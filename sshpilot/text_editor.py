@@ -441,13 +441,14 @@ class RemoteFileEditorWindow(Adw.Window):
             self._buffer.set_modified(False)
             
             # Reset undo/redo state after loading
+            # Using begin_not_undoable_action/end_not_undoable_action clears the undo history
+            # This ensures file loading doesn't create undo history entries
             if self._gtksource_enabled and isinstance(self._buffer, GtkSource.Buffer):
                 try:
-                    if hasattr(self._buffer, 'begin_not_undoable_action'):
-                        self._buffer.begin_not_undoable_action()
-                        self._buffer.end_not_undoable_action()
-                except (AttributeError, TypeError):
-                    pass
+                    self._buffer.begin_not_undoable_action()
+                    self._buffer.end_not_undoable_action()
+                except (AttributeError, TypeError) as e:
+                    logger.debug(f"Failed to reset undo stack: {e}")
                 # Update undo/redo button states
                 if hasattr(self, '_undo_button'):
                     self._undo_button.set_sensitive(False)
@@ -565,13 +566,14 @@ class RemoteFileEditorWindow(Adw.Window):
             self._buffer.set_modified(False)
             
             # Reset undo stack after save
+            # Using begin_not_undoable_action/end_not_undoable_action clears the undo history
+            # This ensures saving doesn't create undo history entries
             if self._gtksource_enabled and isinstance(self._buffer, GtkSource.Buffer):
                 try:
-                    if hasattr(self._buffer, 'begin_not_undoable_action'):
-                        self._buffer.begin_not_undoable_action()
-                        self._buffer.end_not_undoable_action()
-                except (AttributeError, TypeError):
-                    pass
+                    self._buffer.begin_not_undoable_action()
+                    self._buffer.end_not_undoable_action()
+                except (AttributeError, TypeError) as e:
+                    logger.debug(f"Failed to reset undo stack: {e}")
                 # Update undo/redo button states
                 if hasattr(self, '_undo_button'):
                     self._undo_button.set_sensitive(False)
@@ -626,9 +628,14 @@ class RemoteFileEditorWindow(Adw.Window):
         self._buffer.set_modified(False)
         
         # Reset undo stack after save
+        # Using begin_not_undoable_action/end_not_undoable_action clears the undo history
+        # This ensures saving doesn't create undo history entries
         if self._gtksource_enabled and isinstance(self._buffer, GtkSource.Buffer):
-            self._buffer.begin_not_undoable_action()
-            self._buffer.end_not_undoable_action()
+            try:
+                self._buffer.begin_not_undoable_action()
+                self._buffer.end_not_undoable_action()
+            except (AttributeError, TypeError) as e:
+                logger.debug(f"Failed to reset undo stack: {e}")
             # Update undo/redo button states
             if hasattr(self, '_undo_button'):
                 self._undo_button.set_sensitive(False)
@@ -787,26 +794,12 @@ class RemoteFileEditorWindow(Adw.Window):
         # If there's a selection, start from just after the end of the selection
         # Otherwise, start from the insert mark
         try:
-            bounds_result = self._buffer.get_selection_bounds()
-            logger.debug(f"_search_next: get_selection_bounds() returned: {bounds_result}, len={len(bounds_result) if hasattr(bounds_result, '__len__') else 'N/A'}")
+            # get_selection_bounds() returns (has_selection, start_iter, end_iter) when selection exists
+            # Raises ValueError when no selection
+            has_selection, start, end = self._buffer.get_selection_bounds()
+            logger.debug(f"_search_next: has_selection={has_selection}")
             
-            # get_selection_bounds() returns (bool, start_iter, end_iter) or just bool
-            if isinstance(bounds_result, tuple) and len(bounds_result) >= 1:
-                has_selection = bounds_result[0]
-                if has_selection and len(bounds_result) >= 3:
-                    start = bounds_result[1]
-                    end = bounds_result[2]
-                else:
-                    start = None
-                    end = None
-            else:
-                has_selection = bool(bounds_result) if bounds_result else False
-                start = None
-                end = None
-            
-            logger.debug(f"_search_next: has_selection={has_selection}, start={start}, end={end}")
-            
-            if has_selection and start is not None and end is not None:
+            if has_selection:
                 # Start searching from just after the end of the current selection
                 iter_ = end.copy()
                 start_offset = iter_.get_offset()
@@ -821,13 +814,14 @@ class RemoteFileEditorWindow(Adw.Window):
                 iter_ = self._buffer.get_iter_at_mark(insert_mark)
                 offset = iter_.get_offset()
                 logger.debug(f"_search_next: using cursor position, offset={offset}")
-        except (ValueError, TypeError) as e:
-            # Fallback to insert mark
-            logger.debug(f"_search_next: exception getting selection bounds: {e}")
+        except ValueError:
+            # No selection - get_selection_bounds() raises ValueError when there's no selection
+            # Start from insert mark (cursor position)
+            logger.debug("_search_next: no selection, using cursor position")
             insert_mark = self._buffer.get_insert()
             iter_ = self._buffer.get_iter_at_mark(insert_mark)
             offset = iter_.get_offset()
-            logger.debug(f"_search_next: fallback to cursor, offset={offset}")
+            logger.debug(f"_search_next: cursor offset={offset}")
         
         # Log iterator position before search
         iter_offset = iter_.get_offset()
@@ -988,8 +982,9 @@ class RemoteFileEditorWindow(Adw.Window):
         
         # Replace the match using the iterators from the search context
         # replace() requires: match_start, match_end, replace_text, replace_length
+        # replace_length should be in bytes or -1 for null-terminated UTF-8 string
         # According to docs, after replace(), the iterators are revalidated to point to the replaced text
-        ok = self._search_context.replace(match_start, match_end, replace_text, len(replace_text))
+        ok = self._search_context.replace(match_start, match_end, replace_text, -1)
         if not ok:
             # Replace failed - the iterators might not correspond to a valid match
             return
@@ -1013,9 +1008,9 @@ class RemoteFileEditorWindow(Adw.Window):
         if not replace_text:
             return
         
-        # replace_all() needs the replace text and its length (in characters)
-        replace_length = len(replace_text)
-        self._search_context.replace_all(replace_text, replace_length)
+        # replace_all() needs the replace text and its length (in bytes) or -1 for null-terminated UTF-8
+        # Using -1 allows GTK to handle UTF-8 encoding automatically
+        self._search_context.replace_all(replace_text, -1)
     
     # ---------- Undo/Redo methods ----------
     

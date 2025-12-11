@@ -1398,7 +1398,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             self.split_view = Adw.OverlaySplitView()
             try:
                 self.split_view.set_sidebar_width_fraction(0.25)
-                self.split_view.set_min_sidebar_width(200)
+                self.split_view.set_min_sidebar_width(180)
                 self.split_view.set_max_sidebar_width(400)
             except Exception:
                 pass
@@ -1514,6 +1514,36 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception:
             pass
         return 0
+
+    def update_sidebar_display(self):
+        """Update sidebar display based on current preferences."""
+        if not hasattr(self, 'connection_list'):
+            return
+        
+        show_user_hostname = self.config.get_setting('ui.sidebar_show_user_hostname', False)
+        show_group_count = self.config.get_setting('ui.sidebar_show_group_count', True)
+        show_status = self.config.get_setting('ui.sidebar_show_connection_status', True)
+        show_port_forwarding = self.config.get_setting('ui.sidebar_show_port_forwarding', False)
+        show_connection_icon = self.config.get_setting('ui.sidebar_show_connection_icon', True)
+        
+        # Update all rows in the connection list
+        row = self.connection_list.get_first_child()
+        while row:
+            # Update ConnectionRow elements
+            if hasattr(row, 'connection_icon'):
+                row.connection_icon.set_visible(show_connection_icon)
+            if hasattr(row, 'host_label'):
+                row.host_label.set_visible(show_user_hostname)
+            if hasattr(row, 'status_icon'):
+                row.status_icon.set_visible(show_status)
+            if hasattr(row, '_update_forwarding_indicators'):
+                row._update_forwarding_indicators()
+            
+            # Update GroupRow elements
+            if hasattr(row, 'count_label'):
+                row.count_label.set_visible(show_group_count)
+            
+            row = row.get_next_sibling()
 
     def update_sidebar_max_width(self, max_width: int):
         """Update the maximum sidebar width for both NavigationSplitView and OverlaySplitView."""
@@ -2094,6 +2124,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                             files_row.connect('activated', lambda *_: (self.on_manage_files_action(None, None), pop.popdown()))
                             listbox.append(files_row)
 
+                        # Copy Key to Server row
+                        copy_key_row = Adw.ActionRow(title=_('Copy Key to Server'))
+                        copy_key_icon = icon_utils.new_image_from_icon_name('dialog-password-symbolic')
+                        copy_key_row.add_prefix(copy_key_icon)
+                        copy_key_row.set_activatable(True)
+                        copy_key_row.connect('activated', lambda *_: (self.on_copy_key_to_server_action(None, None), pop.popdown()))
+                        listbox.append(copy_key_row)
+
                         # Only show system terminal option when external terminals are available
                         if not should_hide_external_terminal_options():
                             terminal_row = Adw.ActionRow(title=_('Open in System Terminal'))
@@ -2263,7 +2301,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.connection_toolbar.append(self.copy_key_button)
 
         # SCP transfer button
-        self.scp_button = icon_utils.new_button_from_icon_name('document-send-symbolic')
+        self.scp_button = icon_utils.new_button_from_icon_name('vertical-arrows-long-symbolic')
         self.scp_button.set_tooltip_text('Transfer files with scp')
         self.scp_button.set_sensitive(False)
         self.scp_button.connect('clicked', self.on_scp_button_clicked)
@@ -7271,13 +7309,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 for terminal in terms:
                     terminal.apply_theme()
         elif key == 'ui.group_row_display':
-            normalized = 'fullwidth'
+            normalized = 'nested'
             try:
                 normalized = str(value).lower()
             except Exception:
                 pass
             if normalized not in {'fullwidth', 'nested'}:
-                normalized = 'fullwidth'
+                normalized = 'nested'
 
             for row in self.connection_rows.values():
                 if hasattr(row, 'refresh_group_display_mode'):

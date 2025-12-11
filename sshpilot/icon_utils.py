@@ -58,6 +58,7 @@ _ICON_RESOURCE_MAP = {
     'utilities-terminal-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/utilities-terminal-symbolic.svg',
     'dialog-password-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/dialog-password-symbolic.svg',
     'document-send-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/document-send-symbolic.svg',
+    'vertical-arrows-long-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/vertical-arrows-long-symbolic.svg',
     'view-sort-ascending-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/view-sort-ascending-symbolic.svg',
     'preferences-system-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/preferences-system-symbolic.svg',
     'tab-new-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/tab-new-symbolic.svg',
@@ -88,6 +89,7 @@ _ICON_RESOURCE_MAP = {
     'applications-graphics-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/preferences-system-symbolic.svg',
     'network-workgroup-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/network-server-symbolic.svg',
     'applications-system-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/preferences-system-symbolic.svg',
+    'tag-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/tag-symbolic.svg',
     # Additional missing icons - map to closest available
     'network-receive-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/network-transmit-receive-symbolic.svg',
     'security-high-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/dialog-warning-symbolic.svg',

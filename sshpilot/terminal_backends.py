@@ -583,6 +583,8 @@ class PyXtermTerminalBackend:
         self._current_search_term: Optional[str] = None  # Current search term
         self._current_search_is_regex: bool = False  # Whether current search is regex
         self._current_search_case_sensitive: bool = False  # Whether current search is case sensitive
+        self._pending_spawn_callback: Optional[Callable] = None  # Store callback until WebView is ready
+        self._pending_spawn_user_data: Optional[Any] = None  # Store user_data for callback
 
         # Initialize with a fallback widget
         self.widget: Gtk.Widget = Gtk.Box()
@@ -622,6 +624,18 @@ class PyXtermTerminalBackend:
                 from gi.repository import WebKit
                 self.WebKit = WebKit
                 self._webview = WebKit.WebView()
+                
+                # Configure WebView settings to ensure JavaScript is enabled
+                # According to WebKit 6.0 API, JavaScript is enabled by default,
+                # but we explicitly set it for clarity
+                try:
+                    settings = self._webview.get_settings()
+                    if settings:
+                        settings.set_property('enable-javascript', True)
+                        logger.debug("WebView JavaScript enabled via settings")
+                except Exception as settings_error:
+                    logger.debug(f"Could not configure WebView settings (may be enabled by default): {settings_error}")
+                
                 logger.debug("Using WebKit 6.0 (GTK4 compatible)")
             except Exception as webkit6_error:
                 logger.debug(f"WebKit 6.0 not available: {webkit6_error}")
@@ -675,90 +689,143 @@ class PyXtermTerminalBackend:
     def _on_webview_load_changed(self, webview, load_event, *args):
         """Called when the WebView load state changes"""
         try:
-            # Handle different load events
-            if load_event == 1:  # WEBKIT_LOAD_STARTED
-                logger.debug("WebView load started")
-            elif load_event == 2:  # WEBKIT_LOAD_REDIRECTED
-                logger.debug("WebView load redirected")
-            elif load_event == 3:  # WEBKIT_LOAD_COMMITTED
-                logger.debug("WebView load committed")
-                # Disable context menu early (on load-committed) to catch it before page fully loads
-                disable_context_menu_js = """
-                (function() {
-                    // Disable browser's default context menu
-                    document.addEventListener('contextmenu', function(e) {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        return false;
-                    }, true);
-                    // Also disable on the terminal element if it exists
-                    if (typeof window.term !== 'undefined' && window.term.element) {
-                        window.term.element.addEventListener('contextmenu', function(e) {
+            # Handle different load events using WebKit.LoadEvent enum constants
+            # According to WebKit 6.0 API: LoadEvent enum has STARTED, REDIRECTED, COMMITTED, FINISHED, FAILED
+            if hasattr(self, 'WebKit') and self.WebKit:
+                LoadEvent = self.WebKit.LoadEvent
+                if load_event == LoadEvent.STARTED:
+                    logger.debug("WebView load started")
+                elif load_event == LoadEvent.REDIRECTED:
+                    logger.debug("WebView load redirected")
+                elif load_event == LoadEvent.COMMITTED:
+                    logger.debug("WebView load committed")
+                    # Disable context menu early (on load-committed) to catch it before page fully loads
+                    disable_context_menu_js = """
+                    (function() {
+                        // Disable browser's default context menu
+                        document.addEventListener('contextmenu', function(e) {
                             e.preventDefault();
                             e.stopPropagation();
                             return false;
                         }, true);
-                    }
-                })();
-                """
-                self._run_javascript(disable_context_menu_js)
-                logger.debug("Disabled WebView context menu (early, on load-committed)")
-            elif load_event == 4:  # WEBKIT_LOAD_FINISHED
-                logger.debug("WebView load finished, applying focus and settings")
-                # Apply focus and settings after WebView is fully loaded
-                def apply_settings():
-                    try:
-                        logger.debug("WebView load-finished: applying focus and settings")
-                        # Disable context menu again on load-finished (in case it wasn't caught earlier)
-                        disable_context_menu_js = """
-                        (function() {
-                            // Disable browser's default context menu
-                            document.addEventListener('contextmenu', function(e) {
+                        // Also disable on the terminal element if it exists
+                        if (typeof window.term !== 'undefined' && window.term.element) {
+                            window.term.element.addEventListener('contextmenu', function(e) {
                                 e.preventDefault();
                                 e.stopPropagation();
                                 return false;
                             }, true);
-                            // Also disable on the terminal element if it exists
-                            if (typeof window.term !== 'undefined' && window.term.element) {
-                                window.term.element.addEventListener('contextmenu', function(e) {
+                        }
+                    })();
+                    """
+                    self._run_javascript(disable_context_menu_js)
+                    logger.debug("Disabled WebView context menu (early, on load-committed)")
+                elif load_event == LoadEvent.FINISHED:
+                    logger.debug("WebView load finished, applying focus and settings")
+                    # Apply focus and settings after WebView is fully loaded
+                    def apply_settings():
+                        try:
+                            logger.debug("WebView load-finished: applying focus and settings")
+                            # Disable context menu again on load-finished (in case it wasn't caught earlier)
+                            disable_context_menu_js = """
+                            (function() {
+                                // Disable browser's default context menu
+                                document.addEventListener('contextmenu', function(e) {
                                     e.preventDefault();
                                     e.stopPropagation();
                                     return false;
                                 }, true);
-                            }
-                        })();
-                        """
-                        self._run_javascript(disable_context_menu_js)
-                        logger.debug("Disabled WebView context menu (on load-finished)")
-                        
-                        # Just focus the WebView - HTML template handles terminal focus
-                        self.widget.grab_focus()
-                        
-                        # Apply theme and font after page is loaded
-                        if hasattr(self.owner, 'config'):
-                            theme_name = self.owner.config.get_setting("terminal.theme", "default")
-                            self.apply_theme(theme_name)
+                                // Also disable on the terminal element if it exists
+                                if (typeof window.term !== 'undefined' && window.term.element) {
+                                    window.term.element.addEventListener('contextmenu', function(e) {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        return false;
+                                    }, true);
+                                }
+                            })();
+                            """
+                            self._run_javascript(disable_context_menu_js)
+                            logger.debug("Disabled WebView context menu (on load-finished)")
                             
-                            font_string = self.owner.config.get_setting("terminal.font", "Monospace 12")
-                            font_desc = Pango.FontDescription.from_string(font_string)
-                            self.set_font(font_desc)
+                            # Just focus the WebView - HTML template handles terminal focus
+                            self.widget.grab_focus()
                             
-                            # Apply font scale if set
-                            if hasattr(self, '_font_scale'):
-                                self.set_font_scale(self._font_scale)
+                            # Apply theme and font after page is loaded
+                            if hasattr(self.owner, 'config'):
+                                theme_name = self.owner.config.get_setting("terminal.theme", "default")
+                                self.apply_theme(theme_name)
+                                
+                                font_string = self.owner.config.get_setting("terminal.font", "Monospace 12")
+                                font_desc = Pango.FontDescription.from_string(font_string)
+                                self.set_font(font_desc)
+                                
+                                # Apply font scale if set
+                                if hasattr(self, '_font_scale'):
+                                    self.set_font_scale(self._font_scale)
+                            
+                            logger.debug("Settings applied after WebView load finished")
+                            
+                            # Now that WebView is fully loaded and terminal is ready, call the spawn callback
+                            # This ensures the terminal is ready before SSH connection is attempted
+                            if hasattr(self, '_pending_spawn_callback') and self._pending_spawn_callback:
+                                callback = self._pending_spawn_callback
+                                user_data = self._pending_spawn_user_data
+                                self._pending_spawn_callback = None
+                                self._pending_spawn_user_data = None
+                                
+                                def _notify() -> bool:
+                                    try:
+                                        callback(self.widget, self._child_pid or 0, None, user_data)
+                                    except TypeError:
+                                        callback(self.widget, None)
+                                    return False
+                                
+                                GLib.idle_add(_notify)
+                                logger.debug("Called deferred spawn callback after WebView is ready")
+                        except Exception:
+                            logger.debug("Failed to apply settings after WebView load", exc_info=True)
+                        return False  # Don't repeat
+                    
+                    # Minimal delay (50ms) to ensure DOM is ready - reduced from 500ms for faster startup
+                    GLib.timeout_add(50, apply_settings)
+                elif load_event == LoadEvent.FAILED:
+                    logger.error("WebView load failed - this may indicate connection refused error")
+                    # Emit connection failed signal to the terminal widget
+                    if hasattr(self.owner, 'emit'):
+                        self.owner.emit('connection-failed', 'Could not connect to PyXterm server: Connection refused')
+                    
+                    # Still call the callback even on failure, so the terminal widget knows spawn completed
+                    # This prevents the terminal from hanging waiting for the callback
+                    if hasattr(self, '_pending_spawn_callback') and self._pending_spawn_callback:
+                        callback = self._pending_spawn_callback
+                        user_data = self._pending_spawn_user_data
+                        self._pending_spawn_callback = None
+                        self._pending_spawn_user_data = None
                         
-                        logger.debug("Settings applied after WebView load finished")
-                    except Exception:
-                        logger.debug("Failed to apply settings after WebView load", exc_info=True)
-                    return False  # Don't repeat
-                
-                # Small delay to ensure page is ready
-                GLib.timeout_add(500, apply_settings)
-            elif load_event == 5:  # WEBKIT_LOAD_FAILED
-                logger.error("WebView load failed - this may indicate connection refused error")
-                # Emit connection failed signal to the terminal widget
-                if hasattr(self.owner, 'emit'):
-                    self.owner.emit('connection-failed', 'Could not connect to PyXterm server: Connection refused')
+                        def _notify_error() -> bool:
+                            try:
+                                # Pass an error to indicate failure
+                                callback(self.widget, None, Exception("WebView load failed"), user_data)
+                            except TypeError:
+                                callback(self.widget, None)
+                            return False
+                        
+                        GLib.idle_add(_notify_error)
+                        logger.debug("Called deferred spawn callback with error after WebView load failed")
+            else:
+                # Fallback for WebKit2 or if enum is not available
+                # Use integer comparison as fallback (for WebKit2 compatibility)
+                if load_event == 1:  # WEBKIT_LOAD_STARTED
+                    logger.debug("WebView load started")
+                elif load_event == 2:  # WEBKIT_LOAD_REDIRECTED
+                    logger.debug("WebView load redirected")
+                elif load_event == 3:  # WEBKIT_LOAD_COMMITTED
+                    logger.debug("WebView load committed")
+                elif load_event == 4:  # WEBKIT_LOAD_FINISHED
+                    logger.debug("WebView load finished")
+                elif load_event == 5:  # WEBKIT_LOAD_FAILED
+                    logger.error("WebView load failed")
         except Exception:
             logger.debug("Error in WebView load-changed handler", exc_info=True)
 
@@ -1030,8 +1097,10 @@ class PyXtermTerminalBackend:
                                 webview.evaluate_javascript_finish(result)
                         except Exception as e:
                             logger.debug(f"JavaScript execution finished with error: {e}")
-                    # Pass script length (-1 for null-terminated), None for world_name, None for source_uri, None for cancellable
-                    self._webview.evaluate_javascript(script, -1, None, None, None, on_js_finished, None)
+                    # Pass script length (len(script) for Python strings)
+                    # According to WebKit 6.0 API, -1 works for auto-detect, but using actual length is more explicit
+                    # PyGObject handles string conversion, so len(script) is appropriate
+                    self._webview.evaluate_javascript(script, len(script), None, None, None, on_js_finished, None)
                 except Exception as e:
                     logger.debug(f"Failed to evaluate JavaScript (WebKit 6.0): {e}", exc_info=True)
             # WebKit2 4.0 (GTK3) - uses run_javascript
@@ -1429,15 +1498,16 @@ class PyXtermTerminalBackend:
             self._child_pid = self._server_process.pid
             
             # Wait for the server to be ready with retry logic
-            max_retries = 10
-            retry_delay = 0.5
+            # Use shorter delays for faster startup
+            max_retries = 20  # More attempts with shorter delays
+            retry_delay = 0.1  # Reduced from 0.5s to 0.1s for faster startup
             server_ready = False
             
             for attempt in range(max_retries):
                 try:
-                    # Test if the server is responding
+                    # Test if the server is responding with shorter timeout
                     import socket
-                    with socket.create_connection(('127.0.0.1', port), timeout=1):
+                    with socket.create_connection(('127.0.0.1', port), timeout=0.5):
                         server_ready = True
                         logger.debug(f"PyXterm server ready on port {port} after {attempt + 1} attempts")
                         break
@@ -1483,25 +1553,32 @@ class PyXtermTerminalBackend:
             
             # Load the terminal in WebView
             if self._webview:
-                uri = f"http://127.0.0.1:{port}"
-                logger.debug(f"Loading WebView with URI: {uri}")
-                self._webview.load_uri(uri)
-                
-                # Connect to load-changed signal to track when WebView is ready
+                # Connect to load-changed signal BEFORE loading to ensure we catch all events
                 try:
                     self._webview.connect('load-changed', self._on_webview_load_changed)
                 except Exception:
                     logger.debug("Failed to connect to WebView load-changed signal", exc_info=True)
-
-            if callback:
-                def _notify() -> bool:
-                    try:
-                        callback(self.widget, self._child_pid or 0, None, user_data)
-                    except TypeError:
-                        callback(self.widget, None)
-                    return False
-
-                GLib.idle_add(_notify)
+                
+                uri = f"http://127.0.0.1:{port}"
+                logger.debug(f"Loading WebView with URI: {uri}")
+                self._webview.load_uri(uri)
+                
+                # Store callback to be called after WebView is fully loaded
+                # This ensures the terminal is ready before the spawn callback fires
+                if callback:
+                    self._pending_spawn_callback = callback
+                    self._pending_spawn_user_data = user_data
+                    logger.debug("Deferred spawn callback until WebView is fully loaded")
+            else:
+                # No WebView, call callback immediately (shouldn't happen, but handle gracefully)
+                if callback:
+                    def _notify() -> bool:
+                        try:
+                            callback(self.widget, self._child_pid or 0, None, user_data)
+                        except TypeError:
+                            callback(self.widget, None)
+                        return False
+                    GLib.idle_add(_notify)
 
         except Exception as e:
             # Clean up stderr file if it exists

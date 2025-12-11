@@ -1225,12 +1225,29 @@ class TerminalWidget(Gtk.Box):
             logger.debug(f"Environment PATH: {env.get('PATH', 'NOT_SET')}")
             
             # Create a new PTY for the terminal (VTE-specific, but backend may handle this)
+            # According to VTE docs, we should set PTY size before spawning to avoid SIGWINCH
             pty = None
             if hasattr(self.backend, 'get_pty') and callable(self.backend.get_pty):
                 pty = self.backend.get_pty()
             if pty is None and self.vte is not None:
                 try:
                     pty = Vte.Pty.new_sync(Vte.PtyFlags.DEFAULT)
+                    # Set PTY size before spawning to avoid child process receiving SIGWINCH
+                    # Get terminal size (rows, columns)
+                    try:
+                        rows = self.vte.get_row_count()
+                        cols = self.vte.get_column_count()
+                        # Only set size if we have valid dimensions (not default 80x24)
+                        if rows > 0 and cols > 0 and (rows != 24 or cols != 80):
+                            pty.set_size(rows, cols)
+                            logger.debug(f"Set PTY size to {rows}x{cols} before spawn")
+                    except Exception as e:
+                        logger.debug(f"Could not set PTY size before spawn: {e}")
+                    # Associate PTY with Terminal so spawn_async uses it
+                    try:
+                        self.vte.set_pty(pty)
+                    except Exception as e:
+                        logger.debug(f"Could not set PTY on terminal: {e}")
                 except Exception:
                     pass
             
@@ -1537,12 +1554,29 @@ class TerminalWidget(Gtk.Box):
             logger.debug(f"Environment PATH: {env.get('PATH', 'NOT_SET')}")
             
             # Create a new PTY for the terminal (VTE-specific, but backend may handle this)
+            # According to VTE docs, we should set PTY size before spawning to avoid SIGWINCH
             pty = None
             if hasattr(self.backend, 'get_pty') and callable(self.backend.get_pty):
                 pty = self.backend.get_pty()
             if pty is None and self.vte is not None:
                 try:
                     pty = Vte.Pty.new_sync(Vte.PtyFlags.DEFAULT)
+                    # Set PTY size before spawning to avoid child process receiving SIGWINCH
+                    # Get terminal size (rows, columns)
+                    try:
+                        rows = self.vte.get_row_count()
+                        cols = self.vte.get_column_count()
+                        # Only set size if we have valid dimensions (not default 80x24)
+                        if rows > 0 and cols > 0 and (rows != 24 or cols != 80):
+                            pty.set_size(rows, cols)
+                            logger.debug(f"Set PTY size to {rows}x{cols} before spawn")
+                    except Exception as e:
+                        logger.debug(f"Could not set PTY size before spawn: {e}")
+                    # Associate PTY with Terminal so spawn_async uses it
+                    try:
+                        self.vte.set_pty(pty)
+                    except Exception as e:
+                        logger.debug(f"Could not set PTY on terminal: {e}")
                 except Exception:
                     pass
             
@@ -2364,6 +2398,44 @@ class TerminalWidget(Gtk.Box):
             logger.error(f"Failed to setup local shell: {e}")
             self.emit('connection-failed', str(e))
     
+    def _get_terminal_size(self) -> tuple[int, int]:
+        """
+        Get the terminal size in columns and rows.
+        Tries to get the actual allocated size from the terminal widget.
+        
+        Returns:
+            Tuple of (cols, rows)
+        """
+        cols = 80
+        rows = 24
+        
+        try:
+            if getattr(self, 'vte', None) is not None:
+                # Try to get size from VTE
+                vte_cols = self.vte.get_column_count()
+                vte_rows = self.vte.get_row_count()
+                
+                # Use VTE's reported size if it's reasonable (not the default 80x24)
+                # VTE will return the actual size once the terminal is allocated
+                if vte_cols >= 80 and vte_rows >= 24:
+                    cols = vte_cols
+                    rows = vte_rows
+                    logger.debug(f"Got terminal size from VTE: {cols}x{rows}")
+            elif getattr(self, 'backend', None) is not None:
+                # Some backends may expose a widget with geometry hints
+                widget = getattr(self.backend, 'widget', None)
+                if widget and hasattr(widget, 'get_width_chars') and hasattr(widget, 'get_height_rows'):
+                    widget_cols = widget.get_width_chars()
+                    widget_rows = widget.get_height_rows()
+                    if widget_cols and widget_cols > 0:
+                        cols = widget_cols
+                    if widget_rows and widget_rows > 0:
+                        rows = widget_rows
+        except Exception as e:
+            logger.debug(f"Failed to determine terminal size from backend: {e}")
+        
+        return (cols, rows)
+    
     def _try_agent_based_shell(self) -> bool:
         """
         Try to set up local shell using the agent (Ptyxis-style).
@@ -2378,22 +2450,58 @@ class TerminalWidget(Gtk.Box):
             # Create agent client
             client = AgentClient()
             
-            # Get terminal size (fallback to sensible defaults if backend lacks VTE)
-            cols = 80
-            rows = 24
-            try:
-                if getattr(self, 'vte', None) is not None:
-                    cols = self.vte.get_column_count()
-                    rows = self.vte.get_row_count()
-                elif getattr(self, 'backend', None) is not None:
-                    # Some backends may expose a widget with geometry hints
-                    widget = getattr(self.backend, 'widget', None)
-                    if widget and hasattr(widget, 'get_width_chars') and hasattr(widget, 'get_height_rows'):
-                        cols = widget.get_width_chars() or cols
-                        rows = widget.get_height_rows() or rows
-            except Exception as e:
-                logger.debug(f"Failed to determine terminal size from backend: {e}")
+            # Get terminal size - try to get actual allocated size
+            cols, rows = self._get_terminal_size()
             
+            # If we still have default size (80x24), defer spawn until terminal is allocated
+            if cols == 80 and rows == 24:
+                logger.debug("Terminal not allocated yet, deferring agent spawn until size is available")
+                # Store client for later use
+                self._pending_agent_client = client
+                # Connect to size-allocate to spawn when terminal is allocated
+                if getattr(self, 'vte', None) is not None:
+                    def on_size_allocate(widget, allocation):
+                        # Only spawn once
+                        if hasattr(self, '_pending_agent_client'):
+                            client = self._pending_agent_client
+                            delattr(self, '_pending_agent_client')
+                            widget.disconnect_by_func(on_size_allocate)
+                            
+                            # Get the actual size now
+                            cols, rows = self._get_terminal_size()
+                            logger.debug(f"Terminal allocated, spawning agent with size {cols}x{rows}")
+                            self._spawn_agent_shell(client, cols, rows)
+                    
+                    self.vte.connect('size-allocate', on_size_allocate)
+                    return True
+                else:
+                    # For non-VTE backends, try to spawn with current size
+                    # They might handle resize differently
+                    pass
+            
+            # Spawn immediately if we have a reasonable size
+            return self._spawn_agent_shell(client, cols, rows)
+            
+        except ImportError as e:
+            logger.warning(f"Agent client not available: {e}")
+            return False
+        except Exception as e:
+            logger.warning(f"Failed to setup agent-based shell: {e}")
+            return False
+    
+    def _spawn_agent_shell(self, client, cols: int, rows: int) -> bool:
+        """
+        Actually spawn the agent shell with the given size.
+        
+        Args:
+            client: AgentClient instance
+            cols: Terminal columns
+            rows: Terminal rows
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
             # Working directory
             cwd = os.path.expanduser('~')
             
@@ -2412,7 +2520,7 @@ class TerminalWidget(Gtk.Box):
                 logger.warning("Could not build agent command, falling back to direct spawn")
                 return False
             
-            logger.info(f"Launching agent-based shell via flatpak-spawn...")
+            logger.info(f"Launching agent-based shell via flatpak-spawn with size {cols}x{rows}...")
             
             # Environment for agent
             env = os.environ.copy()
@@ -2447,12 +2555,8 @@ class TerminalWidget(Gtk.Box):
             self._fallback_timer_id = GLib.timeout_add_seconds(5, self._fallback_hide_spinner)
             
             return True
-            
-        except ImportError as e:
-            logger.warning(f"Agent client not available: {e}")
-            return False
         except Exception as e:
-            logger.warning(f"Failed to setup agent-based shell: {e}")
+            logger.error(f"Failed to spawn agent shell: {e}")
             return False
     
     def _setup_local_shell_direct(self):
@@ -2559,6 +2663,38 @@ class TerminalWidget(Gtk.Box):
                 if '=' in env_item:
                     key, value = env_item.split('=', 1)
                     env_dict[key] = value
+        
+        # Create and configure PTY before spawning (for local terminals)
+        # According to VTE docs, we should set PTY size before spawning to avoid SIGWINCH
+        if self.vte is not None:
+            try:
+                # Check if PTY is already set
+                existing_pty = None
+                try:
+                    existing_pty = self.vte.get_pty()
+                except Exception:
+                    pass
+                
+                # Create new PTY if not already set
+                if existing_pty is None:
+                    pty = Vte.Pty.new_sync(Vte.PtyFlags.DEFAULT)
+                    # Set PTY size before spawning to avoid child process receiving SIGWINCH
+                    try:
+                        rows = self.vte.get_row_count()
+                        cols = self.vte.get_column_count()
+                        # Only set size if we have valid dimensions (not default 80x24)
+                        if rows > 0 and cols > 0 and (rows != 24 or cols != 80):
+                            pty.set_size(rows, cols)
+                            logger.debug(f"Set PTY size to {rows}x{cols} before local terminal spawn")
+                    except Exception as e:
+                        logger.debug(f"Could not set PTY size before spawn: {e}")
+                    # Associate PTY with Terminal so spawn_async uses it
+                    try:
+                        self.vte.set_pty(pty)
+                    except Exception as e:
+                        logger.debug(f"Could not set PTY on terminal: {e}")
+            except Exception as e:
+                logger.debug(f"Could not create/set PTY for local terminal: {e}")
         
         self.backend.spawn_async(
             argv=command,
@@ -3091,6 +3227,12 @@ class TerminalWidget(Gtk.Box):
                     height, width, 0, 0
                 )
             )
+        
+        # For local terminals with direct spawn, VTE automatically sends SIGWINCH
+        # to the child process, so no additional action needed.
+        # For agent-based shells, the agent runs in a separate process and
+        # would need a mechanism to receive resize signals, which is not
+        # currently implemented. The initial size should be correct now though.
     
     def _on_ssh_disconnected(self, exc):
         """Called when SSH connection is lost"""

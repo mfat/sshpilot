@@ -242,7 +242,7 @@ class TerminalManager:
     def _create_tab_color_icon(self, rgba: Gdk.RGBA):
         # Use a simple themed icon instead of creating custom icons
         # This avoids the pixbuf save issues and works reliably
-        return Gio.ThemedIcon.new("media-record-symbolic")
+        return Gio.ThemedIcon.new("tag-symbolic")
 
     def _apply_tab_group_color(self, page, color_value, tooltip=None):
         use_pref = False
@@ -340,9 +340,10 @@ class TerminalManager:
             # Convert RGBA to hex for CSS
             hex_color = f"#{int(rgba.red * 255):02x}{int(rgba.green * 255):02x}{int(rgba.blue * 255):02x}"
             
-            # Create a simple SVG icon with the color
-            svg_data = f"""<svg width="12" height="12" xmlns="http://www.w3.org/2000/svg">
-                <circle cx="6" cy="6" r="5" fill="{hex_color}" stroke="none"/>
+            # Create a tag SVG icon with the color
+            # Based on tag-symbolic.svg but with the group color
+            svg_data = f"""<svg xmlns="http://www.w3.org/2000/svg" height="16px" viewBox="0 0 16 16" width="16px">
+                <path d="m 1 2 v 6 l 6.691406 6.691406 c 0.1875 0.1875 0.414063 0.203125 0.597656 0.019532 l 6.382813 -6.382813 c 0.222656 -0.222656 0.207031 -0.449219 0.019531 -0.636719 l -6.691406 -6.691406 h -6 c -0.464844 0 -1 0.492188 -1 1 z m 3 0.960938 c 0.589844 0 1.070312 0.480468 1.070312 1.070312 s -0.480468 1.070312 -1.070312 1.070312 s -1.070312 -0.480468 -1.070312 -1.070312 s 0.480468 -1.070312 1.070312 -1.070312 z m 0 0" fill="{hex_color}"/>
             </svg>"""
             
             # Create a bytes icon from the SVG
@@ -351,7 +352,7 @@ class TerminalManager:
         except Exception as exc:
             logger.debug(f"Failed to create colored tab icon: {exc}")
             # Fallback to themed icon
-            return Gio.ThemedIcon.new("media-record-symbolic")
+            return Gio.ThemedIcon.new("tag-symbolic")
 
     def _apply_tab_css_color(self, page, rgba: Gdk.RGBA):
         """Apply CSS color to the tab view to color indicator icons"""

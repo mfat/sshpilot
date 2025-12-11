@@ -174,9 +174,15 @@ class Config(GObject.Object):
                 'window_height': 800,
                 'sidebar_width': 250,
                 'group_color_display': 'fill',
+                'group_row_display': 'nested',
                 'use_group_color_in_tab': False,
                 'use_group_color_in_terminal': False,
                 'connection_sort_last': 'name-asc',
+                'sidebar_show_user_hostname': False,
+                'sidebar_show_group_count': True,
+                'sidebar_show_connection_status': True,
+                'sidebar_show_port_forwarding': False,
+                'sidebar_show_connection_icon': True,
             },
             'welcome': {
                 'background_color': None,  # None for default, or CSS string for custom

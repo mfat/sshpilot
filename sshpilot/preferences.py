@@ -501,12 +501,11 @@ class MonospaceFontDialog(Adw.Window):
         self.callback = callback
 
 
-class PreferencesWindow(Gtk.Window):
+class PreferencesWindow(Adw.Window):
     """Preferences dialog window"""
     
     def __init__(self, parent_window, config):
-        super().__init__()
-        self.set_transient_for(parent_window)
+        super().__init__(transient_for=parent_window)
         self.parent_window = parent_window
         self.config = config
         self._shortcuts_row = None
@@ -562,19 +561,43 @@ class PreferencesWindow(Gtk.Window):
     
     def setup_navigation_layout(self):
         """Configure split view layout mirroring GNOME Settings."""
-        # Ensure client-side decorations remain but hide default headerbar
-        # Note: Window decorations are explicitly enabled in __init__ via set_decorated(True)
-        if not is_macos():
-            hidden_titlebar = Gtk.HeaderBar()
-            hidden_titlebar.set_show_title_buttons(False)
-            hidden_titlebar.set_visible(False)
-            # Don't set decoration_layout as it might interfere with window decorations
-            # The window itself has decorations enabled via set_decorated(True)
-            self.set_titlebar(hidden_titlebar)
+        # Adw.Window doesn't have a default titlebar, so no need to hide it
+        # The headerbar with controls is in the ToolbarView below
 
         # Main split view container
         self.navigation_split_view = Adw.NavigationSplitView()
-        self.set_child(self.navigation_split_view)
+        
+        # Configure sidebar width properties according to NavigationSplitView API
+        # Defaults: 25% fraction, 180sp min, 280sp max, SP unit
+        try:
+            self.navigation_split_view.set_sidebar_width_fraction(0.25)
+            self.navigation_split_view.set_min_sidebar_width(180)
+            self.navigation_split_view.set_max_sidebar_width(280)
+            # Set length unit to SP (scale-independent pixels) for responsive sizing
+            if hasattr(Adw, 'LengthUnit'):
+                self.navigation_split_view.set_sidebar_width_unit(Adw.LengthUnit.SP)
+        except Exception as e:
+            logger.debug(f"Failed to set NavigationSplitView sidebar width properties: {e}")
+        
+        # Set show_content to True so content page is visible when collapsed
+        # (sidebar will be hidden, content will be shown)
+        try:
+            self.navigation_split_view.set_show_content(True)
+        except Exception as e:
+            logger.debug(f"Failed to set NavigationSplitView show_content: {e}")
+        
+        # Add breakpoint for responsive design: collapse on small widths
+        # This follows the NavigationSplitView API recommendation
+        try:
+            if hasattr(Adw, 'Breakpoint') and hasattr(Adw, 'breakpoint_condition_parse'):
+                condition = Adw.breakpoint_condition_parse("max-width: 400sp")
+                breakpoint = Adw.Breakpoint.new(condition)
+                breakpoint.add_setter(self.navigation_split_view, "collapsed", True)
+                self.add_breakpoint(breakpoint)
+        except Exception as e:
+            logger.debug(f"Failed to add NavigationSplitView breakpoint: {e}")
+        
+        self.set_content(self.navigation_split_view)
 
         # Sidebar list with navigation styling
         self.sidebar = Gtk.ListBox()
@@ -597,30 +620,24 @@ class PreferencesWindow(Gtk.Window):
         content_scroller = Gtk.ScrolledWindow()
         content_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         content_scroller.set_child(self.content_stack)
-        self.header_bar = Gtk.HeaderBar()
+        # Header bar with window controls
+        self.header_bar = Adw.HeaderBar()
         self.header_bar.add_css_class("flat")
+        
         self.header_title_label = Gtk.Label.new("")
         self.header_title_label.add_css_class("title")
         self.header_title_label.set_single_line_mode(True)
         self.header_title_label.set_xalign(0.0)
         self.header_bar.set_title_widget(self.header_title_label)
+        
+        # Explicitly enable window controls to ensure they're always visible,
+        # even with custom themes that might not render WindowControls properly
+        self.header_bar.set_show_start_title_buttons(True)
+        self.header_bar.set_show_end_title_buttons(True)
 
-        self.header_controls = None
-        try:
-            self.header_controls = Gtk.WindowControls.new(Gtk.PackType.END)
-        except AttributeError:
-            logger.debug("Gtk.WindowControls unavailable; skipping window buttons")
-        if self.header_controls:
-            self.header_bar.pack_end(self.header_controls)
-            self.header_bar.set_show_title_buttons(False)
-        else:
-            self.header_bar.set_show_title_buttons(True)
-
-        window_handle = Gtk.WindowHandle()
-        window_handle.set_child(self.header_bar)
-
+        # ToolbarView with HeaderBar (matching pattern used in file_manager_window.py)
         self.content_toolbar_view = Adw.ToolbarView()
-        self.content_toolbar_view.add_top_bar(window_handle)
+        self.content_toolbar_view.add_top_bar(self.header_bar)
         self.content_toolbar_view.set_content(content_scroller)
 
         content_page = Adw.NavigationPage.new(self.content_toolbar_view, "Preferences")
@@ -645,17 +662,13 @@ class PreferencesWindow(Gtk.Window):
                 self._update_header_title(title)
 
     def _update_header_title(self, page_title: Optional[str] = None):
-        """Update the header and window title to reflect the active page."""
-        display_title = self._base_header_title
-        if page_title:
-            display_title = f"{self._base_header_title} · {page_title}"
-
+        """Update the header label (always shows just "Preferences")."""
         header_label = getattr(self, "header_title_label", None)
         if header_label:
-            header_label.set_label(display_title)
+            header_label.set_label(self._base_header_title)
 
-        # Keep the window title in sync for platforms that show it prominently
-        self.set_title(display_title)
+        # Keep window title static as "Preferences" only
+        self.set_title(self._base_header_title)
 
     def add_page_to_layout(self, title, icon_name, page):
         """Add a page to the custom layout"""
@@ -1079,15 +1092,15 @@ class PreferencesWindow(Gtk.Window):
                 }
                 self._group_display_toggle_controller = _GroupDisplayToggleFallback(buttons)
 
-            current_display_mode = 'fullwidth'
+            current_display_mode = 'nested'
             try:
                 current_display_mode = str(
-                    self.config.get_setting('ui.group_row_display', 'fullwidth')
+                    self.config.get_setting('ui.group_row_display', 'nested')
                 ).lower()
             except Exception:
-                current_display_mode = 'fullwidth'
+                current_display_mode = 'nested'
             if current_display_mode not in self._group_display_modes:
-                current_display_mode = 'fullwidth'
+                current_display_mode = 'nested'
 
             self._group_display_toggle_sync = True
             try:
@@ -1289,6 +1302,56 @@ class PreferencesWindow(Gtk.Window):
             
             max_width_row.add_suffix(max_width_scale)
             sidebar_group.add(max_width_row)
+            
+            # Display user@hostname toggle
+            show_user_hostname_switch = Adw.SwitchRow()
+            show_user_hostname_switch.set_title("Display user@hostname")
+            show_user_hostname_switch.set_subtitle("Show username@hostname in connection rows")
+            show_user_hostname_switch.set_active(
+                self.config.get_setting('ui.sidebar_show_user_hostname', False)
+            )
+            show_user_hostname_switch.connect('notify::active', self.on_sidebar_show_user_hostname_changed)
+            sidebar_group.add(show_user_hostname_switch)
+            
+            # Display connection count in groups toggle
+            show_group_count_switch = Adw.SwitchRow()
+            show_group_count_switch.set_title("Display Connection Count in Groups")
+            show_group_count_switch.set_subtitle("Show the number of connections in each group")
+            show_group_count_switch.set_active(
+                self.config.get_setting('ui.sidebar_show_group_count', True)
+            )
+            show_group_count_switch.connect('notify::active', self.on_sidebar_show_group_count_changed)
+            sidebar_group.add(show_group_count_switch)
+            
+            # Display connection status toggle
+            show_status_switch = Adw.SwitchRow()
+            show_status_switch.set_title("Display Connection Status")
+            show_status_switch.set_subtitle("Show connection status indicator in connection rows")
+            show_status_switch.set_active(
+                self.config.get_setting('ui.sidebar_show_connection_status', True)
+            )
+            show_status_switch.connect('notify::active', self.on_sidebar_show_connection_status_changed)
+            sidebar_group.add(show_status_switch)
+            
+            # Display port forwarding labels toggle
+            show_port_forwarding_switch = Adw.SwitchRow()
+            show_port_forwarding_switch.set_title("Display Port Forwarding Labels")
+            show_port_forwarding_switch.set_subtitle("Show port forwarding indicators (L/R/D) in connection rows")
+            show_port_forwarding_switch.set_active(
+                self.config.get_setting('ui.sidebar_show_port_forwarding', False)
+            )
+            show_port_forwarding_switch.connect('notify::active', self.on_sidebar_show_port_forwarding_changed)
+            sidebar_group.add(show_port_forwarding_switch)
+            
+            # Display connection icon toggle
+            show_connection_icon_switch = Adw.SwitchRow()
+            show_connection_icon_switch.set_title("Display Connection Icon")
+            show_connection_icon_switch.set_subtitle("Show the computer icon in connection rows")
+            show_connection_icon_switch.set_active(
+                self.config.get_setting('ui.sidebar_show_connection_icon', True)
+            )
+            show_connection_icon_switch.connect('notify::active', self.on_sidebar_show_connection_icon_changed)
+            sidebar_group.add(show_connection_icon_switch)
             
             interface_page.add(sidebar_group)
 
@@ -1952,17 +2015,17 @@ class PreferencesWindow(Gtk.Window):
 
         valid_modes = getattr(self, '_group_display_modes', ['fullwidth', 'nested'])
         if active_name not in valid_modes:
-            active_name = 'fullwidth'
+            active_name = 'nested'
 
         try:
             current_value = str(
-                self.config.get_setting('ui.group_row_display', 'fullwidth')
+                self.config.get_setting('ui.group_row_display', 'nested')
             ).lower()
         except Exception:
-            current_value = 'fullwidth'
+            current_value = 'nested'
 
         if current_value not in valid_modes:
-            current_value = 'fullwidth'
+            current_value = 'nested'
 
         if current_value == active_name:
             self._update_group_display_preview(active_name)
@@ -3412,6 +3475,61 @@ class PreferencesWindow(Gtk.Window):
             self._update_external_file_manager_row()
         except Exception as exc:
             logger.error("Failed to update file manager preference: %s", exc)
+
+    def on_sidebar_show_user_hostname_changed(self, switch, *args):
+        """Persist the preference for showing user@hostname in sidebar."""
+        try:
+            active = bool(switch.get_active())
+            self.config.set_setting('ui.sidebar_show_user_hostname', active)
+            # Update sidebar if window is available
+            if self.parent_window and hasattr(self.parent_window, 'update_sidebar_display'):
+                self.parent_window.update_sidebar_display()
+        except Exception as exc:
+            logger.error("Failed to update sidebar show user hostname preference: %s", exc)
+
+    def on_sidebar_show_group_count_changed(self, switch, *args):
+        """Persist the preference for showing connection count in groups."""
+        try:
+            active = bool(switch.get_active())
+            self.config.set_setting('ui.sidebar_show_group_count', active)
+            # Update sidebar if window is available
+            if self.parent_window and hasattr(self.parent_window, 'update_sidebar_display'):
+                self.parent_window.update_sidebar_display()
+        except Exception as exc:
+            logger.error("Failed to update sidebar show group count preference: %s", exc)
+
+    def on_sidebar_show_connection_status_changed(self, switch, *args):
+        """Persist the preference for showing connection status in sidebar."""
+        try:
+            active = bool(switch.get_active())
+            self.config.set_setting('ui.sidebar_show_connection_status', active)
+            # Update sidebar if window is available
+            if self.parent_window and hasattr(self.parent_window, 'update_sidebar_display'):
+                self.parent_window.update_sidebar_display()
+        except Exception as exc:
+            logger.error("Failed to update sidebar show connection status preference: %s", exc)
+
+    def on_sidebar_show_port_forwarding_changed(self, switch, *args):
+        """Persist the preference for showing port forwarding labels in sidebar."""
+        try:
+            active = bool(switch.get_active())
+            self.config.set_setting('ui.sidebar_show_port_forwarding', active)
+            # Update sidebar if window is available
+            if self.parent_window and hasattr(self.parent_window, 'update_sidebar_display'):
+                self.parent_window.update_sidebar_display()
+        except Exception as exc:
+            logger.error("Failed to update sidebar show port forwarding preference: %s", exc)
+
+    def on_sidebar_show_connection_icon_changed(self, switch, *args):
+        """Persist the preference for showing connection icon in sidebar."""
+        try:
+            active = bool(switch.get_active())
+            self.config.set_setting('ui.sidebar_show_connection_icon', active)
+            # Update sidebar if window is available
+            if self.parent_window and hasattr(self.parent_window, 'update_sidebar_display'):
+                self.parent_window.update_sidebar_display()
+        except Exception as exc:
+            logger.error("Failed to update sidebar show connection icon preference: %s", exc)
 
     def on_open_file_manager_externally_changed(self, switch, *args):
         """Persist whether the file manager should open in a separate window."""

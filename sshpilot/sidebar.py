@@ -48,12 +48,6 @@ def _install_sidebar_color_css():
 
         provider = Gtk.CssProvider()
         css = """
-        .sidebar-color-badge {
-            border-radius: 999px;
-            min-width: 12px;
-            min-height: 12px;
-        }
-
         .accent-red { background-color: #ff5c57; }
         .accent-blue { background-color: #51a1ff; }
         .accent-green { background-color: #5fff8d; }
@@ -269,7 +263,8 @@ class GroupRow(Gtk.ListBoxRow):
     def __init__(self, group_info: Dict, group_manager: GroupManager, connections_dict: Dict | None = None):
         super().__init__()
         _install_sidebar_color_css()
-        self.add_css_class("navigation-sidebar")
+        #self.add_css_class("navigation-sidebar")
+        self.add_css_class("card")        #self.add_css_class("navigation-sidebar")
         self.group_info = group_info
         self.group_manager = group_manager
         self.group_id = group_info["id"]
@@ -296,19 +291,24 @@ class GroupRow(Gtk.ListBoxRow):
         from sshpilot import icon_utils
         icon = icon_utils.new_image_from_icon_name("folder-symbolic")
         icon.set_icon_size(Gtk.IconSize.NORMAL)
+        icon.set_valign(Gtk.Align.CENTER)  # Center vertically relative to text
         content.append(icon)
 
         info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         info_box.set_hexpand(True)
+        info_box.set_valign(Gtk.Align.CENTER)  # Center vertically relative to icon
 
         self.name_label = Gtk.Label()
         self.name_label.set_halign(Gtk.Align.START)
         self.name_label.set_xalign(0.0)  # Left-align text within label (default is 0.5/center)
+        self.name_label.set_valign(Gtk.Align.CENTER)  # Center vertically when count label is hidden
         # Ellipsize when text exceeds available width
         # Per GTK4 docs: For ellipsizing labels, width-chars sets minimum width,
         # max-width-chars limits natural width. Both help control size allocation.
+        # Labels with ellipsize need hexpand to fill available space and ellipsize properly.
+        self.name_label.set_hexpand(True)
         self.name_label.set_ellipsize(Pango.EllipsizeMode.END)
-        self.name_label.set_width_chars(20)  # Minimum width
+        self.name_label.set_width_chars(10)  # Minimum width
         self.name_label.set_max_width_chars(25)  # Maximum natural width (prevents expansion)
         info_box.append(self.name_label)
 
@@ -319,19 +319,36 @@ class GroupRow(Gtk.ListBoxRow):
         # Ellipsize when text exceeds available width
         # Per GTK4 docs: For ellipsizing labels, width-chars sets minimum width,
         # max-width-chars limits natural width. Both help control size allocation.
+        # Labels with ellipsize need hexpand to fill available space and ellipsize properly.
+        self.count_label.set_hexpand(True)
         self.count_label.set_ellipsize(Pango.EllipsizeMode.END)
-        self.count_label.set_width_chars(20)  # Minimum width
+        self.count_label.set_width_chars(10)  # Minimum width
         self.count_label.set_max_width_chars(25)  # Maximum natural width (prevents expansion)
+        # Set initial visibility based on preference
+        config = getattr(self.group_manager, 'config', None)
+        show_group_count = config.get_setting('ui.sidebar_show_group_count', True) if config else True
+        self.count_label.set_visible(show_group_count)
         info_box.append(self.count_label)
 
         content.append(info_box)
 
-        self.color_badge = Gtk.Button()
-        self.color_badge.add_css_class("circular")
-        self.color_badge.add_css_class("normal")
+        # Edit button - only visible on hover
+        # Use opacity instead of visibility to reserve space and prevent row resizing
+        self.edit_button = icon_utils.new_button_from_icon_name("document-edit-symbolic")
+        self.edit_button.add_css_class("flat")
+        self.edit_button.add_css_class("group-edit-button")
+        self.edit_button.set_tooltip_text(_("Edit Group"))
+        self.edit_button.set_valign(Gtk.Align.CENTER)
+        self.edit_button.set_opacity(0.0)  # Hidden by default but reserves space
+        self.edit_button.connect("clicked", self._on_edit_clicked)
+        content.append(self.edit_button)
+        
+        # Set up hover events to show/hide button
+        self._setup_edit_button_hover()
+
+        self.color_badge = icon_utils.new_image_from_icon_name("tag-symbolic")
         self.color_badge.add_css_class("sidebar-color-badge")
-        self.color_badge.set_can_focus(False)
-        self.color_badge.set_sensitive(False)
+        self.color_badge.set_icon_size(Gtk.IconSize.NORMAL)
         self.color_badge.set_valign(Gtk.Align.CENTER)
         self.color_badge.set_visible(False)
         content.append(self.color_badge)
@@ -456,6 +473,64 @@ class GroupRow(Gtk.ListBoxRow):
         self._update_display()
         self.emit("group-toggled", self.group_id, expanded)
 
+    def _on_edit_clicked(self, button):
+        """Handle edit button click"""
+        try:
+            window = self.get_root()
+            if window and hasattr(window, 'on_edit_group_action'):
+                # Set the context menu group row so the action knows which group to edit
+                window._context_menu_group_row = self
+                window.on_edit_group_action(None, None)
+        except Exception as e:
+            logger.error(f"Error editing group {self.group_id}: {e}")
+
+    def _setup_edit_button_hover(self):
+        """Set up hover events to show/hide edit button"""
+        # Track hover state
+        self._is_hovering_edit = False
+        
+        # Motion controller for the row
+        motion_controller = Gtk.EventControllerMotion()
+        motion_controller.connect("enter", self._on_row_enter_edit)
+        motion_controller.connect("leave", self._on_row_leave_edit)
+        self.add_controller(motion_controller)
+        
+        # Motion controller for the button itself (to keep it visible when hovering over button)
+        if self.edit_button:
+            button_motion_controller = Gtk.EventControllerMotion()
+            button_motion_controller.connect("enter", self._on_button_enter_edit)
+            button_motion_controller.connect("leave", self._on_button_leave_edit)
+            self.edit_button.add_controller(button_motion_controller)
+
+    def _on_row_enter_edit(self, controller, x, y):
+        """Show edit button when mouse enters row"""
+        self._is_hovering_edit = True
+        if self.edit_button:
+            self.edit_button.set_opacity(1.0)
+
+    def _on_row_leave_edit(self, controller):
+        """Hide edit button when mouse leaves row"""
+        self._is_hovering_edit = False
+        # Use a small delay to allow moving to the button
+        GLib.timeout_add(100, self._maybe_hide_edit_button)
+
+    def _on_button_enter_edit(self, controller, x, y):
+        """Keep button visible when hovering over it"""
+        self._is_hovering_edit = True
+        if self.edit_button:
+            self.edit_button.set_opacity(1.0)
+
+    def _on_button_leave_edit(self, controller):
+        """Handle mouse leaving the button"""
+        self._is_hovering_edit = False
+        GLib.timeout_add(100, self._maybe_hide_edit_button)
+
+    def _maybe_hide_edit_button(self):
+        """Hide button if not hovering"""
+        if not self._is_hovering_edit and self.edit_button:
+            self.edit_button.set_opacity(0.0)
+        return False  # Don't repeat
+
     def _apply_group_color_style(self):
         config = getattr(self.group_manager, 'config', None)
         mode = _get_color_display_mode(config) if config else 'fill'
@@ -496,20 +571,9 @@ class GroupRow(Gtk.ListBoxRow):
         b = int(rgba.blue * 255)
         color_hex = f"#{r:02x}{g:02x}{b:02x}"
 
-        r_hover = max(0, r - 20)
-        g_hover = max(0, g - 20)
-        b_hover = max(0, b - 20)
-        hover_hex = f"#{r_hover:02x}{g_hover:02x}{b_hover:02x}"
-
         css_data = f"""
-        button.circular.normal.sidebar-color-badge {{
-          background-color: {color_hex};
-          color: white;
-          border: none;
-          box-shadow: none;
-        }}
-        button.circular.normal.sidebar-color-badge:hover {{
-          background-color: {hover_hex};
+        image.sidebar-color-badge {{
+          color: {color_hex};
         }}
         """
 
@@ -522,14 +586,12 @@ class GroupRow(Gtk.ListBoxRow):
         self._color_badge_provider = Gtk.CssProvider()
         self._color_badge_provider.load_from_data(css_data.encode('utf-8'))
         self.color_badge.get_style_context().add_provider(
-            self._color_badge_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+            self._color_badge_provider, Gtk.STYLE_PROVIDER_PRIORITY_USER
         )
 
+        # Remove any accent classes that might add background color
         for cls in ("accent-red", "accent-blue", "accent-green", "accent-orange", "accent-purple", "accent-cyan", "accent-gray"):
             self.color_badge.remove_css_class(cls)
-        accent_class = _get_color_class(rgba)
-        if accent_class:
-            self.color_badge.add_css_class(accent_class)
 
     def show_drop_indicator(self, top: bool):
         """Show drop indicator line"""
@@ -562,12 +624,14 @@ class ConnectionRow(Gtk.ListBoxRow):
     def __init__(self, connection: Connection, group_manager: GroupManager, config, file_manager_callback=None):
         super().__init__()
         _install_sidebar_color_css()
-        self.add_css_class("navigation-sidebar")
+        #self.add_css_class("navigation-sidebar")
+        self.add_css_class("card")
         self.connection = connection
         self.group_manager = group_manager
         self.config = config
         self._file_manager_callback = file_manager_callback
         self._tint_provider = None
+        self._color_badge_provider = None
         self._indent_level = 0
         self._group_display_mode = None
         self._row_margin_base = None
@@ -589,22 +653,30 @@ class ConnectionRow(Gtk.ListBoxRow):
         content.set_margin_bottom(6)
 
         from sshpilot import icon_utils
-        icon = icon_utils.new_image_from_icon_name("computer-symbolic")
-        icon.set_icon_size(Gtk.IconSize.NORMAL)
-        content.append(icon)
+        self.connection_icon = icon_utils.new_image_from_icon_name("computer-symbolic")
+        self.connection_icon.set_icon_size(Gtk.IconSize.NORMAL)
+        self.connection_icon.set_valign(Gtk.Align.CENTER)  # Center vertically relative to text
+        # Set initial visibility based on preference
+        show_connection_icon = self.config.get_setting('ui.sidebar_show_connection_icon', True)
+        self.connection_icon.set_visible(show_connection_icon)
+        content.append(self.connection_icon)
 
         info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         info_box.set_hexpand(True)
+        info_box.set_valign(Gtk.Align.CENTER)  # Center vertically relative to icon
 
         self.nickname_label = Gtk.Label()
         self.nickname_label.set_markup(f"<b>{connection.nickname}</b>")
         self.nickname_label.set_halign(Gtk.Align.START)
         self.nickname_label.set_xalign(0.0)  # Left-align text within label (default is 0.5/center)
+        self.nickname_label.set_valign(Gtk.Align.CENTER)  # Center vertically when host label is hidden
         # Ellipsize when text exceeds available width
         # Per GTK4 docs: For ellipsizing labels, width-chars sets minimum width,
         # max-width-chars limits natural width. Both help control size allocation.
+        # Labels with ellipsize need hexpand to fill available space and ellipsize properly.
+        self.nickname_label.set_hexpand(True)
         self.nickname_label.set_ellipsize(Pango.EllipsizeMode.END)
-        self.nickname_label.set_width_chars(20)  # Minimum width
+        self.nickname_label.set_width_chars(10)  # Minimum width
         self.nickname_label.set_max_width_chars(25)  # Maximum natural width (prevents expansion)
         info_box.append(self.nickname_label)
 
@@ -615,10 +687,15 @@ class ConnectionRow(Gtk.ListBoxRow):
         # Ellipsize when text exceeds available width
         # Per GTK4 docs: For ellipsizing labels, width-chars sets minimum width,
         # max-width-chars limits natural width. Both help control size allocation.
+        # Labels with ellipsize need hexpand to fill available space and ellipsize properly.
+        self.host_label.set_hexpand(True)
         self.host_label.set_ellipsize(Pango.EllipsizeMode.END)
-        self.host_label.set_width_chars(20)  # Minimum width
+        self.host_label.set_width_chars(10)  # Minimum width
         self.host_label.set_max_width_chars(25)  # Maximum natural width (prevents expansion)
         self._apply_host_label_text()
+        # Set initial visibility based on preference
+        show_user_hostname = self.config.get_setting('ui.sidebar_show_user_hostname', False)
+        self.host_label.set_visible(show_user_hostname)
         info_box.append(self.host_label)
 
         content.append(info_box)
@@ -627,6 +704,13 @@ class ConnectionRow(Gtk.ListBoxRow):
         self.indicator_box.set_halign(Gtk.Align.CENTER)
         self.indicator_box.set_valign(Gtk.Align.CENTER)
         content.append(self.indicator_box)
+
+        self.color_badge = icon_utils.new_image_from_icon_name("tag-symbolic")
+        self.color_badge.add_css_class("sidebar-color-badge")
+        self.color_badge.set_icon_size(Gtk.IconSize.NORMAL)
+        self.color_badge.set_valign(Gtk.Align.CENTER)
+        self.color_badge.set_visible(False)
+        content.append(self.color_badge)
 
         # File manager button (before status icon) - only visible on hover
         # Use opacity instead of visibility to reserve space and prevent row resizing
@@ -647,6 +731,9 @@ class ConnectionRow(Gtk.ListBoxRow):
         from sshpilot import icon_utils
         self.status_icon = icon_utils.new_image_from_icon_name("network-offline-symbolic")
         self.status_icon.set_pixel_size(16)
+        # Set initial visibility based on preference
+        show_status = self.config.get_setting('ui.sidebar_show_connection_status', True)
+        self.status_icon.set_visible(show_status)
         content.append(self.status_icon)
         
         # Now add the content to main_box
@@ -788,7 +875,7 @@ class ConnectionRow(Gtk.ListBoxRow):
         if self._group_display_mode in _GROUP_DISPLAY_OPTIONS:
             return self._group_display_mode
 
-        mode = 'fullwidth'
+        mode = 'nested'
         config = getattr(self, 'config', None)
         if config:
             try:
@@ -874,7 +961,14 @@ class ConnectionRow(Gtk.ListBoxRow):
                 except Exception:
                     pass
                 self._tint_provider = None
+
+            if rgba:
+                self._update_color_badge(rgba)
+                self.color_badge.set_visible(True)
+            else:
+                self.color_badge.set_visible(False)
         else:
+            self.color_badge.set_visible(False)
             if rgba:
                 self.add_css_class("tinted")
                 _set_tint_card_color(self, _fill_rgba(rgba) or rgba)
@@ -886,6 +980,34 @@ class ConnectionRow(Gtk.ListBoxRow):
                     except Exception:
                         pass
                     self._tint_provider = None
+
+    def _update_color_badge(self, rgba: Gdk.RGBA):
+        r = int(rgba.red * 255)
+        g = int(rgba.green * 255)
+        b = int(rgba.blue * 255)
+        color_hex = f"#{r:02x}{g:02x}{b:02x}"
+
+        css_data = f"""
+        image.sidebar-color-badge {{
+          color: {color_hex};
+        }}
+        """
+
+        if self._color_badge_provider:
+            try:
+                self.color_badge.get_style_context().remove_provider(self._color_badge_provider)
+            except Exception:
+                pass
+
+        self._color_badge_provider = Gtk.CssProvider()
+        self._color_badge_provider.load_from_data(css_data.encode('utf-8'))
+        self.color_badge.get_style_context().add_provider(
+            self._color_badge_provider, Gtk.STYLE_PROVIDER_PRIORITY_USER
+        )
+
+        # Remove any accent classes that might add background colors
+        for cls in ("accent-red", "accent-blue", "accent-green", "accent-orange", "accent-purple", "accent-cyan", "accent-gray"):
+            self.color_badge.remove_css_class(cls)
 
     # -- drag source ------------------------------------------------------
 
@@ -1038,6 +1160,11 @@ class ConnectionRow(Gtk.ListBoxRow):
             while self.indicator_box.get_first_child():
                 self.indicator_box.remove(self.indicator_box.get_first_child())
         except Exception:
+            return
+
+        # Check preference for showing port forwarding indicators
+        show_port_forwarding = self.config.get_setting('ui.sidebar_show_port_forwarding', False)
+        if not show_port_forwarding:
             return
 
         rules = getattr(self.connection, "forwarding_rules", []) or []
@@ -1290,82 +1417,6 @@ def _show_drop_indicator_on_group(window, row):
             window._drop_indicator_position = "on_group"
     except Exception as e:
         logger.error(f"Error showing group drop indicator: {e}")
-
-
-    def _apply_group_color_style(self):
-        config = getattr(self.group_manager, 'config', None)
-        mode = _get_color_display_mode(config) if config else 'fill'
-        rgba = _parse_color(self.group_info.get('color'))
-
-        if mode == 'badge':
-            self.remove_css_class("tinted")
-            if hasattr(self, '_tint_provider') and self._tint_provider:
-                try:
-                    self.get_style_context().remove_provider(self._tint_provider)
-                except Exception:
-                    pass
-                self._tint_provider = None
-
-            if rgba:
-                self._update_color_badge(rgba)
-                self.color_badge.set_visible(True)
-            else:
-                self.color_badge.set_visible(False)
-        else:
-            self.color_badge.set_visible(False)
-            if rgba:
-                tint = _fill_rgba(rgba) or rgba
-                self.add_css_class("tinted")
-                _set_tint_card_color(self, tint)
-            else:
-                self.remove_css_class("tinted")
-                if hasattr(self, '_tint_provider') and self._tint_provider:
-                    try:
-                        self.get_style_context().remove_provider(self._tint_provider)
-                    except Exception:
-                        pass
-                    self._tint_provider = None
-
-    def _update_color_badge(self, rgba: Gdk.RGBA):
-        r = int(rgba.red * 255)
-        g = int(rgba.green * 255)
-        b = int(rgba.blue * 255)
-        color_hex = f"#{r:02x}{g:02x}{b:02x}"
-
-        r_hover = max(0, r - 20)
-        g_hover = max(0, g - 20)
-        b_hover = max(0, b - 20)
-        hover_hex = f"#{r_hover:02x}{g_hover:02x}{b_hover:02x}"
-
-        css_data = f"""
-        button.circular.normal.sidebar-color-badge {{
-          background-color: {color_hex};
-          color: white;
-          border: none;
-          box-shadow: none;
-        }}
-        button.circular.normal.sidebar-color-badge:hover {{
-          background-color: {hover_hex};
-        }}
-        """
-
-        if self._color_badge_provider:
-            try:
-                self.color_badge.get_style_context().remove_provider(self._color_badge_provider)
-            except Exception:
-                pass
-
-        self._color_badge_provider = Gtk.CssProvider()
-        self._color_badge_provider.load_from_data(css_data.encode('utf-8'))
-        self.color_badge.get_style_context().add_provider(
-            self._color_badge_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
-        )
-
-        for cls in ("accent-red", "accent-blue", "accent-green", "accent-orange", "accent-purple", "accent-cyan", "accent-gray"):
-            self.color_badge.remove_css_class(cls)
-        accent_class = _get_color_class(rgba)
-        if accent_class:
-            self.color_badge.add_css_class(accent_class)
 
 
 def _create_ungrouped_area(window):
