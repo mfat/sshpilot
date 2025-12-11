@@ -1110,6 +1110,10 @@ class TerminalWidget(Gtk.Box):
 
             using_password = password_auth_selected or has_saved_password
 
+            # Initialize env early to ensure it's available in all code paths
+            env = os.environ.copy()
+            ssh_conn_cmd = None
+
             if not quick_connect_mode:
                 batch_mode_pref = bool(ssh_cfg.get('batch_mode', False))
                 desired_batch_mode = 'yes' if batch_mode_pref and not using_password else None
@@ -1322,7 +1326,7 @@ class TerminalWidget(Gtk.Box):
                 # Build SSH connection command
                 ssh_conn_cmd = build_ssh_connection(ctx)
                 ssh_cmd = ssh_conn_cmd.command
-                env = ssh_conn_cmd.env.copy()
+                env.update(ssh_conn_cmd.env)
                 
                 # Get password for sshpass if needed
                 password_value = None
@@ -1495,13 +1499,6 @@ class TerminalWidget(Gtk.Box):
             logger.error(f"Failed to setup SSH terminal: {e}")
             self._on_connection_failed(str(e))
             return
-
-            # Start the SSH process using VTE's spawn_async with our PTY
-            logger.debug(f"Flatpak debug: About to spawn SSH with command: {ssh_cmd}")
-
-            # Handle password authentication with sshpass if available
-            env = os.environ.copy()
-            logger.debug(f"Initial environment SSH_ASKPASS: {env.get('SSH_ASKPASS', 'NOT_SET')}, SSH_ASKPASS_REQUIRE: {env.get('SSH_ASKPASS_REQUIRE', 'NOT_SET')}")
 
             if has_saved_password and password_value:
                 # Use sshpass for password authentication
