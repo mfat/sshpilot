@@ -401,17 +401,16 @@ class Connection:
             except Exception:
                 cfg = None
 
-            # Get connection manager (self is a Connection, need to find manager)
-            # Connection objects don't have direct reference to manager, so we pass None
-            # ssh_connection_builder can still work without it (passwords/passphrases may be on Connection object)
-            connection_manager = None
+            # Get connection manager if available so password storage can be used
+            connection_manager = getattr(self, '_connection_manager', None)
 
             # Get known hosts path if available (try to get from global connection manager if possible)
             known_hosts_path = None
             try:
-                # Try to get from a global connection manager instance if available
-                # This is a best-effort approach
-                pass
+                if connection_manager is not None:
+                    kh_path = getattr(connection_manager, 'known_hosts_path', '')
+                    if kh_path and os.path.exists(kh_path):
+                        known_hosts_path = kh_path
             except Exception:
                 pass
 
@@ -1207,9 +1206,11 @@ class ConnectionManager(GObject.Object):
                             existing = existing_by_nickname.get(nickname)
                             if existing:
                                 existing.update_data(connection_data)
+                                existing._connection_manager = self
                                 self.connections.append(existing)
                             else:
                                 new_conn = Connection(connection_data)
+                                new_conn._connection_manager = self
                                 if getattr(self, 'isolated_mode', False):
                                     new_conn.isolated_config = True
                                     new_conn.config_root = self.ssh_config_path
@@ -1256,6 +1257,7 @@ class ConnectionManager(GObject.Object):
                                             self.connections.append(existing)
                                         else:
                                             new_conn = Connection(connection_data)
+                                            new_conn._connection_manager = self
                                             if getattr(self, 'isolated_mode', False):
                                                 new_conn.isolated_config = True
                                                 new_conn.config_root = self.ssh_config_path
@@ -1300,6 +1302,7 @@ class ConnectionManager(GObject.Object):
                                             self.connections.append(existing)
                                         else:
                                             new_conn = Connection(connection_data)
+                                            new_conn._connection_manager = self
                                             if getattr(self, 'isolated_mode', False):
                                                 new_conn.isolated_config = True
                                                 new_conn.config_root = self.ssh_config_path
@@ -1342,6 +1345,7 @@ class ConnectionManager(GObject.Object):
                                     self.connections.append(existing)
                                 else:
                                     new_conn = Connection(connection_data)
+                                    new_conn._connection_manager = self
                                     if getattr(self, 'isolated_mode', False):
                                         new_conn.isolated_config = True
                                         new_conn.config_root = self.ssh_config_path
