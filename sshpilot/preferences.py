@@ -633,17 +633,13 @@ class PreferencesWindow(Adw.Window):
                 self._update_header_title(title)
 
     def _update_header_title(self, page_title: Optional[str] = None):
-        """Update the header and window title to reflect the active page."""
-        display_title = self._base_header_title
-        if page_title:
-            display_title = f"{self._base_header_title} · {page_title}"
-
+        """Update the header label (always shows just "Preferences")."""
         header_label = getattr(self, "header_title_label", None)
         if header_label:
-            header_label.set_label(display_title)
+            header_label.set_label(self._base_header_title)
 
-        # Keep the window title in sync for platforms that show it prominently
-        self.set_title(display_title)
+        # Keep window title static as "Preferences" only
+        self.set_title(self._base_header_title)
 
     def add_page_to_layout(self, title, icon_name, page):
         """Add a page to the custom layout"""
