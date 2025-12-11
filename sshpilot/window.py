@@ -1521,14 +1521,17 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             return
         
         show_user_hostname = self.config.get_setting('ui.sidebar_show_user_hostname', False)
-        show_group_count = self.config.get_setting('ui.sidebar_show_group_count', False)
+        show_group_count = self.config.get_setting('ui.sidebar_show_group_count', True)
         show_status = self.config.get_setting('ui.sidebar_show_connection_status', True)
         show_port_forwarding = self.config.get_setting('ui.sidebar_show_port_forwarding', False)
+        show_connection_icon = self.config.get_setting('ui.sidebar_show_connection_icon', True)
         
         # Update all rows in the connection list
         row = self.connection_list.get_first_child()
         while row:
             # Update ConnectionRow elements
+            if hasattr(row, 'connection_icon'):
+                row.connection_icon.set_visible(show_connection_icon)
             if hasattr(row, 'host_label'):
                 row.host_label.set_visible(show_user_hostname)
             if hasattr(row, 'status_icon'):
@@ -1537,9 +1540,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 row._update_forwarding_indicators()
             
             # Update GroupRow elements
-            # Use opacity instead of visibility to reserve space and prevent row resizing
             if hasattr(row, 'count_label'):
-                row.count_label.set_opacity(1.0 if show_group_count else 0.0)
+                row.count_label.set_visible(show_group_count)
             
             row = row.get_next_sibling()
 

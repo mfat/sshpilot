@@ -1318,7 +1318,7 @@ class PreferencesWindow(Adw.Window):
             show_group_count_switch.set_title("Display Connection Count in Groups")
             show_group_count_switch.set_subtitle("Show the number of connections in each group")
             show_group_count_switch.set_active(
-                self.config.get_setting('ui.sidebar_show_group_count', False)
+                self.config.get_setting('ui.sidebar_show_group_count', True)
             )
             show_group_count_switch.connect('notify::active', self.on_sidebar_show_group_count_changed)
             sidebar_group.add(show_group_count_switch)
@@ -1342,6 +1342,16 @@ class PreferencesWindow(Adw.Window):
             )
             show_port_forwarding_switch.connect('notify::active', self.on_sidebar_show_port_forwarding_changed)
             sidebar_group.add(show_port_forwarding_switch)
+            
+            # Display connection icon toggle
+            show_connection_icon_switch = Adw.SwitchRow()
+            show_connection_icon_switch.set_title("Display Connection Icon")
+            show_connection_icon_switch.set_subtitle("Show the computer icon in connection rows")
+            show_connection_icon_switch.set_active(
+                self.config.get_setting('ui.sidebar_show_connection_icon', True)
+            )
+            show_connection_icon_switch.connect('notify::active', self.on_sidebar_show_connection_icon_changed)
+            sidebar_group.add(show_connection_icon_switch)
             
             interface_page.add(sidebar_group)
 
@@ -3509,6 +3519,17 @@ class PreferencesWindow(Adw.Window):
                 self.parent_window.update_sidebar_display()
         except Exception as exc:
             logger.error("Failed to update sidebar show port forwarding preference: %s", exc)
+
+    def on_sidebar_show_connection_icon_changed(self, switch, *args):
+        """Persist the preference for showing connection icon in sidebar."""
+        try:
+            active = bool(switch.get_active())
+            self.config.set_setting('ui.sidebar_show_connection_icon', active)
+            # Update sidebar if window is available
+            if self.parent_window and hasattr(self.parent_window, 'update_sidebar_display'):
+                self.parent_window.update_sidebar_display()
+        except Exception as exc:
+            logger.error("Failed to update sidebar show connection icon preference: %s", exc)
 
     def on_open_file_manager_externally_changed(self, switch, *args):
         """Persist whether the file manager should open in a separate window."""

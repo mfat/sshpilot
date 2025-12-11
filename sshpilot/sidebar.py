@@ -296,14 +296,17 @@ class GroupRow(Gtk.ListBoxRow):
         from sshpilot import icon_utils
         icon = icon_utils.new_image_from_icon_name("folder-symbolic")
         icon.set_icon_size(Gtk.IconSize.NORMAL)
+        icon.set_valign(Gtk.Align.CENTER)  # Center vertically relative to text
         content.append(icon)
 
         info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         info_box.set_hexpand(True)
+        info_box.set_valign(Gtk.Align.CENTER)  # Center vertically relative to icon
 
         self.name_label = Gtk.Label()
         self.name_label.set_halign(Gtk.Align.START)
         self.name_label.set_xalign(0.0)  # Left-align text within label (default is 0.5/center)
+        self.name_label.set_valign(Gtk.Align.CENTER)  # Center vertically when count label is hidden
         # Ellipsize when text exceeds available width
         # Per GTK4 docs: For ellipsizing labels, width-chars sets minimum width,
         # max-width-chars limits natural width. Both help control size allocation.
@@ -327,10 +330,9 @@ class GroupRow(Gtk.ListBoxRow):
         self.count_label.set_width_chars(10)  # Minimum width
         self.count_label.set_max_width_chars(25)  # Maximum natural width (prevents expansion)
         # Set initial visibility based on preference
-        # Use opacity instead of visibility to reserve space and prevent row resizing
         config = getattr(self.group_manager, 'config', None)
-        show_group_count = config.get_setting('ui.sidebar_show_group_count', False) if config else False
-        self.count_label.set_opacity(1.0 if show_group_count else 0.0)
+        show_group_count = config.get_setting('ui.sidebar_show_group_count', True) if config else True
+        self.count_label.set_visible(show_group_count)
         info_box.append(self.count_label)
 
         content.append(info_box)
@@ -598,10 +600,13 @@ class ConnectionRow(Gtk.ListBoxRow):
         content.set_margin_bottom(6)
 
         from sshpilot import icon_utils
-        icon = icon_utils.new_image_from_icon_name("computer-symbolic")
-        icon.set_icon_size(Gtk.IconSize.NORMAL)
-        icon.set_valign(Gtk.Align.CENTER)  # Center vertically relative to text
-        content.append(icon)
+        self.connection_icon = icon_utils.new_image_from_icon_name("computer-symbolic")
+        self.connection_icon.set_icon_size(Gtk.IconSize.NORMAL)
+        self.connection_icon.set_valign(Gtk.Align.CENTER)  # Center vertically relative to text
+        # Set initial visibility based on preference
+        show_connection_icon = self.config.get_setting('ui.sidebar_show_connection_icon', True)
+        self.connection_icon.set_visible(show_connection_icon)
+        content.append(self.connection_icon)
 
         info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         info_box.set_hexpand(True)
