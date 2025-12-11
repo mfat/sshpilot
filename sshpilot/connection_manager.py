@@ -1887,89 +1887,10 @@ class ConnectionManager(GObject.Object):
         from .askpass_utils import ensure_key_in_agent
         return ensure_key_in_agent(key_path)
 
-    def prepare_key_for_connection(self, key_path: str, connection: Optional[Connection] = None) -> bool:
-        """
-        Prepare SSH key for connection by adding it to ssh-agent.
-        Only adds to agent if AddKeysToAgent is enabled in SSH config.
-        
-        Args:
-            key_path: Path to the SSH key file
-            connection: Optional connection object to check SSH config settings
-        
-        Returns:
-            True if key was added to agent or already present, False otherwise
-        """
-        if not key_path or not os.path.isfile(key_path):
-            return False
-        
-        # If no connection is provided, we can't check SSH config, so default to not adding keys
-        # (matching SSH's default behavior)
-        if not connection:
-            logger.debug(f"No connection provided; skipping key preparation (default SSH behavior): {key_path}")
-            return False
-        
-        # Check SSH config settings
-        try:
-            # Get host identifier for SSH config lookup
-            host_label = getattr(connection, 'nickname', '') or \
-                        getattr(connection, 'host', '') or \
-                        getattr(connection, 'hostname', '')
-            
-            if not host_label:
-                logger.debug(f"No host identifier found; skipping key preparation: {key_path}")
-                return False
-            
-            # Check for config override (isolated mode, etc.)
-            config_override = None
-            if hasattr(connection, '_resolve_config_override_path'):
-                try:
-                    config_override = connection._resolve_config_override_path()
-                except Exception:
-                    pass
-            
-            # Get effective SSH config
-            try:
-                if config_override:
-                    effective_config = get_effective_ssh_config(host_label, config_file=config_override)
-                else:
-                    effective_config = get_effective_ssh_config(host_label)
-            except Exception as e:
-                logger.warning(f"Failed to get effective SSH config for key preparation: {e}")
-                effective_config = {}
-            
-            # Check if IdentityAgent is disabled
-            identity_agent_value = effective_config.get('identityagent', '')
-            if identity_agent_value:
-                if isinstance(identity_agent_value, list):
-                    identity_agent = identity_agent_value[-1].lower() if identity_agent_value else ''
-                else:
-                    identity_agent = str(identity_agent_value).lower()
-                if identity_agent == 'none':
-                    logger.debug(f"IdentityAgent disabled; skipping key preparation: {key_path}")
-                    return False
-            
-            # Check if AddKeysToAgent requires adding to agent
-            add_keys_value = effective_config.get('addkeystoagent', '')
-            if add_keys_value:
-                if isinstance(add_keys_value, list):
-                    add_keys = add_keys_value[-1].lower() if add_keys_value else ''
-                else:
-                    add_keys = str(add_keys_value).lower()
-                if add_keys not in ('yes', 'ask', 'confirm'):
-                    logger.debug(f"AddKeysToAgent not enabled; skipping key preparation (default SSH behavior): {key_path}")
-                    return False
-            else:
-                # AddKeysToAgent not set - default SSH behavior is to not add keys
-                logger.debug(f"AddKeysToAgent not set; skipping key preparation (default SSH behavior): {key_path}")
-                return False
-        except Exception as e:
-            logger.warning(f"Error checking SSH config for key preparation: {e}")
-            # On error, default to not adding keys (safer)
-            return False
-        
-        # All checks passed - add key to agent
-        from .askpass_utils import ensure_key_in_agent
-        return ensure_key_in_agent(key_path)
+    def prepare_key_for_connection(self, key_path: str) -> bool:
+        """Prepare SSH key for connection by adding it to ssh-agent"""
+        from .askpass_utils import prepare_key_for_connection
+        return prepare_key_for_connection(key_path)
 
     def invalidate_cached_commands(self):
         """Clear cached SSH commands so future launches pick up new settings."""

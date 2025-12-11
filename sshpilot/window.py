@@ -5341,7 +5341,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                             )
                         else:
                             self.connection_manager.prepare_key_for_connection(
-                                profile.keyfile_expanded, connection
+                                profile.keyfile_expanded
                             )
                 except Exception:
                     pass
@@ -6673,7 +6673,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         and not getattr(connection, 'identity_agent_disabled', False)
                     ):
                         if hasattr(self, 'connection_manager') and self.connection_manager:
-                            key_prepared = self.connection_manager.prepare_key_for_connection(keyfile, connection)
+                            key_prepared = self.connection_manager.prepare_key_for_connection(keyfile)
                             if key_prepared:
                                 logger.debug(f"SCP: Key prepared for connection: {keyfile}")
                             else:
@@ -6834,7 +6834,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         )
                     else:
                         self.connection_manager.prepare_key_for_connection(
-                            profile.keyfile_expanded, connection
+                            profile.keyfile_expanded
                         )
             except Exception:
                 pass
