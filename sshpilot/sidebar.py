@@ -326,6 +326,11 @@ class GroupRow(Gtk.ListBoxRow):
         self.count_label.set_ellipsize(Pango.EllipsizeMode.END)
         self.count_label.set_width_chars(10)  # Minimum width
         self.count_label.set_max_width_chars(25)  # Maximum natural width (prevents expansion)
+        # Set initial visibility based on preference
+        # Use opacity instead of visibility to reserve space and prevent row resizing
+        config = getattr(self.group_manager, 'config', None)
+        show_group_count = config.get_setting('ui.sidebar_show_group_count', False) if config else False
+        self.count_label.set_opacity(1.0 if show_group_count else 0.0)
         info_box.append(self.count_label)
 
         content.append(info_box)
@@ -627,6 +632,9 @@ class ConnectionRow(Gtk.ListBoxRow):
         self.host_label.set_width_chars(10)  # Minimum width
         self.host_label.set_max_width_chars(25)  # Maximum natural width (prevents expansion)
         self._apply_host_label_text()
+        # Set initial visibility based on preference
+        show_user_hostname = self.config.get_setting('ui.sidebar_show_user_hostname', False)
+        self.host_label.set_visible(show_user_hostname)
         info_box.append(self.host_label)
 
         content.append(info_box)
@@ -655,6 +663,9 @@ class ConnectionRow(Gtk.ListBoxRow):
         from sshpilot import icon_utils
         self.status_icon = icon_utils.new_image_from_icon_name("network-offline-symbolic")
         self.status_icon.set_pixel_size(16)
+        # Set initial visibility based on preference
+        show_status = self.config.get_setting('ui.sidebar_show_connection_status', True)
+        self.status_icon.set_visible(show_status)
         content.append(self.status_icon)
         
         # Now add the content to main_box
@@ -1046,6 +1057,11 @@ class ConnectionRow(Gtk.ListBoxRow):
             while self.indicator_box.get_first_child():
                 self.indicator_box.remove(self.indicator_box.get_first_child())
         except Exception:
+            return
+
+        # Check preference for showing port forwarding indicators
+        show_port_forwarding = self.config.get_setting('ui.sidebar_show_port_forwarding', False)
+        if not show_port_forwarding:
             return
 
         rules = getattr(self.connection, "forwarding_rules", []) or []

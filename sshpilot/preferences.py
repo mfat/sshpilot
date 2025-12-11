@@ -1303,6 +1303,46 @@ class PreferencesWindow(Adw.Window):
             max_width_row.add_suffix(max_width_scale)
             sidebar_group.add(max_width_row)
             
+            # Display user@hostname toggle
+            show_user_hostname_switch = Adw.SwitchRow()
+            show_user_hostname_switch.set_title("Display user@hostname")
+            show_user_hostname_switch.set_subtitle("Show username@hostname in connection rows")
+            show_user_hostname_switch.set_active(
+                self.config.get_setting('ui.sidebar_show_user_hostname', False)
+            )
+            show_user_hostname_switch.connect('notify::active', self.on_sidebar_show_user_hostname_changed)
+            sidebar_group.add(show_user_hostname_switch)
+            
+            # Display connection count in groups toggle
+            show_group_count_switch = Adw.SwitchRow()
+            show_group_count_switch.set_title("Display Connection Count in Groups")
+            show_group_count_switch.set_subtitle("Show the number of connections in each group")
+            show_group_count_switch.set_active(
+                self.config.get_setting('ui.sidebar_show_group_count', False)
+            )
+            show_group_count_switch.connect('notify::active', self.on_sidebar_show_group_count_changed)
+            sidebar_group.add(show_group_count_switch)
+            
+            # Display connection status toggle
+            show_status_switch = Adw.SwitchRow()
+            show_status_switch.set_title("Display Connection Status")
+            show_status_switch.set_subtitle("Show connection status indicator in connection rows")
+            show_status_switch.set_active(
+                self.config.get_setting('ui.sidebar_show_connection_status', True)
+            )
+            show_status_switch.connect('notify::active', self.on_sidebar_show_connection_status_changed)
+            sidebar_group.add(show_status_switch)
+            
+            # Display port forwarding labels toggle
+            show_port_forwarding_switch = Adw.SwitchRow()
+            show_port_forwarding_switch.set_title("Display Port Forwarding Labels")
+            show_port_forwarding_switch.set_subtitle("Show port forwarding indicators (L/R/D) in connection rows")
+            show_port_forwarding_switch.set_active(
+                self.config.get_setting('ui.sidebar_show_port_forwarding', False)
+            )
+            show_port_forwarding_switch.connect('notify::active', self.on_sidebar_show_port_forwarding_changed)
+            sidebar_group.add(show_port_forwarding_switch)
+            
             interface_page.add(sidebar_group)
 
             # Shortcuts page with inline editor
@@ -3425,6 +3465,50 @@ class PreferencesWindow(Adw.Window):
             self._update_external_file_manager_row()
         except Exception as exc:
             logger.error("Failed to update file manager preference: %s", exc)
+
+    def on_sidebar_show_user_hostname_changed(self, switch, *args):
+        """Persist the preference for showing user@hostname in sidebar."""
+        try:
+            active = bool(switch.get_active())
+            self.config.set_setting('ui.sidebar_show_user_hostname', active)
+            # Update sidebar if window is available
+            if self.parent_window and hasattr(self.parent_window, 'update_sidebar_display'):
+                self.parent_window.update_sidebar_display()
+        except Exception as exc:
+            logger.error("Failed to update sidebar show user hostname preference: %s", exc)
+
+    def on_sidebar_show_group_count_changed(self, switch, *args):
+        """Persist the preference for showing connection count in groups."""
+        try:
+            active = bool(switch.get_active())
+            self.config.set_setting('ui.sidebar_show_group_count', active)
+            # Update sidebar if window is available
+            if self.parent_window and hasattr(self.parent_window, 'update_sidebar_display'):
+                self.parent_window.update_sidebar_display()
+        except Exception as exc:
+            logger.error("Failed to update sidebar show group count preference: %s", exc)
+
+    def on_sidebar_show_connection_status_changed(self, switch, *args):
+        """Persist the preference for showing connection status in sidebar."""
+        try:
+            active = bool(switch.get_active())
+            self.config.set_setting('ui.sidebar_show_connection_status', active)
+            # Update sidebar if window is available
+            if self.parent_window and hasattr(self.parent_window, 'update_sidebar_display'):
+                self.parent_window.update_sidebar_display()
+        except Exception as exc:
+            logger.error("Failed to update sidebar show connection status preference: %s", exc)
+
+    def on_sidebar_show_port_forwarding_changed(self, switch, *args):
+        """Persist the preference for showing port forwarding labels in sidebar."""
+        try:
+            active = bool(switch.get_active())
+            self.config.set_setting('ui.sidebar_show_port_forwarding', active)
+            # Update sidebar if window is available
+            if self.parent_window and hasattr(self.parent_window, 'update_sidebar_display'):
+                self.parent_window.update_sidebar_display()
+        except Exception as exc:
+            logger.error("Failed to update sidebar show port forwarding preference: %s", exc)
 
     def on_open_file_manager_externally_changed(self, switch, *args):
         """Persist whether the file manager should open in a separate window."""

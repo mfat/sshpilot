@@ -1515,6 +1515,34 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             pass
         return 0
 
+    def update_sidebar_display(self):
+        """Update sidebar display based on current preferences."""
+        if not hasattr(self, 'connection_list'):
+            return
+        
+        show_user_hostname = self.config.get_setting('ui.sidebar_show_user_hostname', False)
+        show_group_count = self.config.get_setting('ui.sidebar_show_group_count', False)
+        show_status = self.config.get_setting('ui.sidebar_show_connection_status', True)
+        show_port_forwarding = self.config.get_setting('ui.sidebar_show_port_forwarding', False)
+        
+        # Update all rows in the connection list
+        row = self.connection_list.get_first_child()
+        while row:
+            # Update ConnectionRow elements
+            if hasattr(row, 'host_label'):
+                row.host_label.set_visible(show_user_hostname)
+            if hasattr(row, 'status_icon'):
+                row.status_icon.set_visible(show_status)
+            if hasattr(row, '_update_forwarding_indicators'):
+                row._update_forwarding_indicators()
+            
+            # Update GroupRow elements
+            # Use opacity instead of visibility to reserve space and prevent row resizing
+            if hasattr(row, 'count_label'):
+                row.count_label.set_opacity(1.0 if show_group_count else 0.0)
+            
+            row = row.get_next_sibling()
+
     def update_sidebar_max_width(self, max_width: int):
         """Update the maximum sidebar width for both NavigationSplitView and OverlaySplitView."""
         try:
