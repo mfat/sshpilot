@@ -600,15 +600,18 @@ class ConnectionRow(Gtk.ListBoxRow):
         from sshpilot import icon_utils
         icon = icon_utils.new_image_from_icon_name("computer-symbolic")
         icon.set_icon_size(Gtk.IconSize.NORMAL)
+        icon.set_valign(Gtk.Align.CENTER)  # Center vertically relative to text
         content.append(icon)
 
         info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         info_box.set_hexpand(True)
+        info_box.set_valign(Gtk.Align.CENTER)  # Center vertically relative to icon
 
         self.nickname_label = Gtk.Label()
         self.nickname_label.set_markup(f"<b>{connection.nickname}</b>")
         self.nickname_label.set_halign(Gtk.Align.START)
         self.nickname_label.set_xalign(0.0)  # Left-align text within label (default is 0.5/center)
+        self.nickname_label.set_valign(Gtk.Align.CENTER)  # Center vertically when host label is hidden
         # Ellipsize when text exceeds available width
         # Per GTK4 docs: For ellipsizing labels, width-chars sets minimum width,
         # max-width-chars limits natural width. Both help control size allocation.
