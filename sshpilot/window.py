@@ -2094,6 +2094,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                             files_row.connect('activated', lambda *_: (self.on_manage_files_action(None, None), pop.popdown()))
                             listbox.append(files_row)
 
+                        # Copy Key to Server row
+                        copy_key_row = Adw.ActionRow(title=_('Copy Key to Server'))
+                        copy_key_icon = icon_utils.new_image_from_icon_name('dialog-password-symbolic')
+                        copy_key_row.add_prefix(copy_key_icon)
+                        copy_key_row.set_activatable(True)
+                        copy_key_row.connect('activated', lambda *_: (self.on_copy_key_to_server_action(None, None), pop.popdown()))
+                        listbox.append(copy_key_row)
+
                         # Only show system terminal option when external terminals are available
                         if not should_hide_external_terminal_options():
                             terminal_row = Adw.ActionRow(title=_('Open in System Terminal'))
@@ -2263,7 +2271,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.connection_toolbar.append(self.copy_key_button)
 
         # SCP transfer button
-        self.scp_button = icon_utils.new_button_from_icon_name('document-send-symbolic')
+        self.scp_button = icon_utils.new_button_from_icon_name('vertical-arrows-long-symbolic')
         self.scp_button.set_tooltip_text('Transfer files with scp')
         self.scp_button.set_sensitive(False)
         self.scp_button.connect('clicked', self.on_scp_button_clicked)

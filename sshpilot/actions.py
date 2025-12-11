@@ -134,6 +134,36 @@ class WindowActions:
                 logger.error(f"Error opening file manager: {e}")
                 self._show_manage_files_error(connection.nickname, str(e))
 
+    def on_copy_key_to_server_action(self, action, param=None):
+        """Handle copy key to server action from context menu"""
+        try:
+            connection = getattr(self, '_context_menu_connection', None)
+            if connection is None:
+                # Fallback to selected row if any
+                row = self.connection_list.get_selected_row()
+                connection = getattr(row, 'connection', None) if row else None
+            if connection is None:
+                return
+
+            # Open the copy key window directly
+            from .sshcopyid_window import SshCopyIdWindow
+            win = SshCopyIdWindow(self, connection, self.key_manager, self.connection_manager)
+            win.present()
+        except Exception as e:
+            logger.error(f"Failed to copy key to server: {e}")
+            # Show error dialog
+            try:
+                error_dialog = Adw.MessageDialog(
+                    transient_for=self,
+                    modal=True,
+                    heading=_("Error"),
+                    body=_("Could not open the Copy Key window.\n\n{}").format(str(e))
+                )
+                error_dialog.add_response('ok', _('OK'))
+                error_dialog.present()
+            except Exception:
+                pass
+
     def on_edit_connection_action(self, action, param=None):
         """Handle edit connection action from context menu"""
         try:
