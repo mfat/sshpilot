@@ -604,11 +604,9 @@ class PreferencesWindow(Adw.Window):
         self.header_bar.set_show_start_title_buttons(True)
         self.header_bar.set_show_end_title_buttons(True)
 
-        window_handle = Gtk.WindowHandle()
-        window_handle.set_child(self.header_bar)
-
+        # ToolbarView with HeaderBar (matching pattern used in file_manager_window.py)
         self.content_toolbar_view = Adw.ToolbarView()
-        self.content_toolbar_view.add_top_bar(window_handle)
+        self.content_toolbar_view.add_top_bar(self.header_bar)
         self.content_toolbar_view.set_content(content_scroller)
 
         content_page = Adw.NavigationPage.new(self.content_toolbar_view, "Preferences")
