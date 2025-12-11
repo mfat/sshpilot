@@ -337,6 +337,20 @@ class GroupRow(Gtk.ListBoxRow):
 
         content.append(info_box)
 
+        # Edit button - only visible on hover
+        # Use opacity instead of visibility to reserve space and prevent row resizing
+        self.edit_button = icon_utils.new_button_from_icon_name("document-edit-symbolic")
+        self.edit_button.add_css_class("flat")
+        self.edit_button.add_css_class("group-edit-button")
+        self.edit_button.set_tooltip_text(_("Edit Group"))
+        self.edit_button.set_valign(Gtk.Align.CENTER)
+        self.edit_button.set_opacity(0.0)  # Hidden by default but reserves space
+        self.edit_button.connect("clicked", self._on_edit_clicked)
+        content.append(self.edit_button)
+        
+        # Set up hover events to show/hide button
+        self._setup_edit_button_hover()
+
         self.color_badge = Gtk.Button()
         self.color_badge.add_css_class("circular")
         self.color_badge.add_css_class("normal")
@@ -466,6 +480,64 @@ class GroupRow(Gtk.ListBoxRow):
         self.group_manager.set_group_expanded(self.group_id, expanded)
         self._update_display()
         self.emit("group-toggled", self.group_id, expanded)
+
+    def _on_edit_clicked(self, button):
+        """Handle edit button click"""
+        try:
+            window = self.get_root()
+            if window and hasattr(window, 'on_edit_group_action'):
+                # Set the context menu group row so the action knows which group to edit
+                window._context_menu_group_row = self
+                window.on_edit_group_action(None, None)
+        except Exception as e:
+            logger.error(f"Error editing group {self.group_id}: {e}")
+
+    def _setup_edit_button_hover(self):
+        """Set up hover events to show/hide edit button"""
+        # Track hover state
+        self._is_hovering_edit = False
+        
+        # Motion controller for the row
+        motion_controller = Gtk.EventControllerMotion()
+        motion_controller.connect("enter", self._on_row_enter_edit)
+        motion_controller.connect("leave", self._on_row_leave_edit)
+        self.add_controller(motion_controller)
+        
+        # Motion controller for the button itself (to keep it visible when hovering over button)
+        if self.edit_button:
+            button_motion_controller = Gtk.EventControllerMotion()
+            button_motion_controller.connect("enter", self._on_button_enter_edit)
+            button_motion_controller.connect("leave", self._on_button_leave_edit)
+            self.edit_button.add_controller(button_motion_controller)
+
+    def _on_row_enter_edit(self, controller, x, y):
+        """Show edit button when mouse enters row"""
+        self._is_hovering_edit = True
+        if self.edit_button:
+            self.edit_button.set_opacity(1.0)
+
+    def _on_row_leave_edit(self, controller):
+        """Hide edit button when mouse leaves row"""
+        self._is_hovering_edit = False
+        # Use a small delay to allow moving to the button
+        GLib.timeout_add(100, self._maybe_hide_edit_button)
+
+    def _on_button_enter_edit(self, controller, x, y):
+        """Keep button visible when hovering over it"""
+        self._is_hovering_edit = True
+        if self.edit_button:
+            self.edit_button.set_opacity(1.0)
+
+    def _on_button_leave_edit(self, controller):
+        """Handle mouse leaving the button"""
+        self._is_hovering_edit = False
+        GLib.timeout_add(100, self._maybe_hide_edit_button)
+
+    def _maybe_hide_edit_button(self):
+        """Hide button if not hovering"""
+        if not self._is_hovering_edit and self.edit_button:
+            self.edit_button.set_opacity(0.0)
+        return False  # Don't repeat
 
     def _apply_group_color_style(self):
         config = getattr(self.group_manager, 'config', None)
