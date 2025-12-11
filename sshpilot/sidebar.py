@@ -48,12 +48,6 @@ def _install_sidebar_color_css():
 
         provider = Gtk.CssProvider()
         css = """
-        .sidebar-color-badge {
-            border-radius: 999px;
-            min-width: 12px;
-            min-height: 12px;
-        }
-
         .accent-red { background-color: #ff5c57; }
         .accent-blue { background-color: #51a1ff; }
         .accent-green { background-color: #5fff8d; }
@@ -351,12 +345,9 @@ class GroupRow(Gtk.ListBoxRow):
         # Set up hover events to show/hide button
         self._setup_edit_button_hover()
 
-        self.color_badge = Gtk.Button()
-        self.color_badge.add_css_class("circular")
-        self.color_badge.add_css_class("normal")
+        self.color_badge = icon_utils.new_image_from_icon_name("tag-symbolic")
         self.color_badge.add_css_class("sidebar-color-badge")
-        self.color_badge.set_can_focus(False)
-        self.color_badge.set_sensitive(False)
+        self.color_badge.set_icon_size(Gtk.IconSize.NORMAL)
         self.color_badge.set_valign(Gtk.Align.CENTER)
         self.color_badge.set_visible(False)
         content.append(self.color_badge)
@@ -579,20 +570,9 @@ class GroupRow(Gtk.ListBoxRow):
         b = int(rgba.blue * 255)
         color_hex = f"#{r:02x}{g:02x}{b:02x}"
 
-        r_hover = max(0, r - 20)
-        g_hover = max(0, g - 20)
-        b_hover = max(0, b - 20)
-        hover_hex = f"#{r_hover:02x}{g_hover:02x}{b_hover:02x}"
-
         css_data = f"""
-        button.circular.normal.sidebar-color-badge {{
-          background-color: {color_hex};
-          color: white;
-          border: none;
-          box-shadow: none;
-        }}
-        button.circular.normal.sidebar-color-badge:hover {{
-          background-color: {hover_hex};
+        image.sidebar-color-badge {{
+          color: {color_hex};
         }}
         """
 
@@ -605,14 +585,12 @@ class GroupRow(Gtk.ListBoxRow):
         self._color_badge_provider = Gtk.CssProvider()
         self._color_badge_provider.load_from_data(css_data.encode('utf-8'))
         self.color_badge.get_style_context().add_provider(
-            self._color_badge_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+            self._color_badge_provider, Gtk.STYLE_PROVIDER_PRIORITY_USER
         )
 
+        # Remove any accent classes that might add background colors
         for cls in ("accent-red", "accent-blue", "accent-green", "accent-orange", "accent-purple", "accent-cyan", "accent-gray"):
             self.color_badge.remove_css_class(cls)
-        accent_class = _get_color_class(rgba)
-        if accent_class:
-            self.color_badge.add_css_class(accent_class)
 
     def show_drop_indicator(self, top: bool):
         """Show drop indicator line"""
@@ -1436,20 +1414,9 @@ def _show_drop_indicator_on_group(window, row):
         b = int(rgba.blue * 255)
         color_hex = f"#{r:02x}{g:02x}{b:02x}"
 
-        r_hover = max(0, r - 20)
-        g_hover = max(0, g - 20)
-        b_hover = max(0, b - 20)
-        hover_hex = f"#{r_hover:02x}{g_hover:02x}{b_hover:02x}"
-
         css_data = f"""
-        button.circular.normal.sidebar-color-badge {{
-          background-color: {color_hex};
-          color: white;
-          border: none;
-          box-shadow: none;
-        }}
-        button.circular.normal.sidebar-color-badge:hover {{
-          background-color: {hover_hex};
+        image.sidebar-color-badge {{
+          color: {color_hex};
         }}
         """
 
@@ -1462,14 +1429,12 @@ def _show_drop_indicator_on_group(window, row):
         self._color_badge_provider = Gtk.CssProvider()
         self._color_badge_provider.load_from_data(css_data.encode('utf-8'))
         self.color_badge.get_style_context().add_provider(
-            self._color_badge_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+            self._color_badge_provider, Gtk.STYLE_PROVIDER_PRIORITY_USER
         )
 
+        # Remove any accent classes that might add background colors
         for cls in ("accent-red", "accent-blue", "accent-green", "accent-orange", "accent-purple", "accent-cyan", "accent-gray"):
             self.color_badge.remove_css_class(cls)
-        accent_class = _get_color_class(rgba)
-        if accent_class:
-            self.color_badge.add_css_class(accent_class)
 
 
 def _create_ungrouped_area(window):

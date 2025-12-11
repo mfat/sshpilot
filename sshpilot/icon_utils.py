@@ -89,6 +89,7 @@ _ICON_RESOURCE_MAP = {
     'applications-graphics-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/preferences-system-symbolic.svg',
     'network-workgroup-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/network-server-symbolic.svg',
     'applications-system-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/preferences-system-symbolic.svg',
+    'tag-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/tag-symbolic.svg',
     # Additional missing icons - map to closest available
     'network-receive-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/network-transmit-receive-symbolic.svg',
     'security-high-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/dialog-warning-symbolic.svg',
