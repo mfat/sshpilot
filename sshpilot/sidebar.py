@@ -263,7 +263,8 @@ class GroupRow(Gtk.ListBoxRow):
     def __init__(self, group_info: Dict, group_manager: GroupManager, connections_dict: Dict | None = None):
         super().__init__()
         _install_sidebar_color_css()
-        self.add_css_class("navigation-sidebar")
+        #self.add_css_class("navigation-sidebar")
+        self.add_css_class("card")        #self.add_css_class("navigation-sidebar")
         self.group_info = group_info
         self.group_manager = group_manager
         self.group_id = group_info["id"]
@@ -623,7 +624,8 @@ class ConnectionRow(Gtk.ListBoxRow):
     def __init__(self, connection: Connection, group_manager: GroupManager, config, file_manager_callback=None):
         super().__init__()
         _install_sidebar_color_css()
-        self.add_css_class("navigation-sidebar")
+        #self.add_css_class("navigation-sidebar")
+        self.add_css_class("card")
         self.connection = connection
         self.group_manager = group_manager
         self.config = config
