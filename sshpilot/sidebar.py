@@ -629,6 +629,7 @@ class ConnectionRow(Gtk.ListBoxRow):
         self.config = config
         self._file_manager_callback = file_manager_callback
         self._tint_provider = None
+        self._color_badge_provider = None
         self._indent_level = 0
         self._group_display_mode = None
         self._row_margin_base = None
@@ -701,6 +702,13 @@ class ConnectionRow(Gtk.ListBoxRow):
         self.indicator_box.set_halign(Gtk.Align.CENTER)
         self.indicator_box.set_valign(Gtk.Align.CENTER)
         content.append(self.indicator_box)
+
+        self.color_badge = icon_utils.new_image_from_icon_name("tag-symbolic")
+        self.color_badge.add_css_class("sidebar-color-badge")
+        self.color_badge.set_icon_size(Gtk.IconSize.NORMAL)
+        self.color_badge.set_valign(Gtk.Align.CENTER)
+        self.color_badge.set_visible(False)
+        content.append(self.color_badge)
 
         # File manager button (before status icon) - only visible on hover
         # Use opacity instead of visibility to reserve space and prevent row resizing
@@ -951,7 +959,14 @@ class ConnectionRow(Gtk.ListBoxRow):
                 except Exception:
                     pass
                 self._tint_provider = None
+
+            if rgba:
+                self._update_color_badge(rgba)
+                self.color_badge.set_visible(True)
+            else:
+                self.color_badge.set_visible(False)
         else:
+            self.color_badge.set_visible(False)
             if rgba:
                 self.add_css_class("tinted")
                 _set_tint_card_color(self, _fill_rgba(rgba) or rgba)
@@ -963,6 +978,34 @@ class ConnectionRow(Gtk.ListBoxRow):
                     except Exception:
                         pass
                     self._tint_provider = None
+
+    def _update_color_badge(self, rgba: Gdk.RGBA):
+        r = int(rgba.red * 255)
+        g = int(rgba.green * 255)
+        b = int(rgba.blue * 255)
+        color_hex = f"#{r:02x}{g:02x}{b:02x}"
+
+        css_data = f"""
+        image.sidebar-color-badge {{
+          color: {color_hex};
+        }}
+        """
+
+        if self._color_badge_provider:
+            try:
+                self.color_badge.get_style_context().remove_provider(self._color_badge_provider)
+            except Exception:
+                pass
+
+        self._color_badge_provider = Gtk.CssProvider()
+        self._color_badge_provider.load_from_data(css_data.encode('utf-8'))
+        self.color_badge.get_style_context().add_provider(
+            self._color_badge_provider, Gtk.STYLE_PROVIDER_PRIORITY_USER
+        )
+
+        # Remove any accent classes that might add background colors
+        for cls in ("accent-red", "accent-blue", "accent-green", "accent-orange", "accent-purple", "accent-cyan", "accent-gray"):
+            self.color_badge.remove_css_class(cls)
 
     # -- drag source ------------------------------------------------------
 
@@ -1372,69 +1415,6 @@ def _show_drop_indicator_on_group(window, row):
             window._drop_indicator_position = "on_group"
     except Exception as e:
         logger.error(f"Error showing group drop indicator: {e}")
-
-
-    def _apply_group_color_style(self):
-        config = getattr(self.group_manager, 'config', None)
-        mode = _get_color_display_mode(config) if config else 'fill'
-        rgba = _parse_color(self.group_info.get('color'))
-
-        if mode == 'badge':
-            self.remove_css_class("tinted")
-            if hasattr(self, '_tint_provider') and self._tint_provider:
-                try:
-                    self.get_style_context().remove_provider(self._tint_provider)
-                except Exception:
-                    pass
-                self._tint_provider = None
-
-            if rgba:
-                self._update_color_badge(rgba)
-                self.color_badge.set_visible(True)
-            else:
-                self.color_badge.set_visible(False)
-        else:
-            self.color_badge.set_visible(False)
-            if rgba:
-                tint = _fill_rgba(rgba) or rgba
-                self.add_css_class("tinted")
-                _set_tint_card_color(self, tint)
-            else:
-                self.remove_css_class("tinted")
-                if hasattr(self, '_tint_provider') and self._tint_provider:
-                    try:
-                        self.get_style_context().remove_provider(self._tint_provider)
-                    except Exception:
-                        pass
-                    self._tint_provider = None
-
-    def _update_color_badge(self, rgba: Gdk.RGBA):
-        r = int(rgba.red * 255)
-        g = int(rgba.green * 255)
-        b = int(rgba.blue * 255)
-        color_hex = f"#{r:02x}{g:02x}{b:02x}"
-
-        css_data = f"""
-        image.sidebar-color-badge {{
-          color: {color_hex};
-        }}
-        """
-
-        if self._color_badge_provider:
-            try:
-                self.color_badge.get_style_context().remove_provider(self._color_badge_provider)
-            except Exception:
-                pass
-
-        self._color_badge_provider = Gtk.CssProvider()
-        self._color_badge_provider.load_from_data(css_data.encode('utf-8'))
-        self.color_badge.get_style_context().add_provider(
-            self._color_badge_provider, Gtk.STYLE_PROVIDER_PRIORITY_USER
-        )
-
-        # Remove any accent classes that might add background colors
-        for cls in ("accent-red", "accent-blue", "accent-green", "accent-orange", "accent-purple", "accent-cyan", "accent-gray"):
-            self.color_badge.remove_css_class(cls)
 
 
 def _create_ungrouped_area(window):
