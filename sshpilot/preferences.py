@@ -568,11 +568,14 @@ class PreferencesWindow(Adw.Window):
         self.overlay_split_view = Adw.OverlaySplitView()
         
         # Configure sidebar width properties according to OverlaySplitView API
-        # Defaults: 25% fraction, 180sp min, 280sp max
+        # Defaults: 25% fraction, 180sp min, 280sp max (using SP units by default)
         try:
             self.overlay_split_view.set_sidebar_width_fraction(0.25)
             self.overlay_split_view.set_min_sidebar_width(180)
             self.overlay_split_view.set_max_sidebar_width(280)
+            # Set length unit to SP (scale-independent pixels) for responsive sizing
+            if hasattr(Adw, 'LengthUnit'):
+                self.overlay_split_view.set_sidebar_width_unit(Adw.LengthUnit.SP)
         except Exception as e:
             logger.debug(f"Failed to set OverlaySplitView sidebar width properties: {e}")
         
@@ -583,6 +586,18 @@ class PreferencesWindow(Adw.Window):
             logger.debug(f"Failed to set OverlaySplitView show_sidebar: {e}")
         
         self.set_content(self.overlay_split_view)
+        
+        # Add breakpoint for responsive design: collapse on small widths
+        # This follows the OverlaySplitView API recommendation
+        # See: https://gnome.pages.gitlab.gnome.org/libadwaita/doc/1.4/class.OverlaySplitView.html
+        try:
+            if hasattr(Adw, 'Breakpoint') and hasattr(Adw, 'breakpoint_condition_parse'):
+                condition = Adw.breakpoint_condition_parse("max-width: 400sp")
+                breakpoint = Adw.Breakpoint.new(condition)
+                breakpoint.add_setter(self.overlay_split_view, "collapsed", True)
+                self.add_breakpoint(breakpoint)
+        except Exception as e:
+            logger.debug(f"Failed to add OverlaySplitView breakpoint: {e}")
 
         # Sidebar list with navigation styling
         self.sidebar = Gtk.ListBox()
