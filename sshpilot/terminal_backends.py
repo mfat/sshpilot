@@ -583,6 +583,8 @@ class PyXtermTerminalBackend:
         self._current_search_term: Optional[str] = None  # Current search term
         self._current_search_is_regex: bool = False  # Whether current search is regex
         self._current_search_case_sensitive: bool = False  # Whether current search is case sensitive
+        self._pending_spawn_callback: Optional[Callable] = None  # Store callback until WebView is ready
+        self._pending_spawn_user_data: Optional[Any] = None  # Store user_data for callback
 
         # Initialize with a fallback widget
         self.widget: Gtk.Widget = Gtk.Box()
@@ -763,17 +765,54 @@ class PyXtermTerminalBackend:
                                     self.set_font_scale(self._font_scale)
                             
                             logger.debug("Settings applied after WebView load finished")
+                            
+                            # Now that WebView is fully loaded and terminal is ready, call the spawn callback
+                            # This ensures the terminal is ready before SSH connection is attempted
+                            if hasattr(self, '_pending_spawn_callback') and self._pending_spawn_callback:
+                                callback = self._pending_spawn_callback
+                                user_data = self._pending_spawn_user_data
+                                self._pending_spawn_callback = None
+                                self._pending_spawn_user_data = None
+                                
+                                def _notify() -> bool:
+                                    try:
+                                        callback(self.widget, self._child_pid or 0, None, user_data)
+                                    except TypeError:
+                                        callback(self.widget, None)
+                                    return False
+                                
+                                GLib.idle_add(_notify)
+                                logger.debug("Called deferred spawn callback after WebView is ready")
                         except Exception:
                             logger.debug("Failed to apply settings after WebView load", exc_info=True)
                         return False  # Don't repeat
                     
-                    # Small delay to ensure page is ready
-                    GLib.timeout_add(500, apply_settings)
+                    # Minimal delay (50ms) to ensure DOM is ready - reduced from 500ms for faster startup
+                    GLib.timeout_add(50, apply_settings)
                 elif load_event == LoadEvent.FAILED:
                     logger.error("WebView load failed - this may indicate connection refused error")
                     # Emit connection failed signal to the terminal widget
                     if hasattr(self.owner, 'emit'):
                         self.owner.emit('connection-failed', 'Could not connect to PyXterm server: Connection refused')
+                    
+                    # Still call the callback even on failure, so the terminal widget knows spawn completed
+                    # This prevents the terminal from hanging waiting for the callback
+                    if hasattr(self, '_pending_spawn_callback') and self._pending_spawn_callback:
+                        callback = self._pending_spawn_callback
+                        user_data = self._pending_spawn_user_data
+                        self._pending_spawn_callback = None
+                        self._pending_spawn_user_data = None
+                        
+                        def _notify_error() -> bool:
+                            try:
+                                # Pass an error to indicate failure
+                                callback(self.widget, None, Exception("WebView load failed"), user_data)
+                            except TypeError:
+                                callback(self.widget, None)
+                            return False
+                        
+                        GLib.idle_add(_notify_error)
+                        logger.debug("Called deferred spawn callback with error after WebView load failed")
             else:
                 # Fallback for WebKit2 or if enum is not available
                 # Use integer comparison as fallback (for WebKit2 compatibility)
@@ -1459,15 +1498,16 @@ class PyXtermTerminalBackend:
             self._child_pid = self._server_process.pid
             
             # Wait for the server to be ready with retry logic
-            max_retries = 10
-            retry_delay = 0.5
+            # Use shorter delays for faster startup
+            max_retries = 20  # More attempts with shorter delays
+            retry_delay = 0.1  # Reduced from 0.5s to 0.1s for faster startup
             server_ready = False
             
             for attempt in range(max_retries):
                 try:
-                    # Test if the server is responding
+                    # Test if the server is responding with shorter timeout
                     import socket
-                    with socket.create_connection(('127.0.0.1', port), timeout=1):
+                    with socket.create_connection(('127.0.0.1', port), timeout=0.5):
                         server_ready = True
                         logger.debug(f"PyXterm server ready on port {port} after {attempt + 1} attempts")
                         break
@@ -1513,25 +1553,32 @@ class PyXtermTerminalBackend:
             
             # Load the terminal in WebView
             if self._webview:
-                uri = f"http://127.0.0.1:{port}"
-                logger.debug(f"Loading WebView with URI: {uri}")
-                self._webview.load_uri(uri)
-                
-                # Connect to load-changed signal to track when WebView is ready
+                # Connect to load-changed signal BEFORE loading to ensure we catch all events
                 try:
                     self._webview.connect('load-changed', self._on_webview_load_changed)
                 except Exception:
                     logger.debug("Failed to connect to WebView load-changed signal", exc_info=True)
-
-            if callback:
-                def _notify() -> bool:
-                    try:
-                        callback(self.widget, self._child_pid or 0, None, user_data)
-                    except TypeError:
-                        callback(self.widget, None)
-                    return False
-
-                GLib.idle_add(_notify)
+                
+                uri = f"http://127.0.0.1:{port}"
+                logger.debug(f"Loading WebView with URI: {uri}")
+                self._webview.load_uri(uri)
+                
+                # Store callback to be called after WebView is fully loaded
+                # This ensures the terminal is ready before the spawn callback fires
+                if callback:
+                    self._pending_spawn_callback = callback
+                    self._pending_spawn_user_data = user_data
+                    logger.debug("Deferred spawn callback until WebView is fully loaded")
+            else:
+                # No WebView, call callback immediately (shouldn't happen, but handle gracefully)
+                if callback:
+                    def _notify() -> bool:
+                        try:
+                            callback(self.widget, self._child_pid or 0, None, user_data)
+                        except TypeError:
+                            callback(self.widget, None)
+                        return False
+                    GLib.idle_add(_notify)
 
         except Exception as e:
             # Clean up stderr file if it exists
