@@ -128,7 +128,7 @@ def _get_stored_password(
     connection_manager: Optional[any] = None
 ) -> Optional[str]:
     """Get stored password for connection.
-    
+
     Checks in this order:
     1. Connection object's password attribute (in-memory, from dialog)
     2. Connection manager's stored password (libsecret/keyring/keychain)
@@ -140,13 +140,23 @@ def _get_stored_password(
             return in_memory_password
     except Exception:
         pass
-    
+
     # Then check connection manager storage
     if not connection_manager:
         return None
-    
+
     try:
-        host = getattr(connection, 'hostname', '') or getattr(connection, 'host', '')
+        host = (
+            getattr(connection, 'hostname', '')
+            or getattr(connection, 'host', '')
+        )
+        if not host and hasattr(connection, 'resolve_host_identifier'):
+            try:
+                host = connection.resolve_host_identifier()
+            except Exception:
+                host = ''
+        if not host:
+            host = getattr(connection, 'nickname', '') or getattr(connection, 'alias', '')
         username = getattr(connection, 'username', '')
         if host and username:
             stored = connection_manager.get_password(host, username)
