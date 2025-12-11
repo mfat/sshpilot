@@ -501,12 +501,11 @@ class MonospaceFontDialog(Adw.Window):
         self.callback = callback
 
 
-class PreferencesWindow(Gtk.Window):
+class PreferencesWindow(Adw.Window):
     """Preferences dialog window"""
     
     def __init__(self, parent_window, config):
-        super().__init__()
-        self.set_transient_for(parent_window)
+        super().__init__(transient_for=parent_window)
         self.parent_window = parent_window
         self.config = config
         self._shortcuts_row = None
@@ -562,19 +561,12 @@ class PreferencesWindow(Gtk.Window):
     
     def setup_navigation_layout(self):
         """Configure split view layout mirroring GNOME Settings."""
-        # Ensure client-side decorations remain but hide default headerbar
-        # Note: Window decorations are explicitly enabled in __init__ via set_decorated(True)
-        if not is_macos():
-            hidden_titlebar = Gtk.HeaderBar()
-            hidden_titlebar.set_show_title_buttons(False)
-            hidden_titlebar.set_visible(False)
-            # Don't set decoration_layout as it might interfere with window decorations
-            # The window itself has decorations enabled via set_decorated(True)
-            self.set_titlebar(hidden_titlebar)
+        # Adw.Window doesn't have a default titlebar, so no need to hide it
+        # The headerbar with controls is in the ToolbarView below
 
         # Main split view container
         self.navigation_split_view = Adw.NavigationSplitView()
-        self.set_child(self.navigation_split_view)
+        self.set_content(self.navigation_split_view)
 
         # Sidebar list with navigation styling
         self.sidebar = Gtk.ListBox()
@@ -597,24 +589,20 @@ class PreferencesWindow(Gtk.Window):
         content_scroller = Gtk.ScrolledWindow()
         content_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         content_scroller.set_child(self.content_stack)
-        self.header_bar = Gtk.HeaderBar()
+        # Header bar with window controls
+        self.header_bar = Adw.HeaderBar()
         self.header_bar.add_css_class("flat")
+        
         self.header_title_label = Gtk.Label.new("")
         self.header_title_label.add_css_class("title")
         self.header_title_label.set_single_line_mode(True)
         self.header_title_label.set_xalign(0.0)
         self.header_bar.set_title_widget(self.header_title_label)
-
-        self.header_controls = None
-        try:
-            self.header_controls = Gtk.WindowControls.new(Gtk.PackType.END)
-        except AttributeError:
-            logger.debug("Gtk.WindowControls unavailable; skipping window buttons")
-        if self.header_controls:
-            self.header_bar.pack_end(self.header_controls)
-            self.header_bar.set_show_title_buttons(False)
-        else:
-            self.header_bar.set_show_title_buttons(True)
+        
+        # Explicitly enable window controls to ensure they're always visible,
+        # even with custom themes that might not render WindowControls properly
+        self.header_bar.set_show_start_title_buttons(True)
+        self.header_bar.set_show_end_title_buttons(True)
 
         window_handle = Gtk.WindowHandle()
         window_handle.set_child(self.header_bar)
