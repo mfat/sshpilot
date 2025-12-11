@@ -909,7 +909,7 @@ class TerminalWidget(Gtk.Box):
                 attempted = True
 
                 try:
-                    prepared = manager.prepare_key_for_connection(expanded, connection)
+                    prepared = manager.prepare_key_for_connection(expanded)
                 except Exception as exc:
                     logger.warning(
                         "Failed to prepare key for native SSH connection (%s): %s",
@@ -946,7 +946,7 @@ class TerminalWidget(Gtk.Box):
             return
 
         try:
-            prepared = manager.prepare_key_for_connection(key_path, connection)
+            prepared = manager.prepare_key_for_connection(key_path)
         except Exception as exc:
             logger.warning("Failed to prepare key for native SSH connection: %s", exc)
             return
@@ -998,39 +998,130 @@ class TerminalWidget(Gtk.Box):
             ssh_conn_cmd = None
             if hasattr(self.connection, 'ssh_cmd'):
                 prepared = getattr(self.connection, 'ssh_cmd', None)
-                if isinstance(prepared, (list, tuple)) and len(prepared) > 0:
-                    # Use pre-built command directly (for compatibility)
-                    ssh_cmd = list(prepared)
-                    # Use stored environment if available (from connection.connect())
-                    if hasattr(self.connection, 'ssh_env') and self.connection.ssh_env:
-                        env = self.connection.ssh_env.copy()
-                        logger.debug(f"Using stored environment from connection.connect(): SSH_ASKPASS={env.get('SSH_ASKPASS', 'NOT_SET')}")
-                    else:
-                        # Fallback: set up environment based on auth method
-                        env = os.environ.copy()
-                        # Check if this is password auth
-                        auth_method = int(getattr(self.connection, 'auth_method', 0) or 0)
-                        if auth_method == 1:
-                            # Password auth - remove askpass
-                            env.pop('SSH_ASKPASS', None)
-                            env.pop('SSH_ASKPASS_REQUIRE', None)
-                        else:
-                            # Key-based auth - set up askpass
-                            from .askpass_utils import get_ssh_env_with_askpass
-                            askpass_env = get_ssh_env_with_askpass(require="prefer")
-                            env.update(askpass_env)
-                            logger.info("Using pre-built SSH command but setting up SSH_ASKPASS for passphrase handling")
-                    password_value = None
-                    # Continue with VTE spawning below (skip to end)
+
+
+                if isinstance(prepared, (list, tuple)):
+                    base_cmd = list(prepared)
+                    using_prepared_cmd = len(base_cmd) > 0
+
+            if not base_cmd:
+                base_cmd = ['ssh']
+
+            ssh_cmd = list(base_cmd)
+
+            def ensure_option(option: str):
+                if option not in ssh_cmd:
+                    ssh_cmd.extend(['-o', option])
+
+            def remove_option(option_name: str, keep_value: Optional[str] = None):
+                prefix = f'{option_name}='
+                idx = 0
+                found_keep = False
+                while idx < len(ssh_cmd):
+                    if ssh_cmd[idx] == '-o' and idx + 1 < len(ssh_cmd):
+                        opt_value = ssh_cmd[idx + 1]
+                        if opt_value.startswith(prefix):
+                            if (
+                                keep_value is not None
+                                and opt_value == f'{option_name}={keep_value}'
+                                and not found_keep
+                            ):
+                                found_keep = True
+                                idx += 2
+                                continue
+                            del ssh_cmd[idx:idx + 2]
+                            continue
+                    idx += 1
+
+            def sync_option(option_name: str, desired_value: Optional[str]):
+                if desired_value is None:
+                    remove_option(option_name)
                 else:
-                    ssh_cmd = None
-            else:
-                ssh_cmd = None
-            
-            if ssh_cmd is None:
-                # Use ssh_connection_builder to build the command
-                # Get configuration
+                    remove_option(option_name, desired_value)
+                    ensure_option(f'{option_name}={desired_value}')
+
+            def ensure_flag(flag: str):
+                if flag not in ssh_cmd:
+                    ssh_cmd.append(flag)
+
+            def remove_flag(flag: str):
+                while flag in ssh_cmd:
+                    ssh_cmd.remove(flag)
+
+            ssh_cfg = {}
+            try:
+                cfg_obj = getattr(self, 'config', None)
+                if cfg_obj is not None and hasattr(cfg_obj, 'get_ssh_config'):
+                    ssh_cfg = cfg_obj.get_ssh_config()
+            except Exception:
                 ssh_cfg = {}
+            native_mode_enabled = bool(getattr(self.connection_manager, 'native_connect_enabled', False))
+            try:
+                app = Adw.Application.get_default()
+                if not native_mode_enabled and app is not None and hasattr(app, 'native_connect_enabled'):
+                    native_mode_enabled = bool(app.native_connect_enabled)
+            except Exception:
+                pass
+            quick_connect_mode = bool(getattr(self.connection, 'quick_connect_command', ''))
+            if native_mode_enabled:
+                quick_connect_mode = False
+                self._prepare_key_for_native_mode()
+            password_auth_selected = False
+            has_saved_password = False
+            password_value = None
+            auth_method = 0
+            resolved_for_connection = ''
+
+            def _resolve_host_for_connection() -> str:
+                if not hasattr(self, 'connection') or not self.connection:
+                    return ''
+                try:
+                    host_value = self.connection.get_effective_host()
+                except AttributeError:
+                    host_value = getattr(self.connection, 'hostname', '') or getattr(self.connection, 'host', '')
+                if not host_value:
+                    host_value = getattr(self.connection, 'nickname', '')
+                return host_value or ''
+
+            try:
+                resolved_for_connection = _resolve_host_for_connection()
+            except Exception:
+                resolved_for_connection = ''
+
+            try:
+                # In our UI: 0 = key-based, 1 = password
+                auth_method = getattr(self.connection, 'auth_method', 0)
+                password_auth_selected = (auth_method == 1)
+                # Try to fetch stored password regardless of auth method
+                password_value = getattr(self.connection, 'password', None)
+                if not password_value and hasattr(self, 'connection_manager') and self.connection_manager:
+                    lookup_host = resolved_for_connection or _resolve_host_for_connection()
+                    username_for_lookup = getattr(self.connection, 'username', None)
+                    password_value = self.connection_manager.get_password(
+                        lookup_host,
+                        username_for_lookup,
+                    )
+
+                has_saved_password = bool(password_value)
+            except Exception:
+                auth_method = 0
+                password_auth_selected = False
+                has_saved_password = False
+
+            using_password = password_auth_selected or has_saved_password
+
+            # Initialize env early to ensure it's available in all code paths
+            env = os.environ.copy()
+            ssh_conn_cmd = None
+
+            if not quick_connect_mode:
+                batch_mode_pref = bool(ssh_cfg.get('batch_mode', False))
+                desired_batch_mode = 'yes' if batch_mode_pref and not using_password else None
+                sync_option('BatchMode', desired_batch_mode)
+
+            if native_mode_enabled and not ssh_cmd:
+                host_label = ''
+
                 try:
                     cfg_obj = getattr(self, 'config', None)
                     if cfg_obj is not None and hasattr(cfg_obj, 'get_ssh_config'):
@@ -1045,13 +1136,107 @@ class TerminalWidget(Gtk.Box):
                         native_mode_enabled = bool(app.native_connect_enabled)
                 except Exception:
                     pass
-                
-                quick_connect_mode = bool(getattr(self.connection, 'quick_connect_command', ''))
-                if native_mode_enabled:
-                    quick_connect_mode = False
-                    self._prepare_key_for_native_mode()
-                
-                # Get remote and local commands
+
+
+                # Use custom known hosts file when available
+                try:
+                    if getattr(self, 'connection_manager', None):
+                        kh_path = getattr(self.connection_manager, 'known_hosts_path', '')
+                        if kh_path and os.path.exists(kh_path):
+                            ensure_option(f'UserKnownHostsFile={kh_path}')
+                except Exception:
+                    logger.debug('Failed to set UserKnownHostsFile option', exc_info=True)
+
+                # Ensure SSH exits immediately on failure rather than waiting in background
+                sync_option('ExitOnForwardFailure', 'yes')
+
+                # Only add verbose flag if explicitly enabled in config
+                try:
+                    verbosity = int(ssh_cfg.get('verbosity', 0))
+                    debug_enabled = bool(ssh_cfg.get('debug_enabled', False))
+                    v = max(0, min(3, verbosity))
+                    remove_flag('-v')
+                    for _ in range(v):
+                        ssh_cmd.append('-v')
+                    # Map verbosity to LogLevel to ensure messages are not suppressed by defaults
+                    remove_option('LogLevel')
+                    if v == 1:
+                        ensure_option('LogLevel=VERBOSE')
+                    elif v == 2:
+                        ensure_option('LogLevel=DEBUG2')
+                    elif v >= 3:
+                        ensure_option('LogLevel=DEBUG3')
+                    elif debug_enabled:
+                        ensure_option('LogLevel=DEBUG')
+                    if v > 0 or debug_enabled:
+                        logger.debug("SSH verbosity configured: -v x %d, LogLevel set", v)
+                except Exception as e:
+                    logger.warning(f"Could not check SSH verbosity/debug settings: {e}")
+                    # Default to non-verbose on error
+
+                # Add key file/options only for key-based auth
+                if not password_auth_selected:
+                    # Get key selection mode
+                    key_select_mode = 0
+                    try:
+                        key_select_mode = int(getattr(self.connection, 'key_select_mode', 0) or 0)
+                    except Exception:
+                        pass
+
+                    keyfile_value = getattr(self.connection, 'keyfile', '') or ''
+                    has_explicit_key = bool(
+                        keyfile_value
+                        and not str(keyfile_value).startswith('Select key file')
+                        and os.path.isfile(keyfile_value)
+                    )
+
+                    if has_explicit_key and hasattr(self, 'connection_manager') and self.connection_manager:
+                        if getattr(self.connection, 'identity_agent_disabled', False):
+                            logger.debug(
+                                "IdentityAgent disabled; skipping key preparation before connection"
+                            )
+                        else:
+                            try:
+                                if hasattr(self.connection_manager, 'prepare_key_for_connection'):
+                                    key_prepared = self.connection_manager.prepare_key_for_connection(keyfile_value)
+                                    if key_prepared:
+                                        logger.debug(f"Key prepared for connection: {keyfile_value}")
+                                    else:
+                                        logger.warning(f"Failed to prepare key for connection: {keyfile_value}")
+                            except Exception as e:
+                                logger.warning(f"Error preparing key for connection: {e}")
+
+                    # Only add specific key when a dedicated key mode is selected
+                    if has_explicit_key and key_select_mode in (1, 2):
+                        if keyfile_value not in ssh_cmd:
+                            ssh_cmd.extend(['-i', keyfile_value])
+                        logger.debug(f"Using SSH key: {keyfile_value}")
+                        if key_select_mode == 1:
+                            ensure_option('IdentitiesOnly=yes')
+
+                        # Add certificate if specified
+                        if hasattr(self.connection, 'certificate') and self.connection.certificate and \
+                           os.path.isfile(self.connection.certificate):
+                            ensure_option(f'CertificateFile={self.connection.certificate}')
+                            logger.debug(f"Using SSH certificate: {self.connection.certificate}")
+                    else:
+                        logger.debug("Using default SSH key selection (key_select_mode=0 or no valid key specified)")
+
+                    # If a password exists, allow all standard authentication methods
+                    if has_saved_password:
+                        ensure_option('PreferredAuthentications=gssapi-with-mic,hostbased,publickey,keyboard-interactive,password')
+                else:
+                    # Force password authentication when user chose password auth
+                    ensure_option('PreferredAuthentications=password')
+                    if getattr(self.connection, 'pubkey_auth_no', False):
+                        ensure_option('PubkeyAuthentication=no')
+
+                # Add X11 forwarding if enabled
+                if hasattr(self.connection, 'x11_forwarding') and self.connection.x11_forwarding:
+                    ensure_flag('-X')
+
+                # Prepare command-related options (must appear before host)
+
                 remote_cmd = ''
                 local_cmd = ''
                 try:
@@ -1141,7 +1326,7 @@ class TerminalWidget(Gtk.Box):
                 # Build SSH connection command
                 ssh_conn_cmd = build_ssh_connection(ctx)
                 ssh_cmd = ssh_conn_cmd.command
-                env = ssh_conn_cmd.env.copy()
+                env.update(ssh_conn_cmd.env)
                 
                 # Get password for sshpass if needed
                 password_value = None
@@ -1315,13 +1500,6 @@ class TerminalWidget(Gtk.Box):
             self._on_connection_failed(str(e))
             return
 
-            # Start the SSH process using VTE's spawn_async with our PTY
-            logger.debug(f"Flatpak debug: About to spawn SSH with command: {ssh_cmd}")
-
-            # Handle password authentication with sshpass if available
-            env = os.environ.copy()
-            logger.debug(f"Initial environment SSH_ASKPASS: {env.get('SSH_ASKPASS', 'NOT_SET')}, SSH_ASKPASS_REQUIRE: {env.get('SSH_ASKPASS_REQUIRE', 'NOT_SET')}")
-
             if has_saved_password and password_value:
                 # Use sshpass for password authentication
                 import shutil
@@ -1372,10 +1550,9 @@ class TerminalWidget(Gtk.Box):
                 (password_auth_selected or auth_method == 0)
                 and not has_saved_password
                 and not getattr(self.connection, 'identity_agent_disabled', False)
-                and not has_saved_passphrase
             ):
-                # Password may be required but none saved, and no saved passphrase - allow interactive prompt
-                logger.debug("No saved password or passphrase - using interactive prompt if required")
+                # Password may be required but none saved - allow interactive prompt
+                logger.debug("No saved password - using interactive prompt if required")
             else:
                 # Use askpass for passphrase prompts (key-based auth)
                 from .askpass_utils import (

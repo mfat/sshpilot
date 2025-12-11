@@ -560,44 +560,44 @@ class PreferencesWindow(Adw.Window):
         self.connect('close-request', self.on_close_request)
     
     def setup_navigation_layout(self):
-        """Configure split view layout mirroring GNOME Settings."""
+        """Configure split view layout using OverlaySplitView."""
         # Adw.Window doesn't have a default titlebar, so no need to hide it
         # The headerbar with controls is in the ToolbarView below
 
-        # Main split view container
-        self.navigation_split_view = Adw.NavigationSplitView()
+        # Main split view container using OverlaySplitView
+        self.overlay_split_view = Adw.OverlaySplitView()
         
-        # Configure sidebar width properties according to NavigationSplitView API
-        # Defaults: 25% fraction, 180sp min, 280sp max, SP unit
+        # Configure sidebar width properties according to OverlaySplitView API
+        # Defaults: 25% fraction, 180sp min, 280sp max (using SP units by default)
         try:
-            self.navigation_split_view.set_sidebar_width_fraction(0.25)
-            self.navigation_split_view.set_min_sidebar_width(180)
-            self.navigation_split_view.set_max_sidebar_width(280)
+            self.overlay_split_view.set_sidebar_width_fraction(0.25)
+            self.overlay_split_view.set_min_sidebar_width(180)
+            self.overlay_split_view.set_max_sidebar_width(280)
             # Set length unit to SP (scale-independent pixels) for responsive sizing
             if hasattr(Adw, 'LengthUnit'):
-                self.navigation_split_view.set_sidebar_width_unit(Adw.LengthUnit.SP)
+                self.overlay_split_view.set_sidebar_width_unit(Adw.LengthUnit.SP)
         except Exception as e:
-            logger.debug(f"Failed to set NavigationSplitView sidebar width properties: {e}")
+            logger.debug(f"Failed to set OverlaySplitView sidebar width properties: {e}")
         
-        # Set show_content to True so content page is visible when collapsed
-        # (sidebar will be hidden, content will be shown)
+        # Show the sidebar by default
         try:
-            self.navigation_split_view.set_show_content(True)
+            self.overlay_split_view.set_show_sidebar(True)
         except Exception as e:
-            logger.debug(f"Failed to set NavigationSplitView show_content: {e}")
+            logger.debug(f"Failed to set OverlaySplitView show_sidebar: {e}")
+        
+        self.set_content(self.overlay_split_view)
         
         # Add breakpoint for responsive design: collapse on small widths
-        # This follows the NavigationSplitView API recommendation
+        # This follows the OverlaySplitView API recommendation
+        # See: https://gnome.pages.gitlab.gnome.org/libadwaita/doc/1.4/class.OverlaySplitView.html
         try:
             if hasattr(Adw, 'Breakpoint') and hasattr(Adw, 'breakpoint_condition_parse'):
                 condition = Adw.breakpoint_condition_parse("max-width: 400sp")
                 breakpoint = Adw.Breakpoint.new(condition)
-                breakpoint.add_setter(self.navigation_split_view, "collapsed", True)
+                breakpoint.add_setter(self.overlay_split_view, "collapsed", True)
                 self.add_breakpoint(breakpoint)
         except Exception as e:
-            logger.debug(f"Failed to add NavigationSplitView breakpoint: {e}")
-        
-        self.set_content(self.navigation_split_view)
+            logger.debug(f"Failed to add OverlaySplitView breakpoint: {e}")
 
         # Sidebar list with navigation styling
         self.sidebar = Gtk.ListBox()
@@ -608,8 +608,8 @@ class PreferencesWindow(Adw.Window):
         sidebar_scroller = Gtk.ScrolledWindow()
         sidebar_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         sidebar_scroller.set_child(self.sidebar)
-        sidebar_page = Adw.NavigationPage.new(sidebar_scroller, "Preferences")
-        self.navigation_split_view.set_sidebar(sidebar_page)
+        # OverlaySplitView doesn't use NavigationPage - set widget directly
+        self.overlay_split_view.set_sidebar(sidebar_scroller)
 
         # Stack for page content
         self.content_stack = Gtk.Stack()
@@ -640,8 +640,8 @@ class PreferencesWindow(Adw.Window):
         self.content_toolbar_view.add_top_bar(self.header_bar)
         self.content_toolbar_view.set_content(content_scroller)
 
-        content_page = Adw.NavigationPage.new(self.content_toolbar_view, "Preferences")
-        self.navigation_split_view.set_content(content_page)
+        # OverlaySplitView doesn't use NavigationPage - set widget directly
+        self.overlay_split_view.set_content(self.content_toolbar_view)
 
         # Connect sidebar selection to content stack
         self.sidebar.connect('row-selected', self.on_sidebar_row_selected)
