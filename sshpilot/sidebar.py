@@ -307,6 +307,8 @@ class GroupRow(Gtk.ListBoxRow):
         # Ellipsize when text exceeds available width
         # Per GTK4 docs: For ellipsizing labels, width-chars sets minimum width,
         # max-width-chars limits natural width. Both help control size allocation.
+        # Labels with ellipsize need hexpand to fill available space and ellipsize properly.
+        self.name_label.set_hexpand(True)
         self.name_label.set_ellipsize(Pango.EllipsizeMode.END)
         self.name_label.set_width_chars(20)  # Minimum width
         self.name_label.set_max_width_chars(25)  # Maximum natural width (prevents expansion)
@@ -319,6 +321,8 @@ class GroupRow(Gtk.ListBoxRow):
         # Ellipsize when text exceeds available width
         # Per GTK4 docs: For ellipsizing labels, width-chars sets minimum width,
         # max-width-chars limits natural width. Both help control size allocation.
+        # Labels with ellipsize need hexpand to fill available space and ellipsize properly.
+        self.count_label.set_hexpand(True)
         self.count_label.set_ellipsize(Pango.EllipsizeMode.END)
         self.count_label.set_width_chars(20)  # Minimum width
         self.count_label.set_max_width_chars(25)  # Maximum natural width (prevents expansion)
@@ -603,6 +607,8 @@ class ConnectionRow(Gtk.ListBoxRow):
         # Ellipsize when text exceeds available width
         # Per GTK4 docs: For ellipsizing labels, width-chars sets minimum width,
         # max-width-chars limits natural width. Both help control size allocation.
+        # Labels with ellipsize need hexpand to fill available space and ellipsize properly.
+        self.nickname_label.set_hexpand(True)
         self.nickname_label.set_ellipsize(Pango.EllipsizeMode.END)
         self.nickname_label.set_width_chars(20)  # Minimum width
         self.nickname_label.set_max_width_chars(25)  # Maximum natural width (prevents expansion)
@@ -615,6 +621,8 @@ class ConnectionRow(Gtk.ListBoxRow):
         # Ellipsize when text exceeds available width
         # Per GTK4 docs: For ellipsizing labels, width-chars sets minimum width,
         # max-width-chars limits natural width. Both help control size allocation.
+        # Labels with ellipsize need hexpand to fill available space and ellipsize properly.
+        self.host_label.set_hexpand(True)
         self.host_label.set_ellipsize(Pango.EllipsizeMode.END)
         self.host_label.set_width_chars(20)  # Minimum width
         self.host_label.set_max_width_chars(25)  # Maximum natural width (prevents expansion)
