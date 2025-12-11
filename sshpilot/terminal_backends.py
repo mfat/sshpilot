@@ -622,6 +622,18 @@ class PyXtermTerminalBackend:
                 from gi.repository import WebKit
                 self.WebKit = WebKit
                 self._webview = WebKit.WebView()
+                
+                # Configure WebView settings to ensure JavaScript is enabled
+                # According to WebKit 6.0 API, JavaScript is enabled by default,
+                # but we explicitly set it for clarity
+                try:
+                    settings = self._webview.get_settings()
+                    if settings:
+                        settings.set_property('enable-javascript', True)
+                        logger.debug("WebView JavaScript enabled via settings")
+                except Exception as settings_error:
+                    logger.debug(f"Could not configure WebView settings (may be enabled by default): {settings_error}")
+                
                 logger.debug("Using WebKit 6.0 (GTK4 compatible)")
             except Exception as webkit6_error:
                 logger.debug(f"WebKit 6.0 not available: {webkit6_error}")
@@ -675,90 +687,106 @@ class PyXtermTerminalBackend:
     def _on_webview_load_changed(self, webview, load_event, *args):
         """Called when the WebView load state changes"""
         try:
-            # Handle different load events
-            if load_event == 1:  # WEBKIT_LOAD_STARTED
-                logger.debug("WebView load started")
-            elif load_event == 2:  # WEBKIT_LOAD_REDIRECTED
-                logger.debug("WebView load redirected")
-            elif load_event == 3:  # WEBKIT_LOAD_COMMITTED
-                logger.debug("WebView load committed")
-                # Disable context menu early (on load-committed) to catch it before page fully loads
-                disable_context_menu_js = """
-                (function() {
-                    // Disable browser's default context menu
-                    document.addEventListener('contextmenu', function(e) {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        return false;
-                    }, true);
-                    // Also disable on the terminal element if it exists
-                    if (typeof window.term !== 'undefined' && window.term.element) {
-                        window.term.element.addEventListener('contextmenu', function(e) {
+            # Handle different load events using WebKit.LoadEvent enum constants
+            # According to WebKit 6.0 API: LoadEvent enum has STARTED, REDIRECTED, COMMITTED, FINISHED, FAILED
+            if hasattr(self, 'WebKit') and self.WebKit:
+                LoadEvent = self.WebKit.LoadEvent
+                if load_event == LoadEvent.STARTED:
+                    logger.debug("WebView load started")
+                elif load_event == LoadEvent.REDIRECTED:
+                    logger.debug("WebView load redirected")
+                elif load_event == LoadEvent.COMMITTED:
+                    logger.debug("WebView load committed")
+                    # Disable context menu early (on load-committed) to catch it before page fully loads
+                    disable_context_menu_js = """
+                    (function() {
+                        // Disable browser's default context menu
+                        document.addEventListener('contextmenu', function(e) {
                             e.preventDefault();
                             e.stopPropagation();
                             return false;
                         }, true);
-                    }
-                })();
-                """
-                self._run_javascript(disable_context_menu_js)
-                logger.debug("Disabled WebView context menu (early, on load-committed)")
-            elif load_event == 4:  # WEBKIT_LOAD_FINISHED
-                logger.debug("WebView load finished, applying focus and settings")
-                # Apply focus and settings after WebView is fully loaded
-                def apply_settings():
-                    try:
-                        logger.debug("WebView load-finished: applying focus and settings")
-                        # Disable context menu again on load-finished (in case it wasn't caught earlier)
-                        disable_context_menu_js = """
-                        (function() {
-                            // Disable browser's default context menu
-                            document.addEventListener('contextmenu', function(e) {
+                        // Also disable on the terminal element if it exists
+                        if (typeof window.term !== 'undefined' && window.term.element) {
+                            window.term.element.addEventListener('contextmenu', function(e) {
                                 e.preventDefault();
                                 e.stopPropagation();
                                 return false;
                             }, true);
-                            // Also disable on the terminal element if it exists
-                            if (typeof window.term !== 'undefined' && window.term.element) {
-                                window.term.element.addEventListener('contextmenu', function(e) {
+                        }
+                    })();
+                    """
+                    self._run_javascript(disable_context_menu_js)
+                    logger.debug("Disabled WebView context menu (early, on load-committed)")
+                elif load_event == LoadEvent.FINISHED:
+                    logger.debug("WebView load finished, applying focus and settings")
+                    # Apply focus and settings after WebView is fully loaded
+                    def apply_settings():
+                        try:
+                            logger.debug("WebView load-finished: applying focus and settings")
+                            # Disable context menu again on load-finished (in case it wasn't caught earlier)
+                            disable_context_menu_js = """
+                            (function() {
+                                // Disable browser's default context menu
+                                document.addEventListener('contextmenu', function(e) {
                                     e.preventDefault();
                                     e.stopPropagation();
                                     return false;
                                 }, true);
-                            }
-                        })();
-                        """
-                        self._run_javascript(disable_context_menu_js)
-                        logger.debug("Disabled WebView context menu (on load-finished)")
-                        
-                        # Just focus the WebView - HTML template handles terminal focus
-                        self.widget.grab_focus()
-                        
-                        # Apply theme and font after page is loaded
-                        if hasattr(self.owner, 'config'):
-                            theme_name = self.owner.config.get_setting("terminal.theme", "default")
-                            self.apply_theme(theme_name)
+                                // Also disable on the terminal element if it exists
+                                if (typeof window.term !== 'undefined' && window.term.element) {
+                                    window.term.element.addEventListener('contextmenu', function(e) {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        return false;
+                                    }, true);
+                                }
+                            })();
+                            """
+                            self._run_javascript(disable_context_menu_js)
+                            logger.debug("Disabled WebView context menu (on load-finished)")
                             
-                            font_string = self.owner.config.get_setting("terminal.font", "Monospace 12")
-                            font_desc = Pango.FontDescription.from_string(font_string)
-                            self.set_font(font_desc)
+                            # Just focus the WebView - HTML template handles terminal focus
+                            self.widget.grab_focus()
                             
-                            # Apply font scale if set
-                            if hasattr(self, '_font_scale'):
-                                self.set_font_scale(self._font_scale)
-                        
-                        logger.debug("Settings applied after WebView load finished")
-                    except Exception:
-                        logger.debug("Failed to apply settings after WebView load", exc_info=True)
-                    return False  # Don't repeat
-                
-                # Small delay to ensure page is ready
-                GLib.timeout_add(500, apply_settings)
-            elif load_event == 5:  # WEBKIT_LOAD_FAILED
-                logger.error("WebView load failed - this may indicate connection refused error")
-                # Emit connection failed signal to the terminal widget
-                if hasattr(self.owner, 'emit'):
-                    self.owner.emit('connection-failed', 'Could not connect to PyXterm server: Connection refused')
+                            # Apply theme and font after page is loaded
+                            if hasattr(self.owner, 'config'):
+                                theme_name = self.owner.config.get_setting("terminal.theme", "default")
+                                self.apply_theme(theme_name)
+                                
+                                font_string = self.owner.config.get_setting("terminal.font", "Monospace 12")
+                                font_desc = Pango.FontDescription.from_string(font_string)
+                                self.set_font(font_desc)
+                                
+                                # Apply font scale if set
+                                if hasattr(self, '_font_scale'):
+                                    self.set_font_scale(self._font_scale)
+                            
+                            logger.debug("Settings applied after WebView load finished")
+                        except Exception:
+                            logger.debug("Failed to apply settings after WebView load", exc_info=True)
+                        return False  # Don't repeat
+                    
+                    # Small delay to ensure page is ready
+                    GLib.timeout_add(500, apply_settings)
+                elif load_event == LoadEvent.FAILED:
+                    logger.error("WebView load failed - this may indicate connection refused error")
+                    # Emit connection failed signal to the terminal widget
+                    if hasattr(self.owner, 'emit'):
+                        self.owner.emit('connection-failed', 'Could not connect to PyXterm server: Connection refused')
+            else:
+                # Fallback for WebKit2 or if enum is not available
+                # Use integer comparison as fallback (for WebKit2 compatibility)
+                if load_event == 1:  # WEBKIT_LOAD_STARTED
+                    logger.debug("WebView load started")
+                elif load_event == 2:  # WEBKIT_LOAD_REDIRECTED
+                    logger.debug("WebView load redirected")
+                elif load_event == 3:  # WEBKIT_LOAD_COMMITTED
+                    logger.debug("WebView load committed")
+                elif load_event == 4:  # WEBKIT_LOAD_FINISHED
+                    logger.debug("WebView load finished")
+                elif load_event == 5:  # WEBKIT_LOAD_FAILED
+                    logger.error("WebView load failed")
         except Exception:
             logger.debug("Error in WebView load-changed handler", exc_info=True)
 
@@ -1030,8 +1058,10 @@ class PyXtermTerminalBackend:
                                 webview.evaluate_javascript_finish(result)
                         except Exception as e:
                             logger.debug(f"JavaScript execution finished with error: {e}")
-                    # Pass script length (-1 for null-terminated), None for world_name, None for source_uri, None for cancellable
-                    self._webview.evaluate_javascript(script, -1, None, None, None, on_js_finished, None)
+                    # Pass script length (len(script) for Python strings)
+                    # According to WebKit 6.0 API, -1 works for auto-detect, but using actual length is more explicit
+                    # PyGObject handles string conversion, so len(script) is appropriate
+                    self._webview.evaluate_javascript(script, len(script), None, None, None, on_js_finished, None)
                 except Exception as e:
                     logger.debug(f"Failed to evaluate JavaScript (WebKit 6.0): {e}", exc_info=True)
             # WebKit2 4.0 (GTK3) - uses run_javascript
