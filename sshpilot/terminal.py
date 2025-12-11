@@ -1225,12 +1225,29 @@ class TerminalWidget(Gtk.Box):
             logger.debug(f"Environment PATH: {env.get('PATH', 'NOT_SET')}")
             
             # Create a new PTY for the terminal (VTE-specific, but backend may handle this)
+            # According to VTE docs, we should set PTY size before spawning to avoid SIGWINCH
             pty = None
             if hasattr(self.backend, 'get_pty') and callable(self.backend.get_pty):
                 pty = self.backend.get_pty()
             if pty is None and self.vte is not None:
                 try:
                     pty = Vte.Pty.new_sync(Vte.PtyFlags.DEFAULT)
+                    # Set PTY size before spawning to avoid child process receiving SIGWINCH
+                    # Get terminal size (rows, columns)
+                    try:
+                        rows = self.vte.get_row_count()
+                        cols = self.vte.get_column_count()
+                        # Only set size if we have valid dimensions (not default 80x24)
+                        if rows > 0 and cols > 0 and (rows != 24 or cols != 80):
+                            pty.set_size(rows, cols)
+                            logger.debug(f"Set PTY size to {rows}x{cols} before spawn")
+                    except Exception as e:
+                        logger.debug(f"Could not set PTY size before spawn: {e}")
+                    # Associate PTY with Terminal so spawn_async uses it
+                    try:
+                        self.vte.set_pty(pty)
+                    except Exception as e:
+                        logger.debug(f"Could not set PTY on terminal: {e}")
                 except Exception:
                     pass
             
@@ -1537,12 +1554,29 @@ class TerminalWidget(Gtk.Box):
             logger.debug(f"Environment PATH: {env.get('PATH', 'NOT_SET')}")
             
             # Create a new PTY for the terminal (VTE-specific, but backend may handle this)
+            # According to VTE docs, we should set PTY size before spawning to avoid SIGWINCH
             pty = None
             if hasattr(self.backend, 'get_pty') and callable(self.backend.get_pty):
                 pty = self.backend.get_pty()
             if pty is None and self.vte is not None:
                 try:
                     pty = Vte.Pty.new_sync(Vte.PtyFlags.DEFAULT)
+                    # Set PTY size before spawning to avoid child process receiving SIGWINCH
+                    # Get terminal size (rows, columns)
+                    try:
+                        rows = self.vte.get_row_count()
+                        cols = self.vte.get_column_count()
+                        # Only set size if we have valid dimensions (not default 80x24)
+                        if rows > 0 and cols > 0 and (rows != 24 or cols != 80):
+                            pty.set_size(rows, cols)
+                            logger.debug(f"Set PTY size to {rows}x{cols} before spawn")
+                    except Exception as e:
+                        logger.debug(f"Could not set PTY size before spawn: {e}")
+                    # Associate PTY with Terminal so spawn_async uses it
+                    try:
+                        self.vte.set_pty(pty)
+                    except Exception as e:
+                        logger.debug(f"Could not set PTY on terminal: {e}")
                 except Exception:
                     pass
             
@@ -2629,6 +2663,38 @@ class TerminalWidget(Gtk.Box):
                 if '=' in env_item:
                     key, value = env_item.split('=', 1)
                     env_dict[key] = value
+        
+        # Create and configure PTY before spawning (for local terminals)
+        # According to VTE docs, we should set PTY size before spawning to avoid SIGWINCH
+        if self.vte is not None:
+            try:
+                # Check if PTY is already set
+                existing_pty = None
+                try:
+                    existing_pty = self.vte.get_pty()
+                except Exception:
+                    pass
+                
+                # Create new PTY if not already set
+                if existing_pty is None:
+                    pty = Vte.Pty.new_sync(Vte.PtyFlags.DEFAULT)
+                    # Set PTY size before spawning to avoid child process receiving SIGWINCH
+                    try:
+                        rows = self.vte.get_row_count()
+                        cols = self.vte.get_column_count()
+                        # Only set size if we have valid dimensions (not default 80x24)
+                        if rows > 0 and cols > 0 and (rows != 24 or cols != 80):
+                            pty.set_size(rows, cols)
+                            logger.debug(f"Set PTY size to {rows}x{cols} before local terminal spawn")
+                    except Exception as e:
+                        logger.debug(f"Could not set PTY size before spawn: {e}")
+                    # Associate PTY with Terminal so spawn_async uses it
+                    try:
+                        self.vte.set_pty(pty)
+                    except Exception as e:
+                        logger.debug(f"Could not set PTY on terminal: {e}")
+            except Exception as e:
+                logger.debug(f"Could not create/set PTY for local terminal: {e}")
         
         self.backend.spawn_async(
             argv=command,
