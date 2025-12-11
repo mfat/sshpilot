@@ -174,6 +174,7 @@ class Config(GObject.Object):
                 'window_height': 800,
                 'sidebar_width': 250,
                 'group_color_display': 'fill',
+                'group_row_display': 'nested',
                 'use_group_color_in_tab': False,
                 'use_group_color_in_terminal': False,
                 'connection_sort_last': 'name-asc',

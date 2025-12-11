@@ -7309,13 +7309,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 for terminal in terms:
                     terminal.apply_theme()
         elif key == 'ui.group_row_display':
-            normalized = 'fullwidth'
+            normalized = 'nested'
             try:
                 normalized = str(value).lower()
             except Exception:
                 pass
             if normalized not in {'fullwidth', 'nested'}:
-                normalized = 'fullwidth'
+                normalized = 'nested'
 
             for row in self.connection_rows.values():
                 if hasattr(row, 'refresh_group_display_mode'):

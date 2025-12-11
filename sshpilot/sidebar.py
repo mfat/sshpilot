@@ -887,7 +887,7 @@ class ConnectionRow(Gtk.ListBoxRow):
         if self._group_display_mode in _GROUP_DISPLAY_OPTIONS:
             return self._group_display_mode
 
-        mode = 'fullwidth'
+        mode = 'nested'
         config = getattr(self, 'config', None)
         if config:
             try:

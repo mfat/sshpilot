@@ -1092,15 +1092,15 @@ class PreferencesWindow(Adw.Window):
                 }
                 self._group_display_toggle_controller = _GroupDisplayToggleFallback(buttons)
 
-            current_display_mode = 'fullwidth'
+            current_display_mode = 'nested'
             try:
                 current_display_mode = str(
-                    self.config.get_setting('ui.group_row_display', 'fullwidth')
+                    self.config.get_setting('ui.group_row_display', 'nested')
                 ).lower()
             except Exception:
-                current_display_mode = 'fullwidth'
+                current_display_mode = 'nested'
             if current_display_mode not in self._group_display_modes:
-                current_display_mode = 'fullwidth'
+                current_display_mode = 'nested'
 
             self._group_display_toggle_sync = True
             try:
@@ -2015,17 +2015,17 @@ class PreferencesWindow(Adw.Window):
 
         valid_modes = getattr(self, '_group_display_modes', ['fullwidth', 'nested'])
         if active_name not in valid_modes:
-            active_name = 'fullwidth'
+            active_name = 'nested'
 
         try:
             current_value = str(
-                self.config.get_setting('ui.group_row_display', 'fullwidth')
+                self.config.get_setting('ui.group_row_display', 'nested')
             ).lower()
         except Exception:
-            current_value = 'fullwidth'
+            current_value = 'nested'
 
         if current_value not in valid_modes:
-            current_value = 'fullwidth'
+            current_value = 'nested'
 
         if current_value == active_name:
             self._update_group_display_preview(active_name)
