@@ -14,6 +14,8 @@ from gettext import gettext as _
 from .connection_manager import Connection
 from .platform_utils import is_macos
 
+logger = logging.getLogger(__name__)
+
 
 SSH_OPTIONS_EXPECTING_ARGUMENT = {
     "-b",
@@ -717,21 +719,29 @@ class WelcomePage(Gtk.Overlay):
 
     def open_online_help(self):
         """Open online help documentation"""
+        logger.debug("open_online_help called")
         import webbrowser
         try:
             webbrowser.open('https://github.com/mfat/sshpilot/wiki')
+            logger.debug("Successfully opened browser")
         except Exception as e:
+            logger.error(f"Failed to open browser: {e}")
             # Fallback: show a dialog with the URL
-            dialog = Adw.MessageDialog.new(
-                self.window,
-                "Online Help",
-                "Visit the SSH Pilot documentation at:\nhttps://github.com/mfat/sshpilot/wiki"
-            )
-            dialog.add_response("ok", "OK")
-            dialog.set_response_appearance("ok", Adw.ResponseAppearance.SUGGESTED)
-            dialog.set_modal(True)
-            dialog.set_transient_for(self.window)
-            dialog.present()
+            try:
+                dialog = Adw.MessageDialog(
+                    transient_for=self.window,
+                    modal=True,
+                    heading=_("Online Help"),
+                    body=_("Visit the SSH Pilot documentation at:\nhttps://github.com/mfat/sshpilot/wiki")
+                )
+                dialog.add_response("ok", _("OK"))
+                dialog.set_response_appearance("ok", Adw.ResponseAppearance.SUGGESTED)
+                dialog.set_default_response("ok")
+                dialog.set_close_response("ok")
+                dialog.present()
+                logger.debug("Showed fallback help dialog")
+            except Exception as e2:
+                logger.error(f"Failed to show help dialog: {e2}", exc_info=True)
     
     def _parse_ssh_command(self, command_text):
         """Parse SSH command text and extract connection parameters"""
