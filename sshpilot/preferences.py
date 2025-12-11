@@ -629,6 +629,7 @@ class PreferencesWindow(Adw.Window):
         self.header_title_label.set_single_line_mode(True)
         self.header_title_label.set_xalign(0.0)
         self.header_bar.set_title_widget(self.header_title_label)
+        self.header_bar.set_decoration_layout('close')
         
         # Explicitly enable window controls to ensure they're always visible,
         # even with custom themes that might not render WindowControls properly
