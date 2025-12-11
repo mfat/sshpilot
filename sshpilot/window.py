@@ -1398,7 +1398,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             self.split_view = Adw.OverlaySplitView()
             try:
                 self.split_view.set_sidebar_width_fraction(0.25)
-                self.split_view.set_min_sidebar_width(200)
+                self.split_view.set_min_sidebar_width(180)
                 self.split_view.set_max_sidebar_width(400)
             except Exception:
                 pass

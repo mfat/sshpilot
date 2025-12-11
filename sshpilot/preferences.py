@@ -566,6 +566,37 @@ class PreferencesWindow(Adw.Window):
 
         # Main split view container
         self.navigation_split_view = Adw.NavigationSplitView()
+        
+        # Configure sidebar width properties according to NavigationSplitView API
+        # Defaults: 25% fraction, 180sp min, 280sp max, SP unit
+        try:
+            self.navigation_split_view.set_sidebar_width_fraction(0.25)
+            self.navigation_split_view.set_min_sidebar_width(180)
+            self.navigation_split_view.set_max_sidebar_width(280)
+            # Set length unit to SP (scale-independent pixels) for responsive sizing
+            if hasattr(Adw, 'LengthUnit'):
+                self.navigation_split_view.set_sidebar_width_unit(Adw.LengthUnit.SP)
+        except Exception as e:
+            logger.debug(f"Failed to set NavigationSplitView sidebar width properties: {e}")
+        
+        # Set show_content to True so content page is visible when collapsed
+        # (sidebar will be hidden, content will be shown)
+        try:
+            self.navigation_split_view.set_show_content(True)
+        except Exception as e:
+            logger.debug(f"Failed to set NavigationSplitView show_content: {e}")
+        
+        # Add breakpoint for responsive design: collapse on small widths
+        # This follows the NavigationSplitView API recommendation
+        try:
+            if hasattr(Adw, 'Breakpoint') and hasattr(Adw, 'breakpoint_condition_parse'):
+                condition = Adw.breakpoint_condition_parse("max-width: 400sp")
+                breakpoint = Adw.Breakpoint.new(condition)
+                breakpoint.add_setter(self.navigation_split_view, "collapsed", True)
+                self.add_breakpoint(breakpoint)
+        except Exception as e:
+            logger.debug(f"Failed to add NavigationSplitView breakpoint: {e}")
+        
         self.set_content(self.navigation_split_view)
 
         # Sidebar list with navigation styling
