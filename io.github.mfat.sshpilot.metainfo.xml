@@ -50,6 +50,16 @@
 
 
 
+
+    <release version="4.7.6" date="2025-12-11">
+
+      <description>
+        <p>- Support for sidebar resizing</p>
+        <p>- Toggles for info labels in sidebar</p>
+        <p>- Updated color badges</p>
+        <p>- Various bug fixes and UI improvements</p>
+      </description>
+    </release>
     <release version="4.7.5" date="2025-12-11">
 
       <description>
