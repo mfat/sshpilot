@@ -608,8 +608,33 @@ class PreferencesWindow(Adw.Window):
         sidebar_scroller = Gtk.ScrolledWindow()
         sidebar_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         sidebar_scroller.set_child(self.sidebar)
+        
+        # Header bar for sidebar with window controls
+        # Note: OverlaySplitView automatically hides window buttons in the middle of HeaderBars
+        # See: https://gnome.pages.gitlab.gnome.org/libadwaita/doc/1.4/class.OverlaySplitView.html
+        self.sidebar_header_bar = Adw.HeaderBar()
+        self.sidebar_header_bar.add_css_class("flat")
+        
+        # Sidebar title always shows "Preferences" (like GNOME Settings)
+        sidebar_title_label = Gtk.Label.new(self._base_header_title)
+        sidebar_title_label.add_css_class("title")
+        sidebar_title_label.set_single_line_mode(True)
+        sidebar_title_label.set_xalign(0.0)
+        self.sidebar_header_bar.set_title_widget(sidebar_title_label)
+        
+        # Enable window controls on both sides - OverlaySplitView will automatically
+        # hide middle buttons. This ensures close button is visible for users with
+        # window controls on either left or right side.
+        self.sidebar_header_bar.set_show_start_title_buttons(True)
+        self.sidebar_header_bar.set_show_end_title_buttons(True)
+        
+        # ToolbarView with HeaderBar for sidebar
+        sidebar_toolbar_view = Adw.ToolbarView()
+        sidebar_toolbar_view.add_top_bar(self.sidebar_header_bar)
+        sidebar_toolbar_view.set_content(sidebar_scroller)
+        
         # OverlaySplitView doesn't use NavigationPage - set widget directly
-        self.overlay_split_view.set_sidebar(sidebar_scroller)
+        self.overlay_split_view.set_sidebar(sidebar_toolbar_view)
 
         # Stack for page content
         self.content_stack = Gtk.Stack()
@@ -620,7 +645,9 @@ class PreferencesWindow(Adw.Window):
         content_scroller = Gtk.ScrolledWindow()
         content_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         content_scroller.set_child(self.content_stack)
-        # Header bar with window controls
+        # Header bar for content area with window controls
+        # Note: OverlaySplitView automatically hides window buttons in the middle of HeaderBars
+        # See: https://gnome.pages.gitlab.gnome.org/libadwaita/doc/1.4/class.OverlaySplitView.html
         self.header_bar = Adw.HeaderBar()
         self.header_bar.add_css_class("flat")
         
@@ -630,8 +657,9 @@ class PreferencesWindow(Adw.Window):
         self.header_title_label.set_xalign(0.0)
         self.header_bar.set_title_widget(self.header_title_label)
         
-        # Explicitly enable window controls to ensure they're always visible,
-        # even with custom themes that might not render WindowControls properly
+        # Enable window controls on both sides - OverlaySplitView will automatically
+        # hide middle buttons. This ensures close button is visible for users with
+        # window controls on either left or right side.
         self.header_bar.set_show_start_title_buttons(True)
         self.header_bar.set_show_end_title_buttons(True)
 
@@ -662,10 +690,17 @@ class PreferencesWindow(Adw.Window):
                 self._update_header_title(title)
 
     def _update_header_title(self, page_title: Optional[str] = None):
-        """Update the header label (always shows just "Preferences")."""
+        """Update the content area header label dynamically based on selected page.
+        
+        Sidebar always shows "Preferences", content area shows the page title.
+        """
         header_label = getattr(self, "header_title_label", None)
         if header_label:
-            header_label.set_label(self._base_header_title)
+            # Content area shows the page title, or "Preferences" if no page selected
+            if page_title:
+                header_label.set_label(page_title)
+            else:
+                header_label.set_label(self._base_header_title)
 
         # Keep window title static as "Preferences" only
         self.set_title(self._base_header_title)
