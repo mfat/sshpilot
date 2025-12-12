@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:4.7.7}
+Version:        %{?version}%{!?version:4.7.8}
 Release:        1%{?dist}
 Summary:        Manage your servers with ease
 
@@ -92,6 +92,9 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/io.github.mfat.sshpil
 %{_datadir}/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg
 
 %changelog
+* Fri Dec 12 2025 mFat <newmfat@gmail.com> - 4.7.8
+- - Bug fixes
+
 * Fri Dec 12 2025 mFat <newmfat@gmail.com> - 4.7.7
 - - Fixed saved secrets not used for login
 
