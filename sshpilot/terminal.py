@@ -2653,11 +2653,12 @@ class TerminalWidget(Gtk.Box):
                             return
                         
                         # Check if widget has been allocated (has non-zero dimensions)
-                        # This is more reliable than just checking VTE size
+                        # Use get_width()/get_height() instead of deprecated get_allocated_width()/get_allocated_height()
+                        # (deprecated since GTK 4.12)
                         widget_allocated = False
                         try:
-                            allocated_width = widget.get_allocated_width() if hasattr(widget, 'get_allocated_width') else widget.get_width()
-                            allocated_height = widget.get_allocated_height() if hasattr(widget, 'get_allocated_height') else widget.get_height()
+                            allocated_width = widget.get_width()
+                            allocated_height = widget.get_height()
                             
                             # Widget must have been allocated (non-zero size)
                             widget_allocated = allocated_width > 0 and allocated_height > 0
@@ -2711,11 +2712,13 @@ class TerminalWidget(Gtk.Box):
                                 logger.debug("Fallback: Checking terminal size after timeout")
                                 
                                 # Check if widget is allocated
+                                # Use get_width()/get_height() instead of deprecated get_allocated_width()/get_allocated_height()
+                                # (deprecated since GTK 4.12)
                                 widget_allocated = False
                                 try:
                                     if widget_to_connect:
-                                        allocated_width = widget_to_connect.get_allocated_width() if hasattr(widget_to_connect, 'get_allocated_width') else widget_to_connect.get_width()
-                                        allocated_height = widget_to_connect.get_allocated_height() if hasattr(widget_to_connect, 'get_allocated_height') else widget_to_connect.get_height()
+                                        allocated_width = widget_to_connect.get_width()
+                                        allocated_height = widget_to_connect.get_height()
                                         widget_allocated = allocated_width > 0 and allocated_height > 0
                                         logger.debug(f"Fallback: Widget allocated={widget_allocated}, size={allocated_width}x{allocated_height}")
                                 except Exception as e:
