@@ -2636,7 +2636,15 @@ class TerminalWidget(Gtk.Box):
                 # Store client for later use
                 self._pending_agent_client = client
                 # Connect to size-allocate to spawn when terminal is allocated
-                if getattr(self, 'vte', None) is not None:
+                # Use terminal_widget or scrolled_window instead of vte directly,
+                # as VTE.Terminal may not expose size-allocate signal properly
+                widget_to_connect = None
+                if getattr(self, 'terminal_widget', None) is not None:
+                    widget_to_connect = self.terminal_widget
+                elif getattr(self, 'scrolled_window', None) is not None:
+                    widget_to_connect = self.scrolled_window
+                
+                if widget_to_connect is not None:
                     def on_size_allocate(widget, allocation):
                         # Only spawn once
                         if hasattr(self, '_pending_agent_client'):
@@ -2649,12 +2657,18 @@ class TerminalWidget(Gtk.Box):
                             logger.debug(f"Terminal allocated, spawning agent with size {cols}x{rows}")
                             self._spawn_agent_shell(client, cols, rows)
                     
-                    self.vte.connect('size-allocate', on_size_allocate)
-                    return True
+                    try:
+                        widget_to_connect.connect('size-allocate', on_size_allocate)
+                        return True
+                    except Exception as e:
+                        logger.warning(f"Failed to connect size-allocate signal, spawning immediately: {e}")
+                        # Clean up pending client and fall through to spawn with current size
+                        if hasattr(self, '_pending_agent_client'):
+                            delattr(self, '_pending_agent_client')
                 else:
-                    # For non-VTE backends, try to spawn with current size
-                    # They might handle resize differently
-                    pass
+                    # For non-VTE backends or if we can't find a widget to connect,
+                    # spawn immediately with current size
+                    logger.debug("No widget available for size-allocate, spawning immediately")
             
             # Spawn immediately if we have a reasonable size
             return self._spawn_agent_shell(client, cols, rows)
