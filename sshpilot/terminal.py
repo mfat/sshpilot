@@ -2635,60 +2635,130 @@ class TerminalWidget(Gtk.Box):
                 logger.debug("Terminal not allocated yet, deferring agent spawn until size is available")
                 # Store client for later use
                 self._pending_agent_client = client
-                # Connect to size-allocate to spawn when terminal is allocated
-                # Use terminal_widget (the actual Gtk.Widget) instead of vte
-                widget_to_connect = getattr(self, 'terminal_widget', None) or getattr(self, 'vte', None)
+                # Use GTK4-compatible notify signals for size allocation
+                # In GTK4, size-allocate signal was removed, use notify::allocated-width/height instead
+                widget_to_connect = None
+                if getattr(self, 'terminal_widget', None) is not None:
+                    widget_to_connect = self.terminal_widget
+                elif getattr(self, 'scrolled_window', None) is not None:
+                    widget_to_connect = self.scrolled_window
+                elif getattr(self, 'vte', None) is not None:
+                    # Fallback to VTE widget itself
+                    widget_to_connect = self.vte
+                
                 if widget_to_connect is not None:
-                    def on_size_allocate(widget, allocation):
-                        # Only spawn once
-                        if hasattr(self, '_pending_agent_client'):
+                    def on_size_changed(widget, param_spec):
+                        # Only spawn once - check if pending client exists
+                        if not hasattr(self, '_pending_agent_client'):
+                            return
+                        
+                        # Check if widget has been allocated (has non-zero dimensions)
+                        # Use get_width()/get_height() instead of deprecated get_allocated_width()/get_allocated_height()
+                        # (deprecated since GTK 4.12)
+                        widget_allocated = False
+                        try:
+                            allocated_width = widget.get_width()
+                            allocated_height = widget.get_height()
+                            
+                            # Widget must have been allocated (non-zero size)
+                            widget_allocated = allocated_width > 0 and allocated_height > 0
+                            if not widget_allocated:
+                                logger.debug(f"Widget not allocated yet: {allocated_width}x{allocated_height}")
+                                return
+                        except Exception as e:
+                            logger.debug(f"Could not check widget allocation: {e}")
+                            # If we can't get allocated size, fall back to VTE size check
+                            widget_allocated = True  # Assume allocated if we can't check
+                        
+                        # Check if we now have a reasonable size from VTE
+                        # If widget is allocated, spawn even if size is still 80x24 (might be actual size)
+                        cols, rows = self._get_terminal_size()
+                        logger.debug(f"Size check: widget_allocated={widget_allocated}, cols={cols}, rows={rows}")
+                        
+                        # Spawn if widget is allocated (even if size is 80x24, it might be the actual size)
+                        if widget_allocated and cols >= 80 and rows >= 24:
                             client = self._pending_agent_client
                             delattr(self, '_pending_agent_client')
-                            try:
-                                widget.disconnect_by_func(on_size_allocate)
-                            except Exception:
-                                pass
                             
-                            # Get the actual size now
-                            cols, rows = self._get_terminal_size()
+                            # Disconnect both handlers to prevent duplicate calls
+                            if hasattr(self, '_pending_size_handlers'):
+                                for handler_id in self._pending_size_handlers:
+                                    try:
+                                        widget.disconnect(handler_id)
+                                    except Exception:
+                                        pass
+                                delattr(self, '_pending_size_handlers')
+                            else:
+                                # Fallback to disconnect_by_func if handlers not stored
+                                widget.disconnect_by_func(on_size_changed)
+                            
                             logger.debug(f"Terminal allocated, spawning agent with size {cols}x{rows}")
                             self._spawn_agent_shell(client, cols, rows)
                     
-                    # Try to connect to size-allocate signal
-                    # If it fails (e.g., in Flatpak), use realize + idle_add as fallback
                     try:
-                        widget_to_connect.connect('size-allocate', on_size_allocate)
-                        return True
-                    except (TypeError, AttributeError) as e:
-                        logger.debug(f"size-allocate signal not available, using realize fallback: {e}")
-                        # Fallback: use realize signal and check size with idle_add
-                        def on_realize(widget):
-                            def check_size():
-                                if hasattr(self, '_pending_agent_client'):
-                                    cols, rows = self._get_terminal_size()
-                                    if cols != 80 or rows != 24:
-                                        client = self._pending_agent_client
-                                        delattr(self, '_pending_agent_client')
-                                        logger.debug(f"Terminal realized, spawning agent with size {cols}x{rows}")
-                                        self._spawn_agent_shell(client, cols, rows)
-                                        return False  # Don't repeat
-                                return True  # Keep checking
-                            
-                            # Check immediately and then periodically
-                            GLib.idle_add(check_size)
-                            GLib.timeout_add(100, check_size)  # Check every 100ms
+                        # Use notify signals for GTK4 compatibility
+                        # Connect to both width and height to catch allocation
+                        handler1 = widget_to_connect.connect('notify::allocated-width', on_size_changed)
+                        handler2 = widget_to_connect.connect('notify::allocated-height', on_size_changed)
+                        # Store handlers for cleanup if needed
+                        if not hasattr(self, '_pending_size_handlers'):
+                            self._pending_size_handlers = []
+                        self._pending_size_handlers = [handler1, handler2]
                         
-                        try:
-                            widget_to_connect.connect('realize', on_realize)
-                            return True
-                        except Exception as e2:
-                            logger.warning(f"Failed to connect realize signal: {e2}")
-                            # Last resort: spawn with default size
-                            return self._spawn_agent_shell(client, 80, 24)
+                        # Add a fallback timeout in case signals don't fire
+                        # This ensures we spawn even if allocation detection fails
+                        def fallback_spawn():
+                            if hasattr(self, '_pending_agent_client'):
+                                logger.debug("Fallback: Checking terminal size after timeout")
+                                
+                                # Check if widget is allocated
+                                # Use get_width()/get_height() instead of deprecated get_allocated_width()/get_allocated_height()
+                                # (deprecated since GTK 4.12)
+                                widget_allocated = False
+                                try:
+                                    if widget_to_connect:
+                                        allocated_width = widget_to_connect.get_width()
+                                        allocated_height = widget_to_connect.get_height()
+                                        widget_allocated = allocated_width > 0 and allocated_height > 0
+                                        logger.debug(f"Fallback: Widget allocated={widget_allocated}, size={allocated_width}x{allocated_height}")
+                                except Exception as e:
+                                    logger.debug(f"Fallback: Could not check widget allocation: {e}")
+                                    widget_allocated = True  # Assume allocated if we can't check
+                                
+                                cols, rows = self._get_terminal_size()
+                                logger.debug(f"Fallback: VTE size={cols}x{rows}")
+                                
+                                # Spawn with current size (even if still 80x24 or widget not fully allocated)
+                                # It's better to have a terminal than none at all
+                                client = self._pending_agent_client
+                                delattr(self, '_pending_agent_client')
+                                
+                                # Disconnect handlers if they're still connected
+                                if hasattr(self, '_pending_size_handlers') and widget_to_connect:
+                                    for handler_id in self._pending_size_handlers:
+                                        try:
+                                            widget_to_connect.disconnect(handler_id)
+                                        except Exception:
+                                            pass
+                                    delattr(self, '_pending_size_handlers')
+                                
+                                logger.info(f"Fallback: Spawning agent with size {cols}x{rows} (widget_allocated={widget_allocated})")
+                                self._spawn_agent_shell(client, cols, rows)
+                            return False  # Don't repeat
+                        
+                        # Set timeout to check after 500ms
+                        GLib.timeout_add(500, fallback_spawn)
+                        logger.debug("Connected to notify signals and set fallback timeout")
+                        return True
+                    except Exception as e:
+                        logger.warning(f"Failed to connect notify signals, spawning immediately: {e}")
+                        # Clean up pending client and fall through to spawn with current size
+                        if hasattr(self, '_pending_agent_client'):
+                            delattr(self, '_pending_agent_client')
                 else:
-                    # For non-VTE backends, try to spawn with current size
-                    # They might handle resize differently
-                    pass
+                    # For non-VTE backends or if we can't find a widget to connect,
+                    # spawn immediately with current size
+                    logger.debug("No widget available for size notification, spawning immediately")
             
             # Spawn immediately if we have a reasonable size
             return self._spawn_agent_shell(client, cols, rows)
