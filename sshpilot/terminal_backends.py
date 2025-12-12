@@ -8,6 +8,7 @@ import os
 import sys
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional, Protocol, Sequence
+import shlex
 
 import gi
 
@@ -1429,11 +1430,13 @@ class PyXtermTerminalBackend:
                 # pyxtermjs expects --command to be just the executable and --cmd-args for arguments
                 executable = command[0]
                 args = command[1:] if len(command) > 1 else []
-                
+
                 pyxterm_cmd.extend(['--command', executable])
                 if args:
-                    # Join arguments with spaces for --cmd-args
-                    args_string = ' '.join(args)
+                    # Join arguments with proper shell quoting so pyxtermjs can
+                    # reconstruct the argv list without losing grouping (e.g.
+                    # bash -c "<script>").
+                    args_string = ' '.join(shlex.quote(arg) for arg in args)
                     pyxterm_cmd.extend([f'--cmd-args={args_string}'])
         else:
             pyxterm_cmd.extend(['--command', 'bash'])
