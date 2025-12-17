@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Dict, List, Optional
 
@@ -34,6 +35,86 @@ _DEFAULT_ROW_WIDGET_MARGIN_START = -1
 _GROUP_DISPLAY_OPTIONS = {"fullwidth", "nested"}
 _GROUP_ROW_INDENT_WIDTH = 20
 _MIN_VALID_MARGIN = 0
+_DND_MIME_TYPE = "application/json"
+
+
+def _serialize_drag_payload(payload: Dict) -> Optional[Gdk.ContentProvider]:
+    """Convert a drag payload to a JSON-backed content provider."""
+
+    providers: List[Gdk.ContentProvider] = []
+
+    try:
+        serialized = json.dumps(payload, separators=(",", ":"), sort_keys=True)
+    except Exception:
+        logger.error("Failed to serialize drag payload", exc_info=True)
+        return None
+
+    try:
+        payload_bytes = GLib.Bytes.new(serialized.encode("utf-8"))
+        providers.append(Gdk.ContentProvider.new_for_bytes(_DND_MIME_TYPE, payload_bytes))
+    except Exception:
+        logger.debug("Failed to create bytes content provider", exc_info=True)
+
+    try:
+        variant = GLib.Variant.new_string(serialized)
+        providers.append(Gdk.ContentProvider.new_for_value(variant))
+    except Exception:
+        logger.debug("Failed to create variant content provider", exc_info=True)
+
+    try:
+        providers.append(Gdk.ContentProvider.new_for_value(serialized))
+    except Exception:
+        logger.debug("Failed to create string content provider", exc_info=True)
+
+    if not providers:
+        return None
+
+    if len(providers) == 1:
+        return providers[0]
+
+    try:
+        return Gdk.ContentProvider.new_union(providers)
+    except Exception:
+        logger.debug("Failed to create union content provider", exc_info=True)
+        return providers[0]
+
+
+def _deserialize_drop_payload(value) -> Optional[Dict]:
+    """Decode drop data from GLib.Bytes or string content into a dictionary."""
+
+    if isinstance(value, dict):
+        return value
+
+    if isinstance(value, GLib.Variant):
+        try:
+            if value.is_of_type(GLib.VariantType.new("s")):
+                value = value.get_string()
+        except Exception:
+            logger.debug("Failed to extract string from GLib.Variant", exc_info=True)
+
+    try:
+        raw_bytes: Optional[bytes] = None
+
+        if isinstance(value, GLib.Bytes):
+            data = value.get_data()
+            if isinstance(data, tuple):
+                data = data[0]
+            if hasattr(data, "tobytes"):
+                raw_bytes = data.tobytes()
+            else:
+                raw_bytes = bytes(data)
+        elif isinstance(value, (bytes, bytearray, memoryview)):
+            raw_bytes = bytes(value)
+        elif isinstance(value, str):
+            raw_bytes = value.encode("utf-8")
+
+        if raw_bytes is None:
+            return None
+
+        return json.loads(raw_bytes.decode("utf-8"))
+    except Exception:
+        logger.error("Failed to deserialize drop payload", exc_info=True)
+        return None
 
 
 def _install_sidebar_color_css():
@@ -431,9 +512,7 @@ class GroupRow(Gtk.ListBoxRow):
 
     def _on_drag_prepare(self, source, x, y):
         data = {"type": "group", "group_id": self.group_id}
-        return Gdk.ContentProvider.new_for_value(
-            GObject.Value(GObject.TYPE_PYOBJECT, data)
-        )
+        return _serialize_drag_payload(data)
 
     def _on_drag_begin(self, source, drag):
         try:
@@ -1103,9 +1182,7 @@ class ConnectionRow(Gtk.ListBoxRow):
         if window:
             window._dragged_connections = ordered_nicknames
 
-        return Gdk.ContentProvider.new_for_value(
-            GObject.Value(GObject.TYPE_PYOBJECT, data)
-        )
+        return _serialize_drag_payload(data)
 
     def _on_drag_begin(self, source, drag):
         try:
@@ -1268,7 +1345,21 @@ class ConnectionRow(Gtk.ListBoxRow):
 def setup_connection_list_dnd(window):
     """Set up drag and drop for the window's connection list."""
 
-    drop_target = Gtk.DropTarget.new(type=GObject.TYPE_PYOBJECT, actions=Gdk.DragAction.MOVE)
+    formats_builder = Gdk.ContentFormatsBuilder()
+    try:
+        formats_builder.add_mime_type(_DND_MIME_TYPE)
+    except Exception:
+        logger.debug("Failed to add JSON mime type to formats", exc_info=True)
+    try:
+        formats_builder.add_mime_type("text/plain")
+    except Exception:
+        logger.debug("Failed to add text/plain mime type to formats", exc_info=True)
+
+    drop_target = Gtk.DropTarget.new(type=str, actions=Gdk.DragAction.MOVE)
+    try:
+        drop_target.set_formats(formats_builder.to_formats())
+    except Exception:
+        logger.debug("Failed to set drop target formats", exc_info=True)
     drop_target.connect("drop", lambda t, v, x, y: _on_connection_list_drop(window, t, v, x, y))
     drop_target.connect("motion", lambda t, x, y: _on_connection_list_motion(window, t, x, y))
     drop_target.connect("leave", lambda t: _on_connection_list_leave(window, t))
@@ -1499,8 +1590,9 @@ def _on_connection_list_drop(window, target, value, x, y):
             window._drag_in_progress = False
             window.connection_list.set_selection_mode(Gtk.SelectionMode.MULTIPLE)
 
-        # Extract Python object from GObject.Value drops
-        if isinstance(value, GObject.Value):
+        payload = _deserialize_drop_payload(value)
+
+        if payload is None and isinstance(value, GObject.Value):
             extracted = None
             for getter in ("get_boxed", "get_object", "get"):
                 try:
@@ -1509,35 +1601,34 @@ def _on_connection_list_drop(window, target, value, x, y):
                         break
                 except Exception:
                     continue
-            value = extracted
+            payload = _deserialize_drop_payload(extracted)
 
-
-        if not isinstance(value, dict):
+        if not isinstance(payload, dict):
             return False
 
-        drop_type = value.get("type")
+        drop_type = payload.get("type")
         changes_made = False
 
         if drop_type == "connection":
             connection_nicknames: List[str] = []
 
-            payload = value.get("connections")
-            if isinstance(payload, list):
-                for item in payload:
+            payload_connections = payload.get("connections")
+            if isinstance(payload_connections, list):
+                for item in payload_connections:
                     if isinstance(item, dict):
                         nickname = item.get("nickname")
                         if isinstance(nickname, str) and nickname not in connection_nicknames:
                             connection_nicknames.append(nickname)
 
             if not connection_nicknames:
-                raw_list = value.get("connection_nicknames")
+                raw_list = payload.get("connection_nicknames")
                 if isinstance(raw_list, list):
                     for nickname in raw_list:
                         if isinstance(nickname, str) and nickname not in connection_nicknames:
                             connection_nicknames.append(nickname)
 
             if not connection_nicknames:
-                nickname = value.get("connection_nickname")
+                nickname = payload.get("connection_nickname")
                 if isinstance(nickname, str):
                     connection_nicknames.append(nickname)
 
@@ -1627,7 +1718,7 @@ def _on_connection_list_drop(window, target, value, x, y):
                                     changes_made = True
 
         elif drop_type == "group":
-            group_id = value.get("group_id")
+            group_id = payload.get("group_id")
             if group_id:
                 target_row = window.connection_list.get_row_at_y(int(y))
                 if target_row and hasattr(target_row, "group_id"):
