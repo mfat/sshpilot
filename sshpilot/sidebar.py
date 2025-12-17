@@ -430,10 +430,8 @@ class GroupRow(Gtk.ListBoxRow):
         self._drag_source = drag_source
 
     def _on_drag_prepare(self, source, x, y):
-        data = {"type": "group", "group_id": self.group_id}
-        return Gdk.ContentProvider.new_for_value(
-            GObject.Value(GObject.TYPE_PYOBJECT, data)
-        )
+        payload = {"type": "group", "group_id": self.group_id}
+        return Gdk.ContentProvider.new_for_value(payload)
 
     def _on_drag_begin(self, source, drag):
         try:
@@ -1093,7 +1091,7 @@ class ConnectionRow(Gtk.ListBoxRow):
                 ordered_nicknames.append(nickname)
             item.pop("order", None)
 
-        data = {
+        payload = {
             "type": "connection",
             "connection_nickname": ordered_nicknames[0] if ordered_nicknames else self.connection.nickname,
             "connection_nicknames": ordered_nicknames,
@@ -1103,9 +1101,7 @@ class ConnectionRow(Gtk.ListBoxRow):
         if window:
             window._dragged_connections = ordered_nicknames
 
-        return Gdk.ContentProvider.new_for_value(
-            GObject.Value(GObject.TYPE_PYOBJECT, data)
-        )
+        return Gdk.ContentProvider.new_for_value(payload)
 
     def _on_drag_begin(self, source, drag):
         try:
@@ -1265,14 +1261,45 @@ class ConnectionRow(Gtk.ListBoxRow):
 # ---------------------------------------------------------------------------
 
 
+def _coerce_drag_value(value):
+    """Extract the Python payload from drag values produced by ``DragSource``."""
+
+    if isinstance(value, GObject.Value):
+        for getter in ("get_boxed", "get_object", "get"):
+            try:
+                extracted = getattr(value, getter)()
+            except Exception:
+                extracted = None
+            if extracted is not None:
+                return extracted
+        return None
+
+    return value
+
+
 def setup_connection_list_dnd(window):
     """Set up drag and drop for the window's connection list."""
 
     drop_target = Gtk.DropTarget.new(type=GObject.TYPE_PYOBJECT, actions=Gdk.DragAction.MOVE)
-    drop_target.connect("drop", lambda t, v, x, y: _on_connection_list_drop(window, t, v, x, y))
-    drop_target.connect("motion", lambda t, x, y: _on_connection_list_motion(window, t, x, y))
-    drop_target.connect("leave", lambda t: _on_connection_list_leave(window, t))
+    drop_target.connect(
+        "accept", lambda target, value: isinstance(_coerce_drag_value(value), dict)
+    )
+    drop_target.connect(
+        "drop", lambda target, value, x, y: _on_connection_list_drop(window, value, x, y)
+    )
     window.connection_list.add_controller(drop_target)
+
+    motion_controller = Gtk.DropControllerMotion()
+    motion_controller.connect(
+        "enter", lambda controller, x, y: _on_connection_list_motion(window, x, y)
+    )
+    motion_controller.connect(
+        "motion", lambda controller, x, y: _on_connection_list_motion(window, x, y)
+    )
+    motion_controller.connect(
+        "leave", lambda controller: _on_connection_list_leave(window)
+    )
+    window.connection_list.add_controller(motion_controller)
 
     window._drop_indicator_row = None
     window._drop_indicator_position = None
@@ -1288,7 +1315,7 @@ def setup_connection_list_dnd(window):
         window._connection_autoscroll_interval_ms = 16
 
 
-def _on_connection_list_motion(window, target, x, y):
+def _on_connection_list_motion(window, x, y):
     try:
         # Prevent row selection during drag by temporarily disabling selection
         if not hasattr(window, '_drag_in_progress'):
@@ -1361,7 +1388,7 @@ def _on_connection_list_motion(window, target, x, y):
         return Gdk.DragAction.MOVE
 
 
-def _on_connection_list_leave(window, target):
+def _on_connection_list_leave(window):
     _clear_drop_indicator(window)
     _hide_ungrouped_area(window)
     _stop_connection_autoscroll(window)
@@ -1488,7 +1515,7 @@ def _clear_drop_indicator(window):
         window._drop_indicator_position = None
 
 
-def _on_connection_list_drop(window, target, value, x, y):
+def _on_connection_list_drop(window, value, x, y):
     try:
         _clear_drop_indicator(window)
         _hide_ungrouped_area(window)
@@ -1499,45 +1526,34 @@ def _on_connection_list_drop(window, target, value, x, y):
             window._drag_in_progress = False
             window.connection_list.set_selection_mode(Gtk.SelectionMode.MULTIPLE)
 
-        # Extract Python object from GObject.Value drops
-        if isinstance(value, GObject.Value):
-            extracted = None
-            for getter in ("get_boxed", "get_object", "get"):
-                try:
-                    extracted = getattr(value, getter)()
-                    if extracted is not None:
-                        break
-                except Exception:
-                    continue
-            value = extracted
+        payload = _coerce_drag_value(value)
 
-
-        if not isinstance(value, dict):
+        if not isinstance(payload, dict):
             return False
 
-        drop_type = value.get("type")
+        drop_type = payload.get("type")
         changes_made = False
 
         if drop_type == "connection":
             connection_nicknames: List[str] = []
 
-            payload = value.get("connections")
-            if isinstance(payload, list):
-                for item in payload:
+            connection_payload = payload.get("connections")
+            if isinstance(connection_payload, list):
+                for item in connection_payload:
                     if isinstance(item, dict):
                         nickname = item.get("nickname")
                         if isinstance(nickname, str) and nickname not in connection_nicknames:
                             connection_nicknames.append(nickname)
 
             if not connection_nicknames:
-                raw_list = value.get("connection_nicknames")
+                raw_list = payload.get("connection_nicknames")
                 if isinstance(raw_list, list):
                     for nickname in raw_list:
                         if isinstance(nickname, str) and nickname not in connection_nicknames:
                             connection_nicknames.append(nickname)
 
             if not connection_nicknames:
-                nickname = value.get("connection_nickname")
+                nickname = payload.get("connection_nickname")
                 if isinstance(nickname, str):
                     connection_nicknames.append(nickname)
 
