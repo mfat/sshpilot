@@ -438,20 +438,21 @@ class GroupRow(Gtk.ListBoxRow):
     def _on_drag_begin(self, source, drag):
         try:
             window = self.get_root()
-            controller = _get_connection_dnd_controller(window) if window else None
-            if controller:
-                controller.dragged_group_id = self.group_id
-                controller.begin_drag()
+            if window:
+                # Track which group is being dragged
+                window._dragged_group_id = self.group_id
+                _show_ungrouped_area(window)
         except Exception as e:
             logger.error(f"Error in group drag begin: {e}")
 
     def _on_drag_end(self, source, drag, delete_data):
         try:
             window = self.get_root()
-            controller = _get_connection_dnd_controller(window) if window else None
-            if controller:
-                controller.dragged_group_id = None
-                controller.end_drag()
+            if window:
+                # Clear the dragged group tracking
+                if hasattr(window, "_dragged_group_id"):
+                    delattr(window, "_dragged_group_id")
+                _hide_ungrouped_area(window)
         except Exception as e:
             logger.error(f"Error in group drag end: {e}")
 
@@ -1100,32 +1101,31 @@ class ConnectionRow(Gtk.ListBoxRow):
         }
 
         if window:
-            controller = _get_connection_dnd_controller(window)
-            if controller:
-                controller.set_dragged_connections(ordered_nicknames)
+            window._dragged_connections = ordered_nicknames
 
-        value = GObject.Value()
-        value.init(GObject.TYPE_PYOBJECT)
-        value.set_boxed(data)
-        return Gdk.ContentProvider.new_for_value(value)
+        return Gdk.ContentProvider.new_for_value(
+            GObject.Value(GObject.TYPE_PYOBJECT, data)
+        )
 
     def _on_drag_begin(self, source, drag):
         try:
             window = self.get_root()
-            controller = _get_connection_dnd_controller(window) if window else None
-            if controller:
-                if not controller.dragged_connections:
-                    controller.set_dragged_connections([self.connection.nickname])
-                controller.begin_drag()
+            if window:
+                if not hasattr(window, "_dragged_connections"):
+                    window._dragged_connections = [self.connection.nickname]
+                window._drag_in_progress = True
+                _show_ungrouped_area(window)
         except Exception as e:
             logger.error(f"Error in drag begin: {e}")
 
     def _on_drag_end(self, source, drag, delete_data):
         try:
             window = self.get_root()
-            controller = _get_connection_dnd_controller(window) if window else None
-            if controller:
-                controller.end_drag()
+            if window:
+                if hasattr(window, "_dragged_connections"):
+                    delattr(window, "_dragged_connections")
+                window._drag_in_progress = False
+                _hide_ungrouped_area(window)
         except Exception as e:
             logger.error(f"Error in drag end: {e}")
 
@@ -1265,538 +1265,407 @@ class ConnectionRow(Gtk.ListBoxRow):
 # ---------------------------------------------------------------------------
 
 
+def setup_connection_list_dnd(window):
+    """Set up drag and drop for the window's connection list."""
 
-class ConnectionListDnDController:
-    """Controller that applies the GTK4 drag-and-drop tutorial patterns."""
+    drop_target = Gtk.DropTarget.new(type=GObject.TYPE_PYOBJECT, actions=Gdk.DragAction.MOVE)
+    drop_target.connect("drop", lambda t, v, x, y: _on_connection_list_drop(window, t, v, x, y))
+    drop_target.connect("motion", lambda t, x, y: _on_connection_list_motion(window, t, x, y))
+    drop_target.connect("leave", lambda t: _on_connection_list_leave(window, t))
+    window.connection_list.add_controller(drop_target)
 
-    def __init__(self, window):
-        self.window = window
-        self.connection_list = window.connection_list
-        self.drag_in_progress = False
-        self.dragged_connections: list[str] = []
-        self.dragged_group_id: str | None = None
-        self.last_motion_time: int | None = None
+    window._drop_indicator_row = None
+    window._drop_indicator_position = None
+    window._ungrouped_area_row = None
+    window._ungrouped_area_visible = False
+    window._connection_autoscroll_timeout_id = 0
+    window._connection_autoscroll_velocity = 0.0
+    if not hasattr(window, "_connection_autoscroll_margin"):
+        window._connection_autoscroll_margin = 48.0
+    if not hasattr(window, "_connection_autoscroll_max_velocity"):
+        window._connection_autoscroll_max_velocity = 28.0
+    if not hasattr(window, "_connection_autoscroll_interval_ms"):
+        window._connection_autoscroll_interval_ms = 16
 
-        self.drop_indicator_row = None
-        self.drop_indicator_position = None
-        self.ungrouped_area_row = None
-        self.ungrouped_area_visible = False
-        self.connection_autoscroll_timeout_id = 0
-        self.connection_autoscroll_velocity = 0.0
-        self.connection_autoscroll_margin = getattr(window, "_connection_autoscroll_margin", 48.0)
-        self.connection_autoscroll_max_velocity = getattr(
-            window, "_connection_autoscroll_max_velocity", 28.0
-        )
-        self.connection_autoscroll_interval_ms = getattr(
-            window, "_connection_autoscroll_interval_ms", 16
-        )
 
-        drop_target = Gtk.DropTarget.new(
-            type=GObject.TYPE_PYOBJECT, actions=Gdk.DragAction.MOVE
-        )
-        drop_target.connect("accept", self._on_accept)
-        drop_target.connect("motion", self._on_motion)
-        drop_target.connect("leave", self._on_leave)
-        drop_target.connect("drop", self._on_drop)
-        self.connection_list.add_controller(drop_target)
+def _on_connection_list_motion(window, target, x, y):
+    try:
+        # Prevent row selection during drag by temporarily disabling selection
+        if not hasattr(window, '_drag_in_progress'):
+            window._drag_in_progress = True
+            window.connection_list.set_selection_mode(Gtk.SelectionMode.NONE)
 
-    def begin_drag(self):
-        self.drag_in_progress = True
-        self.connection_list.set_selection_mode(Gtk.SelectionMode.NONE)
-        self._show_ungrouped_area()
-
-    def set_dragged_connections(self, nicknames: list[str]):
-        self.dragged_connections = list(nicknames)
-
-    def end_drag(self):
-        self.drag_in_progress = False
-        self.dragged_connections = []
-        self.dragged_group_id = None
-        self.last_motion_time = None
-        self._clear_drop_indicator()
-        self._hide_ungrouped_area()
-        self._stop_connection_autoscroll()
-        self.connection_list.set_selection_mode(Gtk.SelectionMode.MULTIPLE)
-
-    # -- drop target callbacks -------------------------------------------------
-
-    def _on_accept(self, target: Gtk.DropTarget, value: GObject.Value | object) -> bool:
-        payload = self._coerce_payload(value)
-        if not isinstance(payload, dict):
-            return False
-
-        drop_type = payload.get("type")
-        return drop_type in {"connection", "group"}
-
-    def _on_motion(self, target: Gtk.DropTarget, x: float, y: float) -> Gdk.DragAction:
-        try:
-            if not self.drag_in_progress:
-                self.drag_in_progress = True
-                self.connection_list.set_selection_mode(Gtk.SelectionMode.NONE)
-
-            current_time = GLib.get_monotonic_time()
-            if self.last_motion_time and current_time - self.last_motion_time < 16000:
+        # Throttle motion events to improve performance
+        current_time = GLib.get_monotonic_time()
+        if hasattr(window, '_last_motion_time'):
+            if current_time - window._last_motion_time < 16000:  # ~16ms = 60fps
                 return Gdk.DragAction.MOVE
-            self.last_motion_time = current_time
+        window._last_motion_time = current_time
 
-            self._show_ungrouped_area()
-            self._update_connection_autoscroll(y)
+        _show_ungrouped_area(window)
+        _update_connection_autoscroll(window, y)
 
-            row = self.connection_list.get_row_at_y(int(y))
-            if not row:
-                self._clear_drop_indicator()
-                return Gdk.DragAction.MOVE
-
-            if getattr(row, "ungrouped_area", False):
-                self._clear_drop_indicator()
-                self.drop_indicator_row = row
-                self.drop_indicator_position = "ungrouped"
-                return Gdk.DragAction.MOVE
-
-            if hasattr(row, "show_drop_indicator"):
-                allocation = row.get_allocation()
-                relative_y = y - allocation.y
-                position = "above" if relative_y < allocation.height / 2 else "below"
-
-                if hasattr(row, "connection"):
-                    nickname = getattr(getattr(row, "connection", None), "nickname", None)
-                    if nickname and nickname in set(self.dragged_connections):
-                        self._clear_drop_indicator()
-                        return Gdk.DragAction.MOVE
-                    self._show_drop_indicator(row, position)
-                elif hasattr(row, "group_id") and self.dragged_group_id is not None:
-                    if row.group_id == self.dragged_group_id:
-                        self._clear_drop_indicator()
-                        return Gdk.DragAction.MOVE
-                    self._show_drop_indicator(row, position)
-                elif hasattr(row, "connection") and self.dragged_group_id is not None:
-                    self._show_drop_indicator(row, position)
-                elif hasattr(row, "group_id") and self.dragged_connections:
-                    self._show_drop_indicator_on_group(row)
-                else:
-                    self._clear_drop_indicator()
-            else:
-                self._clear_drop_indicator()
-            return Gdk.DragAction.MOVE
-        except Exception as exc:  # pragma: no cover - defensive guard
-            logger.error(f"Error handling motion: {exc}")
+        row = window.connection_list.get_row_at_y(int(y))
+        if not row:
+            _clear_drop_indicator(window)
             return Gdk.DragAction.MOVE
 
-    def _on_leave(self, target: Gtk.DropTarget) -> bool:
-        self._clear_drop_indicator()
-        self._hide_ungrouped_area()
-        self._stop_connection_autoscroll()
+        if getattr(row, "ungrouped_area", False):
+            # For ungrouped area, we don't need special highlighting
+            _clear_drop_indicator(window)
+            window._drop_indicator_row = row
+            window._drop_indicator_position = "ungrouped"
+            return Gdk.DragAction.MOVE
 
-        if self.drag_in_progress:
-            self.drag_in_progress = False
-            self.connection_list.set_selection_mode(Gtk.SelectionMode.MULTIPLE)
-
-        return True
-
-    def _on_drop(
-        self, target: Gtk.DropTarget, value: GObject.Value | object, x: float, y: float
-    ) -> bool:
-        try:
-            payload = self._coerce_payload(value)
-            if not isinstance(payload, dict):
-                return False
-
-            self._clear_drop_indicator()
-            self._hide_ungrouped_area()
-            self._stop_connection_autoscroll()
-
-            if self.drag_in_progress:
-                self.drag_in_progress = False
-                self.connection_list.set_selection_mode(Gtk.SelectionMode.MULTIPLE)
-
-            drop_type = payload.get("type")
-            changes_made = False
-
-            if drop_type == "connection":
-                changes_made = self._handle_connection_drop(payload, y)
-            elif drop_type == "group":
-                changes_made = self._handle_group_drop(payload, y)
-
-            if changes_made:
-                self.window.rebuild_connection_list()
-            return changes_made
-        except Exception as exc:  # pragma: no cover - defensive guard
-            logger.error(f"Error handling drop: {exc}")
-            return False
-
-    # -- payload helpers ------------------------------------------------------
-
-    @staticmethod
-    def _coerce_payload(value: GObject.Value | object) -> object:
-        if isinstance(value, GObject.Value):
-            for accessor in ("get_boxed", "get_object", "get"):
-                try:
-                    extracted = getattr(value, accessor)()
-                    if extracted is not None:
-                        return extracted
-                except Exception:
-                    continue
-        return value
-
-    # -- indicator helpers ----------------------------------------------------
-
-    def _show_drop_indicator(self, row, position: str):
-        if self.drop_indicator_row == row and self.drop_indicator_position == position:
-            return
-
-        if self.drop_indicator_row and hasattr(
-            self.drop_indicator_row, "hide_drop_indicators"
-        ):
-            self.drop_indicator_row.hide_drop_indicators()
-
+        # Show indicators for valid drop targets
         if hasattr(row, "show_drop_indicator"):
-            row.show_drop_indicator(position == "above")
+            row_y = row.get_allocation().y
+            row_height = row.get_allocation().height
+            relative_y = y - row_y
+            position = "above" if relative_y < row_height / 2 else "below"
+            
+            # Handle connection rows
+            if hasattr(row, "connection"):
+                dragged = set(getattr(window, "_dragged_connections", []) or [])
+                nickname = getattr(getattr(row, "connection", None), "nickname", None)
+                if dragged and nickname in dragged:
+                    _clear_drop_indicator(window)
+                    return Gdk.DragAction.MOVE
 
-        self.drop_indicator_row = row
-        self.drop_indicator_position = position
+                _show_drop_indicator(window, row, position)
+            
+            # Handle group rows
+            elif (hasattr(row, "group_id") and hasattr(window, "_dragged_group_id")):
+                # Don't show indicators on the group being dragged
+                if row.group_id == window._dragged_group_id:
+                    _clear_drop_indicator(window)
+                    return Gdk.DragAction.MOVE
+                
+                # Only show indicator if this is a different group
+                _show_drop_indicator(window, row, position)
+            
+            # Handle mixed drag scenarios (dragging connection over group, etc.)
+            elif (hasattr(row, "connection") and hasattr(window, "_dragged_group_id")):
+                # Dragging group over connection - show indicator
+                _show_drop_indicator(window, row, position)
+            elif (hasattr(row, "group_id") and getattr(window, "_dragged_connections", None)):
+                _show_drop_indicator_on_group(window, row)
+            else:
+                _clear_drop_indicator(window)
+        else:
+            # Clear indicators if we're over a non-valid target
+            _clear_drop_indicator(window)
+        return Gdk.DragAction.MOVE
+    except Exception as e:
+        logger.error(f"Error handling motion: {e}")
+        return Gdk.DragAction.MOVE
 
-    def _show_drop_indicator_on_group(self, row):
-        if self.drop_indicator_row == row and self.drop_indicator_position == "on_group":
+
+def _on_connection_list_leave(window, target):
+    _clear_drop_indicator(window)
+    _hide_ungrouped_area(window)
+    _stop_connection_autoscroll(window)
+
+    # Restore selection mode after drag
+    if hasattr(window, '_drag_in_progress'):
+        window._drag_in_progress = False
+        window.connection_list.set_selection_mode(Gtk.SelectionMode.MULTIPLE)
+    
+    return True
+
+
+def _show_drop_indicator(window, row, position):
+    try:
+        # Only update if the indicator has changed
+        if (window._drop_indicator_row != row or
+            window._drop_indicator_position != position):
+            
+            # Clear any existing indicators
+            if window._drop_indicator_row and hasattr(window._drop_indicator_row, 'hide_drop_indicators'):
+                window._drop_indicator_row.hide_drop_indicators()
+            
+            # Show indicator on the target row
+            if hasattr(row, 'show_drop_indicator'):
+                show_top = (position == "above")
+                row.show_drop_indicator(show_top)
+
+            window._drop_indicator_row = row
+            window._drop_indicator_position = position
+    except Exception as e:
+        logger.error(f"Error showing drop indicator: {e}")
+
+
+def _show_drop_indicator_on_group(window, row):
+    """Show a special indicator when dropping a connection onto a group (adds to group)"""
+    try:
+        # Only update if the indicator has changed
+        if (window._drop_indicator_row != row or
+            window._drop_indicator_position != "on_group"):
+            
+            # Clear any existing indicators
+            if window._drop_indicator_row and hasattr(window._drop_indicator_row, 'hide_drop_indicators'):
+                window._drop_indicator_row.hide_drop_indicators()
+            
+            # Show group highlight indicator instead of line indicators
+            if hasattr(row, 'show_group_highlight'):
+                row.show_group_highlight(True)
+            elif hasattr(row, 'show_drop_indicator'):
+                # Fallback: show bottom indicator if group highlight not available
+                row.show_drop_indicator(False)
+
+            window._drop_indicator_row = row
+            window._drop_indicator_position = "on_group"
+    except Exception as e:
+        logger.error(f"Error showing group drop indicator: {e}")
+
+
+def _create_ungrouped_area(window):
+    if window._ungrouped_area_row:
+        return window._ungrouped_area_row
+
+    ungrouped_area = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+
+    from sshpilot import icon_utils
+    icon = icon_utils.new_image_from_icon_name("folder-open-symbolic")
+    icon.set_pixel_size(24)
+    icon.add_css_class("dim-label")
+
+    label = Gtk.Label(label=_("Drop connections here to ungroup them"))
+    label.add_css_class("dim-label")
+    label.add_css_class("caption")
+
+    ungrouped_area.append(icon)
+    ungrouped_area.append(label)
+
+    ungrouped_row = Gtk.ListBoxRow()
+    ungrouped_row.set_child(ungrouped_area)
+    ungrouped_row.set_selectable(False)
+    ungrouped_row.set_activatable(False)
+    ungrouped_row.ungrouped_area = True
+
+    window._ungrouped_area_row = ungrouped_row
+    return ungrouped_row
+
+
+def _show_ungrouped_area(window):
+    try:
+        if window._ungrouped_area_visible:
             return
 
-        if self.drop_indicator_row and hasattr(
-            self.drop_indicator_row, "hide_drop_indicators"
-        ):
-            self.drop_indicator_row.hide_drop_indicators()
-
-        if hasattr(row, "show_group_highlight"):
-            row.show_group_highlight(True)
-        elif hasattr(row, "show_drop_indicator"):
-            row.show_drop_indicator(False)
-
-        self.drop_indicator_row = row
-        self.drop_indicator_position = "on_group"
-
-    def _clear_drop_indicator(self):
-        try:
-            if self.drop_indicator_row and hasattr(
-                self.drop_indicator_row, "hide_drop_indicators"
-            ):
-                self.drop_indicator_row.hide_drop_indicators()
-        finally:
-            self.drop_indicator_row = None
-            self.drop_indicator_position = None
-
-    # -- ungrouped area helpers ----------------------------------------------
-
-    def _create_ungrouped_area(self):
-        ungrouped_area = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-
-        from sshpilot import icon_utils
-
-        icon = icon_utils.new_image_from_icon_name("folder-open-symbolic")
-        icon.set_pixel_size(24)
-        icon.add_css_class("dim-label")
-
-        label = Gtk.Label(label=_("Drop connections here to ungroup them"))
-        label.add_css_class("dim-label")
-        label.add_css_class("caption")
-
-        ungrouped_area.append(icon)
-        ungrouped_area.append(label)
-
-        ungrouped_row = Gtk.ListBoxRow()
-        ungrouped_row.set_child(ungrouped_area)
-        ungrouped_row.set_selectable(False)
-        ungrouped_row.set_activatable(False)
-        ungrouped_row.ungrouped_area = True
-
-        self.ungrouped_area_row = ungrouped_row
-        return ungrouped_row
-
-    def _show_ungrouped_area(self):
-        if self.ungrouped_area_visible:
-            return
-
-        hierarchy = self.window.group_manager.get_group_hierarchy()
+        hierarchy = window.group_manager.get_group_hierarchy()
         if not hierarchy:
             return
 
-        ungrouped_row = self._create_ungrouped_area()
-        self.connection_list.append(ungrouped_row)
-        self.ungrouped_area_visible = True
+        ungrouped_row = _create_ungrouped_area(window)
+        window.connection_list.append(ungrouped_row)
+        window._ungrouped_area_visible = True
+    except Exception as e:
+        logger.error(f"Error showing ungrouped area: {e}")
 
-    def _hide_ungrouped_area(self):
-        if not self.ungrouped_area_visible or not self.ungrouped_area_row:
+
+def _hide_ungrouped_area(window):
+    try:
+        if not window._ungrouped_area_visible or not window._ungrouped_area_row:
             return
-        self.connection_list.remove(self.ungrouped_area_row)
-        self.ungrouped_area_visible = False
 
-    # -- drop handlers -------------------------------------------------------
+        window.connection_list.remove(window._ungrouped_area_row)
+        window._ungrouped_area_visible = False
+    except Exception as e:
+        logger.error(f"Error hiding ungrouped area: {e}")
 
-    def _handle_connection_drop(self, payload: dict, y: float) -> bool:
-        connection_nicknames: list[str] = []
 
-        for item in payload.get("connections", []) or []:
-            if isinstance(item, dict):
-                nickname = item.get("nickname")
-                if isinstance(nickname, str) and nickname not in connection_nicknames:
+def _clear_drop_indicator(window):
+    try:
+        if window._drop_indicator_row and hasattr(window._drop_indicator_row, 'hide_drop_indicators'):
+            window._drop_indicator_row.hide_drop_indicators()
+
+        window._drop_indicator_row = None
+        window._drop_indicator_position = None
+    except Exception as e:
+        logger.error(f"Error clearing drop indicator: {e}")
+        # Ensure cleanup even if there's an error
+        window._drop_indicator_row = None
+        window._drop_indicator_position = None
+
+
+def _on_connection_list_drop(window, target, value, x, y):
+    try:
+        _clear_drop_indicator(window)
+        _hide_ungrouped_area(window)
+        _stop_connection_autoscroll(window)
+
+        # Restore selection mode after drag
+        if hasattr(window, '_drag_in_progress'):
+            window._drag_in_progress = False
+            window.connection_list.set_selection_mode(Gtk.SelectionMode.MULTIPLE)
+
+        # Extract Python object from GObject.Value drops
+        if isinstance(value, GObject.Value):
+            extracted = None
+            for getter in ("get_boxed", "get_object", "get"):
+                try:
+                    extracted = getattr(value, getter)()
+                    if extracted is not None:
+                        break
+                except Exception:
+                    continue
+            value = extracted
+
+
+        if not isinstance(value, dict):
+            return False
+
+        drop_type = value.get("type")
+        changes_made = False
+
+        if drop_type == "connection":
+            connection_nicknames: List[str] = []
+
+            payload = value.get("connections")
+            if isinstance(payload, list):
+                for item in payload:
+                    if isinstance(item, dict):
+                        nickname = item.get("nickname")
+                        if isinstance(nickname, str) and nickname not in connection_nicknames:
+                            connection_nicknames.append(nickname)
+
+            if not connection_nicknames:
+                raw_list = value.get("connection_nicknames")
+                if isinstance(raw_list, list):
+                    for nickname in raw_list:
+                        if isinstance(nickname, str) and nickname not in connection_nicknames:
+                            connection_nicknames.append(nickname)
+
+            if not connection_nicknames:
+                nickname = value.get("connection_nickname")
+                if isinstance(nickname, str):
                     connection_nicknames.append(nickname)
 
-        for nickname in payload.get("connection_nicknames", []) or []:
-            if isinstance(nickname, str) and nickname not in connection_nicknames:
-                connection_nicknames.append(nickname)
+            if connection_nicknames:
+                target_row = window.connection_list.get_row_at_y(int(y))
 
-        nickname = payload.get("connection_nickname")
-        if isinstance(nickname, str) and nickname not in connection_nicknames:
-            connection_nicknames.append(nickname)
+                if not target_row:
+                    for nickname in connection_nicknames:
+                        window.group_manager.move_connection(nickname, None)
+                        changes_made = True
+                elif getattr(target_row, "ungrouped_area", False):
+                    for nickname in connection_nicknames:
+                        window.group_manager.move_connection(nickname, None)
+                        changes_made = True
+                else:
+                    row_y = target_row.get_allocation().y
+                    row_height = target_row.get_allocation().height
+                    relative_y = y - row_y
+                    position = "above" if relative_y < row_height / 2 else "below"
 
-        if not connection_nicknames:
-            return False
+                    if hasattr(target_row, "group_id"):
+                        target_group_id = target_row.group_id
 
-        target_row = self.connection_list.get_row_at_y(int(y))
-        if not target_row:
-            return self._ungroup_connections(connection_nicknames)
-        if getattr(target_row, "ungrouped_area", False):
-            return self._ungroup_connections(connection_nicknames)
+                        if position == "above":
+                            first_connection = None
+                            child = window.connection_list.get_first_child()
+                            while child:
+                                if hasattr(child, 'connection'):
+                                    connection_group = window.group_manager.get_connection_group(child.connection.nickname)
+                                    if connection_group == target_group_id:
+                                        first_connection = child.connection.nickname
+                                        break
+                                child = child.get_next_sibling()
 
-        allocation = target_row.get_allocation()
-        relative_y = y - allocation.y
-        position = "above" if relative_y < allocation.height / 2 else "below"
+                            if first_connection:
+                                for nickname in connection_nicknames:
+                                    current_group_id = window.group_manager.get_connection_group(nickname)
+                                    if current_group_id != target_group_id:
+                                        window.group_manager.move_connection(nickname, target_group_id)
+                                        changes_made = True
+                                    window.group_manager.reorder_connection_in_group(
+                                        nickname, first_connection, "above"
+                                    )
+                                    first_connection = nickname
+                                    changes_made = True
+                            else:
+                                for nickname in connection_nicknames:
+                                    if window.group_manager.get_connection_group(nickname) != target_group_id:
+                                        window.group_manager.move_connection(nickname, target_group_id)
+                                        changes_made = True
+                        else:
+                            for nickname in connection_nicknames:
+                                if window.group_manager.get_connection_group(nickname) != target_group_id:
+                                    window.group_manager.move_connection(nickname, target_group_id)
+                                    changes_made = True
+                    else:
+                        target_connection = getattr(target_row, "connection", None)
+                        if target_connection:
+                            reference_nickname = target_connection.nickname
+                            target_group_id = window.group_manager.get_connection_group(reference_nickname)
 
-        if hasattr(target_row, "group_id"):
-            return self._drop_connections_on_group(target_row.group_id, connection_nicknames, position)
+                            for nickname in connection_nicknames:
+                                current_group_id = window.group_manager.get_connection_group(nickname)
+                                if current_group_id != target_group_id:
+                                    window.group_manager.move_connection(nickname, target_group_id)
+                                    changes_made = True
 
-        target_connection = getattr(target_row, "connection", None)
-        if not target_connection:
-            return False
+                            if position == "above":
+                                reference = reference_nickname
+                                for nickname in reversed(connection_nicknames):
+                                    if nickname == reference:
+                                        continue
+                                    window.group_manager.reorder_connection_in_group(
+                                        nickname, reference, "above"
+                                    )
+                                    reference = nickname
+                                    changes_made = True
+                            else:
+                                reference = reference_nickname
+                                for nickname in connection_nicknames:
+                                    if nickname == reference:
+                                        continue
+                                    window.group_manager.reorder_connection_in_group(
+                                        nickname, reference, "below"
+                                    )
+                                    reference = nickname
+                                    changes_made = True
 
-        return self._drop_connections_on_connection(
-            target_connection.nickname, connection_nicknames, position
-        )
+        elif drop_type == "group":
+            group_id = value.get("group_id")
+            if group_id:
+                target_row = window.connection_list.get_row_at_y(int(y))
+                if target_row and hasattr(target_row, "group_id"):
+                    target_group_id = target_row.group_id
+                    if target_group_id != group_id:
+                        # Validate that the target group exists
+                        if target_group_id in window.group_manager.groups:
+                            # Calculate position for reordering
+                            row_y = target_row.get_allocation().y
+                            row_height = target_row.get_allocation().height
+                            relative_y = y - row_y
+                            position = "above" if relative_y < row_height / 2 else "below"
+                            
+                            # Check if both groups are at the same level (can be reordered)
+                            source_group = window.group_manager.groups.get(group_id)
+                            target_group = window.group_manager.groups.get(target_group_id)
+                            
+                            if (source_group and target_group and 
+                                source_group.get('parent_id') == target_group.get('parent_id')):
+                                # Same level - reorder
+                                window.group_manager.reorder_group(group_id, target_group_id, position)
+                                changes_made = True
+                            else:
+                                # Different levels - move to new parent (existing functionality)
+                                if _move_group(window, group_id, target_group_id):
+                                    changes_made = True
+                        else:
+                            logger.warning(f"Target group '{target_group_id}' does not exist")
 
-    def _handle_group_drop(self, payload: dict, y: float) -> bool:
-        group_id = payload.get("group_id")
-        if not group_id:
-            return False
-
-        target_row = self.connection_list.get_row_at_y(int(y))
-        if not target_row or not hasattr(target_row, "group_id"):
-            return False
-
-        target_group_id = target_row.group_id
-        if target_group_id == group_id or target_group_id not in self.window.group_manager.groups:
-            return False
-
-        allocation = target_row.get_allocation()
-        relative_y = y - allocation.y
-        position = "above" if relative_y < allocation.height / 2 else "below"
-
-        source_group = self.window.group_manager.groups.get(group_id)
-        target_group = self.window.group_manager.groups.get(target_group_id)
-
-        if (
-            source_group
-            and target_group
-            and source_group.get("parent_id") == target_group.get("parent_id")
-        ):
-            self.window.group_manager.reorder_group(group_id, target_group_id, position)
+        # Only rebuild the connection list once if changes were made
+        if changes_made:
+            window.rebuild_connection_list()
             return True
 
-        return _move_group(self.window, group_id, target_group_id)
-
-    # -- connection drop helpers ---------------------------------------------
-
-    def _ungroup_connections(self, connection_nicknames: list[str]) -> bool:
-        changes_made = False
-        for nickname in connection_nicknames:
-            self.window.group_manager.move_connection(nickname, None)
-            changes_made = True
-        return changes_made
-
-    def _drop_connections_on_group(
-        self, target_group_id: str, connection_nicknames: list[str], position: str
-    ) -> bool:
-        changes_made = False
-        if position == "above":
-            first_connection = None
-            child = self.connection_list.get_first_child()
-            while child:
-                if hasattr(child, "connection"):
-                    connection_group = self.window.group_manager.get_connection_group(
-                        child.connection.nickname
-                    )
-                    if connection_group == target_group_id:
-                        first_connection = child.connection.nickname
-                        break
-                child = child.get_next_sibling()
-
-            if first_connection:
-                for nickname in connection_nicknames:
-                    current_group_id = self.window.group_manager.get_connection_group(nickname)
-                    if current_group_id != target_group_id:
-                        self.window.group_manager.move_connection(nickname, target_group_id)
-                        changes_made = True
-                    self.window.group_manager.reorder_connection_in_group(
-                        nickname, first_connection, "above"
-                    )
-                    first_connection = nickname
-                    changes_made = True
-            else:
-                for nickname in connection_nicknames:
-                    if (
-                        self.window.group_manager.get_connection_group(nickname)
-                        != target_group_id
-                    ):
-                        self.window.group_manager.move_connection(nickname, target_group_id)
-                        changes_made = True
-        else:
-            for nickname in connection_nicknames:
-                if (
-                    self.window.group_manager.get_connection_group(nickname)
-                    != target_group_id
-                ):
-                    self.window.group_manager.move_connection(nickname, target_group_id)
-                    changes_made = True
-        return changes_made
-
-    def _drop_connections_on_connection(
-        self, reference_nickname: str, connection_nicknames: list[str], position: str
-    ) -> bool:
-        changes_made = False
-        target_group_id = self.window.group_manager.get_connection_group(reference_nickname)
-
-        for nickname in connection_nicknames:
-            current_group_id = self.window.group_manager.get_connection_group(nickname)
-            if current_group_id != target_group_id:
-                self.window.group_manager.move_connection(nickname, target_group_id)
-                changes_made = True
-
-        if position == "above":
-            reference = reference_nickname
-            for nickname in reversed(connection_nicknames):
-                if nickname == reference:
-                    continue
-                self.window.group_manager.reorder_connection_in_group(
-                    nickname, reference, "above"
-                )
-                reference = nickname
-                changes_made = True
-        else:
-            reference = reference_nickname
-            for nickname in connection_nicknames:
-                if nickname == reference:
-                    continue
-                self.window.group_manager.reorder_connection_in_group(
-                    nickname, reference, "below"
-                )
-                reference = nickname
-                changes_made = True
-
-        return changes_made
-
-    # -- autoscroll helpers --------------------------------------------------
-
-    def _update_connection_autoscroll(self, y: float):
-        scrolled = getattr(self.window, "connection_scrolled", None)
-        if not scrolled:
-            self._stop_connection_autoscroll()
-            return
-
-        allocation = scrolled.get_allocation()
-        height = allocation.height
-        if height <= 0:
-            self._stop_connection_autoscroll()
-            return
-
-        margin = max(1.0, min(self.connection_autoscroll_margin, height / 2))
-        max_velocity = max(1.0, self.connection_autoscroll_max_velocity)
-
-        vadjustment = scrolled.get_vadjustment()
-        adjustment_value = vadjustment.get_value() if vadjustment else 0.0
-        viewport_y = max(0.0, min(height, y - adjustment_value))
-
-        top_threshold = margin
-        bottom_threshold = height - margin
-
-        velocity = 0.0
-        if viewport_y < top_threshold:
-            distance = top_threshold - viewport_y
-            velocity = -self._calculate_autoscroll_velocity(distance, margin, max_velocity)
-        elif viewport_y > bottom_threshold:
-            distance = viewport_y - bottom_threshold
-            velocity = self._calculate_autoscroll_velocity(distance, margin, max_velocity)
-
-        if velocity:
-            self._start_connection_autoscroll(velocity)
-        else:
-            self._stop_connection_autoscroll()
-
-    def _start_connection_autoscroll(self, velocity: float):
-        self.connection_autoscroll_velocity = float(velocity)
-        if self.connection_autoscroll_timeout_id:
-            return
-
-        interval = max(10, int(self.connection_autoscroll_interval_ms))
-
-        def _step():
-            return self._connection_autoscroll_step()
-
-        self.connection_autoscroll_timeout_id = GLib.timeout_add(interval, _step)
-
-    def _stop_connection_autoscroll(self):
-        if self.connection_autoscroll_timeout_id:
-            GLib.source_remove(self.connection_autoscroll_timeout_id)
-        self.connection_autoscroll_timeout_id = 0
-        self.connection_autoscroll_velocity = 0.0
-
-    def _connection_autoscroll_step(self) -> bool:
-        scrolled = getattr(self.window, "connection_scrolled", None)
-        if not scrolled:
-            self.connection_autoscroll_timeout_id = 0
-            self.connection_autoscroll_velocity = 0.0
-            return False
-
-        velocity = self.connection_autoscroll_velocity
-        if not velocity:
-            self.connection_autoscroll_timeout_id = 0
-            return False
-
-        adjustment = scrolled.get_vadjustment()
-        if not adjustment:
-            self.connection_autoscroll_timeout_id = 0
-            self.connection_autoscroll_velocity = 0.0
-            return False
-
-        lower = adjustment.get_lower()
-        upper = adjustment.get_upper() - adjustment.get_page_size()
-        current = adjustment.get_value()
-
-        if upper < lower:
-            upper = lower
-
-        new_value = max(lower, min(upper, current + velocity))
-        if new_value != current:
-            adjustment.set_value(new_value)
-
-        if self.connection_autoscroll_velocity:
-            return True
-
-        self.connection_autoscroll_timeout_id = 0
         return False
-
-    @staticmethod
-    def _calculate_autoscroll_velocity(distance: float, margin: float, max_velocity: float) -> float:
-        ratio = min(1.0, max(0.0, distance) / margin)
-        return max_velocity * ratio
-
-
-def _get_connection_dnd_controller(window) -> ConnectionListDnDController | None:
-    controller = getattr(window, "_connection_list_dnd", None)
-    return controller if isinstance(controller, ConnectionListDnDController) else None
-
-
-def setup_connection_list_dnd(window):
-    """Configure drag-and-drop controllers for the connection list."""
-
-    controller = ConnectionListDnDController(window)
-    window._connection_list_dnd = controller
-    return controller
+    except Exception as e:
+        logger.error(f"Error handling drop: {e}")
+        return False
 
 
 def _get_target_group_at_position(window, x, y):
@@ -1851,6 +1720,112 @@ def _move_group(window, group_id, target_parent_id):
     except Exception as e:
         logger.error(f"Error moving group: {e}")
         return False
+
+
+def _update_connection_autoscroll(window, y):
+    """Update autoscroll velocity based on pointer position within the viewport."""
+    scrolled = getattr(window, "connection_scrolled", None)
+    if not scrolled:
+        _stop_connection_autoscroll(window)
+        return
+
+    allocation = scrolled.get_allocation()
+    height = allocation.height
+    if height <= 0:
+        _stop_connection_autoscroll(window)
+        return
+
+    margin = max(1.0, min(getattr(window, "_connection_autoscroll_margin", 48.0), height / 2))
+    max_velocity = max(1.0, getattr(window, "_connection_autoscroll_max_velocity", 28.0))
+
+    vadjustment = scrolled.get_vadjustment()
+    adjustment_value = vadjustment.get_value() if vadjustment else 0.0
+    viewport_y = max(0.0, min(height, y - adjustment_value))
+
+    top_threshold = margin
+    bottom_threshold = height - margin
+
+    velocity = 0.0
+    if viewport_y < top_threshold:
+        distance = top_threshold - viewport_y
+        velocity = -_calculate_autoscroll_velocity(distance, margin, max_velocity)
+    elif viewport_y > bottom_threshold:
+        distance = viewport_y - bottom_threshold
+        velocity = _calculate_autoscroll_velocity(distance, margin, max_velocity)
+
+    if velocity:
+        _start_connection_autoscroll(window, velocity)
+    else:
+        _stop_connection_autoscroll(window)
+
+
+def _calculate_autoscroll_velocity(distance, margin, max_velocity):
+    """Scale the autoscroll velocity based on how deep the pointer is in the margin."""
+    ratio = min(1.0, max(0.0, distance) / margin)
+    return max_velocity * ratio
+
+
+def _start_connection_autoscroll(window, velocity):
+    """Ensure an autoscroll timeout is active with the requested velocity."""
+    window._connection_autoscroll_velocity = float(velocity)
+
+    timeout_id = getattr(window, "_connection_autoscroll_timeout_id", 0)
+    if timeout_id:
+        return
+
+    interval = max(10, int(getattr(window, "_connection_autoscroll_interval_ms", 16)))
+
+    def _step():
+        return _connection_autoscroll_step(window)
+
+    window._connection_autoscroll_timeout_id = GLib.timeout_add(interval, _step)
+
+
+def _stop_connection_autoscroll(window):
+    """Cancel any active autoscroll timeout and reset state."""
+    timeout_id = getattr(window, "_connection_autoscroll_timeout_id", 0)
+    if timeout_id:
+        GLib.source_remove(timeout_id)
+    window._connection_autoscroll_timeout_id = 0
+    window._connection_autoscroll_velocity = 0.0
+
+
+def _connection_autoscroll_step(window):
+    scrolled = getattr(window, "connection_scrolled", None)
+    if not scrolled:
+        window._connection_autoscroll_timeout_id = 0
+        window._connection_autoscroll_velocity = 0.0
+        return False
+
+    velocity = getattr(window, "_connection_autoscroll_velocity", 0.0)
+    if not velocity:
+        window._connection_autoscroll_timeout_id = 0
+        return False
+
+    adjustment = scrolled.get_vadjustment()
+    if not adjustment:
+        window._connection_autoscroll_timeout_id = 0
+        window._connection_autoscroll_velocity = 0.0
+        return False
+
+    lower = adjustment.get_lower()
+    upper = adjustment.get_upper() - adjustment.get_page_size()
+    current = adjustment.get_value()
+
+    if upper < lower:
+        upper = lower
+
+    new_value = max(lower, min(upper, current + velocity))
+
+    if new_value != current:
+        adjustment.set_value(new_value)
+
+    # Keep the timeout running as long as velocity remains set
+    if getattr(window, "_connection_autoscroll_velocity", 0.0):
+        return True
+
+    window._connection_autoscroll_timeout_id = 0
+    return False
 
 
 # ---------------------------------------------------------------------------
