@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sys
-from typing import Dict, Tuple
+from typing import Dict
 
 import gi
 
@@ -12,12 +12,10 @@ gi.require_version("Adw", "1")
 
 from gi.repository import Adw, Gdk, GObject, Gtk
 
-from sshpilot_dnd import HitTestResult, RowBounds, hit_test_insertion
+from sshpilot_dnd import RowBounds, hit_test_insertion
 
 
 class DemoRow(Gtk.ListBoxRow):
-    """A simple row that follows the official GTK drag source pattern."""
-
     def __init__(self, title: str, controller: "DnDDemoApp") -> None:
         super().__init__()
         self.label_text = title
@@ -39,46 +37,22 @@ class DemoRow(Gtk.ListBoxRow):
         drag_source.set_actions(Gdk.DragAction.MOVE)
         drag_source.connect("prepare", self._on_drag_prepare)
         drag_source.connect("drag-begin", self._on_drag_begin)
-        drag_source.connect("drag-end", self._on_drag_end)
         self.add_controller(drag_source)
 
-    def _on_drag_prepare(
-        self, source: Gtk.DragSource, x: float, y: float
-    ) -> Gdk.ContentProvider:
-        """Provide row text as the drag payload using the GTK4 tutorial recipe."""
-
+    def _on_drag_prepare(self, source: Gtk.DragSource, x: float, y: float) -> Gdk.ContentProvider:
         return Gdk.ContentProvider.new_for_value(self.label_text)
 
     def _on_drag_begin(self, source: Gtk.DragSource, drag: Gdk.Drag) -> None:
-        # The official docs recommend providing a widget snapshot as the icon.
-        icon = Gtk.DragIcon.get_for_drag(drag)
-        icon.set_child(self._build_drag_icon())
         self._controller.drag_label = self.label_text
-
-    def _on_drag_end(self, source: Gtk.DragSource, drag: Gdk.Drag, delete_data: bool) -> None:
-        self._controller.drag_label = None
-
-    def _build_drag_icon(self) -> Gtk.Widget:
-        label = Gtk.Label(label=self.label_text)
-        label.set_margin_start(12)
-        label.set_margin_end(12)
-        label.set_margin_top(6)
-        label.set_margin_bottom(6)
-        label.set_xalign(0.0)
-        return label
 
 
 class DnDDemoApp(Adw.Application):
-    """Minimal listbox reordering demo aligned with GTK's DnD tutorial."""
-
     def __init__(self) -> None:
         super().__init__(application_id="io.github.mfat.dnddemo")
         self.connect("activate", self._on_activate)
         self.labels = ["Row 1", "Row 2", "Row 3", "Row 4"]
         self.drag_label: str | None = None
         self.listbox: Gtk.ListBox | None = None
-        self._motion_controller: Gtk.DropControllerMotion | None = None
-        self._pending_hit: HitTestResult | None = None
 
     def _on_activate(self, app: Adw.Application) -> None:
         window = Adw.ApplicationWindow(application=self)
@@ -90,13 +64,8 @@ class DnDDemoApp(Adw.Application):
 
         drop_target = Gtk.DropTarget.new(type=str, actions=Gdk.DragAction.MOVE)
         drop_target.connect("drop", self._on_drop)
+        drop_target.connect("motion", self._on_motion)
         listbox.add_controller(drop_target)
-
-        motion = Gtk.DropControllerMotion.new()
-        motion.connect("motion", self._on_motion)
-        motion.connect("leave", self._on_leave)
-        listbox.add_controller(motion)
-        self._motion_controller = motion
 
         self._rebuild_rows()
 
@@ -114,24 +83,9 @@ class DnDDemoApp(Adw.Application):
         for label in self.labels:
             self.listbox.append(DemoRow(label, controller=self))
 
-    def _on_motion(self, controller: Gtk.DropControllerMotion, x: float, y: float) -> None:
-        # Motion tracking mirrors the guidance in the GTK tutorial by translating
-        # pointer coordinates into an insertion hint. A real sidebar could show
-        # visual feedback here; the sample keeps it logic-only for portability.
-        self._update_drop_hint(y)
-
-    def _on_leave(self, controller: Gtk.DropControllerMotion) -> None:
-        self._clear_drop_hint()
-
-    def _update_drop_hint(self, y: float) -> None:
-        if not self.listbox:
-            return
-
-        row_bounds, _ = self._collect_row_geometry(self.listbox)
-        self._pending_hit = hit_test_insertion(row_bounds, float(y))
-
-    def _clear_drop_hint(self) -> None:
-        self._pending_hit = None
+    def _on_motion(self, target: Gtk.DropTarget, x: float, y: float) -> Gdk.DragAction:
+        # No visual feedback required for the demo.
+        return Gdk.DragAction.MOVE
 
     def _on_drop(self, target: Gtk.DropTarget, value: GObject.Value | str, x: float, y: float) -> bool:
         if not self.listbox:
@@ -142,7 +96,7 @@ class DnDDemoApp(Adw.Application):
             return False
 
         row_bounds, row_lookup = self._collect_row_geometry(self.listbox)
-        hit = self._pending_hit or hit_test_insertion(row_bounds, float(y))
+        hit = hit_test_insertion(row_bounds, float(y))
         if not hit:
             return False
 
@@ -167,7 +121,6 @@ class DnDDemoApp(Adw.Application):
         new_order.insert(anchor_index, drag_label)
         self.labels = new_order
         self._rebuild_rows()
-        self._clear_drop_hint()
         return True
 
     @staticmethod
@@ -193,9 +146,7 @@ class DnDDemoApp(Adw.Application):
         return text if isinstance(text, str) else None
 
     @staticmethod
-    def _collect_row_geometry(
-        listbox: Gtk.ListBox,
-    ) -> Tuple[list[RowBounds], Dict[str, Gtk.ListBoxRow]]:
+    def _collect_row_geometry(listbox: Gtk.ListBox) -> Tuple[list[RowBounds], Dict[str, Gtk.ListBoxRow]]:
         index = 0
         bounds: list[RowBounds] = []
         lookup: Dict[str, Gtk.ListBoxRow] = {}
