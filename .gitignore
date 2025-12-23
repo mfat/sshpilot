@@ -8,27 +8,114 @@ release.sh
 /dist
 /build
 /packaging/macos/build
-/.venv-system
-/.venv-system-python
-/.flatpak-builder
-/repo
-/__pycache__
-/tests/__pycache__
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+pip-wheel-metadata/
+wheelhouse/
+artifacts/
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+.env
+.env.local
+.venv-system
+.venv-system-python
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Vagrant
+.vagrant/
+
+# Editor directories and files
+.idea/
+.vscode/
+.vscode-test/
+*.sublime-workspace
+*.sublime-project
+
+# OS generated files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs and databases
+*.log
+*.sql
+*.sqlite
+*.db
+.pytest_cache/
+/.pytest_cache/
+
+# Coverage
+.coverage
+htmlcov/
+coverage.xml
+
+# Unit test / build outputs
+test-output/
+
+# pyenv
+.python-version
+
+# mypy
+.mypy_cache/
+
+# Jupyter
+.ipynb_checkpoints
+
+# Sphinx
+docs/_build/
+
+# Env files
+*.env
+*.local
+
+# Temporary files
+*~
+*.swp
+*.swo
+*~
+.nfs*
+
+# Project-specific paths (keep these here if present locally)
+sshpilot/vendor/pyxtermjs/index.html
+sshpilot/vendor/__pycache__/
+sshpilot/__pycache__/
+tests/__pycache__/
+
+# Flatpak / packaging artifacts
+/.flatpak-builder/
+flatpak/io.github.mfat.sshpilot.yaml
 io.github.mfat.sshpilot.yaml
 python3-deps.yml
 sshpilot-launcher.sh
+/flatpak/repo-test/
+
+# Distribution helper scripts
+release.sh
+build-deb-local.sh
+
+# Misc
+whip.md
 scripts/generate_github_url.sh
 scripts/screenshot_url.sh
-/flatpak
-flatpak/io.github.mfat.sshpilot.yaml
-/flatpak
-*.pyc
-whip.md
-sshpilot/vendor/pyxtermjs/index.html
-/artifacts
-build-deb-local.sh
-/debian
-/sshpilot/vendor/__pycache__
-/sshpilot/vendor/__pycache__
-*.pyc
 gnome-settings/gnome-control-center/

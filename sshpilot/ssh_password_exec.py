@@ -167,6 +167,10 @@ def run_ssh_with_password(host: str, user: str, password: str, *,
     
     try:
         # Capture output or stream as you prefer
+        logger.info("Running ssh command via ssh_password_exec", extra={
+            "cmd": cmd,
+            "env": {k: v for k, v in env.items() if k != 'SSH_ASKPASS'},
+        })
         result = subprocess.run(cmd, env=env, text=True, capture_output=True, check=False)
         return result
     finally:
@@ -239,6 +243,10 @@ def run_scp_with_password(host: str, user: str, password: str,
             env['PATH'] = f"/app/bin:{current_path}"
     
     try:
+        logger.info("Running scp command via ssh_password_exec", extra={
+            "cmd": cmd,
+            "env": {k: v for k, v in env.items() if k != 'SSH_ASKPASS'},
+        })
         return subprocess.run(cmd, env=env, text=True, capture_output=True, check=False)
     finally:
         try:

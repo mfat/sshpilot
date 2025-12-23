@@ -413,6 +413,15 @@ class VTETerminalBackend:
         env_list: Optional[list[str]] = None
         if env is not None:
             env_list = [f"{key}={value}" for key, value in env.items()]
+        try:
+            logger.info("Spawning process in VTE backend", extra={
+                "argv": list(argv),
+                "env": dict(env) if env is not None else None,
+                "cwd": cwd,
+            })
+        except Exception:
+            # Logging must not break spawning
+            logger.debug("Spawning process in VTE backend (failed to serialize argv/env)")
         cwd = cwd or None
         pty_flags = Vte.PtyFlags(flags) if flags else Vte.PtyFlags.DEFAULT
         self.vte.spawn_async(
@@ -1342,6 +1351,14 @@ class PyXtermTerminalBackend:
         # Start pyxtermjs server
         port = find_free_port()
         command = list(argv) if argv else None
+        try:
+            logger.info("Spawning process in pyxterm backend", extra={
+                "argv": command,
+                "env": dict(env) if env is not None else None,
+                "cwd": cwd,
+            })
+        except Exception:
+            logger.debug("Spawning process in pyxterm backend (failed to serialize argv/env)")
         
         # Get encoding setting from config and wrap command if needed
         encoding = 'UTF-8'  # Default

@@ -211,6 +211,10 @@ class Config(GObject.Object):
             'security': {
                 'store_passwords': True,
                 'ssh_agent_forwarding': True,
+                # Optional path to an SSH agent socket to use instead of the
+                # environment-provided value. When set to None, the system
+                # environment (SSH_AUTH_SOCK) is used.
+                'ssh_auth_sock': None,
             }
         }
 
