@@ -9,6 +9,7 @@ import importlib.util
 from typing import Any, Dict, List, Optional
 from gettext import gettext as _
 
+from .connection_manager import SSHDirectoryCreationError
 from .platform_utils import get_config_dir, is_flatpak, is_macos
 from .file_manager_integration import (
     has_internal_file_manager,
@@ -2769,13 +2770,29 @@ class PreferencesWindow(Adw.Window):
 
             use_isolated = self.isolated_mode_radio.get_active()
 
+            parent_window = self.get_transient_for()
+            if parent_window and hasattr(parent_window, 'connection_manager'):
+                try:
+                    parent_window.connection_manager.set_isolated_mode(bool(use_isolated))
+                    if hasattr(parent_window, '_update_key_manager_ssh_dir'):
+                        parent_window._update_key_manager_ssh_dir()
+                except SSHDirectoryCreationError as exc:
+                    logger.error(f"Failed to toggle isolated SSH mode: {exc}")
+                    active_isolated = False
+                    try:
+                        active_isolated = bool(getattr(parent_window.connection_manager, 'isolated_mode', False))
+                    except Exception:
+                        active_isolated = False
+                    self.isolated_mode_radio.set_active(active_isolated)
+                    self.default_mode_radio.set_active(not active_isolated)
+                    self._update_operation_mode_styles()
+                    if hasattr(parent_window, '_show_ssh_dir_creation_dialog'):
+                        parent_window._show_ssh_dir_creation_dialog(exc)
+                    return
+
             self.config.set_setting('ssh.use_isolated_config', bool(use_isolated))
 
             self._update_operation_mode_styles()
-
-            parent_window = self.get_transient_for()
-            if parent_window and hasattr(parent_window, 'connection_manager'):
-                parent_window.connection_manager.set_isolated_mode(bool(use_isolated))
 
             # Inform user that restart is required for changes
             if parent_window:
