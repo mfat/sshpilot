@@ -1097,6 +1097,17 @@ class ConnectionManager(GObject.Object):
             self._ensure_secure_permissions(parent_dir, 0o700)
         return normalized
 
+    def _resolve_ssh_config_path(self, target_path: Optional[str], *, reason: str = "SSH config update") -> str:
+        """Return a usable SSH config path, defaulting to ~/.ssh/config when missing."""
+        candidate = str(target_path).strip() if target_path else ''
+        if not candidate:
+            default_path = os.path.join(get_ssh_dir(), 'config')
+            logger.warning("%s: missing SSH config path; defaulting to %s", reason, default_path)
+            candidate = default_path
+        normalized = self._ensure_config_parent_dir(candidate)
+        self.ssh_config_path = normalized
+        return normalized
+
     def _post_init_slow_path(self):
         """Run slower initialization steps after UI is responsive."""
         try:
@@ -2099,7 +2110,10 @@ class ConnectionManager(GObject.Object):
         try:
             if not target_path:
                 target_path = self.ssh_config_path
-            target_path = self._ensure_config_parent_dir(target_path)
+            target_path = self._resolve_ssh_config_path(
+                target_path,
+                reason="Split host block target path",
+            )
 
             try:
                 with open(target_path, 'r') as f:
@@ -2167,8 +2181,11 @@ class ConnectionManager(GObject.Object):
     def update_ssh_config_file(self, connection: Connection, new_data: Dict[str, Any], original_nickname: str = None):
         """Update SSH config file with new connection data"""
         try:
-            target_path = new_data.get('source') or getattr(connection, 'source', None) or self.ssh_config_path
-            target_path = self._ensure_config_parent_dir(target_path)
+            target_path = self._resolve_ssh_config_path(
+                new_data.get('source') or getattr(connection, 'source', None) or self.ssh_config_path,
+                reason="SSH config update",
+            )
+            new_data['source'] = target_path
             if not os.path.exists(target_path):
                 with open(target_path, 'w', encoding='utf-8') as f:
                     f.write("# SSH configuration file\n\n")
@@ -2356,7 +2373,14 @@ class ConnectionManager(GObject.Object):
             split_source_override = new_data.pop('__split_source', None)
             split_original_host = new_data.pop('__split_original_nickname', None)
 
-            target_path = split_source_override or new_data.get('source') or getattr(connection, 'source', self.ssh_config_path)
+            raw_target_path = (
+                split_source_override
+                or new_data.get('source')
+                or getattr(connection, 'source', None)
+                or self.ssh_config_path
+            )
+            target_path = self._resolve_ssh_config_path(raw_target_path, reason="Connection update")
+            new_data['source'] = target_path
             logger.info(
                 "Updating connection '%s' → writing to %s (rules=%d)",
                 connection.nickname,
