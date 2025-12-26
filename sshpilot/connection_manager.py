@@ -1084,6 +1084,17 @@ class ConnectionManager(GObject.Object):
         expanded = os.path.expanduser(os.path.expandvars(path))
         return os.path.abspath(expanded)
 
+    def _resolve_config_path(self, path: Optional[str]) -> str:
+        """Return a usable SSH config path, falling back to the default when missing."""
+        candidate = path or self.ssh_config_path
+        if candidate and str(candidate).strip():
+            return candidate
+
+        default_path = os.path.join(get_ssh_dir(), "config")
+        logger.error("SSH config path missing; defaulting to %s", default_path)
+        self.ssh_config_path = default_path
+        return default_path
+
     def _ensure_config_parent_dir(self, path: str) -> str:
         """Normalize *path* and ensure its parent directory exists with secure permissions."""
         normalized = self._normalize_path(path)
@@ -2167,8 +2178,12 @@ class ConnectionManager(GObject.Object):
     def update_ssh_config_file(self, connection: Connection, new_data: Dict[str, Any], original_nickname: str = None):
         """Update SSH config file with new connection data"""
         try:
-            target_path = new_data.get('source') or getattr(connection, 'source', None) or self.ssh_config_path
+            new_data = dict(new_data)
+            target_path_candidate = new_data.get('source') or getattr(connection, 'source', None) or self.ssh_config_path
+            target_path = self._resolve_config_path(target_path_candidate)
             target_path = self._ensure_config_parent_dir(target_path)
+            self.ssh_config_path = target_path
+            new_data['source'] = target_path
             if not os.path.exists(target_path):
                 with open(target_path, 'w', encoding='utf-8') as f:
                     f.write("# SSH configuration file\n\n")
@@ -2352,11 +2367,16 @@ class ConnectionManager(GObject.Object):
     def update_connection(self, connection: Connection, new_data: Dict[str, Any]) -> bool:
         """Update an existing connection"""
         try:
+            new_data = dict(new_data)
             split_from_group = bool(new_data.pop('__split_from_group', False))
             split_source_override = new_data.pop('__split_source', None)
             split_original_host = new_data.pop('__split_original_nickname', None)
 
-            target_path = split_source_override or new_data.get('source') or getattr(connection, 'source', self.ssh_config_path)
+            target_path_candidate = split_source_override or new_data.get('source') or getattr(connection, 'source', None) or self.ssh_config_path
+            target_path = self._resolve_config_path(target_path_candidate)
+            target_path = self._ensure_config_parent_dir(target_path)
+            self.ssh_config_path = target_path
+            new_data['source'] = target_path
             logger.info(
                 "Updating connection '%s' → writing to %s (rules=%d)",
                 connection.nickname,
