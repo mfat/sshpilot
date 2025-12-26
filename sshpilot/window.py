@@ -42,7 +42,7 @@ HAS_TIMED_ANIMATION = hasattr(Adw, 'TimedAnimation')
 
 from gettext import gettext as _
 
-from .connection_manager import ConnectionManager, Connection, SSHDirectoryCreationError
+from .connection_manager import ConnectionManager, Connection
 from .terminal import TerminalWidget
 from .terminal_manager import TerminalManager
 from .config import Config
@@ -80,7 +80,7 @@ from .actions import WindowActions, register_window_actions
 from . import shutdown
 from .search_utils import connection_matches
 from .shortcut_utils import get_primary_modifier_label
-from .platform_utils import is_macos, get_config_dir, get_ssh_dir
+from .platform_utils import is_macos, get_config_dir
 from .ssh_utils import ensure_writable_ssh_home
 from .scp_utils import assemble_scp_transfer_args, download_file, upload_file
 from .ssh_password_exec import run_ssh_with_password, run_scp_with_password
@@ -697,16 +697,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 self._config_changed_handler = None
         effective_isolated = isolated or bool(self.config.get_setting('ssh.use_isolated_config', False))
         key_dir = Path(get_config_dir()) if effective_isolated else None
-        self.connection_manager = None
-        try:
-            self.connection_manager = ConnectionManager(self.config, isolated_mode=effective_isolated)
-        except SSHDirectoryCreationError as exc:
-            logger.error("Failed to initialize SSH directory: %s", exc)
-            effective_isolated = True
-            key_dir = Path(get_config_dir())
-            self.connection_manager = ConnectionManager(self.config, isolated_mode=True)
-            self.config.set_setting('ssh.use_isolated_config', True)
-            GLib.idle_add(self._show_ssh_dir_creation_dialog, exc)
+        self.connection_manager = ConnectionManager(self.config, isolated_mode=effective_isolated)
         # Ensure native connect preference is propagated to the connection manager
         try:
             native_cfg = bool(self.config.get_setting('ssh.native_connect', True))
@@ -719,7 +710,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         if app is not None and app_native is None:
             app.native_connect_enabled = native_cfg
         self.key_manager = KeyManager(key_dir)
-        self._update_key_manager_ssh_dir()
         self.group_manager = GroupManager(self.config)
         
         # UI state
@@ -776,100 +766,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self._schedule_startup_tasks()
 
         logger.info("Main window initialized")
-
-    def _update_key_manager_ssh_dir(self):
-        """Keep the key manager SSH directory aligned with the current mode."""
-        manager = getattr(self, 'connection_manager', None)
-        if not hasattr(self, 'key_manager') or self.key_manager is None or manager is None:
-            return
-        try:
-            if getattr(manager, 'isolated_mode', False):
-                self.key_manager.ssh_dir = Path(get_config_dir())
-            else:
-                self.key_manager.ssh_dir = Path(get_ssh_dir())
-        except Exception as exc:
-            logger.debug("Unable to update key manager SSH directory: %s", exc)
-
-    def _retry_create_ssh_dir(self):
-        """Retry creating the default SSH directory and switch back to default mode on success."""
-        try:
-            if self.connection_manager:
-                self.connection_manager.set_isolated_mode(False)
-            self.config.set_setting('ssh.use_isolated_config', False)
-            self._update_key_manager_ssh_dir()
-        except SSHDirectoryCreationError as exc:
-            logger.error("SSH directory creation retry failed: %s", exc)
-            self._show_ssh_dir_creation_dialog(exc)
-        except Exception as exc:
-            logger.error("Unexpected error while retrying SSH directory creation: %s", exc)
-
-    def _force_isolated_mode_after_failure(self):
-        """Switch to isolated mode after a default SSH directory failure."""
-        try:
-            if self.connection_manager:
-                self.connection_manager.set_isolated_mode(True)
-            self.config.set_setting('ssh.use_isolated_config', True)
-            self._update_key_manager_ssh_dir()
-        except Exception as exc:
-            logger.error("Failed to switch to isolated mode after SSH directory error: %s", exc)
-
-    def _show_ssh_dir_creation_dialog(self, error: SSHDirectoryCreationError):
-        """Present options when the ~/.ssh directory cannot be created."""
-        if error is None:
-            return False
-
-        heading = _("SSH Directory Unavailable")
-        body = _(
-            "sshPilot could not create the SSH directory at:\n{path}\n\n"
-            "You can create the directory now, switch to Isolated Mode, or cancel."
-        ).format(path=getattr(error, 'path', _("Unknown location")))
-
-        dialog = Adw.MessageDialog(
-            transient_for=self,
-            modal=True,
-            heading=heading,
-            body=body,
-        )
-        dialog.add_response('create', _('Create SSH Directory'))
-        dialog.add_response('isolated', _('Switch to Isolated Mode'))
-        dialog.add_response('cancel', _('Cancel'))
-        dialog.set_response_appearance('create', Adw.ResponseAppearance.SUGGESTED)
-        dialog.set_close_response('cancel')
-        dialog.set_default_response('create')
-
-        description = Gtk.Label()
-        description.set_wrap(True)
-        description.set_use_markup(False)
-        description.set_xalign(0)
-        description.set_label(
-            _("Creating the directory lets sshPilot manage ~/.ssh directly. "
-              "Isolated Mode keeps SSH configuration inside the app data directory.")
-        )
-
-        wiki_link = Gtk.LinkButton.new_with_label(
-            "https://github.com/mfat/sshpilot/wiki/6.Operation-Modes",
-            _("Learn about operation modes"),
-        )
-        wiki_link.set_halign(Gtk.Align.START)
-
-        extra = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        extra.append(description)
-        extra.append(wiki_link)
-        dialog.set_extra_child(extra)
-
-        def on_response(dlg, response):
-            dlg.destroy()
-            if response == 'create':
-                self._retry_create_ssh_dir()
-            elif response == 'isolated':
-                self._force_isolated_mode_after_failure()
-            else:
-                self._update_key_manager_ssh_dir()
-
-        dialog.connect('response', on_response)
-        dialog.present()
-
-        return False
 
     def _on_config_setting_changed(self, _config, key, value):
         """Synchronize runtime state when configuration values change."""
