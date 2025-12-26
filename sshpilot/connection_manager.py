@@ -71,15 +71,6 @@ logger = logging.getLogger(__name__)
 _SERVICE_NAME = "sshPilot"
 
 
-class SSHDirectoryCreationError(RuntimeError):
-    """Raised when the SSH directory cannot be created."""
-
-    def __init__(self, path: str, original_exception: Exception):
-        self.path = path
-        self.original_exception = original_exception
-        super().__init__(f"Unable to create SSH directory at {path}: {original_exception}")
-
-
 def _ensure_event_loop() -> asyncio.AbstractEventLoop:
     """Return the running asyncio event loop or create one if missing.
 
@@ -1056,11 +1047,7 @@ class ConnectionManager(GObject.Object):
                 self._ensure_secure_permissions(path, 0o600)
         else:
             ssh_dir = self._normalize_path(get_ssh_dir())
-            try:
-                os.makedirs(ssh_dir, mode=0o700, exist_ok=True)
-            except Exception as exc:
-                logger.error("Unable to create SSH directory %s: %s", ssh_dir, exc)
-                raise SSHDirectoryCreationError(ssh_dir, exc) from exc
+            os.makedirs(ssh_dir, mode=0o700, exist_ok=True)
             self._ensure_secure_permissions(ssh_dir, 0o700)
             self.ssh_config_path = self._normalize_path(os.path.join(ssh_dir, 'config'))
             self.known_hosts_path = self._normalize_path(os.path.join(ssh_dir, 'known_hosts'))
