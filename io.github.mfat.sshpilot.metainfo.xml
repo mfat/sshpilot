@@ -53,6 +53,13 @@
 
 
 
+
+    <release version="4.7.9" date="2025-12-27">
+
+      <description>
+        <p>- Minor bug fixes</p>
+      </description>
+    </release>
     <release version="4.7.8" date="2025-12-12">
 
       <description>
