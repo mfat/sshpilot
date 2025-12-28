@@ -40,6 +40,7 @@ from .askpass_utils import (
     lookup_passphrase,
     store_passphrase,
 )
+from .ssh_agent_socket import get_configured_socket, socket_exists
 
 if Secret is not None:
     _SECRET_SCHEMA = get_secret_schema()
@@ -1100,6 +1101,12 @@ class ConnectionManager(GObject.Object):
     def _post_init_slow_path(self):
         """Run slower initialization steps after UI is responsive."""
         try:
+            # Ensure SSH agent environment is available early so agent-based
+            # identity discovery (ssh-add) can pick up configured sockets.
+            try:
+                self._ensure_ssh_agent()
+            except Exception:
+                pass
             # Key scan
             self.load_ssh_keys()
         except Exception as e:
@@ -1844,9 +1851,26 @@ class ConnectionManager(GObject.Object):
     def _ensure_ssh_agent(self) -> bool:
         """Ensure ssh-agent is running and export environment variables"""
         try:
-            # Check if ssh-agent is already running
+            # If user configured a specific SSH agent socket, prefer it.
+            try:
+                conf_sock = None
+                if hasattr(self, 'config') and self.config is not None:
+                    conf_sock = get_configured_socket(self.config)
+                if conf_sock:
+                    if socket_exists(conf_sock):
+                        os.environ['SSH_AUTH_SOCK'] = conf_sock
+                        logger.debug("Using configured SSH_AUTH_SOCK: %s", conf_sock)
+                        return True
+                    else:
+                        logger.warning("Configured SSH_AUTH_SOCK does not exist: %s", conf_sock)
+                        # Don't set invalid socket; continue to other checks
+            except Exception:
+                # Fall back to environment checks below
+                pass
+
+            # Check if ssh-agent is already running via SSH_AUTH_SOCK env
             if os.environ.get('SSH_AUTH_SOCK'):
-                logger.debug("SSH agent already running")
+                logger.debug("SSH agent already running (env)")
                 return True
             
             # Start a new ssh-agent
@@ -1898,6 +1922,10 @@ class ConnectionManager(GObject.Object):
             try:
                 if hasattr(connection, 'ssh_cmd'):
                     connection.ssh_cmd = []
+                # Also clear any cached environment so updated SSH_AUTH_SOCK
+                # from preferences is picked up on next connect.
+                if hasattr(connection, 'ssh_env'):
+                    connection.ssh_env = {}
                 if getattr(connection, 'is_connected', False):
                     connection.is_connected = False
             except Exception as exc:

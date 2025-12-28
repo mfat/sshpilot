@@ -125,6 +125,10 @@ OR in a terminal type:
 flatpak install flathub io.github.mfat.sshpilot
 ```
 
+**Developer / Testing note:** If you want to build and test a local Flatpak variant (e.g., for forwarding SSH agent sockets or testing a different App ID), see `flatpak/README-test.md`. The test manifest installs the app as `io.github.mfat.sshpilot.test`.
+
+**Behavior note:** When running inside Flatpak the application will use the `FLATPAK_ID` environment variable as its runtime application id (if present), which avoids DBus service name conflicts for test builds.
+
 ### <img src="https://img.icons8.com/color/48/000000/arch-linux.png" width="24"/> Arch Linux
 Arch Linux package via AUR: https://aur.archlinux.org/packages/sshpilot
 

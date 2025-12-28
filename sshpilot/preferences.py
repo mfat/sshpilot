@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 from gettext import gettext as _
 
 from .platform_utils import get_config_dir, is_flatpak, is_macos
+from .ssh_agent_socket import socket_exists, get_configured_socket
 from .file_manager_integration import (
     has_internal_file_manager,
     has_native_gvfs_support,
@@ -1717,6 +1718,45 @@ class PreferencesWindow(Adw.Window):
             ssh_settings_page.add(advanced_group)
             ssh_settings_page.add(native_connect_group)
 
+            # Security / SSH agent socket selection
+            security_group = Adw.PreferencesGroup(title="SSH Agent")
+
+            self.ssh_agent_combo = Adw.ComboRow()
+            self.ssh_agent_combo.set_title("SSH Agent Socket")
+            self.ssh_agent_combo.set_subtitle("Select an SSH agent socket (Bitwarden supported) or enter manually")
+
+            agent_list = Gtk.StringList()
+            # We'll populate choices below
+            self._ssh_agent_candidates = []  # list of (label, path)
+            self.ssh_agent_combo.set_model(agent_list)
+
+            security_group.add(self.ssh_agent_combo)
+
+            # Manual entry row
+            self.ssh_agent_manual_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            self.ssh_agent_manual_entry = Gtk.Entry()
+            self.ssh_agent_manual_entry.set_placeholder_text("/run/user/1000/ssh-agent.sock or custom path")
+            # Load current manual value
+            try:
+                current_manual = self.config.get_setting('security.ssh_auth_sock', None)
+            except Exception:
+                current_manual = None
+            if current_manual:
+                self.ssh_agent_manual_entry.set_text(current_manual)
+            self.ssh_agent_manual_entry.connect('changed', self.on_ssh_agent_manual_changed)
+            self.ssh_agent_manual_box.append(self.ssh_agent_manual_entry)
+            # Hide manual entry unless Manual selected
+            self.ssh_agent_manual_box.set_visible(False)
+            security_group.add(self.ssh_agent_manual_box)
+
+            ssh_settings_page.add(security_group)
+
+            # Populate bitwarden socket candidates
+            self._populate_ssh_agent_candidates()
+            # Select saved value if present
+            self._sync_ssh_agent_ui_with_config()
+
+
             # Ensure shortcut overview controls reflect current state
             self._set_shortcut_controls_enabled(not self._pass_through_enabled)
 
@@ -3031,6 +3071,147 @@ class PreferencesWindow(Adw.Window):
         else:
             # Default: show for unknown backends
             self.encoding_row.set_visible(True)
+
+    def _populate_ssh_agent_candidates(self):
+        """Detect Bitwarden SSH agent socket locations and populate the combo."""
+        try:
+            home = os.path.expanduser('~')
+            candidates = [
+                ("SSH_AUTH_SOCK", None),
+                ("Bitwarden (home)", os.path.join(home, '.bitwarden-ssh-agent.sock')),
+                ("Bitwarden (snap)", os.path.join(home, 'snap', 'bitwarden', 'current', '.bitwarden-ssh-agent.sock')),
+                ("Bitwarden (flatpak)", os.path.join(home, '.var', 'app', 'com.bitwarden.desktop', 'data', '.bitwarden-ssh-agent.sock')),
+                ("Manual...", '__manual__'),
+            ]
+
+            # Filter candidates that actually exist, always keep the system and manual options
+            present = []
+            for label, path in candidates:
+                if path is None or path == '__manual__' or socket_exists(path):
+                    present.append((label, path))
+
+            # Build model
+            model = Gtk.StringList()
+            self._ssh_agent_candidates = present
+            for label, _ in present:
+                model.append(label)
+            self.ssh_agent_combo.set_model(model)
+            self.ssh_agent_combo.connect('notify::selected', self.on_ssh_agent_combo_changed)
+        except Exception as e:
+            logger.debug("Failed to populate ssh agent candidates: %s", e)
+
+    def _sync_ssh_agent_ui_with_config(self):
+        try:
+            saved = self.config.get_setting('security.ssh_auth_sock', None)
+            # If saved is None, select system option (index 0)
+            selected_index = 0
+            if saved:
+                # Find matching candidate
+                saved_exp = os.path.expanduser(saved)
+                for i, (_label, path) in enumerate(self._ssh_agent_candidates):
+                    # Compare expanded paths so tilde/snap variants match
+                    if path == saved or (path and os.path.expanduser(path) == saved_exp):
+                        selected_index = i
+                        break
+                else:
+                    # Not found among candidates: set manual text and select Manual entry if present
+                    self.ssh_agent_manual_entry.set_text(saved)
+                    for i, (_label, path) in enumerate(self._ssh_agent_candidates):
+                        if path == '__manual__':
+                            selected_index = i
+                            break
+
+            # Guard against out-of-range
+            if selected_index < 0 or selected_index >= len(self._ssh_agent_candidates):
+                selected_index = 0
+            self.ssh_agent_combo.set_selected(selected_index)
+        except Exception as e:
+            logger.debug("Failed to sync ssh agent UI with config: %s", e)
+
+    def on_ssh_agent_combo_changed(self, combo_row, _param):
+        if not hasattr(self, '_ssh_agent_candidates') or not self._ssh_agent_candidates:
+            return
+        idx = combo_row.get_selected()
+        if idx < 0 or idx >= len(self._ssh_agent_candidates):
+            return
+        label, path = self._ssh_agent_candidates[idx]
+        if path == '__manual__':
+            # Show manual entry and persist whatever is currently in it
+            self.ssh_agent_manual_box.set_visible(True)
+            text = self.ssh_agent_manual_entry.get_text().strip()
+            value = os.path.expanduser(text) if text else None
+            try:
+                self.config.set_setting('security.ssh_auth_sock', value)
+            except Exception as e:
+                logger.debug("Failed to set ssh_auth_sock in config (manual): %s", e)
+            # Export to current process environment as well
+            if value and socket_exists(value):
+                os.environ['SSH_AUTH_SOCK'] = value
+                logger.info("Preferences: set SSH_AUTH_SOCK to %s (manual)", value)
+            else:
+                # Don't set env to invalid socket; ensure it's not present
+                os.environ.pop('SSH_AUTH_SOCK', None)
+                logger.info("Preferences: manual SSH_AUTH_SOCK cleared or invalid: %s", value)
+            return
+
+        # Non-manual selection: hide manual entry and persist selection (None means use system env)
+        self.ssh_agent_manual_box.set_visible(False)
+        try:
+            # Expand and persist the selected path (None means use system env)
+            set_path = None if path is None else os.path.expanduser(path)
+            self.config.set_setting('security.ssh_auth_sock', set_path)
+        except Exception as e:
+            logger.debug("Failed to set ssh_auth_sock in config: %s", e)
+        # Update current process env so subsequent subprocess calls inherit the socket
+        if set_path and socket_exists(set_path):
+            os.environ['SSH_AUTH_SOCK'] = set_path
+            logger.info("Preferences: set SSH_AUTH_SOCK to %s", set_path)
+        else:
+            os.environ.pop('SSH_AUTH_SOCK', None)
+            logger.info("Preferences: cleared SSH_AUTH_SOCK (selection invalid or system)")
+        # If parent window has a connection_manager, notify it so future connections pick up the change
+        try:
+            parent = getattr(self, 'parent_window', None)
+            if parent and hasattr(parent, 'connection_manager'):
+                # Invalidate cached commands so ssh processes re-evaluate environment
+                parent.connection_manager.invalidate_cached_commands()
+                # Ensure connection manager applies the new socket immediately
+                try:
+                    if hasattr(parent.connection_manager, '_ensure_ssh_agent'):
+                        parent.connection_manager._ensure_ssh_agent()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    def on_ssh_agent_manual_changed(self, entry):
+        text = entry.get_text().strip()
+        if not text:
+            value = None
+        else:
+            value = os.path.expanduser(text)
+        try:
+            self.config.set_setting('security.ssh_auth_sock', value)
+        except Exception as e:
+            logger.debug("Failed to set ssh_auth_sock from manual entry: %s", e)
+        # Export to environment so future subprocess calls see it
+        if value and socket_exists(value):
+            os.environ['SSH_AUTH_SOCK'] = value
+            logger.info("Preferences: set SSH_AUTH_SOCK to %s (manual edit)", value)
+        else:
+            os.environ.pop('SSH_AUTH_SOCK', None)
+            logger.info("Preferences: cleared SSH_AUTH_SOCK from manual edit")
+        try:
+            parent = getattr(self, 'parent_window', None)
+            if parent and hasattr(parent, 'connection_manager'):
+                parent.connection_manager.invalidate_cached_commands()
+                try:
+                    if hasattr(parent.connection_manager, '_ensure_ssh_agent'):
+                        parent.connection_manager._ensure_ssh_agent()
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
     def on_encoding_selection_changed(self, combo_row, _param):
         if self._encoding_selection_sync:

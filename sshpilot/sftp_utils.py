@@ -12,6 +12,10 @@ from typing import Optional, Tuple, Callable, Any
 from gi.repository import Gtk, Adw, Gio, GLib, Gdk
 
 from .platform_utils import is_flatpak, is_macos
+from .ssh_agent_socket import get_configured_socket, env_with_socket, socket_exists, run_with_socket
+import tempfile
+import random
+import string
 
 logger = logging.getLogger(__name__)
 
@@ -246,6 +250,87 @@ def open_remote_in_file_manager(
         # For in-app file manager, use the specified path
         p = path or "~"
         uri = f"sftp://{user}@{host}{port_part}{p}"
+        # Try to launch in-app file manager; if paramiko or dependencies are missing,
+        # offer to install paramiko into the user's environment and retry.
+        try:
+            from .file_manager_window import launch_file_manager_window
+
+            launch_file_manager_window(
+                host=host,
+                username=user,
+                port=port or 22,
+                path=path or "~",
+                parent=parent_window,
+                transient_for_parent=False,
+                connection=connection,
+                connection_manager=connection_manager,
+                ssh_config=ssh_config,
+            )
+        except Exception as exc:
+            # If the failure appears to be due to missing paramiko, offer to install it
+            msg = str(exc) or ''
+            missing_paramiko = 'paramiko' in msg.lower() or False
+            try:
+                import paramiko  # type: ignore
+            except Exception:
+                missing_paramiko = True
+
+            if missing_paramiko:
+                try:
+                    dialog = Adw.MessageDialog(
+                        transient_for=parent_window,
+                        modal=True,
+                        heading="Required dependency missing",
+                        body=(
+                            "The integrated file manager requires the Python package 'paramiko'.\n"
+                            "Would you like sshPilot to install it now into your Python environment?"
+                        ),
+                    )
+                    dialog.add_response("no", "No")
+                    dialog.add_response("install", "Install paramiko")
+                    dialog.set_response_appearance("install", Adw.ResponseAppearance.SUGGESTED)
+
+                    def _on_response(dlg, response):
+                        dlg.destroy()
+                        if response == 'install':
+                            try:
+                                import sys
+                                import subprocess
+                                cmd = [sys.executable, "-m", "pip", "install", "--user", "paramiko"]
+                                # Run pip install asynchronously to avoid blocking UI
+                                def _run_install():
+                                    try:
+                                        subprocess.run(cmd, check=True)
+                                    except Exception:
+                                        pass
+                                import threading
+                                t = threading.Thread(target=_run_install, daemon=True)
+                                t.start()
+                                # Inform the user to restart the file manager after install
+                                info = Adw.MessageDialog(
+                                    transient_for=parent_window,
+                                    modal=True,
+                                    heading="Installation started",
+                                    body=(
+                                        "Installation of 'paramiko' has started in the background.\n"
+                                        "Please restart sshPilot (or retry the file manager) after it completes."
+                                    ),
+                                )
+                                info.add_response("ok", "OK")
+                                info.present()
+                            except Exception:
+                                pass
+
+                    dialog.connect("response", _on_response)
+                    dialog.present()
+                except Exception:
+                    logger.debug("Failed to show paramiko install dialog: %s", exc, exc_info=True)
+            else:
+                logger.exception("Failed to launch in-app file manager: %s", exc)
+                if error_callback:
+                    error_callback(str(exc))
+            return False, str(exc)
+        return True, None
     else:
         # For external file managers, default to root but honor explicit paths
         requested_path = path or "/"
@@ -591,14 +676,35 @@ def _mount_and_open_sftp(
                         1000, lambda: GLib.idle_add(progress_dialog.close)
                     )
                 else:
-                    error_msg = f"Could not mount {uri}: {e.message}"
-                    logger.error(
-                        f"Mount failed for {user}@{host}: {error_msg}"
-                    )
-                    progress_dialog.update_progress(
-                        0.0, f"Mount failed: {e.message}"
-                    )
+                    err_text = getattr(e, 'message', str(e))
+                    error_msg = f"Could not mount {uri}: {err_text}"
+                    logger.error(f"Mount failed for {user}@{host}: {error_msg}")
+                    progress_dialog.update_progress(0.0, f"Mount failed: {err_text}")
                     progress_dialog.show_error(error_msg)
+
+                    # If mount failed due to permission/authorization, offer password prompt
+                    lowered = (err_text or '').lower()
+                    if 'permission denied' in lowered or 'zugriff verweigert' in lowered or 'authentication' in lowered:
+                        try:
+                            # Ask the user for a password and retry mount with provided password
+                            logger.info("Mount failed due to auth; prompting for password to retry mount")
+                            retry_password = _show_password_dialog_for_mount(user, host, connection, progress_dialog)
+                            if retry_password:
+                                lookup_user = user
+                                if connection is not None:
+                                    lookup_user = getattr(connection, 'username', None) or user
+                                op_retry = PasswordMountOperation(retry_password, lookup_user)
+                                # Retry mount once with provided password
+                                gfile.mount_enclosing_volume(
+                                    Gio.MountMountFlags.NONE,
+                                    op_retry,
+                                    None,
+                                    on_mounted,
+                                    None,
+                                )
+                                return
+                        except Exception:
+                            logger.debug("Password retry mount attempt failed or was cancelled", exc_info=True)
 
                     # Try Flatpak-compatible methods as fallback
                     if is_flatpak():
@@ -610,9 +716,7 @@ def _mount_and_open_sftp(
                         if not success and error_callback:
                             error_callback(msg)
                     else:
-                        GLib.timeout_add(
-                            1500, lambda: GLib.idle_add(progress_dialog.close)
-                        )
+                        GLib.timeout_add(1500, lambda: GLib.idle_add(progress_dialog.close))
                         if error_callback:
                             error_callback(error_msg)
             except Exception as e:
@@ -627,6 +731,90 @@ def _mount_and_open_sftp(
         # Start progress updates if not already running
         if not getattr(progress_dialog, "progress_timer", None):
             progress_dialog.start_progress_updates()
+
+        # First try a direct sshfs mount using the configured SSH_AUTH_SOCK (non-interactive)
+        # This allows mounting in the user process using the agent socket (no password prompt).
+        try:
+            sshfs_bin = shutil.which('sshfs')
+            configured = get_configured_socket()
+            if sshfs_bin and configured and socket_exists(configured):
+                # Create a temporary mountpoint
+                tmpdir = tempfile.mkdtemp(prefix='sshpilot-sftp-')
+                mount_dir = os.path.join(tmpdir, 'mount')
+                os.makedirs(mount_dir, exist_ok=True)
+                sshfs_cmd = [sshfs_bin, f"{user}@{host}:", mount_dir, '-o', 'reconnect', '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=3']
+                try:
+                    logger.info("Attempting sshfs mount: %s -> %s", sshfs_cmd, mount_dir)
+                    p = run_with_socket(sshfs_cmd, timeout=20, capture_output=True, text=True)
+                    logger.info("sshfs exit: %s stdout=%s stderr=%s", p.returncode, (p.stdout or '').strip(), (p.stderr or '').strip())
+                    if p.returncode == 0:
+                        # Open file manager at the mount point and return
+                        def _open_mount():
+                            try:
+                                Gio.AppInfo.launch_default_for_uri(f"file://{mount_dir}", None)
+                            except Exception:
+                                pass
+                            try:
+                                progress_dialog.update_progress(1.0, "Mount successful! Opening file manager...")
+                            except Exception:
+                                pass
+                            try:
+                                progress_dialog.close()
+                            except Exception:
+                                pass
+                            return False
+
+                        GLib.idle_add(_open_mount)
+                        logger.info("sshfs mounted %s at %s", user + '@' + host, mount_dir)
+                        return True, None
+                    else:
+                        # Cleanup mount dir on failure
+                        try:
+                            shutil.rmtree(tmpdir, ignore_errors=True)
+                        except Exception:
+                            pass
+                except Exception as exc:
+                    logger.debug("sshfs mount attempt failed: %s", exc, exc_info=True)
+                    try:
+                        shutil.rmtree(tmpdir, ignore_errors=True)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+        # Try invoking `gio mount` with the configured SSH_AUTH_SOCK so gvfsd can use our agent
+        try:
+            configured = get_configured_socket()
+            if configured and socket_exists(configured) and shutil.which('gio'):
+                try:
+                    logger.info("Attempting `gio mount` with SSH_AUTH_SOCK=%s", configured)
+                    # Use run_with_socket helper to run gio with SSH_AUTH_SOCK in env
+                    p = run_with_socket([shutil.which('gio') or 'gio', 'mount', uri], timeout=10, capture_output=True, text=True)
+                    logger.info("`gio mount` exit: %s stdout=%s stderr=%s", p.returncode, p.stdout.strip(), p.stderr.strip())
+                    if p.returncode == 0:
+                        # Mount initiated successfully; open default file manager on the main loop
+                        def _open_and_close():
+                            try:
+                                Gio.AppInfo.launch_default_for_uri(uri, None)
+                            except Exception:
+                                pass
+                            try:
+                                progress_dialog.update_progress(1.0, "Mount successful! Opening file manager...")
+                            except Exception:
+                                pass
+                            try:
+                                progress_dialog.close()
+                            except Exception:
+                                pass
+                            return False
+
+                        GLib.idle_add(_open_and_close)
+                        logger.info("`gio mount` reported success for %s", uri)
+                        return True, None
+                except Exception as exc:
+                    logger.debug("`gio mount` with SSH_AUTH_SOCK failed: %s", exc)
+        except Exception:
+            pass
 
         gfile.mount_enclosing_volume(
             Gio.MountMountFlags.NONE,

@@ -6,6 +6,8 @@ This module provides a single, consistent way to build SSH commands for all
 components (terminal, SCP, SFTP, ssh-copy-id) that matches default SSH behavior.
 """
 import os
+import json
+from pathlib import Path
 import logging
 import subprocess
 from typing import Dict, List, Optional, Tuple, Union
@@ -17,7 +19,9 @@ from .askpass_utils import (
     ensure_key_in_agent,
     lookup_passphrase,
 )
+from .platform_utils import get_config_dir
 from .ssh_password_exec import run_ssh_with_password, run_scp_with_password
+from .ssh_agent_socket import env_with_socket, get_configured_socket
 
 logger = logging.getLogger(__name__)
 
@@ -144,16 +148,19 @@ def _get_stored_password(
     # Then check connection manager storage
     if not connection_manager:
         return None
-    
+
     try:
         host = getattr(connection, 'hostname', '') or getattr(connection, 'host', '')
-        username = getattr(connection, 'username', '')
+        username = getattr(connection, 'username', '') or getattr(connection, 'user', '')
         if host and username:
-            stored = connection_manager.get_password(host, username)
-            if stored:
-                return stored
+            try:
+                if hasattr(connection_manager, 'get_password'):
+                    return connection_manager.get_password(host, username)
+            except Exception:
+                pass
     except Exception:
         pass
+
     return None
 
 
@@ -164,7 +171,7 @@ def _get_stored_passphrase(
     """Get stored passphrase for key."""
     if not key_path:
         return None
-    
+
     # Try connection_manager first if available
     if connection_manager:
         try:
@@ -174,7 +181,7 @@ def _get_stored_passphrase(
                     return result
         except Exception:
             pass
-    
+
     # Fallback to direct lookup (works even without connection_manager)
     try:
         result = lookup_passphrase(key_path)
@@ -182,7 +189,7 @@ def _get_stored_passphrase(
             return result
     except Exception:
         pass
-    
+
     return None
 
 
@@ -427,6 +434,11 @@ def build_ssh_connection(
         env = os.environ.copy()
         env.pop('SSH_ASKPASS', None)
         env.pop('SSH_ASKPASS_REQUIRE', None)
+        # Ensure configured SSH_AUTH_SOCK (e.g., Bitwarden socket) is applied
+        try:
+            env = env_with_socket(app_config, base_env=env)
+        except Exception:
+            pass
         return SSHConnectionCommand(
             command=base_cmd,
             env=env,
@@ -634,16 +646,16 @@ def build_ssh_connection(
         resolved_user = _get_ssh_config_value(effective_config, 'user')
         resolved_hostname = _get_ssh_config_value(effective_config, 'hostname')
         
-        # If SSH config has user/hostname, prefer using host_label (SSH will resolve it)
-        # Otherwise, use explicit user@hostname if provided
-        if resolved_user or resolved_hostname:
-            # SSH config has user/hostname - use host_label pattern
-            base_cmd.append(host_label)
-        elif username and hostname:
-            # No SSH config user/hostname - use explicit values
-            base_cmd.append(f"{username}@{hostname}")
+        # Prefer using explicit username@hostname when a username is provided
+        # and it differs from the resolved SSH config user. Otherwise fall back
+        # to the host_label which allows SSH config to resolve user/host.
+        if username and hostname:
+            if not resolved_user or (resolved_user and resolved_user != username):
+                base_cmd.append(f"{username}@{hostname}")
+            else:
+                base_cmd.append(host_label)
         else:
-            # Fallback to host_label
+            # No explicit username - use host_label so SSH config applies
             base_cmd.append(host_label)
     
     # Add remote command after host (if specified)
@@ -763,7 +775,15 @@ def build_ssh_connection(
         logger.debug("Using sshpass for automatic password authentication")
     
     # Log final environment state
-    logger.info(f"build_ssh_connection returning: SSH_ASKPASS={env.get('SSH_ASKPASS', 'NOT_SET')}, SSH_ASKPASS_REQUIRE={env.get('SSH_ASKPASS_REQUIRE', 'NOT_SET')}, use_askpass={use_askpass}, has_saved_passphrase={has_saved_passphrase}")
+    # Ensure configured SSH_AUTH_SOCK from app config is present in the env so
+    # child processes inherit the user's chosen agent socket (e.g., Bitwarden).
+    try:
+        env = env_with_socket(app_config, base_env=env)
+    except Exception:
+        # Best-effort: leave env as-is on error
+        pass
+
+    logger.info(f"build_ssh_connection returning: SSH_ASKPASS={env.get('SSH_ASKPASS', 'NOT_SET')}, SSH_ASKPASS_REQUIRE={env.get('SSH_ASKPASS_REQUIRE', 'NOT_SET')}, SSH_AUTH_SOCK={env.get('SSH_AUTH_SOCK', 'NOT_SET')}, use_askpass={use_askpass}, has_saved_passphrase={has_saved_passphrase}")
     
     return SSHConnectionCommand(
         command=base_cmd,

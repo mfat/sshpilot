@@ -84,7 +84,7 @@ class SshPilotApplication(Adw.Application):
 
     def __init__(self, verbose: bool = False, isolated: bool = False, native_connect: bool = False):
         super().__init__(
-            application_id='io.github.mfat.sshpilot',
+            application_id=os.environ.get('FLATPAK_ID', 'io.github.mfat.sshpilot'),
             flags=Gio.ApplicationFlags.FLAGS_NONE
         )
 

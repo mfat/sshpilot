@@ -751,6 +751,10 @@ class WelcomePage(Gtk.Overlay):
             # Handle simple user@host format (backward compatibility)
             if not raw_command.startswith('ssh') and '@' in raw_command and ' ' not in raw_command:
                 username, host = raw_command.split('@', 1)
+                # Preserve explicit quick-connect command so the builder
+                # doesn't rely on SSH config to resolve the username.
+                # Use `-l user host` form which is less likely to be
+                # rewritten by other code paths.
                 return {
                     "nickname": host,
                     "host": host,
@@ -758,7 +762,7 @@ class WelcomePage(Gtk.Overlay):
                     "port": 22,
                     "auth_method": 0,  # Default to key-based auth
                     "key_select_mode": 0,  # Try all keys
-                    "quick_connect_command": "",
+                    "quick_connect_command": f"ssh -l {username} {host}",
                     "unparsed_args": [],
                 }
 
@@ -1020,11 +1024,89 @@ class QuickConnectDialog(Adw.MessageDialog):
         text = self.entry.get_text().strip()
         if not text:
             return
-        
         # Parse the SSH command
         connection_data = self._parse_ssh_command(text)
         if connection_data:
             connection = Connection(connection_data)
+
+            # Try to build the SSH command here for logging and to ensure
+            # an explicit username is present when the user provided one but
+            # the resulting command would omit it (SSH config may otherwise
+            # cause the username to be resolved differently at runtime).
+            try:
+                from .ssh_connection_builder import ConnectionContext, build_ssh_connection
+                from .config import Config
+
+                cfg = None
+                try:
+                    cfg = Config()
+                except Exception:
+                    cfg = None
+
+                ctx = ConnectionContext(
+                    connection=connection,
+                    connection_manager=None,
+                    config=cfg,
+                    command_type='ssh',
+                    extra_args=[],
+                    port_forwarding_rules=None,
+                    remote_command=None,
+                    local_command=None,
+                    extra_ssh_config=None,
+                    known_hosts_path=None,
+                    native_mode=False,
+                    quick_connect_mode=bool(connection.quick_connect_command),
+                    quick_connect_command=connection.quick_connect_command or None,
+                )
+                built = build_ssh_connection(ctx)
+                logger.info(f"QuickConnect parsed: {connection_data}; built: {built.command}")
+
+                # If the user provided an explicit username but the built
+                # command does not contain a user@host token, force it so
+                # SSH uses the intended username rather than the local one.
+                username = getattr(connection, 'username', '') or ''
+                hostname = getattr(connection, 'hostname', '') or getattr(connection, 'host', '') or ''
+                if username and hostname:
+                    has_user_at = any('@' in a and not a.startswith('-') for a in built.command)
+                    # Detect explicit -l user or -luser forms to avoid duplicating user
+                    user_specified_via_l = False
+                    for i, a in enumerate(built.command):
+                        if a == '-l' and i + 1 < len(built.command):
+                            try:
+                                if built.command[i + 1] == username:
+                                    user_specified_via_l = True
+                                    break
+                            except Exception:
+                                pass
+                        if a.startswith('-l') and len(a) > 2:
+                            if a[2:] == username:
+                                user_specified_via_l = True
+                                break
+
+                    if not has_user_at and not user_specified_via_l:
+                        # Prepend explicit target after ssh binary if present
+                        cmd = list(built.command)
+                        if cmd and cmd[0] in ('ssh', 'scp', 'sftp'):
+                            # Insert explicit user@host as the next argument
+                            cmd.insert(1, f"{username}@{hostname}")
+                        else:
+                            cmd.insert(0, f"{username}@{hostname}")
+                        # Replace cached ssh_cmd so downstream uses explicit form
+                        connection.ssh_cmd = cmd
+                    else:
+                        # Leave as built if user already specified
+                        connection.ssh_cmd = built.command
+                else:
+                    # No username/hostname explicit - leave as built
+                    connection.ssh_cmd = built.command
+                # Also store env if available
+                try:
+                    connection.ssh_env = built.env
+                except Exception:
+                    pass
+            except Exception:
+                logger.debug('Failed to pre-build quick connect command', exc_info=True)
+
             self.parent_window.terminal_manager.connect_to_host(connection, force_new=False)
             self.destroy()
 
@@ -1036,6 +1118,10 @@ class QuickConnectDialog(Adw.MessageDialog):
             # Handle simple user@host format (backward compatibility)
             if not raw_command.startswith('ssh') and '@' in raw_command and ' ' not in raw_command:
                 username, host = raw_command.split('@', 1)
+                # Preserve explicit quick-connect command so the builder
+                # doesn't rely on SSH config to resolve the username.
+                # Use `-l user host` form which is less likely to be
+                # rewritten by other code paths.
                 return {
                     "nickname": host,
                     "host": host,
@@ -1043,7 +1129,7 @@ class QuickConnectDialog(Adw.MessageDialog):
                     "port": 22,
                     "auth_method": 0,  # Default to key-based auth
                     "key_select_mode": 0,  # Try all keys
-                    "quick_connect_command": "",
+                    "quick_connect_command": f"ssh -l {username} {host}",
                     "unparsed_args": [],
                 }
 

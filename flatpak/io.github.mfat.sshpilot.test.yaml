@@ -1,4 +1,4 @@
-app-id: io.github.mfat.sshpilot
+app-id: io.github.mfat.sshpilot.test
 runtime: org.gnome.Platform
 runtime-version: '49'
 sdk: org.gnome.Sdk
@@ -11,8 +11,9 @@ finish-args:
   - --socket=wayland
   - --socket=ssh-auth
   - --device=dri
-  - --filesystem=~/.ssh:create
+  - --filesystem=~/.ssh:rw
   - --talk-name=org.freedesktop.Flatpak
+  - --talk-name=org.freedesktop.secrets
   # Allow access to common Bitwarden agent socket locations in the user's home
   - --filesystem=~/.var/app/com.bitwarden.desktop/data:rw
   - --filesystem=~/.bitwarden-ssh-agent.sock:rw
@@ -66,9 +67,9 @@ modules:
       - pip3 install --verbose --exists-action=i --no-build-isolation --no-deps --prefix=${FLATPAK_DEST} .
       - install -Dm755 sshpilot-launcher.sh /app/bin/sshpilot
       - install -Dm755 sshpilot-agent /app/bin/sshpilot-agent
-      - install -Dm644 sshpilot/resources/sshpilot.svg /app/share/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg
-      - install -Dm644 io.github.mfat.sshpilot.desktop /app/share/applications/io.github.mfat.sshpilot.desktop
-      - install -Dm644 io.github.mfat.sshpilot.metainfo.xml /app/share/metainfo/io.github.mfat.sshpilot.metainfo.xml
+      - install -Dm644 sshpilot/resources/sshpilot.svg /app/share/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.test.svg
+      - install -Dm644 io.github.mfat.sshpilot.test.desktop /app/share/applications/io.github.mfat.sshpilot.test.desktop
+      - install -Dm644 io.github.mfat.sshpilot.test.metainfo.xml /app/share/metainfo/io.github.mfat.sshpilot.test.metainfo.xml
     sources:
       - type: dir
-        path: .
+        path: ..

@@ -1325,8 +1325,41 @@ class TerminalWidget(Gtk.Box):
                 
                 # Build SSH connection command
                 ssh_conn_cmd = build_ssh_connection(ctx)
-                ssh_cmd = ssh_conn_cmd.command
+                ssh_cmd = list(ssh_conn_cmd.command)
                 env.update(ssh_conn_cmd.env)
+
+                # Safety: if the connection provides an explicit username but
+                # the built command does not contain a user@host token, inject
+                # the explicit `username@hostname` so SSH won't fall back to
+                # the local user. This covers Quick Connect and other paths
+                # where the username might otherwise be lost.
+                try:
+                    username = getattr(self.connection, 'username', '') or ''
+                    hostname = getattr(self.connection, 'hostname', '') or getattr(self.connection, 'host', '') or ''
+                    if username and hostname:
+                        has_user_at = any('@' in a and not a.startswith('-') for a in ssh_cmd)
+                        # Detect explicit -l user or -luser forms to avoid duplicating user
+                        user_specified_via_l = False
+                        for i, a in enumerate(ssh_cmd):
+                            if a == '-l' and i + 1 < len(ssh_cmd):
+                                try:
+                                    if ssh_cmd[i + 1] == username:
+                                        user_specified_via_l = True
+                                        break
+                                except Exception:
+                                    pass
+                            if a.startswith('-l') and len(a) > 2:
+                                if a[2:] == username:
+                                    user_specified_via_l = True
+                                    break
+
+                        if not has_user_at and not user_specified_via_l:
+                            if ssh_cmd and ssh_cmd[0] in ('ssh', 'scp', 'sftp'):
+                                ssh_cmd.insert(1, f"{username}@{hostname}")
+                            else:
+                                ssh_cmd.insert(0, f"{username}@{hostname}")
+                except Exception:
+                    pass
                 
                 # Get password for sshpass if needed
                 password_value = None
@@ -1406,8 +1439,8 @@ class TerminalWidget(Gtk.Box):
                 env_list.append(f"{key}={value}")
             
             # Log the command being executed for debugging
-            logger.debug(f"Spawning SSH command: {ssh_cmd}")
-            logger.debug(f"Environment PATH: {env.get('PATH', 'NOT_SET')}")
+            logger.info(f"Spawning SSH command: {ssh_cmd}")
+            logger.info(f"Environment PATH: {env.get('PATH', 'NOT_SET')}")
             
             # Create a new PTY for the terminal (VTE-specific, but backend may handle this)
             # According to VTE docs, we should set PTY size before spawning to avoid SIGWINCH

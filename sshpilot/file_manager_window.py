@@ -52,6 +52,7 @@ except (ImportError, ValueError, AttributeError):
 
 from .platform_utils import is_flatpak, is_macos
 from .text_editor import RemoteFileEditorWindow
+from .ssh_agent_socket import get_configured_socket, socket_exists
 
 import logging
 
@@ -1647,6 +1648,29 @@ class AsyncSFTPManager(GObject.GObject):
 
         transport: Optional[Any] = None
         try:
+            # Inject configured SSH_AUTH_SOCK (if any) so Paramiko can use external agent (e.g., Bitwarden)
+            try:
+                configured_sock = get_configured_socket()
+                if configured_sock and socket_exists(configured_sock):
+                    prev_sock = os.environ.get('SSH_AUTH_SOCK')
+                    os.environ['SSH_AUTH_SOCK'] = configured_sock
+                    logger.info("Injected SSH_AUTH_SOCK for Paramiko: %s", configured_sock)
+                else:
+                    prev_sock = None
+            except Exception:
+                prev_sock = None
+
+            # Log connect kwargs for debugging (sanitize password)
+            safe_kwargs = dict(connect_kwargs)
+            if 'password' in safe_kwargs:
+                safe_kwargs['password'] = '***REDACTED***'
+            logger.info("Paramiko connecting with kwargs: %s", safe_kwargs)
+            # Log SSH_AUTH_SOCK presence
+            try:
+                logger.info("SSH_AUTH_SOCK in env: %s", os.environ.get('SSH_AUTH_SOCK'))
+            except Exception:
+                pass
+
             client.connect(**connect_kwargs)
             sftp = client.open_sftp()
             transport = client.get_transport()
