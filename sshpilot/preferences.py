@@ -656,6 +656,7 @@ class PreferencesWindow(Adw.Window):
         self.header_title_label.set_single_line_mode(True)
         self.header_title_label.set_xalign(0.0)
         self.header_bar.set_title_widget(self.header_title_label)
+        self.header_bar.set_decoration_layout('close')
         
         # Enable window controls on both sides - OverlaySplitView will automatically
         # hide middle buttons. This ensures close button is visible for users with
