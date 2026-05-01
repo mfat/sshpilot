@@ -880,6 +880,18 @@ class TerminalWidget(Gtk.Box):
         if not connection:
             return
 
+        try:
+            auth_method = int(getattr(connection, 'auth_method', 0) or 0)
+        except Exception:
+            auth_method = 0
+        if auth_method == 1:
+            logger.debug("Password auth selected; skipping native key preload")
+            return
+
+        if bool(getattr(connection, 'pubkey_auth_no', False)):
+            logger.debug("Public key auth disabled; skipping native key preload")
+            return
+
         if getattr(connection, 'identity_agent_disabled', False):
             logger.debug("IdentityAgent disabled; skipping native key preload")
             return
