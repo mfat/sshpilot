@@ -10,6 +10,7 @@
   - [Fedora/RHEL/openSUSE (Manual Install)](#-fedorarhelopensuse-manual-install)
   - [Flatpak](#-flatpak)
   - [Arch Linux](#-arch-linux)
+  - [Homebrew (macOS + Linux)](#-homebrew-macos--linux)
   - [macOS](#-macos-aarch64)
 - [Minimum Requirements](#minimum-requirements)
 - [Run from Source](#-run-from-source)
@@ -141,6 +142,15 @@ Nightly Arch Linux package via AUR (community maintained): https://aur.archlinux
 # replace yay with your AUR helper of choice, e.g. paru
 yay -S sshpilot-git
 ```
+
+### <img src="https://brew.sh/assets/img/homebrew-256x256.png" width="24" height="24"/> Homebrew (macOS + Linux)
+
+```bash
+brew tap mfat/sshpilot
+brew install sshpilot
+```
+
+Works on macOS Homebrew and Linuxbrew. The formula is build-from-source; first install pulls the GTK4 stack and compiles a Python virtualenv with the runtime deps. After install, launch sshPilot from a terminal inside an active desktop session (Wayland/X11 + dbus on Linux; native on macOS).
 
 ### <img src="https://upload.wikimedia.org/wikipedia/commons/7/74/Apple_logo_dark_grey.svg" height="24"/> macOS (aarch64)
 Download the dmg file from the releases section https://github.com/mfat/sshpilot/releases/
