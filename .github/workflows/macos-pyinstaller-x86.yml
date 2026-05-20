@@ -1,0 +1,104 @@
+name: Build macOS PyInstaller Bundle (Intel x86_64)
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  build-x86_64:
+    name: macOS x86_64 PyInstaller
+    runs-on: macos-13
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Homebrew dependencies
+        run: |
+          brew update
+          brew install python@3.13 gtk4 libadwaita vte3 gtksourceview5 adwaita-icon-theme gobject-introspection pygobject3 py3cairo create-dmg sshpass
+          brew link --overwrite libadwaita
+
+      - name: Prepare Homebrew virtual environment
+        run: |
+          PYTHON_PATH="$(brew --prefix python@3.13)/bin/python3.13"
+          "$PYTHON_PATH" -m venv .venv-homebrew --system-site-packages
+          source .venv-homebrew/bin/activate
+          python -m pip install --upgrade pip wheel
+          python -m pip install paramiko cryptography keyring psutil PyInstaller
+
+      - name: Build application bundle with PyInstaller
+        run: |
+          BREW_PREFIX="$(brew --prefix)"
+          export PATH="$BREW_PREFIX/bin:$PATH"
+          export GI_TYPELIB_PATH="$BREW_PREFIX/lib/girepository-1.0"
+          export DYLD_LIBRARY_PATH="$BREW_PREFIX/lib:$DYLD_LIBRARY_PATH"
+          export PKG_CONFIG_PATH="$BREW_PREFIX/lib/pkgconfig:$PKG_CONFIG_PATH"
+          export XDG_DATA_DIRS="$BREW_PREFIX/share:$XDG_DATA_DIRS"
+          chmod +x pyinstaller.sh
+          ./pyinstaller.sh
+
+      - name: Determine artifact names
+        id: artifact-info
+        run: |
+          VERSION=$(grep -o '__version__ = "[^"]*"' sshpilot/__init__.py | cut -d'"' -f2)
+          if [ -z "$VERSION" ]; then
+            VERSION=$(date +%Y%m%d)
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "dmg=sshPilot-macOS-${VERSION}-x86_64.dmg" >> "$GITHUB_OUTPUT"
+
+      - name: Verify build outputs
+        run: |
+          ls -la dist/
+          [ -d "dist/SSHPilot.app" ] || (echo "ERROR: SSHPilot.app not found" && exit 1)
+
+      - name: Compress app bundle for artifact upload
+        run: |
+          ditto -c -k --sequesterRsrc --keepParent dist/SSHPilot.app dist/SSHPilot.app.zip
+
+      - name: Generate DMG checksum
+        run: |
+          DMG_NAME="${{ steps.artifact-info.outputs.dmg }}"
+          [ -f "dist/$DMG_NAME" ] || (echo "ERROR: DMG not found" && ls -la dist/ && exit 1)
+          shasum -a 256 "dist/$DMG_NAME" > "dist/$DMG_NAME.sha256"
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sshpilot-${{ steps.artifact-info.outputs.version }}-macos-x86_64-dmg
+          path: dist/${{ steps.artifact-info.outputs.dmg }}
+        continue-on-error: true
+
+      - name: Upload app bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sshpilot-${{ steps.artifact-info.outputs.version }}-macos-x86_64-app
+          path: dist/SSHPilot.app.zip
+        continue-on-error: true
+
+      - name: Upload checksum artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sshpilot-${{ steps.artifact-info.outputs.version }}-macos-x86_64-checksum
+          path: dist/${{ steps.artifact-info.outputs.dmg }}.sha256
+        continue-on-error: true
+
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            dist/${{ steps.artifact-info.outputs.dmg }}
+          generate_release_notes: false
+          body: ""
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
