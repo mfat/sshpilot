@@ -24,13 +24,24 @@ jobs:
       - name: Install Homebrew dependencies
         run: |
           brew update
-          # Unlink any pre-installed Python versions that conflict with python@3.13
+          
+          # Forcefully unlink any conflicting brew versions
           for v in 3.14 3.13 3.12 3.11 3.10; do
             brew unlink python@$v 2>/dev/null || true
           done
-          brew install python@3.13 gtk4 libadwaita vte3 gtksourceview5 \
+          
+          # Remove conflicting non-brew macOS Python framework symlinks
+          sudo rm -f /usr/local/bin/idle3.13 \
+                     /usr/local/bin/pip3.13 \
+                     /usr/local/bin/pydoc3.13 \
+                     /usr/local/bin/python3.13 \
+                     /usr/local/bin/python3.13-config
+
+          # Install with overwrite flag to prevent linking errors
+          brew install --overwrite python@3.13 gtk4 libadwaita vte3 gtksourceview5 \
             adwaita-icon-theme gobject-introspection pygobject3 py3cairo \
             create-dmg sshpass
+            
           brew link --overwrite --force python@3.13
           brew link --overwrite libadwaita
 
