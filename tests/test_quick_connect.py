@@ -77,7 +77,10 @@ def test_quick_connect_preserves_original_command():
     assert parsed["quick_connect_command"] == command
     assert parsed["host"] == "host"
     assert parsed["username"] == "user"
-    assert parsed["unparsed_args"] == ['-J', 'bastion']
+    # -J now maps to proxy_jump and -o Foo=bar goes to extra_ssh_config
+    assert parsed["proxy_jump"] == ["bastion"]
+    assert "Foo bar" in parsed["extra_ssh_config"]
+    assert parsed["unparsed_args"] == []
 
     new_loop = asyncio.new_event_loop()
     previous_loop = None

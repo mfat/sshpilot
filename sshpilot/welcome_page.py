@@ -42,6 +42,50 @@ SSH_OPTIONS_EXPECTING_ARGUMENT = {
 }
 
 
+def _parse_forward_spec(spec: str, fwd_type: str):
+    """Parse -L/-R spec [bind_addr:]port:host:hostport into a forwarding_rules dict."""
+    parts = spec.split(':')
+    try:
+        if len(parts) == 4:
+            bind_addr, listen_port, remote_host, remote_port = parts
+        elif len(parts) == 3:
+            bind_addr = 'localhost'
+            listen_port, remote_host, remote_port = parts
+        else:
+            return None
+        rule = {'type': fwd_type, 'enabled': True,
+                'listen_addr': bind_addr, 'listen_port': int(listen_port)}
+        if fwd_type == 'local':
+            rule['remote_host'] = remote_host
+            rule['remote_port'] = int(remote_port)
+        else:
+            rule['local_host'] = remote_host
+            rule['local_port'] = int(remote_port)
+        return rule
+    except (ValueError, IndexError):
+        return None
+
+
+def _parse_dynamic_spec(spec: str):
+    """Parse -D spec [bind_addr:]port into a forwarding_rules dict."""
+    parts = spec.split(':')
+    try:
+        if len(parts) == 2:
+            bind_addr, port = parts
+        else:
+            bind_addr, port = 'localhost', parts[0]
+        return {'type': 'dynamic', 'enabled': True,
+                'listen_addr': bind_addr, 'listen_port': int(port)}
+    except (ValueError, IndexError):
+        return None
+
+
+def _append_extra_config(data: dict, line: str) -> None:
+    """Append a SSH-config-syntax 'Key value' line to extra_ssh_config."""
+    existing = data.get("extra_ssh_config", "")
+    data["extra_ssh_config"] = (existing + "\n" + line).lstrip("\n")
+
+
 class WelcomePage(Gtk.Overlay):
     """Welcome page shown when no tabs are open."""
 
@@ -780,20 +824,20 @@ class WelcomePage(Gtk.Overlay):
                 # If shlex fails, fall back to simple split
                 args = working_text.split()
 
-            # Initialize connection data with defaults
             connection_data = {
                 "nickname": "",
                 "host": "",
                 "username": "",
                 "port": 22,
-                "auth_method": 0,  # Key-based auth
-                "key_select_mode": 0,  # Try all keys
+                "auth_method": 0,
+                "key_select_mode": 0,
                 "keyfile": "",
                 "certificate": "",
                 "x11_forwarding": False,
-                "local_port_forwards": [],
-                "remote_port_forwards": [],
-                "dynamic_forwards": [],
+                "forwarding_rules": [],
+                "proxy_jump": [],
+                "forward_agent": False,
+                "extra_ssh_config": "",
                 "quick_connect_command": quick_connect_command,
                 "unparsed_args": [],
             }
@@ -802,7 +846,6 @@ class WelcomePage(Gtk.Overlay):
             while i < len(args):
                 arg = args[i]
 
-                # Handle options with values
                 if arg == '-p' and i + 1 < len(args):
                     try:
                         connection_data["port"] = int(args[i + 1])
@@ -812,11 +855,10 @@ class WelcomePage(Gtk.Overlay):
                         pass
                 elif arg == '-i' and i + 1 < len(args):
                     connection_data["keyfile"] = args[i + 1]
-                    connection_data["key_select_mode"] = 2  # Use specific key without forcing IdentitiesOnly by default
+                    connection_data["key_select_mode"] = 2
                     i += 2
                     continue
                 elif arg == '-o' and i + 1 < len(args):
-                    # Handle SSH options like -o "UserKnownHostsFile=/dev/null"
                     option = args[i + 1]
                     parsed = option.split('=', 1)
                     if len(parsed) == 2:
@@ -838,6 +880,10 @@ class WelcomePage(Gtk.Overlay):
                                 connection_data["key_select_mode"] = 1
                             elif value.lower() in ('no', 'false', '0', 'off') and connection_data.get("keyfile"):
                                 connection_data["key_select_mode"] = 2
+                        elif key_lower == 'forwardagent':
+                            connection_data["forward_agent"] = value.lower() in ('yes', 'true', '1', 'on')
+                        else:
+                            _append_extra_config(connection_data, f"{key} {value}")
                     i += 2
                     continue
                 elif arg.startswith('-o') and '=' in arg[2:]:
@@ -859,32 +905,57 @@ class WelcomePage(Gtk.Overlay):
                             connection_data["port"] = int(value)
                         except ValueError:
                             pass
+                    elif key_lower == 'forwardagent':
+                        connection_data["forward_agent"] = value.lower() in ('yes', 'true', '1', 'on')
+                    else:
+                        _append_extra_config(connection_data, f"{key} {value}")
                     i += 1
                     continue
                 elif arg == '-X':
                     connection_data["x11_forwarding"] = True
                     i += 1
                     continue
+                elif arg == '-A':
+                    connection_data["forward_agent"] = True
+                    i += 1
+                    continue
+                elif arg == '-C':
+                    _append_extra_config(connection_data, "Compression yes")
+                    i += 1
+                    continue
+                elif arg == '-4':
+                    _append_extra_config(connection_data, "AddressFamily inet")
+                    i += 1
+                    continue
+                elif arg == '-6':
+                    _append_extra_config(connection_data, "AddressFamily inet6")
+                    i += 1
+                    continue
+                elif arg == '-J' and i + 1 < len(args):
+                    connection_data["proxy_jump"] = [
+                        h.strip() for h in args[i + 1].split(',') if h.strip()
+                    ]
+                    i += 2
+                    continue
                 elif arg == '-L' and i + 1 < len(args):
-                    # Local port forwarding: -L [bind_address:]port:host:hostport
-                    forward_spec = args[i + 1]
-                    connection_data["local_port_forwards"].append(forward_spec)
+                    rule = _parse_forward_spec(args[i + 1], 'local')
+                    if rule:
+                        connection_data["forwarding_rules"].append(rule)
                     i += 2
                     continue
                 elif arg == '-R' and i + 1 < len(args):
-                    # Remote port forwarding: -R [bind_address:]port:host:hostport
-                    forward_spec = args[i + 1]
-                    connection_data["remote_port_forwards"].append(forward_spec)
+                    rule = _parse_forward_spec(args[i + 1], 'remote')
+                    if rule:
+                        connection_data["forwarding_rules"].append(rule)
                     i += 2
                     continue
                 elif arg == '-D' and i + 1 < len(args):
-                    # Dynamic port forwarding: -D [bind_address:]port
-                    forward_spec = args[i + 1]
-                    connection_data["dynamic_forwards"].append(forward_spec)
+                    rule = _parse_dynamic_spec(args[i + 1])
+                    if rule:
+                        connection_data["forwarding_rules"].append(rule)
                     i += 2
                     continue
                 elif arg.startswith('-p'):
-                    # Handle -p2222 format (no space)
                     try:
                         connection_data["port"] = int(arg[2:])
                         i += 1
@@ -892,13 +963,11 @@ class WelcomePage(Gtk.Overlay):
                     except ValueError:
                         pass
                 elif arg.startswith('-i'):
-                    # Handle -i/path/to/key format (no space)
                     connection_data["keyfile"] = arg[2:]
                     connection_data["key_select_mode"] = 2
                     i += 1
                     continue
                 elif not arg.startswith('-'):
-                    # This should be the host specification (user@host)
                     if not connection_data["host"]:
                         if '@' in arg:
                             username, host = arg.split('@', 1)
@@ -906,15 +975,12 @@ class WelcomePage(Gtk.Overlay):
                             connection_data["host"] = host
                             connection_data["nickname"] = host
                         else:
-                            # Just hostname, no username
                             connection_data["host"] = arg
                             connection_data["nickname"] = arg
                     else:
                         connection_data["unparsed_args"].append(arg)
                     i += 1
                 else:
-
-                    # Unknown option. Determine whether it normally expects an argument.
                     option_key = arg
                     attached_value = ""
                     if option_key.startswith('--'):
@@ -1202,9 +1268,10 @@ class QuickConnectDialog(Adw.MessageDialog):
                 "keyfile": "",
                 "certificate": "",
                 "x11_forwarding": False,
-                "local_port_forwards": [],
-                "remote_port_forwards": [],
-                "dynamic_forwards": [],
+                "forwarding_rules": [],
+                "proxy_jump": [],
+                "forward_agent": False,
+                "extra_ssh_config": "",
                 "quick_connect_command": quick_connect_command,
                 "unparsed_args": [],
             }
@@ -1247,6 +1314,10 @@ class QuickConnectDialog(Adw.MessageDialog):
                                 connection_data["key_select_mode"] = 1
                             elif value.lower() in ('no', 'false', '0', 'off') and connection_data.get("keyfile"):
                                 connection_data["key_select_mode"] = 2
+                        elif key_lower == 'forwardagent':
+                            connection_data["forward_agent"] = value.lower() in ('yes', 'true', '1', 'on')
+                        else:
+                            _append_extra_config(connection_data, f"{key} {value}")
                     i += 2
                     continue
                 elif arg.startswith('-o') and '=' in arg[2:]:
@@ -1268,22 +1339,54 @@ class QuickConnectDialog(Adw.MessageDialog):
                             connection_data["port"] = int(value)
                         except ValueError:
                             pass
+                    elif key_lower == 'forwardagent':
+                        connection_data["forward_agent"] = value.lower() in ('yes', 'true', '1', 'on')
+                    else:
+                        _append_extra_config(connection_data, f"{key} {value}")
                     i += 1
                     continue
                 elif arg == '-X':
                     connection_data["x11_forwarding"] = True
                     i += 1
                     continue
+                elif arg == '-A':
+                    connection_data["forward_agent"] = True
+                    i += 1
+                    continue
+                elif arg == '-C':
+                    _append_extra_config(connection_data, "Compression yes")
+                    i += 1
+                    continue
+                elif arg == '-4':
+                    _append_extra_config(connection_data, "AddressFamily inet")
+                    i += 1
+                    continue
+                elif arg == '-6':
+                    _append_extra_config(connection_data, "AddressFamily inet6")
+                    i += 1
+                    continue
+                elif arg == '-J' and i + 1 < len(args):
+                    connection_data["proxy_jump"] = [
+                        h.strip() for h in args[i + 1].split(',') if h.strip()
+                    ]
+                    i += 2
+                    continue
                 elif arg == '-L' and i + 1 < len(args):
-                    connection_data["local_port_forwards"].append(args[i + 1])
+                    rule = _parse_forward_spec(args[i + 1], 'local')
+                    if rule:
+                        connection_data["forwarding_rules"].append(rule)
                     i += 2
                     continue
                 elif arg == '-R' and i + 1 < len(args):
-                    connection_data["remote_port_forwards"].append(args[i + 1])
+                    rule = _parse_forward_spec(args[i + 1], 'remote')
+                    if rule:
+                        connection_data["forwarding_rules"].append(rule)
                     i += 2
                     continue
                 elif arg == '-D' and i + 1 < len(args):
-                    connection_data["dynamic_forwards"].append(args[i + 1])
+                    rule = _parse_dynamic_spec(args[i + 1])
+                    if rule:
+                        connection_data["forwarding_rules"].append(rule)
                     i += 2
                     continue
                 elif arg.startswith('-p'):
