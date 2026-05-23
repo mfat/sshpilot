@@ -90,6 +90,30 @@ jobs:
           ./pyinstaller.sh
           echo "=== DEBUG: PyInstaller build completed ==="
 
+      - name: Verify sshpass bundled correctly
+        run: |
+          SSHPASS_PATH="dist/SSHPilot.app/Contents/Resources/bin/sshpass"
+          echo "=== CHECK: Verifying sshpass bundle at $SSHPASS_PATH ==="
+          if [ ! -f "$SSHPASS_PATH" ]; then
+            echo "=== ERROR: sshpass NOT found at expected path: $SSHPASS_PATH ==="
+            echo "=== Searching entire bundle for sshpass: ==="
+            find dist/SSHPilot.app -name "sshpass" 2>/dev/null || echo "sshpass not found anywhere in bundle"
+            exit 1
+          fi
+          echo "=== CHECK: sshpass found ==="
+          ls -la "$SSHPASS_PATH"
+          file "$SSHPASS_PATH"
+          if [ ! -x "$SSHPASS_PATH" ]; then
+            echo "=== ERROR: sshpass is not executable ==="
+            exit 1
+          fi
+          echo "=== CHECK: sshpass is executable ==="
+          if ! file "$SSHPASS_PATH" | grep -q "arm64"; then
+            echo "=== ERROR: sshpass does not contain arm64 slice — architecture mismatch ==="
+            exit 1
+          fi
+          echo "=== CHECK: sshpass arm64 architecture verified ==="
+
       - name: Determine artifact names
         id: artifact-info
         run: |

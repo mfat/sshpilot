@@ -66,22 +66,29 @@ jobs:
           chmod +x pyinstaller.sh
           ./pyinstaller.sh
 
-      - name: Bundle sshpass binary into app
+      - name: Verify sshpass bundled correctly
         run: |
-          BREW_PREFIX="$(brew --prefix)"
-          SSHPASS_BIN="$BREW_PREFIX/bin/sshpass"
-          BUNDLE_BIN="dist/SSHPilot.app/Contents/MacOS"
-          
-          echo "=== DEBUG: Copying sshpass into bundle ==="
-          if [ -f "$SSHPASS_BIN" ]; then
-            cp "$SSHPASS_BIN" "$BUNDLE_BIN/sshpass"
-            chmod +x "$BUNDLE_BIN/sshpass"
-            echo "=== DEBUG: sshpass copied successfully ==="
-            file "$BUNDLE_BIN/sshpass"
-          else
-            echo "=== DEBUG: ERROR - sshpass not found at $SSHPASS_BIN ==="
+          SSHPASS_PATH="dist/SSHPilot.app/Contents/Resources/bin/sshpass"
+          echo "=== CHECK: Verifying sshpass bundle at $SSHPASS_PATH ==="
+          if [ ! -f "$SSHPASS_PATH" ]; then
+            echo "=== ERROR: sshpass NOT found at expected path: $SSHPASS_PATH ==="
+            echo "=== Searching entire bundle for sshpass: ==="
+            find dist/SSHPilot.app -name "sshpass" 2>/dev/null || echo "sshpass not found anywhere in bundle"
             exit 1
-          fi          
+          fi
+          echo "=== CHECK: sshpass found ==="
+          ls -la "$SSHPASS_PATH"
+          file "$SSHPASS_PATH"
+          if [ ! -x "$SSHPASS_PATH" ]; then
+            echo "=== ERROR: sshpass is not executable ==="
+            exit 1
+          fi
+          echo "=== CHECK: sshpass is executable ==="
+          if ! file "$SSHPASS_PATH" | grep -q "x86_64"; then
+            echo "=== ERROR: sshpass does not contain x86_64 slice — architecture mismatch ==="
+            exit 1
+          fi
+          echo "=== CHECK: sshpass x86_64 architecture verified ==="
 
 
       - name: Determine artifact names
