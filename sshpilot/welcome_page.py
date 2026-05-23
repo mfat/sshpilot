@@ -1162,6 +1162,7 @@ class QuickConnectDialog(Adw.MessageDialog):
         password = self.password_row.get_text()
         if password:
             result["password"] = password
+            result["auth_method"] = 1
         if self._selected_keyfile:
             result["keyfile"] = self._selected_keyfile
             result["key_select_mode"] = 2
