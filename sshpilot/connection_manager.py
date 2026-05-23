@@ -190,6 +190,7 @@ class Connection:
         
         # Asyncio event loop
         self.loop = _ensure_event_loop()
+        self._connection_manager = None
 
     def __str__(self):
         return f"{self.nickname} ({self.username}@{self.hostname})"
@@ -401,19 +402,13 @@ class Connection:
             except Exception:
                 cfg = None
 
-            # Get connection manager (self is a Connection, need to find manager)
-            # Connection objects don't have direct reference to manager, so we pass None
-            # ssh_connection_builder can still work without it (passwords/passphrases may be on Connection object)
-            connection_manager = None
+            connection_manager = getattr(self, '_connection_manager', None)
 
-            # Get known hosts path if available (try to get from global connection manager if possible)
             known_hosts_path = None
-            try:
-                # Try to get from a global connection manager instance if available
-                # This is a best-effort approach
-                pass
-            except Exception:
-                pass
+            if connection_manager:
+                kh_path = getattr(connection_manager, 'known_hosts_path', '') or ''
+                if kh_path and os.path.exists(kh_path):
+                    known_hosts_path = kh_path
 
             # Build connection context
             ctx = ConnectionContext(
@@ -480,13 +475,12 @@ class Connection:
             except Exception:
                 cfg = None
 
-            # Get connection manager
-            connection_manager = None
-            try:
-                if hasattr(self, '_connection_manager'):
-                    connection_manager = self._connection_manager
-            except Exception:
-                pass
+            connection_manager = getattr(self, '_connection_manager', None)
+            known_hosts_path = None
+            if connection_manager:
+                kh_path = getattr(connection_manager, 'known_hosts_path', '') or ''
+                if kh_path and os.path.exists(kh_path):
+                    known_hosts_path = kh_path
 
             # Build connection context with native_mode=True
             ctx = ConnectionContext(
@@ -499,7 +493,7 @@ class Connection:
                 remote_command=None,
                 local_command=None,
                 extra_ssh_config=None,
-                known_hosts_path=None,
+                known_hosts_path=known_hosts_path,
                 native_mode=True,  # Use native mode
                 quick_connect_mode=bool(getattr(self, 'quick_connect_command', '')),
                 quick_connect_command=getattr(self, 'quick_connect_command', None) or None,
@@ -624,81 +618,41 @@ class Connection:
         """Start dynamic port forwarding (SOCKS proxy) using system SSH client"""
         try:
             logger.debug(f"Starting dynamic port forwarding setup for {self.hostname} on {listen_addr}:{listen_port}")
-            
-            # Build the complete SSH command for dynamic port forwarding
-            ssh_cmd = ['ssh', '-v']  # Add verbose flag for debugging
 
-            # Read config for options
             try:
                 from .config import Config
                 cfg = Config()
-                ssh_cfg = cfg.get_ssh_config()
             except Exception:
-                ssh_cfg = {}
-            def _coerce_int(value):
-                try:
-                    coerced = int(value)
-                    return coerced if coerced > 0 else None
-                except (TypeError, ValueError):
-                    return None
+                cfg = None
 
-            connect_timeout = _coerce_int(ssh_cfg.get('connection_timeout'))
-            connection_attempts = _coerce_int(ssh_cfg.get('connection_attempts'))
-            keepalive_interval = _coerce_int(ssh_cfg.get('keepalive_interval'))
-            keepalive_count = _coerce_int(ssh_cfg.get('keepalive_count_max'))
-            strict_host = str(ssh_cfg.get('strict_host_key_checking', 'accept-new') or '').strip()
-            batch_mode = bool(ssh_cfg.get('batch_mode', False))
-
-            # Robust non-interactive options to prevent hangs
-            if batch_mode:
-                ssh_cmd.extend(['-o', 'BatchMode=yes'])
-            if connect_timeout is not None:
-                ssh_cmd.extend(['-o', f'ConnectTimeout={connect_timeout}'])
-            if connection_attempts is not None:
-                ssh_cmd.extend(['-o', f'ConnectionAttempts={connection_attempts}'])
-            if keepalive_interval is not None:
-                ssh_cmd.extend(['-o', f'ServerAliveInterval={keepalive_interval}'])
-            if keepalive_count is not None:
-                ssh_cmd.extend(['-o', f'ServerAliveCountMax={keepalive_count}'])
-            if strict_host:
-                ssh_cmd.extend(['-o', f'StrictHostKeyChecking={strict_host}'])
-
-            # Add key file if specified
-            if self.keyfile and os.path.exists(self.keyfile):
-                logger.debug(f"Using SSH key: {self.keyfile}")
-                ssh_cmd.extend(['-i', self.keyfile])
-                if self.key_passphrase:
-                    logger.debug("Key has a passphrase")
-            else:
-                logger.debug("No SSH key specified or key not found")
-                
-            # Add host and port
-            if self.port != 22:
-                logger.debug(f"Using custom SSH port: {self.port}")
-                ssh_cmd.extend(['-p', str(self.port)])
-                
-            # Add dynamic port forwarding option
             forward_spec = f"{listen_addr}:{listen_port}"
-            logger.debug(f"Setting up dynamic forwarding to: {forward_spec}")
-            
-            ssh_cmd.extend([
-                '-N',  # No remote command
-                '-D', forward_spec,  # Dynamic port forwarding (SOCKS)
-                '-f',  # Run in background
-                '-o', 'ExitOnForwardFailure=yes',  # Exit if forwarding fails
-            ])
-            
-            # Add username and host
-            target = f"{self.username}@{self.hostname}" if self.username else self.hostname
-            ssh_cmd.append(target)
-            
-            # Log the full command (without sensitive data)
-            logger.debug(f"SSH command: {' '.join(ssh_cmd[:10])}...")
-            
-            # Ensure ssh can prompt interactively by removing any askpass settings
-            env = os.environ.copy()
+            ctx = ConnectionContext(
+                connection=self,
+                connection_manager=getattr(self, '_connection_manager', None),
+                config=cfg,
+                command_type='ssh',
+                extra_args=['-N', '-D', forward_spec, '-f'],
+                port_forwarding_rules=None,
+                remote_command=None,
+                local_command=None,
+                extra_ssh_config=None,
+                known_hosts_path=(
+                    getattr(getattr(self, '_connection_manager', None), 'known_hosts_path', None)
+                    if getattr(self, '_connection_manager', None)
+                    and os.path.exists(getattr(self._connection_manager, 'known_hosts_path', '') or '')
+                    else None
+                ),
+                native_mode=False,
+                quick_connect_mode=False,
+                quick_connect_command=None,
+            )
+            ssh_conn_cmd = build_ssh_connection(ctx)
+            ssh_cmd = ssh_conn_cmd.command
+            env = ssh_conn_cmd.env.copy()
             env.pop("SSH_ASKPASS", None)
             env.pop("SSH_ASKPASS_REQUIRE", None)
+
+            logger.debug(f"SSH command: {' '.join(ssh_cmd[:12])}...")
             
             # Start the SSH process
             logger.info(f"Starting dynamic port forwarding with command: {' '.join(ssh_cmd)}")
@@ -995,6 +949,11 @@ class ConnectionManager(GObject.Object):
         # Defer slower operations to idle to avoid blocking startup
         GLib.idle_add(self._post_init_slow_path)
 
+    def _register_connection(self, connection: Connection) -> None:
+        """Link a connection to this manager and add it to the list."""
+        connection._connection_manager = self
+        self.connections.append(connection)
+
     def _get_active_connection_key(self, connection: Connection) -> str:
         identifier = connection.resolve_host_identifier()
         if identifier:
@@ -1207,6 +1166,7 @@ class ConnectionManager(GObject.Object):
                             existing = existing_by_nickname.get(nickname)
                             if existing:
                                 existing.update_data(connection_data)
+                                existing._connection_manager = self
                                 self.connections.append(existing)
                             else:
                                 new_conn = Connection(connection_data)
@@ -1215,7 +1175,7 @@ class ConnectionManager(GObject.Object):
                                     new_conn.config_root = self.ssh_config_path
                                     new_conn.data['isolated_mode'] = True
                                     new_conn.data['config_root'] = self.ssh_config_path
-                                self.connections.append(new_conn)
+                                self._register_connection(new_conn)
                 try:
                     with open(cfg_file, 'r') as f:
                         lines = f.readlines()
@@ -1253,6 +1213,7 @@ class ConnectionManager(GObject.Object):
                                         existing = existing_by_nickname.get(nickname)
                                         if existing:
                                             existing.update_data(connection_data)
+                                            existing._connection_manager = self
                                             self.connections.append(existing)
                                         else:
                                             new_conn = Connection(connection_data)
@@ -1261,7 +1222,7 @@ class ConnectionManager(GObject.Object):
                                                 new_conn.config_root = self.ssh_config_path
                                                 new_conn.data['isolated_mode'] = True
                                                 new_conn.data['config_root'] = self.ssh_config_path
-                                            self.connections.append(new_conn)
+                                            self._register_connection(new_conn)
                         current_hosts = []
                         current_config = {}
                         block_lines = [raw_line.rstrip('\n')]
@@ -1297,6 +1258,7 @@ class ConnectionManager(GObject.Object):
                                         existing = existing_by_nickname.get(nickname)
                                         if existing:
                                             existing.update_data(connection_data)
+                                            existing._connection_manager = self
                                             self.connections.append(existing)
                                         else:
                                             new_conn = Connection(connection_data)
@@ -1305,7 +1267,7 @@ class ConnectionManager(GObject.Object):
                                                 new_conn.config_root = self.ssh_config_path
                                                 new_conn.data['isolated_mode'] = True
                                                 new_conn.data['config_root'] = self.ssh_config_path
-                                            self.connections.append(new_conn)
+                                            self._register_connection(new_conn)
                         current_hosts = tokens
                         current_config = {}
                         i += 1
@@ -1339,6 +1301,7 @@ class ConnectionManager(GObject.Object):
                                 existing = existing_by_nickname.get(nickname)
                                 if existing:
                                     existing.update_data(connection_data)
+                                    existing._connection_manager = self
                                     self.connections.append(existing)
                                 else:
                                     new_conn = Connection(connection_data)
@@ -1347,7 +1310,7 @@ class ConnectionManager(GObject.Object):
                                         new_conn.config_root = self.ssh_config_path
                                         new_conn.data['isolated_mode'] = True
                                         new_conn.data['config_root'] = self.ssh_config_path
-                                    self.connections.append(new_conn)
+                                    self._register_connection(new_conn)
             logger.info(f"Loaded {len(self.connections)} connections from SSH config")
         except Exception as e:
             logger.error(f"Failed to load SSH config: {e}", exc_info=True)

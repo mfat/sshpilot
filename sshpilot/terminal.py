@@ -1008,16 +1008,13 @@ class TerminalWidget(Gtk.Box):
         try:
             # Check for pre-built SSH command from connection (for compatibility)
             ssh_conn_cmd = None
+            base_cmd = ['ssh']
+            using_prepared_cmd = False
             if hasattr(self.connection, 'ssh_cmd'):
                 prepared = getattr(self.connection, 'ssh_cmd', None)
-
-
-                if isinstance(prepared, (list, tuple)):
+                if isinstance(prepared, (list, tuple)) and prepared:
                     base_cmd = list(prepared)
-                    using_prepared_cmd = len(base_cmd) > 0
-
-            if not base_cmd:
-                base_cmd = ['ssh']
+                    using_prepared_cmd = True
 
             ssh_cmd = list(base_cmd)
 

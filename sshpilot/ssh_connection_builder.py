@@ -223,7 +223,10 @@ def _build_base_ssh_command(
     compression = bool(app_ssh_config.get('compression', False))
     if compression:
         cmd.append('-C')
-    
+
+    if bool(app_ssh_config.get('batch_mode', False)):
+        cmd.extend(['-o', 'BatchMode=yes'])
+
     # Apply connection timeout if specified
     connect_timeout = app_ssh_config.get('connection_timeout')
     if connect_timeout:
@@ -311,6 +314,11 @@ def _build_base_ssh_command(
     forward_x11 = _get_ssh_config_value(config, 'forwardx11', '').lower()
     if forward_x11 in ('yes', 'true', '1'):
         cmd.append('-X')
+
+    forward_agent = _get_ssh_config_value(config, 'forwardagent', '').lower()
+    if forward_agent in ('yes', 'true', '1'):
+        cmd.append('-A')
+        cmd.extend(['-o', 'ForwardAgent=yes'])
     
     # Apply other SSH config options that should be passed through
     # (SSH config is primary source, so we trust it)
@@ -403,7 +411,15 @@ def build_ssh_connection(
                             base_cmd.append(str(entry))
             except Exception:
                 pass
-        base_cmd.append(host_label)
+        native_target = host_label
+        if hasattr(connection, 'resolve_host_identifier'):
+            try:
+                resolved = connection.resolve_host_identifier()
+                if resolved:
+                    native_target = resolved
+            except Exception:
+                pass
+        base_cmd.append(native_target)
         # Use default environment (no askpass, no sshpass)
         env = os.environ.copy()
         env.pop('SSH_ASKPASS', None)
@@ -446,7 +462,21 @@ def build_ssh_connection(
     except Exception as e:
         logger.warning(f"Failed to get effective SSH config for {host_label}: {e}")
         effective_config = {}
-    
+
+    # Merge connection-level SSH settings (from parsed config in the app DB)
+    effective_config = dict(effective_config) if effective_config else {}
+    conn_proxy = getattr(connection, 'proxy_command', '') or ''
+    if conn_proxy.strip():
+        effective_config['proxycommand'] = conn_proxy.strip()
+    conn_jump = getattr(connection, 'proxy_jump', None)
+    if conn_jump:
+        if isinstance(conn_jump, list):
+            effective_config['proxyjump'] = [j for j in conn_jump if j]
+        else:
+            effective_config['proxyjump'] = [str(conn_jump)]
+    if getattr(connection, 'forward_agent', False):
+        effective_config['forwardagent'] = 'yes'
+
     # 2. Build base SSH command following `ssh Host` pattern
     base_cmd = _build_base_ssh_command(connection, effective_config, app_config, command_type)
     
@@ -460,8 +490,8 @@ def build_ssh_connection(
     if has_stored_password:
         logger.debug(f"Found stored password for {host_label}")
     
-    # Determine if we need password authentication
-    use_password_auth = password_auth_selected or (has_stored_password and not password_auth_selected)
+    # sshpass / forced password TTY only when the user chose password authentication
+    use_password_auth = password_auth_selected
     
     # Handle key-based authentication
     use_askpass = False
@@ -610,56 +640,27 @@ def build_ssh_connection(
         env.pop('SSH_ASKPASS', None)
         env.pop('SSH_ASKPASS_REQUIRE', None)
     
-    # 2. Add host to command following `ssh Host` pattern
-    # Use host_label (from SSH config) as the target, which follows the `ssh Host` pattern
-    # SSH will resolve the actual hostname, user, port, etc. from the SSH config
+    # Resolve connection target (appended after all options; see end of builder)
     username = getattr(connection, 'username', '')
     hostname = getattr(connection, 'hostname', '') or getattr(connection, 'host', '')
-    
-    if command_type == 'scp':
-        # SCP command format is handled by caller (they add sources/destinations)
-        # But we can add the host identifier if needed
-        pass
-    elif command_type == 'ssh-copy-id':
-        # ssh-copy-id format: ssh-copy-id [options] user@host
-        # Prefer user@hostname if available, otherwise use host_label
-        if username and hostname:
-            base_cmd.append(f"{username}@{hostname}")
-        else:
-            base_cmd.append(host_label)
-    else:
-        # SSH/SFTP format: ssh [options] Host
-        # Follow the `ssh Host` pattern - use host_label which SSH will resolve from config
-        # Only use user@hostname format if we have explicit values and they differ from config
-        resolved_user = _get_ssh_config_value(effective_config, 'user')
-        resolved_hostname = _get_ssh_config_value(effective_config, 'hostname')
-        
-        # If SSH config has user/hostname, prefer using host_label (SSH will resolve it)
-        # Otherwise, use explicit user@hostname if provided
-        if resolved_user or resolved_hostname:
-            # SSH config has user/hostname - use host_label pattern
-            base_cmd.append(host_label)
-        elif username and hostname:
-            # No SSH config user/hostname - use explicit values
-            base_cmd.append(f"{username}@{hostname}")
-        else:
-            # Fallback to host_label
-            base_cmd.append(host_label)
-    
-    # Add remote command after host (if specified)
+    resolved_user = _get_ssh_config_value(effective_config, 'user')
+    resolved_hostname = _get_ssh_config_value(effective_config, 'hostname')
+
+    final_remote_cmd = None
     if ctx.remote_command:
-        # Ensure shell remains active
-        final_remote_cmd = ctx.remote_command if 'exec $SHELL' in ctx.remote_command else f"{ctx.remote_command} ; exec $SHELL -l"
-        base_cmd.append(final_remote_cmd)
-        logger.debug(f"Remote command: {final_remote_cmd}")
-    
-    # Force TTY for interactive password prompts if needed
+        final_remote_cmd = (
+            ctx.remote_command
+            if 'exec $SHELL' in ctx.remote_command
+            else f"{ctx.remote_command} ; exec $SHELL -l"
+        )
+        base_cmd.extend(['-t', '-t'])
+        logger.debug(f"Remote command (TTY): {final_remote_cmd}")
+
     if use_password_auth and not has_stored_password:
         if '-t' not in base_cmd and '-tt' not in base_cmd:
             base_cmd.append('-t')
             logger.debug("Forcing TTY for interactive password prompt")
-    
-    # 6. Determine if we need sshpass for automatic password authentication
+
     if ctx.port_forwarding_rules:
         def _format_forward_host(host: str) -> str:
             host = (host or '').strip()
@@ -699,17 +700,20 @@ def build_ssh_connection(
     if getattr(connection, 'x11_forwarding', False):
         base_cmd.append('-X')
         logger.debug("X11 forwarding enabled")
-    
-    # Add remote command TTY allocation if specified (before host)
-    if ctx.remote_command:
-        base_cmd.extend(['-t', '-t'])  # Force TTY allocation
-    
+
     # Add local command if specified
     if ctx.local_command:
         base_cmd.extend(['-o', 'PermitLocalCommand=yes'])
         base_cmd.extend(['-o', f'LocalCommand={ctx.local_command}'])
         logger.debug(f"Local command enabled: {ctx.local_command}")
-    
+
+    certificate = getattr(connection, 'certificate', '') or ''
+    if certificate:
+        cert_path = os.path.expanduser(certificate)
+        if os.path.isfile(cert_path):
+            base_cmd.extend(['-o', f'CertificateFile={cert_path}'])
+            logger.debug(f"Using SSH certificate: {cert_path}")
+
     # Add NumberOfPasswordPrompts
     base_cmd.extend(['-o', 'NumberOfPasswordPrompts=1'])
     
@@ -749,15 +753,33 @@ def build_ssh_connection(
         base_cmd.extend(['-o', f'UserKnownHostsFile={ctx.known_hosts_path}'])
         logger.debug(f"Using custom known hosts file: {ctx.known_hosts_path}")
     
-    # Add extra arguments (before host)
+    # Extra CLI flags (e.g. -N -D for background forwarding) before the target host
     if extra_args:
         base_cmd.extend(extra_args)
-    
-    # 6. Determine if we need sshpass for automatic password authentication
+
+    # Append host and remote command last: ssh [options] host [command]
+    if command_type == 'scp':
+        pass
+    elif command_type == 'ssh-copy-id':
+        if username and hostname:
+            base_cmd.append(f"{username}@{hostname}")
+        else:
+            base_cmd.append(host_label)
+    else:
+        if resolved_user or resolved_hostname:
+            host_target = host_label
+        elif username and hostname:
+            host_target = f"{username}@{hostname}"
+        else:
+            host_target = host_label
+        base_cmd.append(host_target)
+        if final_remote_cmd:
+            base_cmd.append(final_remote_cmd)
+
     use_sshpass = False
     password_for_sshpass = None
-    
-    if use_password_auth and stored_password:
+
+    if password_auth_selected and stored_password:
         use_sshpass = True
         password_for_sshpass = stored_password
         logger.debug("Using sshpass for automatic password authentication")
@@ -780,8 +802,13 @@ def execute_ssh_connection(
 ) -> subprocess.CompletedProcess:
     """
     Execute an SSH connection command.
-    
+
     Handles sshpass wrapping and environment setup automatically.
+
+    .. deprecated::
+        Prefer spawning ``cmd.command`` with ``cmd.env`` directly (as the
+        terminal does) or ``run_ssh_with_password`` / ``run_scp_with_password``.
+        This helper re-parses ``cmd.command`` and is kept for API compatibility.
     """
     if cmd.use_sshpass and cmd.password:
         # Use sshpass for password authentication
