@@ -2847,13 +2847,26 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         """Handle delete port forwarding rule button click"""
         if not hasattr(self, 'forwarding_rules'):
             return
-            
+
         # Remove the rule from the list
         self.forwarding_rules = [r for r in self.forwarding_rules if r != rule]
-        
+
+        # Sync old-style toggle switches so save-time validation doesn't block
+        for toggle_attr, rule_type in [
+            ('local_forwarding_enabled', 'local'),
+            ('remote_forwarding_enabled', 'remote'),
+            ('dynamic_forwarding_enabled', 'dynamic'),
+        ]:
+            if hasattr(self, toggle_attr):
+                has_rule = any(
+                    r.get('type') == rule_type and r.get('enabled', True)
+                    for r in self.forwarding_rules
+                )
+                getattr(self, toggle_attr).set_active(has_rule)
+
         # Reload the rules UI
         self.load_port_forwarding_rules()
-        
+
         logger.info(f"Deleted port forwarding rule: {rule}")
     
     def on_edit_forwarding_rule_clicked(self, button, rule):
@@ -3040,8 +3053,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             listen_port = int((listen_port_row.get_text() or '0').strip() or '0')
         except Exception:
             listen_port = 0
-        if listen_port <= 0:
-            self.show_error(_("Please enter a valid listen port (> 0)"))
+        if listen_port <= 0 or listen_port > 65535:
+            self.show_error(_("Please enter a valid listen port (1–65535)"))
             return
         
         # Check for port conflicts (for local and dynamic forwarding)
