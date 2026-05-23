@@ -1175,6 +1175,11 @@ class QuickConnectDialog(Adw.MessageDialog):
             connection=connection,
             connection_manager=getattr(self.parent_window, 'connection_manager', None),
         )
+        # load_connection_data() already ran inside __init__ to pre-fill the form.
+        # Mark as new so window.on_connection_saved takes the new-connection branch
+        # that appends to connection_manager.connections instead of the edit branch
+        # that tries to update a transient object not registered in the manager.
+        conn_dialog.is_editing = False
         conn_dialog.connect('connection-saved', self._on_connection_saved)
         conn_dialog.present()
 
