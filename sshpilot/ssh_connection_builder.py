@@ -380,9 +380,28 @@ def build_ssh_connection(
         except Exception:
             pass
     
-    # Handle native mode early - minimal SSH command
+    # Handle quick connect mode first — an explicit user-typed SSH command takes
+    # priority over native mode so flags like -p, -i, -X etc. are not dropped.
+    if ctx.quick_connect_mode and ctx.quick_connect_command:
+        import shlex
+        try:
+            base_cmd = shlex.split(ctx.quick_connect_command)
+        except ValueError:
+            base_cmd = ctx.quick_connect_command.split()
+        # Use default environment
+        env = os.environ.copy()
+        env.pop('SSH_ASKPASS', None)
+        env.pop('SSH_ASKPASS_REQUIRE', None)
+        return SSHConnectionCommand(
+            command=base_cmd,
+            env=env,
+            use_sshpass=False,
+            password=None,
+            use_askpass=False
+        )
+
+    # Handle native mode - minimal SSH command, let SSH config handle everything
     if ctx.native_mode:
-        # Native mode: just use ssh with host_label, let SSH config handle everything
         base_cmd = ['ssh']
         config_override = None
         if hasattr(connection, '_resolve_config_override_path'):
@@ -405,25 +424,6 @@ def build_ssh_connection(
                 pass
         base_cmd.append(host_label)
         # Use default environment (no askpass, no sshpass)
-        env = os.environ.copy()
-        env.pop('SSH_ASKPASS', None)
-        env.pop('SSH_ASKPASS_REQUIRE', None)
-        return SSHConnectionCommand(
-            command=base_cmd,
-            env=env,
-            use_sshpass=False,
-            password=None,
-            use_askpass=False
-        )
-    
-    # Handle quick connect mode early
-    if ctx.quick_connect_mode and ctx.quick_connect_command:
-        import shlex
-        try:
-            base_cmd = shlex.split(ctx.quick_connect_command)
-        except ValueError:
-            base_cmd = ctx.quick_connect_command.split()
-        # Use default environment
         env = os.environ.copy()
         env.pop('SSH_ASKPASS', None)
         env.pop('SSH_ASKPASS_REQUIRE', None)
