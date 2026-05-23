@@ -21,7 +21,7 @@ import pwd
 from datetime import datetime
 from typing import Optional, List
 from .port_utils import get_port_checker
-from .platform_utils import is_flatpak, is_macos
+from .platform_utils import is_flatpak, is_macos, get_sshpass_path
 from .terminal_backends import BaseTerminalBackend, VTETerminalBackend, PyXtermTerminalBackend
 from .ssh_connection_builder import build_ssh_connection, ConnectionContext
 
@@ -1356,16 +1356,9 @@ class TerminalWidget(Gtk.Box):
 
             if password_value:
                 # Use sshpass for password authentication with FIFO (terminal-specific)
-                import shutil
-                sshpass_path = None
-                
-                # Check if sshpass is available and executable
-                if os.path.exists('/app/bin/sshpass') and os.access('/app/bin/sshpass', os.X_OK):
-                    sshpass_path = '/app/bin/sshpass'
-                    logger.debug("Found sshpass at /app/bin/sshpass")
-                elif shutil.which('sshpass'):
-                    sshpass_path = shutil.which('sshpass')
-                    logger.debug(f"Found sshpass in PATH: {sshpass_path}")
+                sshpass_path = get_sshpass_path()
+                if sshpass_path:
+                    logger.debug(f"Using sshpass at {sshpass_path}")
                 else:
                     logger.debug("sshpass not found or not executable")
                 

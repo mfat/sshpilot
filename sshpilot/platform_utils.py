@@ -2,6 +2,7 @@
 
 import os
 import platform
+import shutil
 
 from gi.repository import GLib
 
@@ -27,6 +28,30 @@ def get_config_dir() -> str:
 def get_data_dir() -> str:
     """Return the per-user data directory for sshPilot."""
     return os.path.join(GLib.get_user_data_dir(), APP_NAME)
+
+
+_sshpass_path_cache: str | None = None
+_sshpass_checked: bool = False
+
+
+def get_sshpass_path() -> str | None:
+    """Return the path to the sshpass binary, or None if unavailable.
+
+    The result is cached after the first call so repeated lookups are free.
+    Checks the Flatpak-bundled location first, then falls back to PATH.
+    """
+    global _sshpass_path_cache, _sshpass_checked
+    if _sshpass_checked:
+        return _sshpass_path_cache
+
+    flatpak_path = "/app/bin/sshpass"
+    if os.path.exists(flatpak_path) and os.access(flatpak_path, os.X_OK):
+        _sshpass_path_cache = flatpak_path
+    else:
+        _sshpass_path_cache = shutil.which("sshpass")
+
+    _sshpass_checked = True
+    return _sshpass_path_cache
 
 
 def get_ssh_dir() -> str:
