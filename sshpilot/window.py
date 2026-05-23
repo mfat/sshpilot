@@ -1689,6 +1689,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             new_data['proxy_jump'] = proxy_jump_value
 
             new_data['proxy_command'] = getattr(connection, 'proxy_command', new_data.get('proxy_command', '')) or ''
+            new_data['pre_command'] = getattr(connection, 'pre_command', new_data.get('pre_command', '')) or ''
             new_data['local_command'] = getattr(connection, 'local_command', new_data.get('local_command', '')) or ''
             new_data['remote_command'] = getattr(connection, 'remote_command', new_data.get('remote_command', '')) or ''
             new_data['extra_ssh_config'] = getattr(connection, 'extra_ssh_config', new_data.get('extra_ssh_config', '')) or ''
@@ -9261,6 +9262,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     'key_passphrase': _norm_str(getattr(old_connection, 'key_passphrase', '')),
                     'x11_forwarding': bool(getattr(old_connection, 'x11_forwarding', False)),
                     'forwarding_rules': _norm_rules(getattr(old_connection, 'forwarding_rules', [])),
+                    'pre_command': _norm_str(getattr(old_connection, 'pre_command', '') or (getattr(old_connection, 'data', {}).get('pre_command') if hasattr(old_connection, 'data') else '')),
                     'local_command': _norm_str(getattr(old_connection, 'local_command', '') or (getattr(old_connection, 'data', {}).get('local_command') if hasattr(old_connection, 'data') else '')),
                     'remote_command': _norm_str(getattr(old_connection, 'remote_command', '') or (getattr(old_connection, 'data', {}).get('remote_command') if hasattr(old_connection, 'data') else '')),
                     'extra_ssh_config': _norm_str(getattr(old_connection, 'extra_ssh_config', '') or (getattr(old_connection, 'data', {}).get('extra_ssh_config') if hasattr(old_connection, 'data') else '')),
@@ -9278,6 +9280,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     'key_passphrase': _norm_str(connection_data.get('key_passphrase')),
                     'x11_forwarding': bool(connection_data.get('x11_forwarding', False)),
                     'forwarding_rules': _norm_rules(connection_data.get('forwarding_rules')),
+                    'pre_command': _norm_str(connection_data.get('pre_command')),
                     'local_command': _norm_str(connection_data.get('local_command')),
                     'remote_command': _norm_str(connection_data.get('remote_command')),
                     'extra_ssh_config': _norm_str(connection_data.get('extra_ssh_config')),
@@ -9399,6 +9402,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
                 # Update commands
                 try:
+                    old_connection.pre_command = connection_data.get('pre_command', '')
                     old_connection.local_command = connection_data.get('local_command', '')
                     old_connection.remote_command = connection_data.get('remote_command', '')
                     old_connection.extra_ssh_config = connection_data.get('extra_ssh_config', '')

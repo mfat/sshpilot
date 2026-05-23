@@ -162,6 +162,7 @@ class Connection:
         self.proxy_jump = pj
         self.forward_agent = bool(data.get('forward_agent', False))
         # Commands
+        self.pre_command = data.get('pre_command', '')
         self.local_command = data.get('local_command', '')
         self.remote_command = data.get('remote_command', '')
         # Extra SSH config parameters
@@ -929,7 +930,12 @@ class ConnectionManager(GObject.Object):
                 while i < len(lines):
                     raw_line = lines[i]
                     line = raw_line.strip()
-                    if not line or line.startswith('#'):
+                    if not line:
+                        i += 1
+                        continue
+                    if line.startswith('#'):
+                        if current_hosts and line.startswith('# sshpilot:PreCommand '):
+                            current_config['__pre_command'] = line[len('# sshpilot:PreCommand '):].strip()
                         i += 1
                         continue
                     lowered = line.lower()
@@ -1228,6 +1234,8 @@ class ConnectionManager(GObject.Object):
                     v = v.replace('\\"', '"').replace('\\\\', '\\')
                     return v
 
+                if '__pre_command' in config:
+                    parsed['pre_command'] = config['__pre_command']
                 if 'localcommand' in config:
                     parsed['local_command'] = _unescape_cfg_value(config.get('localcommand', ''))
                 if 'remotecommand' in config:
@@ -1685,6 +1693,11 @@ class ConnectionManager(GObject.Object):
         # Add X11 forwarding if enabled
         if data.get('x11_forwarding', False):
             lines.append("    ForwardX11 yes")
+
+        # Add PreCommand (sshpilot-specific, stored as a comment)
+        pre_cmd = (data.get('pre_command') or '').strip()
+        if pre_cmd:
+            lines.append(f"    # sshpilot:PreCommand {pre_cmd}")
 
         # Add LocalCommand if specified, ensure PermitLocalCommand (write exactly as provided)
         local_cmd = (data.get('local_command') or '').strip()

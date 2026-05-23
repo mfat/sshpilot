@@ -869,6 +869,27 @@ class TerminalWidget(Gtk.Box):
     def _connect_ssh_thread(self):
         """SSH connection thread: directly spawn SSH and rely on its output for errors."""
         try:
+            pre_cmd = ''
+            try:
+                pre_cmd = (getattr(self.connection, 'pre_command', '') or '').strip()
+                if not pre_cmd and hasattr(self.connection, 'data'):
+                    pre_cmd = (self.connection.data.get('pre_command') or '').strip()
+            except Exception:
+                pre_cmd = ''
+            if pre_cmd:
+                logger.info(f"Running pre-connection command: {pre_cmd}")
+                try:
+                    result = subprocess.run(
+                        pre_cmd,
+                        shell=True,
+                        timeout=30,
+                    )
+                    if result.returncode != 0:
+                        logger.warning(f"Pre-connection command exited with code {result.returncode}: {pre_cmd}")
+                except subprocess.TimeoutExpired:
+                    logger.warning(f"Pre-connection command timed out: {pre_cmd}")
+                except Exception as pre_exc:
+                    logger.warning(f"Pre-connection command failed: {pre_exc}")
             GLib.idle_add(self._setup_ssh_terminal)
         except Exception as e:
             logger.error(f"SSH connection failed: {e}")

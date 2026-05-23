@@ -1434,6 +1434,15 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                         return ''
                     return val
 
+                if hasattr(self, 'pre_command_row'):
+                    pre_cmd_val = ''
+                    try:
+                        pre_cmd_val = getattr(self.connection, 'pre_command', '') or (
+                            self.connection.data.get('pre_command') if hasattr(self.connection, 'data') else ''
+                        ) or ''
+                    except Exception:
+                        pre_cmd_val = ''
+                    self.pre_command_row.set_text(_display_safe(pre_cmd_val))
                 if hasattr(self, 'local_command_row'):
                     local_cmd_val = ''
                     try:
@@ -2649,10 +2658,16 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             title=_("Connection Commands"),
             description=_(
                 "Run a command automatically on connect.\n\n"
+                "• Pre-Connection Command: Runs locally before connecting.\n"
                 "• Local Command: Runs on your machine after connection (requires PermitLocalCommand).\n"
                 "• Remote Command: Runs on the remote host (uses RequestTTY for interactive shell)."
             )
         )
+        self.pre_command_row = Adw.EntryRow(title=_("Pre-Connection Command"))
+        try:
+            self.pre_command_row.set_subtitle(_("Executed locally before connecting"))
+        except Exception:
+            pass
         self.local_command_row = Adw.EntryRow(title=_("Local Command"))
         try:
             self.local_command_row.set_subtitle(_("Executed locally after connect"))
@@ -2663,6 +2678,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             self.remote_command_row.set_subtitle(_("Executed on remote; TTY requested for interactivity"))
         except Exception:
             pass
+        commands_group.add(self.pre_command_row)
         commands_group.add(self.local_command_row)
         commands_group.add(self.remote_command_row)
 
@@ -3559,6 +3575,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             'forward_agent': self.forward_agent_row.get_active(),
 
             'forwarding_rules': forwarding_rules,
+            'pre_command': (self.pre_command_row.get_text() if hasattr(self, 'pre_command_row') else ''),
             'local_command': (self.local_command_row.get_text() if hasattr(self, 'local_command_row') else ''),
             'remote_command': (self.remote_command_row.get_text() if hasattr(self, 'remote_command_row') else ''),
             'extra_ssh_config': extra_ssh_config,
