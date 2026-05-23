@@ -23,9 +23,29 @@ def _ensure_gi_stubs():
             sys.modules['gi.repository'] = repository
 
     for name, attr_map in (
-        ('Gtk', {'Overlay': type('Overlay', (object,), {})}),
-        ('Adw', {'MessageDialog': type('MessageDialog', (object,), {})}),
+        ('Gtk', {'Overlay': type('Overlay', (object,), {}),
+                 'Box': type('Box', (object,), {'__init__': lambda s, **kw: None}),
+                 'Label': type('Label', (object,), {}),
+                 'Entry': type('Entry', (object,), {}),
+                 'Button': type('Button', (object,), {}),
+                 'FileDialog': type('FileDialog', (object,), {}),
+                 'Align': type('Align', (object,), {'START': 0, 'CENTER': 1}),
+                 'Orientation': type('Orientation', (object,), {'VERTICAL': 0, 'HORIZONTAL': 1})}),
+        ('Adw', {'MessageDialog': type('MessageDialog', (object,), {}),
+                 'PreferencesGroup': type('PreferencesGroup', (object,), {}),
+                 'PasswordEntryRow': type('PasswordEntryRow', (object,), {}),
+                 'ActionRow': type('ActionRow', (object,), {}),
+                 'ResponseAppearance': type('ResponseAppearance', (object,), {'SUGGESTED': 0})}),
         ('Gdk', {}),
+        ('GObject', {'Object': type('Object', (object,), {}),
+                     'SignalFlags': type('SignalFlags', (object,), {'RUN_FIRST': 0})}),
+        ('Gio', {'File': type('File', (object,), {'new_for_path': staticmethod(lambda p: None)})}),
+        ('GLib', {
+            'get_user_config_dir': lambda: '/tmp',
+            'get_user_data_dir': lambda: '/tmp',
+            'get_home_dir': lambda: '/tmp',
+            'idle_add': lambda *a, **kw: None,
+        }),
     ):
         module_name = f'gi.repository.{name}'
         module = sys.modules.get(module_name)
