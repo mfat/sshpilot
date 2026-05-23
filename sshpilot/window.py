@@ -2132,6 +2132,19 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         copy_key_row.connect('activated', lambda *_: (self.on_copy_key_to_server_action(None, None), pop.popdown()))
                         listbox.append(copy_key_row)
 
+                        # Wake on LAN row (only when MAC is set for this connection)
+                        try:
+                            conn_meta = self.config.get_connection_meta(row.connection.nickname) if getattr(row, 'connection', None) else {}
+                            if (conn_meta or {}).get('wol_mac', '').strip():
+                                wol_row = Adw.ActionRow(title=_('Wake on LAN'))
+                                wol_icon = icon_utils.new_image_from_icon_name('network-wireless-symbolic')
+                                wol_row.add_prefix(wol_icon)
+                                wol_row.set_activatable(True)
+                                wol_row.connect('activated', lambda *_: (self.on_wake_on_lan_action(None, None), pop.popdown()))
+                                listbox.append(wol_row)
+                        except Exception:
+                            pass
+
                         # Only show system terminal option when external terminals are available
                         if not should_hide_external_terminal_options():
                             terminal_row = Adw.ActionRow(title=_('Open in System Terminal'))
