@@ -34,7 +34,7 @@ except Exception:
     KEYRING_AVAILABLE = False
 
 from . import __version__
-from .platform_utils import is_macos, is_flatpak, get_config_dir, get_ssh_dir
+from .platform_utils import is_macos, is_flatpak, get_config_dir, get_ssh_dir, get_sshpass_path
 
 
 logger = logging.getLogger(__name__)
@@ -201,13 +201,9 @@ class StartupInfo:
         else:
             tools['ssh'] = {'available': False, 'path': None, 'version': None}
         
-        # sshpass
-        sshpass_path = None
-        if os.path.exists('/app/bin/sshpass') and os.access('/app/bin/sshpass', os.X_OK):
-            sshpass_path = '/app/bin/sshpass'
-        else:
-            sshpass_path = shutil.which('sshpass')
-        
+        # sshpass — warm the cache and record availability
+        sshpass_path = get_sshpass_path()
+
         if sshpass_path:
             try:
                 import subprocess
