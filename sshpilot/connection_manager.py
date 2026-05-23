@@ -565,37 +565,34 @@ class Connection:
         
     async def setup_forwarding(self):
         """Set up all forwarding rules"""
-        if not self.is_connected or not self.connection:
+        if not self.is_connected:
             return False
-            
+
         success = True
         for rule in self.forwarding_rules:
             if not rule.get('enabled', True):
                 continue
-                
+
             rule_type = rule.get('type')
             listen_addr = rule.get('listen_addr', 'localhost')
             listen_port = rule.get('listen_port')
-            
+
             try:
                 if rule_type == 'dynamic':
-                    # Start SOCKS proxy server
                     await self.start_dynamic_forwarding(listen_addr, listen_port)
                 elif rule_type == 'local':
-                    # Local port forwarding
                     remote_host = rule.get('remote_host', 'localhost')
                     remote_port = rule.get('remote_port')
                     await self.start_local_forwarding(listen_addr, listen_port, remote_host, remote_port)
                 elif rule_type == 'remote':
-                    # Remote port forwarding
-                    remote_host = rule.get('remote_host', 'localhost')
-                    remote_port = rule.get('remote_port')
-                    await self.start_remote_forwarding(listen_addr, listen_port, remote_host, remote_port)
-                    
+                    local_host = rule.get('local_host') or rule.get('remote_host', 'localhost')
+                    local_port = rule.get('local_port') or rule.get('remote_port')
+                    await self.start_remote_forwarding(listen_addr, listen_port, local_host, local_port)
+
             except Exception as e:
                 logger.error(f"Failed to set up {rule_type} forwarding: {e}")
                 success = False
-                
+
         return success
         
     async def _forward_data(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, label: str):
@@ -726,99 +723,171 @@ class Connection:
     async def start_local_forwarding(self, listen_addr: str, listen_port: int, remote_host: str, remote_port: int):
         """Start local port forwarding using system SSH client"""
         try:
-            # Build the SSH command for local port forwarding
-            ssh_cmd = self.ssh_cmd + [
-                '-N',  # No remote command
-                '-L', f"{listen_addr}:{listen_port}:{remote_host}:{remote_port}"
-            ]
-            
-            # Ensure ssh can prompt interactively by removing any askpass settings
-            env = os.environ.copy()
+            logger.debug(f"Starting local port forwarding setup for {self.hostname}: {listen_addr}:{listen_port} -> {remote_host}:{remote_port}")
+
+            try:
+                from .config import Config
+                cfg = Config()
+            except Exception:
+                cfg = None
+
+            forward_spec = f"{listen_addr}:{listen_port}:{remote_host}:{remote_port}"
+            ctx = ConnectionContext(
+                connection=self,
+                connection_manager=getattr(self, '_connection_manager', None),
+                config=cfg,
+                command_type='ssh',
+                extra_args=['-N', '-L', forward_spec, '-f'],
+                port_forwarding_rules=None,
+                remote_command=None,
+                local_command=None,
+                extra_ssh_config=None,
+                known_hosts_path=(
+                    getattr(getattr(self, '_connection_manager', None), 'known_hosts_path', None)
+                    if getattr(self, '_connection_manager', None)
+                    and os.path.exists(getattr(self._connection_manager, 'known_hosts_path', '') or '')
+                    else None
+                ),
+                native_mode=False,
+                quick_connect_mode=False,
+                quick_connect_command=None,
+            )
+            ssh_conn_cmd = build_ssh_connection(ctx)
+            ssh_cmd = ssh_conn_cmd.command
+            env = ssh_conn_cmd.env.copy()
             env.pop("SSH_ASKPASS", None)
             env.pop("SSH_ASKPASS_REQUIRE", None)
-            
-            # Start the SSH process
+
+            logger.info(f"Starting local port forwarding with command: {' '.join(ssh_cmd)}")
             self.process = await asyncio.create_subprocess_exec(
                 *ssh_cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env
             )
-            
-            # Check if the process started successfully
-            if self.process.returncode is not None and self.process.returncode != 0:
-                stderr = await self.process.stderr.read()
-                raise Exception(f"SSH port forwarding failed: {stderr.decode().strip()}")
-            
+
+            try:
+                stdout, stderr = await asyncio.wait_for(self.process.communicate(), timeout=5.0)
+                if stdout:
+                    logger.debug(f"SSH stdout: {stdout.decode().strip()}")
+                if stderr:
+                    logger.debug(f"SSH stderr: {stderr.decode().strip()}")
+                if self.process.returncode != 0:
+                    error_msg = stderr.decode().strip() if stderr else "Unknown error"
+                    logger.error(f"SSH local port forwarding failed with code {self.process.returncode}: {error_msg}")
+                    raise Exception(f"SSH local port forwarding failed: {error_msg}")
+                else:
+                    logger.info("SSH local port forwarding process started successfully")
+            except asyncio.TimeoutError:
+                logger.debug("SSH local port forwarding process is running in background")
+
             logger.info(f"Local forwarding started: {listen_addr}:{listen_port} -> {remote_host}:{remote_port}")
-            
-            # Store the forwarding rule
-            self.forwarding_rules.append({
+
+            rule = {
                 'type': 'local',
                 'listen_addr': listen_addr,
                 'listen_port': listen_port,
                 'remote_host': remote_host,
                 'remote_port': remote_port,
-                'process': self.process
-            })
-            
-            # Wait for the process to complete
-            await self.process.wait()
-            
+                'process': self.process,
+                'start_time': time.time()
+            }
+            self.forwarding_rules.append(rule)
+            return True
+
         except Exception as e:
-            logger.error(f"Local forwarding failed: {e}")
+            logger.error(f"Local port forwarding failed: {e}", exc_info=True)
             if hasattr(self, 'process') and self.process:
-                self.process.terminate()
-                await self.process.wait()
+                try:
+                    self.process.terminate()
+                    await asyncio.wait_for(self.process.wait(), timeout=2.0)
+                except (ProcessLookupError, asyncio.TimeoutError):
+                    pass
             raise
 
     async def start_remote_forwarding(self, listen_addr: str, listen_port: int, remote_host: str, remote_port: int):
         """Start remote port forwarding using system SSH client"""
         try:
-            # Build the SSH command for remote port forwarding
-            ssh_cmd = self.ssh_cmd + [
-                '-N',  # No remote command
-                '-R', f"{listen_addr}:{listen_port}:{remote_host}:{remote_port}"
-            ]
-            
-            # Ensure ssh can prompt interactively by removing any askpass settings
-            env = os.environ.copy()
+            logger.debug(f"Starting remote port forwarding setup for {self.hostname}: {listen_addr}:{listen_port} -> {remote_host}:{remote_port}")
+
+            try:
+                from .config import Config
+                cfg = Config()
+            except Exception:
+                cfg = None
+
+            forward_spec = f"{listen_addr}:{listen_port}:{remote_host}:{remote_port}"
+            ctx = ConnectionContext(
+                connection=self,
+                connection_manager=getattr(self, '_connection_manager', None),
+                config=cfg,
+                command_type='ssh',
+                extra_args=['-N', '-R', forward_spec, '-f'],
+                port_forwarding_rules=None,
+                remote_command=None,
+                local_command=None,
+                extra_ssh_config=None,
+                known_hosts_path=(
+                    getattr(getattr(self, '_connection_manager', None), 'known_hosts_path', None)
+                    if getattr(self, '_connection_manager', None)
+                    and os.path.exists(getattr(self._connection_manager, 'known_hosts_path', '') or '')
+                    else None
+                ),
+                native_mode=False,
+                quick_connect_mode=False,
+                quick_connect_command=None,
+            )
+            ssh_conn_cmd = build_ssh_connection(ctx)
+            ssh_cmd = ssh_conn_cmd.command
+            env = ssh_conn_cmd.env.copy()
             env.pop("SSH_ASKPASS", None)
             env.pop("SSH_ASKPASS_REQUIRE", None)
-            
-            # Start the SSH process
+
+            logger.info(f"Starting remote port forwarding with command: {' '.join(ssh_cmd)}")
             self.process = await asyncio.create_subprocess_exec(
                 *ssh_cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env
             )
-            
-            # Check if the process started successfully
-            if self.process.returncode is not None and self.process.returncode != 0:
-                stderr = await self.process.stderr.read()
-                raise Exception(f"SSH remote port forwarding failed: {stderr.decode().strip()}")
-            
+
+            try:
+                stdout, stderr = await asyncio.wait_for(self.process.communicate(), timeout=5.0)
+                if stdout:
+                    logger.debug(f"SSH stdout: {stdout.decode().strip()}")
+                if stderr:
+                    logger.debug(f"SSH stderr: {stderr.decode().strip()}")
+                if self.process.returncode != 0:
+                    error_msg = stderr.decode().strip() if stderr else "Unknown error"
+                    logger.error(f"SSH remote port forwarding failed with code {self.process.returncode}: {error_msg}")
+                    raise Exception(f"SSH remote port forwarding failed: {error_msg}")
+                else:
+                    logger.info("SSH remote port forwarding process started successfully")
+            except asyncio.TimeoutError:
+                logger.debug("SSH remote port forwarding process is running in background")
+
             logger.info(f"Remote forwarding started: {listen_addr}:{listen_port} -> {remote_host}:{remote_port}")
-            
-            # Store the forwarding rule
-            self.forwarding_rules.append({
+
+            rule = {
                 'type': 'remote',
                 'listen_addr': listen_addr,
                 'listen_port': listen_port,
                 'remote_host': remote_host,
                 'remote_port': remote_port,
-                'process': self.process
-            })
-            
-            # Wait for the process to complete
-            await self.process.wait()
-            
+                'process': self.process,
+                'start_time': time.time()
+            }
+            self.forwarding_rules.append(rule)
+            return True
+
         except Exception as e:
-            logger.error(f"Remote forwarding failed: {e}")
+            logger.error(f"Remote port forwarding failed: {e}", exc_info=True)
             if hasattr(self, 'process') and self.process:
-                self.process.terminate()
-                await self.process.wait()
+                try:
+                    self.process.terminate()
+                    await asyncio.wait_for(self.process.wait(), timeout=2.0)
+                except (ProcessLookupError, asyncio.TimeoutError):
+                    pass
             raise
 
     def update_data(self, new_data: Dict[str, Any]):
