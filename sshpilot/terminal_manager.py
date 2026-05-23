@@ -627,6 +627,8 @@ class TerminalManager:
     def on_terminal_title_changed(self, terminal, title):
         page = self.window.tab_view.get_page(terminal)
         if page:
+            if getattr(page, 'custom_tab_title', None):
+                return
             if title and title != terminal.connection.nickname:
                 page.set_title(f"{terminal.connection.nickname} - {title}")
             else:
