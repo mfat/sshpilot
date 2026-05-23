@@ -2770,7 +2770,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
         self.local_terminal_button.connect('clicked', self.on_local_terminal_button_clicked)
         self.tab_bar.set_start_action_widget(self.local_terminal_button)
-        
+
+        # Double-click on a tab to rename it inline
+        rename_gesture = Gtk.GestureClick()
+        rename_gesture.set_button(1)
+        rename_gesture.connect('pressed', self._on_tab_bar_pressed)
+        self.tab_bar.add_controller(rename_gesture)
+
         # Create tab content box
         tab_content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         tab_content_box.append(self.tab_bar)
@@ -7037,6 +7043,53 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Update the UI based on the number of remaining tabs
         GLib.idle_add(self._update_ui_after_tab_close)
     
+    def _on_tab_bar_pressed(self, gesture, n_press, x, y):
+        if n_press != 2:
+            return
+        page = self.tab_view.get_selected_page()
+        if page:
+            self._show_tab_rename_popover(page, x, y)
+
+    def _show_tab_rename_popover(self, page, x, y):
+        entry = Gtk.Entry()
+        entry.set_text(page.get_title())
+        entry.set_width_chars(24)
+
+        popover = Gtk.Popover()
+        popover.set_child(entry)
+        popover.set_parent(self.tab_bar)
+        popover.set_has_arrow(False)
+
+        rect = Gdk.Rectangle()
+        rect.x, rect.y, rect.width, rect.height = int(x), int(y), 1, 1
+        popover.set_pointing_to(rect)
+        popover._committed = False
+
+        def commit(_entry):
+            if not popover._committed:
+                popover._committed = True
+                self._apply_tab_title(page, entry.get_text().strip())
+            popover.popdown()
+
+        def on_closed(p):
+            if not p._committed:
+                self._apply_tab_title(page, entry.get_text().strip())
+
+        entry.connect('activate', commit)
+        popover.connect('closed', on_closed)
+        popover.popup()
+        GLib.idle_add(lambda: (entry.grab_focus(), entry.select_region(0, -1), False)[-1])
+
+    def _apply_tab_title(self, page, title):
+        if title:
+            page.set_title(title)
+            page.custom_tab_title = title
+        else:
+            page.custom_tab_title = None
+            terminal = page.get_child()
+            if hasattr(terminal, 'connection'):
+                page.set_title(terminal.connection.nickname)
+
     def on_tab_close(self, tab_view, page):
         """Handle tab close - THE KEY FIX: Never call close_page ourselves"""
         # If we are closing pages programmatically (e.g., after deleting a

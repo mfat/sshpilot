@@ -66,6 +66,24 @@ jobs:
           chmod +x pyinstaller.sh
           ./pyinstaller.sh
 
+      - name: Bundle sshpass binary into app
+        run: |
+          BREW_PREFIX="$(brew --prefix)"
+          SSHPASS_BIN="$BREW_PREFIX/bin/sshpass"
+          BUNDLE_BIN="dist/SSHPilot.app/Contents/MacOS"
+          
+          echo "=== DEBUG: Copying sshpass into bundle ==="
+          if [ -f "$SSHPASS_BIN" ]; then
+            cp "$SSHPASS_BIN" "$BUNDLE_BIN/sshpass"
+            chmod +x "$BUNDLE_BIN/sshpass"
+            echo "=== DEBUG: sshpass copied successfully ==="
+            file "$BUNDLE_BIN/sshpass"
+          else
+            echo "=== DEBUG: ERROR - sshpass not found at $SSHPASS_BIN ==="
+            exit 1
+          fi          
+
+
       - name: Determine artifact names
         id: artifact-info
         run: |
