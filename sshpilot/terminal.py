@@ -1336,7 +1336,14 @@ class TerminalWidget(Gtk.Box):
                 ssh_conn_cmd = build_ssh_connection(ctx)
                 ssh_cmd = ssh_conn_cmd.command
                 env.update(ssh_conn_cmd.env)
-                
+                # dict.update() doesn't remove keys absent from the source; propagate
+                # deletions explicitly so that SSH_ASKPASS stripped for password auth
+                # (e.g. ksshaskpass from KDE host env) doesn't bleed into the SSH process.
+                if 'SSH_ASKPASS' not in ssh_conn_cmd.env:
+                    env.pop('SSH_ASKPASS', None)
+                if 'SSH_ASKPASS_REQUIRE' not in ssh_conn_cmd.env:
+                    env.pop('SSH_ASKPASS_REQUIRE', None)
+
                 # Get password for sshpass if needed
                 password_value = None
                 if ssh_conn_cmd.use_sshpass and ssh_conn_cmd.password:

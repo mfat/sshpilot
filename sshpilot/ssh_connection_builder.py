@@ -632,6 +632,8 @@ def build_ssh_connection(
         else:
             # Password authentication selected - use default SSH behavior
             env = os.environ.copy()
+            env.pop('SSH_ASKPASS', None)
+            env.pop('SSH_ASKPASS_REQUIRE', None)
             logger.debug("Password authentication selected - not using askpass")
     else:
         # Password authentication selected
