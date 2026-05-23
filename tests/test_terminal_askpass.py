@@ -320,6 +320,60 @@ def test_prepare_key_skipped_when_identity_agent_disabled(tmp_path):
     assert prepare_calls == [str(key_path)]
 
 
+def test_prepare_key_skipped_for_password_auth(tmp_path):
+    terminal_mod = importlib.import_module("sshpilot.terminal")
+
+    terminal_cls = terminal_mod.TerminalWidget
+    terminal = terminal_cls.__new__(terminal_cls)
+
+    key_path = tmp_path / "id_test_key"
+    key_path.write_text("dummy")
+
+    prepare_calls = []
+    terminal.connection_manager = types.SimpleNamespace(
+        prepare_key_for_connection=lambda path: prepare_calls.append(path) or True
+    )
+    terminal.connection = types.SimpleNamespace(
+        auth_method=1,
+        pubkey_auth_no=False,
+        key_select_mode=1,
+        keyfile=str(key_path),
+        identity_agent_disabled=False,
+    )
+    terminal._resolve_native_identity_candidates = lambda: [str(key_path)]
+
+    terminal._prepare_key_for_native_mode()
+
+    assert prepare_calls == []
+
+
+def test_prepare_key_skipped_when_pubkey_disabled(tmp_path):
+    terminal_mod = importlib.import_module("sshpilot.terminal")
+
+    terminal_cls = terminal_mod.TerminalWidget
+    terminal = terminal_cls.__new__(terminal_cls)
+
+    key_path = tmp_path / "id_test_key"
+    key_path.write_text("dummy")
+
+    prepare_calls = []
+    terminal.connection_manager = types.SimpleNamespace(
+        prepare_key_for_connection=lambda path: prepare_calls.append(path) or True
+    )
+    terminal.connection = types.SimpleNamespace(
+        auth_method=0,
+        pubkey_auth_no=True,
+        key_select_mode=1,
+        keyfile=str(key_path),
+        identity_agent_disabled=False,
+    )
+    terminal._resolve_native_identity_candidates = lambda: [str(key_path)]
+
+    terminal._prepare_key_for_native_mode()
+
+    assert prepare_calls == []
+
+
 def test_identity_agent_disabled_with_key_auth_uses_forced_askpass(monkeypatch, tmp_path):
     terminal_mod = importlib.import_module("sshpilot.terminal")
     askpass_mod = importlib.import_module("sshpilot.askpass_utils")

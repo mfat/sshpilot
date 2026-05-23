@@ -2977,7 +2977,9 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
 
         # Avoid shadowing translation function '_' by using a local alias
         t = _
+        previous_type_idx = type_row.get_selected()
         def _sync_visibility(*args):
+            nonlocal previous_type_idx
             idx = type_row.get_selected()
             # Apply label set per type
             if idx == 0:
@@ -3004,48 +3006,15 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 listen_port_row.set_title(t("Local port"))
                 remote_host_row.set_visible(False)
                 remote_port_row.set_visible(False)
-            # Apply smart defaults when switching types and fields are empty
-            try:
-                if idx == 0:  # Local
-                    if not listen_addr_row.get_text().strip():
-                        listen_addr_row.set_text('localhost')
-                    try:
-                        if int((listen_port_row.get_text() or '0').strip() or '0') == 0:
-                            listen_port_row.set_text('8080')
-                    except Exception:
-                        listen_port_row.set_text('8080')
-                    if not remote_host_row.get_text().strip():
-                        remote_host_row.set_text('localhost')
-                    try:
-                        if int((remote_port_row.get_text() or '0').strip() or '0') == 0:
-                            remote_port_row.set_text('22')
-                    except Exception:
-                        remote_port_row.set_text('22')
-                elif idx == 1:  # Remote
-                    if not listen_addr_row.get_text().strip():
-                        listen_addr_row.set_text('localhost')
-                    try:
-                        if int((listen_port_row.get_text() or '0').strip() or '0') == 0:
-                            listen_port_row.set_text('8080')
-                    except Exception:
-                        listen_port_row.set_text('8080')
-                    if not remote_host_row.get_text().strip():
-                        remote_host_row.set_text('localhost')
-                    try:
-                        if int((remote_port_row.get_text() or '0').strip() or '0') == 0:
-                            remote_port_row.set_text('22')
-                    except Exception:
-                        remote_port_row.set_text('22')
-                else:  # Dynamic
-                    if not listen_addr_row.get_text().strip():
-                        listen_addr_row.set_text('localhost')
-                    try:
-                        if int((listen_port_row.get_text() or '0').strip() or '0') == 0:
-                            listen_port_row.set_text('1080')
-                    except Exception:
-                        listen_port_row.set_text('1080')
-            except Exception:
-                pass
+            self._apply_rule_editor_defaults_for_type(
+                idx,
+                listen_addr_row,
+                listen_port_row,
+                remote_host_row,
+                remote_port_row,
+                previous_type_idx,
+            )
+            previous_type_idx = idx
         type_row.connect('notify::selected', _sync_visibility)
         _sync_visibility()
 
@@ -3133,6 +3102,64 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             self.forwarding_rules.append(rule)
 
         self.load_port_forwarding_rules()
+
+    def _apply_rule_editor_defaults_for_type(
+        self,
+        idx,
+        listen_addr_row,
+        listen_port_row,
+        remote_host_row,
+        remote_port_row,
+        previous_idx=None,
+    ):
+        """Apply defaults for rule editor fields based on selected forwarding type."""
+        try:
+            if idx == 0:  # Local
+                if not listen_addr_row.get_text().strip():
+                    listen_addr_row.set_text('localhost')
+                try:
+                    if int((listen_port_row.get_text() or '0').strip() or '0') == 0:
+                        listen_port_row.set_text('8080')
+                except Exception:
+                    listen_port_row.set_text('8080')
+
+                # When switching from Remote to Local, always reset the local
+                # target host to localhost instead of carrying remote destination.
+                if previous_idx == 1:
+                    remote_host_row.set_text('localhost')
+                elif not remote_host_row.get_text().strip():
+                    remote_host_row.set_text('localhost')
+
+                try:
+                    if int((remote_port_row.get_text() or '0').strip() or '0') == 0:
+                        remote_port_row.set_text('22')
+                except Exception:
+                    remote_port_row.set_text('22')
+            elif idx == 1:  # Remote
+                if not listen_addr_row.get_text().strip():
+                    listen_addr_row.set_text('localhost')
+                try:
+                    if int((listen_port_row.get_text() or '0').strip() or '0') == 0:
+                        listen_port_row.set_text('8080')
+                except Exception:
+                    listen_port_row.set_text('8080')
+                if not remote_host_row.get_text().strip():
+                    remote_host_row.set_text('localhost')
+                try:
+                    if int((remote_port_row.get_text() or '0').strip() or '0') == 0:
+                        remote_port_row.set_text('22')
+                except Exception:
+                    remote_port_row.set_text('22')
+            else:  # Dynamic
+                if not listen_addr_row.get_text().strip():
+                    listen_addr_row.set_text('localhost')
+                try:
+                    if int((listen_port_row.get_text() or '0').strip() or '0') == 0:
+                        listen_port_row.set_text('1080')
+                except Exception:
+                    listen_port_row.set_text('1080')
+        except Exception:
+            pass
     
     def _show_port_info_dialog(self):
         """Show a window with current port information"""
