@@ -60,7 +60,21 @@ python -m PyInstaller --clean --noconfirm sshpilot.spec
 # Check if build was successful
 if [ -d "dist/SSHPilot.app" ]; then
     echo "✅ Build successful! Bundle created at: dist/SSHPilot.app"
-    
+
+    # Bundle sshpass into the correct location expected by hook-gtk_runtime.py
+    # (Contents/Resources/bin/ — NOT Contents/MacOS/ which PyInstaller's binaries[] uses)
+    echo "🔑 Bundling sshpass..."
+    SSHPASS_SRC="$(command -v sshpass 2>/dev/null || true)"
+    if [ -n "$SSHPASS_SRC" ] && [ -f "$SSHPASS_SRC" ]; then
+        SSHPASS_DEST_DIR="dist/SSHPilot.app/Contents/Resources/bin"
+        mkdir -p "$SSHPASS_DEST_DIR"
+        cp "$SSHPASS_SRC" "$SSHPASS_DEST_DIR/sshpass"
+        chmod +x "$SSHPASS_DEST_DIR/sshpass"
+        echo "✅ sshpass bundled at: $SSHPASS_DEST_DIR/sshpass"
+    else
+        echo "⚠️  sshpass not found in PATH; bundle will require system sshpass"
+    fi
+
     # Create DMG file using create-dmg
     echo "📦 Creating DMG file..."
     

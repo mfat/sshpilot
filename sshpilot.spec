@@ -146,11 +146,6 @@ if keyring_package.exists():
     print(f"Added keyring package: {keyring_package}")
 
 
-# Optional helper binaries
-sshpass = f"{homebrew}/bin/sshpass"
-if os.path.exists(sshpass):
-    binaries.append((sshpass, "Resources/bin"))
-
 # Cairo Python bindings (required for Cairo Context)
 gi_site_packages = site_packages_dir / "gi"
 if gi_site_packages.exists():
