@@ -2565,7 +2565,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         # X11 Forwarding moved to Port Forwarding view
         
         # Return groups for PreferencesPage
-        return [basic_group, wol_group, auth_group, proxy_group, advanced_group]
+        return [basic_group, auth_group, proxy_group, wol_group, advanced_group]
     
     def build_port_forwarding_groups(self):
         """Build PreferencesGroups for the Advanced page (Port Forwarding first, X11 last)"""

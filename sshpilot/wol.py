@@ -75,7 +75,7 @@ def send_wol(
     if not target and host:
         ip = _resolve_host_to_ip(host, port=port)
         if ip:
-            target = get_subnet_broadcast(ip, prefix_bits=24)
+            target = get_subnet_broadcast(ip)
     if not target:
         target = "255.255.255.255"
     try:
@@ -91,25 +91,39 @@ def send_wol(
         return False, str(e)
 
 
-def get_subnet_broadcast(host_ip: str, prefix_bits: int = 24) -> Optional[str]:
+def get_subnet_broadcast(host_ip: str) -> Optional[str]:
     """
-    Compute subnet-directed broadcast address for a host (e.g. 192.168.1.50 -> 192.168.1.255).
-    Many routers and NICs only wake on subnet broadcast, not 255.255.255.255.
+    Compute the directed broadcast address for the local interface that can reach host_ip.
+    Queries actual interface netmasks via psutil so non-/24 subnets work correctly.
+    Falls back to 255.255.255.255 if the interface cannot be determined.
     """
     if not host_ip or not isinstance(host_ip, str):
         return None
     host_ip = host_ip.strip()
     try:
-        addr = socket.inet_pton(socket.AF_INET, host_ip)
+        target_bytes = socket.inet_pton(socket.AF_INET, host_ip)
     except OSError:
         return None
-    ip_int = int.from_bytes(addr, "big")
-    if prefix_bits <= 0 or prefix_bits >= 32:
-        return None
-    mask = (0xFFFFFFFF << (32 - prefix_bits)) & 0xFFFFFFFF
-    net = ip_int & mask
-    broadcast_int = net | (0xFFFFFFFF ^ mask)
-    return socket.inet_ntoa(broadcast_int.to_bytes(4, "big"))
+    target_int = int.from_bytes(target_bytes, "big")
+    try:
+        import psutil
+        for _iface, addrs in psutil.net_if_addrs().items():
+            for addr in addrs:
+                if addr.family != socket.AF_INET:
+                    continue
+                if not addr.address or not addr.netmask:
+                    continue
+                try:
+                    iface_int = int.from_bytes(socket.inet_pton(socket.AF_INET, addr.address), "big")
+                    mask_int = int.from_bytes(socket.inet_pton(socket.AF_INET, addr.netmask), "big")
+                    if (target_int & mask_int) == (iface_int & mask_int):
+                        broadcast_int = (iface_int & mask_int) | (~mask_int & 0xFFFFFFFF)
+                        return socket.inet_ntoa(broadcast_int.to_bytes(4, "big"))
+                except Exception:
+                    continue
+    except Exception as e:
+        logger.debug("Subnet broadcast detection failed: %s", e)
+    return None
 
 
 def _resolve_host_to_ip(host: str, port: int = 22) -> Optional[str]:
