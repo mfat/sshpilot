@@ -2,6 +2,7 @@
 
 import gi
 import os
+import re
 import shlex
 import logging
 
@@ -42,42 +43,60 @@ SSH_OPTIONS_EXPECTING_ARGUMENT = {
 }
 
 
+# An address token is either an IPv6 literal in brackets [::1] or any
+# sequence of characters that contains no unbracketed colon (hostname/IPv4).
+_ADDR = r'(?:\[[^\]]*\]|[^\[\]:]+)'
+_PORT = r'\d+'
+
+# Matches [bind_addr:]port:host:hostport with full bracket-awareness.
+_FORWARD_RE = re.compile(
+    r'^(?:(' + _ADDR + r'):)?'   # optional bind_addr:
+    r'(' + _PORT + r')'           # listen_port
+    r':(' + _ADDR + r')'          # remote host
+    r':(' + _PORT + r')$'         # remote port
+)
+
+# Matches [bind_addr:]port for -D (dynamic SOCKS proxy).
+_DYNAMIC_RE = re.compile(
+    r'^(?:(' + _ADDR + r'):)?'   # optional bind_addr:
+    r'(' + _PORT + r')$'          # port
+)
+
+
 def _parse_forward_spec(spec: str, fwd_type: str):
-    """Parse -L/-R spec [bind_addr:]port:host:hostport into a forwarding_rules dict."""
-    parts = spec.split(':')
-    try:
-        if len(parts) == 4:
-            bind_addr, listen_port, remote_host, remote_port = parts
-        elif len(parts) == 3:
-            bind_addr = 'localhost'
-            listen_port, remote_host, remote_port = parts
-        else:
-            return None
-        rule = {'type': fwd_type, 'enabled': True,
-                'listen_addr': bind_addr, 'listen_port': int(listen_port)}
-        if fwd_type == 'local':
-            rule['remote_host'] = remote_host
-            rule['remote_port'] = int(remote_port)
-        else:
-            rule['local_host'] = remote_host
-            rule['local_port'] = int(remote_port)
-        return rule
-    except (ValueError, IndexError):
+    """Parse -L/-R spec [bind_addr:]port:host:hostport into a forwarding_rules dict.
+
+    Handles IPv6 literals in brackets (e.g. [::1]:8080:localhost:80).
+    Returns None if the spec cannot be parsed; callers should preserve the raw
+    spec in unparsed_args so the rule is not silently lost.
+    """
+    m = _FORWARD_RE.match(spec)
+    if not m:
         return None
+    bind_addr, listen_port, remote_host, remote_port = m.groups()
+    rule = {'type': fwd_type, 'enabled': True,
+            'listen_addr': bind_addr or 'localhost', 'listen_port': int(listen_port)}
+    if fwd_type == 'local':
+        rule['remote_host'] = remote_host
+        rule['remote_port'] = int(remote_port)
+    else:
+        rule['local_host'] = remote_host
+        rule['local_port'] = int(remote_port)
+    return rule
 
 
 def _parse_dynamic_spec(spec: str):
-    """Parse -D spec [bind_addr:]port into a forwarding_rules dict."""
-    parts = spec.split(':')
-    try:
-        if len(parts) == 2:
-            bind_addr, port = parts
-        else:
-            bind_addr, port = 'localhost', parts[0]
-        return {'type': 'dynamic', 'enabled': True,
-                'listen_addr': bind_addr, 'listen_port': int(port)}
-    except (ValueError, IndexError):
+    """Parse -D spec [bind_addr:]port into a forwarding_rules dict.
+
+    Handles IPv6 bind addresses in brackets (e.g. [::1]:1080).
+    Returns None if the spec cannot be parsed.
+    """
+    m = _DYNAMIC_RE.match(spec)
+    if not m:
         return None
+    bind_addr, port = m.groups()
+    return {'type': 'dynamic', 'enabled': True,
+            'listen_addr': bind_addr or 'localhost', 'listen_port': int(port)}
 
 
 def _append_extra_config(data: dict, line: str) -> None:
