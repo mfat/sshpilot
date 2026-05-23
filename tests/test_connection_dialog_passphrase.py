@@ -189,3 +189,24 @@ def test_edit_connection_retains_passphrase_without_keyring():
 
     assert connection.data["key_passphrase"] == "existing-secret"
     assert manager.stored[connection.keyfile] == "existing-secret"
+
+
+def test_rule_editor_remote_to_local_resets_host_to_localhost():
+    dialog = ConnectionDialog.__new__(ConnectionDialog)
+
+    listen_addr_row = DummyEntry("")
+    listen_port_row = DummyEntry("1433")
+    remote_host_row = DummyEntry("10.20.30.40")
+    remote_port_row = DummyEntry("1433")
+
+    # Simulate changing the editor type from Remote (1) to Local (0).
+    dialog._apply_rule_editor_defaults_for_type(
+        0,
+        listen_addr_row,
+        listen_port_row,
+        remote_host_row,
+        remote_port_row,
+        1,
+    )
+
+    assert remote_host_row.get_text() == "localhost"

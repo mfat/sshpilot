@@ -10,6 +10,7 @@ import re
 import ipaddress
 import socket
 import subprocess
+import threading
 import types
 from typing import Optional, Dict, Any
 
@@ -45,6 +46,7 @@ except (ImportError, AttributeError):  # pragma: no cover - used in tests withou
     GObject.SignalFlags = types.SimpleNamespace(RUN_FIRST=None)
 from .port_utils import get_port_checker
 from .platform_utils import is_macos, get_ssh_dir
+from . import wol
 
 # Initialize gettext
 try:
@@ -1252,6 +1254,25 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                     self.forward_agent_row.set_active(bool(self.connection.forward_agent))
                 except Exception:
                     self.forward_agent_row.set_active(False)
+
+            # Load Wake-on-LAN metadata from connections_meta
+            if hasattr(self, 'wol_mac_row'):
+                try:
+                    cfg = getattr(self.parent_window, 'config', None)
+                    nickname = getattr(self.connection, 'nickname', '').strip()
+                    if cfg and nickname:
+                        meta = cfg.get_connection_meta(nickname)
+                        if meta:
+                            self.wol_mac_row.set_text((meta.get('wol_mac') or '').strip())
+                            self.wol_broadcast_row.set_text((meta.get('wol_broadcast_ip') or '').strip())
+                            port_val = meta.get('wol_port')
+                            if port_val is not None:
+                                try:
+                                    self.wol_port_row.set_text(str(int(port_val)))
+                                except Exception:
+                                    self.wol_port_row.set_text("9")
+                except Exception as e:
+                    logger.debug("Load WoL meta: %s", e)
             
             # Set authentication method and related fields
             auth_method = getattr(self.connection, 'auth_method', 0)
@@ -1413,6 +1434,15 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                         return ''
                     return val
 
+                if hasattr(self, 'pre_command_row'):
+                    pre_cmd_val = ''
+                    try:
+                        pre_cmd_val = getattr(self.connection, 'pre_command', '') or (
+                            self.connection.data.get('pre_command') if hasattr(self.connection, 'data') else ''
+                        ) or ''
+                    except Exception:
+                        pre_cmd_val = ''
+                    self.pre_command_row.set_text(_display_safe(pre_cmd_val))
                 if hasattr(self, 'local_command_row'):
                     local_cmd_val = ''
                     try:
@@ -2118,6 +2148,40 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         self.port_row.set_text("22")
         basic_group.add(self.port_row)
 
+        # Wake-on-LAN Group
+        wol_group = Adw.PreferencesGroup(
+            title=_("Wake on LAN"),
+            description=_("Optional. Set MAC address to wake this host from the context menu. Host must be on the same subnet for detection.")
+        )
+        self.wol_mac_row = Adw.EntryRow(title=_("MAC address"))
+        entry = self.wol_mac_row.get_child()
+        if entry and hasattr(entry, 'set_placeholder_text'):
+            entry.set_placeholder_text("aa:bb:cc:dd:ee:ff")
+        wol_group.add(self.wol_mac_row)
+        self.wol_broadcast_row = Adw.EntryRow(title=_("Broadcast IP (optional)"))
+        if self.wol_broadcast_row.get_child() and hasattr(self.wol_broadcast_row.get_child(), 'set_placeholder_text'):
+            self.wol_broadcast_row.get_child().set_placeholder_text("e.g. 192.168.1.255")
+        wol_group.add(self.wol_broadcast_row)
+        self.wol_port_row = Adw.EntryRow(title=_("WoL port (optional)"))
+        try:
+            wpe = self.wol_port_row.get_child()
+            if wpe and hasattr(wpe, 'set_input_purpose'):
+                wpe.set_input_purpose(Gtk.InputPurpose.DIGITS)
+            if wpe and hasattr(wpe, 'set_max_length'):
+                wpe.set_max_length(5)
+        except Exception:
+            pass
+        self.wol_port_row.set_text("9")
+        wol_group.add(self.wol_port_row)
+        # Detect MAC button (run in thread, update row from main thread)
+        wol_detect_row = Adw.ActionRow(title=_("Detect MAC from network"))
+        wol_detect_row.set_subtitle(_("Host must be on and reachable on the same subnet"))
+        wol_detect_btn = Gtk.Button(label=_("Detect MAC"))
+        wol_detect_btn.connect("clicked", self._on_wol_detect_mac_clicked)
+        wol_detect_row.add_suffix(wol_detect_btn)
+        wol_detect_row.set_activatable(False)
+        wol_group.add(wol_detect_row)
+
         # Authentication Group
         auth_group = Adw.PreferencesGroup(title=_("Authentication"))
         
@@ -2501,7 +2565,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         # X11 Forwarding moved to Port Forwarding view
         
         # Return groups for PreferencesPage
-        return [basic_group, auth_group, proxy_group, advanced_group]
+        return [basic_group, auth_group, proxy_group, wol_group, advanced_group]
     
     def build_port_forwarding_groups(self):
         """Build PreferencesGroups for the Advanced page (Port Forwarding first, X11 last)"""
@@ -2594,10 +2658,16 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             title=_("Connection Commands"),
             description=_(
                 "Run a command automatically on connect.\n\n"
+                "• Pre-Connection Command: Runs locally before connecting.\n"
                 "• Local Command: Runs on your machine after connection (requires PermitLocalCommand).\n"
                 "• Remote Command: Runs on the remote host (uses RequestTTY for interactive shell)."
             )
         )
+        self.pre_command_row = Adw.EntryRow(title=_("Pre-Connection Command"))
+        try:
+            self.pre_command_row.set_subtitle(_("Executed locally before connecting"))
+        except Exception:
+            pass
         self.local_command_row = Adw.EntryRow(title=_("Local Command"))
         try:
             self.local_command_row.set_subtitle(_("Executed locally after connect"))
@@ -2608,6 +2678,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             self.remote_command_row.set_subtitle(_("Executed on remote; TTY requested for interactivity"))
         except Exception:
             pass
+        commands_group.add(self.pre_command_row)
         commands_group.add(self.local_command_row)
         commands_group.add(self.remote_command_row)
 
@@ -2847,13 +2918,26 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         """Handle delete port forwarding rule button click"""
         if not hasattr(self, 'forwarding_rules'):
             return
-            
+
         # Remove the rule from the list
         self.forwarding_rules = [r for r in self.forwarding_rules if r != rule]
-        
+
+        # Sync old-style toggle switches so save-time validation doesn't block
+        for toggle_attr, rule_type in [
+            ('local_forwarding_enabled', 'local'),
+            ('remote_forwarding_enabled', 'remote'),
+            ('dynamic_forwarding_enabled', 'dynamic'),
+        ]:
+            if hasattr(self, toggle_attr):
+                has_rule = any(
+                    r.get('type') == rule_type and r.get('enabled', True)
+                    for r in self.forwarding_rules
+                )
+                getattr(self, toggle_attr).set_active(has_rule)
+
         # Reload the rules UI
         self.load_port_forwarding_rules()
-        
+
         logger.info(f"Deleted port forwarding rule: {rule}")
     
     def on_edit_forwarding_rule_clicked(self, button, rule):
@@ -2977,7 +3061,9 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
 
         # Avoid shadowing translation function '_' by using a local alias
         t = _
+        previous_type_idx = type_row.get_selected()
         def _sync_visibility(*args):
+            nonlocal previous_type_idx
             idx = type_row.get_selected()
             # Apply label set per type
             if idx == 0:
@@ -3004,48 +3090,15 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 listen_port_row.set_title(t("Local port"))
                 remote_host_row.set_visible(False)
                 remote_port_row.set_visible(False)
-            # Apply smart defaults when switching types and fields are empty
-            try:
-                if idx == 0:  # Local
-                    if not listen_addr_row.get_text().strip():
-                        listen_addr_row.set_text('localhost')
-                    try:
-                        if int((listen_port_row.get_text() or '0').strip() or '0') == 0:
-                            listen_port_row.set_text('8080')
-                    except Exception:
-                        listen_port_row.set_text('8080')
-                    if not remote_host_row.get_text().strip():
-                        remote_host_row.set_text('localhost')
-                    try:
-                        if int((remote_port_row.get_text() or '0').strip() or '0') == 0:
-                            remote_port_row.set_text('22')
-                    except Exception:
-                        remote_port_row.set_text('22')
-                elif idx == 1:  # Remote
-                    if not listen_addr_row.get_text().strip():
-                        listen_addr_row.set_text('localhost')
-                    try:
-                        if int((listen_port_row.get_text() or '0').strip() or '0') == 0:
-                            listen_port_row.set_text('8080')
-                    except Exception:
-                        listen_port_row.set_text('8080')
-                    if not remote_host_row.get_text().strip():
-                        remote_host_row.set_text('localhost')
-                    try:
-                        if int((remote_port_row.get_text() or '0').strip() or '0') == 0:
-                            remote_port_row.set_text('22')
-                    except Exception:
-                        remote_port_row.set_text('22')
-                else:  # Dynamic
-                    if not listen_addr_row.get_text().strip():
-                        listen_addr_row.set_text('localhost')
-                    try:
-                        if int((listen_port_row.get_text() or '0').strip() or '0') == 0:
-                            listen_port_row.set_text('1080')
-                    except Exception:
-                        listen_port_row.set_text('1080')
-            except Exception:
-                pass
+            self._apply_rule_editor_defaults_for_type(
+                idx,
+                listen_addr_row,
+                listen_port_row,
+                remote_host_row,
+                remote_port_row,
+                previous_type_idx,
+            )
+            previous_type_idx = idx
         type_row.connect('notify::selected', _sync_visibility)
         _sync_visibility()
 
@@ -3071,8 +3124,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             listen_port = int((listen_port_row.get_text() or '0').strip() or '0')
         except Exception:
             listen_port = 0
-        if listen_port <= 0:
-            self.show_error(_("Please enter a valid listen port (> 0)"))
+        if listen_port <= 0 or listen_port > 65535:
+            self.show_error(_("Please enter a valid listen port (1–65535)"))
             return
         
         # Check for port conflicts (for local and dynamic forwarding)
@@ -3133,6 +3186,64 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             self.forwarding_rules.append(rule)
 
         self.load_port_forwarding_rules()
+
+    def _apply_rule_editor_defaults_for_type(
+        self,
+        idx,
+        listen_addr_row,
+        listen_port_row,
+        remote_host_row,
+        remote_port_row,
+        previous_idx=None,
+    ):
+        """Apply defaults for rule editor fields based on selected forwarding type."""
+        try:
+            if idx == 0:  # Local
+                if not listen_addr_row.get_text().strip():
+                    listen_addr_row.set_text('localhost')
+                try:
+                    if int((listen_port_row.get_text() or '0').strip() or '0') == 0:
+                        listen_port_row.set_text('8080')
+                except Exception:
+                    listen_port_row.set_text('8080')
+
+                # When switching from Remote to Local, always reset the local
+                # target host to localhost instead of carrying remote destination.
+                if previous_idx == 1:
+                    remote_host_row.set_text('localhost')
+                elif not remote_host_row.get_text().strip():
+                    remote_host_row.set_text('localhost')
+
+                try:
+                    if int((remote_port_row.get_text() or '0').strip() or '0') == 0:
+                        remote_port_row.set_text('22')
+                except Exception:
+                    remote_port_row.set_text('22')
+            elif idx == 1:  # Remote
+                if not listen_addr_row.get_text().strip():
+                    listen_addr_row.set_text('localhost')
+                try:
+                    if int((listen_port_row.get_text() or '0').strip() or '0') == 0:
+                        listen_port_row.set_text('8080')
+                except Exception:
+                    listen_port_row.set_text('8080')
+                if not remote_host_row.get_text().strip():
+                    remote_host_row.set_text('localhost')
+                try:
+                    if int((remote_port_row.get_text() or '0').strip() or '0') == 0:
+                        remote_port_row.set_text('22')
+                except Exception:
+                    remote_port_row.set_text('22')
+            else:  # Dynamic
+                if not listen_addr_row.get_text().strip():
+                    listen_addr_row.set_text('localhost')
+                try:
+                    if int((listen_port_row.get_text() or '0').strip() or '0') == 0:
+                        listen_port_row.set_text('1080')
+                except Exception:
+                    listen_port_row.set_text('1080')
+        except Exception:
+            pass
     
     def _show_port_info_dialog(self):
         """Show a window with current port information"""
@@ -3270,7 +3381,44 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
     def _autosave_forwarding_changes(self):
         """Disabled autosave to avoid log floods; saving occurs on dialog Save."""
         return
-    
+
+    def _on_wol_detect_mac_clicked(self, button):
+        """Detect MAC from ARP in a background thread and update wol_mac_row."""
+        host = (self.hostname_row.get_text() or '').strip()
+        if not host:
+            self._row_set_message(self.wol_mac_row, _("Enter hostname first"), is_error=True)
+            return
+        try:
+            port_val = int((self.port_row.get_text() or '22').strip() or '22')
+        except ValueError:
+            port_val = 22
+        button.set_sensitive(False)
+        mac_row = self.wol_mac_row
+        detect_btn = button
+
+        def _detect():
+            mac = wol.get_mac_from_arp(host, port=port_val, trigger_first=True)
+            GLib.idle_add(_apply_result, mac)
+
+        def _apply_result(mac):
+            try:
+                detect_btn.set_sensitive(True)
+                if mac:
+                    mac_row.set_text(mac)
+                    self._row_set_message(mac_row, _("MAC detected"), is_error=False)
+                else:
+                    self._row_set_message(
+                        mac_row,
+                        _("Not found. Is the host on and on the same subnet?"),
+                        is_error=True,
+                    )
+            except Exception as e:
+                logger.debug("WoL detect callback: %s", e)
+                detect_btn.set_sensitive(True)
+
+        t = threading.Thread(target=_detect, daemon=True)
+        t.start()
+
     def on_cancel_clicked(self, button):
         """Handle cancel button click"""
         self.close()
@@ -3427,6 +3575,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             'forward_agent': self.forward_agent_row.get_active(),
 
             'forwarding_rules': forwarding_rules,
+            'pre_command': (self.pre_command_row.get_text() if hasattr(self, 'pre_command_row') else ''),
             'local_command': (self.local_command_row.get_text() if hasattr(self, 'local_command_row') else ''),
             'remote_command': (self.remote_command_row.get_text() if hasattr(self, 'remote_command_row') else ''),
             'extra_ssh_config': extra_ssh_config,
@@ -3439,6 +3588,26 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 connection_data['__split_source'] = self.split_group_source
             if getattr(self, 'split_original_nickname', None):
                 connection_data['__split_original_nickname'] = self.split_original_nickname
+
+        # Persist Wake-on-LAN metadata to connections_meta
+        nickname_for_meta = connection_data.get('nickname', '').strip()
+        if nickname_for_meta and hasattr(self, 'wol_mac_row'):
+            try:
+                cfg = getattr(self.parent_window, 'config', None)
+                if cfg:
+                    meta = cfg.get_connection_meta(nickname_for_meta)
+                    wol_mac = (self.wol_mac_row.get_text() or '').strip()
+                    wol_broadcast = (self.wol_broadcast_row.get_text() or '').strip()
+                    try:
+                        wol_port = int((self.wol_port_row.get_text() or '9').strip() or '9')
+                    except ValueError:
+                        wol_port = 9
+                    meta['wol_mac'] = wol_mac
+                    meta['wol_broadcast_ip'] = wol_broadcast
+                    meta['wol_port'] = wol_port
+                    cfg.set_connection_meta(nickname_for_meta, meta)
+            except Exception as e:
+                logger.debug("Save WoL meta: %s", e)
 
         # Update the connection object locally when editing (do not persist here; window handles persistence)
         if self.is_editing and self.connection:

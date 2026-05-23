@@ -21,7 +21,7 @@ import pwd
 from datetime import datetime
 from typing import Optional, List
 from .port_utils import get_port_checker
-from .platform_utils import is_flatpak, is_macos
+from .platform_utils import is_flatpak, is_macos, get_sshpass_path
 from .terminal_backends import BaseTerminalBackend, VTETerminalBackend, PyXtermTerminalBackend
 from .ssh_connection_builder import build_ssh_connection, ConnectionContext
 
@@ -869,6 +869,27 @@ class TerminalWidget(Gtk.Box):
     def _connect_ssh_thread(self):
         """SSH connection thread: directly spawn SSH and rely on its output for errors."""
         try:
+            pre_cmd = ''
+            try:
+                pre_cmd = (getattr(self.connection, 'pre_command', '') or '').strip()
+                if not pre_cmd and hasattr(self.connection, 'data'):
+                    pre_cmd = (self.connection.data.get('pre_command') or '').strip()
+            except Exception:
+                pre_cmd = ''
+            if pre_cmd:
+                logger.info(f"Running pre-connection command: {pre_cmd}")
+                try:
+                    result = subprocess.run(
+                        pre_cmd,
+                        shell=True,
+                        timeout=30,
+                    )
+                    if result.returncode != 0:
+                        logger.warning(f"Pre-connection command exited with code {result.returncode}: {pre_cmd}")
+                except subprocess.TimeoutExpired:
+                    logger.warning(f"Pre-connection command timed out: {pre_cmd}")
+                except Exception as pre_exc:
+                    logger.warning(f"Pre-connection command failed: {pre_exc}")
             GLib.idle_add(self._setup_ssh_terminal)
         except Exception as e:
             logger.error(f"SSH connection failed: {e}")
@@ -878,6 +899,18 @@ class TerminalWidget(Gtk.Box):
         """Ensure explicit keys are unlocked when native SSH mode is active."""
         connection = getattr(self, 'connection', None)
         if not connection:
+            return
+
+        try:
+            auth_method = int(getattr(connection, 'auth_method', 0) or 0)
+        except Exception:
+            auth_method = 0
+        if auth_method == 1:
+            logger.debug("Password auth selected; skipping native key preload")
+            return
+
+        if bool(getattr(connection, 'pubkey_auth_no', False)):
+            logger.debug("Public key auth disabled; skipping native key preload")
             return
 
         if getattr(connection, 'identity_agent_disabled', False):
@@ -996,16 +1029,13 @@ class TerminalWidget(Gtk.Box):
         try:
             # Check for pre-built SSH command from connection (for compatibility)
             ssh_conn_cmd = None
+            base_cmd = ['ssh']
+            using_prepared_cmd = False
             if hasattr(self.connection, 'ssh_cmd'):
                 prepared = getattr(self.connection, 'ssh_cmd', None)
-
-
-                if isinstance(prepared, (list, tuple)):
+                if isinstance(prepared, (list, tuple)) and prepared:
                     base_cmd = list(prepared)
-                    using_prepared_cmd = len(base_cmd) > 0
-
-            if not base_cmd:
-                base_cmd = ['ssh']
+                    using_prepared_cmd = True
 
             ssh_cmd = list(base_cmd)
 
@@ -1327,7 +1357,14 @@ class TerminalWidget(Gtk.Box):
                 ssh_conn_cmd = build_ssh_connection(ctx)
                 ssh_cmd = ssh_conn_cmd.command
                 env.update(ssh_conn_cmd.env)
-                
+                # dict.update() doesn't remove keys absent from the source; propagate
+                # deletions explicitly so that SSH_ASKPASS stripped for password auth
+                # (e.g. ksshaskpass from KDE host env) doesn't bleed into the SSH process.
+                if 'SSH_ASKPASS' not in ssh_conn_cmd.env:
+                    env.pop('SSH_ASKPASS', None)
+                if 'SSH_ASKPASS_REQUIRE' not in ssh_conn_cmd.env:
+                    env.pop('SSH_ASKPASS_REQUIRE', None)
+
                 # Get password for sshpass if needed
                 password_value = None
                 if ssh_conn_cmd.use_sshpass and ssh_conn_cmd.password:
@@ -1340,16 +1377,9 @@ class TerminalWidget(Gtk.Box):
 
             if password_value:
                 # Use sshpass for password authentication with FIFO (terminal-specific)
-                import shutil
-                sshpass_path = None
-                
-                # Check if sshpass is available and executable
-                if os.path.exists('/app/bin/sshpass') and os.access('/app/bin/sshpass', os.X_OK):
-                    sshpass_path = '/app/bin/sshpass'
-                    logger.debug("Found sshpass at /app/bin/sshpass")
-                elif shutil.which('sshpass'):
-                    sshpass_path = shutil.which('sshpass')
-                    logger.debug(f"Found sshpass in PATH: {sshpass_path}")
+                sshpass_path = get_sshpass_path()
+                if sshpass_path:
+                    logger.debug(f"Using sshpass at {sshpass_path}")
                 else:
                     logger.debug("sshpass not found or not executable")
                 
@@ -1389,327 +1419,6 @@ class TerminalWidget(Gtk.Box):
             if ssh_conn_cmd and ssh_conn_cmd.use_askpass:
                 self._enable_askpass_log_forwarding(include_existing=True)
             
-            # Set TERM to a proper value only if missing or set to "dumb"
-            if 'TERM' not in env or env.get('TERM', '').lower() == 'dumb':
-                env['TERM'] = 'xterm-256color'
-            env['SHELL'] = env.get('SHELL', '/bin/bash')
-            env['SSHPILOT_FLATPAK'] = '1'
-            # Add /app/bin to PATH for Flatpak compatibility
-            if os.path.exists('/app/bin'):
-                current_path = env.get('PATH', '')
-                if '/app/bin' not in current_path:
-                    env['PATH'] = f"/app/bin:{current_path}"
-            
-            # Convert environment dict to list format expected by VTE
-            env_list = []
-            for key, value in env.items():
-                env_list.append(f"{key}={value}")
-            
-            # Log the command being executed for debugging
-            logger.debug(f"Spawning SSH command: {ssh_cmd}")
-            logger.debug(f"Environment PATH: {env.get('PATH', 'NOT_SET')}")
-            
-            # Create a new PTY for the terminal (VTE-specific, but backend may handle this)
-            # According to VTE docs, we should set PTY size before spawning to avoid SIGWINCH
-            pty = None
-            if hasattr(self.backend, 'get_pty') and callable(self.backend.get_pty):
-                pty = self.backend.get_pty()
-            if pty is None and self.vte is not None:
-                try:
-                    pty = Vte.Pty.new_sync(Vte.PtyFlags.DEFAULT)
-                    # Set PTY size before spawning to avoid child process receiving SIGWINCH
-                    # Get terminal size (rows, columns)
-                    try:
-                        rows = self.vte.get_row_count()
-                        cols = self.vte.get_column_count()
-                        # Only set size if we have valid dimensions (not default 80x24)
-                        if rows > 0 and cols > 0 and (rows != 24 or cols != 80):
-                            pty.set_size(rows, cols)
-                            logger.debug(f"Set PTY size to {rows}x{cols} before spawn")
-                    except Exception as e:
-                        logger.debug(f"Could not set PTY size before spawn: {e}")
-                    # Associate PTY with Terminal so spawn_async uses it
-                    try:
-                        self.vte.set_pty(pty)
-                    except Exception as e:
-                        logger.debug(f"Could not set PTY on terminal: {e}")
-                except Exception:
-                    pass
-            
-            # Convert env_list to dict for backend
-            env_dict = {}
-            if env_list:
-                for env_item in env_list:
-                    if '=' in env_item:
-                        key, value = env_item.split('=', 1)
-                        env_dict[key] = value
-            
-            try:
-                self.backend.spawn_async(
-                    argv=ssh_cmd,
-                    env=env_dict if env_dict else None,
-                    cwd=os.path.expanduser('~') or '/',
-                    flags=0,
-                    child_setup=None,
-                    callback=self._on_spawn_complete,
-                    user_data=()
-                )
-            except GLib.Error as e:
-                logger.error(f"VTE spawn failed with GLib error: {e}")
-                # Check if it's a "No such file or directory" error for sshpass
-                if "sshpass" in str(e) and "No such file or directory" in str(e):
-                    logger.error("sshpass binary not found, falling back to askpass")
-                    # Fall back to askpass method
-                    self._fallback_to_askpass(ssh_cmd, env_list)
-                else:
-                    self._on_connection_failed(str(e))
-                return
-            except Exception as e:
-                logger.error(f"VTE spawn failed with exception: {e}")
-                self._on_connection_failed(str(e))
-                return
-            
-            # Store the PTY for later cleanup
-            self.pty = pty
-            try:
-                import time
-                self._spawn_start_time = time.time()
-            except Exception:
-                self._spawn_start_time = None
-            
-            # Defer marking as connected until spawn completes
-            try:
-                self.apply_theme()
-            except Exception:
-                pass
-            
-            # Apply theme after connection is established
-            self.apply_theme()
-            
-            # Focus the terminal
-            if self.backend:
-                self.backend.grab_focus()
-
-            # Add fallback timer to hide spinner if spawn completion doesn't fire
-            self._fallback_timer_id = GLib.timeout_add_seconds(5, self._fallback_hide_spinner)
-
-            logger.info(f"SSH terminal connected to {self.connection}")
-            
-        except Exception as e:
-            logger.error(f"Failed to setup SSH terminal: {e}")
-            self._on_connection_failed(str(e))
-            return
-
-            if has_saved_password and password_value:
-                # Use sshpass for password authentication
-                import shutil
-                sshpass_path = None
-                
-                # Check if sshpass is available and executable
-                if os.path.exists('/app/bin/sshpass') and os.access('/app/bin/sshpass', os.X_OK):
-                    sshpass_path = '/app/bin/sshpass'
-                    logger.debug("Found sshpass at /app/bin/sshpass")
-                elif shutil.which('sshpass'):
-                    sshpass_path = shutil.which('sshpass')
-                    logger.debug(f"Found sshpass in PATH: {sshpass_path}")
-                else:
-                    logger.debug("sshpass not found or not executable")
-                
-                if sshpass_path:
-                    # Use the same approach as ssh_password_exec.py for consistency
-                    from .ssh_password_exec import _mk_priv_dir, _write_once_fifo
-                    import threading
-                    
-                    # Create private temp directory and FIFO
-                    tmpdir = _mk_priv_dir()
-                    fifo = os.path.join(tmpdir, "pw.fifo")
-                    os.mkfifo(fifo, 0o600)
-                    
-                    # Start writer thread that writes the password exactly once
-                    t = threading.Thread(target=_write_once_fifo, args=(fifo, password_value), daemon=True)
-                    t.start()
-                    
-                    # Use sshpass with FIFO
-                    ssh_cmd = [sshpass_path, "-f", fifo] + ssh_cmd
-                    
-                    # Important: strip askpass vars so OpenSSH won't try the askpass helper for passwords
-                    env.pop("SSH_ASKPASS", None)
-                    env.pop("SSH_ASKPASS_REQUIRE", None)
-                    
-                    logger.debug("Using sshpass with FIFO for password authentication")
-                    logger.debug(f"Environment after removing SSH_ASKPASS: SSH_ASKPASS={env.get('SSH_ASKPASS', 'NOT_SET')}, SSH_ASKPASS_REQUIRE={env.get('SSH_ASKPASS_REQUIRE', 'NOT_SET')}")
-                    
-                    # Store tmpdir for cleanup
-                    self._sshpass_tmpdir = tmpdir
-                else:
-                    # sshpass not available – allow interactive password prompt
-                    env.pop("SSH_ASKPASS", None)
-                    env.pop("SSH_ASKPASS_REQUIRE", None)
-                    logger.warning("sshpass not available; falling back to interactive password prompt")
-            elif (
-                (password_auth_selected or auth_method == 0)
-                and not has_saved_password
-                and not getattr(self.connection, 'identity_agent_disabled', False)
-            ):
-                # Password may be required but none saved - allow interactive prompt
-                logger.debug("No saved password - using interactive prompt if required")
-            else:
-                # Use askpass for passphrase prompts (key-based auth)
-                from .askpass_utils import (
-                    get_ssh_env_with_askpass,
-                    get_ssh_env_with_forced_askpass,
-                    lookup_passphrase,
-                )
-
-                requires_force = bool(
-                    getattr(self.connection, 'identity_agent_disabled', False)
-                )
-                askpass_env = (
-                    get_ssh_env_with_forced_askpass()
-                    if requires_force
-                    else get_ssh_env_with_askpass()
-                )
-                if requires_force:
-                    key_passphrase = (
-                        getattr(self.connection, 'key_passphrase', '') or ''
-                    )
-                    passphrase_available = bool(key_passphrase)
-                    key_path_for_lookup = (
-                        getattr(self.connection, 'keyfile', '') or ''
-                    )
-
-                    if key_passphrase:
-                        logger.debug(
-                            "IdentityAgent disabled: in-memory passphrase available from connection settings"
-                        )
-
-                    identity_candidates: List[str] = []
-
-                    def _append_candidate(candidate: str) -> None:
-                        if not candidate:
-                            return
-                        expanded = os.path.expanduser(str(candidate))
-                        if expanded not in identity_candidates:
-                            identity_candidates.append(expanded)
-
-                    if key_path_for_lookup:
-                        _append_candidate(key_path_for_lookup)
-
-                    try:
-                        resolved_identities = getattr(
-                            self.connection, 'resolved_identity_files', []
-                        )
-                    except Exception:
-                        resolved_identities = []
-
-                    if isinstance(resolved_identities, (list, tuple)):
-                        for candidate in resolved_identities:
-                            _append_candidate(candidate)
-
-                    try:
-                        native_candidates = self._resolve_native_identity_candidates()
-                    except Exception:
-                        native_candidates = []
-
-                    for candidate in native_candidates:
-                        _append_candidate(candidate)
-
-                    if identity_candidates:
-                        logger.debug(
-                            "IdentityAgent disabled: evaluating passphrase candidates %s",
-                            identity_candidates,
-                        )
-                    else:
-                        logger.debug(
-                            "IdentityAgent disabled: no key candidates available for passphrase retrieval"
-                        )
-
-                    if (
-                        key_passphrase
-                        and identity_candidates
-                        and hasattr(self, 'connection_manager')
-                        and self.connection_manager
-                        and hasattr(self.connection_manager, 'store_key_passphrase')
-                    ):
-                        for candidate in identity_candidates:
-                            try:
-                                self.connection_manager.store_key_passphrase(
-                                    candidate,
-                                    key_passphrase,
-                                )
-                                logger.debug(
-                                    "IdentityAgent disabled: refreshed stored passphrase for %s",
-                                    candidate,
-                                )
-                            except Exception as exc:
-                                logger.debug(
-                                    "IdentityAgent disabled: failed to refresh stored passphrase for %s: %s",
-                                    candidate,
-                                    exc,
-                                )
-
-                    if not passphrase_available:
-                        for candidate in identity_candidates:
-                            try:
-                                looked_up = lookup_passphrase(candidate)
-                            except Exception as exc:
-                                logger.debug(
-                                    "Passphrase lookup via askpass_utils failed for %s: %s",
-                                    candidate,
-                                    exc,
-                                )
-                                looked_up = ''
-
-                            if looked_up:
-                                logger.debug(
-                                    "IdentityAgent disabled: located stored passphrase for %s",
-                                    candidate,
-                                )
-                                passphrase_available = True
-                                break
-
-                            if (
-                                hasattr(self, 'connection_manager')
-                                and self.connection_manager
-                                and hasattr(
-                                    self.connection_manager, 'get_key_passphrase'
-                                )
-                            ):
-                                try:
-                                    stored = self.connection_manager.get_key_passphrase(
-                                        candidate
-                                    )
-                                except Exception as exc:
-                                    logger.debug(
-                                        "Connection manager passphrase lookup failed for %s: %s",
-                                        candidate,
-                                        exc,
-                                    )
-                                    stored = None
-                                if stored:
-                                    logger.debug(
-                                        "IdentityAgent disabled: connection manager supplied passphrase for %s",
-                                        candidate,
-                                    )
-                                    passphrase_available = True
-                                    break
-
-                    if not passphrase_available:
-                        askpass_env.pop('SSH_ASKPASS_REQUIRE', None)
-                        logger.info(
-                            "SSH askpass helper could not supply a key passphrase; "
-                            "allowing interactive prompt instead"
-                        )
-                    else:
-                        logger.debug(
-                            "IdentityAgent disabled: keeping forced askpass to deliver stored passphrase"
-                        )
-                env.update(askpass_env)
-                if requires_force:
-                    logger.debug(
-                        "IdentityAgent disabled for this host; forcing SSH askpass usage"
-                    )
-                self._enable_askpass_log_forwarding(include_existing=True)
             # Set TERM to a proper value only if missing or set to "dumb"
             if 'TERM' not in env or env.get('TERM', '').lower() == 'dumb':
                 env['TERM'] = 'xterm-256color'

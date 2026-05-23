@@ -11,6 +11,7 @@ from .preferences import (
 )
 from .shortcut_utils import get_primary_modifier_label
 from .platform_utils import is_macos
+from . import wol
 
 HAS_NAV_SPLIT = hasattr(Adw, 'NavigationSplitView')
 HAS_OVERLAY_SPLIT = hasattr(Adw, 'OverlaySplitView')
@@ -233,6 +234,42 @@ class WindowActions:
             self.open_in_system_terminal(connection)
         except Exception as e:
             logger.error(f"Failed to open in system terminal: {e}")
+
+    def on_wake_on_lan_action(self, action, param=None):
+        """Send Wake-on-LAN magic packet for the context menu connection."""
+        try:
+            connection = getattr(self, '_context_menu_connection', None)
+            if connection is None:
+                row = self.connection_list.get_selected_row()
+                connection = getattr(row, 'connection', None) if row else None
+            if connection is None:
+                return
+            nickname = getattr(connection, 'nickname', '').strip()
+            if not nickname:
+                return
+            config = getattr(self, 'config', None)
+            if not config:
+                return
+            meta = config.get_connection_meta(nickname)
+            mac = (meta.get('wol_mac') or '').strip()
+            if not mac:
+                return
+            broadcast = (meta.get('wol_broadcast_ip') or '').strip() or None
+            try:
+                port = int(meta.get('wol_port', 9) or 9)
+            except (TypeError, ValueError):
+                port = 9
+            host = getattr(connection, 'hostname', None) or getattr(connection, 'host', None)
+            host_str = (host or '').strip() or None
+            ok, msg = wol.send_wol(mac, broadcast_ip=broadcast, port=port, host=host_str)
+            toast_overlay = getattr(self, 'toast_overlay', None)
+            if toast_overlay:
+                toast_msg = _("Wake-on-LAN sent") if ok else _("Wake-on-LAN failed: %s") % msg
+                toast = Adw.Toast.new(toast_msg)
+                toast.set_timeout(4 if not ok else 3)
+                toast_overlay.add_toast(toast)
+        except Exception as e:
+            logger.debug("WoL action: %s", e)
 
     def on_sort_connections_action(self, action, param=None):
         """Apply a requested connection sort preset."""

@@ -23,6 +23,9 @@ keyring>=24.3
 # System utilities
 psutil>=5.9.0
 
+# Wake-on-LAN
+wakeonlan>=3.0.0
+
 
 
 

@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:4.7.9}
+Version:        %{?version}%{!?version:4.8.0}
 Release:        1%{?dist}
 Summary:        Manage your servers with ease
 
@@ -92,6 +92,13 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/io.github.mfat.sshpil
 %{_datadir}/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg
 
 %changelog
+* Sat May 23 2026 mFat <newmfat@gmail.com> - 4.8.0
+- - Fixes for Quick Connect function
+- - Add option to save Quick Connect host
+- - Added option to rename a tab - Double-click any terminal tab to rename
+- - Added support for Wake on Lan
+- - Added pre-connection command support
+
 * Sat Dec 27 2025 mFat <newmfat@gmail.com> - 4.7.9
 - - Minor bug fixes
 

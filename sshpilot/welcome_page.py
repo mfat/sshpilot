@@ -1,18 +1,20 @@
 """Welcome page widget for sshPilot."""
 
 import gi
+import os
+import re
 import shlex
 import logging
 
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
 
-from gi.repository import Gtk, Adw, Gdk
+from gi.repository import Gtk, Adw, Gdk, Gio, GLib
 
 from gettext import gettext as _
 
 from .connection_manager import Connection
-from .platform_utils import is_macos
+from .platform_utils import is_macos, get_ssh_dir
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +41,68 @@ SSH_OPTIONS_EXPECTING_ARGUMENT = {
     "-W",
     "-w",
 }
+
+
+# An address token is either an IPv6 literal in brackets [::1] or any
+# sequence of characters that contains no unbracketed colon (hostname/IPv4).
+_ADDR = r'(?:\[[^\]]*\]|[^\[\]:]+)'
+_PORT = r'\d+'
+
+# Matches [bind_addr:]port:host:hostport with full bracket-awareness.
+_FORWARD_RE = re.compile(
+    r'^(?:(' + _ADDR + r'):)?'   # optional bind_addr:
+    r'(' + _PORT + r')'           # listen_port
+    r':(' + _ADDR + r')'          # remote host
+    r':(' + _PORT + r')$'         # remote port
+)
+
+# Matches [bind_addr:]port for -D (dynamic SOCKS proxy).
+_DYNAMIC_RE = re.compile(
+    r'^(?:(' + _ADDR + r'):)?'   # optional bind_addr:
+    r'(' + _PORT + r')$'          # port
+)
+
+
+def _parse_forward_spec(spec: str, fwd_type: str):
+    """Parse -L/-R spec [bind_addr:]port:host:hostport into a forwarding_rules dict.
+
+    Handles IPv6 literals in brackets (e.g. [::1]:8080:localhost:80).
+    Returns None if the spec cannot be parsed; callers should preserve the raw
+    spec in unparsed_args so the rule is not silently lost.
+    """
+    m = _FORWARD_RE.match(spec)
+    if not m:
+        return None
+    bind_addr, listen_port, remote_host, remote_port = m.groups()
+    rule = {'type': fwd_type, 'enabled': True,
+            'listen_addr': bind_addr or 'localhost', 'listen_port': int(listen_port)}
+    if fwd_type == 'local':
+        rule['remote_host'] = remote_host
+        rule['remote_port'] = int(remote_port)
+    else:
+        rule['local_host'] = remote_host
+        rule['local_port'] = int(remote_port)
+    return rule
+
+
+def _parse_dynamic_spec(spec: str):
+    """Parse -D spec [bind_addr:]port into a forwarding_rules dict.
+
+    Handles IPv6 bind addresses in brackets (e.g. [::1]:1080).
+    Returns None if the spec cannot be parsed.
+    """
+    m = _DYNAMIC_RE.match(spec)
+    if not m:
+        return None
+    bind_addr, port = m.groups()
+    return {'type': 'dynamic', 'enabled': True,
+            'listen_addr': bind_addr or 'localhost', 'listen_port': int(port)}
+
+
+def _append_extra_config(data: dict, line: str) -> None:
+    """Append a SSH-config-syntax 'Key value' line to extra_ssh_config."""
+    existing = data.get("extra_ssh_config", "")
+    data["extra_ssh_config"] = (existing + "\n" + line).lstrip("\n")
 
 
 class WelcomePage(Gtk.Overlay):
@@ -779,20 +843,20 @@ class WelcomePage(Gtk.Overlay):
                 # If shlex fails, fall back to simple split
                 args = working_text.split()
 
-            # Initialize connection data with defaults
             connection_data = {
                 "nickname": "",
                 "host": "",
                 "username": "",
                 "port": 22,
-                "auth_method": 0,  # Key-based auth
-                "key_select_mode": 0,  # Try all keys
+                "auth_method": 0,
+                "key_select_mode": 0,
                 "keyfile": "",
                 "certificate": "",
                 "x11_forwarding": False,
-                "local_port_forwards": [],
-                "remote_port_forwards": [],
-                "dynamic_forwards": [],
+                "forwarding_rules": [],
+                "proxy_jump": [],
+                "forward_agent": False,
+                "extra_ssh_config": "",
                 "quick_connect_command": quick_connect_command,
                 "unparsed_args": [],
             }
@@ -801,7 +865,6 @@ class WelcomePage(Gtk.Overlay):
             while i < len(args):
                 arg = args[i]
 
-                # Handle options with values
                 if arg == '-p' and i + 1 < len(args):
                     try:
                         connection_data["port"] = int(args[i + 1])
@@ -811,11 +874,10 @@ class WelcomePage(Gtk.Overlay):
                         pass
                 elif arg == '-i' and i + 1 < len(args):
                     connection_data["keyfile"] = args[i + 1]
-                    connection_data["key_select_mode"] = 2  # Use specific key without forcing IdentitiesOnly by default
+                    connection_data["key_select_mode"] = 2
                     i += 2
                     continue
                 elif arg == '-o' and i + 1 < len(args):
-                    # Handle SSH options like -o "UserKnownHostsFile=/dev/null"
                     option = args[i + 1]
                     parsed = option.split('=', 1)
                     if len(parsed) == 2:
@@ -837,6 +899,10 @@ class WelcomePage(Gtk.Overlay):
                                 connection_data["key_select_mode"] = 1
                             elif value.lower() in ('no', 'false', '0', 'off') and connection_data.get("keyfile"):
                                 connection_data["key_select_mode"] = 2
+                        elif key_lower == 'forwardagent':
+                            connection_data["forward_agent"] = value.lower() in ('yes', 'true', '1', 'on')
+                        else:
+                            _append_extra_config(connection_data, f"{key} {value}")
                     i += 2
                     continue
                 elif arg.startswith('-o') and '=' in arg[2:]:
@@ -858,32 +924,57 @@ class WelcomePage(Gtk.Overlay):
                             connection_data["port"] = int(value)
                         except ValueError:
                             pass
+                    elif key_lower == 'forwardagent':
+                        connection_data["forward_agent"] = value.lower() in ('yes', 'true', '1', 'on')
+                    else:
+                        _append_extra_config(connection_data, f"{key} {value}")
                     i += 1
                     continue
                 elif arg == '-X':
                     connection_data["x11_forwarding"] = True
                     i += 1
                     continue
+                elif arg == '-A':
+                    connection_data["forward_agent"] = True
+                    i += 1
+                    continue
+                elif arg == '-C':
+                    _append_extra_config(connection_data, "Compression yes")
+                    i += 1
+                    continue
+                elif arg == '-4':
+                    _append_extra_config(connection_data, "AddressFamily inet")
+                    i += 1
+                    continue
+                elif arg == '-6':
+                    _append_extra_config(connection_data, "AddressFamily inet6")
+                    i += 1
+                    continue
+                elif arg == '-J' and i + 1 < len(args):
+                    connection_data["proxy_jump"] = [
+                        h.strip() for h in args[i + 1].split(',') if h.strip()
+                    ]
+                    i += 2
+                    continue
                 elif arg == '-L' and i + 1 < len(args):
-                    # Local port forwarding: -L [bind_address:]port:host:hostport
-                    forward_spec = args[i + 1]
-                    connection_data["local_port_forwards"].append(forward_spec)
+                    rule = _parse_forward_spec(args[i + 1], 'local')
+                    if rule:
+                        connection_data["forwarding_rules"].append(rule)
                     i += 2
                     continue
                 elif arg == '-R' and i + 1 < len(args):
-                    # Remote port forwarding: -R [bind_address:]port:host:hostport
-                    forward_spec = args[i + 1]
-                    connection_data["remote_port_forwards"].append(forward_spec)
+                    rule = _parse_forward_spec(args[i + 1], 'remote')
+                    if rule:
+                        connection_data["forwarding_rules"].append(rule)
                     i += 2
                     continue
                 elif arg == '-D' and i + 1 < len(args):
-                    # Dynamic port forwarding: -D [bind_address:]port
-                    forward_spec = args[i + 1]
-                    connection_data["dynamic_forwards"].append(forward_spec)
+                    rule = _parse_dynamic_spec(args[i + 1])
+                    if rule:
+                        connection_data["forwarding_rules"].append(rule)
                     i += 2
                     continue
                 elif arg.startswith('-p'):
-                    # Handle -p2222 format (no space)
                     try:
                         connection_data["port"] = int(arg[2:])
                         i += 1
@@ -891,13 +982,11 @@ class WelcomePage(Gtk.Overlay):
                     except ValueError:
                         pass
                 elif arg.startswith('-i'):
-                    # Handle -i/path/to/key format (no space)
                     connection_data["keyfile"] = arg[2:]
                     connection_data["key_select_mode"] = 2
                     i += 1
                     continue
                 elif not arg.startswith('-'):
-                    # This should be the host specification (user@host)
                     if not connection_data["host"]:
                         if '@' in arg:
                             username, host = arg.split('@', 1)
@@ -905,19 +994,16 @@ class WelcomePage(Gtk.Overlay):
                             connection_data["host"] = host
                             connection_data["nickname"] = host
                         else:
-                            # Just hostname, no username
                             connection_data["host"] = arg
                             connection_data["nickname"] = arg
                     else:
                         connection_data["unparsed_args"].append(arg)
                     i += 1
                 else:
-
-                    # Unknown option. Determine whether it normally expects an argument.
                     option_key = arg
                     attached_value = ""
                     if option_key.startswith('--'):
-                        option_key, _, attached_value = option_key.partition('=')
+                        option_key, _sep, attached_value = option_key.partition('=')
                     elif option_key.startswith('-') and len(option_key) > 2:
                         option_key, attached_value = option_key[:2], option_key[2:]
 
@@ -969,115 +1055,248 @@ class QuickConnectDialog(Adw.MessageDialog):
         super().__init__()
 
         self.parent_window = parent_window
-        
-        # Set dialog properties
+        self._selected_keyfile = ""
+
         self.set_modal(True)
         self.set_transient_for(parent_window)
-        self.set_title("Quick Connect")
-        
-        # Create content area
+        self.set_title(_("Quick Connect"))
+
         content_area = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         content_area.set_margin_top(12)
         content_area.set_margin_bottom(12)
         content_area.set_margin_start(12)
         content_area.set_margin_end(12)
-        
-        # Add description
+
+        # Inline error banner (hidden until validation fails)
+        self.error_label = Gtk.Label()
+        self.error_label.set_halign(Gtk.Align.START)
+        self.error_label.set_wrap(True)
+        self.error_label.set_visible(False)
+        self.error_label.add_css_class("error")
+        content_area.append(self.error_label)
+
         description = Gtk.Label()
-        description.set_text("Enter SSH command or connection details:")
+        description.set_text(_("Enter SSH command or connection details:"))
         description.set_halign(Gtk.Align.START)
         content_area.append(description)
-        
-        # Create entry field
+
         self.entry = Gtk.Entry()
         self.entry.set_placeholder_text("ssh -p 2222 user@host")
         self.entry.set_hexpand(True)
         self.entry.connect('activate', self.on_connect)
+        self.entry.connect('changed', self._on_entry_changed)
         content_area.append(self.entry)
 
-        # Add content to dialog
+        # Auth fields group
+        prefs_group = Adw.PreferencesGroup()
+
+        self.password_row = Adw.PasswordEntryRow(title=_("Password (optional)"))
+        prefs_group.add(self.password_row)
+
+        self.keyfile_row = Adw.ActionRow()
+        self.keyfile_row.set_title(_("Key File (optional)"))
+        self.keyfile_row.set_subtitle(_("No key file selected"))
+        browse_button = Gtk.Button(label=_("Browse…"))
+        browse_button.set_valign(Gtk.Align.CENTER)
+        browse_button.connect('clicked', self._browse_for_key_file)
+        self.keyfile_row.add_suffix(browse_button)
+        prefs_group.add(self.keyfile_row)
+
+        content_area.append(prefs_group)
+
         self.set_extra_child(content_area)
 
-        # Add response buttons
-        self.add_response("cancel", "Cancel")
-        self.add_response("connect", "Connect")
+        self.add_response("cancel", _("Cancel"))
+        self.add_response("save", _("Save Connection…"))
+        self.add_response("connect", _("Connect"))
         self.set_response_appearance("connect", Adw.ResponseAppearance.SUGGESTED)
-        
-        # Connect response signal
-        self.connect('response', self.on_response)
 
-        # Focus the entry when dialog is shown
+        self.connect('response', self.on_response)
         self.entry.grab_focus()
 
+    def _on_entry_changed(self, entry):
+        if self.error_label.get_visible():
+            self.error_label.set_visible(False)
+
+    def _show_error(self, message: str):
+        self.error_label.set_text(message)
+        self.error_label.set_visible(True)
+
     def on_response(self, dialog, response):
-        """Handle dialog response"""
         if response == "connect":
             self.on_connect()
-        self.destroy()
+        elif response == "save":
+            self._on_save_connection()
+        else:
+            self.destroy()
 
     def on_connect(self, *args):
-        """Handle connect button or Enter key"""
         text = self.entry.get_text().strip()
         if not text:
             return
-        
-        # Parse the SSH command
-        connection_data = self._parse_ssh_command(text)
-        if connection_data:
-            connection = Connection(connection_data)
-            self.parent_window.terminal_manager.connect_to_host(connection, force_new=False)
-            self.destroy()
+
+        result = self._parse_ssh_command(text)
+        if result is None:
+            self._show_error(_("Could not parse command. Use: ssh user@host or user@host"))
+            return
+        if "error" in result:
+            self._show_error(result["error"])
+            return
+
+        errors = self._validate_parsed(result)
+        if errors:
+            self._show_error("\n".join(errors))
+            return
+
+        password = self.password_row.get_text()
+        if password:
+            result["password"] = password
+            result["auth_method"] = 1
+        if self._selected_keyfile:
+            result["keyfile"] = self._selected_keyfile
+            result["key_select_mode"] = 2
+
+        connection = Connection(result)
+        self.parent_window.terminal_manager.connect_to_host(connection, force_new=False)
+        self.destroy()
+
+    def _on_save_connection(self):
+        text = self.entry.get_text().strip()
+        if not text:
+            return
+
+        result = self._parse_ssh_command(text)
+        if result is None:
+            self._show_error(_("Could not parse command. Use: ssh user@host or user@host"))
+            return
+        if "error" in result:
+            self._show_error(result["error"])
+            return
+
+        errors = self._validate_parsed(result)
+        if errors:
+            self._show_error("\n".join(errors))
+            return
+
+        password = self.password_row.get_text()
+        if password:
+            result["password"] = password
+            result["auth_method"] = 1
+        if self._selected_keyfile:
+            result["keyfile"] = self._selected_keyfile
+            result["key_select_mode"] = 2
+
+        connection = Connection(result)
+        self.destroy()
+
+        from .connection_dialog import ConnectionDialog
+        conn_dialog = ConnectionDialog(
+            self.parent_window,
+            connection=connection,
+            connection_manager=getattr(self.parent_window, 'connection_manager', None),
+        )
+        # load_connection_data() already ran inside __init__ to pre-fill the form.
+        # Mark as new so window.on_connection_saved takes the new-connection branch
+        # that appends to connection_manager.connections instead of the edit branch
+        # that tries to update a transient object not registered in the manager.
+        conn_dialog.is_editing = False
+        conn_dialog.connect('connection-saved', self._on_connection_saved)
+        conn_dialog.present()
+
+    def _on_connection_saved(self, dialog, connection_data):
+        if hasattr(self.parent_window, 'on_connection_saved'):
+            self.parent_window.on_connection_saved(dialog, connection_data)
+
+    def _browse_for_key_file(self, button):
+        dialog = Gtk.FileDialog(title=_("Select SSH Key File"))
+        ssh_dir = get_ssh_dir()
+        if ssh_dir and os.path.isdir(ssh_dir):
+            dialog.set_initial_folder(Gio.File.new_for_path(ssh_dir))
+        dialog.open(self, None, self._on_key_file_selected)
+
+    def _on_key_file_selected(self, dialog, result):
+        try:
+            gfile = dialog.open_finish(result)
+            self._selected_keyfile = gfile.get_path()
+            self.keyfile_row.set_subtitle(self._selected_keyfile)
+        except Exception:
+            pass
+
+    def _validate_parsed(self, connection_data: dict) -> list:
+        from .connection_dialog import SSHConnectionValidator
+        validator = SSHConnectionValidator()
+        errors = []
+
+        hostname = connection_data.get("hostname") or connection_data.get("host", "")
+        result = validator.validate_hostname(hostname)
+        if not result.is_valid:
+            errors.append(result.message)
+
+        port = connection_data.get("port", 22)
+        result = validator.validate_port(str(port))
+        if not result.is_valid:
+            errors.append(result.message)
+
+        return errors
 
     def _parse_ssh_command(self, command_text):
-        """Parse SSH command text and extract connection parameters"""
+        """Parse an SSH command string into connection parameters.
+
+        Returns a connection data dict, a dict with an "error" key for user-visible
+        errors, or None when the input cannot be parsed at all.
+        Only accepts bare user@host or commands starting with 'ssh'.
+        """
         try:
             raw_command = command_text.strip()
 
-            # Handle simple user@host format (backward compatibility)
-            if not raw_command.startswith('ssh') and '@' in raw_command and ' ' not in raw_command:
-                username, host = raw_command.split('@', 1)
+            # Allow bare user@host without the 'ssh' prefix
+            if '@' in raw_command and ' ' not in raw_command and not raw_command.startswith('ssh'):
+                parts = raw_command.split('@', 1)
+                username, host = parts[0], parts[1]
+                if not host:
+                    return None
                 return {
                     "nickname": host,
                     "host": host,
+                    "hostname": host,
                     "username": username,
                     "port": 22,
-                    "auth_method": 0,  # Default to key-based auth
-                    "key_select_mode": 0,  # Try all keys
+                    "auth_method": 0,
+                    "key_select_mode": 0,
                     "quick_connect_command": "",
                     "unparsed_args": [],
                 }
 
-            quick_connect_command = raw_command if raw_command.startswith('ssh') else ""
-            working_text = raw_command
-
-            # Parse full SSH command
-            # Remove 'ssh' prefix if present
-            if working_text.startswith('ssh '):
-                working_text = working_text[4:]
-            elif working_text.startswith('ssh'):
-                working_text = working_text[3:]
-
-            # Use shlex to properly parse the command with quoted arguments
+            # For any other input the first token must be exactly "ssh"
             try:
-                args = shlex.split(working_text)
+                tokens = shlex.split(raw_command)
             except ValueError:
-                # If shlex fails, fall back to simple split
-                args = working_text.split()
+                tokens = raw_command.split()
 
-            # Initialize connection data with defaults
+            if not tokens:
+                return None
+
+            if tokens[0] != "ssh":
+                return {"error": _("Only SSH commands are allowed. Example: ssh user@host")}
+
+            quick_connect_command = raw_command
+            args = tokens[1:]
+
             connection_data = {
                 "nickname": "",
                 "host": "",
+                "hostname": "",
                 "username": "",
                 "port": 22,
-                "auth_method": 0,  # Key-based auth
-                "key_select_mode": 0,  # Try all keys
+                "auth_method": 0,
+                "key_select_mode": 0,
                 "keyfile": "",
                 "certificate": "",
                 "x11_forwarding": False,
-                "local_port_forwards": [],
-                "remote_port_forwards": [],
-                "dynamic_forwards": [],
+                "forwarding_rules": [],
+                "proxy_jump": [],
+                "forward_agent": False,
+                "extra_ssh_config": "",
                 "quick_connect_command": quick_connect_command,
                 "unparsed_args": [],
             }
@@ -1086,7 +1305,6 @@ class QuickConnectDialog(Adw.MessageDialog):
             while i < len(args):
                 arg = args[i]
 
-                # Handle options with values
                 if arg == '-p' and i + 1 < len(args):
                     try:
                         connection_data["port"] = int(args[i + 1])
@@ -1096,11 +1314,10 @@ class QuickConnectDialog(Adw.MessageDialog):
                         pass
                 elif arg == '-i' and i + 1 < len(args):
                     connection_data["keyfile"] = args[i + 1]
-                    connection_data["key_select_mode"] = 2  # Use specific key without forcing IdentitiesOnly by default
+                    connection_data["key_select_mode"] = 2
                     i += 2
                     continue
                 elif arg == '-o' and i + 1 < len(args):
-                    # Handle SSH options like -o "UserKnownHostsFile=/dev/null"
                     option = args[i + 1]
                     parsed = option.split('=', 1)
                     if len(parsed) == 2:
@@ -1122,6 +1339,10 @@ class QuickConnectDialog(Adw.MessageDialog):
                                 connection_data["key_select_mode"] = 1
                             elif value.lower() in ('no', 'false', '0', 'off') and connection_data.get("keyfile"):
                                 connection_data["key_select_mode"] = 2
+                        elif key_lower == 'forwardagent':
+                            connection_data["forward_agent"] = value.lower() in ('yes', 'true', '1', 'on')
+                        else:
+                            _append_extra_config(connection_data, f"{key} {value}")
                     i += 2
                     continue
                 elif arg.startswith('-o') and '=' in arg[2:]:
@@ -1143,32 +1364,57 @@ class QuickConnectDialog(Adw.MessageDialog):
                             connection_data["port"] = int(value)
                         except ValueError:
                             pass
+                    elif key_lower == 'forwardagent':
+                        connection_data["forward_agent"] = value.lower() in ('yes', 'true', '1', 'on')
+                    else:
+                        _append_extra_config(connection_data, f"{key} {value}")
                     i += 1
                     continue
                 elif arg == '-X':
                     connection_data["x11_forwarding"] = True
                     i += 1
                     continue
+                elif arg == '-A':
+                    connection_data["forward_agent"] = True
+                    i += 1
+                    continue
+                elif arg == '-C':
+                    _append_extra_config(connection_data, "Compression yes")
+                    i += 1
+                    continue
+                elif arg == '-4':
+                    _append_extra_config(connection_data, "AddressFamily inet")
+                    i += 1
+                    continue
+                elif arg == '-6':
+                    _append_extra_config(connection_data, "AddressFamily inet6")
+                    i += 1
+                    continue
+                elif arg == '-J' and i + 1 < len(args):
+                    connection_data["proxy_jump"] = [
+                        h.strip() for h in args[i + 1].split(',') if h.strip()
+                    ]
+                    i += 2
+                    continue
                 elif arg == '-L' and i + 1 < len(args):
-                    # Local port forwarding: -L [bind_address:]port:host:hostport
-                    forward_spec = args[i + 1]
-                    connection_data["local_port_forwards"].append(forward_spec)
+                    rule = _parse_forward_spec(args[i + 1], 'local')
+                    if rule:
+                        connection_data["forwarding_rules"].append(rule)
                     i += 2
                     continue
                 elif arg == '-R' and i + 1 < len(args):
-                    # Remote port forwarding: -R [bind_address:]port:host:hostport
-                    forward_spec = args[i + 1]
-                    connection_data["remote_port_forwards"].append(forward_spec)
+                    rule = _parse_forward_spec(args[i + 1], 'remote')
+                    if rule:
+                        connection_data["forwarding_rules"].append(rule)
                     i += 2
                     continue
                 elif arg == '-D' and i + 1 < len(args):
-                    # Dynamic port forwarding: -D [bind_address:]port
-                    forward_spec = args[i + 1]
-                    connection_data["dynamic_forwards"].append(forward_spec)
+                    rule = _parse_dynamic_spec(args[i + 1])
+                    if rule:
+                        connection_data["forwarding_rules"].append(rule)
                     i += 2
                     continue
                 elif arg.startswith('-p'):
-                    # Handle -p2222 format (no space)
                     try:
                         connection_data["port"] = int(arg[2:])
                         i += 1
@@ -1176,33 +1422,30 @@ class QuickConnectDialog(Adw.MessageDialog):
                     except ValueError:
                         pass
                 elif arg.startswith('-i'):
-                    # Handle -i/path/to/key format (no space)
                     connection_data["keyfile"] = arg[2:]
                     connection_data["key_select_mode"] = 2
                     i += 1
                     continue
                 elif not arg.startswith('-'):
-                    # This should be the host specification (user@host)
                     if not connection_data["host"]:
                         if '@' in arg:
                             username, host = arg.split('@', 1)
                             connection_data["username"] = username
                             connection_data["host"] = host
+                            connection_data["hostname"] = host
                             connection_data["nickname"] = host
                         else:
-                            # Just hostname, no username
                             connection_data["host"] = arg
+                            connection_data["hostname"] = arg
                             connection_data["nickname"] = arg
                     else:
                         connection_data["unparsed_args"].append(arg)
                     i += 1
                 else:
-
-                    # Unknown option. Determine whether it normally expects an argument.
                     option_key = arg
                     attached_value = ""
                     if option_key.startswith('--'):
-                        option_key, _, attached_value = option_key.partition('=')
+                        option_key, _sep, attached_value = option_key.partition('=')
                     elif option_key.startswith('-') and len(option_key) > 2:
                         option_key, attached_value = option_key[:2], option_key[2:]
 
@@ -1224,8 +1467,6 @@ class QuickConnectDialog(Adw.MessageDialog):
                         i += 1
                     continue
 
-
-            # Validate that we have at least a host
             if not connection_data["host"]:
                 return None
 
@@ -1235,20 +1476,22 @@ class QuickConnectDialog(Adw.MessageDialog):
             return connection_data
 
         except Exception:
-            # If parsing fails, try simple fallback
-            if '@' in command_text:
+            # Last-resort fallback for bare user@host that somehow raised
+            if '@' in command_text and ' ' not in command_text:
                 try:
                     username, host = command_text.split('@', 1)
-                    return {
-                        "nickname": host,
-                        "host": host,
-                        "username": username,
-                        "port": 22,
-                        "auth_method": 0,
-                        "key_select_mode": 0,
-                        "quick_connect_command": "",
-                        "unparsed_args": [],
-                    }
+                    if host:
+                        return {
+                            "nickname": host,
+                            "host": host,
+                            "hostname": host,
+                            "username": username,
+                            "port": 22,
+                            "auth_method": 0,
+                            "key_select_mode": 0,
+                            "quick_connect_command": "",
+                            "unparsed_args": [],
+                        }
                 except Exception:
                     pass
             return None

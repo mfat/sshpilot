@@ -1,7 +1,10 @@
 # ssh_password_exec.py
 import os, tempfile, threading, subprocess, shutil
 import re
+import logging
 from typing import Iterable, List, Tuple
+
+from .platform_utils import get_sshpass_path
 
 # Moved from scp_utils.py to avoid circular import
 _REMOTE_SPEC_RE = re.compile(r"^[^@]+@(?:\[[^\]]+\]|[^:]+):.+$")
@@ -134,17 +137,11 @@ def run_ssh_with_password(host: str, user: str, password: str, *,
     if extra_ssh_opts:
         ssh_opts += extra_ssh_opts
 
-    # Resolve sshpass and ssh binaries like in window.py/terminal.py
-    sshpass = ("/app/bin/sshpass" if os.path.exists("/app/bin/sshpass") and os.access("/app/bin/sshpass", os.X_OK) else None) or shutil.which("sshpass")
-    sshbin = shutil.which("ssh") or "/usr/bin/ssh"
-    
-    # Debug logging
-    import logging
     logger = logging.getLogger(__name__)
+    sshpass = get_sshpass_path()
+    sshbin = shutil.which("ssh") or "/usr/bin/ssh"
     logger.debug(f"sshpass resolved to: {sshpass}")
     logger.debug(f"sshbin resolved to: {sshbin}")
-    logger.debug(f"/app/bin/sshpass exists: {os.path.exists('/app/bin/sshpass')}")
-    logger.debug(f"/app/bin/sshpass executable: {os.access('/app/bin/sshpass', os.X_OK) if os.path.exists('/app/bin/sshpass') else False}")
     
     if sshpass:
         cmd = [sshpass, "-f", fifo, sshbin, "-p", str(port), *ssh_opts, f"{user}@{host}"]

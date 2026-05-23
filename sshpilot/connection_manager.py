@@ -162,6 +162,7 @@ class Connection:
         self.proxy_jump = pj
         self.forward_agent = bool(data.get('forward_agent', False))
         # Commands
+        self.pre_command = data.get('pre_command', '')
         self.local_command = data.get('local_command', '')
         self.remote_command = data.get('remote_command', '')
         # Extra SSH config parameters
@@ -190,6 +191,7 @@ class Connection:
         
         # Asyncio event loop
         self.loop = _ensure_event_loop()
+        self._connection_manager = None
 
     def __str__(self):
         return f"{self.nickname} ({self.username}@{self.hostname})"
@@ -401,19 +403,13 @@ class Connection:
             except Exception:
                 cfg = None
 
-            # Get connection manager (self is a Connection, need to find manager)
-            # Connection objects don't have direct reference to manager, so we pass None
-            # ssh_connection_builder can still work without it (passwords/passphrases may be on Connection object)
-            connection_manager = None
+            connection_manager = getattr(self, '_connection_manager', None)
 
-            # Get known hosts path if available (try to get from global connection manager if possible)
             known_hosts_path = None
-            try:
-                # Try to get from a global connection manager instance if available
-                # This is a best-effort approach
-                pass
-            except Exception:
-                pass
+            if connection_manager:
+                kh_path = getattr(connection_manager, 'known_hosts_path', '') or ''
+                if kh_path and os.path.exists(kh_path):
+                    known_hosts_path = kh_path
 
             # Build connection context
             ctx = ConnectionContext(
@@ -480,13 +476,12 @@ class Connection:
             except Exception:
                 cfg = None
 
-            # Get connection manager
-            connection_manager = None
-            try:
-                if hasattr(self, '_connection_manager'):
-                    connection_manager = self._connection_manager
-            except Exception:
-                pass
+            connection_manager = getattr(self, '_connection_manager', None)
+            known_hosts_path = None
+            if connection_manager:
+                kh_path = getattr(connection_manager, 'known_hosts_path', '') or ''
+                if kh_path and os.path.exists(kh_path):
+                    known_hosts_path = kh_path
 
             # Build connection context with native_mode=True
             ctx = ConnectionContext(
@@ -499,7 +494,7 @@ class Connection:
                 remote_command=None,
                 local_command=None,
                 extra_ssh_config=None,
-                known_hosts_path=None,
+                known_hosts_path=known_hosts_path,
                 native_mode=True,  # Use native mode
                 quick_connect_mode=bool(getattr(self, 'quick_connect_command', '')),
                 quick_connect_command=getattr(self, 'quick_connect_command', None) or None,
@@ -569,303 +564,6 @@ class Connection:
             self.is_connected = False
             self.listeners.clear()
         
-    async def setup_forwarding(self):
-        """Set up all forwarding rules"""
-        if not self.is_connected or not self.connection:
-            return False
-            
-        success = True
-        for rule in self.forwarding_rules:
-            if not rule.get('enabled', True):
-                continue
-                
-            rule_type = rule.get('type')
-            listen_addr = rule.get('listen_addr', 'localhost')
-            listen_port = rule.get('listen_port')
-            
-            try:
-                if rule_type == 'dynamic':
-                    # Start SOCKS proxy server
-                    await self.start_dynamic_forwarding(listen_addr, listen_port)
-                elif rule_type == 'local':
-                    # Local port forwarding
-                    remote_host = rule.get('remote_host', 'localhost')
-                    remote_port = rule.get('remote_port')
-                    await self.start_local_forwarding(listen_addr, listen_port, remote_host, remote_port)
-                elif rule_type == 'remote':
-                    # Remote port forwarding
-                    remote_host = rule.get('remote_host', 'localhost')
-                    remote_port = rule.get('remote_port')
-                    await self.start_remote_forwarding(listen_addr, listen_port, remote_host, remote_port)
-                    
-            except Exception as e:
-                logger.error(f"Failed to set up {rule_type} forwarding: {e}")
-                success = False
-                
-        return success
-        
-    async def _forward_data(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, label: str):
-        """Helper method to forward data between two streams"""
-        try:
-            while True:
-                data = await reader.read(4096)
-                if not data:
-                    break
-                writer.write(data)
-                await writer.drain()
-        except (ConnectionError, asyncio.CancelledError):
-            pass  # Connection closed
-        except Exception as e:
-            logger.error(f"Error in {label}: {e}")
-        finally:
-            writer.close()
-            
-    async def start_dynamic_forwarding(self, listen_addr: str, listen_port: int):
-        """Start dynamic port forwarding (SOCKS proxy) using system SSH client"""
-        try:
-            logger.debug(f"Starting dynamic port forwarding setup for {self.hostname} on {listen_addr}:{listen_port}")
-            
-            # Build the complete SSH command for dynamic port forwarding
-            ssh_cmd = ['ssh', '-v']  # Add verbose flag for debugging
-
-            # Read config for options
-            try:
-                from .config import Config
-                cfg = Config()
-                ssh_cfg = cfg.get_ssh_config()
-            except Exception:
-                ssh_cfg = {}
-            def _coerce_int(value):
-                try:
-                    coerced = int(value)
-                    return coerced if coerced > 0 else None
-                except (TypeError, ValueError):
-                    return None
-
-            connect_timeout = _coerce_int(ssh_cfg.get('connection_timeout'))
-            connection_attempts = _coerce_int(ssh_cfg.get('connection_attempts'))
-            keepalive_interval = _coerce_int(ssh_cfg.get('keepalive_interval'))
-            keepalive_count = _coerce_int(ssh_cfg.get('keepalive_count_max'))
-            strict_host = str(ssh_cfg.get('strict_host_key_checking', 'accept-new') or '').strip()
-            batch_mode = bool(ssh_cfg.get('batch_mode', False))
-
-            # Robust non-interactive options to prevent hangs
-            if batch_mode:
-                ssh_cmd.extend(['-o', 'BatchMode=yes'])
-            if connect_timeout is not None:
-                ssh_cmd.extend(['-o', f'ConnectTimeout={connect_timeout}'])
-            if connection_attempts is not None:
-                ssh_cmd.extend(['-o', f'ConnectionAttempts={connection_attempts}'])
-            if keepalive_interval is not None:
-                ssh_cmd.extend(['-o', f'ServerAliveInterval={keepalive_interval}'])
-            if keepalive_count is not None:
-                ssh_cmd.extend(['-o', f'ServerAliveCountMax={keepalive_count}'])
-            if strict_host:
-                ssh_cmd.extend(['-o', f'StrictHostKeyChecking={strict_host}'])
-
-            # Add key file if specified
-            if self.keyfile and os.path.exists(self.keyfile):
-                logger.debug(f"Using SSH key: {self.keyfile}")
-                ssh_cmd.extend(['-i', self.keyfile])
-                if self.key_passphrase:
-                    logger.debug("Key has a passphrase")
-            else:
-                logger.debug("No SSH key specified or key not found")
-                
-            # Add host and port
-            if self.port != 22:
-                logger.debug(f"Using custom SSH port: {self.port}")
-                ssh_cmd.extend(['-p', str(self.port)])
-                
-            # Add dynamic port forwarding option
-            forward_spec = f"{listen_addr}:{listen_port}"
-            logger.debug(f"Setting up dynamic forwarding to: {forward_spec}")
-            
-            ssh_cmd.extend([
-                '-N',  # No remote command
-                '-D', forward_spec,  # Dynamic port forwarding (SOCKS)
-                '-f',  # Run in background
-                '-o', 'ExitOnForwardFailure=yes',  # Exit if forwarding fails
-            ])
-            
-            # Add username and host
-            target = f"{self.username}@{self.hostname}" if self.username else self.hostname
-            ssh_cmd.append(target)
-            
-            # Log the full command (without sensitive data)
-            logger.debug(f"SSH command: {' '.join(ssh_cmd[:10])}...")
-            
-            # Ensure ssh can prompt interactively by removing any askpass settings
-            env = os.environ.copy()
-            env.pop("SSH_ASKPASS", None)
-            env.pop("SSH_ASKPASS_REQUIRE", None)
-            
-            # Start the SSH process
-            logger.info(f"Starting dynamic port forwarding with command: {' '.join(ssh_cmd)}")
-            self.process = await asyncio.create_subprocess_exec(
-                *ssh_cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env=env
-            )
-            
-            # Wait a bit to catch any immediate errors
-            try:
-                stdout, stderr = await asyncio.wait_for(self.process.communicate(), timeout=5.0)
-                if stdout:
-                    logger.debug(f"SSH stdout: {stdout.decode().strip()}")
-                if stderr:
-                    logger.debug(f"SSH stderr: {stderr.decode().strip()}")
-                    
-                if self.process.returncode != 0:
-                    error_msg = stderr.decode().strip() if stderr else "Unknown error"
-                    logger.error(f"SSH dynamic port forwarding failed with code {self.process.returncode}: {error_msg}")
-                    raise Exception(f"SSH dynamic port forwarding failed: {error_msg}")
-                else:
-                    logger.info("SSH process started successfully")
-            except asyncio.TimeoutError:
-                # If we get here, the process is still running which is good
-                logger.debug("SSH process is running in background")
-                
-                # Check if the port is actually listening
-                try:
-                    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                        s.settimeout(1)
-                        result = s.connect_ex((listen_addr, int(listen_port)))
-                        if result == 0:
-                            logger.info(f"Successfully verified port {listen_port} is listening")
-                        else:
-                            logger.warning(f"Port {listen_port} is not listening (connect result: {result})")
-                except Exception as e:
-                    logger.warning(f"Could not verify if port is listening: {e}")
-            
-            logger.info(f"Dynamic port forwarding (SOCKS) started on {listen_addr}:{listen_port}")
-            
-            # Store the forwarding rule
-            rule = {
-                'type': 'dynamic',
-                'listen_addr': listen_addr,
-                'listen_port': listen_port,
-                'process': self.process,
-                'start_time': time.time()
-            }
-            self.forwarding_rules.append(rule)
-            logger.debug(f"Added forwarding rule: {rule}")
-            
-            # Log all forwarding rules for debugging
-            logger.debug(f"Current forwarding rules: {self.forwarding_rules}")
-            
-            return True
-            
-        except Exception as e:
-            logger.error(f"Dynamic port forwarding failed: {e}", exc_info=True)
-            if hasattr(self, 'process') and self.process:
-                try:
-                    logger.debug("Terminating SSH process due to error")
-                    self.process.terminate()
-                    await asyncio.wait_for(self.process.wait(), timeout=2.0)
-                except (ProcessLookupError, asyncio.TimeoutError) as e:
-                    logger.debug(f"Error terminating process: {e}")
-                    pass
-            raise
-
-    async def start_local_forwarding(self, listen_addr: str, listen_port: int, remote_host: str, remote_port: int):
-        """Start local port forwarding using system SSH client"""
-        try:
-            # Build the SSH command for local port forwarding
-            ssh_cmd = self.ssh_cmd + [
-                '-N',  # No remote command
-                '-L', f"{listen_addr}:{listen_port}:{remote_host}:{remote_port}"
-            ]
-            
-            # Ensure ssh can prompt interactively by removing any askpass settings
-            env = os.environ.copy()
-            env.pop("SSH_ASKPASS", None)
-            env.pop("SSH_ASKPASS_REQUIRE", None)
-            
-            # Start the SSH process
-            self.process = await asyncio.create_subprocess_exec(
-                *ssh_cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env=env
-            )
-            
-            # Check if the process started successfully
-            if self.process.returncode is not None and self.process.returncode != 0:
-                stderr = await self.process.stderr.read()
-                raise Exception(f"SSH port forwarding failed: {stderr.decode().strip()}")
-            
-            logger.info(f"Local forwarding started: {listen_addr}:{listen_port} -> {remote_host}:{remote_port}")
-            
-            # Store the forwarding rule
-            self.forwarding_rules.append({
-                'type': 'local',
-                'listen_addr': listen_addr,
-                'listen_port': listen_port,
-                'remote_host': remote_host,
-                'remote_port': remote_port,
-                'process': self.process
-            })
-            
-            # Wait for the process to complete
-            await self.process.wait()
-            
-        except Exception as e:
-            logger.error(f"Local forwarding failed: {e}")
-            if hasattr(self, 'process') and self.process:
-                self.process.terminate()
-                await self.process.wait()
-            raise
-
-    async def start_remote_forwarding(self, listen_addr: str, listen_port: int, remote_host: str, remote_port: int):
-        """Start remote port forwarding using system SSH client"""
-        try:
-            # Build the SSH command for remote port forwarding
-            ssh_cmd = self.ssh_cmd + [
-                '-N',  # No remote command
-                '-R', f"{listen_addr}:{listen_port}:{remote_host}:{remote_port}"
-            ]
-            
-            # Ensure ssh can prompt interactively by removing any askpass settings
-            env = os.environ.copy()
-            env.pop("SSH_ASKPASS", None)
-            env.pop("SSH_ASKPASS_REQUIRE", None)
-            
-            # Start the SSH process
-            self.process = await asyncio.create_subprocess_exec(
-                *ssh_cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env=env
-            )
-            
-            # Check if the process started successfully
-            if self.process.returncode is not None and self.process.returncode != 0:
-                stderr = await self.process.stderr.read()
-                raise Exception(f"SSH remote port forwarding failed: {stderr.decode().strip()}")
-            
-            logger.info(f"Remote forwarding started: {listen_addr}:{listen_port} -> {remote_host}:{remote_port}")
-            
-            # Store the forwarding rule
-            self.forwarding_rules.append({
-                'type': 'remote',
-                'listen_addr': listen_addr,
-                'listen_port': listen_port,
-                'remote_host': remote_host,
-                'remote_port': remote_port,
-                'process': self.process
-            })
-            
-            # Wait for the process to complete
-            await self.process.wait()
-            
-        except Exception as e:
-            logger.error(f"Remote forwarding failed: {e}")
-            if hasattr(self, 'process') and self.process:
-                self.process.terminate()
-                await self.process.wait()
-            raise
 
     def update_data(self, new_data: Dict[str, Any]):
         """Update connection data while preserving object identity"""
@@ -994,6 +692,11 @@ class ConnectionManager(GObject.Object):
 
         # Defer slower operations to idle to avoid blocking startup
         GLib.idle_add(self._post_init_slow_path)
+
+    def _register_connection(self, connection: Connection) -> None:
+        """Link a connection to this manager and add it to the list."""
+        connection._connection_manager = self
+        self.connections.append(connection)
 
     def _get_active_connection_key(self, connection: Connection) -> str:
         identifier = connection.resolve_host_identifier()
@@ -1207,6 +910,7 @@ class ConnectionManager(GObject.Object):
                             existing = existing_by_nickname.get(nickname)
                             if existing:
                                 existing.update_data(connection_data)
+                                existing._connection_manager = self
                                 self.connections.append(existing)
                             else:
                                 new_conn = Connection(connection_data)
@@ -1215,7 +919,7 @@ class ConnectionManager(GObject.Object):
                                     new_conn.config_root = self.ssh_config_path
                                     new_conn.data['isolated_mode'] = True
                                     new_conn.data['config_root'] = self.ssh_config_path
-                                self.connections.append(new_conn)
+                                self._register_connection(new_conn)
                 try:
                     with open(cfg_file, 'r') as f:
                         lines = f.readlines()
@@ -1226,7 +930,12 @@ class ConnectionManager(GObject.Object):
                 while i < len(lines):
                     raw_line = lines[i]
                     line = raw_line.strip()
-                    if not line or line.startswith('#'):
+                    if not line:
+                        i += 1
+                        continue
+                    if line.startswith('#'):
+                        if current_hosts and line.startswith('# sshpilot:PreCommand '):
+                            current_config['__pre_command'] = line[len('# sshpilot:PreCommand '):].strip()
                         i += 1
                         continue
                     lowered = line.lower()
@@ -1253,6 +962,7 @@ class ConnectionManager(GObject.Object):
                                         existing = existing_by_nickname.get(nickname)
                                         if existing:
                                             existing.update_data(connection_data)
+                                            existing._connection_manager = self
                                             self.connections.append(existing)
                                         else:
                                             new_conn = Connection(connection_data)
@@ -1261,7 +971,7 @@ class ConnectionManager(GObject.Object):
                                                 new_conn.config_root = self.ssh_config_path
                                                 new_conn.data['isolated_mode'] = True
                                                 new_conn.data['config_root'] = self.ssh_config_path
-                                            self.connections.append(new_conn)
+                                            self._register_connection(new_conn)
                         current_hosts = []
                         current_config = {}
                         block_lines = [raw_line.rstrip('\n')]
@@ -1297,6 +1007,7 @@ class ConnectionManager(GObject.Object):
                                         existing = existing_by_nickname.get(nickname)
                                         if existing:
                                             existing.update_data(connection_data)
+                                            existing._connection_manager = self
                                             self.connections.append(existing)
                                         else:
                                             new_conn = Connection(connection_data)
@@ -1305,7 +1016,7 @@ class ConnectionManager(GObject.Object):
                                                 new_conn.config_root = self.ssh_config_path
                                                 new_conn.data['isolated_mode'] = True
                                                 new_conn.data['config_root'] = self.ssh_config_path
-                                            self.connections.append(new_conn)
+                                            self._register_connection(new_conn)
                         current_hosts = tokens
                         current_config = {}
                         i += 1
@@ -1339,6 +1050,7 @@ class ConnectionManager(GObject.Object):
                                 existing = existing_by_nickname.get(nickname)
                                 if existing:
                                     existing.update_data(connection_data)
+                                    existing._connection_manager = self
                                     self.connections.append(existing)
                                 else:
                                     new_conn = Connection(connection_data)
@@ -1347,7 +1059,7 @@ class ConnectionManager(GObject.Object):
                                         new_conn.config_root = self.ssh_config_path
                                         new_conn.data['isolated_mode'] = True
                                         new_conn.data['config_root'] = self.ssh_config_path
-                                    self.connections.append(new_conn)
+                                    self._register_connection(new_conn)
             logger.info(f"Loaded {len(self.connections)} connections from SSH config")
         except Exception as e:
             logger.error(f"Failed to load SSH config: {e}", exc_info=True)
@@ -1522,6 +1234,8 @@ class ConnectionManager(GObject.Object):
                     v = v.replace('\\"', '"').replace('\\\\', '\\')
                     return v
 
+                if '__pre_command' in config:
+                    parsed['pre_command'] = config['__pre_command']
                 if 'localcommand' in config:
                     parsed['local_command'] = _unescape_cfg_value(config.get('localcommand', ''))
                 if 'remotecommand' in config:
@@ -1979,6 +1693,11 @@ class ConnectionManager(GObject.Object):
         # Add X11 forwarding if enabled
         if data.get('x11_forwarding', False):
             lines.append("    ForwardX11 yes")
+
+        # Add PreCommand (sshpilot-specific, stored as a comment)
+        pre_cmd = (data.get('pre_command') or '').strip()
+        if pre_cmd:
+            lines.append(f"    # sshpilot:PreCommand {pre_cmd}")
 
         # Add LocalCommand if specified, ensure PermitLocalCommand (write exactly as provided)
         local_cmd = (data.get('local_command') or '').strip()
@@ -2509,11 +2228,7 @@ class ConnectionManager(GObject.Object):
                 connected = await connection.connect()
             if not connected:
                 raise Exception("Failed to establish SSH connection")
-            
-            # Set up port forwarding if needed (non-native mode only)
-            if connection.forwarding_rules and not use_native:
-                await connection.setup_forwarding()
-            
+
             # Determine the tracking key used for keepalive management
             key = self._get_active_connection_key(connection, prefer_stored=False)
             existing_key = self._active_connection_keys.get(id(connection))

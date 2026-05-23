@@ -1689,6 +1689,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             new_data['proxy_jump'] = proxy_jump_value
 
             new_data['proxy_command'] = getattr(connection, 'proxy_command', new_data.get('proxy_command', '')) or ''
+            new_data['pre_command'] = getattr(connection, 'pre_command', new_data.get('pre_command', '')) or ''
             new_data['local_command'] = getattr(connection, 'local_command', new_data.get('local_command', '')) or ''
             new_data['remote_command'] = getattr(connection, 'remote_command', new_data.get('remote_command', '')) or ''
             new_data['extra_ssh_config'] = getattr(connection, 'extra_ssh_config', new_data.get('extra_ssh_config', '')) or ''
@@ -2131,6 +2132,19 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         copy_key_row.set_activatable(True)
                         copy_key_row.connect('activated', lambda *_: (self.on_copy_key_to_server_action(None, None), pop.popdown()))
                         listbox.append(copy_key_row)
+
+                        # Wake on LAN row (only when MAC is set for this connection)
+                        try:
+                            conn_meta = self.config.get_connection_meta(row.connection.nickname) if getattr(row, 'connection', None) else {}
+                            if (conn_meta or {}).get('wol_mac', '').strip():
+                                wol_row = Adw.ActionRow(title=_('Wake on LAN'))
+                                wol_icon = icon_utils.new_image_from_icon_name('network-wireless-symbolic')
+                                wol_row.add_prefix(wol_icon)
+                                wol_row.set_activatable(True)
+                                wol_row.connect('activated', lambda *_: (self.on_wake_on_lan_action(None, None), pop.popdown()))
+                                listbox.append(wol_row)
+                        except Exception:
+                            pass
 
                         # Only show system terminal option when external terminals are available
                         if not should_hide_external_terminal_options():
@@ -2770,7 +2784,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
         self.local_terminal_button.connect('clicked', self.on_local_terminal_button_clicked)
         self.tab_bar.set_start_action_widget(self.local_terminal_button)
-        
+
+        # Double-click on a tab to rename it inline
+        rename_gesture = Gtk.GestureClick()
+        rename_gesture.set_button(1)
+        rename_gesture.connect('pressed', self._on_tab_bar_pressed)
+        self.tab_bar.add_controller(rename_gesture)
+
         # Create tab content box
         tab_content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         tab_content_box.append(self.tab_bar)
@@ -7037,6 +7057,53 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Update the UI based on the number of remaining tabs
         GLib.idle_add(self._update_ui_after_tab_close)
     
+    def _on_tab_bar_pressed(self, gesture, n_press, x, y):
+        if n_press != 2:
+            return
+        page = self.tab_view.get_selected_page()
+        if page:
+            self._show_tab_rename_popover(page, x, y)
+
+    def _show_tab_rename_popover(self, page, x, y):
+        entry = Gtk.Entry()
+        entry.set_text(page.get_title())
+        entry.set_width_chars(24)
+
+        popover = Gtk.Popover()
+        popover.set_child(entry)
+        popover.set_parent(self.tab_bar)
+        popover.set_has_arrow(False)
+
+        rect = Gdk.Rectangle()
+        rect.x, rect.y, rect.width, rect.height = int(x), int(y), 1, 1
+        popover.set_pointing_to(rect)
+        popover._committed = False
+
+        def commit(_entry):
+            if not popover._committed:
+                popover._committed = True
+                self._apply_tab_title(page, entry.get_text().strip())
+            popover.popdown()
+
+        def on_closed(p):
+            if not p._committed:
+                self._apply_tab_title(page, entry.get_text().strip())
+
+        entry.connect('activate', commit)
+        popover.connect('closed', on_closed)
+        popover.popup()
+        GLib.idle_add(lambda: (entry.grab_focus(), entry.select_region(0, -1), False)[-1])
+
+    def _apply_tab_title(self, page, title):
+        if title:
+            page.set_title(title)
+            page.custom_tab_title = title
+        else:
+            page.custom_tab_title = None
+            terminal = page.get_child()
+            if hasattr(terminal, 'connection'):
+                page.set_title(terminal.connection.nickname)
+
     def on_tab_close(self, tab_view, page):
         """Handle tab close - THE KEY FIX: Never call close_page ourselves"""
         # If we are closing pages programmatically (e.g., after deleting a
@@ -9195,6 +9262,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     'key_passphrase': _norm_str(getattr(old_connection, 'key_passphrase', '')),
                     'x11_forwarding': bool(getattr(old_connection, 'x11_forwarding', False)),
                     'forwarding_rules': _norm_rules(getattr(old_connection, 'forwarding_rules', [])),
+                    'pre_command': _norm_str(getattr(old_connection, 'pre_command', '') or (getattr(old_connection, 'data', {}).get('pre_command') if hasattr(old_connection, 'data') else '')),
                     'local_command': _norm_str(getattr(old_connection, 'local_command', '') or (getattr(old_connection, 'data', {}).get('local_command') if hasattr(old_connection, 'data') else '')),
                     'remote_command': _norm_str(getattr(old_connection, 'remote_command', '') or (getattr(old_connection, 'data', {}).get('remote_command') if hasattr(old_connection, 'data') else '')),
                     'extra_ssh_config': _norm_str(getattr(old_connection, 'extra_ssh_config', '') or (getattr(old_connection, 'data', {}).get('extra_ssh_config') if hasattr(old_connection, 'data') else '')),
@@ -9212,6 +9280,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     'key_passphrase': _norm_str(connection_data.get('key_passphrase')),
                     'x11_forwarding': bool(connection_data.get('x11_forwarding', False)),
                     'forwarding_rules': _norm_rules(connection_data.get('forwarding_rules')),
+                    'pre_command': _norm_str(connection_data.get('pre_command')),
                     'local_command': _norm_str(connection_data.get('local_command')),
                     'remote_command': _norm_str(connection_data.get('remote_command')),
                     'extra_ssh_config': _norm_str(connection_data.get('extra_ssh_config')),
@@ -9333,6 +9402,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
                 # Update commands
                 try:
+                    old_connection.pre_command = connection_data.get('pre_command', '')
                     old_connection.local_command = connection_data.get('local_command', '')
                     old_connection.remote_command = connection_data.get('remote_command', '')
                     old_connection.extra_ssh_config = connection_data.get('extra_ssh_config', '')
