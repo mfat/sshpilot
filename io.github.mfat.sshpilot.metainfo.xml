@@ -54,6 +54,17 @@
 
 
 
+
+    <release version="4.8.0" date="2026-05-23">
+
+      <description>
+        <p>- Fixes for Quick Connect function</p>
+        <p>- Add option to save Quick Connect host</p>
+        <p>- Added option to rename a tab - Double-click any terminal tab to rename</p>
+        <p>- Added support for Wake on Lan</p>
+        <p>- Added pre-connection command support</p>
+      </description>
+    </release>
     <release version="4.7.9" date="2025-12-27">
 
       <description>
