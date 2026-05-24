@@ -138,6 +138,10 @@ class VTETerminalBackend:
         self.widget = self.vte
         self._termprops_handler: Optional[int] = None
         self._populate_popup_handler: Optional[int] = None
+        self._has_hyperlink_check_event = False
+        self._has_match_check_event     = False
+        self._has_check_hyperlink_at    = False
+        self._has_check_match_at        = False
 
     def initialize(self) -> None:
         self.vte.set_hexpand(True)
