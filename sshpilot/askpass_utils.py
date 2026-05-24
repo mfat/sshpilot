@@ -301,32 +301,32 @@ def _run_askpass_dialog(key_path: str, log_fn) -> "str | None":
     passphrase_result = [None]
     Adw.init()
 
-    try:
-        try:
-            config_dir = os.path.join(GLib.get_user_config_dir(), "sshpilot")
-        except Exception:
-            config_dir = os.path.join(os.path.expanduser("~"), ".config", "sshpilot")
-        config_file = os.path.join(config_dir, "config.json")
-        saved_theme = "default"
-        if os.path.exists(config_file):
-            try:
-                with open(config_file, "r") as f:
-                    saved_theme = str(json.load(f).get("app-theme", "default"))
-            except Exception:
-                pass
-        style_manager = Adw.StyleManager.get_default()
-        if saved_theme == "light":
-            style_manager.set_color_scheme(Adw.ColorScheme.FORCE_LIGHT)
-        elif saved_theme == "dark":
-            style_manager.set_color_scheme(Adw.ColorScheme.FORCE_DARK)
-        else:
-            style_manager.set_color_scheme(Adw.ColorScheme.DEFAULT)
-    except Exception:
-        pass
-
-    app = Adw.Application.new("io.github.mfat.sshpilot.askpass", Gio.ApplicationFlags.FLAGS_NONE)
+    app = Adw.Application.new("io.github.mfat.sshpilot.askpass", Gio.ApplicationFlags.NON_UNIQUE)
 
     def on_activate(app):
+        try:
+            try:
+                config_dir = os.path.join(GLib.get_user_config_dir(), "sshpilot")
+            except Exception:
+                config_dir = os.path.join(os.path.expanduser("~"), ".config", "sshpilot")
+            config_file = os.path.join(config_dir, "config.json")
+            saved_theme = "default"
+            if os.path.exists(config_file):
+                try:
+                    with open(config_file, "r") as f:
+                        saved_theme = str(json.load(f).get("app-theme", "default"))
+                except Exception:
+                    pass
+            style_manager = Adw.StyleManager.get_default()
+            if saved_theme == "light":
+                style_manager.set_color_scheme(Adw.ColorScheme.FORCE_LIGHT)
+            elif saved_theme == "dark":
+                style_manager.set_color_scheme(Adw.ColorScheme.FORCE_DARK)
+            else:
+                style_manager.set_color_scheme(Adw.ColorScheme.DEFAULT)
+        except Exception:
+            pass
+
         key_name = os.path.basename(key_path) if key_path else "key"
         window = Adw.ApplicationWindow()
         window.set_application(app)
