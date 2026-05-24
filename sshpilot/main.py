@@ -750,6 +750,14 @@ class SshPilotApplication(Adw.Application):
 
 def main():
     """Main entry point"""
+    # Fast-path: handle --askpass before starting the GTK application.
+    # This is reached when the app is invoked via a console-script entry point
+    # (e.g. Homebrew pip-installed binary) where run.py is not used.
+    if len(sys.argv) > 1 and sys.argv[1] == '--askpass':
+        from .askpass_utils import handle_askpass_cli
+        prompt = sys.argv[2] if len(sys.argv) > 2 else ""
+        sys.exit(handle_askpass_cli(prompt))
+
     parser = argparse.ArgumentParser(description="sshPilot SSH connection manager")
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose debug logging")
     parser.add_argument("--isolated", action="store_true", help="Use isolated SSH configuration")
