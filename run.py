@@ -6,6 +6,16 @@ Simple runner for the simplified sshpilot package under new/
 import sys
 import os
 
+# Intercept --askpass BEFORE importing sshpilot.main (which has module-level GTK imports).
+# SSH calls the askpass wrapper with the prompt as the first argument; we re-invoke
+# ourselves here so keyring/libsecret are available in our own Python environment.
+if len(sys.argv) > 1 and sys.argv[1] == '--askpass':
+    CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+    sys.path.insert(0, CURRENT_DIR)
+    from sshpilot.askpass_utils import handle_askpass_cli
+    prompt = sys.argv[2] if len(sys.argv) > 2 else ""
+    sys.exit(handle_askpass_cli(prompt))
+
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 PARENT = os.path.dirname(CURRENT_DIR)
 SRC_DIR = os.path.join(CURRENT_DIR, "src")
