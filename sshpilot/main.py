@@ -754,9 +754,9 @@ def main():
     # This is reached when the app is invoked via a console-script entry point
     # (e.g. Homebrew pip-installed binary) where run.py is not used.
     if len(sys.argv) > 1 and sys.argv[1] == '--askpass':
-        from .askpass_utils import handle_askpass_cli
+        from .askpass_utils import run_askpass_and_write
         prompt = sys.argv[2] if len(sys.argv) > 2 else ""
-        sys.exit(handle_askpass_cli(prompt))
+        sys.exit(run_askpass_and_write(prompt))
 
     parser = argparse.ArgumentParser(description="sshPilot SSH connection manager")
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose debug logging")
