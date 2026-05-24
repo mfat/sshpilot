@@ -123,7 +123,7 @@ class BaseTerminalBackend(Protocol):
 
 from typing import TYPE_CHECKING
 
-from gi.repository import Gdk, GLib, Gio, Pango, Vte
+from gi.repository import Gdk, GLib, Pango, Vte
 
 if TYPE_CHECKING:  # pragma: no cover - import only for type checking
     from .terminal import TerminalWidget
@@ -237,6 +237,7 @@ class VTETerminalBackend:
             logger.debug(f"Registered plain-text URL regex with match tag {self._url_match_tag}")
         except Exception as e:
             logger.debug(f"Failed to register URL regex for VTE: {e}", exc_info=True)
+
 
     def destroy(self) -> None:
         try:
@@ -595,6 +596,7 @@ class VTETerminalBackend:
         return None
 
 
+
 class PyXtermTerminalBackend:
     """pyxterm.js based backend.
 
@@ -665,18 +667,8 @@ class PyXtermTerminalBackend:
                 gi.require_version("WebKit", "6.0")
                 from gi.repository import WebKit
                 self.WebKit = WebKit
-                content_manager = WebKit.UserContentManager()
-                self._webview = WebKit.WebView.new_with_user_content_manager(content_manager)
-                try:
-                    content_manager.register_script_message_handler("openLink")
-                    content_manager.connect(
-                        "script-message-received::openLink",
-                        self._on_open_link_message,
-                    )
-                    logger.debug("Registered openLink WebKit message handler")
-                except Exception as mh_error:
-                    logger.debug(f"Failed to register openLink message handler: {mh_error}", exc_info=True)
-
+                self._webview = WebKit.WebView()
+                
                 # Configure WebView settings to ensure JavaScript is enabled
                 # According to WebKit 6.0 API, JavaScript is enabled by default,
                 # but we explicitly set it for clarity
@@ -687,15 +679,15 @@ class PyXtermTerminalBackend:
                         logger.debug("WebView JavaScript enabled via settings")
                 except Exception as settings_error:
                     logger.debug(f"Could not configure WebView settings (may be enabled by default): {settings_error}")
-
+                
                 logger.debug("Using WebKit 6.0 (GTK4 compatible)")
             except Exception as webkit6_error:
                 logger.debug(f"WebKit 6.0 not available: {webkit6_error}")
-
+                
                 # Check if GTK 4.0 is already loaded (which conflicts with WebKit2)
                 if hasattr(Gtk, 'get_major_version') and Gtk.get_major_version() == 4:
                     raise ImportError("PyXterm backend requires WebKit 6.0 for GTK 4.0 compatibility, but WebKit 6.0 is not available")
-
+                
                 # Fall back to WebKit2 4.0 (only if GTK 3.0 is available)
                 gi.require_version("WebKit2", "4.0")
                 from gi.repository import WebKit2
@@ -731,17 +723,6 @@ class PyXtermTerminalBackend:
 
     # The pyxterm backend exposes only a subset of the behaviour for now. Each
     # method contains guards so the widget can fall back cleanly.
-
-    def _on_open_link_message(self, content_manager, js_result) -> None:
-        """Open a URL received from the xterm.js WebLinksAddon click handler."""
-        try:
-            js_value = js_result.get_js_value()
-            url = js_value.to_string()
-            if url:
-                Gio.AppInfo.launch_default_for_uri(url, None)
-                logger.debug(f"Opened link: {url}")
-        except Exception:
-            logger.debug("Failed to open link from WebView message", exc_info=True)
 
     def initialize(self) -> None:
         if not self.available:
