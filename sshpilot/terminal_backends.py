@@ -138,10 +138,13 @@ class VTETerminalBackend:
         self.widget = self.vte
         self._termprops_handler: Optional[int] = None
         self._populate_popup_handler: Optional[int] = None
-        self._has_hyperlink_check_event = False
-        self._has_match_check_event     = False
-        self._has_check_hyperlink_at    = False
-        self._has_check_match_at        = False
+        self._has_hyperlink_check_event   = False
+        self._has_match_check_event       = False
+        self._has_check_hyperlink_at      = False
+        self._has_check_match_at          = False
+        self._has_check_regex_simple_at   = False
+        self._url_vte_regex               = None   # stored for check_regex_simple_at fallback
+        self._url_match_tag               = None
 
     def initialize(self) -> None:
         self.vte.set_hexpand(True)
@@ -225,35 +228,54 @@ class VTETerminalBackend:
             logger.debug(f"Failed to disable VTE context menu: {e}", exc_info=True)
 
         # Enable OSC 8 hyperlink support (e.g. links emitted by ls --hyperlink, git log, etc.)
-        self._url_match_tag = None
         try:
             self.vte.set_allow_hyperlink(True)
             logger.debug("Enabled VTE hyperlink support (OSC 8)")
         except Exception as e:
-            logger.debug(f"Failed to enable VTE hyperlink support: {e}", exc_info=True)
+            logger.debug(f"Failed to enable VTE hyperlink support: {e}")
 
-        # Register URL regex as fallback for plain-text URLs that don't use OSC 8
+        # Register URL regex for plain-text URL highlighting and click detection.
+        # Try Vte.Regex (PCRE2) first; fall back to the deprecated GLib.Regex path if
+        # PCRE2 is unavailable on this build.
+        url_pattern = r"(https?|ftp)://[^\s<>\"\{\}|\\^`\[\]']*[^\s<>\"\{\}|\\^`\[\]'.,;:!?\)]"
         try:
-            url_pattern = r"(https?|ftp)://[^\s<>\"\{\}|\\^`\[\]']*[^\s<>\"\{\}|\\^`\[\]'.,;:!?\)]"
-            url_regex = Vte.Regex.new_for_match(url_pattern, -1, 0)
-            self._url_match_tag = self.vte.match_add_regex(url_regex, 0)
+            vte_regex = Vte.Regex.new_for_match(url_pattern, -1, 0)
+            self._url_vte_regex = vte_regex
+            self._url_match_tag = self.vte.match_add_regex(vte_regex, 0)
             self.vte.match_set_cursor_name(self._url_match_tag, "pointer")
-            logger.debug(f"Registered plain-text URL regex with match tag {self._url_match_tag}")
+            logger.debug(f"Registered URL regex via Vte.Regex, tag={self._url_match_tag}")
         except Exception as e:
-            logger.debug(f"Failed to register URL regex for VTE: {e}", exc_info=True)
+            logger.warning(f"Vte.Regex URL registration failed ({e}); trying GLib.Regex fallback")
+            try:
+                glib_regex = GLib.Regex.new(
+                    url_pattern,
+                    GLib.RegexCompileFlags.OPTIMIZE | GLib.RegexCompileFlags.CASELESS,
+                    0,
+                )
+                if hasattr(self.vte, "match_add_gregex"):
+                    self._url_match_tag = self.vte.match_add_gregex(glib_regex, 0)
+                    self.vte.match_set_cursor_name(self._url_match_tag, "pointer")
+                    logger.debug(f"Registered URL regex via GLib.Regex fallback, tag={self._url_match_tag}")
+                else:
+                    logger.warning("match_add_gregex not available; URL highlighting disabled")
+            except Exception as e2:
+                logger.warning(f"GLib.Regex URL registration also failed: {e2}")
 
         # Probe once which URL detection APIs are available on this VTE build.
         # GTK3 uses event-based APIs; GTK4 replaced them with coordinate-based *_at() variants.
-        self._has_hyperlink_check_event = hasattr(self.vte, "hyperlink_check_event")  # GTK3
-        self._has_match_check_event     = hasattr(self.vte, "match_check_event")       # GTK3
-        self._has_check_hyperlink_at    = hasattr(self.vte, "check_hyperlink_at")      # GTK4
-        self._has_check_match_at        = hasattr(self.vte, "check_match_at")          # GTK4
-        if self._has_check_hyperlink_at or self._has_check_match_at:
+        self._has_hyperlink_check_event  = hasattr(self.vte, "hyperlink_check_event")   # GTK3
+        self._has_match_check_event      = hasattr(self.vte, "match_check_event")        # GTK3
+        self._has_check_hyperlink_at     = hasattr(self.vte, "check_hyperlink_at")       # GTK4
+        self._has_check_match_at         = hasattr(self.vte, "check_match_at")           # GTK4
+        # check_regex_simple_at passes the VteRegex directly — works even when
+        # match_add_regex failed, as long as we still have the VteRegex object.
+        self._has_check_regex_simple_at  = hasattr(self.vte, "check_regex_simple_at")   # GTK4
+        if self._has_check_hyperlink_at or self._has_check_match_at or self._has_check_regex_simple_at:
             logger.debug("VTE URL detection: using GTK4 coordinate-based API")
         elif self._has_hyperlink_check_event or self._has_match_check_event:
             logger.debug("VTE URL detection: using GTK3 event-based API")
         else:
-            logger.debug("VTE URL detection: no supported API found; link clicking disabled")
+            logger.warning("VTE URL detection: no supported API found; link clicking disabled")
 
 
     def destroy(self) -> None:
@@ -588,13 +610,24 @@ class VTETerminalBackend:
         except Exception:
             return None
 
+    @staticmethod
+    def _url_from_result(result) -> Optional[str]:
+        """Extract a URL string from a VTE match result.
+
+        Python GI may return either a plain ``str`` or a ``(str, tag)`` tuple
+        depending on the VTE version and GI annotation.  Handle both.
+        """
+        if isinstance(result, (tuple, list)):
+            return result[0] if result and result[0] else None
+        return result if result else None
+
     def check_match_at_event(self, event, x: float = None, y: float = None) -> Optional[str]:
         """Return the URL under the cursor, or None.
 
         Tries the GTK3 event-based API first, then the GTK4 coordinate-based
-        API (check_hyperlink_at / check_match_at) using the supplied x, y pixel
-        coordinates.  Callers on GTK4 must pass x and y or link detection will
-        silently return None.
+        APIs (check_hyperlink_at / check_match_at / check_regex_simple_at).
+        Callers on GTK4 must pass x and y or link detection will silently
+        return None.
         """
         # GTK3 path: event-based
         if self._has_hyperlink_check_event:
@@ -607,9 +640,9 @@ class VTETerminalBackend:
 
         if self._has_match_check_event:
             try:
-                result = self.vte.match_check_event(event)
-                if result and result[0]:
-                    return result[0]
+                url = self._url_from_result(self.vte.match_check_event(event))
+                if url:
+                    return url
             except Exception:
                 logger.debug("Failed to check regex URL match at event", exc_info=True)
 
@@ -625,11 +658,23 @@ class VTETerminalBackend:
 
             if self._has_check_match_at:
                 try:
-                    result = self.vte.check_match_at(x, y)
-                    if result and result[0]:
-                        return result[0]
+                    url = self._url_from_result(self.vte.check_match_at(x, y))
+                    if url:
+                        return url
                 except Exception:
                     logger.debug("Failed to check regex URL match at coords", exc_info=True)
+
+            # Last resort: check_regex_simple_at passes the VteRegex directly and works
+            # even when match_add_regex failed (e.g. PCRE2 unavailable at init time).
+            if self._has_check_regex_simple_at and self._url_vte_regex is not None:
+                try:
+                    ok, matches = self.vte.check_regex_simple_at(
+                        x, y, [self._url_vte_regex], 0
+                    )
+                    if ok and matches and matches[0]:
+                        return matches[0]
+                except Exception:
+                    logger.debug("Failed to check_regex_simple_at", exc_info=True)
 
         return None
 
