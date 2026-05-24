@@ -2744,32 +2744,27 @@ class TerminalWidget(Gtk.Box):
     _SAFE_URI_SCHEMES = {"http", "https", "ftp", "file", "mailto"}
 
     def _get_uri_at(self, x, y):
-        """Return URI string at pixel coordinates, or None."""
+        """Return URI string at pixel coordinates, or None.
+
+        Both check_hyperlink_at and check_match_at take pixel coordinates;
+        VTE converts to cell coords internally (confirmed in vte.cc source).
+        """
         if self.vte is None:
             return None
-        try:
-            char_w = self.vte.get_char_width()
-            char_h = self.vte.get_char_height()
-            if char_w <= 0 or char_h <= 0:
-                return None
-            col = int(x / char_w)
-            row = int(y / char_h)
-        except Exception:
-            return None
-        # OSC 8 hyperlink (explicit)
+        # OSC 8 hyperlink (explicit) — pass pixel coords directly
         if hasattr(self.vte, "check_hyperlink_at"):
             try:
-                uri = self.vte.check_hyperlink_at(col, row)
+                uri = self.vte.check_hyperlink_at(x, y)
                 if uri:
                     return uri
             except Exception:
                 pass
-        # Regex-detected plain URL
+        # Regex-detected plain URL — pass pixel coords directly
         if hasattr(self.vte, "check_match_at"):
             try:
-                result = self.vte.check_match_at(col, row)
+                result = self.vte.check_match_at(x, y)
                 if isinstance(result, tuple) and len(result) == 2:
-                    # VTE returns (match_string, tag_id); tag_id may come first in some builds
+                    # VTE returns (match_string, tag_id)
                     for candidate in result:
                         if isinstance(candidate, str) and candidate.startswith(
                             ("http", "ftp", "file", "mailto")
