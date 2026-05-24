@@ -84,13 +84,7 @@
       
       const fit = new FitAddon.FitAddon();
       term.loadAddon(fit);
-      term.loadAddon(new WebLinksAddon.WebLinksAddon((e, uri) => {
-        try {
-          window.webkit.messageHandlers.openLink.postMessage(uri);
-        } catch (_) {
-          window.open(uri, '_blank');
-        }
-      }));
+      term.loadAddon(new WebLinksAddon.WebLinksAddon());
       const searchAddon = new SearchAddon.SearchAddon();
       term.loadAddon(searchAddon);
       term.searchAddon = searchAddon;  // Store reference for external access
