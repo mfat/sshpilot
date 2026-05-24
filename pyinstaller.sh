@@ -75,6 +75,12 @@ if [ -d "dist/SSHPilot.app" ]; then
         echo "⚠️  sshpass not found in PATH; bundle will require system sshpass"
     fi
 
+    # Ad-hoc sign the app bundle — prevents "damaged app" Gatekeeper error when downloaded
+    echo "🔐 Ad-hoc code signing app bundle..."
+    codesign --sign - --force --deep --timestamp=none "dist/SSHPilot.app"
+    codesign --verify --verbose "dist/SSHPilot.app" 2>&1 || true
+    echo "✅ App bundle signed (ad-hoc)"
+
     # Create DMG file using create-dmg
     echo "📦 Creating DMG file..."
     

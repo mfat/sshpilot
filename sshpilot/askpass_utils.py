@@ -301,32 +301,32 @@ def _run_askpass_dialog(key_path: str, log_fn) -> "str | None":
     passphrase_result = [None]
     Adw.init()
 
-    try:
-        try:
-            config_dir = os.path.join(GLib.get_user_config_dir(), "sshpilot")
-        except Exception:
-            config_dir = os.path.join(os.path.expanduser("~"), ".config", "sshpilot")
-        config_file = os.path.join(config_dir, "config.json")
-        saved_theme = "default"
-        if os.path.exists(config_file):
-            try:
-                with open(config_file, "r") as f:
-                    saved_theme = str(json.load(f).get("app-theme", "default"))
-            except Exception:
-                pass
-        style_manager = Adw.StyleManager.get_default()
-        if saved_theme == "light":
-            style_manager.set_color_scheme(Adw.ColorScheme.FORCE_LIGHT)
-        elif saved_theme == "dark":
-            style_manager.set_color_scheme(Adw.ColorScheme.FORCE_DARK)
-        else:
-            style_manager.set_color_scheme(Adw.ColorScheme.DEFAULT)
-    except Exception:
-        pass
-
-    app = Adw.Application.new("io.github.mfat.sshpilot.askpass", Gio.ApplicationFlags.FLAGS_NONE)
+    app = Adw.Application.new("io.github.mfat.sshpilot.askpass", Gio.ApplicationFlags.NON_UNIQUE)
 
     def on_activate(app):
+        try:
+            try:
+                config_dir = os.path.join(GLib.get_user_config_dir(), "sshpilot")
+            except Exception:
+                config_dir = os.path.join(os.path.expanduser("~"), ".config", "sshpilot")
+            config_file = os.path.join(config_dir, "config.json")
+            saved_theme = "default"
+            if os.path.exists(config_file):
+                try:
+                    with open(config_file, "r") as f:
+                        saved_theme = str(json.load(f).get("app-theme", "default"))
+                except Exception:
+                    pass
+            style_manager = Adw.StyleManager.get_default()
+            if saved_theme == "light":
+                style_manager.set_color_scheme(Adw.ColorScheme.FORCE_LIGHT)
+            elif saved_theme == "dark":
+                style_manager.set_color_scheme(Adw.ColorScheme.FORCE_DARK)
+            else:
+                style_manager.set_color_scheme(Adw.ColorScheme.DEFAULT)
+        except Exception:
+            pass
+
         key_name = os.path.basename(key_path) if key_path else "key"
         window = Adw.ApplicationWindow()
         window.set_application(app)
@@ -401,12 +401,13 @@ def _run_askpass_dialog(key_path: str, log_fn) -> "str | None":
     return passphrase_result[0]
 
 
-def handle_askpass_cli(prompt: str) -> int:
+def handle_askpass_cli(prompt: str) -> "str | None":
     """Handle --askpass CLI mode (re-invoked by SSH as SSH_ASKPASS handler).
 
     Looks up stored passphrases using the app's own environment (keyring,
-    libsecret) and falls back to a GTK dialog. Prints the passphrase to
-    stdout and returns 0 on success, 1 on failure.
+    libsecret) and falls back to a GTK dialog. Returns the passphrase string
+    on success, or None on failure. The caller is responsible for writing the
+    passphrase to the real stdout fd.
     """
     log_path = get_askpass_log_path()
 
@@ -427,16 +428,16 @@ def handle_askpass_cli(prompt: str) -> int:
 
     if "password" in pl and "passphrase" not in pl:
         _log("ASKPASS: Ignoring password prompt")
-        return 1
+        return None
 
     if "passphrase" not in pl:
         _log("ASKPASS: No passphrase found, exiting with code 1")
-        return 1
+        return None
 
     key_path = _extract_key_path(prompt)
     if not key_path:
         _log("ASKPASS: Could not extract key path from prompt")
-        return 1
+        return None
 
     _log(f"ASKPASS: Extracted key path: {key_path}")
 
@@ -448,12 +449,11 @@ def handle_askpass_cli(prompt: str) -> int:
                 session_passphrase = f.read().strip()
             if session_passphrase:
                 _log("ASKPASS: Found session passphrase from secure temp file")
-                print(session_passphrase)
                 try:
                     os.unlink(session_passphrase_file)
                 except Exception:
                     pass
-                return 0
+                return session_passphrase
         except Exception as exc:
             _log(f"ASKPASS: Error reading session passphrase file: {exc}")
 
@@ -462,20 +462,62 @@ def handle_askpass_cli(prompt: str) -> int:
         passphrase = lookup_passphrase(candidate)
         if passphrase:
             _log(f"ASKPASS: Found passphrase for {candidate}")
-            print(passphrase)
-            _log("ASKPASS: Returning passphrase and exiting with code 0")
-            return 0
+            _log("ASKPASS: Returning passphrase to caller")
+            return passphrase
         _log(f"ASKPASS: No passphrase found for {candidate}")
 
     # Fall back to interactive GUI dialog
     passphrase = _run_askpass_dialog(key_path, _log)
     if passphrase is not None:
         _log("ASKPASS: User entered passphrase in GUI dialog")
-        print(passphrase)
-        return 0
+        return passphrase
 
     _log("ASKPASS: No passphrase found, exiting with code 1")
-    return 1
+    return None
+
+
+def run_askpass_and_write(prompt: str) -> int:
+    """Entry-point wrapper: separates password output from all other I/O.
+
+    Saves the real stdout fd, redirects fd 1 to stderr so any accidental
+    logging or print cannot contaminate the password, calls
+    handle_askpass_cli, then writes the returned passphrase to the original
+    stdout fd using os.write (bypassing Python buffering).
+
+    Returns 0 on success, 1 on failure.
+    """
+    try:
+        real_stdout_fd = os.dup(1)
+    except OSError:
+        real_stdout_fd = None
+
+    try:
+        try:
+            os.dup2(2, 1)
+        except OSError:
+            pass
+        sys.stdout = sys.stderr
+
+        passphrase = handle_askpass_cli(prompt)
+    finally:
+        if real_stdout_fd is not None:
+            try:
+                os.dup2(real_stdout_fd, 1)
+            except OSError:
+                pass
+            try:
+                os.close(real_stdout_fd)
+            except OSError:
+                pass
+
+    if passphrase is None:
+        return 1
+
+    try:
+        os.write(1, (passphrase + "\n").encode())
+    except OSError:
+        return 1
+    return 0
 
 
 def store_passphrase(key_path: str, passphrase: str) -> bool:
@@ -638,9 +680,9 @@ def ensure_passphrase_askpass() -> str:
         with open(helper_path, "w", encoding="utf-8") as f:
             f.write("import sys\n")
             f.write(f"sys.path.insert(0, {pkg_parent!r})\n")
-            f.write("from sshpilot.askpass_utils import handle_askpass_cli\n")
+            f.write("from sshpilot.askpass_utils import run_askpass_and_write\n")
             f.write("prompt = sys.argv[1] if len(sys.argv) > 1 else ''\n")
-            f.write("sys.exit(handle_askpass_cli(prompt))\n")
+            f.write("sys.exit(run_askpass_and_write(prompt))\n")
         os.chmod(helper_path, 0o600)
         with open(script_path, "w", encoding="utf-8") as f:
             f.write(f'#!/bin/sh\nexec "{sys.executable}" "{helper_path}" "$@"\n')

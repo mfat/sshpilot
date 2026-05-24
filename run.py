@@ -12,9 +12,9 @@ import os
 if len(sys.argv) > 1 and sys.argv[1] == '--askpass':
     CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
     sys.path.insert(0, CURRENT_DIR)
-    from sshpilot.askpass_utils import handle_askpass_cli
+    from sshpilot.askpass_utils import run_askpass_and_write
     prompt = sys.argv[2] if len(sys.argv) > 2 else ""
-    sys.exit(handle_askpass_cli(prompt))
+    sys.exit(run_askpass_and_write(prompt))
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 PARENT = os.path.dirname(CURRENT_DIR)
