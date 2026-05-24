@@ -138,6 +138,7 @@ class VTETerminalBackend:
         self.widget = self.vte
         self._termprops_handler: Optional[int] = None
         self._populate_popup_handler: Optional[int] = None
+        self._url_regex_tag: Optional[int] = None
 
     def initialize(self) -> None:
         self.vte.set_hexpand(True)
@@ -219,6 +220,26 @@ class VTETerminalBackend:
                 logger.debug("Disabled VTE built-in context menu")
         except Exception as e:
             logger.debug(f"Failed to disable VTE context menu: {e}", exc_info=True)
+
+        # Enable OSC 8 hyperlink support
+        try:
+            self.vte.set_allow_hyperlink(True)
+            logger.debug("Enabled OSC 8 hyperlink support")
+        except Exception:
+            logger.debug("Failed to enable OSC 8 hyperlinks", exc_info=True)
+
+        # Register regex for plain-text URL detection
+        try:
+            if hasattr(self.vte, "match_add_regex"):
+                url_re = Vte.Regex.new_for_match(
+                    r"(https?|ftp|file)://[^\s<>\"{}|\\^`\[\]]*[^\s<>\"{}|\\^`\[\].,;:!?]",
+                    -1,
+                    0,
+                )
+                self._url_regex_tag = self.vte.match_add_regex(url_re, 0)
+                logger.debug("Registered plain-text URL regex (tag=%s)", self._url_regex_tag)
+        except Exception:
+            logger.debug("Failed to register URL regex", exc_info=True)
 
     def destroy(self) -> None:
         try:
