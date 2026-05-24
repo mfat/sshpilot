@@ -123,7 +123,7 @@ class BaseTerminalBackend(Protocol):
 
 from typing import TYPE_CHECKING
 
-from gi.repository import Gdk, GLib, Pango, Vte
+from gi.repository import Gdk, GLib, Gio, Pango, Vte
 
 if TYPE_CHECKING:  # pragma: no cover - import only for type checking
     from .terminal import TerminalWidget
@@ -219,6 +219,17 @@ class VTETerminalBackend:
                 logger.debug("Disabled VTE built-in context menu")
         except Exception as e:
             logger.debug(f"Failed to disable VTE context menu: {e}", exc_info=True)
+
+        # Register URL regex so Ctrl+click can open links
+        self._url_match_tag = None
+        try:
+            url_pattern = r"(https?|ftp)://[^\s<>\"\{\}|\\^`\[\]']*[^\s<>\"\{\}|\\^`\[\]'.,;:!?\)]"
+            url_regex = Vte.Regex.new_for_match(url_pattern, -1, 0)
+            self._url_match_tag = self.vte.match_add_regex(url_regex, 0)
+            self.vte.match_set_cursor_name(self._url_match_tag, "pointer")
+            logger.debug(f"Registered URL regex with match tag {self._url_match_tag}")
+        except Exception as e:
+            logger.debug(f"Failed to register URL regex for VTE: {e}", exc_info=True)
 
     def destroy(self) -> None:
         try:
@@ -552,6 +563,15 @@ class VTETerminalBackend:
         except Exception:
             return None
 
+    def check_match_at_event(self, event) -> Optional[str]:
+        """Return the URL under the cursor at the given GdkEvent, or None."""
+        try:
+            result = self.vte.match_check_event(event)
+            if result and result[0]:
+                return result[0]
+        except Exception:
+            logger.debug("Failed to check URL match at event", exc_info=True)
+        return None
 
 
 class PyXtermTerminalBackend:
@@ -624,8 +644,18 @@ class PyXtermTerminalBackend:
                 gi.require_version("WebKit", "6.0")
                 from gi.repository import WebKit
                 self.WebKit = WebKit
-                self._webview = WebKit.WebView()
-                
+                content_manager = WebKit.UserContentManager()
+                self._webview = WebKit.WebView.new_with_user_content_manager(content_manager)
+                try:
+                    content_manager.register_script_message_handler("openLink")
+                    content_manager.connect(
+                        "script-message-received::openLink",
+                        self._on_open_link_message,
+                    )
+                    logger.debug("Registered openLink WebKit message handler")
+                except Exception as mh_error:
+                    logger.debug(f"Failed to register openLink message handler: {mh_error}", exc_info=True)
+
                 # Configure WebView settings to ensure JavaScript is enabled
                 # According to WebKit 6.0 API, JavaScript is enabled by default,
                 # but we explicitly set it for clarity
@@ -636,15 +666,15 @@ class PyXtermTerminalBackend:
                         logger.debug("WebView JavaScript enabled via settings")
                 except Exception as settings_error:
                     logger.debug(f"Could not configure WebView settings (may be enabled by default): {settings_error}")
-                
+
                 logger.debug("Using WebKit 6.0 (GTK4 compatible)")
             except Exception as webkit6_error:
                 logger.debug(f"WebKit 6.0 not available: {webkit6_error}")
-                
+
                 # Check if GTK 4.0 is already loaded (which conflicts with WebKit2)
                 if hasattr(Gtk, 'get_major_version') and Gtk.get_major_version() == 4:
                     raise ImportError("PyXterm backend requires WebKit 6.0 for GTK 4.0 compatibility, but WebKit 6.0 is not available")
-                
+
                 # Fall back to WebKit2 4.0 (only if GTK 3.0 is available)
                 gi.require_version("WebKit2", "4.0")
                 from gi.repository import WebKit2
@@ -680,6 +710,17 @@ class PyXtermTerminalBackend:
 
     # The pyxterm backend exposes only a subset of the behaviour for now. Each
     # method contains guards so the widget can fall back cleanly.
+
+    def _on_open_link_message(self, content_manager, js_result) -> None:
+        """Open a URL received from the xterm.js WebLinksAddon click handler."""
+        try:
+            js_value = js_result.get_js_value()
+            url = js_value.to_string()
+            if url:
+                Gio.AppInfo.launch_default_for_uri(url, None)
+                logger.debug(f"Opened link: {url}")
+        except Exception:
+            logger.debug("Failed to open link from WebView message", exc_info=True)
 
     def initialize(self) -> None:
         if not self.available:
