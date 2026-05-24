@@ -2794,23 +2794,6 @@ class TerminalWidget(Gtk.Box):
                     except Exception:
                         pass
                     logger.debug(f"Context menu gesture: button={btn}, x={x}, y={y}")
-
-                    # Ctrl+left-click: open URL under cursor (VTE backend)
-                    if btn == Gdk.BUTTON_PRIMARY:
-                        try:
-                            event = gest.get_last_event(None)
-                            if event and self.backend and hasattr(self.backend, 'check_match_at_event'):
-                                modifier_state = event.get_modifier_state()
-                                if modifier_state & Gdk.ModifierType.CONTROL_MASK:
-                                    url = self.backend.check_match_at_event(event)
-                                    if url:
-                                        gest.set_state(Gtk.EventSequenceState.CLAIMED)
-                                        Gio.AppInfo.launch_default_for_uri(url, None)
-                                        return
-                        except Exception as e:
-                            logger.debug(f"Ctrl+click URL open failed: {e}")
-                        return
-
                     if btn not in (Gdk.BUTTON_SECONDARY, 3):
                         logger.debug(f"Not a right-click button: {btn}")
                         return
