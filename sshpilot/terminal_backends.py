@@ -238,6 +238,14 @@ class VTETerminalBackend:
         except Exception as e:
             logger.debug(f"Failed to register URL regex for VTE: {e}", exc_info=True)
 
+        # Probe once which event-based URL detection APIs are available on this VTE version.
+        self._has_hyperlink_check_event = hasattr(self.vte, "hyperlink_check_event")
+        self._has_match_check_event = hasattr(self.vte, "match_check_event")
+        if not self._has_hyperlink_check_event:
+            logger.debug("VTE hyperlink_check_event not available on this version; OSC 8 click detection disabled")
+        if not self._has_match_check_event:
+            logger.debug("VTE match_check_event not available on this version; regex URL click detection disabled")
+
 
     def destroy(self) -> None:
         try:
@@ -578,20 +586,22 @@ class VTETerminalBackend:
         falls back to regex-matched plain-text URLs.
         """
         # OSC 8 hyperlinks (proper hyperlinks embedded in terminal escape sequences)
-        try:
-            uri = self.vte.hyperlink_check_event(event)
-            if uri:
-                return uri
-        except Exception:
-            logger.debug("Failed to check OSC 8 hyperlink at event", exc_info=True)
+        if self._has_hyperlink_check_event:
+            try:
+                uri = self.vte.hyperlink_check_event(event)
+                if uri:
+                    return uri
+            except Exception:
+                logger.debug("Failed to check OSC 8 hyperlink at event", exc_info=True)
 
         # Fallback: regex-matched plain-text URLs
-        try:
-            result = self.vte.match_check_event(event)
-            if result and result[0]:
-                return result[0]
-        except Exception:
-            logger.debug("Failed to check regex URL match at event", exc_info=True)
+        if self._has_match_check_event:
+            try:
+                result = self.vte.match_check_event(event)
+                if result and result[0]:
+                    return result[0]
+            except Exception:
+                logger.debug("Failed to check regex URL match at event", exc_info=True)
 
         return None
 
