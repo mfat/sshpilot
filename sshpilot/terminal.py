@@ -2218,27 +2218,21 @@ class TerminalWidget(Gtk.Box):
         self._setup_context_menu()
 
     def _on_vte_pointer_enter(self, controller, x, y):
-        """Restore VTE focus when the mouse enters the terminal.
+        """Called when the pointer enters the VTE widget area.
 
-        VTE's native hover detection (cursor shape change, URL underline) relies
-        on VTE having keyboard focus. After other UI elements take focus (search
-        bar, dialogs, context menu) VTE stops updating hover state. Grabbing
-        focus here fixes it without waiting for an explicit click.
+        Cursor shape is managed explicitly in _on_vte_motion via set_cursor(),
+        so VTE does not need keyboard focus for hover detection.  VTE's own
+        EventControllerMotion fires for the widget under the pointer regardless
+        of focus — just like GNOME Terminal, which underlines URLs even without
+        focus.
 
-        We skip the grab when a text-input widget is focused so we don't
-        interrupt the user if they're typing in the search bar or a dialog.
+        Previously this called grab_focus() to restore VTE's native cursor-
+        shape mechanism, but that triggered a focus-in event which cleared
+        VTE's internal m_match_hilite hover state, breaking URL underlines
+        after paste.  Now that cursor shape is driven from Python (set_cursor),
+        the grab_focus is not needed here.
         """
-        if self.vte is None or self.vte.has_focus():
-            return
-        try:
-            root = self.get_root()
-            if root is not None:
-                focused = root.get_focus()
-                if isinstance(focused, (Gtk.Entry, Gtk.SearchEntry, Gtk.Text, Gtk.TextView)):
-                    return
-        except Exception:
-            pass
-        self.vte.grab_focus()
+        pass
 
     def _on_vte_motion(self, controller, x, y):
         """Detect URL under the mouse cursor (both OSC 8 links and plain-text regexes)."""
@@ -2904,20 +2898,15 @@ class TerminalWidget(Gtk.Box):
             act_selall.connect("activate", lambda a, p: self.select_all())
             self._menu_actions.add_action(act_selall)
 
-            # Open Link action (enabled only when a hyperlink is under the cursor)
+            # Open Link / Copy Link actions
             act_open_link = Gio.SimpleAction.new("open_link", None)
-            act_open_link.set_enabled(False)
             act_open_link.connect("activate", self._on_open_link_activated)
             self._menu_actions.add_action(act_open_link)
-            self._act_open_link = act_open_link
             self._context_menu_hyperlink_uri = None
 
-            # Copy Link action (enabled only when a hyperlink is under the cursor)
             act_copy_link = Gio.SimpleAction.new("copy_link", None)
-            act_copy_link.set_enabled(False)
             act_copy_link.connect("activate", self._on_copy_link_activated)
             self._menu_actions.add_action(act_copy_link)
-            self._act_copy_link = act_copy_link
 
             # Add zoom actions
             act_zoom_in = Gio.SimpleAction.new("zoom_in", None)
@@ -2932,37 +2921,48 @@ class TerminalWidget(Gtk.Box):
             act_reset_zoom.connect("activate", lambda a, p: self.reset_zoom())
             self._menu_actions.add_action(act_reset_zoom)
 
+            act_search = Gio.SimpleAction.new("search", None)
+            act_search.connect("activate", lambda a, p: self._show_search_overlay(select_all=True))
+            self._menu_actions.add_action(act_search)
+
             self.insert_action_group('term', self._menu_actions)
 
             # Menu model with keyboard shortcuts
             self._menu_model = Gio.Menu()
+            self._link_section_in_menu = False
 
-            # Link actions at top – greyed-out when no link is under the cursor
-            link_section = Gio.Menu()
-            link_section.append(_("Open Link"), "term.open_link")
-            link_section.append(_("Copy Link"), "term.copy_link")
-            self._menu_model.append_section(None, link_section)
+            # Link section is built once and inserted/removed dynamically so
+            # "Open Link" and "Copy Link" are completely hidden when no URL is
+            # under the cursor.  PopoverMenu tracks GMenuModel::items-changed
+            # and rebuilds before popup() is called.
+            self._link_menu = Gio.Menu()
+            self._link_menu.append(_("Open Link"), "term.open_link")
+            self._link_menu.append(_("Copy Link"), "term.copy_link")
 
             if is_macos():
                 self._menu_model.append(_("Copy\t⌘C"), "term.copy")
                 self._menu_model.append(_("Paste\t⌘V"), "term.paste")
                 self._menu_model.append(_("Select All\t⌘A"), "term.select_all")
-                # Create a separator section for zoom options
                 zoom_section = Gio.Menu()
                 zoom_section.append(_("Zoom In\t⌘="), "term.zoom_in")
                 zoom_section.append(_("Zoom Out\t⌘-"), "term.zoom_out")
                 zoom_section.append(_("Reset Zoom\t⌘0"), "term.reset_zoom")
                 self._menu_model.append_section(None, zoom_section)
+                search_section = Gio.Menu()
+                search_section.append(_("Search\t⌘F"), "term.search")
+                self._menu_model.append_section(None, search_section)
             else:
                 self._menu_model.append(_("Copy\tCtrl+Shift+C"), "term.copy")
                 self._menu_model.append(_("Paste\tCtrl+Shift+V"), "term.paste")
                 self._menu_model.append(_("Select All\tCtrl+Shift+A"), "term.select_all")
-                # Create a separator section for zoom options
                 zoom_section = Gio.Menu()
                 zoom_section.append(_("Zoom In\tCtrl++"), "term.zoom_in")
                 zoom_section.append(_("Zoom Out\tCtrl+-"), "term.zoom_out")
                 zoom_section.append(_("Reset Zoom\tCtrl+0"), "term.reset_zoom")
                 self._menu_model.append_section(None, zoom_section)
+                search_section = Gio.Menu()
+                search_section.append(_("Search\tCtrl+Shift+F"), "term.search")
+                self._menu_model.append_section(None, search_section)
 
             # Popover - set parent to the terminal widget
             self._menu_popover = Gtk.PopoverMenu.new_from_model(self._menu_model)
@@ -2994,15 +2994,20 @@ class TerminalWidget(Gtk.Box):
                             self.backend.grab_focus()
                     except Exception:
                         pass
-                    # Update link actions based on the currently hovered hyperlink
+                    # Show or hide the link section based on whether a URL is
+                    # under the cursor.  Insert/remove from the live model so
+                    # the items are completely absent (not just greyed out).
                     try:
                         uri = getattr(self, '_hovered_hyperlink_uri', None)
                         self._context_menu_hyperlink_uri = uri
                         has_link = bool(uri)
-                        if hasattr(self, '_act_open_link') and self._act_open_link:
-                            self._act_open_link.set_enabled(has_link)
-                        if hasattr(self, '_act_copy_link') and self._act_copy_link:
-                            self._act_copy_link.set_enabled(has_link)
+                        in_menu = getattr(self, '_link_section_in_menu', False)
+                        if has_link and not in_menu:
+                            self._menu_model.insert_section(0, None, self._link_menu)
+                            self._link_section_in_menu = True
+                        elif not has_link and in_menu:
+                            self._menu_model.remove(0)
+                            self._link_section_in_menu = False
                     except Exception:
                         pass
                     # Position popover near click
