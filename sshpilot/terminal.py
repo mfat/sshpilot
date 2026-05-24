@@ -697,6 +697,22 @@ class TerminalWidget(Gtk.Box):
                 except Exception as e:
                     logger.debug(f"Error removing gesture from {type(widget).__name__}: {e}", exc_info=True)
 
+        # Clean up hyperlink controllers before destroying backend
+        if hasattr(self, '_hyperlink_hover_handler') and self._hyperlink_hover_handler is not None:
+            if hasattr(self, 'vte') and self.vte is not None:
+                try:
+                    self.vte.disconnect(self._hyperlink_hover_handler)
+                except Exception:
+                    pass
+            self._hyperlink_hover_handler = None
+        if hasattr(self, '_link_click_gesture') and self._link_click_gesture is not None:
+            if hasattr(self, 'vte') and self.vte is not None:
+                try:
+                    self.vte.remove_controller(self._link_click_gesture)
+                except Exception:
+                    pass
+            self._link_click_gesture = None
+
         # Destroy old backend
         old_backend = getattr(self, 'backend', None)
         if old_backend is not None:
@@ -2146,6 +2162,7 @@ class TerminalWidget(Gtk.Box):
         # Install terminal shortcuts and custom context menu
         self._apply_pass_through_mode(self._pass_through_mode)
         self._setup_context_menu()
+        self._setup_hyperlink_controllers()
 
     def _get_supported_encodings(self):
         if self._supported_encodings is not None:
@@ -2720,10 +2737,119 @@ class TerminalWidget(Gtk.Box):
         # Store PID for cleanup
         self.process_pid = pid
 
+    # ------------------------------------------------------------------
+    # Hyperlink support
+    # ------------------------------------------------------------------
+
+    _SAFE_URI_SCHEMES = {"http", "https", "ftp", "file", "mailto"}
+
+    def _get_uri_at(self, x, y):
+        """Return URI string at pixel coordinates, or None."""
+        if self.vte is None:
+            return None
+        try:
+            char_w = self.vte.get_char_width()
+            char_h = self.vte.get_char_height()
+            if char_w <= 0 or char_h <= 0:
+                return None
+            col = int(x / char_w)
+            row = int(y / char_h)
+        except Exception:
+            return None
+        # OSC 8 hyperlink (explicit)
+        if hasattr(self.vte, "check_hyperlink_at"):
+            try:
+                uri = self.vte.check_hyperlink_at(col, row)
+                if uri:
+                    return uri
+            except Exception:
+                pass
+        # Regex-detected plain URL
+        if hasattr(self.vte, "check_match_at"):
+            try:
+                result = self.vte.check_match_at(col, row)
+                if isinstance(result, tuple) and len(result) == 2:
+                    # VTE returns (match_string, tag_id); tag_id may come first in some builds
+                    for candidate in result:
+                        if isinstance(candidate, str) and candidate.startswith(
+                            ("http", "ftp", "file", "mailto")
+                        ):
+                            return candidate
+            except Exception:
+                pass
+        return None
+
+    def _open_uri(self, uri):
+        """Validate and open a URI via the desktop default handler."""
+        if not uri:
+            return
+        try:
+            from urllib.parse import urlparse
+            if urlparse(uri).scheme.lower() not in self._SAFE_URI_SCHEMES:
+                logger.warning("Blocked unsafe URI scheme: %s", uri)
+                return
+            Gio.AppInfo.launch_default_for_uri(uri, None)
+        except Exception:
+            logger.error("Failed to open URI: %s", uri, exc_info=True)
+
+    def _copy_uri_to_clipboard(self, uri):
+        """Copy a URI string to the system clipboard."""
+        if not uri:
+            return
+        try:
+            clipboard = Gdk.Display.get_default().get_clipboard()
+            clipboard.set(uri)
+        except Exception:
+            logger.error("Failed to copy URI to clipboard", exc_info=True)
+
+    def _setup_hyperlink_controllers(self):
+        """Wire up hover cursor changes and Ctrl+Click link activation."""
+        if self.vte is None:
+            return
+        try:
+            self._hyperlink_hover_handler = self.vte.connect(
+                "hyperlink-hover-uri-changed", self._on_hyperlink_hover_changed
+            )
+        except Exception:
+            logger.debug("Failed to connect hyperlink-hover-uri-changed", exc_info=True)
+            self._hyperlink_hover_handler = None
+        try:
+            self._link_click_gesture = Gtk.GestureClick.new()
+            self._link_click_gesture.set_button(1)
+            self._link_click_gesture.connect("pressed", self._on_link_click_pressed)
+            self.vte.add_controller(self._link_click_gesture)
+        except Exception:
+            logger.debug("Failed to set up Ctrl+Click gesture", exc_info=True)
+            self._link_click_gesture = None
+
+    def _on_hyperlink_hover_changed(self, terminal):
+        """Change cursor to pointer when hovering a hyperlink."""
+        try:
+            uri = terminal.props.hyperlink_hover_uri
+            name = "pointer" if uri else "text"
+            terminal.set_cursor(Gdk.Cursor.new_from_name(name, None))
+        except Exception:
+            pass
+
+    def _on_link_click_pressed(self, gesture, n_press, x, y):
+        """Open hyperlink on Ctrl+Left-Click."""
+        try:
+            state = gesture.get_current_event_state()
+            if not (state & Gdk.ModifierType.CONTROL_MASK):
+                return
+            uri = self._get_uri_at(x, y)
+            if not uri:
+                return
+            gesture.set_state(Gtk.EventSequenceState.CLAIMED)
+            self._open_uri(uri)
+        except Exception:
+            pass
+
     def _setup_context_menu(self):
         """Set up a robust per-terminal context menu and actions."""
         try:
             logger.debug("Setting up terminal context menu...")
+            self._menu_uri = None
             # Per-widget action group
             self._menu_actions = Gio.SimpleActionGroup()
             act_copy = Gio.SimpleAction.new("copy", None)
@@ -2735,24 +2861,41 @@ class TerminalWidget(Gtk.Box):
             act_selall = Gio.SimpleAction.new("select_all", None)
             act_selall.connect("activate", lambda a, p: self.select_all())
             self._menu_actions.add_action(act_selall)
-            
+
             # Add zoom actions
             act_zoom_in = Gio.SimpleAction.new("zoom_in", None)
             act_zoom_in.connect("activate", lambda a, p: self.zoom_in())
             self._menu_actions.add_action(act_zoom_in)
-            
+
             act_zoom_out = Gio.SimpleAction.new("zoom_out", None)
             act_zoom_out.connect("activate", lambda a, p: self.zoom_out())
             self._menu_actions.add_action(act_zoom_out)
-            
+
             act_reset_zoom = Gio.SimpleAction.new("reset_zoom", None)
             act_reset_zoom.connect("activate", lambda a, p: self.reset_zoom())
             self._menu_actions.add_action(act_reset_zoom)
-            
+
+            # Hyperlink actions (disabled until a URL is right-clicked)
+            act_open_link = Gio.SimpleAction.new("open_link", None)
+            act_open_link.set_enabled(False)
+            act_open_link.connect("activate", lambda a, p: self._open_uri(self._menu_uri) if self._menu_uri else None)
+            self._menu_actions.add_action(act_open_link)
+
+            act_copy_link = Gio.SimpleAction.new("copy_link", None)
+            act_copy_link.set_enabled(False)
+            act_copy_link.connect("activate", lambda a, p: self._copy_uri_to_clipboard(self._menu_uri) if self._menu_uri else None)
+            self._menu_actions.add_action(act_copy_link)
+
             self.insert_action_group('term', self._menu_actions)
 
             # Menu model with keyboard shortcuts
             self._menu_model = Gio.Menu()
+
+            # Link section at top (items enabled only when right-clicking a URL)
+            link_section = Gio.Menu()
+            link_section.append(_("Open Link"), "term.open_link")
+            link_section.append(_("Copy Link Address"), "term.copy_link")
+            self._menu_model.append_section(None, link_section)
 
             if is_macos():
                 self._menu_model.append(_("Copy\t⌘C"), "term.copy")
@@ -2805,6 +2948,12 @@ class TerminalWidget(Gtk.Box):
                             self.backend.grab_focus()
                     except Exception:
                         pass
+                    # Detect URL at click position; enable/disable link actions
+                    self._menu_uri = self._get_uri_at(x, y)
+                    for _act_name in ("open_link", "copy_link"):
+                        _act = self._menu_actions.lookup_action(_act_name)
+                        if _act:
+                            _act.set_enabled(bool(self._menu_uri))
                     # Position popover near click
                     try:
                         rect = Gdk.Rectangle()
