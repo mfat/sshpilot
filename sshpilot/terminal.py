@@ -2720,12 +2720,34 @@ class TerminalWidget(Gtk.Box):
         # Store PID for cleanup
         self.process_pid = pid
 
+    def _open_url_in_browser(self, url: str) -> None:
+        """Open *url* in the default browser."""
+        try:
+            Gtk.show_uri(None, url, 0)
+        except Exception:
+            try:
+                import subprocess
+                subprocess.Popen(["xdg-open", url])
+            except Exception:
+                logger.debug("Failed to open URL: %s", url)
+
     def _setup_context_menu(self):
         """Set up a robust per-terminal context menu and actions."""
         try:
             logger.debug("Setting up terminal context menu...")
+            self._menu_url: Optional[str] = None
+
             # Per-widget action group
             self._menu_actions = Gio.SimpleActionGroup()
+
+            # "Open URL" – disabled until a right-click lands on a link
+            act_open_url = Gio.SimpleAction.new("open_url", None)
+            act_open_url.set_enabled(False)
+            act_open_url.connect(
+                "activate", lambda a, p: self._open_url_in_browser(self._menu_url) if self._menu_url else None
+            )
+            self._menu_actions.add_action(act_open_url)
+
             act_copy = Gio.SimpleAction.new("copy", None)
             act_copy.connect("activate", lambda a, p: self.copy_text())
             self._menu_actions.add_action(act_copy)
@@ -2735,24 +2757,29 @@ class TerminalWidget(Gtk.Box):
             act_selall = Gio.SimpleAction.new("select_all", None)
             act_selall.connect("activate", lambda a, p: self.select_all())
             self._menu_actions.add_action(act_selall)
-            
+
             # Add zoom actions
             act_zoom_in = Gio.SimpleAction.new("zoom_in", None)
             act_zoom_in.connect("activate", lambda a, p: self.zoom_in())
             self._menu_actions.add_action(act_zoom_in)
-            
+
             act_zoom_out = Gio.SimpleAction.new("zoom_out", None)
             act_zoom_out.connect("activate", lambda a, p: self.zoom_out())
             self._menu_actions.add_action(act_zoom_out)
-            
+
             act_reset_zoom = Gio.SimpleAction.new("reset_zoom", None)
             act_reset_zoom.connect("activate", lambda a, p: self.reset_zoom())
             self._menu_actions.add_action(act_reset_zoom)
-            
+
             self.insert_action_group('term', self._menu_actions)
 
             # Menu model with keyboard shortcuts
             self._menu_model = Gio.Menu()
+
+            # URL section at top (always present; grayed-out when no link is under cursor)
+            url_section = Gio.Menu()
+            url_section.append(_("Open URL"), "term.open_url")
+            self._menu_model.append_section(None, url_section)
 
             if is_macos():
                 self._menu_model.append(_("Copy\t⌘C"), "term.copy")
@@ -2783,7 +2810,8 @@ class TerminalWidget(Gtk.Box):
             if parent_widget:
                 self._menu_popover.set_parent(parent_widget)
 
-            # Right-click gesture to open popover
+            # Right-click gesture to open popover; button=0 catches all buttons so
+            # we can also intercept Ctrl+left-click to open links.
             gesture = Gtk.GestureClick()
             gesture.set_button(0)
             def _on_pressed(gest, n_press, x, y):
@@ -2793,27 +2821,46 @@ class TerminalWidget(Gtk.Box):
                         btn = gest.get_current_button()
                     except Exception:
                         pass
-                    logger.debug(f"Context menu gesture: button={btn}, x={x}, y={y}")
 
-                    # Ctrl+left-click: open URL under cursor (VTE backend)
-                    if btn == Gdk.BUTTON_PRIMARY:
+                    # Retrieve the underlying GdkEvent so we can ask VTE which URL
+                    # (if any) is under the pointer.
+                    gdk_event = None
+                    try:
+                        seq = gest.get_last_updated_sequence()
+                        gdk_event = gest.get_last_event(seq)
+                    except Exception:
+                        pass
+
+                    url = None
+                    if self.backend and hasattr(self.backend, "get_url_at_event"):
                         try:
-                            event = gest.get_last_event(None)
-                            if event and self.backend and hasattr(self.backend, 'check_match_at_event'):
-                                modifier_state = event.get_modifier_state()
-                                if modifier_state & Gdk.ModifierType.CONTROL_MASK:
-                                    url = self.backend.check_match_at_event(event)
-                                    if url:
-                                        gest.set_state(Gtk.EventSequenceState.CLAIMED)
-                                        Gio.AppInfo.launch_default_for_uri(url, None)
-                                        return
-                        except Exception as e:
-                            logger.debug(f"Ctrl+click URL open failed: {e}")
-                        return
+                            url = self.backend.get_url_at_event(gdk_event)
+                        except Exception:
+                            pass
 
+                    # Ctrl+left-click → open URL directly without showing the menu
+                    if btn == Gdk.BUTTON_PRIMARY and url:
+                        try:
+                            modifier = gdk_event.get_modifier_state() if gdk_event else Gdk.ModifierType(0)
+                            if modifier & Gdk.ModifierType.CONTROL_MASK:
+                                gest.set_state(Gtk.EventSequenceState.CLAIMED)
+                                self._open_url_in_browser(url)
+                                return
+                        except Exception:
+                            pass
+
+                    logger.debug(f"Context menu gesture: button={btn}, x={x}, y={y}")
                     if btn not in (Gdk.BUTTON_SECONDARY, 3):
                         logger.debug(f"Not a right-click button: {btn}")
                         return
+
+                    # Enable / disable "Open URL" depending on what's under the cursor
+                    self._menu_url = url
+                    try:
+                        self._menu_actions.lookup_action("open_url").set_enabled(bool(url))
+                    except Exception:
+                        pass
+
                     # Stop event propagation to prevent other context menus
                     gest.set_state(Gtk.EventSequenceState.CLAIMED)
                     # Focus terminal first for reliable copy/paste
