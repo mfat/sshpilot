@@ -220,14 +220,21 @@ class VTETerminalBackend:
         except Exception as e:
             logger.debug(f"Failed to disable VTE context menu: {e}", exc_info=True)
 
-        # Register URL regex so Ctrl+click can open links
+        # Enable OSC 8 hyperlink support (e.g. links emitted by ls --hyperlink, git log, etc.)
         self._url_match_tag = None
+        try:
+            self.vte.set_allow_hyperlink(True)
+            logger.debug("Enabled VTE hyperlink support (OSC 8)")
+        except Exception as e:
+            logger.debug(f"Failed to enable VTE hyperlink support: {e}", exc_info=True)
+
+        # Register URL regex as fallback for plain-text URLs that don't use OSC 8
         try:
             url_pattern = r"(https?|ftp)://[^\s<>\"\{\}|\\^`\[\]']*[^\s<>\"\{\}|\\^`\[\]'.,;:!?\)]"
             url_regex = Vte.Regex.new_for_match(url_pattern, -1, 0)
             self._url_match_tag = self.vte.match_add_regex(url_regex, 0)
             self.vte.match_set_cursor_name(self._url_match_tag, "pointer")
-            logger.debug(f"Registered URL regex with match tag {self._url_match_tag}")
+            logger.debug(f"Registered plain-text URL regex with match tag {self._url_match_tag}")
         except Exception as e:
             logger.debug(f"Failed to register URL regex for VTE: {e}", exc_info=True)
 
@@ -564,13 +571,27 @@ class VTETerminalBackend:
             return None
 
     def check_match_at_event(self, event) -> Optional[str]:
-        """Return the URL under the cursor at the given GdkEvent, or None."""
+        """Return the URL under the cursor at the given GdkEvent, or None.
+
+        Checks OSC 8 hyperlinks first (set_allow_hyperlink must be True), then
+        falls back to regex-matched plain-text URLs.
+        """
+        # OSC 8 hyperlinks (proper hyperlinks embedded in terminal escape sequences)
+        try:
+            uri = self.vte.hyperlink_check_event(event)
+            if uri:
+                return uri
+        except Exception:
+            logger.debug("Failed to check OSC 8 hyperlink at event", exc_info=True)
+
+        # Fallback: regex-matched plain-text URLs
         try:
             result = self.vte.match_check_event(event)
             if result and result[0]:
                 return result[0]
         except Exception:
-            logger.debug("Failed to check URL match at event", exc_info=True)
+            logger.debug("Failed to check regex URL match at event", exc_info=True)
+
         return None
 
 
