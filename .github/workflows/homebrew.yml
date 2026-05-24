@@ -1,0 +1,19 @@
+name: Bump Homebrew Formula
+
+on:
+  push:
+    tags:
+      - 'v*' # Triggers on tags like v4.8.0
+
+jobs:
+  bump-formula:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Update formula in tap
+        uses: mislav/bump-homebrew-formula-action@v3
+        with:
+          formula-name: sshpilot
+          homebrew-tap: mfat/homebrew-sshpilot
+          download-url: https://github.com/mfat/sshpilot/archive/refs/tags/${{ github.ref_name }}.tar.gz
+        env:
+          COMMITTER_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
