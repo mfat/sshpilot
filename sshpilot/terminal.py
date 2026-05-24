@@ -2804,7 +2804,7 @@ class TerminalWidget(Gtk.Box):
                         try:
                             event = gest.get_last_event(None)
                             if event and self.backend and hasattr(self.backend, 'check_match_at_event'):
-                                url = self.backend.check_match_at_event(event)
+                                url = self.backend.check_match_at_event(event, x, y)
                                 if url:
                                     gest.set_state(Gtk.EventSequenceState.CLAIMED)
                                     Gio.AppInfo.launch_default_for_uri(url, None)

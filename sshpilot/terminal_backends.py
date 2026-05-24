@@ -238,13 +238,18 @@ class VTETerminalBackend:
         except Exception as e:
             logger.debug(f"Failed to register URL regex for VTE: {e}", exc_info=True)
 
-        # Probe once which event-based URL detection APIs are available on this VTE version.
-        self._has_hyperlink_check_event = hasattr(self.vte, "hyperlink_check_event")
-        self._has_match_check_event = hasattr(self.vte, "match_check_event")
-        if not self._has_hyperlink_check_event:
-            logger.debug("VTE hyperlink_check_event not available on this version; OSC 8 click detection disabled")
-        if not self._has_match_check_event:
-            logger.debug("VTE match_check_event not available on this version; regex URL click detection disabled")
+        # Probe once which URL detection APIs are available on this VTE build.
+        # GTK3 uses event-based APIs; GTK4 replaced them with coordinate-based *_at() variants.
+        self._has_hyperlink_check_event = hasattr(self.vte, "hyperlink_check_event")  # GTK3
+        self._has_match_check_event     = hasattr(self.vte, "match_check_event")       # GTK3
+        self._has_check_hyperlink_at    = hasattr(self.vte, "check_hyperlink_at")      # GTK4
+        self._has_check_match_at        = hasattr(self.vte, "check_match_at")          # GTK4
+        if self._has_check_hyperlink_at or self._has_check_match_at:
+            logger.debug("VTE URL detection: using GTK4 coordinate-based API")
+        elif self._has_hyperlink_check_event or self._has_match_check_event:
+            logger.debug("VTE URL detection: using GTK3 event-based API")
+        else:
+            logger.debug("VTE URL detection: no supported API found; link clicking disabled")
 
 
     def destroy(self) -> None:
@@ -579,13 +584,15 @@ class VTETerminalBackend:
         except Exception:
             return None
 
-    def check_match_at_event(self, event) -> Optional[str]:
-        """Return the URL under the cursor at the given GdkEvent, or None.
+    def check_match_at_event(self, event, x: float = None, y: float = None) -> Optional[str]:
+        """Return the URL under the cursor, or None.
 
-        Checks OSC 8 hyperlinks first (set_allow_hyperlink must be True), then
-        falls back to regex-matched plain-text URLs.
+        Tries the GTK3 event-based API first, then the GTK4 coordinate-based
+        API (check_hyperlink_at / check_match_at) using the supplied x, y pixel
+        coordinates.  Callers on GTK4 must pass x and y or link detection will
+        silently return None.
         """
-        # OSC 8 hyperlinks (proper hyperlinks embedded in terminal escape sequences)
+        # GTK3 path: event-based
         if self._has_hyperlink_check_event:
             try:
                 uri = self.vte.hyperlink_check_event(event)
@@ -594,7 +601,6 @@ class VTETerminalBackend:
             except Exception:
                 logger.debug("Failed to check OSC 8 hyperlink at event", exc_info=True)
 
-        # Fallback: regex-matched plain-text URLs
         if self._has_match_check_event:
             try:
                 result = self.vte.match_check_event(event)
@@ -602,6 +608,24 @@ class VTETerminalBackend:
                     return result[0]
             except Exception:
                 logger.debug("Failed to check regex URL match at event", exc_info=True)
+
+        # GTK4 path: coordinate-based
+        if x is not None and y is not None:
+            if self._has_check_hyperlink_at:
+                try:
+                    uri = self.vte.check_hyperlink_at(x, y)
+                    if uri:
+                        return uri
+                except Exception:
+                    logger.debug("Failed to check OSC 8 hyperlink at coords", exc_info=True)
+
+            if self._has_check_match_at:
+                try:
+                    result = self.vte.check_match_at(x, y)
+                    if result and result[0]:
+                        return result[0]
+                except Exception:
+                    logger.debug("Failed to check regex URL match at coords", exc_info=True)
 
         return None
 
