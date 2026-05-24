@@ -2786,6 +2786,10 @@ class TerminalWidget(Gtk.Box):
             # Right-click gesture to open popover
             gesture = Gtk.GestureClick()
             gesture.set_button(0)
+            # CAPTURE phase: fires before VTE's own handlers so we can intercept
+            # link clicks. If no link is found we DENY the sequence so VTE still
+            # handles cursor positioning and text selection normally.
+            gesture.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
             def _on_pressed(gest, n_press, x, y):
                 try:
                     btn = 0
@@ -2795,24 +2799,25 @@ class TerminalWidget(Gtk.Box):
                         pass
                     logger.debug(f"Context menu gesture: button={btn}, x={x}, y={y}")
 
-                    # Ctrl+left-click: open URL under cursor (VTE backend)
+                    # Left click: open URL under cursor if hovering over a link
                     if btn == Gdk.BUTTON_PRIMARY:
                         try:
                             event = gest.get_last_event(None)
                             if event and self.backend and hasattr(self.backend, 'check_match_at_event'):
-                                modifier_state = event.get_modifier_state()
-                                if modifier_state & Gdk.ModifierType.CONTROL_MASK:
-                                    url = self.backend.check_match_at_event(event)
-                                    if url:
-                                        gest.set_state(Gtk.EventSequenceState.CLAIMED)
-                                        Gio.AppInfo.launch_default_for_uri(url, None)
-                                        return
+                                url = self.backend.check_match_at_event(event)
+                                if url:
+                                    gest.set_state(Gtk.EventSequenceState.CLAIMED)
+                                    Gio.AppInfo.launch_default_for_uri(url, None)
+                                    return
                         except Exception as e:
-                            logger.debug(f"Ctrl+click URL open failed: {e}")
+                            logger.debug(f"Left-click URL open failed: {e}")
+                        # No URL — deny so VTE handles cursor/selection normally
+                        gest.set_state(Gtk.EventSequenceState.DENIED)
                         return
 
                     if btn not in (Gdk.BUTTON_SECONDARY, 3):
                         logger.debug(f"Not a right-click button: {btn}")
+                        gest.set_state(Gtk.EventSequenceState.DENIED)
                         return
                     # Stop event propagation to prevent other context menus
                     gest.set_state(Gtk.EventSequenceState.CLAIMED)
