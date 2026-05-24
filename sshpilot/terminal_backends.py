@@ -138,6 +138,9 @@ class VTETerminalBackend:
         self.widget = self.vte
         self._termprops_handler: Optional[int] = None
         self._populate_popup_handler: Optional[int] = None
+        self._hyperlink_handler: Optional[int] = None
+        self._hover_uri: str = ""
+        self._url_tag: int = -1
 
     def initialize(self) -> None:
         self.vte.set_hexpand(True)
@@ -207,6 +210,33 @@ class VTETerminalBackend:
         except Exception:
             logger.debug("Failed to show VTE widget", exc_info=True)
         
+        # Enable OSC 8 hyperlinks and connect hover signal
+        try:
+            if hasattr(self.vte, "set_allow_hyperlink"):
+                self.vte.set_allow_hyperlink(True)
+                self._hyperlink_handler = self.vte.connect(
+                    "hyperlink-hover-uri-changed", self._on_hyperlink_hover
+                )
+        except Exception:
+            logger.debug("Failed to enable OSC 8 hyperlinks", exc_info=True)
+
+        # Add regex match for plain-text URLs so the pointer cursor appears on hover
+        try:
+            url_pattern = (
+                r'(?:https?://|ftp://|file://|ssh://|git://)'
+                r'[^\s<>"\'\)\]\}]*'
+                r'[^\s<>"\'\)\]\}\.,;:!?]'
+            )
+            url_regex = GLib.Regex.new(
+                url_pattern,
+                GLib.RegexCompileFlags.OPTIMIZE | GLib.RegexCompileFlags.CASELESS,
+                GLib.RegexMatchFlags.NOTEMPTY,
+            )
+            self._url_tag = self.vte.match_add_regex(url_regex, 0)
+            self.vte.match_set_cursor_name(self._url_tag, "pointer")
+        except Exception:
+            logger.debug("Failed to add URL regex match", exc_info=True)
+
         # Disable VTE's built-in context menu to prevent duplication with our custom menu
         try:
             if hasattr(self.vte, "connect"):
@@ -231,6 +261,39 @@ class VTETerminalBackend:
                 self.vte.disconnect(self._populate_popup_handler)  # type: ignore[arg-type]
         except Exception:
             pass
+        try:
+            if self._hyperlink_handler is not None:
+                self.vte.disconnect(self._hyperlink_handler)  # type: ignore[arg-type]
+        except Exception:
+            pass
+        try:
+            if self._url_tag >= 0 and hasattr(self.vte, "match_remove"):
+                self.vte.match_remove(self._url_tag)
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------
+    # Hyperlink helpers
+    # ------------------------------------------------------------------
+    def _on_hyperlink_hover(self, terminal: Vte.Terminal, uri: str, bbox: Any) -> None:
+        self._hover_uri = uri or ""
+
+    def get_url_at_event(self, event: Optional[Gdk.Event]) -> Optional[str]:
+        """Return the URL under the given GDK event, or None.
+
+        OSC 8 hover URI is checked first; then the regex match at the event
+        position is used as a fallback for plain-text URLs.
+        """
+        if self._hover_uri:
+            return self._hover_uri
+        if event is not None and hasattr(self.vte, "match_check_event"):
+            try:
+                match, _tag = self.vte.match_check_event(event)
+                if match:
+                    return match
+            except Exception:
+                pass
+        return None
 
     # ------------------------------------------------------------------
     # Lifecycle helpers
