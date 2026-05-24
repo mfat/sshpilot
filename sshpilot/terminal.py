@@ -705,6 +705,13 @@ class TerminalWidget(Gtk.Box):
                 except Exception:
                     pass
             self._hyperlink_hover_handler = None
+        if hasattr(self, '_url_motion_controller') and self._url_motion_controller is not None:
+            if hasattr(self, 'vte') and self.vte is not None:
+                try:
+                    self.vte.remove_controller(self._url_motion_controller)
+                except Exception:
+                    pass
+            self._url_motion_controller = None
         if hasattr(self, '_link_click_gesture') and self._link_click_gesture is not None:
             if hasattr(self, 'vte') and self.vte is not None:
                 try:
@@ -2744,14 +2751,10 @@ class TerminalWidget(Gtk.Box):
     _SAFE_URI_SCHEMES = {"http", "https", "ftp", "file", "mailto"}
 
     def _get_uri_at(self, x, y):
-        """Return URI string at pixel coordinates, or None.
-
-        Both check_hyperlink_at and check_match_at take pixel coordinates;
-        VTE converts to cell coords internally (confirmed in vte.cc source).
-        """
+        """Return URI string at pixel coordinates, or None."""
         if self.vte is None:
             return None
-        # OSC 8 hyperlink (explicit) — pass pixel coords directly
+        # OSC 8 hyperlink (explicit)
         if hasattr(self.vte, "check_hyperlink_at"):
             try:
                 uri = self.vte.check_hyperlink_at(x, y)
@@ -2759,17 +2762,18 @@ class TerminalWidget(Gtk.Box):
                     return uri
             except Exception:
                 pass
-        # Regex-detected plain URL — pass pixel coords directly
+        # Regex-detected plain URL
         if hasattr(self.vte, "check_match_at"):
             try:
                 result = self.vte.check_match_at(x, y)
-                if isinstance(result, tuple) and len(result) == 2:
-                    # VTE returns (match_string, tag_id)
-                    for candidate in result:
-                        if isinstance(candidate, str) and candidate.startswith(
-                            ("http", "ftp", "file", "mailto")
-                        ):
-                            return candidate
+                # GI binding returns a string, (string, tag) tuple, or None
+                match_text = None
+                if isinstance(result, str):
+                    match_text = result
+                elif isinstance(result, (list, tuple)):
+                    match_text = next((c for c in result if isinstance(c, str)), None)
+                if match_text and match_text.startswith(("http", "ftp", "file", "mailto")):
+                    return match_text
             except Exception:
                 pass
         return None
@@ -2808,6 +2812,15 @@ class TerminalWidget(Gtk.Box):
         except Exception:
             logger.debug("Failed to connect hyperlink-hover-uri-changed", exc_info=True)
             self._hyperlink_hover_handler = None
+        # Motion controller: update cursor on every mouse move so regex-matched
+        # URLs show a pointer cursor regardless of VTE's internal match_set_cursor_name.
+        try:
+            self._url_motion_controller = Gtk.EventControllerMotion.new()
+            self._url_motion_controller.connect("motion", self._on_url_motion)
+            self.vte.add_controller(self._url_motion_controller)
+        except Exception:
+            logger.debug("Failed to set up URL motion controller", exc_info=True)
+            self._url_motion_controller = None
         try:
             self._link_click_gesture = Gtk.GestureClick.new()
             self._link_click_gesture.set_button(1)
@@ -2818,11 +2831,20 @@ class TerminalWidget(Gtk.Box):
             self._link_click_gesture = None
 
     def _on_hyperlink_hover_changed(self, terminal):
-        """Change cursor to pointer when hovering a hyperlink."""
+        """Change cursor to pointer when hovering an OSC 8 hyperlink."""
         try:
             uri = terminal.props.hyperlink_hover_uri
             name = "pointer" if uri else "text"
             terminal.set_cursor(Gdk.Cursor.new_from_name(name, None))
+        except Exception:
+            pass
+
+    def _on_url_motion(self, controller, x, y):
+        """Update cursor as the mouse moves — pointer over URLs, text otherwise."""
+        try:
+            uri = self._get_uri_at(x, y)
+            name = "pointer" if uri else "text"
+            self.vte.set_cursor(Gdk.Cursor.new_from_name(name, None))
         except Exception:
             pass
 

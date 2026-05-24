@@ -232,15 +232,12 @@ class VTETerminalBackend:
         try:
             if hasattr(self.vte, "match_add_regex"):
                 url_re = Vte.Regex.new_for_match(
-                    r"(https?|ftp|file)://[^\s<>\"{}|\\^`\[\]]*[^\s<>\"{}|\\^`\[\].,;:!?]",
+                    r"(https?|ftp|file)://[^\s]+",
                     -1,
                     0,
                 )
                 self._url_regex_tag = self.vte.match_add_regex(url_re, 0)
                 logger.debug("Registered plain-text URL regex (tag=%s)", self._url_regex_tag)
-                # Without this, VTE shows no visual feedback (no underline, no cursor change)
-                # for regex-matched URLs. match_set_cursor_name tells VTE what cursor to use
-                # on hover, which also triggers the underline decoration internally.
                 if hasattr(self.vte, "match_set_cursor_name") and self._url_regex_tag >= 0:
                     self.vte.match_set_cursor_name(self._url_regex_tag, "pointer")
                     logger.debug("Set pointer cursor for URL regex matches")
