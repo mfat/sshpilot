@@ -530,13 +530,12 @@ def lookup_passphrase(key_path: str) -> str:
         for candidate in candidates:
             try:
                 passphrase = keyring.get_password('sshPilot', candidate)
-                # keyring can return None or empty string when not found
-                if passphrase:
-                    return passphrase
             except Exception as e:
-                logger.debug(f"Failed to retrieve passphrase from keyring for {candidate}: {e}")
-                # Continue to next candidate instead of breaking
-                continue
+                logger.debug(f"Failed to retrieve passphrase from keyring: {e}")
+                break
+
+            if passphrase:
+                return passphrase
 
     # Fall back to libsecret (Linux)
     schema = get_secret_schema()
