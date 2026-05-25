@@ -205,8 +205,13 @@ def create_internal_file_manager_tab(
     )
     # Remove the controller window from the application so it does not count
     # as a top-level window while embedded in a tab.
+    # GTK 4.18 (GNOME Platform 50) calls gdk_surface_get_display() inside
+    # remove_window() for D-Bus shell integration cleanup.  That path
+    # asserts GDK_IS_SURFACE(surface), which fails when the window was never
+    # realized.  Realizing before removal gives GTK a valid surface to query.
     if app is not None:
         try:
+            controller.realize()
             app.remove_window(controller)
         except Exception:
             pass
