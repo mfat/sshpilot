@@ -2,6 +2,7 @@
 
 ## Table of Contents
 
+- [About](#about)
 - [Features](#features)
 - [Download](#download)
   - [Debian/Ubuntu APT Repository](#--debianubuntu-apt-repository)
@@ -46,7 +47,24 @@
 </table>
 
 
+## About
 
+### What is SSH Pilot?
+It's an SSH connection manager with an integrated terminal and built-in dual-pane SFTP client.
+
+### Why should I use SSH Pilot?
+It makes managing multiple machines easier and more fun. You see all your hosts in one unified interface and can organize them into groups, with color tags.
+
+### What makes it unique?
+SSH Pilot is a GUI on top of your .ssh/config
+It honors your existing SSH configuration. Just fire up the app and you'll be have access to all your machines instantly.
+
+### What else can it do?
+It can do [so many things](#features).
+
+SSH Pilot can generate and copy keys to your servers.
+It stores your secrets (passwords and private key passphrases) securely in the operating system's keychain.
+It can securely use saved secrets to log you in.
 
 
 ## Features
