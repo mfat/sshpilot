@@ -56,6 +56,14 @@
 
 
 
+
+    <release version="4.8.2" date="2026-05-25">
+
+      <description>
+        <p>- Added URL support to terminal</p>
+        <p>- Bug fixes</p>
+      </description>
+    </release>
     <release version="4.8.1" date="2026-05-24">
 
       <description>

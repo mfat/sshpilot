@@ -49,12 +49,11 @@
 
 
 
-
 ## Features
 
 - Tabbed interface
 - Intuitive, minimal UI with keyboard navigation and shortcuts
-- File management using SFTP
+- Built-in SFTP dual-pane file manager
 - Organize servers in groups
 - Option to use the built-in terminal or your favorite one
 - Broadcast commands to all open tabs
@@ -62,7 +61,7 @@
 - SCP support for quickly uploading or downloading files to/from remote servers
 - Keypair generation and copying to remote servers (ssh-copy-id)
 - Support for running remote and local commands upon login
-- Secure storage for credentials via libsecret on Linux; no secret (password or passphrase) is copied to clipboard or saved to plain text
+- Secure storage for credentials
 - Privacy toggle to show/hide ip addresses/hostnames in the main window
 - Light/Dark interface themes
 - Customizable terminal font and color schemes

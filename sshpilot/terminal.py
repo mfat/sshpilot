@@ -2130,7 +2130,77 @@ class TerminalWidget(Gtk.Box):
                         logger.debug("Enabled bold text")
                 except Exception as e:
                     logger.warning(f"Could not enable bold text: {e}")
-                
+
+                # Enable OSC 8 hyperlink support (links emitted by apps via escape sequences)
+                self._hovered_hyperlink_uri = None
+                self._ctrl_pressed = False
+                try:
+                    if hasattr(self.vte, 'set_allow_hyperlink'):
+                        self.vte.set_allow_hyperlink(True)
+                        logger.debug("Enabled OSC 8 hyperlink support")
+                except Exception as e:
+                    logger.warning(f"Could not enable OSC 8 hyperlink support: {e}")
+
+                # Register URL regex so VTE underlines plain-text URLs on hover.
+                # PCRE2_MULTILINE (0x00000400) is required by VTE's match_add_regex.
+                self._url_regex_tag = -1
+                try:
+                    PCRE2_MULTILINE = 0x00000400
+                    _url_pattern = (
+                        r'(?:https?|ftp)://[^\s\t\n\r<>"{}|\\^`\[\]]'
+                        r'*[^\s\t\n\r<>"{}|\\^`\[\].,;:!?]'
+                    )
+                    _url_regex = Vte.Regex.new_for_match(
+                        _url_pattern, len(_url_pattern), PCRE2_MULTILINE
+                    )
+                    self._url_regex_tag = self.vte.match_add_regex(_url_regex, 0)
+                    self.vte.match_set_cursor_name(self._url_regex_tag, "pointer")
+                    logger.debug(f"Registered URL regex, tag={self._url_regex_tag}")
+                except Exception as e:
+                    logger.warning(f"Could not register URL regex: {e}")
+
+                # Motion controller – tracks which URL cell the cursor is over,
+                # and re-grabs focus on enter so VTE's native hover detection
+                # (cursor shape, underline) stays active after other UI elements
+                # have taken focus.
+                try:
+                    _motion_ctrl = Gtk.EventControllerMotion()
+                    _motion_ctrl.connect('motion', self._on_vte_motion)
+                    _motion_ctrl.connect('enter', self._on_vte_pointer_enter)
+                    self.vte.add_controller(_motion_ctrl)
+                    self._url_motion_controller = _motion_ctrl
+                except Exception as e:
+                    logger.warning(f"Could not add URL motion controller: {e}")
+
+                # Nudge VTE to re-evaluate match highlighting whenever new content
+                # arrives (e.g. after a paste).  queue_draw() alone won't update
+                # VTE's internal m_match_hilite, but it ensures the underline
+                # drawn by our manual cursor management below is repainted.
+                try:
+                    self.vte.connect('contents-changed', lambda t: t.queue_draw())
+                except Exception as e:
+                    logger.warning(f"Could not connect contents-changed: {e}")
+
+                # Key controller – tracks Ctrl state for Ctrl+click URL opening.
+                # Reading it from the click event is unreliable; a dedicated key
+                # controller is more robust.
+                try:
+                    _key_ctrl = Gtk.EventControllerKey()
+                    def _on_key_press_url(ctrl, keyval, keycode, state):
+                        if keyval in (Gdk.KEY_Control_L, Gdk.KEY_Control_R):
+                            self._ctrl_pressed = True
+                        return False
+                    def _on_key_release_url(ctrl, keyval, keycode, state):
+                        if keyval in (Gdk.KEY_Control_L, Gdk.KEY_Control_R):
+                            self._ctrl_pressed = False
+                        return False
+                    _key_ctrl.connect('key-pressed', _on_key_press_url)
+                    _key_ctrl.connect('key-released', _on_key_release_url)
+                    self.vte.add_controller(_key_ctrl)
+                    self._url_key_controller = _key_ctrl
+                except Exception as e:
+                    logger.warning(f"Could not add URL key controller: {e}")
+
                 # Show the terminal
                 try:
                     self.vte.show()
@@ -2146,6 +2216,98 @@ class TerminalWidget(Gtk.Box):
         # Install terminal shortcuts and custom context menu
         self._apply_pass_through_mode(self._pass_through_mode)
         self._setup_context_menu()
+
+    def _on_vte_pointer_enter(self, controller, x, y):
+        """Called when the pointer enters the VTE widget area.
+
+        Cursor shape is managed explicitly in _on_vte_motion via set_cursor(),
+        so VTE does not need keyboard focus for hover detection.  VTE's own
+        EventControllerMotion fires for the widget under the pointer regardless
+        of focus — just like GNOME Terminal, which underlines URLs even without
+        focus.
+
+        Previously this called grab_focus() to restore VTE's native cursor-
+        shape mechanism, but that triggered a focus-in event which cleared
+        VTE's internal m_match_hilite hover state, breaking URL underlines
+        after paste.  Now that cursor shape is driven from Python (set_cursor),
+        the grab_focus is not needed here.
+        """
+        pass
+
+    def _on_vte_motion(self, controller, x, y):
+        """Detect URL under the mouse cursor (both OSC 8 links and plain-text regexes)."""
+        if self.vte is None:
+            return
+        try:
+            uri = None
+
+            # OSC 8 hyperlinks – needs a GdkEvent; skip if unavailable
+            event = controller.get_current_event()
+            if event and hasattr(self.vte, 'hyperlink_check_event'):
+                try:
+                    uri = self.vte.hyperlink_check_event(event)
+                except Exception:
+                    pass
+
+            # Plain-text regex matches – use cell coordinates so we don't
+            # depend on get_current_event() being reliable
+            if not uri:
+                try:
+                    char_width = self.vte.get_char_width()
+                    char_height = self.vte.get_char_height()
+                    if char_width > 0 and char_height > 0:
+                        col = int(x / char_width)
+                        row = int(y / char_height)
+                        result = self.vte.match_check(col, row)
+                        if result:
+                            candidate = result[0] if isinstance(result, (tuple, list)) else result
+                            if candidate:
+                                uri = candidate
+                except Exception as e:
+                    logger.debug(f"match_check error: {e}")
+
+            # Only update when we have a definitive answer; never clear via a
+            # missing event (the cursor may still be on the same link)
+            if uri or event:
+                self._hovered_hyperlink_uri = uri or None
+
+            # VTE's internal hover state (underline + cursor shape) is only
+            # updated when VTE processes its own GDK events.  After a paste the
+            # mouse may not have moved, so VTE never runs that path and the
+            # visual feedback is missing even though match_check() works fine.
+            # Manually driving the widget cursor here gives us an independent
+            # fallback that doesn't depend on VTE's internal bookkeeping.
+            try:
+                if uri:
+                    self.vte.set_cursor(Gdk.Cursor.new_from_name("pointer", None))
+                elif event:
+                    self.vte.set_cursor(None)
+            except Exception:
+                pass
+        except Exception as e:
+            logger.debug(f"URL hover error: {e}")
+
+    def _on_open_link_activated(self, action, param):
+        """Open the hyperlink that was under the cursor when the context menu was triggered."""
+        uri = getattr(self, '_context_menu_hyperlink_uri', None) or getattr(self, '_hovered_hyperlink_uri', None)
+        if uri:
+            try:
+                Gio.AppInfo.launch_default_for_uri(uri, None)
+                logger.debug(f"Opened link: {uri}")
+            except Exception as e:
+                logger.warning(f"Failed to open link '{uri}': {e}")
+
+    def _on_copy_link_activated(self, action, param):
+        """Copy the hyperlink to the clipboard."""
+        uri = getattr(self, '_context_menu_hyperlink_uri', None) or getattr(self, '_hovered_hyperlink_uri', None)
+        if uri:
+            try:
+                display = Gdk.Display.get_default()
+                clipboard = display.get_clipboard()
+                clipboard.set(uri)
+                logger.debug(f"Copied link to clipboard: {uri}")
+            except Exception as e:
+                logger.warning(f"Failed to copy link '{uri}': {e}")
 
     def _get_supported_encodings(self):
         if self._supported_encodings is not None:
@@ -2735,45 +2897,72 @@ class TerminalWidget(Gtk.Box):
             act_selall = Gio.SimpleAction.new("select_all", None)
             act_selall.connect("activate", lambda a, p: self.select_all())
             self._menu_actions.add_action(act_selall)
-            
+
+            # Open Link / Copy Link actions
+            act_open_link = Gio.SimpleAction.new("open_link", None)
+            act_open_link.connect("activate", self._on_open_link_activated)
+            self._menu_actions.add_action(act_open_link)
+            self._context_menu_hyperlink_uri = None
+
+            act_copy_link = Gio.SimpleAction.new("copy_link", None)
+            act_copy_link.connect("activate", self._on_copy_link_activated)
+            self._menu_actions.add_action(act_copy_link)
+
             # Add zoom actions
             act_zoom_in = Gio.SimpleAction.new("zoom_in", None)
             act_zoom_in.connect("activate", lambda a, p: self.zoom_in())
             self._menu_actions.add_action(act_zoom_in)
-            
+
             act_zoom_out = Gio.SimpleAction.new("zoom_out", None)
             act_zoom_out.connect("activate", lambda a, p: self.zoom_out())
             self._menu_actions.add_action(act_zoom_out)
-            
+
             act_reset_zoom = Gio.SimpleAction.new("reset_zoom", None)
             act_reset_zoom.connect("activate", lambda a, p: self.reset_zoom())
             self._menu_actions.add_action(act_reset_zoom)
-            
+
+            act_search = Gio.SimpleAction.new("search", None)
+            act_search.connect("activate", lambda a, p: self._show_search_overlay(select_all=True))
+            self._menu_actions.add_action(act_search)
+
             self.insert_action_group('term', self._menu_actions)
 
             # Menu model with keyboard shortcuts
             self._menu_model = Gio.Menu()
+            self._link_section_in_menu = False
+
+            # Link section is built once and inserted/removed dynamically so
+            # "Open Link" and "Copy Link" are completely hidden when no URL is
+            # under the cursor.  PopoverMenu tracks GMenuModel::items-changed
+            # and rebuilds before popup() is called.
+            self._link_menu = Gio.Menu()
+            self._link_menu.append(_("Open Link"), "term.open_link")
+            self._link_menu.append(_("Copy Link"), "term.copy_link")
 
             if is_macos():
                 self._menu_model.append(_("Copy\t⌘C"), "term.copy")
                 self._menu_model.append(_("Paste\t⌘V"), "term.paste")
                 self._menu_model.append(_("Select All\t⌘A"), "term.select_all")
-                # Create a separator section for zoom options
                 zoom_section = Gio.Menu()
                 zoom_section.append(_("Zoom In\t⌘="), "term.zoom_in")
                 zoom_section.append(_("Zoom Out\t⌘-"), "term.zoom_out")
                 zoom_section.append(_("Reset Zoom\t⌘0"), "term.reset_zoom")
                 self._menu_model.append_section(None, zoom_section)
+                search_section = Gio.Menu()
+                search_section.append(_("Search\t⌘F"), "term.search")
+                self._menu_model.append_section(None, search_section)
             else:
                 self._menu_model.append(_("Copy\tCtrl+Shift+C"), "term.copy")
                 self._menu_model.append(_("Paste\tCtrl+Shift+V"), "term.paste")
                 self._menu_model.append(_("Select All\tCtrl+Shift+A"), "term.select_all")
-                # Create a separator section for zoom options
                 zoom_section = Gio.Menu()
                 zoom_section.append(_("Zoom In\tCtrl++"), "term.zoom_in")
                 zoom_section.append(_("Zoom Out\tCtrl+-"), "term.zoom_out")
                 zoom_section.append(_("Reset Zoom\tCtrl+0"), "term.reset_zoom")
                 self._menu_model.append_section(None, zoom_section)
+                search_section = Gio.Menu()
+                search_section.append(_("Search\tCtrl+Shift+F"), "term.search")
+                self._menu_model.append_section(None, search_section)
 
             # Popover - set parent to the terminal widget
             self._menu_popover = Gtk.PopoverMenu.new_from_model(self._menu_model)
@@ -2783,7 +2972,7 @@ class TerminalWidget(Gtk.Box):
             if parent_widget:
                 self._menu_popover.set_parent(parent_widget)
 
-            # Right-click gesture to open popover
+            # Right-click gesture to open the context menu (BUBBLE phase is fine for right-click)
             gesture = Gtk.GestureClick()
             gesture.set_button(0)
             def _on_pressed(gest, n_press, x, y):
@@ -2803,6 +2992,22 @@ class TerminalWidget(Gtk.Box):
                     try:
                         if self.backend:
                             self.backend.grab_focus()
+                    except Exception:
+                        pass
+                    # Show or hide the link section based on whether a URL is
+                    # under the cursor.  Insert/remove from the live model so
+                    # the items are completely absent (not just greyed out).
+                    try:
+                        uri = getattr(self, '_hovered_hyperlink_uri', None)
+                        self._context_menu_hyperlink_uri = uri
+                        has_link = bool(uri)
+                        in_menu = getattr(self, '_link_section_in_menu', False)
+                        if has_link and not in_menu:
+                            self._menu_model.insert_section(0, None, self._link_menu)
+                            self._link_section_in_menu = True
+                        elif not has_link and in_menu:
+                            self._menu_model.remove(0)
+                            self._link_section_in_menu = False
                     except Exception:
                         pass
                     # Position popover near click
@@ -2832,6 +3037,57 @@ class TerminalWidget(Gtk.Box):
             elif self.terminal_widget is not None:
                 self.terminal_widget.add_controller(gesture)
                 logger.debug("Added context menu gesture to terminal widget")
+
+            # CAPTURE-phase left-click gesture for Ctrl+click URL opening.
+            # Must use CAPTURE so it runs before VTE's text-selection handler; we only
+            # claim the event when Ctrl is held AND a URL is under the cursor.
+            if self.vte is not None:
+                url_gesture = Gtk.GestureClick()
+                url_gesture.set_button(Gdk.BUTTON_PRIMARY)
+                url_gesture.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+                def _on_url_click(gest, n_press, x, y):
+                    try:
+                        uri = None
+
+                        # Primary: match_check_event mirrors the code sample pattern
+                        ev = gest.get_current_event()
+                        if ev and self.vte is not None:
+                            try:
+                                result = self.vte.match_check_event(ev)
+                                if result:
+                                    candidate = result[0] if isinstance(result, (tuple, list)) else result
+                                    if candidate:
+                                        uri = candidate
+                            except Exception:
+                                pass
+
+                        # Fallback: cell-coordinate lookup
+                        if not uri and self.vte is not None:
+                            try:
+                                cw = self.vte.get_char_width()
+                                ch = self.vte.get_char_height()
+                                if cw > 0 and ch > 0:
+                                    result = self.vte.match_check(int(x / cw), int(y / ch))
+                                    if result:
+                                        candidate = result[0] if isinstance(result, (tuple, list)) else result
+                                        if candidate:
+                                            uri = candidate
+                            except Exception:
+                                pass
+
+                        if not uri:
+                            return  # no URL here – let VTE handle the click normally
+
+                        gest.set_state(Gtk.EventSequenceState.CLAIMED)
+                        Gio.AppInfo.launch_default_for_uri(uri, None)
+                        logger.debug(f"Opened URL via click: {uri}")
+                    except Exception as e:
+                        logger.warning(f"URL click failed: {e}")
+                url_gesture.connect('pressed', _on_url_click)
+                self.vte.add_controller(url_gesture)
+                self._url_click_gesture = url_gesture
+                logger.debug("Added CAPTURE-phase Ctrl+click URL gesture to VTE widget")
+
             logger.debug("Terminal context menu setup completed successfully")
         except Exception as e:
             logger.error(f"Context menu setup failed: {e}")
