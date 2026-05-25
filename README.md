@@ -60,7 +60,8 @@ SSH Pilot is a GUI on top of your .ssh/config
 It honors your existing SSH configuration. Just fire up the app and you'll be have access to all your machines instantly.
 
 ### What else can it do?
-It can do [so many things](#features)
+It can do [so many things](#features).
+
 SSH Pilot can generate and copy keys to your servers.
 It stores your secrets (passwords and private key passphrases) securely in the operating system's keychain.
 It can securely use saved secrets to log you in.
