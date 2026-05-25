@@ -74,6 +74,10 @@ if not load_resources():
 from .icon_utils import patch_gtk_image
 patch_gtk_image()
 
+# Replace removed Adw.MessageDialog with Adw.AlertDialog-based compat shim.
+# Must run before any UI module that references Adw.MessageDialog is imported.
+from . import _adw_compat  # noqa: F401
+
 from .window import MainWindow
 from .platform_utils import is_macos, get_data_dir
 from .preferences import should_hide_file_manager_options
