@@ -5803,64 +5803,15 @@ class FileManagerWindow(Adw.Window):
         nickname = getattr(connection, 'nickname', None) if connection else None
         display_name = nickname or f"{user}@{host}"
         
-        # Get the correct parent window (handles both embedded tab and separate window cases)
-        # Adw.MessageDialog.transient_for requires a Gtk.Window, so we need to get the root window
-        dialog_parent_window: Optional[Gtk.Window] = None
-        try:
-            if self._embedded_parent is not None:
-                # If embedded as a tab, get the root window from the parent widget
-                root_window = self._embedded_parent.get_root()
-                if root_window is not None and isinstance(root_window, Gtk.Window):
-                    dialog_parent_window = root_window
-            else:
-                # If standalone window, try to get transient parent if any
-                transient = self.get_transient_for()
-                if transient is not None:
-                    dialog_parent_window = transient
-            
-            # Fallback: try to get application's active window
-            if dialog_parent_window is None:
-                try:
-                    app = self.get_application()
-                    if app is not None:
-                        active_window = app.get_active_window()
-                        if active_window is not None and isinstance(active_window, Gtk.Window):
-                            dialog_parent_window = active_window
-                except Exception:
-                    pass
-            
-            # Final fallback: use self if it's a window
-            if dialog_parent_window is None:
-                try:
-                    self_root = self.get_root()
-                    if self_root is not None and isinstance(self_root, Gtk.Window):
-                        dialog_parent_window = self_root
-                    else:
-                        dialog_parent_window = self
-                except Exception:
-                    dialog_parent_window = self
-        except Exception as e:
-            logger.error(f"Error determining password dialog parent: {e}", exc_info=True)
-            # Final fallback to self
-            dialog_parent_window = self
-        
-        # Log the parent window for debugging
+        # Adw.AlertDialog.present() accepts any Gtk.Widget as parent
+        dialog_parent_window = self
+        if self._embedded_parent is not None:
+            dialog_parent_window = self._embedded_parent
+
         logger.debug(f"Password dialog parent window: {dialog_parent_window}, type: {type(dialog_parent_window)}, embedded: {self._embedded_parent is not None}")
-        
-        # Create password dialog
-        dialog = Adw.MessageDialog(
-            transient_for=dialog_parent_window,
-            modal=True,
-            heading="Password Required",
-            body=f"Please enter your password for {display_name}:",
-        )
-        
-        # Ensure transient_for is set (in case it wasn't set in constructor)
-        if dialog_parent_window is not None:
-            try:
-                dialog.set_transient_for(dialog_parent_window)
-            except Exception:
-                pass
+
+        # Create password dialog using Adw.AlertDialog (Adw.MessageDialog is deprecated in libadwaita 1.5+)
+        dialog = Adw.AlertDialog.new("Password Required", f"Please enter your password for {display_name}:")
         
         # Create a container box for entry and checkbox
         content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
@@ -5888,42 +5839,12 @@ class FileManagerWindow(Adw.Window):
         dialog.set_default_response("connect")
         dialog.set_close_response("cancel")
         
-        # Handle Enter key - try multiple approaches for maximum compatibility
-        def on_entry_activate(_entry):
-            """Handle Enter key press in password entry"""
-            dialog.emit("response", "connect")
-        
-        # Try to set activates-default property (works for Gtk.Entry)
-        try:
-            password_entry.set_property("activates-default", True)
-        except (TypeError, AttributeError):
-            pass
-        
-        # Also connect to activate signal as fallback
-        try:
-            password_entry.connect("activate", on_entry_activate)
-        except (TypeError, AttributeError):
-            # Fallback to key controller if activate signal is not available
-            key_controller = Gtk.EventControllerKey()
-            def on_key_pressed(_controller, keyval, _keycode, _state):
-                if keyval == Gdk.KEY_Return or keyval == Gdk.KEY_KP_Enter:
-                    dialog.emit("response", "connect")
-                    return True
-                return False
-            key_controller.connect("key-pressed", on_key_pressed)
-            password_entry.add_controller(key_controller)
-        
-        # Focus password entry when dialog is shown
-        def on_dialog_shown(_dialog):
-            password_entry.grab_focus()
-        dialog.connect("notify::visible", lambda d, _: on_dialog_shown(d) if d.get_visible() else None)
-        
         def on_response(_dialog, response: str) -> None:
             if response == "connect":
                 entered_password = password_entry.get_text()
                 if entered_password:
                     password_result[0] = entered_password
-                    
+
                     # Store password if checkbox is checked
                     if store_checkbox.get_active() and hasattr(self, '_connection_manager') and self._connection_manager:
                         try:
@@ -5934,11 +5855,33 @@ class FileManagerWindow(Adw.Window):
                     password_result[0] = None  # Empty password treated as cancel
             else:
                 password_result[0] = None  # User cancelled
-            dialog.destroy()
+            # Use force_close() to avoid re-emitting the response signal (close() would re-trigger with close-response)
+            _dialog.force_close()
             main_loop.quit()
-        
+
+        # Handle Enter key - call response handler directly to avoid signal emission reentrancy
+        def on_entry_activate(_entry):
+            on_response(dialog, "connect")
+
+        try:
+            password_entry.connect("activate", on_entry_activate)
+        except (TypeError, AttributeError):
+            key_controller = Gtk.EventControllerKey()
+            def on_key_pressed(_controller, keyval, _keycode, _state):
+                if keyval == Gdk.KEY_Return or keyval == Gdk.KEY_KP_Enter:
+                    on_response(dialog, "connect")
+                    return True
+                return False
+            key_controller.connect("key-pressed", on_key_pressed)
+            password_entry.add_controller(key_controller)
+
+        # Focus password entry when dialog is shown
+        def on_dialog_shown(_dialog):
+            password_entry.grab_focus()
+        dialog.connect("notify::visible", lambda d, _: on_dialog_shown(d) if d.get_visible() else None)
+
         dialog.connect("response", on_response)
-        dialog.present()
+        dialog.present(dialog_parent_window)
         
         # Run main loop to wait for dialog response
         # This blocks until the dialog is closed
@@ -5983,64 +5926,15 @@ class FileManagerWindow(Adw.Window):
                 nickname = getattr(self._connection, 'nickname', None) if self._connection else None
                 display_name = nickname or f"{username}@{host}"
                 
-                # Get the correct parent window (handles both embedded tab and separate window cases)
-                # Adw.MessageDialog.transient_for requires a Gtk.Window, so we need to get the root window
-                dialog_parent_window: Optional[Gtk.Window] = None
-                try:
-                    if self._embedded_parent is not None:
-                        # If embedded as a tab, get the root window from the parent widget
-                        root_window = self._embedded_parent.get_root()
-                        if root_window is not None and isinstance(root_window, Gtk.Window):
-                            dialog_parent_window = root_window
-                    else:
-                        # If standalone window, try to get transient parent if any
-                        transient = self.get_transient_for()
-                        if transient is not None:
-                            dialog_parent_window = transient
-                    
-                    # Fallback: try to get application's active window
-                    if dialog_parent_window is None:
-                        try:
-                            app = self.get_application()
-                            if app is not None:
-                                active_window = app.get_active_window()
-                                if active_window is not None and isinstance(active_window, Gtk.Window):
-                                    dialog_parent_window = active_window
-                        except Exception:
-                            pass
-                    
-                    # Final fallback: use self if it's a window
-                    if dialog_parent_window is None:
-                        try:
-                            self_root = self.get_root()
-                            if self_root is not None and isinstance(self_root, Gtk.Window):
-                                dialog_parent_window = self_root
-                            else:
-                                dialog_parent_window = self
-                        except Exception:
-                            dialog_parent_window = self
-                except Exception as e:
-                    logger.error(f"Error determining password dialog parent: {e}", exc_info=True)
-                    # Final fallback to self
-                    dialog_parent_window = self
-                
-                # Log the parent window for debugging
+                # Adw.AlertDialog.present() accepts any Gtk.Widget as parent
+                dialog_parent_window = self
+                if self._embedded_parent is not None:
+                    dialog_parent_window = self._embedded_parent
+
                 logger.debug(f"Password dialog parent window: {dialog_parent_window}, type: {type(dialog_parent_window)}, embedded: {self._embedded_parent is not None}")
-                
-                # Create password dialog
-                dialog = Adw.MessageDialog(
-                    transient_for=dialog_parent_window,
-                    modal=True,
-                    heading="Password Required",
-                    body=f"Authentication failed for {display_name}.\n\nPlease enter your password:",
-                )
-                
-                # Ensure transient_for is set (in case it wasn't set in constructor)
-                if dialog_parent_window is not None:
-                    try:
-                        dialog.set_transient_for(dialog_parent_window)
-                    except Exception:
-                        pass
+
+                # Create password dialog using Adw.AlertDialog (Adw.MessageDialog is deprecated in libadwaita 1.5+)
+                dialog = Adw.AlertDialog.new("Password Required", f"Authentication failed for {display_name}.\n\nPlease enter your password:")
                 
                 # Create a container box for entry and checkbox
                 content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
@@ -6068,46 +5962,15 @@ class FileManagerWindow(Adw.Window):
                 dialog.set_default_response("connect")
                 dialog.set_close_response("cancel")
                 
-                # Handle Enter key - try multiple approaches for maximum compatibility
-                def on_entry_activate(_entry):
-                    """Handle Enter key press in password entry"""
-                    dialog.emit("response", "connect")
-                
-                # Try to set activates-default property (works for Gtk.Entry)
-                try:
-                    password_entry.set_property("activates-default", True)
-                except (TypeError, AttributeError):
-                    pass
-                
-                # Also connect to activate signal as fallback
-                try:
-                    password_entry.connect("activate", on_entry_activate)
-                except (TypeError, AttributeError):
-                    # Fallback to key controller if activate signal is not available
-                    key_controller = Gtk.EventControllerKey()
-                    def on_key_pressed(_controller, keyval, _keycode, _state):
-                        if keyval == Gdk.KEY_Return or keyval == Gdk.KEY_KP_Enter:
-                            dialog.emit("response", "connect")
-                            return True
-                        return False
-                    key_controller.connect("key-pressed", on_key_pressed)
-                    password_entry.add_controller(key_controller)
-                
-                # Focus password entry when dialog is shown
-                def on_dialog_shown(_dialog):
-                    password_entry.grab_focus()
-                dialog.connect("notify::visible", lambda d, _: on_dialog_shown(d) if d.get_visible() else None)
-                
                 def on_response(_dialog, response: str) -> None:
-                    # Get password and checkbox state before destroying dialog
+                    # Get password and checkbox state before closing dialog
                     entered_password = password_entry.get_text() if response == "connect" else None
                     should_store = store_checkbox.get_active() if response == "connect" else False
-                    
-                    # Destroy dialog first
-                    dialog.destroy()
-                    
+
+                    # Use force_close() to avoid re-emitting the response signal (close() would re-trigger with close-response)
+                    _dialog.force_close()
+
                     # Reset the flag when dialog is closed so it can be shown again if authentication fails
-                    # This allows the dialog to be shown again if the password is wrong
                     self._password_dialog_shown = False
                     
                     # Use GLib.idle_add to ensure UI operations happen on main thread
@@ -6154,8 +6017,29 @@ class FileManagerWindow(Adw.Window):
                     
                     GLib.idle_add(handle_response)
                 
+                # Handle Enter key - call response handler directly to avoid signal emission reentrancy
+                def on_entry_activate(_entry):
+                    on_response(dialog, "connect")
+
+                try:
+                    password_entry.connect("activate", on_entry_activate)
+                except (TypeError, AttributeError):
+                    key_controller = Gtk.EventControllerKey()
+                    def on_key_pressed(_controller, keyval, _keycode, _state):
+                        if keyval == Gdk.KEY_Return or keyval == Gdk.KEY_KP_Enter:
+                            on_response(dialog, "connect")
+                            return True
+                        return False
+                    key_controller.connect("key-pressed", on_key_pressed)
+                    password_entry.add_controller(key_controller)
+
+                # Focus password entry when dialog is shown
+                def on_dialog_shown(_dialog):
+                    password_entry.grab_focus()
+                dialog.connect("notify::visible", lambda d, _: on_dialog_shown(d) if d.get_visible() else None)
+
                 dialog.connect("response", on_response)
-                dialog.present()
+                dialog.present(dialog_parent_window)
                 logger.debug("Built-in file manager: Password dialog presented")
                 
                 return False  # Don't repeat
