@@ -1,26 +1,7 @@
-**SSH Pilot** is a user-friendly, modern and lightweight SSH connection manager for Linux and macOS, with an integrated terminal and a file manager. It's an alternative to Termius, Putty, Mobaxterm and similar apps.
+**SSH Pilot** is a user-friendly, modern and lightweight SSH connection manager for Linux and macOS, with an integrated terminal and SFTP file manager. It's an alternative to Termius, Putty, Mobaxterm and similar apps.
 
-## Table of Contents
 
-- [About](#about)
-- [Features](#features)
-- [Download](#download)
-  - [Debian/Ubuntu APT Repository](#--debianubuntu-apt-repository)
-  - [Debian/Ubuntu (Manual Install)](#--debianubuntu-manual-install)
-  - [Fedora/RHEL/openSUSE COPR Repository](#-fedorarhelopensuse-copr-repository)
-  - [Fedora/RHEL/openSUSE (Manual Install)](#-fedorarhelopensuse-manual-install)
-  - [Flatpak](#-flatpak)
-  - [Arch Linux](#-arch-linux)
-  - [Homebrew (macOS + Linux)](#-homebrew-macos--linux)
-  - [macOS](#-macos-aarch64)
-- [Minimum Requirements](#minimum-requirements)
-- [Run from Source](#-run-from-source)
-- [Runtime Dependencies](#runtime-dependencies)
-- [Documentation](#documentation)
-- [Telegram Channel](#telegram-channel)
-- [Third-Party Libraries](#third-party-libraries)
-- [Special Thanks](#special-thanks)
-- [Support Development](#support-development)
+
 
 <img width="1322" height="922" alt="Screenshot From 2025-10-07 10-57-55" src="https://github.com/user-attachments/assets/af8ce903-2704-4740-8e39-547765ddd490" />
 
@@ -46,7 +27,27 @@
   </tr>
 </table>
 
+- [About](#about)
+- [Features](#features)
+- [Download](#download)
+  - [Debian/Ubuntu APT Repository](#--debianubuntu-apt-repository)
+  - [Debian/Ubuntu (Manual Install)](#--debianubuntu-manual-install)
+  - [Fedora/RHEL/openSUSE COPR Repository](#-fedorarhelopensuse-copr-repository)
+  - [Fedora/RHEL/openSUSE (Manual Install)](#-fedorarhelopensuse-manual-install)
+  - [Flatpak](#-flatpak)
+  - [Arch Linux](#-arch-linux)
+  - [Homebrew (macOS + Linux)](#-homebrew-macos--linux)
+  - [macOS](#-macos-aarch64)
+- [Minimum Requirements](#minimum-requirements)
+- [Run from Source](#-run-from-source)
+- [Runtime Dependencies](#runtime-dependencies)
+- [Documentation](#documentation)
+- [Telegram Channel](#telegram-channel)
+- [Third-Party Libraries](#third-party-libraries)
+- [Special Thanks](#special-thanks)
+- [Support Development](#support-development)
 
+  
 ## About
 
 ### What is SSH Pilot?
