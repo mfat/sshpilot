@@ -57,6 +57,13 @@
 
 
 
+
+    <release version="4.8.3" date="2026-05-25">
+
+      <description>
+        <p>- Updated flatpak to GNOME Platform 50</p>
+      </description>
+    </release>
     <release version="4.8.2" date="2026-05-25">
 
       <description>

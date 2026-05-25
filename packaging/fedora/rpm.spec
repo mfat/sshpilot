@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:4.8.2}
+Version:        %{?version}%{!?version:4.8.3}
 Release:        1%{?dist}
 Summary:        Manage your servers with ease
 
@@ -92,6 +92,9 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/io.github.mfat.sshpil
 %{_datadir}/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg
 
 %changelog
+* Mon May 25 2026 mFat <newmfat@gmail.com> - 4.8.3
+- - Updated flatpak to GNOME Platform 50
+
 * Mon May 25 2026 mFat <newmfat@gmail.com> - 4.8.2
 - - Added URL support to terminal
 - - Bug fixes
