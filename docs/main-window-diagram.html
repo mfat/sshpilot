@@ -1,0 +1,711 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>SSH Pilot – Main Window & Widget Diagram</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', system-ui, sans-serif; background: #1e1e2e; color: #cdd6f4; padding: 24px; }
+  h1 { font-size: 1.4rem; color: #89b4fa; margin-bottom: 6px; }
+  h2 { font-size: 1rem; color: #89dceb; margin: 24px 0 10px; letter-spacing: 0.05em; text-transform: uppercase; }
+  .subtitle { font-size: 0.8rem; color: #6c7086; margin-bottom: 28px; }
+
+  /* ─── Window mockup ─── */
+  .window-mockup {
+    border: 2px solid #45475a;
+    border-radius: 12px;
+    overflow: hidden;
+    max-width: 960px;
+    box-shadow: 0 8px 32px #00000080;
+    margin-bottom: 40px;
+  }
+  .titlebar {
+    background: #181825;
+    padding: 10px 14px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border-bottom: 1px solid #313244;
+  }
+  .wm-btn { width: 12px; height: 12px; border-radius: 50%; }
+  .wm-close  { background: #f38ba8; }
+  .wm-min    { background: #f9e2af; }
+  .wm-max    { background: #a6e3a1; }
+  .titlebar-title { flex: 1; text-align: center; font-size: 0.78rem; color: #6c7086; }
+  .titlebar-actions { display: flex; gap: 4px; }
+  .tb-btn {
+    font-size: 0.65rem; background: #313244; border: 1px solid #45475a;
+    color: #cdd6f4; padding: 2px 7px; border-radius: 4px; cursor: default;
+  }
+
+  .window-body { display: flex; height: 420px; }
+
+  /* Sidebar */
+  .sidebar {
+    width: 220px; min-width: 220px;
+    background: #181825;
+    border-right: 1px solid #313244;
+    display: flex; flex-direction: column;
+  }
+  .sidebar-header {
+    background: #1e1e2e;
+    padding: 8px 10px;
+    display: flex; align-items: center; gap: 4px;
+    border-bottom: 1px solid #313244;
+    font-size: 0.7rem; color: #7f849c;
+  }
+  .sidebar-header .spacer { flex: 1; }
+  .icon-btn {
+    width: 22px; height: 22px; border-radius: 5px;
+    background: transparent; border: 1px solid #45475a;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.65rem; color: #9399b2; cursor: default;
+  }
+  .search-bar {
+    margin: 6px 8px; background: #313244; border: 1px solid #45475a;
+    border-radius: 6px; padding: 4px 8px; font-size: 0.7rem; color: #6c7086;
+  }
+  .conn-list { flex: 1; overflow: hidden; padding: 4px 0; }
+  .group-row {
+    padding: 4px 10px; font-size: 0.7rem; color: #89b4fa;
+    display: flex; align-items: center; gap: 6px;
+    cursor: default; border-radius: 6px; margin: 1px 4px;
+    background: #1e1e2e;
+  }
+  .group-row .badge {
+    margin-left: auto; background: #313244; border-radius: 10px;
+    padding: 0 5px; font-size: 0.6rem; color: #6c7086;
+  }
+  .conn-row {
+    padding: 5px 10px 5px 22px; font-size: 0.68rem; color: #cdd6f4;
+    display: flex; align-items: center; gap: 6px;
+    cursor: default; border-radius: 6px; margin: 1px 4px;
+  }
+  .conn-row.active { background: #313244; }
+  .conn-row .host { font-size: 0.6rem; color: #6c7086; margin-left: auto; }
+  .conn-row .status-dot {
+    width: 6px; height: 6px; border-radius: 50%; background: #a6e3a1;
+  }
+  .sidebar-toolbar {
+    padding: 6px 8px;
+    border-top: 1px solid #313244;
+    display: flex; gap: 4px;
+    background: #181825;
+  }
+  .tb-icon {
+    flex: 1; height: 26px; border-radius: 5px;
+    background: #313244; border: 1px solid #45475a;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.6rem; color: #9399b2; cursor: default;
+  }
+
+  /* Content area */
+  .content-area {
+    flex: 1; background: #1e1e2e;
+    display: flex; flex-direction: column;
+  }
+  .tab-bar {
+    background: #181825;
+    border-bottom: 1px solid #313244;
+    display: flex; align-items: center; gap: 2px;
+    padding: 6px 8px 0;
+    min-height: 38px;
+  }
+  .tab {
+    padding: 5px 12px; border-radius: 6px 6px 0 0;
+    font-size: 0.7rem; background: #313244; border: 1px solid #45475a;
+    border-bottom: none; cursor: default;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .tab.active-tab { background: #1e1e2e; border-bottom-color: #1e1e2e; }
+  .tab-close { font-size: 0.6rem; color: #6c7086; }
+  .tab-new { margin-left: 4px; padding: 4px 8px; background: transparent;
+    border: 1px dashed #45475a; border-radius: 5px; font-size: 0.7rem;
+    color: #6c7086; cursor: default; }
+
+  .terminal-area {
+    flex: 1; background: #11111b;
+    padding: 10px 12px;
+    font-family: 'Cascadia Code', 'Fira Code', monospace;
+    font-size: 0.72rem; color: #a6e3a1;
+    position: relative; overflow: hidden;
+  }
+  .terminal-area .prompt { color: #89b4fa; }
+  .terminal-area .dim { color: #585b70; }
+  .search-overlay {
+    position: absolute; top: 8px; right: 10px;
+    background: #313244; border: 1px solid #45475a;
+    border-radius: 8px; padding: 5px 10px;
+    font-size: 0.68rem; display: flex; gap: 6px; align-items: center;
+    color: #cdd6f4;
+  }
+  .update-banner {
+    background: #313244; border-bottom: 1px solid #45475a;
+    padding: 5px 12px; font-size: 0.7rem; color: #f9e2af;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .banner-dismiss {
+    margin-left: auto; font-size: 0.6rem; background: #45475a;
+    border-radius: 4px; padding: 1px 6px; cursor: default;
+  }
+
+  /* ─── Widget tree ─── */
+  .tree-container {
+    max-width: 960px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    margin-bottom: 40px;
+  }
+  .tree-panel {
+    background: #181825;
+    border: 1px solid #313244;
+    border-radius: 10px;
+    padding: 16px;
+  }
+  .tree-panel h3 {
+    font-size: 0.78rem; color: #89b4fa; margin-bottom: 12px;
+    text-transform: uppercase; letter-spacing: 0.05em;
+  }
+  .tree { font-family: 'Cascadia Code', 'Courier New', monospace; font-size: 0.72rem; line-height: 1.7; }
+  .tree ul { list-style: none; padding-left: 18px; }
+  .tree > ul { padding-left: 0; }
+  .tree li::before { content: "├─ "; color: #45475a; }
+  .tree li:last-child::before { content: "└─ "; color: #45475a; }
+  .c-window   { color: #f38ba8; font-weight: bold; }
+  .c-layout   { color: #89b4fa; }
+  .c-widget   { color: #a6e3a1; }
+  .c-dialog   { color: #f9e2af; }
+  .c-overlay  { color: #cba6f7; }
+  .c-list     { color: #89dceb; }
+  .c-row      { color: #fab387; }
+  .c-terminal { color: #a6e3a1; }
+  .c-note     { color: #6c7086; font-style: italic; }
+
+  .tag { display: inline-block; font-size: 0.58rem; padding: 1px 5px;
+    border-radius: 4px; margin-left: 5px; vertical-align: middle; }
+  .tag-adw   { background: #313244; color: #89b4fa; }
+  .tag-gtk   { background: #313244; color: #a6e3a1; }
+  .tag-vte   { background: #313244; color: #f9e2af; }
+
+  /* ─── Data flow / connections diagram ─── */
+  .flow-container {
+    max-width: 960px;
+    background: #181825;
+    border: 1px solid #313244;
+    border-radius: 10px;
+    padding: 20px;
+    margin-bottom: 40px;
+  }
+  .flow-row {
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 10px; flex-wrap: wrap;
+  }
+  .flow-box {
+    background: #313244; border: 1px solid #45475a;
+    border-radius: 7px; padding: 6px 12px;
+    font-size: 0.72rem; text-align: center;
+  }
+  .flow-box.primary   { border-color: #89b4fa; color: #89b4fa; }
+  .flow-box.secondary { border-color: #a6e3a1; color: #a6e3a1; }
+  .flow-box.tertiary  { border-color: #f9e2af; color: #f9e2af; }
+  .flow-box.purple    { border-color: #cba6f7; color: #cba6f7; }
+  .arrow { color: #45475a; font-size: 1rem; }
+  .flow-label { font-size: 0.65rem; color: #6c7086; margin-left: 4px; }
+
+  /* Legend */
+  .legend {
+    display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 28px;
+    font-size: 0.7rem;
+  }
+  .legend-item { display: flex; align-items: center; gap: 6px; }
+  .legend-dot { width: 10px; height: 10px; border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<h1>SSH Pilot — Main Window &amp; Widget Diagram</h1>
+<p class="subtitle">GTK4 / Libadwaita widget hierarchy · sshpilot/window.py · sshpilot/sidebar.py</p>
+
+<!-- ═══════════════════ VISUAL MOCKUP ═══════════════════ -->
+<h2>Visual Layout</h2>
+<div class="window-mockup">
+
+  <!-- Title bar -->
+  <div class="titlebar">
+    <div class="wm-btn wm-close"></div>
+    <div class="wm-btn wm-min"></div>
+    <div class="wm-btn wm-max"></div>
+    <div class="titlebar-title">SSH Pilot</div>
+    <div class="titlebar-actions">
+      <div class="tb-btn">⊕ New</div>
+      <div class="tb-btn">⌕</div>
+      <div class="tb-btn">☰</div>
+    </div>
+  </div>
+
+  <!-- Update banner (hidden by default, shown on update) -->
+  <div class="update-banner">
+    ⬆ A new version is available — v2.1.0
+    <span class="banner-dismiss">Dismiss</span>
+  </div>
+
+  <div class="window-body">
+
+    <!-- ── Sidebar ── -->
+    <div class="sidebar">
+      <div class="sidebar-header">
+        <span>Connections</span>
+        <div class="spacer"></div>
+        <div class="icon-btn">+</div>
+        <div class="icon-btn">⌕</div>
+        <div class="icon-btn">↕</div>
+        <div class="icon-btn">⋮</div>
+      </div>
+
+      <div class="search-bar">🔍 Search connections…</div>
+
+      <div class="conn-list">
+        <div class="group-row">📁 Production <span class="badge">3</span></div>
+        <div class="conn-row active">
+          🖥 web-01
+          <span class="status-dot"></span>
+          <span class="host">ubuntu@10.0.0.1</span>
+        </div>
+        <div class="conn-row">
+          🖥 db-01
+          <span class="host">root@10.0.0.2</span>
+        </div>
+        <div class="conn-row">
+          🖥 cache-01
+          <span class="host">admin@10.0.0.3</span>
+        </div>
+
+        <div class="group-row">📁 Staging <span class="badge">2</span></div>
+        <div class="conn-row">
+          🖥 staging-web
+          <span class="host">deploy@192.168.1.5</span>
+        </div>
+        <div class="conn-row">
+          🖥 staging-db
+          <span class="host">root@192.168.1.6</span>
+        </div>
+
+        <div class="group-row">📁 Local <span class="badge">1</span></div>
+        <div class="conn-row">
+          🖥 localhost
+          <span class="host">user@127.0.0.1</span>
+        </div>
+      </div>
+
+      <div class="sidebar-toolbar">
+        <div class="tb-icon" title="Edit">✏</div>
+        <div class="tb-icon" title="Copy Key">🔑</div>
+        <div class="tb-icon" title="SCP">⬆</div>
+        <div class="tb-icon" title="Files">📂</div>
+        <div class="tb-icon" title="Delete">🗑</div>
+      </div>
+    </div>
+
+    <!-- ── Content area ── -->
+    <div class="content-area">
+      <div class="tab-bar">
+        <div class="tab active-tab">🖥 web-01 <span class="tab-close">✕</span></div>
+        <div class="tab">🖥 db-01 <span class="tab-close">✕</span></div>
+        <div class="tab">📂 web-01 Files <span class="tab-close">✕</span></div>
+        <div class="tab-new">+</div>
+      </div>
+
+      <div class="terminal-area">
+        <div class="search-overlay">🔍 find . &nbsp; ▲ ▼ &nbsp; ✕</div>
+        <span class="dim">Last login: Sun May 25 12:00:00 2025 from 192.168.1.100</span><br>
+        <span class="prompt">ubuntu@web-01:~$ </span>ls -la<br>
+        total 48<br>
+        drwxr-xr-x  8 ubuntu ubuntu 4096 May 25 09:00 .<br>
+        drwxr-xr-x  3 root   root   4096 Jan  1 00:00 ..<br>
+        -rw-r--r--  1 ubuntu ubuntu  220 Jan  1 00:00 .bash_logout<br>
+        -rw-r--r--  1 ubuntu ubuntu 3526 Jan  1 00:00 .bashrc<br>
+        drwxr-xr-x  2 ubuntu ubuntu 4096 May 25 08:30 app<br>
+        drwxr-xr-x  3 ubuntu ubuntu 4096 May 25 08:00 logs<br>
+        <span class="prompt">ubuntu@web-01:~$ </span><span style="border-left:2px solid #a6e3a1">&nbsp;</span>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ═══════════════════ LEGEND ═══════════════════ -->
+<div class="legend">
+  <div class="legend-item"><div class="legend-dot" style="background:#f38ba8"></div> Window / ApplicationWindow</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#89b4fa"></div> Layout containers</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#a6e3a1"></div> Visible widgets</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#cba6f7"></div> Overlay / Banner</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#89dceb"></div> List / Scroll</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#fab387"></div> Row widgets</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#f9e2af"></div> Dialogs / Secondary windows</div>
+</div>
+
+<!-- ═══════════════════ WIDGET TREES ═══════════════════ -->
+<h2>Widget Hierarchy</h2>
+<div class="tree-container">
+
+  <!-- Left: Main window tree -->
+  <div class="tree-panel">
+    <h3>Main Window (window.py)</h3>
+    <div class="tree">
+      <ul>
+        <li><span class="c-window">MainWindow</span>
+          <span class="tag tag-adw">Adw.ApplicationWindow</span>
+          <ul>
+            <li><span class="c-overlay">ToastOverlay</span>
+              <span class="tag tag-adw">Adw.ToastOverlay</span>
+              <ul>
+                <li><span class="c-layout">main_box</span>
+                  <span class="tag tag-gtk">Gtk.Box ↕</span>
+                  <ul>
+                    <li><span class="c-widget">HeaderBar</span>
+                      <span class="tag tag-gtk">Gtk.HeaderBar</span>
+                      <ul>
+                        <li><span class="c-widget">new_conn_button</span></li>
+                        <li><span class="c-widget">search_button</span></li>
+                        <li><span class="c-widget">menu_button</span></li>
+                      </ul>
+                    </li>
+                    <li><span class="c-layout">SplitView</span>
+                      <span class="tag tag-adw">OverlaySplitView*</span>
+                      <ul>
+                        <li><span class="c-layout">sidebar pane</span>
+                          <span class="c-note">→ see Sidebar tree</span></li>
+                        <li><span class="c-layout">content pane</span>
+                          <span class="c-note">→ see Content tree</span></li>
+                      </ul>
+                    </li>
+                  </ul>
+                </li>
+              </ul>
+            </li>
+          </ul>
+        </li>
+      </ul>
+      <p style="font-size:0.62rem;color:#6c7086;margin-top:8px">* Falls back to NavigationSplitView → Gtk.Paned</p>
+    </div>
+  </div>
+
+  <!-- Right: Content area tree -->
+  <div class="tree-panel">
+    <h3>Content Area (window.py)</h3>
+    <div class="tree">
+      <ul>
+        <li><span class="c-layout">content_area_box</span>
+          <span class="tag tag-gtk">Gtk.Box ↕</span>
+          <ul>
+            <li><span class="c-overlay">update_banner_container</span>
+              <span class="tag tag-gtk">Gtk.Overlay</span>
+              <ul>
+                <li><span class="c-overlay">ToastOverlay</span>
+                  <span class="tag tag-adw">Adw.ToastOverlay</span></li>
+                <li><span class="c-widget">update_banner</span>
+                  <span class="tag tag-adw">Adw.Banner</span>
+                  <ul>
+                    <li><span class="c-widget">dismiss_button</span></li>
+                  </ul>
+                </li>
+              </ul>
+            </li>
+            <li><span class="c-widget">tab_bar</span>
+              <span class="tag tag-adw">Adw.TabBar</span></li>
+            <li><span class="c-overlay">tab_overview</span>
+              <span class="tag tag-adw">Adw.TabOverview</span>
+              <ul>
+                <li><span class="c-list">tab_view</span>
+                  <span class="tag tag-adw">Adw.TabView</span>
+                  <ul>
+                    <li><span class="c-widget">WelcomePage tab</span></li>
+                    <li><span class="c-terminal">TerminalWidget tab(s)</span></li>
+                    <li><span class="c-widget">FileManagerWindow tab(s)</span></li>
+                  </ul>
+                </li>
+              </ul>
+            </li>
+            <li><span class="c-widget">tab_button</span>
+              <span class="tag tag-gtk">Gtk.MenuButton</span></li>
+          </ul>
+        </li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Left: Sidebar tree -->
+  <div class="tree-panel">
+    <h3>Sidebar (sidebar.py)</h3>
+    <div class="tree">
+      <ul>
+        <li><span class="c-layout">sidebar_box</span>
+          <span class="tag tag-gtk">Gtk.Box ↕</span>
+          <ul>
+            <li><span class="c-widget">header_handle</span>
+              <span class="tag tag-gtk">Gtk.Box ↔</span>
+              <ul>
+                <li><span class="c-widget">title_label</span></li>
+                <li><span class="c-widget">add_button</span> <span class="c-note">(+)</span></li>
+                <li><span class="c-widget">search_button</span> <span class="c-note">(⌕)</span></li>
+                <li><span class="c-widget">hide_hosts_button</span></li>
+                <li><span class="c-widget">sort_button</span></li>
+                <li><span class="c-widget">preferences_button</span></li>
+                <li><span class="c-widget">menu_button</span> <span class="c-note">(☰)</span></li>
+              </ul>
+            </li>
+            <li><span class="c-widget">search_container</span>
+              <span class="tag tag-gtk">Gtk.Box ↕</span>
+              <ul>
+                <li><span class="c-widget">search_entry</span>
+                  <span class="tag tag-gtk">Gtk.SearchEntry</span></li>
+              </ul>
+            </li>
+            <li><span class="c-list">connection_scrolled</span>
+              <span class="tag tag-gtk">Gtk.ScrolledWindow</span>
+              <ul>
+                <li><span class="c-list">connection_list</span>
+                  <span class="tag tag-gtk">Gtk.ListBox</span>
+                  <ul>
+                    <li><span class="c-row">GroupRow</span>
+                      <span class="tag tag-gtk">Gtk.ListBoxRow</span>
+                      <ul>
+                        <li><span class="c-widget">folder icon</span></li>
+                        <li><span class="c-widget">group name label</span></li>
+                        <li><span class="c-widget">count badge</span></li>
+                        <li><span class="c-widget">color badge</span></li>
+                        <li><span class="c-widget">expand button</span></li>
+                        <li><span class="c-widget">DragIndicator (top/bot)</span></li>
+                      </ul>
+                    </li>
+                    <li><span class="c-row">ConnectionRow</span>
+                      <span class="tag tag-gtk">Gtk.ListBoxRow</span>
+                      <ul>
+                        <li><span class="c-widget">host icon</span></li>
+                        <li><span class="c-widget">nickname label</span></li>
+                        <li><span class="c-widget">host/user label</span></li>
+                        <li><span class="c-widget">pf indicator badges</span></li>
+                        <li><span class="c-widget">color badge</span></li>
+                        <li><span class="c-widget">file_manager_button</span></li>
+                        <li><span class="c-widget">status icon</span></li>
+                        <li><span class="c-widget">DragIndicator (top/bot)</span></li>
+                      </ul>
+                    </li>
+                  </ul>
+                </li>
+              </ul>
+            </li>
+            <li><span class="c-widget">toolbar</span>
+              <span class="tag tag-gtk">Gtk.Box ↔</span>
+              <ul>
+                <li><span class="c-widget">connection_toolbar</span>
+                  <ul>
+                    <li><span class="c-widget">edit_button</span></li>
+                    <li><span class="c-widget">copy_key_button</span></li>
+                    <li><span class="c-widget">scp_button</span></li>
+                    <li><span class="c-widget">manage_files_button</span></li>
+                    <li><span class="c-widget">system_terminal_button</span></li>
+                    <li><span class="c-widget">delete_button</span></li>
+                  </ul>
+                </li>
+                <li><span class="c-widget">group_toolbar</span>
+                  <ul>
+                    <li><span class="c-widget">rename_group_button</span></li>
+                    <li><span class="c-widget">delete_group_button</span></li>
+                  </ul>
+                </li>
+              </ul>
+            </li>
+          </ul>
+        </li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Right: Terminal widget tree -->
+  <div class="tree-panel">
+    <h3>Terminal Widget (terminal.py)</h3>
+    <div class="tree">
+      <ul>
+        <li><span class="c-terminal">TerminalWidget</span>
+          <span class="tag tag-gtk">Gtk.Box ↕</span>
+          <ul>
+            <li><span class="c-list">scrolled_window</span>
+              <span class="tag tag-gtk">Gtk.ScrolledWindow</span>
+              <ul>
+                <li><span class="c-terminal">VTE.Terminal</span>
+                  <span class="tag tag-vte">VTE (primary)</span></li>
+                <li><span class="c-terminal">WebView</span>
+                  <span class="c-note">(pyxtermjs fallback)</span></li>
+              </ul>
+            </li>
+            <li><span class="c-overlay">search_overlay</span>
+              <span class="tag tag-gtk">Gtk.Overlay</span>
+              <ul>
+                <li><span class="c-widget">search_bar</span>
+                  <span class="tag tag-adw">Adw.Clamp</span>
+                  <ul>
+                    <li><span class="c-widget">search_entry</span>
+                      <span class="tag tag-gtk">Gtk.SearchEntry</span></li>
+                  </ul>
+                </li>
+                <li><span class="c-widget">search_matches_label</span></li>
+              </ul>
+            </li>
+            <li><span class="c-widget">notification banners</span>
+              <span class="tag tag-adw">Adw.Banner</span></li>
+          </ul>
+        </li>
+      </ul>
+    </div>
+
+    <hr style="border-color:#313244;margin:14px 0">
+
+    <h3>Welcome Page (welcome_page.py)</h3>
+    <div class="tree">
+      <ul>
+        <li><span class="c-overlay">WelcomePage</span>
+          <span class="tag tag-gtk">Gtk.Overlay</span>
+          <ul>
+            <li><span class="c-list">scrolled</span>
+              <span class="tag tag-gtk">Gtk.ScrolledWindow</span>
+              <ul>
+                <li><span class="c-layout">clamp</span>
+                  <span class="tag tag-adw">Adw.Clamp</span>
+                  <ul>
+                    <li><span class="c-widget">app_icon</span></li>
+                    <li><span class="c-widget">title_label</span></li>
+                    <li><span class="c-widget">layout_stack</span>
+                      <span class="tag tag-gtk">Gtk.Stack</span>
+                      <ul>
+                        <li><span class="c-list">cards_widget</span>
+                          <span class="tag tag-gtk">Gtk.FlowBox</span>
+                          <ul>
+                            <li><span class="c-row">QuickConnect card</span></li>
+                            <li><span class="c-row">AddConnection card</span></li>
+                            <li><span class="c-row">SSHConfig card</span></li>
+                            <li><span class="c-row">LocalTerminal card</span></li>
+                            <li><span class="c-row">Shortcuts card</span></li>
+                            <li><span class="c-row">About card</span></li>
+                          </ul>
+                        </li>
+                        <li><span class="c-list">rows_widget</span>
+                          <span class="tag tag-adw">Adw.Clamp</span></li>
+                      </ul>
+                    </li>
+                  </ul>
+                </li>
+              </ul>
+            </li>
+            <li><span class="c-widget">layout_toggle</span> <span class="c-note">(overlay)</span></li>
+          </ul>
+        </li>
+      </ul>
+    </div>
+  </div>
+
+</div>
+
+<!-- ═══════════════════ SECONDARY WINDOWS ═══════════════════ -->
+<h2>Secondary Windows &amp; Dialogs</h2>
+<div class="flow-container">
+  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
+
+    <div class="flow-box primary">
+      <strong>ConnectionDialog</strong><br>
+      <span style="font-size:0.65rem;color:#6c7086">connection_dialog.py · Adw.Window</span><br>
+      <span style="font-size:0.68rem;margin-top:4px;display:block">Tabs: Basic · Auth · Port Forwarding · Advanced</span>
+    </div>
+
+    <div class="flow-box secondary">
+      <strong>PreferencesWindow</strong><br>
+      <span style="font-size:0.65rem;color:#6c7086">preferences.py · Adw.Window</span><br>
+      <span style="font-size:0.68rem;margin-top:4px;display:block">Sections: Appearance · Terminal · SSH · Shortcuts · Updates</span>
+    </div>
+
+    <div class="flow-box tertiary">
+      <strong>FileManagerWindow</strong><br>
+      <span style="font-size:0.65rem;color:#6c7086">file_manager_window.py · Adw.Window</span><br>
+      <span style="font-size:0.68rem;margin-top:4px;display:block">Dual-pane SFTP browser + Transfer progress</span>
+    </div>
+
+    <div class="flow-box purple">
+      <strong>SshCopyIdWindow</strong><br>
+      <span style="font-size:0.65rem;color:#6c7086">sshcopyid_window.py</span><br>
+      <span style="font-size:0.68rem;margin-top:4px;display:block">SSH key deployment wizard</span>
+    </div>
+
+    <div class="flow-box primary" style="border-color:#89dceb;color:#89dceb">
+      <strong>SSHConfigEditorWindow</strong><br>
+      <span style="font-size:0.65rem;color:#6c7086">ssh_config_editor.py</span><br>
+      <span style="font-size:0.68rem;margin-top:4px;display:block">Edit ~/.ssh/config</span>
+    </div>
+
+    <div class="flow-box secondary" style="border-color:#cba6f7;color:#cba6f7">
+      <strong>ShortcutEditorWindow</strong><br>
+      <span style="font-size:0.65rem;color:#6c7086">shortcut_editor.py</span><br>
+      <span style="font-size:0.68rem;margin-top:4px;display:block">Keyboard shortcut customization</span>
+    </div>
+
+    <div class="flow-box tertiary" style="border-color:#f38ba8;color:#f38ba8">
+      <strong>KnownHostsEditorWindow</strong><br>
+      <span style="font-size:0.65rem;color:#6c7086">known_hosts_editor.py</span><br>
+      <span style="font-size:0.68rem;margin-top:4px;display:block">Manage ~/.ssh/known_hosts</span>
+    </div>
+
+    <div class="flow-box primary" style="border-color:#fab387;color:#fab387">
+      <strong>RemoteFileEditorWindow</strong><br>
+      <span style="font-size:0.65rem;color:#6c7086">text_editor.py</span><br>
+      <span style="font-size:0.68rem;margin-top:4px;display:block">Edit remote files over SFTP</span>
+    </div>
+
+    <div class="flow-box secondary" style="border-color:#a6e3a1;color:#a6e3a1">
+      <strong>QuickConnectDialog</strong><br>
+      <span style="font-size:0.65rem;color:#6c7086">welcome_page.py · Adw.MessageDialog</span><br>
+      <span style="font-size:0.68rem;margin-top:4px;display:block">Type ssh command to connect instantly</span>
+    </div>
+
+  </div>
+</div>
+
+<!-- ═══════════════════ DATA FLOW ═══════════════════ -->
+<h2>Component Interaction</h2>
+<div class="flow-container">
+  <div class="flow-row">
+    <div class="flow-box primary">MainWindow</div>
+    <div class="arrow">→</div>
+    <div class="flow-box secondary">Sidebar</div>
+    <div class="arrow">—— selection ──→</div>
+    <div class="flow-box tertiary">TerminalWidget</div>
+    <div class="arrow">→</div>
+    <div class="flow-box purple">VTE.Terminal / WebView</div>
+  </div>
+  <div class="flow-row" style="margin-top:16px">
+    <div class="flow-box secondary">ConnectionRow click</div>
+    <div class="arrow">→</div>
+    <div class="flow-box primary">window.open_terminal()</div>
+    <div class="arrow">→</div>
+    <div class="flow-box tertiary">tab_view.append_page()</div>
+    <div class="arrow">→</div>
+    <div class="flow-box purple">SSH session starts</div>
+  </div>
+  <div class="flow-row" style="margin-top:16px">
+    <div class="flow-box" style="border-color:#6c7086;color:#6c7086">
+      State: active_terminals<br>
+      connection_to_terminals<br>
+      terminal_to_connection
+    </div>
+    <div class="arrow">↔</div>
+    <div class="flow-box primary">MainWindow</div>
+    <div class="arrow">↔</div>
+    <div class="flow-box secondary">Sidebar (connection_rows)</div>
+  </div>
+</div>
+
+<p style="font-size:0.65rem;color:#45475a;margin-top:8px">
+  Generated from sshpilot source — window.py (9690 lines) · sidebar.py (1843 lines) · terminal.py (5360 lines) · welcome_page.py (1497 lines)
+</p>
+
+</body>
+</html>
