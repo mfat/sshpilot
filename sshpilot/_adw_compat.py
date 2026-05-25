@@ -53,6 +53,17 @@ class _MessageDialogCompat(Adw.AlertDialog):
         # Adw.MessageDialog exposed set_title() via Gtk.Window; map to set_heading()
         self.set_heading(title)
 
+    def destroy(self):
+        # Adw.AlertDialog auto-dismisses after the response signal; calling
+        # Gtk.Widget.destroy() concurrently releases the GDK surface before the
+        # framework's own dismiss logic, causing gdk_surface_get_display crashes.
+        # Adw.Dialog.close() is idempotent: a second call (from the auto-dismiss)
+        # is a no-op, so it is safe to call it here from a response handler.
+        try:
+            self.close()
+        except Exception:
+            pass
+
     # Override present so callers that didn't pass a parent still work
     def present(self, parent=None):
         actual = parent if parent is not None else getattr(self, "_compat_parent", None)
