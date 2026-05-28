@@ -6,7 +6,6 @@ from typing import List, Optional
 
 from gi.repository import Gtk, Gdk, GObject, GLib, Adw
 from gettext import gettext as _
-from .platform_utils import is_macos
 
 logger = logging.getLogger(__name__)
 
@@ -779,7 +778,7 @@ class SplitViewTab(Gtk.Box):
 
     # ── keyboard navigation ───────────────────────────────────────────────────
 
-    _RESIZE_STEP = 50  # pixels per Ctrl+Alt+Shift+Arrow keypress
+    _RESIZE_STEP = 50  # pixels per Ctrl+Alt+Shift+HJKL keypress
 
     def _on_key_pressed(self, _ctrl, keyval, _keycode, state) -> bool:
         mods = state & (
@@ -792,23 +791,22 @@ class SplitViewTab(Gtk.Box):
         CTRL_ALT    = Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.ALT_MASK
         CTRL_ALT_SH = CTRL_ALT | Gdk.ModifierType.SHIFT_MASK
         CTRL_SH     = Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.SHIFT_MASK
-        # macOS: Cmd+Option avoids Mission Control (Ctrl+Option+Up/Down conflict)
-        MAC_NAV     = Gdk.ModifierType.META_MASK | Gdk.ModifierType.ALT_MASK
-        MAC_NAV_SH  = MAC_NAV | Gdk.ModifierType.SHIFT_MASK
 
-        ARROWS = {
-            Gdk.KEY_Up: 'up', Gdk.KEY_Down: 'down',
-            Gdk.KEY_Left: 'left', Gdk.KEY_Right: 'right',
+        # Ctrl+Alt+H/J/K/L — focus navigation (vim-style, no GNOME/macOS conflicts)
+        # Ctrl+Alt+Shift+H/J/K/L — resize
+        HJKL_NAV = {
+            Gdk.KEY_h: 'left',  Gdk.KEY_H: 'left',
+            Gdk.KEY_j: 'down',  Gdk.KEY_J: 'down',
+            Gdk.KEY_k: 'up',    Gdk.KEY_K: 'up',
+            Gdk.KEY_l: 'right', Gdk.KEY_L: 'right',
         }
 
-        if keyval in ARROWS:
-            d = ARROWS[keyval]
-            nav_mods  = {CTRL_ALT, MAC_NAV if is_macos() else CTRL_ALT}
-            res_mods  = {CTRL_ALT_SH, MAC_NAV_SH if is_macos() else CTRL_ALT_SH}
-            if mods in nav_mods:
+        if keyval in HJKL_NAV:
+            d = HJKL_NAV[keyval]
+            if mods == CTRL_ALT:
                 self._navigate_pane(d)
                 return True
-            if mods in res_mods:
+            if mods == CTRL_ALT_SH:
                 self._resize_active_pane(d)
                 return True
 
