@@ -7298,7 +7298,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self._layout_toggle_revealer = revealer
 
         self.tab_content_overlay.add_overlay(revealer)
-        self.tab_content_overlay.set_overlay_pass_through(revealer, False)
 
         # Show on mouse motion; hide after 2 s of inactivity
         motion = Gtk.EventControllerMotion()
