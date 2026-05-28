@@ -9,39 +9,6 @@ from gettext import gettext as _
 
 logger = logging.getLogger(__name__)
 
-_PANE_TABBAR_CSS_INSTALLED = False
-
-
-def _install_pane_tabbar_css() -> None:
-    """Install CSS that shrinks the per-tab close button to zero size/opacity.
-
-    GTK4 CSS 'display: none' is overridden by Libadwaita's programmatic
-    set_visible(TRUE) on hover.  Instead, collapse the button to zero size
-    AND zero opacity so it takes no space and is invisible even when
-    Libadwaita marks it as visible.  The 'Close Pane' button lives in
-    .end-action (outside any 'tab' node) so it is unaffected.
-    """
-    global _PANE_TABBAR_CSS_INSTALLED
-    if _PANE_TABBAR_CSS_INSTALLED:
-        return
-    try:
-        display = Gdk.Display.get_default()
-        if not display:
-            return
-        provider = Gtk.CssProvider()
-        css = (
-            "tabbar.sshpilot-inner-tabbar tab button.close-btn {"
-            " min-width: 0; min-height: 0; padding: 0; margin: 0;"
-            " border-width: 0; opacity: 0; -gtk-icon-size: 0px; }\n"
-        )
-        provider.load_from_data(css.encode("utf-8"))
-        Gtk.StyleContext.add_provider_for_display(
-            display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
-        )
-        _PANE_TABBAR_CSS_INSTALLED = True
-    except Exception:
-        pass
-
 class SplitPane(Gtk.Box):
     """
     A single pane in the split view grid.
@@ -60,6 +27,9 @@ class SplitPane(Gtk.Box):
         self._has_terminals = False
         self.set_hexpand(True)
         self.set_vexpand(True)
+        # Minimum height prevents panes from collapsing to zero when layout
+        # changes (e.g. reconnect banner appears in a sibling pane).
+        self.set_size_request(-1, 150)
 
         # ── inner tab view (mini Adw.TabBar + Adw.TabView) ───────────────
         self._inner_tab_view = Adw.TabView()
@@ -70,27 +40,11 @@ class SplitPane(Gtk.Box):
         self._inner_tab_bar = Adw.TabBar()
         self._inner_tab_bar.set_view(self._inner_tab_view)
         self._inner_tab_bar.set_autohide(False)
-        self._inner_tab_bar.add_css_class("sshpilot-inner-tabbar")
-        _install_pane_tabbar_css()
 
-        # "Close Pane" button at end of tab bar
-        close_pane_btn = Gtk.Button()
-        close_pane_btn.set_icon_name("window-close-symbolic")
-        close_pane_btn.add_css_class("flat")
-        close_pane_btn.set_tooltip_text(_("Close Pane"))
-        close_pane_btn.connect("clicked", lambda _b: self.close_pane())
-        try:
-            self._inner_tab_bar.set_end_action_widget(close_pane_btn)
-        except Exception:
-            pass
-
-        # Programmatic close-button hiding: CSS alone cannot override Libadwaita's
-        # hover-triggered set_visible(TRUE).  We walk the widget tree on enter and
-        # whenever a new page is attached.
-        self._inner_tab_view.connect("page-attached", self._on_inner_page_attached_hide)
-        _motion = Gtk.EventControllerMotion()
-        _motion.connect("enter", lambda _c, _x, _y: GLib.idle_add(self._hide_inner_close_buttons))
-        self._inner_tab_bar.add_controller(_motion)
+        # When the pane is populated the per-tab × buttons (Adwaita default,
+        # visible on hover/selected) are the close mechanism.  No extra
+        # "Close Pane" end-action button is added here; the placeholder has
+        # its own close button for when the pane is empty.
 
         self._tab_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self._tab_container.set_hexpand(True)
@@ -113,33 +67,6 @@ class SplitPane(Gtk.Box):
 
         # Register with parent tab
         split_view_tab.register_pane(self)
-
-    # ── programmatic close-button suppression ───────────────────────────────
-
-    def _on_inner_page_attached_hide(self, _tab_view, _page, _position) -> None:
-        GLib.idle_add(self._hide_inner_close_buttons)
-
-    def _hide_inner_close_buttons(self) -> bool:
-        """Walk the inner tab bar widget tree and force-hide all close-btn buttons."""
-        def walk(widget: Gtk.Widget) -> None:
-            if widget is None:
-                return
-            try:
-                if isinstance(widget, Gtk.Button) and widget.has_css_class("close-btn"):
-                    widget.set_visible(False)
-                    return
-            except Exception:
-                pass
-            child = widget.get_first_child()
-            while child is not None:
-                walk(child)
-                child = child.get_next_sibling()
-
-        try:
-            walk(self._inner_tab_bar)
-        except Exception:
-            pass
-        return False  # one-shot idle
 
     # ── placeholder ──────────────────────────────────────────────────────────
 
@@ -505,11 +432,20 @@ class SplitViewTab(Gtk.Box):
         self.set_hexpand(True)
         self.set_vexpand(True)
 
-        # Content area — holds the dynamically rebuilt Paned tree
-        self._content_area = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        # Content area — Box of rows; does NOT set vexpand so its natural
+        # height drives the scroll extent.
+        self._content_area = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         self._content_area.set_hexpand(True)
-        self._content_area.set_vexpand(True)
-        self.append(self._content_area)
+
+        # Wrap in a ScrolledWindow so the view scrolls when panes overflow the
+        # available height (e.g. many panes or a tall reconnect banner).
+        # Horizontal scroll is disabled; panes always fill the full width.
+        self._pane_scroll = Gtk.ScrolledWindow()
+        self._pane_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        self._pane_scroll.set_hexpand(True)
+        self._pane_scroll.set_vexpand(True)
+        self._pane_scroll.set_child(self._content_area)
+        self.append(self._pane_scroll)
 
         # "Add Terminal" strip below the panes
         self._add_strip = self._build_add_pane_strip()
@@ -608,18 +544,30 @@ class SplitViewTab(Gtk.Box):
     def get_pane_count(self) -> int:
         return len(self._panes)
 
-    # ── layout rebuild (Paned-based, resizable) ──────────────────────────────
+    # ── layout rebuild ────────────────────────────────────────────────────────
 
     def _rebuild_layout(self) -> None:
-        """Detach all panes and rebuild a nested Gtk.Paned tree."""
-        # Unparent every pane from its current parent (Paned or content_area)
+        """Detach all panes and rebuild rows inside _content_area.
+
+        HORIZONTAL mode: pane pairs sit in a GtkPaned(H) so the user can
+        drag the vertical divider.  Rows are stacked in the Box so they each
+        grow to their own natural height — a reconnect banner in one row never
+        steals height from another row.
+
+        VERTICAL mode: all panes stacked directly in the Box.
+
+        Both modes are wrapped by the ScrolledWindow(_pane_scroll), which
+        provides vertical scrolling when the total content exceeds the
+        viewport.
+        """
+        # Detach every pane from its current container (H-Paned or Box child).
         for pane in self._panes:
             try:
                 pane.unparent()
             except Exception:
                 pass
 
-        # Clear any leftover container from the content area
+        # Remove leftover H-Paned row widgets from the Box.
         child = self._content_area.get_first_child()
         while child is not None:
             nxt = child.get_next_sibling()
@@ -633,59 +581,22 @@ class SplitViewTab(Gtk.Box):
         if n == 0:
             return
 
-        if n == 1:
-            container = self._panes[0]
-        elif self._layout_mode == self.HORIZONTAL:
-            container = self._build_h_paned_tree(self._panes)
+        if self._layout_mode == self.VERTICAL:
+            for pane in self._panes:
+                self._content_area.append(pane)
         else:
-            container = self._build_v_paned_tree(self._panes)
-
-        container.set_hexpand(True)
-        container.set_vexpand(True)
-        self._content_area.append(container)
-
-    def _build_h_paned_tree(self, panes: list) -> Gtk.Widget:
-        """Build a 2-column grid of H-Paned rows, stacked with V-Paned."""
-        rows: List[Gtk.Widget] = []
-        for i in range(0, len(panes), 2):
-            pair = panes[i:i + 2]
-            if len(pair) == 1:
-                rows.append(pair[0])
-            else:
-                p = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
-                p.set_hexpand(True)
-                p.set_vexpand(True)
-                p.set_start_child(pair[0])
-                p.set_end_child(pair[1])
-                # Allow shrinking so the divider stays put when content changes
-                # size (e.g., a reconnect banner appears inside a pane).
-                p.set_resize_start_child(True)
-                p.set_resize_end_child(True)
-                rows.append(p)
-        return self._build_v_paned_tree(rows)
-
-    def _build_v_paned_tree(self, widgets: list) -> Gtk.Widget:
-        """Stack a list of widgets vertically using nested V-Paned."""
-        if len(widgets) == 1:
-            return widgets[0]
-        if len(widgets) == 2:
-            p = Gtk.Paned(orientation=Gtk.Orientation.VERTICAL)
-            p.set_hexpand(True)
-            p.set_vexpand(True)
-            p.set_start_child(widgets[0])
-            p.set_end_child(widgets[1])
-            p.set_resize_start_child(True)
-            p.set_resize_end_child(True)
-            return p
-        # More than 2: nest all-but-last into start, put last in end
-        p = Gtk.Paned(orientation=Gtk.Orientation.VERTICAL)
-        p.set_hexpand(True)
-        p.set_vexpand(True)
-        p.set_start_child(self._build_v_paned_tree(widgets[:-1]))
-        p.set_end_child(widgets[-1])
-        p.set_resize_start_child(True)
-        p.set_resize_end_child(True)
-        return p
+            # HORIZONTAL: pairs side-by-side in H-Paned, rows stacked in Box.
+            for i in range(0, n, 2):
+                pair = self._panes[i:i + 2]
+                if len(pair) == 1:
+                    self._content_area.append(pair[0])
+                else:
+                    h_paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
+                    h_paned.set_hexpand(True)
+                    h_paned.set_vexpand(True)
+                    h_paned.set_start_child(pair[0])
+                    h_paned.set_end_child(pair[1])
+                    self._content_area.append(h_paned)
 
     # ── pre-population ────────────────────────────────────────────────────────
 
