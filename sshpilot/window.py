@@ -858,9 +858,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             # Queue terminal focus operation to avoid race conditions
             self._queue_focus_operation(_focus_terminal_when_ready)
         else:
-            # Delay focus to ensure the UI is fully set up
+            # Two calls: early (100 ms) for immediate visual feedback, and late
+            # (700 ms, after _on_startup_complete at 500 ms) to win back focus
+            # if anything else grabbed it during startup.
             try:
                 GLib.timeout_add(100, self._focus_connection_list_first_row)
+                GLib.timeout_add(700, self._focus_connection_list_first_row)
             except Exception:
                 pass
 
@@ -3189,34 +3192,34 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         logger.info("Showing welcome view")
 
     def _focus_connection_list_first_row(self):
-        """Focus the connection list and ensure the first row is selected (startup only)."""
+        """Focus the first row of the connection list so arrow-key navigation works immediately."""
         try:
             if not hasattr(self, 'connection_list') or self.connection_list is None:
                 return False
-            
-            # Check if the connection list is properly attached to its parent
             if not self.connection_list.get_parent():
                 return False
-                
-            # Only auto-select first row during initial startup, not during normal operations
-            # Check if this is being called during startup vs normal operations
-            if not hasattr(self, '_startup_complete'):
-                # During startup - select first row if no selection exists
+
+            first_row = self.connection_list.get_row_at_index(0)
+
+            # During startup: auto-select first row if nothing is selected yet.
+            if not getattr(self, '_startup_complete', False):
                 try:
                     selected_rows = list(self.connection_list.get_selected_rows())
                 except Exception:
-                    selected_row = self.connection_list.get_selected_row()
-                    selected_rows = [selected_row] if selected_row else []
-                first_row = self.connection_list.get_row_at_index(0)
+                    sel = self.connection_list.get_selected_row()
+                    selected_rows = [sel] if sel else []
                 if not selected_rows and first_row:
                     self._select_only_row(first_row)
-            
-            # Always focus the connection list when requested
-            if self.connection_list.get_parent():
+
+            # Focus the first row directly — not just the ListBox container.
+            # GTK4 ListBox arrow-key navigation only works when a *row* has
+            # focus; grab_focus() on the container leaves no row focused.
+            if first_row:
+                first_row.grab_focus()
+            else:
                 self.connection_list.grab_focus()
         except Exception as e:
             logger.debug(f"Focus connection list failed: {e}")
-            pass
         return False
 
     def focus_connection_list(self):
