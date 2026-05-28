@@ -138,9 +138,10 @@ class SplitPane(Gtk.Box):
 
     def _restore_placeholder(self) -> bool:
         """Swap back from tab container to placeholder.  Called via idle_add."""
+        if not self._has_terminals:
+            return False  # already restored; guard against double idle_add
         try:
-            if self._has_terminals:
-                self.remove(self._tab_container)
+            self.remove(self._tab_container)
         except Exception:
             pass
         self._has_terminals = False
@@ -535,11 +536,8 @@ class SplitViewTab(Gtk.Box):
     def remove_pane(self, pane: SplitPane) -> None:
         if pane in self._panes:
             self._panes.remove(pane)
-        # Unparent the pane from whatever Paned or content_area holds it
-        try:
-            pane.unparent()
-        except Exception:
-            pass
+        # _rebuild_layout uses _release_paned to safely detach panes from
+        # their Paned containers; no separate unparent() needed here.
         self._rebuild_layout()
         self._update_tab_title()
         # Close the tab if no panes remain
@@ -561,22 +559,47 @@ class SplitViewTab(Gtk.Box):
 
     def _rebuild_layout(self) -> None:
         """Detach all panes and rebuild a fully resizable pane tree."""
-        # Detach every pane from its current container (H-Paned or Box child).
-        for pane in self._panes:
-            try:
-                pane.unparent()
-            except Exception:
-                pass
+        def _release_paned(widget: Gtk.Widget) -> None:
+            """Recursively null Paned children so panes can be safely re-parented."""
+            if not isinstance(widget, Gtk.Paned):
+                return
+            start = widget.get_start_child()
+            end = widget.get_end_child()
+            if start is not None:
+                _release_paned(start)
+                try:
+                    widget.set_start_child(None)
+                except Exception:
+                    pass
+            if end is not None:
+                _release_paned(end)
+                try:
+                    widget.set_end_child(None)
+                except Exception:
+                    pass
 
-        # Remove leftover H-Paned row widgets from the Box.
+        # Release all Paned children via set_start/end_child(None) before
+        # removing the Paned wrappers.  Using widget.unparent() on a Paned's
+        # end_child can silently fail in GTK4, leaving the pane stranded inside
+        # a detached Paned and preventing correct re-parenting on rebuild.
         child = self._content_area.get_first_child()
         while child is not None:
             nxt = child.get_next_sibling()
+            _release_paned(child)
             try:
                 self._content_area.remove(child)
             except Exception:
                 pass
             child = nxt
+
+        # Catch any panes still attached as direct Box children (single-pane
+        # or vertical mode layouts where panes are appended directly).
+        for pane in self._panes:
+            try:
+                if pane.get_parent() is not None:
+                    pane.unparent()
+            except Exception:
+                pass
 
         n = len(self._panes)
         if n == 0:
