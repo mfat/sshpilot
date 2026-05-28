@@ -4400,23 +4400,29 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Split view shortcuts (hardcoded — not registered as actions)
         group_split = Gtk.ShortcutsGroup(title=_('Split View'))
         group_split.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Focus pane (H / J / K / L)'),
-            accelerator='<Ctrl><Alt>h <Ctrl><Alt>j <Ctrl><Alt>k <Ctrl><Alt>l'))
+            title=_('Focus pane left'), accelerator='<Ctrl><Alt>h'))
         group_split.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Resize pane (H / J / K / L)'),
-            accelerator='<Ctrl><Alt><Shift>h <Ctrl><Alt><Shift>j <Ctrl><Alt><Shift>k <Ctrl><Alt><Shift>l'))
+            title=_('Focus pane down'), accelerator='<Ctrl><Alt>j'))
         group_split.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Side-by-side layout'),
-            accelerator='<Ctrl><Shift>backslash'))
+            title=_('Focus pane up'), accelerator='<Ctrl><Alt>k'))
         group_split.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Top / bottom layout'),
-            accelerator='<Ctrl><Shift>minus'))
+            title=_('Focus pane right'), accelerator='<Ctrl><Alt>l'))
         group_split.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Add pane'),
-            accelerator='<Ctrl><Shift>t'))
+            title=_('Resize pane left'), accelerator='<Ctrl><Alt><Shift>h'))
         group_split.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Close pane'),
-            accelerator='<Ctrl><Shift>w'))
+            title=_('Resize pane down'), accelerator='<Ctrl><Alt><Shift>j'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Resize pane up'), accelerator='<Ctrl><Alt><Shift>k'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Resize pane right'), accelerator='<Ctrl><Alt><Shift>l'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Side-by-side layout'), accelerator='<Ctrl><Shift>backslash'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Top / bottom layout'), accelerator='<Ctrl><Shift>minus'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Add pane'), accelerator='<Ctrl><Shift>n'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Close pane'), accelerator='<Ctrl><Shift>w'))
         section.add_group(group_split)
 
     def _get_safe_current_shortcuts(self):
@@ -4509,23 +4515,29 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Split view shortcuts
         group_split = Gtk.ShortcutsGroup(title=_('Split View'))
         group_split.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Focus pane (H / J / K / L)'),
-            accelerator='<Ctrl><Alt>h <Ctrl><Alt>j <Ctrl><Alt>k <Ctrl><Alt>l'))
+            title=_('Focus pane left'), accelerator='<Ctrl><Alt>h'))
         group_split.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Resize pane (H / J / K / L)'),
-            accelerator='<Ctrl><Alt><Shift>h <Ctrl><Alt><Shift>j <Ctrl><Alt><Shift>k <Ctrl><Alt><Shift>l'))
+            title=_('Focus pane down'), accelerator='<Ctrl><Alt>j'))
         group_split.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Side-by-side layout'),
-            accelerator='<Ctrl><Shift>backslash'))
+            title=_('Focus pane up'), accelerator='<Ctrl><Alt>k'))
         group_split.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Top / bottom layout'),
-            accelerator='<Ctrl><Shift>minus'))
+            title=_('Focus pane right'), accelerator='<Ctrl><Alt>l'))
         group_split.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Add pane'),
-            accelerator='<Ctrl><Shift>t'))
+            title=_('Resize pane left'), accelerator='<Ctrl><Alt><Shift>h'))
         group_split.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Close pane'),
-            accelerator='<Ctrl><Shift>w'))
+            title=_('Resize pane down'), accelerator='<Ctrl><Alt><Shift>j'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Resize pane up'), accelerator='<Ctrl><Alt><Shift>k'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Resize pane right'), accelerator='<Ctrl><Alt><Shift>l'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Side-by-side layout'), accelerator='<Ctrl><Shift>backslash'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Top / bottom layout'), accelerator='<Ctrl><Shift>minus'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Add pane'), accelerator='<Ctrl><Shift>n'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Close pane'), accelerator='<Ctrl><Shift>w'))
         section.add_group(group_split)
 
     def toggle_list_focus(self):

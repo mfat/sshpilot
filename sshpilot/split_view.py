@@ -228,13 +228,8 @@ class SplitPane(Gtk.Box):
         return False  # Allow AdwTabView to proceed with the close
 
     def _after_inner_close(self) -> bool:
-        remaining = self.get_terminal_count()
-        if remaining == 0:
+        if self.get_terminal_count() == 0:
             self.close_pane()
-        elif remaining <= 1:
-            # Defensive fallback if a single page remains but _has_terminals
-            # was not in sync for any reason.
-            self._restore_placeholder()
         return False
 
     # ── pane close ───────────────────────────────────────────────────────────
@@ -810,10 +805,12 @@ class SplitViewTab(Gtk.Box):
                 self._resize_active_pane(d)
                 return True
 
-        if keyval == Gdk.KEY_backslash and mods == CTRL_SH:
+        # Accept both the base key and its Shift-transformed variant since GTK4
+        # reports the effective (shifted) keyval: \ → |, - → _
+        if keyval in (Gdk.KEY_backslash, Gdk.KEY_bar) and mods == CTRL_SH:
             self.set_layout_mode(self.HORIZONTAL)
             return True
-        if keyval == Gdk.KEY_minus and mods == CTRL_SH:
+        if keyval in (Gdk.KEY_minus, Gdk.KEY_underscore) and mods == CTRL_SH:
             self.set_layout_mode(self.VERTICAL)
             return True
         if keyval in (Gdk.KEY_W, Gdk.KEY_w) and mods == CTRL_SH:
@@ -821,7 +818,8 @@ class SplitViewTab(Gtk.Box):
             if pane:
                 pane.close_pane()
             return True
-        if keyval in (Gdk.KEY_T, Gdk.KEY_t) and mods == CTRL_SH:
+        # Ctrl+Shift+N — add pane (Ctrl+Shift+T is taken by local-terminal action)
+        if keyval in (Gdk.KEY_N, Gdk.KEY_n) and mods == CTRL_SH:
             self.add_pane()
             return True
 
