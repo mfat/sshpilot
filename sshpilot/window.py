@@ -2053,8 +2053,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     pop.set_parent(row)
 
                     def _on_popover_closed(*_):
-                        self._context_menu_row = None
-                        self._context_menu_connection = None
+                        # Defer cleanup: PopoverMenu emits 'closed' before activating
+                        # the action, so clearing immediately would leave action
+                        # callbacks with no connection to act on.
+                        def _cleanup():
+                            self._context_menu_row = None
+                            self._context_menu_connection = None
+                            return False
+                        GLib.idle_add(_cleanup)
 
                     pop.connect('closed', _on_popover_closed)
                     GLib.idle_add(lambda: (pop.popup(), False)[-1])
