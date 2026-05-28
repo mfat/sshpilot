@@ -26,10 +26,8 @@ class SplitPane(Gtk.Box):
         self._window = window
         self._has_terminals = False
         self.set_hexpand(True)
-        # Keep pane height controlled by SplitViewTab so all panes remain
-        # visually uniform and overflow is handled by the outer scroller.
-        self.set_vexpand(False)
-        self.set_size_request(-1, 240)
+        self.set_vexpand(True)
+        self.set_size_request(-1, 200)
 
         # ── inner tab view (mini Adw.TabBar + Adw.TabView) ───────────────
         self._inner_tab_view = Adw.TabView()
@@ -434,7 +432,7 @@ class SplitViewTab(Gtk.Box):
 
     HORIZONTAL = 'horizontal'
     VERTICAL = 'vertical'
-    DEFAULT_PANE_HEIGHT = 240
+    DEFAULT_PANE_HEIGHT = 200
 
     def __init__(self, window) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
@@ -445,19 +443,18 @@ class SplitViewTab(Gtk.Box):
         self.set_hexpand(True)
         self.set_vexpand(True)
 
-        # Content area — Box of rows; does NOT set vexpand so its natural
-        # height drives the scroll extent.
+        # Content area holds the Paned tree.  vexpand=True is required so the
+        # ScrolledWindow stretches the tree to fill the viewport when panes are
+        # few enough to fit; the scrollbar appears only when the aggregate
+        # natural height (n_rows × DEFAULT_PANE_HEIGHT) exceeds the viewport.
         self._content_area = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         self._content_area.set_hexpand(True)
+        self._content_area.set_vexpand(True)
 
-        # Wrap in a ScrolledWindow so the view scrolls when panes overflow the
-        # available height (e.g. many panes or a tall reconnect banner).
-        # Horizontal scroll is disabled; panes always fill the full width.
         self._pane_scroll = Gtk.ScrolledWindow()
         self._pane_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         self._pane_scroll.set_hexpand(True)
         self._pane_scroll.set_vexpand(True)
-        self._pane_scroll.set_propagate_natural_height(True)
         self._pane_scroll.set_child(self._content_area)
         self.append(self._pane_scroll)
 
@@ -619,16 +616,12 @@ class SplitViewTab(Gtk.Box):
                 else:
                     h_paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
                     h_paned.set_hexpand(True)
-                    h_paned.set_vexpand(False)
+                    h_paned.set_vexpand(True)
                     h_paned.set_wide_handle(True)
                     h_paned.set_resize_start_child(True)
                     h_paned.set_resize_end_child(True)
                     h_paned.set_shrink_start_child(False)
                     h_paned.set_shrink_end_child(False)
-                    pair[0].set_vexpand(False)
-                    pair[1].set_vexpand(False)
-                    pair[0].set_size_request(-1, self.DEFAULT_PANE_HEIGHT)
-                    pair[1].set_size_request(-1, self.DEFAULT_PANE_HEIGHT)
                     h_paned.set_start_child(pair[0])
                     h_paned.set_end_child(pair[1])
                     row_widgets.append(h_paned)
@@ -650,7 +643,7 @@ class SplitViewTab(Gtk.Box):
 
         root = Gtk.Paned(orientation=orientation)
         root.set_hexpand(True)
-        root.set_vexpand(False)
+        root.set_vexpand(True)
         root.set_wide_handle(True)
         root.set_resize_start_child(True)
         root.set_resize_end_child(True)
@@ -663,10 +656,10 @@ class SplitViewTab(Gtk.Box):
         return root
 
     def _normalize_pane_heights(self) -> None:
-        """Force stable, equal pane heights so banners don't reflow the grid."""
+        """Enforce minimum pane height while allowing growth to fill the viewport."""
         for pane in self._panes:
             try:
-                pane.set_vexpand(False)
+                pane.set_vexpand(True)
                 pane.set_size_request(-1, self.DEFAULT_PANE_HEIGHT)
             except Exception:
                 pass
