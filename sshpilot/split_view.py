@@ -2,83 +2,94 @@
 from __future__ import annotations
 
 import logging
-from typing import Optional, List
+from typing import List, Optional
 
-from gi.repository import Gtk, Gdk, GObject, GLib, Pango
+from gi.repository import Gtk, Gdk, GObject, GLib, Adw, Pango
 from gettext import gettext as _
 
 logger = logging.getLogger(__name__)
 
 
-class SplitPane(Gtk.Overlay):
+class SplitPane(Gtk.Box):
     """
-    A single cell in the split grid.
+    A single pane in the split view grid.
 
-    Contains either an empty placeholder or a live TerminalWidget.
-    The pane tree is a binary tree of Gtk.Paned nodes; each leaf is a
-    SplitPane.  When a pane is split it replaces itself in its parent
-    with a Gtk.Paned whose two children are (self, new_pane).
+    Each pane contains its own mini Adw.TabBar + Adw.TabView so multiple
+    terminals can be stacked as sub-tabs within one pane.  When empty, a
+    placeholder is shown with a "Pick existing tab" pill button.
     """
 
     __gtype_name__ = "SshPilotSplitPane"
 
-    def __init__(self, split_view_tab: "SplitViewTab", terminal=None) -> None:
-        super().__init__()
-        self.split_view_tab = split_view_tab
-        self._terminal = None
+    def __init__(self, split_view_tab: "SplitViewTab", window) -> None:
+        super().__init__(orientation=Gtk.Orientation.VERTICAL)
+        self._split_view_tab = split_view_tab
+        self._window = window
+        self._has_terminals = False
         self.set_hexpand(True)
         self.set_vexpand(True)
 
-        # Build placeholder (shown when empty)
+        # ── inner tab view (mini Adw.TabBar + Adw.TabView) ───────────────
+        self._inner_tab_view = Adw.TabView()
+        self._inner_tab_view.set_hexpand(True)
+        self._inner_tab_view.set_vexpand(True)
+        self._inner_tab_view.connect("close-page", self._on_inner_close)
+
+        self._inner_tab_bar = Adw.TabBar()
+        self._inner_tab_bar.set_view(self._inner_tab_view)
+        self._inner_tab_bar.set_autohide(False)
+
+        # "Close Pane" button at end of tab bar
+        close_pane_btn = Gtk.Button()
+        close_pane_btn.set_icon_name("window-close-symbolic")
+        close_pane_btn.add_css_class("flat")
+        close_pane_btn.set_tooltip_text(_("Close Pane"))
+        close_pane_btn.connect("clicked", lambda _b: self.close_pane())
+        try:
+            self._inner_tab_bar.set_end_action_widget(close_pane_btn)
+        except Exception:
+            pass
+
+        self._tab_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self._tab_container.set_hexpand(True)
+        self._tab_container.set_vexpand(True)
+        self._tab_container.append(self._inner_tab_bar)
+        self._tab_container.append(self._inner_tab_view)
+
+        # ── placeholder ──────────────────────────────────────────────────
         self._placeholder = self._build_placeholder()
-        self.set_child(self._placeholder)
+        self.append(self._placeholder)
 
-        # Hover controls overlay
-        self._hover_controls = self._build_hover_controls()
-        self._hover_revealer = Gtk.Revealer()
-        self._hover_revealer.set_transition_type(Gtk.RevealerTransitionType.CROSSFADE)
-        self._hover_revealer.set_transition_duration(150)
-        self._hover_revealer.set_child(self._hover_controls)
-        self._hover_revealer.set_halign(Gtk.Align.END)
-        self._hover_revealer.set_valign(Gtk.Align.START)
-        self._hover_revealer.set_reveal_child(False)
-        self.add_overlay(self._hover_revealer)
-
-        # Motion controller for hover reveal
-        motion = Gtk.EventControllerMotion()
-        motion.connect("enter", self._on_motion_enter)
-        motion.connect("leave", self._on_motion_leave)
-        self.add_controller(motion)
-
-        # Drop target for connection drags from sidebar
+        # ── drop target ──────────────────────────────────────────────────
         self._setup_drop_target()
 
-        # Register with the parent SplitViewTab
+        # Register with parent tab
         split_view_tab.register_pane(self)
 
-        if terminal is not None:
-            self.set_terminal(terminal)
-
-    # ── placeholder ───────────────────────────────────────────────────────
+    # ── placeholder ──────────────────────────────────────────────────────────
 
     def _build_placeholder(self) -> Gtk.Widget:
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
-        box.set_halign(Gtk.Align.CENTER)
-        box.set_valign(Gtk.Align.CENTER)
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        outer.set_hexpand(True)
+        outer.set_vexpand(True)
+
+        inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
+        inner.set_halign(Gtk.Align.CENTER)
+        inner.set_valign(Gtk.Align.CENTER)
 
         icon = Gtk.Image.new_from_icon_name("utilities-terminal-symbolic")
         icon.set_pixel_size(48)
         icon.add_css_class("dim-label")
-        box.append(icon)
+        inner.append(icon)
 
-        label = Gtk.Label(label=_("Drop a connection here"))
-        label.add_css_class("dim-label")
-        label.add_css_class("title-3")
-        box.append(label)
+        lbl = Gtk.Label(label=_("Drop a connection here"))
+        lbl.add_css_class("dim-label")
+        lbl.add_css_class("title-3")
+        inner.append(lbl)
 
         sub = Gtk.Label(label=_("or"))
         sub.add_css_class("dim-label")
-        box.append(sub)
+        inner.append(sub)
 
         pick_btn = Gtk.Button(label=_("Pick existing tab"))
         pick_btn.add_css_class("suggested-action")
@@ -86,173 +97,121 @@ class SplitPane(Gtk.Overlay):
         pick_btn.set_halign(Gtk.Align.CENTER)
         pick_btn.connect("clicked", self._on_pick_existing_tab_clicked)
         self._pick_button = pick_btn
-        box.append(pick_btn)
 
-        self._update_pick_button_sensitivity_on_widget(pick_btn)
-        return box
+        has_tabs = self._has_open_terminal_tabs()
+        pick_btn.set_sensitive(has_tabs)
+        if not has_tabs:
+            pick_btn.set_tooltip_text(_("No open terminal tabs to pick from"))
 
-    def _update_pick_button_sensitivity_on_widget(self, btn: Gtk.Button) -> None:
-        """Sensitise / desensitise the 'Pick existing tab' button."""
-        has_terminal_tabs = self._has_open_terminal_tabs()
-        btn.set_sensitive(has_terminal_tabs)
-        btn.set_tooltip_text(
-            None if has_terminal_tabs else _("No open terminal tabs to pick from")
-        )
+        inner.append(pick_btn)
+        outer.append(inner)
+        return outer
 
     def _has_open_terminal_tabs(self) -> bool:
-        from .terminal import TerminalWidget  # local import avoids circular
-        window = self.split_view_tab.window
+        from .terminal import TerminalWidget  # noqa: PLC0415
         try:
-            n = window.tab_view.get_n_pages()
+            n = self._window.tab_view.get_n_pages()
             for i in range(n):
-                page = window.tab_view.get_nth_page(i)
-                if page is None:
-                    continue
-                if isinstance(page.get_child(), TerminalWidget):
+                page = self._window.tab_view.get_nth_page(i)
+                if page and isinstance(page.get_child(), TerminalWidget):
                     return True
         except Exception:
             pass
         return False
 
-    # ── hover controls ────────────────────────────────────────────────────
-
-    def _build_hover_controls(self) -> Gtk.Widget:
-        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
-        box.set_margin_top(4)
-        box.set_margin_end(4)
-
-        split_h_btn = Gtk.Button()
-        split_h_btn.set_icon_name("view-dual-symbolic")
-        split_h_btn.add_css_class("flat")
-        split_h_btn.set_tooltip_text(_("Split Side by Side"))
-        split_h_btn.connect("clicked", lambda _b: self.split_horizontal())
-        box.append(split_h_btn)
-
-        split_v_btn = Gtk.Button()
-        split_v_btn.set_icon_name("view-paged-symbolic")
-        split_v_btn.add_css_class("flat")
-        split_v_btn.set_tooltip_text(_("Split Top/Bottom"))
-        split_v_btn.connect("clicked", lambda _b: self.split_vertical())
-        box.append(split_v_btn)
-
-        close_btn = Gtk.Button()
-        close_btn.set_icon_name("window-close-symbolic")
-        close_btn.add_css_class("flat")
-        close_btn.set_tooltip_text(_("Close Pane"))
-        close_btn.connect("clicked", lambda _b: self.close_pane())
-        box.append(close_btn)
-
-        return box
-
-    def _on_motion_enter(self, _ctrl, _x, _y) -> None:
-        self._hover_revealer.set_reveal_child(True)
-
-    def _on_motion_leave(self, _ctrl) -> None:
-        self._hover_revealer.set_reveal_child(False)
-
-    # ── terminal management ───────────────────────────────────────────────
-
-    def set_terminal(self, terminal) -> None:
-        """Replace placeholder (or existing terminal) with a live TerminalWidget."""
-        self._terminal = terminal
-        if terminal is not None:
-            self.set_child(terminal)
-        else:
-            self._placeholder = self._build_placeholder()
-            self.set_child(self._placeholder)
-        self.split_view_tab._update_tab_title()
-
-    def get_terminal(self):
-        return self._terminal
-
-    # ── split / close ────────────────────────────────────────────────────
-
-    def split_horizontal(self) -> "SplitPane":
-        return self._do_split(Gtk.Orientation.HORIZONTAL)
-
-    def split_vertical(self) -> "SplitPane":
-        return self._do_split(Gtk.Orientation.VERTICAL)
-
-    def _do_split(self, orientation: Gtk.Orientation) -> "SplitPane":
-        new_pane = SplitPane(self.split_view_tab)
-        paned = Gtk.Paned(orientation=orientation)
-        paned.set_wide_handle(True)
-        paned.set_hexpand(True)
-        paned.set_vexpand(True)
-        paned.set_shrink_start_child(False)
-        paned.set_shrink_end_child(False)
-        # Replace self in parent with the new Paned node
-        self._replace_in_parent(paned)
-        # Nest self and new pane inside the Paned
-        paned.set_start_child(self)
-        paned.set_end_child(new_pane)
-        self.split_view_tab._update_tab_title()
-        return new_pane
-
-    def _replace_in_parent(self, new_widget: Gtk.Widget) -> None:
-        """Swap self out of its parent container, inserting new_widget in its place."""
-        parent = self.get_parent()
-        if isinstance(parent, SplitViewTab):
-            parent._set_root(new_widget)
-        elif isinstance(parent, Gtk.Paned):
-            if parent.get_start_child() is self:
-                parent.set_start_child(new_widget)
-            else:
-                parent.set_end_child(new_widget)
-
-    def close_pane(self) -> None:
-        if self.split_view_tab.get_pane_count() == 1:
-            # Last pane — close the whole split-view tab
-            self.split_view_tab.cleanup_all()
-            window = self.split_view_tab.window
-            page = self.split_view_tab._tab_page
-            if page is not None:
-                window._suppress_close_confirmation = True
-                try:
-                    window.tab_view.close_page(page)
-                finally:
-                    window._suppress_close_confirmation = False
-            return
-
-        parent = self.get_parent()
-        if not isinstance(parent, Gtk.Paned):
-            return
-
-        # Identify the sibling pane/node
-        if parent.get_start_child() is self:
-            sibling = parent.get_end_child()
-        else:
-            sibling = parent.get_start_child()
-
-        if sibling is None:
-            return
-
-        # Clean up this pane's terminal if any
-        terminal = self.get_terminal()
-        if terminal is not None:
-            self.split_view_tab._cleanup_terminal(terminal)
-            self._terminal = None
-
-        # Unparent sibling from the Paned before re-parenting it
+    def _restore_placeholder(self) -> bool:
+        """Swap back from tab container to placeholder.  Called via idle_add."""
         try:
-            sibling.unparent()
+            if self._has_terminals:
+                self.remove(self._tab_container)
         except Exception:
             pass
+        self._has_terminals = False
+        self._placeholder = self._build_placeholder()
+        self._placeholder.set_hexpand(True)
+        self._placeholder.set_vexpand(True)
+        self.append(self._placeholder)
+        self._split_view_tab._update_tab_title()
+        return False  # one-shot idle
 
-        # Replace the containing Paned with the sibling in the grandparent
-        grandparent = parent.get_parent()
-        if isinstance(grandparent, SplitViewTab):
-            grandparent._set_root(sibling)
-        elif isinstance(grandparent, Gtk.Paned):
-            if grandparent.get_start_child() is parent:
-                grandparent.set_start_child(sibling)
-            else:
-                grandparent.set_end_child(sibling)
+    # ── terminal management ──────────────────────────────────────────────────
 
-        self.split_view_tab.unregister_pane(self)
-        self.split_view_tab._update_tab_title()
+    def add_terminal(self, terminal, title: Optional[str] = None) -> None:
+        """Embed a TerminalWidget as a sub-tab in this pane."""
+        if not self._has_terminals:
+            try:
+                self.remove(self._placeholder)
+            except Exception:
+                pass
+            self.append(self._tab_container)
+            self._has_terminals = True
 
-    # ── drag-and-drop ─────────────────────────────────────────────────────
+        if title is None:
+            conn = getattr(terminal, 'connection', None)
+            title = getattr(conn, 'nickname', None) or _("Terminal")
+
+        from sshpilot import icon_utils  # noqa: PLC0415
+        page = self._inner_tab_view.append(terminal)
+        page.set_title(title)
+        try:
+            page.set_icon(icon_utils.new_gicon_from_icon_name('utilities-terminal-symbolic'))
+        except Exception:
+            pass
+        self._inner_tab_view.set_selected_page(page)
+        self._split_view_tab._update_tab_title()
+
+    def add_connection(self, connection) -> None:
+        """Create a new terminal for connection and add it to this pane."""
+        terminal = self._window.terminal_manager.create_terminal_for_pane(connection)
+        self.add_terminal(terminal, getattr(connection, 'nickname', None))
+
+    def get_terminals(self) -> list:
+        result = []
+        if not self._has_terminals:
+            return result
+        try:
+            n = self._inner_tab_view.get_n_pages()
+            for i in range(n):
+                page = self._inner_tab_view.get_nth_page(i)
+                if page:
+                    child = page.get_child()
+                    if child is not None:
+                        result.append(child)
+        except Exception:
+            pass
+        return result
+
+    def get_terminal_count(self) -> int:
+        if not self._has_terminals:
+            return 0
+        try:
+            return self._inner_tab_view.get_n_pages()
+        except Exception:
+            return 0
+
+    def _on_inner_close(self, tab_view, page) -> bool:
+        terminal = page.get_child() if page else None
+        if terminal is not None:
+            # Only clean up if not already removed (guards against double-cleanup
+            # when the whole split-view tab is being torn down via cleanup_all).
+            if terminal in self._window.terminal_to_connection:
+                self._split_view_tab._cleanup_terminal(terminal)
+
+        remaining = tab_view.get_n_pages() if tab_view else 0
+        if remaining <= 1:  # Will be 0 after this close completes
+            GLib.idle_add(self._restore_placeholder)
+
+        return False  # Allow AdwTabView to proceed with the close
+
+    # ── pane close ───────────────────────────────────────────────────────────
+
+    def close_pane(self) -> None:
+        for terminal in self.get_terminals():
+            if terminal in self._window.terminal_to_connection:
+                self._split_view_tab._cleanup_terminal(terminal)
+        self._split_view_tab.remove_pane(self)
+
+    # ── drag-and-drop ────────────────────────────────────────────────────────
 
     def _setup_drop_target(self) -> None:
         dt = Gtk.DropTarget.new(type=GObject.TYPE_PYOBJECT, actions=Gdk.DragAction.MOVE)
@@ -264,65 +223,39 @@ class SplitPane(Gtk.Overlay):
         try:
             if hasattr(value, 'get_value'):
                 value = value.get_value()
-            if not isinstance(value, dict):
-                return False
-            if value.get("type") != "connection":
+            if not isinstance(value, dict) or value.get("type") != "connection":
                 return False
 
-            nicknames = self._extract_connections(value)
+            nicknames = value.get("connection_nicknames") or []
+            if not nicknames and value.get("connection_nickname"):
+                nicknames = [value["connection_nickname"]]
             if not nicknames:
                 return False
 
-            window = self.split_view_tab.window
-            connections = []
             for nick in nicknames:
-                conn = window.connection_manager.find_connection_by_nickname(nick)
+                conn = self._window.connection_manager.find_connection_by_nickname(nick)
                 if conn is not None:
-                    connections.append(conn)
-
-            if not connections:
-                return False
-
-            # First connection fills this pane; extras get additional vertical splits
-            terminal = window.terminal_manager.create_terminal_for_pane(connections[0])
-            self.set_terminal(terminal)
-            last_pane = self
-
-            for conn in connections[1:]:
-                new_pane = last_pane.split_vertical()
-                term = window.terminal_manager.create_terminal_for_pane(conn)
-                new_pane.set_terminal(term)
-                last_pane = new_pane
-
+                    self.add_connection(conn)
             return True
         except Exception as exc:
             logger.error("SplitPane drop failed: %s", exc)
             return False
 
-    @staticmethod
-    def _extract_connections(value: dict) -> List[str]:
-        nicknames = value.get("connection_nicknames")
-        if isinstance(nicknames, list) and nicknames:
-            return nicknames
-        single = value.get("connection_nickname")
-        return [single] if single else []
-
-    # ── "Pick existing tab" button ────────────────────────────────────────
+    # ── "Pick existing tab" button ────────────────────────────────────────────
 
     def _on_pick_existing_tab_clicked(self, button: Gtk.Button) -> None:
-        from .terminal import TerminalWidget
-        window = self.split_view_tab.window
+        from .terminal import TerminalWidget  # noqa: PLC0415
+        window = self._window
 
-        tab_entries: List[tuple] = []
+        tab_entries = []
         try:
             n = window.tab_view.get_n_pages()
             for i in range(n):
                 page = window.tab_view.get_nth_page(i)
-                if page is None:
-                    continue
-                child = page.get_child()
-                if isinstance(child, TerminalWidget):
-                    tab_entries.append((page, child, page.get_title() or _("Terminal")))
+                if page and isinstance(page.get_child(), TerminalWidget):
+                    tab_entries.append(
+                        (page, page.get_child(), page.get_title() or _("Terminal"))
+                    )
         except Exception as exc:
             logger.error("Failed to enumerate terminal tabs: %s", exc)
             return
@@ -353,14 +286,18 @@ class SplitPane(Gtk.Overlay):
             lbl.set_hexpand(True)
             row_box.append(lbl)
             row.set_child(row_box)
-            # Attach data to row for the activated callback
             row._embed_page = page
             row._embed_terminal = terminal
+            row._embed_title = title
             list_box.append(row)
 
         def _on_row_activated(_lb, row):
             popover.popdown()
-            GLib.idle_add(lambda: self._embed_existing_tab(row._embed_page, row._embed_terminal))
+            GLib.idle_add(
+                lambda: self._embed_existing_tab(
+                    row._embed_page, row._embed_terminal, row._embed_title
+                )
+            )
 
         list_box.connect("row-activated", _on_row_activated)
 
@@ -369,13 +306,14 @@ class SplitPane(Gtk.Overlay):
         scroll.set_max_content_height(300)
         scroll.set_propagate_natural_height(True)
         scroll.set_child(list_box)
-
         popover.set_child(scroll)
         popover.popup()
 
-    def _embed_existing_tab(self, page, terminal) -> bool:
-        """Move an existing tab's terminal into this pane (reparent, no new session)."""
-        window = self.split_view_tab.window
+    def _embed_existing_tab(
+        self, page, terminal, title: Optional[str] = None
+    ) -> bool:
+        """Move a terminal from the main tab_view into this pane (live session)."""
+        window = self._window
         window._suppress_close_confirmation = True
         window._moving_tab_to_pane = True
         try:
@@ -383,87 +321,231 @@ class SplitPane(Gtk.Overlay):
         finally:
             window._suppress_close_confirmation = False
             window._moving_tab_to_pane = False
-        self.set_terminal(terminal)
-        return False  # GLib.idle_add one-shot
+        self.add_terminal(terminal, title)
+        return False  # one-shot idle
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════════════════════════
 
 
 class SplitViewTab(Gtk.Box):
     """
-    Top-level widget placed as the child of an Adw.TabPage.
-    Owns the root of the Gtk.Paned tree and tracks all SplitPane leaves.
+    Top-level widget for a split-view tab page.
+
+    Contains:
+    - A header with side-by-side / top-bottom layout toggle buttons
+    - A Gtk.Grid of SplitPane instances
+    - An "Add Terminal" pill button strip below the grid
     """
 
     __gtype_name__ = "SshPilotSplitViewTab"
+
+    HORIZONTAL = 'horizontal'
+    VERTICAL = 'vertical'
 
     def __init__(self, window) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
         self.window = window
         self._panes: List[SplitPane] = []
+        self._layout_mode = self.HORIZONTAL
         self._tab_page = None
         self.set_hexpand(True)
         self.set_vexpand(True)
 
-        # Create the initial (empty) pane and make it the root
-        self._root: Optional[Gtk.Widget] = None
-        initial = SplitPane(self)       # registers itself via register_pane
-        self._root = initial
-        self.append(initial)
+        # Header: layout mode toggles
+        self._header = self._build_header()
+        self.append(self._header)
 
-    # ── pane tree ─────────────────────────────────────────────────────────
+        # Pane grid (sole layout container)
+        self._grid = Gtk.Grid()
+        self._grid.set_column_homogeneous(True)
+        self._grid.set_row_homogeneous(True)
+        self._grid.set_hexpand(True)
+        self._grid.set_vexpand(True)
+        self._grid.set_column_spacing(2)
+        self._grid.set_row_spacing(2)
+        self.append(self._grid)
 
-    def _set_root(self, widget: Gtk.Widget) -> None:
-        """Replace the root widget (called by SplitPane._replace_in_parent)."""
-        if self._root is not None:
+        # "Add Terminal" strip below the grid
+        self._add_strip = self._build_add_pane_strip()
+        self.append(self._add_strip)
+
+        # Start with 2 empty panes (minimum requirement)
+        self.add_pane()
+        self.add_pane()
+
+    # ── header ───────────────────────────────────────────────────────────────
+
+    def _build_header(self) -> Gtk.Widget:
+        bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        bar.add_css_class("toolbar")
+        bar.set_margin_start(4)
+        bar.set_margin_end(4)
+
+        h_btn = Gtk.ToggleButton()
+        h_btn.set_icon_name("view-dual-symbolic")
+        h_btn.set_tooltip_text(_("Side by Side"))
+        h_btn.add_css_class("flat")
+        h_btn.set_active(True)
+
+        v_btn = Gtk.ToggleButton()
+        v_btn.set_icon_name("view-paged-symbolic")
+        v_btn.set_tooltip_text(_("Top / Bottom"))
+        v_btn.add_css_class("flat")
+
+        # Link as a mutually-exclusive group (GTK 4.2+)
+        try:
+            v_btn.set_group(h_btn)
+        except Exception:
+            # Fallback: manual mutual exclusion
+            def _on_h(btn):
+                if btn.get_active():
+                    v_btn.set_active(False)
+
+            def _on_v(btn):
+                if btn.get_active():
+                    h_btn.set_active(False)
+
+            h_btn.connect("toggled", _on_h)
+            v_btn.connect("toggled", _on_v)
+
+        h_btn.connect("toggled", self._on_layout_h_toggled)
+        v_btn.connect("toggled", self._on_layout_v_toggled)
+
+        bar.append(h_btn)
+        bar.append(v_btn)
+        self._h_btn = h_btn
+        self._v_btn = v_btn
+        return bar
+
+    def _on_layout_h_toggled(self, btn: Gtk.ToggleButton) -> None:
+        if btn.get_active() and self._layout_mode != self.HORIZONTAL:
+            self._layout_mode = self.HORIZONTAL
+            self._rebuild_layout()
+
+    def _on_layout_v_toggled(self, btn: Gtk.ToggleButton) -> None:
+        if btn.get_active() and self._layout_mode != self.VERTICAL:
+            self._layout_mode = self.VERTICAL
+            self._rebuild_layout()
+
+    # ── "Add Terminal" strip ─────────────────────────────────────────────────
+
+    def _build_add_pane_strip(self) -> Gtk.Widget:
+        strip = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        strip.set_halign(Gtk.Align.CENTER)
+        strip.set_margin_top(8)
+        strip.set_margin_bottom(8)
+
+        btn = Gtk.Button(label=_("Add Terminal"))
+        btn.add_css_class("suggested-action")
+        btn.add_css_class("pill")
+        btn.connect("clicked", lambda _b: self.add_pane())
+        strip.append(btn)
+
+        # Drop target on the strip: create a new pane and add the connection
+        dt = Gtk.DropTarget.new(type=GObject.TYPE_PYOBJECT, actions=Gdk.DragAction.MOVE)
+        dt.connect("drop", self._on_add_strip_drop)
+        dt.connect("enter", lambda _t, _x, _y: Gdk.DragAction.MOVE)
+        strip.add_controller(dt)
+
+        return strip
+
+    def _on_add_strip_drop(self, _target, value, _x, _y) -> bool:
+        try:
+            if hasattr(value, 'get_value'):
+                value = value.get_value()
+            if not isinstance(value, dict) or value.get("type") != "connection":
+                return False
+            nicknames = value.get("connection_nicknames") or []
+            if not nicknames and value.get("connection_nickname"):
+                nicknames = [value["connection_nickname"]]
+            for nick in nicknames:
+                conn = self.window.connection_manager.find_connection_by_nickname(nick)
+                if conn is not None:
+                    self.add_pane().add_connection(conn)
+            return bool(nicknames)
+        except Exception as exc:
+            logger.error("add-strip drop failed: %s", exc)
+            return False
+
+    # ── pane management ──────────────────────────────────────────────────────
+
+    def add_pane(self) -> SplitPane:
+        """Add a new empty pane and rebuild the layout. Returns the new pane."""
+        pane = SplitPane(self, self.window)  # SplitPane.__init__ calls register_pane
+        self._rebuild_layout()
+        return pane
+
+    def remove_pane(self, pane: SplitPane) -> None:
+        if pane in self._panes:
+            self._panes.remove(pane)
+        try:
+            pane.unparent()
+        except Exception:
             try:
-                self.remove(self._root)
+                self._grid.remove(pane)
             except Exception:
                 pass
-        self._root = widget
-        self.append(widget)
+        self._rebuild_layout()
+        self._update_tab_title()
+        # Close the tab if no panes remain
+        if not self._panes and self._tab_page is not None:
+            self.window._suppress_close_confirmation = True
+            try:
+                self.window.tab_view.close_page(self._tab_page)
+            finally:
+                self.window._suppress_close_confirmation = False
 
     def register_pane(self, pane: SplitPane) -> None:
         if pane not in self._panes:
             self._panes.append(pane)
 
-    def unregister_pane(self, pane: SplitPane) -> None:
-        if pane in self._panes:
-            self._panes.remove(pane)
-        # If no panes remain, close the tab
-        if not self._panes and self._tab_page is not None:
-            window = self.window
-            window._suppress_close_confirmation = True
-            try:
-                window.tab_view.close_page(self._tab_page)
-            finally:
-                window._suppress_close_confirmation = False
-
     def get_pane_count(self) -> int:
         return len(self._panes)
 
-    # ── population ───────────────────────────────────────────────────────
+    # ── layout rebuild ────────────────────────────────────────────────────────
+
+    def _rebuild_layout(self) -> None:
+        """Detach all panes from the grid and re-attach in the correct positions."""
+        for pane in self._panes:
+            try:
+                self._grid.remove(pane)
+            except Exception:
+                try:
+                    pane.unparent()
+                except Exception:
+                    pass
+
+        n = len(self._panes)
+        if self._layout_mode == self.HORIZONTAL:
+            for i, pane in enumerate(self._panes):
+                row = i // 2
+                col = i % 2
+                # Last pane in an odd-count list spans both columns
+                colspan = 2 if (i == n - 1 and n % 2 == 1) else 1
+                self._grid.attach(pane, col, row, colspan, 1)
+        else:  # VERTICAL — single column, each pane spans full width
+            for i, pane in enumerate(self._panes):
+                self._grid.attach(pane, 0, i, 2, 1)
+
+    # ── pre-population ────────────────────────────────────────────────────────
 
     def populate(self, connections: list) -> None:
-        """Pre-populate from a list of Connection objects (context-menu trigger)."""
+        """
+        Fill panes from a list of Connection objects.
+
+        The two initial empty panes absorb the first two connections;
+        extra connections each get a new pane.
+        """
         if not connections:
             return
-        window = self.window
-        first_terminal = window.terminal_manager.create_terminal_for_pane(connections[0])
-        self._panes[0].set_terminal(first_terminal)
-        last_pane = self._panes[0]
+        for i, conn in enumerate(connections):
+            if i < len(self._panes):
+                self._panes[i].add_connection(conn)
+            else:
+                self.add_pane().add_connection(conn)
 
-        for conn in connections[1:]:
-            new_pane = last_pane.split_vertical()
-            term = window.terminal_manager.create_terminal_for_pane(conn)
-            new_pane.set_terminal(term)
-            last_pane = new_pane
-
-    # ── terminal lifecycle ────────────────────────────────────────────────
-
-    def _get_all_terminals(self) -> list:
-        return [p.get_terminal() for p in self._panes if p.get_terminal() is not None]
+    # ── terminal lifecycle ────────────────────────────────────────────────────
 
     def _cleanup_terminal(self, terminal) -> None:
         """Disconnect terminal and remove it from window tracking dicts."""
@@ -488,25 +570,22 @@ class SplitViewTab(Gtk.Box):
                         window.active_terminals.pop(connection, None)
             window.terminal_to_connection.pop(terminal, None)
         except Exception as exc:
-            logger.debug("Error cleaning up pane terminal dicts: %s", exc)
+            logger.debug("Error cleaning up split-pane terminal dicts: %s", exc)
 
     def cleanup_all(self) -> None:
-        """Disconnect all embedded terminals and remove them from tracking dicts."""
+        """Disconnect all embedded terminals (called when the tab is being closed)."""
         for pane in list(self._panes):
-            terminal = pane.get_terminal()
-            if terminal is not None:
-                self._cleanup_terminal(terminal)
-                pane._terminal = None
+            for terminal in pane.get_terminals():
+                if terminal in self.window.terminal_to_connection:
+                    self._cleanup_terminal(terminal)
 
-    # ── tab title ────────────────────────────────────────────────────────
+    # ── tab title ────────────────────────────────────────────────────────────
 
     def _update_tab_title(self) -> None:
         if self._tab_page is None:
             return
-        n_active = sum(1 for p in self._panes if p.get_terminal() is not None)
-        if n_active > 0:
-            self._tab_page.set_title(
-                _("Split View ({n} terminals)").format(n=n_active)
-            )
+        n = sum(p.get_terminal_count() for p in self._panes)
+        if n > 0:
+            self._tab_page.set_title(_("Split View ({n} terminals)").format(n=n))
         else:
             self._tab_page.set_title(_("Split View"))

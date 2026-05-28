@@ -7138,6 +7138,93 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     def on_tab_attached(self, tab_view, page, position):
         """Handle tab attached"""
         self._update_tab_button_visibility()
+        # Register a drop target on TerminalWidget pages so dragging a
+        # connection onto a terminal converts that tab into a split-view tab.
+        try:
+            from .terminal import TerminalWidget
+            child = page.get_child() if page else None
+            if isinstance(child, TerminalWidget):
+                self._register_convert_to_split_drop(child, page)
+        except Exception as exc:
+            logger.debug("Could not register convert-to-split drop: %s", exc)
+
+    def _register_convert_to_split_drop(self, terminal, page) -> None:
+        """Attach a drop target to terminal so dragging a connection converts the tab to split view."""
+        from gi.repository import Gtk, Gdk, GObject
+        dt = Gtk.DropTarget.new(type=GObject.TYPE_PYOBJECT, actions=Gdk.DragAction.MOVE)
+
+        def _on_drop(_target, value, _x, _y):
+            try:
+                if hasattr(value, 'get_value'):
+                    value = value.get_value()
+                if not isinstance(value, dict) or value.get("type") != "connection":
+                    return False
+
+                # Only convert if the terminal is still in the main tab_view
+                try:
+                    source_page = self.tab_view.get_page(terminal)
+                except Exception:
+                    source_page = None
+                if source_page is None:
+                    return False
+
+                nicknames = value.get("connection_nicknames") or []
+                if not nicknames and value.get("connection_nickname"):
+                    nicknames = [value["connection_nickname"]]
+                if not nicknames:
+                    return False
+
+                connections = []
+                for nick in nicknames:
+                    conn = self.connection_manager.find_connection_by_nickname(nick)
+                    if conn is not None:
+                        connections.append(conn)
+                if not connections:
+                    return False
+
+                from .split_view import SplitViewTab
+                from sshpilot import icon_utils
+
+                svt = SplitViewTab(self)
+
+                # Move the existing terminal out of the main tab_view into pane 0
+                title = source_page.get_title() or _("Terminal")
+                self._suppress_close_confirmation = True
+                self._moving_tab_to_pane = True
+                try:
+                    self.tab_view.close_page(source_page)
+                finally:
+                    self._suppress_close_confirmation = False
+                    self._moving_tab_to_pane = False
+                svt._panes[0].add_terminal(terminal, title)
+
+                # Add each dropped connection to pane 1 (and extra panes beyond)
+                for i, conn in enumerate(connections):
+                    if i == 0:
+                        svt._panes[1].add_connection(conn)
+                    else:
+                        svt.add_pane().add_connection(conn)
+
+                # Append the split-view tab to the main tab_view
+                new_page = self.tab_view.append(svt)
+                new_page.set_title(_("Split View"))
+                try:
+                    new_page.set_icon(
+                        icon_utils.new_gicon_from_icon_name('view-dual-symbolic')
+                    )
+                except Exception:
+                    pass
+                svt._tab_page = new_page
+                self.show_tab_view()
+                self.tab_view.set_selected_page(new_page)
+                return True
+            except Exception as exc:
+                logger.error("Convert-to-split drop failed: %s", exc)
+                return False
+
+        dt.connect("drop", _on_drop)
+        dt.connect("enter", lambda _t, _x, _y: Gdk.DragAction.MOVE)
+        terminal.add_controller(dt)
 
     def _update_tab_button_visibility(self):
         """Update TabButton visibility based on number of tabs"""
