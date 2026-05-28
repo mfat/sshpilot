@@ -591,7 +591,7 @@ class SplitViewTab(Gtk.Box):
             if total <= 0:
                 return
             pos = int(paned._split_ratio * total)
-            pos = max(DEFAULT_PANE_HEIGHT, min(total - DEFAULT_PANE_HEIGHT, pos))
+            pos = max(self.DEFAULT_PANE_HEIGHT, min(total - self.DEFAULT_PANE_HEIGHT, pos))
             paned._in_ratio_update = True
             paned.set_position(pos)
             paned._in_ratio_update = False
