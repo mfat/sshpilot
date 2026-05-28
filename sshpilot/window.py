@@ -1950,6 +1950,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self._queue_focus_operation(_set_sidebar_focus)
         
         # Set up drag and drop for reordering
+        self._setup_context_menu_actions()
         build_sidebar(self)
 
         # Right-click context menu using simple gesture without coordinate detection
@@ -2004,197 +2005,59 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     self._context_menu_row = row
                     self._context_menu_connection = getattr(row, 'connection', None)
                     self._context_menu_group_row = row if hasattr(row, 'group_id') else None
-                    # Create popover menu and rely on default autohide behavior
-                    pop = Gtk.Popover.new()
-                    pop.set_has_arrow(True)
-                    logger.debug("Created popover with default autohide")
+                    # Build Gio.Menu model and show as PopoverMenu
+                    menu = Gio.Menu()
 
-
-                    # Create listbox for menu items
-                    listbox = Gtk.ListBox(margin_top=2, margin_bottom=2, margin_start=2, margin_end=2)
-                    listbox.set_selection_mode(Gtk.SelectionMode.NONE)
-                    pop.set_child(listbox)
-                    
-                    # Simple popover close handler with cleanup
-                    def _on_popover_closed(*args):
-                        # Clean up the window focus handler when popover closes
-                        if hasattr(pop, '_focus_handler_id') and hasattr(pop, '_window') and pop._window:
-                            try:
-                                pop._window.disconnect(pop._focus_handler_id)
-                                logger.debug("Cleaned up window focus handler")
-                            except Exception as e:
-                                logger.debug(f"Error cleaning up focus handler: {e}")
-
-                        logger.debug("Context menu closed")
-                        try:
-                            self._context_menu_row = None
-                            self._context_menu_connection = None
-                        except Exception:
-                            pass
-                    
-                    pop.connect("closed", _on_popover_closed)
-                    
-                    # Close context menu when window becomes inactive (with delay to prevent immediate closure)
-                    def _on_window_active_changed(window, pspec):
-                        try:
-                            # Add a small delay to avoid immediate closure when popover is first shown
-                            def delayed_check():
-                                try:
-                                    # Only close if window is actually inactive and popover is still visible
-                                    if not self.is_active() and pop and pop.get_visible():
-                                        pop.popdown()
-                                        logger.debug("Context menu closed due to window becoming inactive")
-                                except Exception as e:
-                                    logger.debug(f"Error in delayed focus check: {e}")
-                                return False
-                            GLib.timeout_add(50, delayed_check)
-                        except Exception as e:
-                            logger.debug(f"Error in window active change handler: {e}")
-                    
-                    # Connect to the window's notify::is-active signal after a brief delay
-                    def connect_focus_handler():
-                        try:
-                            focus_handler_id = self.connect("notify::is-active", _on_window_active_changed)
-                            pop._focus_handler_id = focus_handler_id
-                            pop._window = self
-                            logger.debug("Connected window focus handler")
-                        except Exception as e:
-                            logger.debug(f"Error connecting focus handler: {e}")
-                        return False
-                    
-                    # Delay the connection slightly to avoid immediate triggering
-                    GLib.timeout_add(100, connect_focus_handler)
-                    
-                    # Add menu items based on row type
                     if hasattr(row, 'group_id'):
-                        # Group row context menu
-                        logger.debug(f"Creating context menu for group row: {row.group_id}")
-
-                        # Edit Group row
-                        from sshpilot import icon_utils
-                        edit_row = Adw.ActionRow(title=_('Edit Group'))
-                        edit_icon = icon_utils.new_image_from_icon_name('document-edit-symbolic')
-                        edit_row.add_prefix(edit_icon)
-                        edit_row.set_activatable(True)
-                        edit_row.connect('activated', lambda *_: (self.on_edit_group_action(None, None), pop.popdown()))
-                        listbox.append(edit_row)
-
-                        # Delete Group row
-                        delete_row = Adw.ActionRow(title=_('Delete Group'))
-                        delete_icon = icon_utils.new_image_from_icon_name('user-trash-symbolic')
-                        delete_row.add_prefix(delete_icon)
-                        delete_row.set_activatable(True)
-                        delete_row.connect('activated', lambda *_: (self.on_delete_group_action(None, None), pop.popdown()))
-                        listbox.append(delete_row)
+                        section = Gio.Menu()
+                        section.append(_('Edit Group'), 'win.ctx-edit-group')
+                        section.append(_('Delete Group'), 'win.ctx-delete-group')
+                        menu.append_section(None, section)
                     else:
-                        # Connection row context menu
-                        logger.debug(f"Creating context menu for connection row: {getattr(row, 'connection', None)}")
-                        from sshpilot import icon_utils
+                        conn = getattr(row, 'connection', None)
 
-                        # Open New Connection row
-                        new_row = Adw.ActionRow(title=_('Open New Connection'))
-                        new_icon = icon_utils.new_image_from_icon_name('list-add-symbolic')
-                        new_row.add_prefix(new_icon)
-                        new_row.set_activatable(True)
-                        new_row.connect('activated', lambda *_: (self.on_open_new_connection_action(None, None), pop.popdown()))
-                        listbox.append(new_row)
+                        section1 = Gio.Menu()
+                        section1.append(_('Open New Connection'), 'win.ctx-open-new')
+                        section1.append(_('Edit Connection'), 'win.ctx-edit-connection')
+                        section1.append(_('Duplicate Connection'), 'win.ctx-duplicate')
+                        section1.append(_('Copy Address'), 'win.ctx-copy-address')
+                        menu.append_section(None, section1)
 
-                        # Edit Connection row
-                        edit_row = Adw.ActionRow(title=_('Edit Connection'))
-                        edit_icon = icon_utils.new_image_from_icon_name('document-edit-symbolic')
-                        edit_row.add_prefix(edit_icon)
-                        edit_row.set_activatable(True)
-                        
-                        edit_row.connect('activated', lambda *_: (self.on_edit_connection_action(None, None), pop.popdown()))
-                        listbox.append(edit_row)
-
-                        # Duplicate Connection row
-                        duplicate_row = Adw.ActionRow(title=_('Duplicate Connection'))
-                        duplicate_icon = icon_utils.new_image_from_icon_name('edit-copy-symbolic')
-                        duplicate_row.add_prefix(duplicate_icon)
-                        duplicate_row.set_activatable(True)
-                        duplicate_row.connect('activated', lambda *_: (self.on_duplicate_connection_action(None, None), pop.popdown()))
-                        listbox.append(duplicate_row)
-
-                        # Manage Files row
+                        section2 = Gio.Menu()
                         if not should_hide_file_manager_options():
-                            files_row = Adw.ActionRow(title=_('Manage Files'))
-                            files_icon = icon_utils.new_image_from_icon_name('folder-symbolic')
-                            files_row.add_prefix(files_icon)
-                            files_row.set_activatable(True)
-                            files_row.connect('activated', lambda *_: (self.on_manage_files_action(None, None), pop.popdown()))
-                            listbox.append(files_row)
-
-                        # Copy Key to Server row
-                        copy_key_row = Adw.ActionRow(title=_('Copy Key to Server'))
-                        copy_key_icon = icon_utils.new_image_from_icon_name('dialog-password-symbolic')
-                        copy_key_row.add_prefix(copy_key_icon)
-                        copy_key_row.set_activatable(True)
-                        copy_key_row.connect('activated', lambda *_: (self.on_copy_key_to_server_action(None, None), pop.popdown()))
-                        listbox.append(copy_key_row)
-
-                        # Wake on LAN row (only when MAC is set for this connection)
+                            section2.append(_('Manage Files'), 'win.ctx-manage-files')
+                        section2.append(_('Copy Key to Server'), 'win.ctx-copy-key')
                         try:
-                            conn_meta = self.config.get_connection_meta(row.connection.nickname) if getattr(row, 'connection', None) else {}
+                            conn_meta = self.config.get_connection_meta(conn.nickname) if conn else {}
                             if (conn_meta or {}).get('wol_mac', '').strip():
-                                wol_row = Adw.ActionRow(title=_('Wake on LAN'))
-                                wol_icon = icon_utils.new_image_from_icon_name('network-wireless-symbolic')
-                                wol_row.add_prefix(wol_icon)
-                                wol_row.set_activatable(True)
-                                wol_row.connect('activated', lambda *_: (self.on_wake_on_lan_action(None, None), pop.popdown()))
-                                listbox.append(wol_row)
+                                section2.append(_('Wake on LAN'), 'win.ctx-wake-on-lan')
                         except Exception:
                             pass
-
-                        # Only show system terminal option when external terminals are available
                         if not should_hide_external_terminal_options():
-                            terminal_row = Adw.ActionRow(title=_('Open in System Terminal'))
-                            terminal_icon = icon_utils.new_image_from_icon_name('utilities-terminal-symbolic')
-                            terminal_row.add_prefix(terminal_icon)
-                            terminal_row.set_activatable(True)
-                            terminal_row.connect('activated', lambda *_: (self.on_open_in_system_terminal_action(None, None), pop.popdown()))
-                            listbox.append(terminal_row)
+                            section2.append(_('Open in System Terminal'), 'win.ctx-system-terminal')
+                        if section2.get_n_items():
+                            menu.append_section(None, section2)
 
-                        # Add grouping options
-                        current_group_id = self.group_manager.get_connection_group(row.connection.nickname)
-                        
-                        # Always show "Move to Group" option
-                        move_row = Adw.ActionRow(title=_('Move to Group'))
-                        move_icon = icon_utils.new_image_from_icon_name('folder-symbolic')
-                        move_row.add_prefix(move_icon)
-                        move_row.set_activatable(True)
-                        move_row.connect('activated', lambda *_: (self.on_move_to_group_action(None, None), pop.popdown()))
-                        listbox.append(move_row)
-                        
-                        # Show "Ungroup" option if connection is currently in a group
+                        current_group_id = self.group_manager.get_connection_group(conn.nickname) if conn else None
+                        section3 = Gio.Menu()
+                        section3.append(_('Move to Group'), 'win.ctx-move-to-group')
                         if current_group_id:
-                            ungroup_row = Adw.ActionRow(title=_('Ungroup'))
-                            ungroup_icon = icon_utils.new_image_from_icon_name('folder-symbolic')
-                            ungroup_row.add_prefix(ungroup_icon)
-                            ungroup_row.set_activatable(True)
-                            ungroup_row.connect('activated', lambda *_: (self.on_move_to_ungrouped_action(None, None), pop.popdown()))
-                            listbox.append(ungroup_row)
+                            section3.append(_('Ungroup'), 'win.ctx-ungroup')
+                        menu.append_section(None, section3)
 
-                        # Delete Connection row (moved to bottom)
-                        delete_row = Adw.ActionRow(title=_('Delete'))
-                        delete_icon = icon_utils.new_image_from_icon_name('user-trash-symbolic')
-                        delete_row.add_prefix(delete_icon)
-                        delete_row.set_activatable(True)
-                        delete_row.connect('activated', lambda *_: (self.on_delete_connection_action(None, None), pop.popdown()))
-                        listbox.append(delete_row)
-                    # Set popover parent to the selected row for proper anchoring
+                        section4 = Gio.Menu()
+                        section4.append(_('Delete'), 'win.ctx-delete-connection')
+                        menu.append_section(None, section4)
+
+                    pop = Gtk.PopoverMenu.new_from_model(menu)
                     pop.set_parent(row)
-                    
-                    # Add a small delay to ensure proper display
-                    def show_menu():
-                        try:
-                            pop.popup()
-                            logger.debug("Context menu popup called")
-                        except Exception as e:
-                            logger.error(f"Failed to popup context menu: {e}")
-                        return False
-                    
-                    GLib.idle_add(show_menu)
+
+                    def _on_popover_closed(*_):
+                        self._context_menu_row = None
+                        self._context_menu_connection = None
+
+                    pop.connect('closed', _on_popover_closed)
+                    GLib.idle_add(lambda: (pop.popup(), False)[-1])
                     
                 except Exception as e:
                     logger.error(f"Failed to create context menu: {e}")
@@ -2377,6 +2240,35 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
         self._set_sidebar_widget(sidebar_box)
         logger.debug("Set sidebar widget")
+
+    def _setup_context_menu_actions(self):
+        """Register Gio.SimpleAction instances for the connection list context menu."""
+        def _add(name, callback):
+            action = Gio.SimpleAction.new(name, None)
+            action.connect('activate', callback)
+            self.add_action(action)
+
+        _add('ctx-edit-group', lambda a, p: self.on_edit_group_action(a, p))
+        _add('ctx-delete-group', lambda a, p: self.on_delete_group_action(a, p))
+        _add('ctx-open-new', lambda a, p: self.on_open_new_connection_action(a, p))
+        _add('ctx-edit-connection', lambda a, p: self.on_edit_connection_action(a, p))
+        _add('ctx-duplicate', lambda a, p: self.on_duplicate_connection_action(a, p))
+        _add('ctx-manage-files', lambda a, p: self.on_manage_files_action(a, p))
+        _add('ctx-copy-key', lambda a, p: self.on_copy_key_to_server_action(a, p))
+        _add('ctx-wake-on-lan', lambda a, p: self.on_wake_on_lan_action(a, p))
+        _add('ctx-system-terminal', lambda a, p: self.on_open_in_system_terminal_action(a, p))
+        _add('ctx-move-to-group', lambda a, p: self.on_move_to_group_action(a, p))
+        _add('ctx-ungroup', lambda a, p: self.on_move_to_ungrouped_action(a, p))
+        _add('ctx-delete-connection', lambda a, p: self.on_delete_connection_action(a, p))
+
+        def _on_copy_address(action, param):
+            conn = getattr(self, '_context_menu_connection', None)
+            if conn:
+                host = getattr(conn, 'hostname', '') or getattr(conn, 'host', '')
+                if host:
+                    self.get_clipboard().set(host)
+
+        _add('ctx-copy-address', _on_copy_address)
 
     def _resolve_connection_list_event(
         self,
