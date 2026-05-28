@@ -2061,6 +2061,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
                         _section(
                             _mi('list-add-symbolic', _('Open New Connection'), lambda: self.on_open_new_connection_action(None, None)),
+                            _mi('view-grid-symbolic', _('Open in Split View'), lambda: self.on_open_in_split_view_action(None, None)),
                             _mi('document-edit-symbolic', _('Edit Connection'), lambda: self.on_edit_connection_action(None, None)),
                             _mi('edit-copy-symbolic', _('Duplicate Connection'), lambda: self.on_duplicate_connection_action(None, None)),
                             _mi('edit-copy-symbolic', _('Copy Address'), lambda: self._copy_connection_address()),
@@ -2716,6 +2717,15 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.tab_button.connect('clicked', self.on_tab_button_clicked)
         self.tab_button.set_visible(False)  # Hidden by default, shown when tabs exist
         self.header_bar.pack_start(self.tab_button)
+
+        # Split-view button — opens a new split-view tab
+        from sshpilot import icon_utils as _iu
+        self.split_view_button = Gtk.Button()
+        _iu.set_button_icon(self.split_view_button, 'view-grid-symbolic')
+        self.split_view_button.set_tooltip_text(_('Open Split View'))
+        self.split_view_button.add_css_class('flat')
+        self.split_view_button.connect('clicked', self.on_open_split_view_clicked)
+        self.header_bar.pack_start(self.split_view_button)
         
         self.content_stack.add_named(self.tab_overview, "tabs")
         # Also color the stack background
@@ -4766,6 +4776,21 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     except Exception as e:
                         logger.debug(f"Failed to focus terminal on tab switch: {e}")
                 GLib.timeout_add(50, _focus_on_tab_switch)
+
+            # Split-view tabs have no single connection — clear sidebar selection
+            from .split_view import SplitViewTab
+            if isinstance(child, SplitViewTab):
+                try:
+                    if hasattr(self.connection_list, 'unselect_all'):
+                        self.connection_list.unselect_all()
+                    else:
+                        current = self.connection_list.get_selected_row()
+                        if current is not None:
+                            self.connection_list.unselect_row(current)
+                except Exception:
+                    pass
+                return
+
             connection = self.terminal_to_connection.get(child)
             if connection:
                 # Check if this is a local terminal
@@ -7019,6 +7044,15 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # close behavior to proceed.
         if getattr(self, '_suppress_close_confirmation', False):
             return False
+
+        # SplitViewTab: clean up all embedded terminals, then allow immediate close
+        if hasattr(page, 'get_child'):
+            child = page.get_child()
+            from .split_view import SplitViewTab
+            if isinstance(child, SplitViewTab):
+                child.cleanup_all()
+                return False
+
         # Get the connection for this tab
         connection = None
         terminal = None
@@ -7116,6 +7150,17 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
     def on_tab_detached(self, tab_view, page, position):
         """Handle tab detached"""
+        # Skip dict cleanup when a terminal is being moved into a split pane
+        # (the terminal stays live; its tracking entries remain valid).
+        if getattr(self, '_moving_tab_to_pane', False):
+            self._update_tab_button_visibility()
+            if tab_view.get_n_pages() == 0:
+                self.show_welcome_view()
+            else:
+                if hasattr(self, 'view_toggle_button'):
+                    self.view_toggle_button.set_visible(True)
+            return
+
         # Cleanup terminal-to-connection maps when a page is detached
         try:
             if hasattr(page, 'get_child'):
@@ -7149,6 +7194,21 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             # Update button visibility when tabs remain
             if hasattr(self, 'view_toggle_button'):
                 self.view_toggle_button.set_visible(True)
+
+    def on_open_split_view_clicked(self, button):
+        """Open a new empty split-view tab."""
+        try:
+            from .split_view import SplitViewTab
+            from sshpilot import icon_utils
+            svt = SplitViewTab(self)
+            page = self.tab_view.append(svt)
+            page.set_title(_("Split View"))
+            page.set_icon(icon_utils.new_gicon_from_icon_name('view-dual-symbolic'))
+            svt._tab_page = page
+            self.show_tab_view()
+            self.tab_view.set_selected_page(page)
+        except Exception as exc:
+            logger.error("Failed to open split view: %s", exc)
 
     def on_local_terminal_button_clicked(self, button):
         """Handle local terminal button click"""

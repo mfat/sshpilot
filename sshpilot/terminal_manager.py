@@ -199,6 +199,102 @@ class TerminalManager:
 
         GLib.idle_add(_set_terminal_colors)
 
+    def create_terminal_for_pane(self, connection, on_connected=None, on_disconnected=None):
+        """
+        Create and connect a TerminalWidget for use inside a SplitPane.
+
+        Unlike connect_to_host(), this does NOT append the terminal to tab_view.
+        The caller (SplitPane) embeds the returned widget in its own layout.
+        """
+        window = self.window
+        group_color, group_name = self._resolve_group_color_and_name(connection)
+
+        terminal = TerminalWidget(
+            connection,
+            window.config,
+            window.connection_manager,
+            group_color=group_color,
+        )
+        terminal.connect('connection-established', self.on_terminal_connected)
+        terminal.connect('connection-failed', lambda w, e: logger.error(f"Connection failed: {e}"))
+        terminal.connect('connection-lost', self.on_terminal_disconnected)
+        terminal.connect('title-changed', self._on_pane_terminal_title_changed)
+
+        if on_connected:
+            terminal.connect('connection-established', on_connected)
+        if on_disconnected:
+            terminal.connect('connection-lost', on_disconnected)
+
+        if group_name:
+            setattr(terminal, 'group_name', group_name)
+
+        window.connection_to_terminals.setdefault(connection, []).append(terminal)
+        window.terminal_to_connection[terminal] = connection
+        window.active_terminals[connection] = terminal
+
+        def _set_terminal_colors():
+            try:
+                try:
+                    app = window.get_application()
+                except Exception:
+                    app = None
+                if app is None:
+                    try:
+                        from gi.repository import Adw as _Adw
+                        app = _Adw.Application.get_default()
+                    except Exception:
+                        app = None
+                connection_manager = getattr(window, 'connection_manager', None)
+                use_native = bool(getattr(connection_manager, 'native_connect_enabled', False))
+                if not use_native and app is not None and hasattr(app, 'native_connect_enabled'):
+                    use_native = bool(app.native_connect_enabled)
+                if not getattr(connection, 'ssh_cmd', None):
+                    try:
+                        loop = asyncio.get_event_loop()
+                        if loop.is_running():
+                            fut = asyncio.run_coroutine_threadsafe(
+                                connection.native_connect() if use_native and hasattr(connection, 'native_connect')
+                                else connection.connect(),
+                                loop,
+                            )
+                            fut.result()
+                        else:
+                            if use_native and hasattr(connection, 'native_connect'):
+                                loop.run_until_complete(connection.native_connect())
+                            else:
+                                loop.run_until_complete(connection.connect())
+                    except Exception as prep_err:
+                        logger.error(f"Failed to prepare SSH command for pane: {prep_err}")
+
+                terminal.apply_theme()
+                if terminal.backend:
+                    terminal.backend.queue_draw()
+                elif hasattr(terminal, 'vte') and terminal.vte:
+                    terminal.vte.queue_draw()
+                if not terminal._connect_ssh():
+                    logger.error('Failed to establish SSH connection for pane')
+                    connection.is_connected = False
+                    try:
+                        if window.active_terminals.get(connection) is terminal:
+                            del window.active_terminals[connection]
+                        window.terminal_to_connection.pop(terminal, None)
+                        terms = window.connection_to_terminals.get(connection, [])
+                        if terminal in terms:
+                            terms.remove(terminal)
+                            if not terms:
+                                del window.connection_to_terminals[connection]
+                    except Exception:
+                        pass
+            except Exception as exc:
+                logger.error(f"Error initialising pane terminal: {exc}")
+
+        GLib.idle_add(_set_terminal_colors)
+        return terminal
+
+    def _on_pane_terminal_title_changed(self, terminal, title):
+        """Title-changed handler for terminals embedded in split panes."""
+        pass  # Title updates are reflected in the tab title via SplitViewTab._update_tab_title
+
     def _resolve_group_color(self, connection):
         color_value, _ = self._resolve_group_color_and_name(connection)
         return color_value
