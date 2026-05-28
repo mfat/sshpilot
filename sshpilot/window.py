@@ -2006,47 +2006,52 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     self._context_menu_connection = getattr(row, 'connection', None)
                     self._context_menu_group_row = row if hasattr(row, 'group_id') else None
                     # Build Gio.Menu model and show as PopoverMenu
+                    def _mi(label, action, icon_name):
+                        item = Gio.MenuItem.new(label, action)
+                        item.set_icon(Gio.ThemedIcon.new(icon_name))
+                        return item
+
                     menu = Gio.Menu()
 
                     if hasattr(row, 'group_id'):
                         section = Gio.Menu()
-                        section.append(_('Edit Group'), 'win.ctx-edit-group')
-                        section.append(_('Delete Group'), 'win.ctx-delete-group')
+                        section.append_item(_mi(_('Edit Group'), 'win.ctx-edit-group', 'document-edit-symbolic'))
+                        section.append_item(_mi(_('Delete Group'), 'win.ctx-delete-group', 'user-trash-symbolic'))
                         menu.append_section(None, section)
                     else:
                         conn = getattr(row, 'connection', None)
 
                         section1 = Gio.Menu()
-                        section1.append(_('Open New Connection'), 'win.ctx-open-new')
-                        section1.append(_('Edit Connection'), 'win.ctx-edit-connection')
-                        section1.append(_('Duplicate Connection'), 'win.ctx-duplicate')
-                        section1.append(_('Copy Address'), 'win.ctx-copy-address')
+                        section1.append_item(_mi(_('Open New Connection'), 'win.ctx-open-new', 'list-add-symbolic'))
+                        section1.append_item(_mi(_('Edit Connection'), 'win.ctx-edit-connection', 'document-edit-symbolic'))
+                        section1.append_item(_mi(_('Duplicate Connection'), 'win.ctx-duplicate', 'edit-copy-symbolic'))
+                        section1.append_item(_mi(_('Copy Address'), 'win.ctx-copy-address', 'edit-copy-symbolic'))
                         menu.append_section(None, section1)
 
                         section2 = Gio.Menu()
                         if not should_hide_file_manager_options():
-                            section2.append(_('Manage Files'), 'win.ctx-manage-files')
-                        section2.append(_('Copy Key to Server'), 'win.ctx-copy-key')
+                            section2.append_item(_mi(_('Manage Files'), 'win.ctx-manage-files', 'folder-symbolic'))
+                        section2.append_item(_mi(_('Copy Key to Server'), 'win.ctx-copy-key', 'dialog-password-symbolic'))
                         try:
                             conn_meta = self.config.get_connection_meta(conn.nickname) if conn else {}
                             if (conn_meta or {}).get('wol_mac', '').strip():
-                                section2.append(_('Wake on LAN'), 'win.ctx-wake-on-lan')
+                                section2.append_item(_mi(_('Wake on LAN'), 'win.ctx-wake-on-lan', 'network-wireless-symbolic'))
                         except Exception:
                             pass
                         if not should_hide_external_terminal_options():
-                            section2.append(_('Open in System Terminal'), 'win.ctx-system-terminal')
+                            section2.append_item(_mi(_('Open in System Terminal'), 'win.ctx-system-terminal', 'utilities-terminal-symbolic'))
                         if section2.get_n_items():
                             menu.append_section(None, section2)
 
                         current_group_id = self.group_manager.get_connection_group(conn.nickname) if conn else None
                         section3 = Gio.Menu()
-                        section3.append(_('Move to Group'), 'win.ctx-move-to-group')
+                        section3.append_item(_mi(_('Move to Group'), 'win.ctx-move-to-group', 'folder-symbolic'))
                         if current_group_id:
-                            section3.append(_('Ungroup'), 'win.ctx-ungroup')
+                            section3.append_item(_mi(_('Ungroup'), 'win.ctx-ungroup', 'edit-undo-symbolic'))
                         menu.append_section(None, section3)
 
                         section4 = Gio.Menu()
-                        section4.append(_('Delete'), 'win.ctx-delete-connection')
+                        section4.append_item(_mi(_('Delete'), 'win.ctx-delete-connection', 'user-trash-symbolic'))
                         menu.append_section(None, section4)
 
                     pop = Gtk.PopoverMenu.new_from_model(menu)
