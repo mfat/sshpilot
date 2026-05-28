@@ -2739,12 +2739,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self._layout_h_btn.set_icon_name("view-dual-symbolic")
         self._layout_h_btn.set_tooltip_text(_("Side by Side"))
         self._layout_h_btn.add_css_class("flat")
+        self._layout_h_btn.set_visible(False)
         self.header_bar.pack_start(self._layout_h_btn)
 
         self._layout_v_btn = Gtk.ToggleButton()
         self._layout_v_btn.set_icon_name("view-paged-symbolic")
         self._layout_v_btn.set_tooltip_text(_("Top / Bottom"))
         self._layout_v_btn.add_css_class("flat")
+        self._layout_v_btn.set_visible(False)
         self.header_bar.pack_start(self._layout_v_btn)
 
         def _on_h_toggled(btn):
@@ -7369,13 +7371,20 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     # ── layout toggle state / apply ───────────────────────────────────────────
 
     def _update_layout_toggle_state(self) -> None:
-        """Sync toggle button active states with the currently selected tab."""
+        """Sync toggle button visibility and active states with the selected tab.
+
+        Buttons are shown only when the active tab is a terminal or split-view
+        tab.  They are hidden on the welcome page, file manager tabs, etc.
+        """
         if not hasattr(self, '_layout_h_btn'):
             return
         try:
             page = self.tab_view.get_selected_page()
             child = page.get_child() if page else None
             from .split_view import SplitViewTab
+            is_terminal_tab = isinstance(child, (TerminalWidget, SplitViewTab))
+            self._layout_h_btn.set_visible(is_terminal_tab)
+            self._layout_v_btn.set_visible(is_terminal_tab)
             self._updating_layout_toggles = True
             try:
                 if isinstance(child, SplitViewTab):
