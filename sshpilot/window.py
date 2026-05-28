@@ -7234,7 +7234,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 finally:
                     self._suppress_close_confirmation = False
                     self._moving_tab_to_pane = False
-                svt._panes[0].add_terminal(terminal, title)
+                # Defer reparent so tab_view fully completes its close sequence
+                GLib.idle_add(svt._panes[0].add_terminal, terminal, title)
 
                 # Add each dropped connection to pane 1 (and extra panes beyond)
                 for i, conn in enumerate(connections):
@@ -7320,7 +7321,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             self._suppress_close_confirmation = False
             self._moving_tab_to_pane = False
 
-        svt._panes[0].add_terminal(terminal, title)
+        # Defer reparent so tab_view fully completes its close sequence first
+        GLib.idle_add(svt._panes[0].add_terminal, terminal, title)
 
         new_page = self.tab_view.append(svt)
         new_page.set_title(_("Split View"))

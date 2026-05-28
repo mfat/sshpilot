@@ -22,7 +22,9 @@ def _install_pane_tabbar_css() -> None:
         if not display:
             return
         provider = Gtk.CssProvider()
-        css = "tabbar.sshpilot-inner-tabbar tab .close-btn { display: none; }\n"
+        # Target every button that is a direct child of an AdwTab (the close-btn).
+        # The Close Pane button lives in .end-action (not inside tab), so it is unaffected.
+        css = "tabbar.sshpilot-inner-tabbar tab button { display: none; }\n"
         provider.load_from_data(css.encode("utf-8"))
         Gtk.StyleContext.add_provider_for_display(
             display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
@@ -102,9 +104,24 @@ class SplitPane(Gtk.Box):
         outer.set_hexpand(True)
         outer.set_vexpand(True)
 
+        # Close-pane header (always visible even when empty)
+        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        header.set_hexpand(True)
+        close_btn = Gtk.Button()
+        close_btn.set_icon_name("window-close-symbolic")
+        close_btn.add_css_class("flat")
+        close_btn.set_tooltip_text(_("Close Pane"))
+        close_btn.set_halign(Gtk.Align.END)
+        close_btn.set_hexpand(True)
+        close_btn.connect("clicked", lambda _b: self.close_pane())
+        header.append(close_btn)
+        outer.append(header)
+
+        # Centered content — vexpand=True so valign=CENTER has space to work in
         inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
         inner.set_halign(Gtk.Align.CENTER)
         inner.set_valign(Gtk.Align.CENTER)
+        inner.set_vexpand(True)
 
         icon = Gtk.Image.new_from_icon_name("utilities-terminal-symbolic")
         icon.set_pixel_size(48)
@@ -384,6 +401,7 @@ class SplitPane(Gtk.Box):
 
         scroll = Gtk.ScrolledWindow()
         scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroll.set_min_content_width(280)
         scroll.set_max_content_height(300)
         scroll.set_propagate_natural_height(True)
         scroll.set_child(list_box)
@@ -471,14 +489,18 @@ class SplitViewTab(Gtk.Box):
     # ── "Add Terminal" strip ─────────────────────────────────────────────────
 
     def _build_add_pane_strip(self) -> Gtk.Widget:
+        # Strip spans the full width so the whole area acts as a drop target.
+        # The pill button is centred within the strip via halign on the button.
         strip = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-        strip.set_halign(Gtk.Align.CENTER)
+        strip.set_hexpand(True)
         strip.set_margin_top(8)
         strip.set_margin_bottom(8)
 
         btn = Gtk.Button(label=_("Add Terminal"))
         btn.add_css_class("suggested-action")
         btn.add_css_class("pill")
+        btn.set_halign(Gtk.Align.CENTER)
+        btn.set_hexpand(True)
         btn.connect("clicked", lambda _b: self.add_pane())
         strip.append(btn)
 
