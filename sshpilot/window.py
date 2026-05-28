@@ -2008,7 +2008,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     # Build Gio.Menu model and show as PopoverMenu
                     def _mi(label, action, icon_name):
                         item = Gio.MenuItem.new(label, action)
-                        item.set_icon(Gio.ThemedIcon.new(icon_name))
+                        item.set_attribute_value('verb-icon', GLib.Variant('s', icon_name))
                         return item
 
                     menu = Gio.Menu()
