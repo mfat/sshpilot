@@ -26,10 +26,10 @@ class SplitPane(Gtk.Box):
         self._window = window
         self._has_terminals = False
         self.set_hexpand(True)
-        self.set_vexpand(True)
-        # Minimum height prevents panes from collapsing to zero when layout
-        # changes (e.g. reconnect banner appears in a sibling pane).
-        self.set_size_request(-1, 150)
+        # Keep pane height controlled by SplitViewTab so all panes remain
+        # visually uniform and overflow is handled by the outer scroller.
+        self.set_vexpand(False)
+        self.set_size_request(-1, 240)
 
         # ── inner tab view (mini Adw.TabBar + Adw.TabView) ───────────────
         self._inner_tab_view = Adw.TabView()
@@ -221,11 +221,22 @@ class SplitPane(Gtk.Box):
             if terminal in self._window.terminal_to_connection:
                 self._split_view_tab._cleanup_terminal(terminal)
 
-        remaining = tab_view.get_n_pages() if tab_view else 0
-        if remaining <= 1:
-            GLib.idle_add(self._restore_placeholder)
+        # Let Adw.TabView finish closing first, then decide whether this pane
+        # should disappear entirely (last inner tab closed) or keep showing a
+        # placeholder. This avoids stale empty panes and tab/pane mismatch.
+        GLib.idle_add(self._after_inner_close)
 
         return False  # Allow AdwTabView to proceed with the close
+
+    def _after_inner_close(self) -> bool:
+        remaining = self.get_terminal_count()
+        if remaining == 0:
+            self.close_pane()
+        elif remaining <= 1:
+            # Defensive fallback if a single page remains but _has_terminals
+            # was not in sync for any reason.
+            self._restore_placeholder()
+        return False
 
     # ── pane close ───────────────────────────────────────────────────────────
 
@@ -422,6 +433,7 @@ class SplitViewTab(Gtk.Box):
 
     HORIZONTAL = 'horizontal'
     VERTICAL = 'vertical'
+    DEFAULT_PANE_HEIGHT = 240
 
     def __init__(self, window) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
@@ -444,6 +456,7 @@ class SplitViewTab(Gtk.Box):
         self._pane_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         self._pane_scroll.set_hexpand(True)
         self._pane_scroll.set_vexpand(True)
+        self._pane_scroll.set_propagate_natural_height(True)
         self._pane_scroll.set_child(self._content_area)
         self.append(self._pane_scroll)
 
@@ -547,19 +560,7 @@ class SplitViewTab(Gtk.Box):
     # ── layout rebuild ────────────────────────────────────────────────────────
 
     def _rebuild_layout(self) -> None:
-        """Detach all panes and rebuild rows inside _content_area.
-
-        HORIZONTAL mode: pane pairs sit in a GtkPaned(H) so the user can
-        drag the vertical divider.  Rows are stacked in the Box so they each
-        grow to their own natural height — a reconnect banner in one row never
-        steals height from another row.
-
-        VERTICAL mode: all panes stacked directly in the Box.
-
-        Both modes are wrapped by the ScrolledWindow(_pane_scroll), which
-        provides vertical scrolling when the total content exceeds the
-        viewport.
-        """
+        """Detach all panes and rebuild a fully resizable pane tree."""
         # Detach every pane from its current container (H-Paned or Box child).
         for pane in self._panes:
             try:
@@ -582,21 +583,70 @@ class SplitViewTab(Gtk.Box):
             return
 
         if self._layout_mode == self.VERTICAL:
-            for pane in self._panes:
-                self._content_area.append(pane)
+            root = self._chain_panes(self._panes, Gtk.Orientation.VERTICAL)
+            self._content_area.append(root)
         else:
-            # HORIZONTAL: pairs side-by-side in H-Paned, rows stacked in Box.
+            # HORIZONTAL: pane pairs become rows. Rows are chained vertically
+            # with Gtk.Paned so row heights can be manually resized.
+            row_widgets: List[Gtk.Widget] = []
             for i in range(0, n, 2):
                 pair = self._panes[i:i + 2]
                 if len(pair) == 1:
-                    self._content_area.append(pair[0])
+                    row_widgets.append(pair[0])
                 else:
                     h_paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
                     h_paned.set_hexpand(True)
-                    h_paned.set_vexpand(True)
+                    h_paned.set_vexpand(False)
+                    h_paned.set_wide_handle(True)
+                    h_paned.set_resize_start_child(True)
+                    h_paned.set_resize_end_child(True)
+                    h_paned.set_shrink_start_child(False)
+                    h_paned.set_shrink_end_child(False)
+                    pair[0].set_vexpand(False)
+                    pair[1].set_vexpand(False)
+                    pair[0].set_size_request(-1, self.DEFAULT_PANE_HEIGHT)
+                    pair[1].set_size_request(-1, self.DEFAULT_PANE_HEIGHT)
                     h_paned.set_start_child(pair[0])
                     h_paned.set_end_child(pair[1])
-                    self._content_area.append(h_paned)
+                    row_widgets.append(h_paned)
+            root = self._chain_panes(row_widgets, Gtk.Orientation.VERTICAL)
+            self._content_area.append(root)
+
+        self._normalize_pane_heights()
+
+    def _chain_panes(
+        self,
+        widgets: List[Gtk.Widget],
+        orientation: Gtk.Orientation,
+    ) -> Gtk.Widget:
+        """Build a nested Gtk.Paned chain so every boundary is draggable."""
+        if not widgets:
+            return Gtk.Box()
+        if len(widgets) == 1:
+            return widgets[0]
+
+        root = Gtk.Paned(orientation=orientation)
+        root.set_hexpand(True)
+        root.set_vexpand(False)
+        root.set_wide_handle(True)
+        root.set_resize_start_child(True)
+        root.set_resize_end_child(True)
+        # Critical for nested vertical paned chains: don't let either side
+        # collapse to zero, otherwise lower panes disappear from view.
+        root.set_shrink_start_child(False)
+        root.set_shrink_end_child(False)
+        root.set_start_child(widgets[0])
+        root.set_end_child(self._chain_panes(widgets[1:], orientation))
+        return root
+
+    def _normalize_pane_heights(self) -> None:
+        """Force stable, equal pane heights so banners don't reflow the grid."""
+        for pane in self._panes:
+            try:
+                pane.set_vexpand(False)
+                pane.set_size_request(-1, self.DEFAULT_PANE_HEIGHT)
+            except Exception:
+                pass
 
     # ── pre-population ────────────────────────────────────────────────────────
 
