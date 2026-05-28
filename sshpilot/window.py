@@ -1950,7 +1950,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self._queue_focus_operation(_set_sidebar_focus)
         
         # Set up drag and drop for reordering
-        self._setup_context_menu_actions()
         build_sidebar(self)
 
         # Right-click context menu using simple gesture without coordinate detection
@@ -2005,69 +2004,94 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     self._context_menu_row = row
                     self._context_menu_connection = getattr(row, 'connection', None)
                     self._context_menu_group_row = row if hasattr(row, 'group_id') else None
-                    # Build Gio.Menu model and show as PopoverMenu
-                    def _mi(label, action, icon_name):
-                        item = Gio.MenuItem.new(label, action)
-                        item.set_attribute_value('verb-icon', GLib.Variant('s', icon_name))
-                        return item
 
-                    menu = Gio.Menu()
+                    pop = Gtk.Popover.new()
+                    pop.set_has_arrow(True)
+
+                    listbox = Gtk.ListBox()
+                    listbox.set_selection_mode(Gtk.SelectionMode.SINGLE)
+                    listbox.set_margin_top(4)
+                    listbox.set_margin_bottom(4)
+                    pop.set_child(listbox)
+
+                    section_id = [0]
+
+                    def _add_item(icon_name, label_text, callback):
+                        menu_row = Gtk.ListBoxRow()
+                        menu_row.set_activatable(True)
+                        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+                        box.set_margin_start(12)
+                        box.set_margin_end(16)
+                        box.set_margin_top(6)
+                        box.set_margin_bottom(6)
+                        icon = Gtk.Image.new_from_icon_name(icon_name)
+                        box.append(icon)
+                        lbl = Gtk.Label(label=label_text)
+                        lbl.set_xalign(0)
+                        lbl.set_hexpand(True)
+                        box.append(lbl)
+                        menu_row.set_child(box)
+                        menu_row._section = section_id[0]
+                        menu_row._callback = callback
+                        listbox.append(menu_row)
+
+                    def _next_section():
+                        section_id[0] += 1
+
+                    def _header_func(menu_row, before):
+                        if before is not None and menu_row._section != before._section:
+                            menu_row.set_header(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
+                        else:
+                            menu_row.set_header(None)
+
+                    listbox.set_header_func(_header_func)
+
+                    def _on_row_activated(lb, activated_row):
+                        activated_row._callback()
+                        pop.popdown()
+
+                    listbox.connect('row-activated', _on_row_activated)
+
+                    def _on_popover_closed(*_):
+                        self._context_menu_row = None
+                        self._context_menu_connection = None
+
+                    pop.connect('closed', _on_popover_closed)
 
                     if hasattr(row, 'group_id'):
-                        section = Gio.Menu()
-                        section.append_item(_mi(_('Edit Group'), 'win.ctx-edit-group', 'document-edit-symbolic'))
-                        section.append_item(_mi(_('Delete Group'), 'win.ctx-delete-group', 'user-trash-symbolic'))
-                        menu.append_section(None, section)
+                        _add_item('document-edit-symbolic', _('Edit Group'), lambda: self.on_edit_group_action(None, None))
+                        _add_item('user-trash-symbolic', _('Delete Group'), lambda: self.on_delete_group_action(None, None))
                     else:
                         conn = getattr(row, 'connection', None)
 
-                        section1 = Gio.Menu()
-                        section1.append_item(_mi(_('Open New Connection'), 'win.ctx-open-new', 'list-add-symbolic'))
-                        section1.append_item(_mi(_('Edit Connection'), 'win.ctx-edit-connection', 'document-edit-symbolic'))
-                        section1.append_item(_mi(_('Duplicate Connection'), 'win.ctx-duplicate', 'edit-copy-symbolic'))
-                        section1.append_item(_mi(_('Copy Address'), 'win.ctx-copy-address', 'edit-copy-symbolic'))
-                        menu.append_section(None, section1)
+                        _add_item('list-add-symbolic', _('Open New Connection'), lambda: self.on_open_new_connection_action(None, None))
+                        _add_item('document-edit-symbolic', _('Edit Connection'), lambda: self.on_edit_connection_action(None, None))
+                        _add_item('edit-copy-symbolic', _('Duplicate Connection'), lambda: self.on_duplicate_connection_action(None, None))
+                        _add_item('edit-copy-symbolic', _('Copy Address'), lambda: self._copy_connection_address())
 
-                        section2 = Gio.Menu()
+                        _next_section()
                         if not should_hide_file_manager_options():
-                            section2.append_item(_mi(_('Manage Files'), 'win.ctx-manage-files', 'folder-symbolic'))
-                        section2.append_item(_mi(_('Copy Key to Server'), 'win.ctx-copy-key', 'dialog-password-symbolic'))
+                            _add_item('folder-symbolic', _('Manage Files'), lambda: self.on_manage_files_action(None, None))
+                        _add_item('dialog-password-symbolic', _('Copy Key to Server'), lambda: self.on_copy_key_to_server_action(None, None))
                         try:
                             conn_meta = self.config.get_connection_meta(conn.nickname) if conn else {}
                             if (conn_meta or {}).get('wol_mac', '').strip():
-                                section2.append_item(_mi(_('Wake on LAN'), 'win.ctx-wake-on-lan', 'network-wireless-symbolic'))
+                                _add_item('network-wireless-symbolic', _('Wake on LAN'), lambda: self.on_wake_on_lan_action(None, None))
                         except Exception:
                             pass
                         if not should_hide_external_terminal_options():
-                            section2.append_item(_mi(_('Open in System Terminal'), 'win.ctx-system-terminal', 'utilities-terminal-symbolic'))
-                        if section2.get_n_items():
-                            menu.append_section(None, section2)
+                            _add_item('utilities-terminal-symbolic', _('Open in System Terminal'), lambda: self.on_open_in_system_terminal_action(None, None))
 
+                        _next_section()
                         current_group_id = self.group_manager.get_connection_group(conn.nickname) if conn else None
-                        section3 = Gio.Menu()
-                        section3.append_item(_mi(_('Move to Group'), 'win.ctx-move-to-group', 'folder-symbolic'))
+                        _add_item('folder-symbolic', _('Move to Group'), lambda: self.on_move_to_group_action(None, None))
                         if current_group_id:
-                            section3.append_item(_mi(_('Ungroup'), 'win.ctx-ungroup', 'edit-undo-symbolic'))
-                        menu.append_section(None, section3)
+                            _add_item('edit-undo-symbolic', _('Ungroup'), lambda: self.on_move_to_ungrouped_action(None, None))
 
-                        section4 = Gio.Menu()
-                        section4.append_item(_mi(_('Delete'), 'win.ctx-delete-connection', 'user-trash-symbolic'))
-                        menu.append_section(None, section4)
+                        _next_section()
+                        _add_item('user-trash-symbolic', _('Delete'), lambda: self.on_delete_connection_action(None, None))
 
-                    pop = Gtk.PopoverMenu.new_from_model(menu)
                     pop.set_parent(row)
-
-                    def _on_popover_closed(*_):
-                        # Defer cleanup: PopoverMenu emits 'closed' before activating
-                        # the action, so clearing immediately would leave action
-                        # callbacks with no connection to act on.
-                        def _cleanup():
-                            self._context_menu_row = None
-                            self._context_menu_connection = None
-                            return False
-                        GLib.idle_add(_cleanup)
-
-                    pop.connect('closed', _on_popover_closed)
                     GLib.idle_add(lambda: (pop.popup(), False)[-1])
                     
                 except Exception as e:
@@ -2252,34 +2276,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self._set_sidebar_widget(sidebar_box)
         logger.debug("Set sidebar widget")
 
-    def _setup_context_menu_actions(self):
-        """Register Gio.SimpleAction instances for the connection list context menu."""
-        def _add(name, callback):
-            action = Gio.SimpleAction.new(name, None)
-            action.connect('activate', callback)
-            self.add_action(action)
-
-        _add('ctx-edit-group', lambda a, p: self.on_edit_group_action(a, p))
-        _add('ctx-delete-group', lambda a, p: self.on_delete_group_action(a, p))
-        _add('ctx-open-new', lambda a, p: self.on_open_new_connection_action(a, p))
-        _add('ctx-edit-connection', lambda a, p: self.on_edit_connection_action(a, p))
-        _add('ctx-duplicate', lambda a, p: self.on_duplicate_connection_action(a, p))
-        _add('ctx-manage-files', lambda a, p: self.on_manage_files_action(a, p))
-        _add('ctx-copy-key', lambda a, p: self.on_copy_key_to_server_action(a, p))
-        _add('ctx-wake-on-lan', lambda a, p: self.on_wake_on_lan_action(a, p))
-        _add('ctx-system-terminal', lambda a, p: self.on_open_in_system_terminal_action(a, p))
-        _add('ctx-move-to-group', lambda a, p: self.on_move_to_group_action(a, p))
-        _add('ctx-ungroup', lambda a, p: self.on_move_to_ungrouped_action(a, p))
-        _add('ctx-delete-connection', lambda a, p: self.on_delete_connection_action(a, p))
-
-        def _on_copy_address(action, param):
-            conn = getattr(self, '_context_menu_connection', None)
-            if conn:
-                host = getattr(conn, 'hostname', '') or getattr(conn, 'host', '')
-                if host:
-                    self.get_clipboard().set(host)
-
-        _add('ctx-copy-address', _on_copy_address)
+    def _copy_connection_address(self):
+        conn = getattr(self, '_context_menu_connection', None)
+        if conn:
+            host = getattr(conn, 'hostname', '') or getattr(conn, 'host', '')
+            if host:
+                self.get_clipboard().set(host)
 
     def _resolve_connection_list_event(
         self,
