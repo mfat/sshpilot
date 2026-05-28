@@ -776,6 +776,20 @@ class SplitViewTab(Gtk.Box):
     _RESIZE_STEP = 50  # pixels per Ctrl+Alt+Shift+HJKL keypress
 
     def _on_key_pressed(self, _ctrl, keyval, _keycode, state) -> bool:
+        # Guard: only act when the focused widget is inside THIS SplitViewTab.
+        # Adw.TabView keeps all tab-page children realized, so GTK4 may invoke
+        # our CAPTURE handler even when a sibling widget (e.g. the connection
+        # list) has focus. Walk the parent chain to confirm.
+        root = self.get_root()
+        focused = root.get_focus() if root else None
+        w = focused
+        while w is not None:
+            if w is self:
+                break
+            w = w.get_parent()
+        else:
+            return False
+
         mods = state & (
             Gdk.ModifierType.CONTROL_MASK
             | Gdk.ModifierType.ALT_MASK
