@@ -6,6 +6,7 @@ from typing import List, Optional
 
 from gi.repository import Gtk, Gdk, GObject, GLib, Adw
 from gettext import gettext as _
+from .platform_utils import is_macos
 
 logger = logging.getLogger(__name__)
 
@@ -466,6 +467,12 @@ class SplitViewTab(Gtk.Box):
         self.add_pane()
         self.add_pane()
 
+        # CAPTURE-phase key controller intercepts shortcuts before VTE eats them
+        key_ctrl = Gtk.EventControllerKey()
+        key_ctrl.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        key_ctrl.connect("key-pressed", self._on_key_pressed)
+        self.add_controller(key_ctrl)
+
     # ── layout mode (public API for window.py overlay toggle) ────────────────
 
     def get_layout_mode(self) -> str:
@@ -769,3 +776,132 @@ class SplitViewTab(Gtk.Box):
             self._tab_page.set_title(_("Split View ({n} terminals)").format(n=n))
         else:
             self._tab_page.set_title(_("Split View"))
+
+    # ── keyboard navigation ───────────────────────────────────────────────────
+
+    _RESIZE_STEP = 50  # pixels per Ctrl+Alt+Shift+Arrow keypress
+
+    def _on_key_pressed(self, _ctrl, keyval, _keycode, state) -> bool:
+        mods = state & (
+            Gdk.ModifierType.CONTROL_MASK
+            | Gdk.ModifierType.ALT_MASK
+            | Gdk.ModifierType.SHIFT_MASK
+            | Gdk.ModifierType.META_MASK
+        )
+
+        CTRL_ALT    = Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.ALT_MASK
+        CTRL_ALT_SH = CTRL_ALT | Gdk.ModifierType.SHIFT_MASK
+        CTRL_SH     = Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.SHIFT_MASK
+        # macOS: Cmd+Option avoids Mission Control (Ctrl+Option+Up/Down conflict)
+        MAC_NAV     = Gdk.ModifierType.META_MASK | Gdk.ModifierType.ALT_MASK
+        MAC_NAV_SH  = MAC_NAV | Gdk.ModifierType.SHIFT_MASK
+
+        ARROWS = {
+            Gdk.KEY_Up: 'up', Gdk.KEY_Down: 'down',
+            Gdk.KEY_Left: 'left', Gdk.KEY_Right: 'right',
+        }
+
+        if keyval in ARROWS:
+            d = ARROWS[keyval]
+            nav_mods  = {CTRL_ALT, MAC_NAV if is_macos() else CTRL_ALT}
+            res_mods  = {CTRL_ALT_SH, MAC_NAV_SH if is_macos() else CTRL_ALT_SH}
+            if mods in nav_mods:
+                self._navigate_pane(d)
+                return True
+            if mods in res_mods:
+                self._resize_active_pane(d)
+                return True
+
+        if keyval == Gdk.KEY_backslash and mods == CTRL_SH:
+            self.set_layout_mode(self.HORIZONTAL)
+            return True
+        if keyval == Gdk.KEY_minus and mods == CTRL_SH:
+            self.set_layout_mode(self.VERTICAL)
+            return True
+        if keyval in (Gdk.KEY_W, Gdk.KEY_w) and mods == CTRL_SH:
+            pane = self._get_focused_pane()
+            if pane:
+                pane.close_pane()
+            return True
+        if keyval in (Gdk.KEY_T, Gdk.KEY_t) and mods == CTRL_SH:
+            self.add_pane()
+            return True
+
+        return False
+
+    def _get_focused_pane(self) -> Optional[SplitPane]:
+        root = self.get_root()
+        focused = root.get_focus() if root else None
+        widget = focused
+        while widget is not None:
+            if isinstance(widget, SplitPane):
+                return widget
+            widget = widget.get_parent()
+        return None
+
+    def _pane_grid_pos(self, idx: int) -> tuple:
+        if self._layout_mode == self.VERTICAL:
+            return (idx, 0)
+        return (idx // 2, idx % 2)
+
+    def _navigate_pane(self, direction: str) -> None:
+        current = self._get_focused_pane()
+        if current is None:
+            if self._panes:
+                self._focus_pane(self._panes[0])
+            return
+        if current not in self._panes:
+            return
+
+        idx = self._panes.index(current)
+        row, col = self._pane_grid_pos(idx)
+        pos_map = {self._pane_grid_pos(i): p for i, p in enumerate(self._panes)}
+
+        dr, dc = {'up': (-1, 0), 'down': (1, 0),
+                  'left': (0, -1), 'right': (0, 1)}[direction]
+        target = pos_map.get((row + dr, col + dc))
+        if target:
+            self._focus_pane(target)
+
+    def _focus_pane(self, pane: SplitPane) -> None:
+        page = pane._inner_tab_view.get_selected_page()
+        if page is None:
+            pane.grab_focus()
+            return
+        child = page.get_child()
+        if hasattr(child, 'backend') and child.backend:
+            child.backend.grab_focus()
+        else:
+            child.grab_focus()
+
+    def _resize_active_pane(self, direction: str) -> None:
+        pane = self._get_focused_pane()
+        if pane is None:
+            return
+
+        need_h = direction in ('left', 'right')
+        need_orient = (Gtk.Orientation.HORIZONTAL if need_h
+                       else Gtk.Orientation.VERTICAL)
+
+        widget = pane
+        paned = None
+        is_start = True
+        while widget is not None:
+            parent = widget.get_parent()
+            if (isinstance(parent, Gtk.Paned)
+                    and parent.get_orientation() == need_orient):
+                paned = parent
+                is_start = (parent.get_start_child() is widget)
+                break
+            widget = parent
+
+        if paned is None:
+            return
+
+        if direction in ('right', 'down'):
+            delta = self._RESIZE_STEP if is_start else -self._RESIZE_STEP
+        else:
+            delta = -self._RESIZE_STEP if is_start else self._RESIZE_STEP
+
+        new_pos = max(self.DEFAULT_PANE_HEIGHT, paned.get_position() + delta)
+        paned.set_position(new_pos)
