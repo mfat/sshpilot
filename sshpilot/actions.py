@@ -162,6 +162,38 @@ class WindowActions:
         except Exception as exc:
             logger.error("Failed to open connections in split view: %s", exc)
 
+    def on_open_group_in_split_view_action(self, action, param=None):
+        """Open all connections in a group as a new split-view tab."""
+        try:
+            from .split_view import SplitViewTab
+            from sshpilot import icon_utils
+
+            group_row = getattr(self, '_context_menu_group_row', None)
+            if group_row is None:
+                return
+
+            group_info = group_row.group_info
+            connections = []
+            for nick in group_info.get('connections', []):
+                conn = self.connection_manager.find_connection_by_nickname(nick)
+                if conn is not None:
+                    connections.append(conn)
+
+            if not connections:
+                return
+
+            svt = SplitViewTab(self)
+            page = self.tab_view.append(svt)
+            name = group_info.get('name', '')
+            page.set_title(_("Split View — {name}").format(name=name) if name else _("Split View"))
+            page.set_icon(icon_utils.new_gicon_from_icon_name('view-dual-symbolic'))
+            svt._tab_page = page
+            svt.populate(connections)
+            self.show_tab_view()
+            self.tab_view.set_selected_page(page)
+        except Exception as exc:
+            logger.error("Failed to open group in split view: %s", exc)
+
     def on_manage_files_action(self, action, param=None):
         """Handle manage files action from context menu"""
         if hasattr(self, '_context_menu_connection') and self._context_menu_connection:

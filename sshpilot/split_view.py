@@ -9,6 +9,27 @@ from gettext import gettext as _
 
 logger = logging.getLogger(__name__)
 
+_PANE_TABBAR_CSS_INSTALLED = False
+
+
+def _install_pane_tabbar_css() -> None:
+    """Install CSS that hides the per-tab close button inside split-pane tab bars."""
+    global _PANE_TABBAR_CSS_INSTALLED
+    if _PANE_TABBAR_CSS_INSTALLED:
+        return
+    try:
+        display = Gdk.Display.get_default()
+        if not display:
+            return
+        provider = Gtk.CssProvider()
+        css = "tabbar.sshpilot-inner-tabbar tab .close-btn { display: none; }\n"
+        provider.load_from_data(css.encode("utf-8"))
+        Gtk.StyleContext.add_provider_for_display(
+            display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+        _PANE_TABBAR_CSS_INSTALLED = True
+    except Exception:
+        pass
 
 class SplitPane(Gtk.Box):
     """
@@ -38,6 +59,8 @@ class SplitPane(Gtk.Box):
         self._inner_tab_bar = Adw.TabBar()
         self._inner_tab_bar.set_view(self._inner_tab_view)
         self._inner_tab_bar.set_autohide(False)
+        self._inner_tab_bar.add_css_class("sshpilot-inner-tabbar")
+        _install_pane_tabbar_css()
 
         # "Close Pane" button at end of tab bar
         close_pane_btn = Gtk.Button()

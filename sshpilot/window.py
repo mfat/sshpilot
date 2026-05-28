@@ -2054,6 +2054,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     if hasattr(row, 'group_id'):
                         _section(
                             _mi('document-edit-symbolic', _('Edit Group'), lambda: self.on_edit_group_action(None, None)),
+                            _mi('view-grid-symbolic', _('Open in Split View'), lambda: self.on_open_group_in_split_view_action(None, None)),
                             _mi('user-trash-symbolic', _('Delete Group'), lambda: self.on_delete_group_action(None, None)),
                         )
                     else:
@@ -2703,15 +2704,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Create tab content box
         tab_content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         tab_content_box.append(self.tab_bar)
-
-        # Wrap tab_view in an overlay so the global layout-toggle floats above it
-        self.tab_content_overlay = Gtk.Overlay()
-        self.tab_content_overlay.set_hexpand(True)
-        self.tab_content_overlay.set_vexpand(True)
-        self.tab_content_overlay.set_child(self.tab_view)
-        self._setup_layout_toggle_overlay()
-        tab_content_box.append(self.tab_content_overlay)
-
+        tab_content_box.append(self.tab_view)
         # Ensure background matches terminal theme to avoid white flash
         if hasattr(tab_content_box, 'add_css_class'):
             tab_content_box.add_css_class('terminal-bg')
@@ -2734,7 +2727,42 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.split_view_button.add_css_class('flat')
         self.split_view_button.connect('clicked', self.on_open_split_view_clicked)
         self.header_bar.pack_start(self.split_view_button)
-        
+
+        # H/V layout toggle buttons (control split-view layout or convert a
+        # regular terminal tab to a split-view tab)
+        self._updating_layout_toggles = False
+
+        self._layout_h_btn = Gtk.ToggleButton()
+        self._layout_h_btn.set_icon_name("view-dual-symbolic")
+        self._layout_h_btn.set_tooltip_text(_("Side by Side"))
+        self._layout_h_btn.add_css_class("flat")
+        self.header_bar.pack_start(self._layout_h_btn)
+
+        self._layout_v_btn = Gtk.ToggleButton()
+        self._layout_v_btn.set_icon_name("view-paged-symbolic")
+        self._layout_v_btn.set_tooltip_text(_("Top / Bottom"))
+        self._layout_v_btn.add_css_class("flat")
+        self.header_bar.pack_start(self._layout_v_btn)
+
+        def _on_h_toggled(btn):
+            if self._updating_layout_toggles or not btn.get_active():
+                return
+            self._updating_layout_toggles = True
+            self._layout_v_btn.set_active(False)
+            self._updating_layout_toggles = False
+            self._apply_tab_layout_mode('horizontal')
+
+        def _on_v_toggled(btn):
+            if self._updating_layout_toggles or not btn.get_active():
+                return
+            self._updating_layout_toggles = True
+            self._layout_h_btn.set_active(False)
+            self._updating_layout_toggles = False
+            self._apply_tab_layout_mode('vertical')
+
+        self._layout_h_btn.connect("toggled", _on_h_toggled)
+        self._layout_v_btn.connect("toggled", _on_v_toggled)
+
         self.content_stack.add_named(self.tab_overview, "tabs")
         # Also color the stack background
         if hasattr(self.content_stack, 'add_css_class'):
@@ -7236,97 +7264,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         dt.connect("enter", lambda _t, _x, _y: Gdk.DragAction.MOVE)
         terminal.add_controller(dt)
 
-    # ── global layout-toggle overlay ─────────────────────────────────────────
-
-    def _setup_layout_toggle_overlay(self) -> None:
-        """Build H/V layout-toggle buttons and attach them as an autohiding overlay."""
-        self._layout_toggle_hide_id: Optional[int] = None
-        self._updating_layout_toggles = False
-
-        # Toggle buttons
-        h_btn = Gtk.ToggleButton()
-        h_btn.set_icon_name("view-dual-symbolic")
-        h_btn.set_tooltip_text(_("Side by Side"))
-        h_btn.add_css_class("flat")
-
-        v_btn = Gtk.ToggleButton()
-        v_btn.set_icon_name("view-paged-symbolic")
-        v_btn.set_tooltip_text(_("Top / Bottom"))
-        v_btn.add_css_class("flat")
-
-        self._layout_h_btn = h_btn
-        self._layout_v_btn = v_btn
-
-        def on_h_toggled(btn):
-            if self._updating_layout_toggles or not btn.get_active():
-                return
-            self._updating_layout_toggles = True
-            v_btn.set_active(False)
-            self._updating_layout_toggles = False
-            self._apply_tab_layout_mode('horizontal')
-
-        def on_v_toggled(btn):
-            if self._updating_layout_toggles or not btn.get_active():
-                return
-            self._updating_layout_toggles = True
-            h_btn.set_active(False)
-            self._updating_layout_toggles = False
-            self._apply_tab_layout_mode('vertical')
-
-        h_btn.connect("toggled", on_h_toggled)
-        v_btn.connect("toggled", on_v_toggled)
-
-        toggle_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
-        toggle_box.add_css_class("card")
-        toggle_box.set_margin_top(8)
-        toggle_box.set_margin_end(8)
-        toggle_box.set_margin_start(4)
-        toggle_box.set_margin_bottom(4)
-        toggle_box.append(h_btn)
-        toggle_box.append(v_btn)
-
-        # Revealer for autohide (crossfade in/out)
-        revealer = Gtk.Revealer()
-        revealer.set_transition_type(Gtk.RevealerTransitionType.CROSSFADE)
-        revealer.set_transition_duration(200)
-        revealer.set_reveal_child(False)
-        revealer.set_child(toggle_box)
-        revealer.set_halign(Gtk.Align.END)
-        revealer.set_valign(Gtk.Align.START)
-        # Let pointer events through when hidden; intercept when visible
-        revealer.set_can_target(True)
-        self._layout_toggle_revealer = revealer
-
-        self.tab_content_overlay.add_overlay(revealer)
-
-        # Show on mouse motion; hide after 2 s of inactivity
-        motion = Gtk.EventControllerMotion()
-        motion.connect("motion", self._on_tab_overlay_motion)
-        motion.connect("leave", self._on_tab_overlay_leave)
-        self.tab_content_overlay.add_controller(motion)
-
-    def _on_tab_overlay_motion(self, _ctrl, _x, _y) -> None:
-        """Show the layout toggle on any pointer movement."""
-        if self._layout_toggle_hide_id:
-            GLib.source_remove(self._layout_toggle_hide_id)
-            self._layout_toggle_hide_id = None
-        self._layout_toggle_revealer.set_reveal_child(True)
-        self._layout_toggle_hide_id = GLib.timeout_add(
-            2000, self._auto_hide_layout_toggle
-        )
-
-    def _on_tab_overlay_leave(self, _ctrl) -> None:
-        """Start a short hide timer when the pointer leaves the tab area."""
-        if self._layout_toggle_hide_id:
-            GLib.source_remove(self._layout_toggle_hide_id)
-        self._layout_toggle_hide_id = GLib.timeout_add(
-            600, self._auto_hide_layout_toggle
-        )
-
-    def _auto_hide_layout_toggle(self) -> bool:
-        self._layout_toggle_revealer.set_reveal_child(False)
-        self._layout_toggle_hide_id = None
-        return False  # one-shot
+    # ── layout toggle state / apply ───────────────────────────────────────────
 
     def _update_layout_toggle_state(self) -> None:
         """Sync toggle button active states with the currently selected tab."""
