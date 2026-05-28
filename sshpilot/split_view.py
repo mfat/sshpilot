@@ -552,6 +552,62 @@ class SplitViewTab(Gtk.Box):
     def get_pane_count(self) -> int:
         return len(self._panes)
 
+    # ── proportional Paned factory ────────────────────────────────────────────
+
+    def _make_proportional_paned(
+        self,
+        orientation: Gtk.Orientation,
+        ratio: float = 0.5,
+    ) -> Gtk.Paned:
+        """Return a Gtk.Paned whose divider tracks a ratio, not a pixel position.
+
+        When the widget is resized the divider is repositioned at
+        `ratio × new_total_size` so the split stays proportional.  When the
+        user drags the divider the new ratio is saved automatically.
+        `shrink=False` on both children ensures neither pane collapses below
+        its minimum size (set via set_size_request on the SplitPane).
+        """
+        p = Gtk.Paned(orientation=orientation)
+        p.set_hexpand(True)
+        p.set_vexpand(True)
+        p.set_wide_handle(True)
+        p.set_resize_start_child(True)
+        p.set_resize_end_child(True)
+        p.set_shrink_start_child(False)
+        p.set_shrink_end_child(False)
+
+        is_vertical = (orientation == Gtk.Orientation.VERTICAL)
+        p._split_ratio = ratio
+        p._in_ratio_update = False
+        p._last_alloc_total = -1
+
+        def _apply_ratio(paned: Gtk.Paned) -> None:
+            total = paned.get_height() if is_vertical else paned.get_width()
+            if total <= 0:
+                return
+            paned._in_ratio_update = True
+            paned.set_position(int(paned._split_ratio * total))
+            paned._in_ratio_update = False
+
+        def on_size_allocate(paned, width, height, baseline) -> None:
+            total = height if is_vertical else width
+            if total == paned._last_alloc_total:
+                return  # size unchanged — skip redundant update
+            paned._last_alloc_total = total
+            _apply_ratio(paned)
+
+        def on_position_notify(paned, _param) -> None:
+            if paned._in_ratio_update:
+                return
+            total = paned.get_height() if is_vertical else paned.get_width()
+            if total > 0:
+                paned._split_ratio = paned.get_position() / total
+
+        p.connect("size-allocate", on_size_allocate)
+        p.connect("notify::position", on_position_notify)
+
+        return p
+
     # ── layout rebuild ────────────────────────────────────────────────────────
 
     def _rebuild_layout(self) -> None:
@@ -614,14 +670,7 @@ class SplitViewTab(Gtk.Box):
                 if len(pair) == 1:
                     row_widgets.append(pair[0])
                 else:
-                    h_paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
-                    h_paned.set_hexpand(True)
-                    h_paned.set_vexpand(True)
-                    h_paned.set_wide_handle(True)
-                    h_paned.set_resize_start_child(True)
-                    h_paned.set_resize_end_child(True)
-                    h_paned.set_shrink_start_child(False)
-                    h_paned.set_shrink_end_child(False)
+                    h_paned = self._make_proportional_paned(Gtk.Orientation.HORIZONTAL)
                     h_paned.set_start_child(pair[0])
                     h_paned.set_end_child(pair[1])
                     row_widgets.append(h_paned)
@@ -635,22 +684,13 @@ class SplitViewTab(Gtk.Box):
         widgets: List[Gtk.Widget],
         orientation: Gtk.Orientation,
     ) -> Gtk.Widget:
-        """Build a nested Gtk.Paned chain so every boundary is draggable."""
+        """Build a nested proportional-Paned chain so every boundary is draggable."""
         if not widgets:
             return Gtk.Box()
         if len(widgets) == 1:
             return widgets[0]
 
-        root = Gtk.Paned(orientation=orientation)
-        root.set_hexpand(True)
-        root.set_vexpand(True)
-        root.set_wide_handle(True)
-        root.set_resize_start_child(True)
-        root.set_resize_end_child(True)
-        # Critical for nested vertical paned chains: don't let either side
-        # collapse to zero, otherwise lower panes disappear from view.
-        root.set_shrink_start_child(False)
-        root.set_shrink_end_child(False)
+        root = self._make_proportional_paned(orientation)
         root.set_start_child(widgets[0])
         root.set_end_child(self._chain_panes(widgets[1:], orientation))
         return root
