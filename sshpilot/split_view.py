@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 from typing import List, Optional
 
-from gi.repository import Gtk, Gdk, GObject, GLib, Adw, Pango
+from gi.repository import Gtk, Gdk, GObject, GLib, Adw
 from gettext import gettext as _
 
 logger = logging.getLogger(__name__)
@@ -13,7 +13,14 @@ _PANE_TABBAR_CSS_INSTALLED = False
 
 
 def _install_pane_tabbar_css() -> None:
-    """Install CSS that hides the per-tab close button inside split-pane tab bars."""
+    """Install CSS that shrinks the per-tab close button to zero size/opacity.
+
+    GTK4 CSS 'display: none' is overridden by Libadwaita's programmatic
+    set_visible(TRUE) on hover.  Instead, collapse the button to zero size
+    AND zero opacity so it takes no space and is invisible even when
+    Libadwaita marks it as visible.  The 'Close Pane' button lives in
+    .end-action (outside any 'tab' node) so it is unaffected.
+    """
     global _PANE_TABBAR_CSS_INSTALLED
     if _PANE_TABBAR_CSS_INSTALLED:
         return
@@ -22,9 +29,11 @@ def _install_pane_tabbar_css() -> None:
         if not display:
             return
         provider = Gtk.CssProvider()
-        # Target every button that is a direct child of an AdwTab (the close-btn).
-        # The Close Pane button lives in .end-action (not inside tab), so it is unaffected.
-        css = "tabbar.sshpilot-inner-tabbar tab button { display: none; }\n"
+        css = (
+            "tabbar.sshpilot-inner-tabbar tab button.close-btn {"
+            " min-width: 0; min-height: 0; padding: 0; margin: 0;"
+            " border-width: 0; opacity: 0; -gtk-icon-size: 0px; }\n"
+        )
         provider.load_from_data(css.encode("utf-8"))
         Gtk.StyleContext.add_provider_for_display(
             display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
@@ -75,6 +84,14 @@ class SplitPane(Gtk.Box):
         except Exception:
             pass
 
+        # Programmatic close-button hiding: CSS alone cannot override Libadwaita's
+        # hover-triggered set_visible(TRUE).  We walk the widget tree on enter and
+        # whenever a new page is attached.
+        self._inner_tab_view.connect("page-attached", self._on_inner_page_attached_hide)
+        _motion = Gtk.EventControllerMotion()
+        _motion.connect("enter", lambda _c, _x, _y: GLib.idle_add(self._hide_inner_close_buttons))
+        self._inner_tab_bar.add_controller(_motion)
+
         self._tab_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self._tab_container.set_hexpand(True)
         self._tab_container.set_vexpand(True)
@@ -96,6 +113,33 @@ class SplitPane(Gtk.Box):
 
         # Register with parent tab
         split_view_tab.register_pane(self)
+
+    # ── programmatic close-button suppression ───────────────────────────────
+
+    def _on_inner_page_attached_hide(self, _tab_view, _page, _position) -> None:
+        GLib.idle_add(self._hide_inner_close_buttons)
+
+    def _hide_inner_close_buttons(self) -> bool:
+        """Walk the inner tab bar widget tree and force-hide all close-btn buttons."""
+        def walk(widget: Gtk.Widget) -> None:
+            if widget is None:
+                return
+            try:
+                if isinstance(widget, Gtk.Button) and widget.has_css_class("close-btn"):
+                    widget.set_visible(False)
+                    return
+            except Exception:
+                pass
+            child = widget.get_first_child()
+            while child is not None:
+                walk(child)
+                child = child.get_next_sibling()
+
+        try:
+            walk(self._inner_tab_bar)
+        except Exception:
+            pass
+        return False  # one-shot idle
 
     # ── placeholder ──────────────────────────────────────────────────────────
 
@@ -378,7 +422,7 @@ class SplitPane(Gtk.Box):
             row_box.append(img)
             lbl = Gtk.Label(label=title)
             lbl.set_xalign(0)
-            lbl.set_ellipsize(Pango.EllipsizeMode.END)
+            lbl.set_max_width_chars(40)
             lbl.set_hexpand(True)
             row_box.append(lbl)
             row.set_child(row_box)
@@ -401,7 +445,8 @@ class SplitPane(Gtk.Box):
 
         scroll = Gtk.ScrolledWindow()
         scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scroll.set_min_content_width(280)
+        # size_request forces the popover wide enough to show full titles
+        scroll.set_size_request(320, -1)
         scroll.set_max_content_height(300)
         scroll.set_propagate_natural_height(True)
         scroll.set_child(list_box)
@@ -612,8 +657,10 @@ class SplitViewTab(Gtk.Box):
                 p.set_vexpand(True)
                 p.set_start_child(pair[0])
                 p.set_end_child(pair[1])
-                p.set_shrink_start_child(False)
-                p.set_shrink_end_child(False)
+                # Allow shrinking so the divider stays put when content changes
+                # size (e.g., a reconnect banner appears inside a pane).
+                p.set_resize_start_child(True)
+                p.set_resize_end_child(True)
                 rows.append(p)
         return self._build_v_paned_tree(rows)
 
@@ -627,8 +674,8 @@ class SplitViewTab(Gtk.Box):
             p.set_vexpand(True)
             p.set_start_child(widgets[0])
             p.set_end_child(widgets[1])
-            p.set_shrink_start_child(False)
-            p.set_shrink_end_child(False)
+            p.set_resize_start_child(True)
+            p.set_resize_end_child(True)
             return p
         # More than 2: nest all-but-last into start, put last in end
         p = Gtk.Paned(orientation=Gtk.Orientation.VERTICAL)
@@ -636,8 +683,8 @@ class SplitViewTab(Gtk.Box):
         p.set_vexpand(True)
         p.set_start_child(self._build_v_paned_tree(widgets[:-1]))
         p.set_end_child(widgets[-1])
-        p.set_shrink_start_child(False)
-        p.set_shrink_end_child(False)
+        p.set_resize_start_child(True)
+        p.set_resize_end_child(True)
         return p
 
     # ── pre-population ────────────────────────────────────────────────────────

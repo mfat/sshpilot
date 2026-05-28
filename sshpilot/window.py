@@ -7082,11 +7082,32 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         if getattr(self, '_suppress_close_confirmation', False):
             return False
 
-        # SplitViewTab: clean up all embedded terminals, then allow immediate close
+        # SplitViewTab: clean up all embedded terminals, then allow immediate close.
+        # When confirm-disconnect is enabled and there are active terminals, ask first.
         if hasattr(page, 'get_child'):
             child = page.get_child()
             from .split_view import SplitViewTab
             if isinstance(child, SplitViewTab):
+                n_terminals = sum(p.get_terminal_count() for p in child._panes)
+                confirm_disconnect = getattr(self, 'config', None) and self.config.get_setting('confirm-disconnect', True)
+                if confirm_disconnect and n_terminals > 0:
+                    self._pending_close_split_tab_view = tab_view
+                    self._pending_close_split_page = page
+                    self._pending_close_split_child = child
+                    dialog = Adw.MessageDialog(
+                        transient_for=self,
+                        modal=True,
+                        heading=_("Close split view?"),
+                        body=_("This will disconnect {n} terminal session(s). Continue?").format(n=n_terminals),
+                    )
+                    dialog.add_response('cancel', _("Cancel"))
+                    dialog.add_response('close', _("Close"))
+                    dialog.set_response_appearance('close', Adw.ResponseAppearance.DESTRUCTIVE)
+                    dialog.set_default_response('close')
+                    dialog.set_close_response('cancel')
+                    dialog.connect('response', self._on_split_tab_close_response)
+                    dialog.present()
+                    return True  # Prevent immediate close; dialog handles it
                 child.cleanup_all()
                 return False
 
@@ -7171,7 +7192,28 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self._pending_close_page = None
         self._pending_close_connection = None
         self._pending_close_terminal = None
-    
+
+    def _on_split_tab_close_response(self, dialog, response_id):
+        """Handle the confirmation dialog for closing an entire SplitViewTab."""
+        tab_view = getattr(self, '_pending_close_split_tab_view', None)
+        page = getattr(self, '_pending_close_split_page', None)
+        child = getattr(self, '_pending_close_split_child', None)
+        if response_id == 'close':
+            if child is not None:
+                child.cleanup_all()
+            if tab_view is not None and page is not None:
+                tab_view.close_page_finish(page, True)
+            self._update_tab_button_visibility()
+            if tab_view is not None and tab_view.get_n_pages() == 0:
+                self.show_welcome_view()
+        else:
+            if tab_view is not None and page is not None:
+                tab_view.close_page_finish(page, False)
+        dialog.destroy()
+        self._pending_close_split_tab_view = None
+        self._pending_close_split_page = None
+        self._pending_close_split_child = None
+
     def on_tab_attached(self, tab_view, page, position):
         """Handle tab attached"""
         self._update_tab_button_visibility()
