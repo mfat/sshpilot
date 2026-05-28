@@ -579,31 +579,35 @@ class SplitViewTab(Gtk.Box):
         is_vertical = (orientation == Gtk.Orientation.VERTICAL)
         p._split_ratio = ratio
         p._in_ratio_update = False
-        p._last_alloc_total = -1
 
         def _apply_ratio(paned: Gtk.Paned) -> None:
-            total = paned.get_height() if is_vertical else paned.get_width()
+            total = paned.get_allocated_height() if is_vertical else paned.get_allocated_width()
             if total <= 0:
                 return
+            pos = int(paned._split_ratio * total)
+            pos = max(DEFAULT_PANE_HEIGHT, min(total - DEFAULT_PANE_HEIGHT, pos))
             paned._in_ratio_update = True
-            paned.set_position(int(paned._split_ratio * total))
+            paned.set_position(pos)
             paned._in_ratio_update = False
+            return False  # for GLib.idle_add
 
-        def on_size_allocate(paned, width, height, baseline) -> None:
-            total = height if is_vertical else width
-            if total == paned._last_alloc_total:
-                return  # size unchanged — skip redundant update
-            paned._last_alloc_total = total
-            _apply_ratio(paned)
+        def on_map(paned, *_args) -> None:
+            GLib.idle_add(_apply_ratio, paned)
+
+        def on_dimension_changed(paned, _param) -> None:
+            if not paned._in_ratio_update:
+                _apply_ratio(paned)
 
         def on_position_notify(paned, _param) -> None:
             if paned._in_ratio_update:
                 return
-            total = paned.get_height() if is_vertical else paned.get_width()
+            total = paned.get_allocated_height() if is_vertical else paned.get_allocated_width()
             if total > 0:
                 paned._split_ratio = paned.get_position() / total
 
-        p.connect("size-allocate", on_size_allocate)
+        p.connect("map", on_map)
+        dim_signal = "notify::height" if is_vertical else "notify::width"
+        p.connect(dim_signal, on_dimension_changed)
         p.connect("notify::position", on_position_notify)
 
         return p
