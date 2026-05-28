@@ -2703,7 +2703,15 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Create tab content box
         tab_content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         tab_content_box.append(self.tab_bar)
-        tab_content_box.append(self.tab_view)
+
+        # Wrap tab_view in an overlay so the global layout-toggle floats above it
+        self.tab_content_overlay = Gtk.Overlay()
+        self.tab_content_overlay.set_hexpand(True)
+        self.tab_content_overlay.set_vexpand(True)
+        self.tab_content_overlay.set_child(self.tab_view)
+        self._setup_layout_toggle_overlay()
+        tab_content_box.append(self.tab_content_overlay)
+
         # Ensure background matches terminal theme to avoid white flash
         if hasattr(tab_content_box, 'add_css_class'):
             tab_content_box.add_css_class('terminal-bg')
@@ -4759,6 +4767,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     def on_tab_selected(self, tab_view: Adw.TabView, _pspec=None) -> None:
         """Update active terminal mapping when the user switches tabs."""
         self._return_to_tab_view_if_welcome()
+        self._update_layout_toggle_state()
         try:
             page = tab_view.get_selected_page()
             if page is None:
@@ -7147,6 +7156,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 self._register_convert_to_split_drop(child, page)
         except Exception as exc:
             logger.debug("Could not register convert-to-split drop: %s", exc)
+        self._update_layout_toggle_state()
 
     def _register_convert_to_split_drop(self, terminal, page) -> None:
         """Attach a drop target to terminal so dragging a connection converts the tab to split view."""
@@ -7226,6 +7236,169 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         dt.connect("enter", lambda _t, _x, _y: Gdk.DragAction.MOVE)
         terminal.add_controller(dt)
 
+    # ── global layout-toggle overlay ─────────────────────────────────────────
+
+    def _setup_layout_toggle_overlay(self) -> None:
+        """Build H/V layout-toggle buttons and attach them as an autohiding overlay."""
+        self._layout_toggle_hide_id: Optional[int] = None
+        self._updating_layout_toggles = False
+
+        # Toggle buttons
+        h_btn = Gtk.ToggleButton()
+        h_btn.set_icon_name("view-dual-symbolic")
+        h_btn.set_tooltip_text(_("Side by Side"))
+        h_btn.add_css_class("flat")
+
+        v_btn = Gtk.ToggleButton()
+        v_btn.set_icon_name("view-paged-symbolic")
+        v_btn.set_tooltip_text(_("Top / Bottom"))
+        v_btn.add_css_class("flat")
+
+        self._layout_h_btn = h_btn
+        self._layout_v_btn = v_btn
+
+        def on_h_toggled(btn):
+            if self._updating_layout_toggles or not btn.get_active():
+                return
+            self._updating_layout_toggles = True
+            v_btn.set_active(False)
+            self._updating_layout_toggles = False
+            self._apply_tab_layout_mode('horizontal')
+
+        def on_v_toggled(btn):
+            if self._updating_layout_toggles or not btn.get_active():
+                return
+            self._updating_layout_toggles = True
+            h_btn.set_active(False)
+            self._updating_layout_toggles = False
+            self._apply_tab_layout_mode('vertical')
+
+        h_btn.connect("toggled", on_h_toggled)
+        v_btn.connect("toggled", on_v_toggled)
+
+        toggle_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
+        toggle_box.add_css_class("card")
+        toggle_box.set_margin_top(8)
+        toggle_box.set_margin_end(8)
+        toggle_box.set_margin_start(4)
+        toggle_box.set_margin_bottom(4)
+        toggle_box.append(h_btn)
+        toggle_box.append(v_btn)
+
+        # Revealer for autohide (crossfade in/out)
+        revealer = Gtk.Revealer()
+        revealer.set_transition_type(Gtk.RevealerTransitionType.CROSSFADE)
+        revealer.set_transition_duration(200)
+        revealer.set_reveal_child(False)
+        revealer.set_child(toggle_box)
+        revealer.set_halign(Gtk.Align.END)
+        revealer.set_valign(Gtk.Align.START)
+        # Let pointer events through when hidden; intercept when visible
+        revealer.set_can_target(True)
+        self._layout_toggle_revealer = revealer
+
+        self.tab_content_overlay.add_overlay(revealer)
+        self.tab_content_overlay.set_overlay_pass_through(revealer, False)
+
+        # Show on mouse motion; hide after 2 s of inactivity
+        motion = Gtk.EventControllerMotion()
+        motion.connect("motion", self._on_tab_overlay_motion)
+        motion.connect("leave", self._on_tab_overlay_leave)
+        self.tab_content_overlay.add_controller(motion)
+
+    def _on_tab_overlay_motion(self, _ctrl, _x, _y) -> None:
+        """Show the layout toggle on any pointer movement."""
+        if self._layout_toggle_hide_id:
+            GLib.source_remove(self._layout_toggle_hide_id)
+            self._layout_toggle_hide_id = None
+        self._layout_toggle_revealer.set_reveal_child(True)
+        self._layout_toggle_hide_id = GLib.timeout_add(
+            2000, self._auto_hide_layout_toggle
+        )
+
+    def _on_tab_overlay_leave(self, _ctrl) -> None:
+        """Start a short hide timer when the pointer leaves the tab area."""
+        if self._layout_toggle_hide_id:
+            GLib.source_remove(self._layout_toggle_hide_id)
+        self._layout_toggle_hide_id = GLib.timeout_add(
+            600, self._auto_hide_layout_toggle
+        )
+
+    def _auto_hide_layout_toggle(self) -> bool:
+        self._layout_toggle_revealer.set_reveal_child(False)
+        self._layout_toggle_hide_id = None
+        return False  # one-shot
+
+    def _update_layout_toggle_state(self) -> None:
+        """Sync toggle button active states with the currently selected tab."""
+        if not hasattr(self, '_layout_h_btn'):
+            return
+        try:
+            page = self.tab_view.get_selected_page()
+            child = page.get_child() if page else None
+            from .split_view import SplitViewTab
+            self._updating_layout_toggles = True
+            try:
+                if isinstance(child, SplitViewTab):
+                    mode = child.get_layout_mode()
+                    self._layout_h_btn.set_active(mode == 'horizontal')
+                    self._layout_v_btn.set_active(mode == 'vertical')
+                else:
+                    self._layout_h_btn.set_active(False)
+                    self._layout_v_btn.set_active(False)
+            finally:
+                self._updating_layout_toggles = False
+        except Exception as exc:
+            logger.debug("Failed to update layout toggle state: %s", exc)
+
+    def _apply_tab_layout_mode(self, mode: str) -> None:
+        """Apply H or V layout to the current tab (converts regular tab if needed)."""
+        try:
+            page = self.tab_view.get_selected_page()
+            if page is None:
+                return
+            child = page.get_child()
+            from .split_view import SplitViewTab
+            if isinstance(child, SplitViewTab):
+                child.set_layout_mode(mode)
+            elif isinstance(child, TerminalWidget):
+                self._convert_terminal_tab_to_split(page, child, mode)
+        except Exception as exc:
+            logger.error("Failed to apply tab layout mode: %s", exc)
+
+    def _convert_terminal_tab_to_split(self, source_page, terminal, mode: str) -> None:
+        """Convert a regular terminal tab into a split-view tab."""
+        from .split_view import SplitViewTab
+        from sshpilot import icon_utils
+
+        svt = SplitViewTab(self)
+        svt.set_layout_mode(mode)
+
+        title = source_page.get_title() or _("Terminal")
+        self._suppress_close_confirmation = True
+        self._moving_tab_to_pane = True
+        try:
+            self.tab_view.close_page(source_page)
+        finally:
+            self._suppress_close_confirmation = False
+            self._moving_tab_to_pane = False
+
+        svt._panes[0].add_terminal(terminal, title)
+
+        new_page = self.tab_view.append(svt)
+        new_page.set_title(_("Split View"))
+        try:
+            new_page.set_icon(
+                icon_utils.new_gicon_from_icon_name('view-dual-symbolic')
+            )
+        except Exception:
+            pass
+        svt._tab_page = new_page
+        self.show_tab_view()
+        self.tab_view.set_selected_page(new_page)
+
+    # ── tab button visibility ─────────────────────────────────────────────────
+
     def _update_tab_button_visibility(self):
         """Update TabButton visibility based on number of tabs"""
         try:
@@ -7273,7 +7446,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
         # Update tab button visibility
         self._update_tab_button_visibility()
-        
+        self._update_layout_toggle_state()
+
         # Show welcome view if no more tabs are left
         if tab_view.get_n_pages() == 0:
             self.show_welcome_view()

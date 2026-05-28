@@ -60,6 +60,12 @@ class SplitPane(Gtk.Box):
         self._placeholder = self._build_placeholder()
         self.append(self._placeholder)
 
+        # ── inner tab bar: double-click to rename ────────────────────────
+        rename_gesture = Gtk.GestureClick()
+        rename_gesture.set_button(1)
+        rename_gesture.connect("pressed", self._on_inner_tab_bar_pressed)
+        self._inner_tab_bar.add_controller(rename_gesture)
+
         # ── drop target ──────────────────────────────────────────────────
         self._setup_drop_target()
 
@@ -138,6 +144,15 @@ class SplitPane(Gtk.Box):
 
     def add_terminal(self, terminal, title: Optional[str] = None) -> None:
         """Embed a TerminalWidget as a sub-tab in this pane."""
+        # Ensure the terminal is detached from any existing parent first so
+        # GTK4 allows reparenting into the inner TabView.
+        try:
+            parent = terminal.get_parent()
+            if parent is not None:
+                terminal.unparent()
+        except Exception:
+            pass
+
         if not self._has_terminals:
             try:
                 self.remove(self._placeholder)
@@ -192,13 +207,11 @@ class SplitPane(Gtk.Box):
     def _on_inner_close(self, tab_view, page) -> bool:
         terminal = page.get_child() if page else None
         if terminal is not None:
-            # Only clean up if not already removed (guards against double-cleanup
-            # when the whole split-view tab is being torn down via cleanup_all).
             if terminal in self._window.terminal_to_connection:
                 self._split_view_tab._cleanup_terminal(terminal)
 
         remaining = tab_view.get_n_pages() if tab_view else 0
-        if remaining <= 1:  # Will be 0 after this close completes
+        if remaining <= 1:
             GLib.idle_add(self._restore_placeholder)
 
         return False  # Allow AdwTabView to proceed with the close
@@ -240,6 +253,49 @@ class SplitPane(Gtk.Box):
         except Exception as exc:
             logger.error("SplitPane drop failed: %s", exc)
             return False
+
+    # ── inner tab rename ─────────────────────────────────────────────────────
+
+    def _on_inner_tab_bar_pressed(self, gesture, n_press, x, y) -> None:
+        if n_press != 2:
+            return
+        page = self._inner_tab_view.get_selected_page()
+        if page is not None:
+            self._show_inner_tab_rename_popover(page, x, y)
+
+    def _show_inner_tab_rename_popover(self, page, x: float, y: float) -> None:
+        entry = Gtk.Entry()
+        entry.set_text(page.get_title())
+        entry.set_width_chars(20)
+
+        popover = Gtk.Popover()
+        popover.set_child(entry)
+        popover.set_parent(self._inner_tab_bar)
+        popover.set_has_arrow(False)
+
+        rect = Gdk.Rectangle()
+        rect.x, rect.y, rect.width, rect.height = int(x), int(y), 1, 1
+        popover.set_pointing_to(rect)
+        popover._committed = False
+
+        def commit(_entry):
+            if not popover._committed:
+                popover._committed = True
+                text = entry.get_text().strip()
+                if text:
+                    page.set_title(text)
+            popover.popdown()
+
+        def on_closed(p):
+            if not p._committed:
+                text = entry.get_text().strip()
+                if text:
+                    page.set_title(text)
+
+        entry.connect("activate", commit)
+        popover.connect("closed", on_closed)
+        popover.popup()
+        GLib.idle_add(lambda: (entry.grab_focus(), entry.select_region(0, -1), False)[-1])
 
     # ── "Pick existing tab" button ────────────────────────────────────────────
 
@@ -293,10 +349,12 @@ class SplitPane(Gtk.Box):
 
         def _on_row_activated(_lb, row):
             popover.popdown()
+            # Defer so the popover can close first, then do the reparent
             GLib.idle_add(
-                lambda: self._embed_existing_tab(
-                    row._embed_page, row._embed_terminal, row._embed_title
-                )
+                self._embed_existing_tab,
+                row._embed_page,
+                row._embed_terminal,
+                row._embed_title,
             )
 
         list_box.connect("row-activated", _on_row_activated)
@@ -321,8 +379,14 @@ class SplitPane(Gtk.Box):
         finally:
             window._suppress_close_confirmation = False
             window._moving_tab_to_pane = False
+        # Defer the actual reparent so the tab_view has time to finish its
+        # internal close sequence before we try to reparent the widget.
+        GLib.idle_add(self._finish_embed, terminal, title)
+        return False  # one-shot idle (this function was called via idle_add)
+
+    def _finish_embed(self, terminal, title: Optional[str]) -> bool:
         self.add_terminal(terminal, title)
-        return False  # one-shot idle
+        return False
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -333,9 +397,12 @@ class SplitViewTab(Gtk.Box):
     Top-level widget for a split-view tab page.
 
     Contains:
-    - A header with side-by-side / top-bottom layout toggle buttons
-    - A Gtk.Grid of SplitPane instances
-    - An "Add Terminal" pill button strip below the grid
+    - A Gtk.Box (content area) holding a dynamically rebuilt nested Gtk.Paned
+      structure so every pane boundary is drag-resizable.
+    - An "Add Terminal" pill button strip below the panes.
+
+    The H/V layout toggle lives in a global autohiding overlay managed by
+    the main window (window.py), not inside this widget.
     """
 
     __gtype_name__ = "SshPilotSplitViewTab"
@@ -352,21 +419,13 @@ class SplitViewTab(Gtk.Box):
         self.set_hexpand(True)
         self.set_vexpand(True)
 
-        # Header: layout mode toggles
-        self._header = self._build_header()
-        self.append(self._header)
+        # Content area — holds the dynamically rebuilt Paned tree
+        self._content_area = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self._content_area.set_hexpand(True)
+        self._content_area.set_vexpand(True)
+        self.append(self._content_area)
 
-        # Pane grid (sole layout container)
-        self._grid = Gtk.Grid()
-        self._grid.set_column_homogeneous(True)
-        self._grid.set_row_homogeneous(True)
-        self._grid.set_hexpand(True)
-        self._grid.set_vexpand(True)
-        self._grid.set_column_spacing(2)
-        self._grid.set_row_spacing(2)
-        self.append(self._grid)
-
-        # "Add Terminal" strip below the grid
+        # "Add Terminal" strip below the panes
         self._add_strip = self._build_add_pane_strip()
         self.append(self._add_strip)
 
@@ -374,58 +433,16 @@ class SplitViewTab(Gtk.Box):
         self.add_pane()
         self.add_pane()
 
-    # ── header ───────────────────────────────────────────────────────────────
+    # ── layout mode (public API for window.py overlay toggle) ────────────────
 
-    def _build_header(self) -> Gtk.Widget:
-        bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
-        bar.add_css_class("toolbar")
-        bar.set_margin_start(4)
-        bar.set_margin_end(4)
+    def get_layout_mode(self) -> str:
+        return self._layout_mode
 
-        h_btn = Gtk.ToggleButton()
-        h_btn.set_icon_name("view-dual-symbolic")
-        h_btn.set_tooltip_text(_("Side by Side"))
-        h_btn.add_css_class("flat")
-        h_btn.set_active(True)
-
-        v_btn = Gtk.ToggleButton()
-        v_btn.set_icon_name("view-paged-symbolic")
-        v_btn.set_tooltip_text(_("Top / Bottom"))
-        v_btn.add_css_class("flat")
-
-        # Link as a mutually-exclusive group (GTK 4.2+)
-        try:
-            v_btn.set_group(h_btn)
-        except Exception:
-            # Fallback: manual mutual exclusion
-            def _on_h(btn):
-                if btn.get_active():
-                    v_btn.set_active(False)
-
-            def _on_v(btn):
-                if btn.get_active():
-                    h_btn.set_active(False)
-
-            h_btn.connect("toggled", _on_h)
-            v_btn.connect("toggled", _on_v)
-
-        h_btn.connect("toggled", self._on_layout_h_toggled)
-        v_btn.connect("toggled", self._on_layout_v_toggled)
-
-        bar.append(h_btn)
-        bar.append(v_btn)
-        self._h_btn = h_btn
-        self._v_btn = v_btn
-        return bar
-
-    def _on_layout_h_toggled(self, btn: Gtk.ToggleButton) -> None:
-        if btn.get_active() and self._layout_mode != self.HORIZONTAL:
-            self._layout_mode = self.HORIZONTAL
-            self._rebuild_layout()
-
-    def _on_layout_v_toggled(self, btn: Gtk.ToggleButton) -> None:
-        if btn.get_active() and self._layout_mode != self.VERTICAL:
-            self._layout_mode = self.VERTICAL
+    def set_layout_mode(self, mode: str) -> None:
+        if mode not in (self.HORIZONTAL, self.VERTICAL):
+            return
+        if mode != self._layout_mode:
+            self._layout_mode = mode
             self._rebuild_layout()
 
     # ── "Add Terminal" strip ─────────────────────────────────────────────────
@@ -479,13 +496,11 @@ class SplitViewTab(Gtk.Box):
     def remove_pane(self, pane: SplitPane) -> None:
         if pane in self._panes:
             self._panes.remove(pane)
+        # Unparent the pane from whatever Paned or content_area holds it
         try:
             pane.unparent()
         except Exception:
-            try:
-                self._grid.remove(pane)
-            except Exception:
-                pass
+            pass
         self._rebuild_layout()
         self._update_tab_title()
         # Close the tab if no panes remain
@@ -503,30 +518,82 @@ class SplitViewTab(Gtk.Box):
     def get_pane_count(self) -> int:
         return len(self._panes)
 
-    # ── layout rebuild ────────────────────────────────────────────────────────
+    # ── layout rebuild (Paned-based, resizable) ──────────────────────────────
 
     def _rebuild_layout(self) -> None:
-        """Detach all panes from the grid and re-attach in the correct positions."""
+        """Detach all panes and rebuild a nested Gtk.Paned tree."""
+        # Unparent every pane from its current parent (Paned or content_area)
         for pane in self._panes:
             try:
-                self._grid.remove(pane)
+                pane.unparent()
             except Exception:
-                try:
-                    pane.unparent()
-                except Exception:
-                    pass
+                pass
+
+        # Clear any leftover container from the content area
+        child = self._content_area.get_first_child()
+        while child is not None:
+            nxt = child.get_next_sibling()
+            try:
+                self._content_area.remove(child)
+            except Exception:
+                pass
+            child = nxt
 
         n = len(self._panes)
-        if self._layout_mode == self.HORIZONTAL:
-            for i, pane in enumerate(self._panes):
-                row = i // 2
-                col = i % 2
-                # Last pane in an odd-count list spans both columns
-                colspan = 2 if (i == n - 1 and n % 2 == 1) else 1
-                self._grid.attach(pane, col, row, colspan, 1)
-        else:  # VERTICAL — single column, each pane spans full width
-            for i, pane in enumerate(self._panes):
-                self._grid.attach(pane, 0, i, 2, 1)
+        if n == 0:
+            return
+
+        if n == 1:
+            container = self._panes[0]
+        elif self._layout_mode == self.HORIZONTAL:
+            container = self._build_h_paned_tree(self._panes)
+        else:
+            container = self._build_v_paned_tree(self._panes)
+
+        container.set_hexpand(True)
+        container.set_vexpand(True)
+        self._content_area.append(container)
+
+    def _build_h_paned_tree(self, panes: list) -> Gtk.Widget:
+        """Build a 2-column grid of H-Paned rows, stacked with V-Paned."""
+        rows: List[Gtk.Widget] = []
+        for i in range(0, len(panes), 2):
+            pair = panes[i:i + 2]
+            if len(pair) == 1:
+                rows.append(pair[0])
+            else:
+                p = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
+                p.set_hexpand(True)
+                p.set_vexpand(True)
+                p.set_start_child(pair[0])
+                p.set_end_child(pair[1])
+                p.set_shrink_start_child(False)
+                p.set_shrink_end_child(False)
+                rows.append(p)
+        return self._build_v_paned_tree(rows)
+
+    def _build_v_paned_tree(self, widgets: list) -> Gtk.Widget:
+        """Stack a list of widgets vertically using nested V-Paned."""
+        if len(widgets) == 1:
+            return widgets[0]
+        if len(widgets) == 2:
+            p = Gtk.Paned(orientation=Gtk.Orientation.VERTICAL)
+            p.set_hexpand(True)
+            p.set_vexpand(True)
+            p.set_start_child(widgets[0])
+            p.set_end_child(widgets[1])
+            p.set_shrink_start_child(False)
+            p.set_shrink_end_child(False)
+            return p
+        # More than 2: nest all-but-last into start, put last in end
+        p = Gtk.Paned(orientation=Gtk.Orientation.VERTICAL)
+        p.set_hexpand(True)
+        p.set_vexpand(True)
+        p.set_start_child(self._build_v_paned_tree(widgets[:-1]))
+        p.set_end_child(widgets[-1])
+        p.set_shrink_start_child(False)
+        p.set_shrink_end_child(False)
+        return p
 
     # ── pre-population ────────────────────────────────────────────────────────
 
