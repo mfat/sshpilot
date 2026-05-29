@@ -1,0 +1,34 @@
+name: Trigger PPA on Release
+
+on:
+  release:
+    types:
+      - published
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release tag to dispatch (example: v1.2.3)'
+        required: true
+        type: string
+
+jobs:
+  trigger-ppa:
+    # Only trigger for versioned release tags like v1.2.3
+    if: startsWith(github.event.release.tag_name || github.event.inputs.release_tag, 'v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch release event to sshpilot-ppa
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.PPA_TRIGGER_TOKEN }}
+          repository: mfat/sshpilot-ppa
+          event-type: sshpilot_release_published
+          client-payload: >-
+            {
+              "tag": "${{ github.event.release.tag_name || github.event.inputs.release_tag }}",
+              "release_id": "${{ github.event.release.id || 'manual-dispatch' }}",
+              "release_html_url": "${{ github.event.release.html_url || '' }}",
+              "triggered_by_repo": "${{ github.repository }}",
+              "triggered_at": "${{ github.event.release.published_at || '' }}",
+              "workflow_run_id": "${{ github.run_id }}"
+            }
