@@ -466,6 +466,8 @@ class TerminalWidget(Gtk.Box):
         self.disconnected_banner = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         self.disconnected_banner.set_halign(Gtk.Align.FILL)
         self.disconnected_banner.set_valign(Gtk.Align.END)
+        self.disconnected_banner.set_hexpand(True)
+        self.disconnected_banner.set_vexpand(False)
         self.disconnected_banner.set_margin_start(0)
         self.disconnected_banner.set_margin_end(0)
         self.disconnected_banner.set_margin_top(0)
@@ -526,12 +528,15 @@ class TerminalWidget(Gtk.Box):
                 pass
         self.set_banner_height = _apply_external_height
 
-        # Container to stack terminal (overlay) above the banner panel
+        # Put disconnected banner in overlay so revealing it does not change
+        # terminal natural height (which would otherwise resize split panes).
+        self.overlay.add_overlay(self.disconnected_banner)
+
+        # Container for terminal stack only
         self.container_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self.container_box.set_hexpand(True)
         self.container_box.set_vexpand(True)
         self.container_box.append(self.terminal_stack)
-        self.container_box.append(self.disconnected_banner)
 
         self.append(self.container_box)
 

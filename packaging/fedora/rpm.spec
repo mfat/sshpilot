@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:4.8.3}
+Version:        %{?version}%{!?version:4.9.0}
 Release:        1%{?dist}
 Summary:        Manage your servers with ease
 
@@ -92,6 +92,10 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/io.github.mfat.sshpil
 %{_datadir}/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg
 
 %changelog
+* Fri May 29 2026 mFat <newmfat@gmail.com> - 4.9.0
+- - New "Splt View" feature - view terminals side by side inside any terminal tab
+- - New context menu item to copy host address
+
 * Mon May 25 2026 mFat <newmfat@gmail.com> - 4.8.3
 - - Updated flatpak to GNOME Platform 50
 

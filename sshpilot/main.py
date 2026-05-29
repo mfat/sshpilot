@@ -197,11 +197,13 @@ class SshPilotApplication(Adw.Application):
             self.create_action('preferences', self.on_preferences, ['<Meta>comma'])
             self.create_action('tab-close', self.on_tab_close, ['<Meta>F4'])
             self.create_action('broadcast-command', self.on_broadcast_command, ['<Meta><Shift>b'])
+            self.create_action('new-split-view-tab', self.on_new_split_view_tab, ['<Meta><Shift>s'])
         else:
             self.create_action('local-terminal', self.on_local_terminal, ['<primary><shift>t'])
             self.create_action('preferences', self.on_preferences, ['<primary>comma'])
             self.create_action('tab-close', self.on_tab_close, ['<primary>F4'])
             self.create_action('broadcast-command', self.on_broadcast_command, ['<primary><shift>b'])
+            self.create_action('new-split-view-tab', self.on_new_split_view_tab, ['<primary><shift>s'])
         
         self.create_action('about', self.on_about)
         self.create_action('help', self.on_help, ['F1'])
@@ -673,6 +675,13 @@ class SshPilotApplication(Adw.Application):
         if self.props.active_window:
             # Forward to the window's action
             self.props.active_window.broadcast_command_action.activate(None)
+
+    def on_new_split_view_tab(self, action, param=None):
+        """Open a new empty split-view tab (Ctrl/⌘+Shift+S)."""
+        logging.debug("New split view tab action triggered")
+        win = self.props.active_window
+        if win and hasattr(win, 'on_new_split_view_tab'):
+            win.on_new_split_view_tab(action, param)
 
     def apply_color_overrides(self, config):
         """Apply color overrides to the application"""

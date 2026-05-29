@@ -858,9 +858,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             # Queue terminal focus operation to avoid race conditions
             self._queue_focus_operation(_focus_terminal_when_ready)
         else:
-            # Delay focus to ensure the UI is fully set up
+            # Two calls: early (100 ms) for immediate visual feedback, and late
+            # (700 ms, after _on_startup_complete at 500 ms) to win back focus
+            # if anything else grabbed it during startup.
             try:
                 GLib.timeout_add(100, self._focus_connection_list_first_row)
+                GLib.timeout_add(700, self._focus_connection_list_first_row)
             except Exception:
                 pass
 
@@ -2004,197 +2007,100 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     self._context_menu_row = row
                     self._context_menu_connection = getattr(row, 'connection', None)
                     self._context_menu_group_row = row if hasattr(row, 'group_id') else None
-                    # Create popover menu and rely on default autohide behavior
-                    pop = Gtk.Popover.new()
-                    pop.set_has_arrow(True)
-                    logger.debug("Created popover with default autohide")
 
+                    # Build a Gtk.PopoverMenu from a Gio.Menu that uses the
+                    # 'custom' attribute for each item so we can supply a
+                    # Gtk.Button with an icon.  Native model-button rendering
+                    # does not show icons for regular (non-hint) sections.
+                    menu = Gio.Menu()
+                    custom_widgets = []   # [(widget_id, btn)]
+                    widget_counter = [0]
 
-                    # Create listbox for menu items
-                    listbox = Gtk.ListBox(margin_top=2, margin_bottom=2, margin_start=2, margin_end=2)
-                    listbox.set_selection_mode(Gtk.SelectionMode.NONE)
-                    pop.set_child(listbox)
-                    
-                    # Simple popover close handler with cleanup
-                    def _on_popover_closed(*args):
-                        # Clean up the window focus handler when popover closes
-                        if hasattr(pop, '_focus_handler_id') and hasattr(pop, '_window') and pop._window:
-                            try:
-                                pop._window.disconnect(pop._focus_handler_id)
-                                logger.debug("Cleaned up window focus handler")
-                            except Exception as e:
-                                logger.debug(f"Error cleaning up focus handler: {e}")
+                    def _mi(icon_name, label_text, callback):
+                        wid = f'ctx-{widget_counter[0]}'
+                        widget_counter[0] += 1
 
-                        logger.debug("Context menu closed")
-                        try:
-                            self._context_menu_row = None
-                            self._context_menu_connection = None
-                        except Exception:
-                            pass
-                    
-                    pop.connect("closed", _on_popover_closed)
-                    
-                    # Close context menu when window becomes inactive (with delay to prevent immediate closure)
-                    def _on_window_active_changed(window, pspec):
-                        try:
-                            # Add a small delay to avoid immediate closure when popover is first shown
-                            def delayed_check():
-                                try:
-                                    # Only close if window is actually inactive and popover is still visible
-                                    if not self.is_active() and pop and pop.get_visible():
-                                        pop.popdown()
-                                        logger.debug("Context menu closed due to window becoming inactive")
-                                except Exception as e:
-                                    logger.debug(f"Error in delayed focus check: {e}")
-                                return False
-                            GLib.timeout_add(50, delayed_check)
-                        except Exception as e:
-                            logger.debug(f"Error in window active change handler: {e}")
-                    
-                    # Connect to the window's notify::is-active signal after a brief delay
-                    def connect_focus_handler():
-                        try:
-                            focus_handler_id = self.connect("notify::is-active", _on_window_active_changed)
-                            pop._focus_handler_id = focus_handler_id
-                            pop._window = self
-                            logger.debug("Connected window focus handler")
-                        except Exception as e:
-                            logger.debug(f"Error connecting focus handler: {e}")
-                        return False
-                    
-                    # Delay the connection slightly to avoid immediate triggering
-                    GLib.timeout_add(100, connect_focus_handler)
-                    
-                    # Add menu items based on row type
+                        item = Gio.MenuItem.new(None, None)
+                        item.set_attribute_value('custom', GLib.Variant('s', wid))
+
+                        btn = Gtk.Button()
+                        btn.add_css_class('flat')
+                        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+                        box.set_margin_start(8)
+                        box.set_margin_end(8)
+                        box.append(Gtk.Image.new_from_icon_name(icon_name))
+                        lbl = Gtk.Label(label=label_text)
+                        lbl.set_xalign(0)
+                        lbl.set_hexpand(True)
+                        attrs = Pango.AttrList.new()
+                        attrs.insert(Pango.attr_weight_new(Pango.Weight.NORMAL))
+                        lbl.set_attributes(attrs)
+                        box.append(lbl)
+                        btn.set_child(box)
+                        btn.connect('clicked', lambda b, cb=callback: (cb(), pop.popdown()))
+
+                        custom_widgets.append((wid, btn))
+                        return item
+
+                    def _section(*items):
+                        s = Gio.Menu()
+                        for it in items:
+                            if it is not None:
+                                s.append_item(it)
+                        if s.get_n_items():
+                            menu.append_section(None, s)
+
+                    def _on_popover_closed(*_):
+                        self._context_menu_row = None
+                        self._context_menu_connection = None
+
                     if hasattr(row, 'group_id'):
-                        # Group row context menu
-                        logger.debug(f"Creating context menu for group row: {row.group_id}")
-
-                        # Edit Group row
-                        from sshpilot import icon_utils
-                        edit_row = Adw.ActionRow(title=_('Edit Group'))
-                        edit_icon = icon_utils.new_image_from_icon_name('document-edit-symbolic')
-                        edit_row.add_prefix(edit_icon)
-                        edit_row.set_activatable(True)
-                        edit_row.connect('activated', lambda *_: (self.on_edit_group_action(None, None), pop.popdown()))
-                        listbox.append(edit_row)
-
-                        # Delete Group row
-                        delete_row = Adw.ActionRow(title=_('Delete Group'))
-                        delete_icon = icon_utils.new_image_from_icon_name('user-trash-symbolic')
-                        delete_row.add_prefix(delete_icon)
-                        delete_row.set_activatable(True)
-                        delete_row.connect('activated', lambda *_: (self.on_delete_group_action(None, None), pop.popdown()))
-                        listbox.append(delete_row)
+                        _section(
+                            _mi('document-edit-symbolic', _('Edit Group'), lambda: self.on_edit_group_action(None, None)),
+                            _mi('view-grid-symbolic', _('Open in Split View'), lambda: self.on_open_group_in_split_view_action(None, None)),
+                            _mi('user-trash-symbolic', _('Delete Group'), lambda: self.on_delete_group_action(None, None)),
+                        )
                     else:
-                        # Connection row context menu
-                        logger.debug(f"Creating context menu for connection row: {getattr(row, 'connection', None)}")
-                        from sshpilot import icon_utils
+                        conn = getattr(row, 'connection', None)
 
-                        # Open New Connection row
-                        new_row = Adw.ActionRow(title=_('Open New Connection'))
-                        new_icon = icon_utils.new_image_from_icon_name('list-add-symbolic')
-                        new_row.add_prefix(new_icon)
-                        new_row.set_activatable(True)
-                        new_row.connect('activated', lambda *_: (self.on_open_new_connection_action(None, None), pop.popdown()))
-                        listbox.append(new_row)
+                        _section(
+                            _mi('list-add-symbolic', _('Open New Connection'), lambda: self.on_open_new_connection_action(None, None)),
+                            _mi('view-grid-symbolic', _('Open in Split View'), lambda: self.on_open_in_split_view_action(None, None)),
+                            _mi('document-edit-symbolic', _('Edit Connection'), lambda: self.on_edit_connection_action(None, None)),
+                            _mi('edit-copy-symbolic', _('Duplicate Connection'), lambda: self.on_duplicate_connection_action(None, None)),
+                            _mi('edit-copy-symbolic', _('Copy Address'), lambda: self._copy_connection_address()),
+                        )
 
-                        # Edit Connection row
-                        edit_row = Adw.ActionRow(title=_('Edit Connection'))
-                        edit_icon = icon_utils.new_image_from_icon_name('document-edit-symbolic')
-                        edit_row.add_prefix(edit_icon)
-                        edit_row.set_activatable(True)
-                        
-                        edit_row.connect('activated', lambda *_: (self.on_edit_connection_action(None, None), pop.popdown()))
-                        listbox.append(edit_row)
-
-                        # Duplicate Connection row
-                        duplicate_row = Adw.ActionRow(title=_('Duplicate Connection'))
-                        duplicate_icon = icon_utils.new_image_from_icon_name('edit-copy-symbolic')
-                        duplicate_row.add_prefix(duplicate_icon)
-                        duplicate_row.set_activatable(True)
-                        duplicate_row.connect('activated', lambda *_: (self.on_duplicate_connection_action(None, None), pop.popdown()))
-                        listbox.append(duplicate_row)
-
-                        # Manage Files row
-                        if not should_hide_file_manager_options():
-                            files_row = Adw.ActionRow(title=_('Manage Files'))
-                            files_icon = icon_utils.new_image_from_icon_name('folder-symbolic')
-                            files_row.add_prefix(files_icon)
-                            files_row.set_activatable(True)
-                            files_row.connect('activated', lambda *_: (self.on_manage_files_action(None, None), pop.popdown()))
-                            listbox.append(files_row)
-
-                        # Copy Key to Server row
-                        copy_key_row = Adw.ActionRow(title=_('Copy Key to Server'))
-                        copy_key_icon = icon_utils.new_image_from_icon_name('dialog-password-symbolic')
-                        copy_key_row.add_prefix(copy_key_icon)
-                        copy_key_row.set_activatable(True)
-                        copy_key_row.connect('activated', lambda *_: (self.on_copy_key_to_server_action(None, None), pop.popdown()))
-                        listbox.append(copy_key_row)
-
-                        # Wake on LAN row (only when MAC is set for this connection)
+                        wol_item = None
                         try:
-                            conn_meta = self.config.get_connection_meta(row.connection.nickname) if getattr(row, 'connection', None) else {}
+                            conn_meta = self.config.get_connection_meta(conn.nickname) if conn else {}
                             if (conn_meta or {}).get('wol_mac', '').strip():
-                                wol_row = Adw.ActionRow(title=_('Wake on LAN'))
-                                wol_icon = icon_utils.new_image_from_icon_name('network-wireless-symbolic')
-                                wol_row.add_prefix(wol_icon)
-                                wol_row.set_activatable(True)
-                                wol_row.connect('activated', lambda *_: (self.on_wake_on_lan_action(None, None), pop.popdown()))
-                                listbox.append(wol_row)
+                                wol_item = _mi('network-wireless-symbolic', _('Wake on LAN'), lambda: self.on_wake_on_lan_action(None, None))
                         except Exception:
                             pass
+                        _section(
+                            _mi('folder-symbolic', _('Manage Files'), lambda: self.on_manage_files_action(None, None)) if not should_hide_file_manager_options() else None,
+                            _mi('dialog-password-symbolic', _('Copy Key to Server'), lambda: self.on_copy_key_to_server_action(None, None)),
+                            wol_item,
+                            _mi('utilities-terminal-symbolic', _('Open in System Terminal'), lambda: self.on_open_in_system_terminal_action(None, None)) if not should_hide_external_terminal_options() else None,
+                        )
 
-                        # Only show system terminal option when external terminals are available
-                        if not should_hide_external_terminal_options():
-                            terminal_row = Adw.ActionRow(title=_('Open in System Terminal'))
-                            terminal_icon = icon_utils.new_image_from_icon_name('utilities-terminal-symbolic')
-                            terminal_row.add_prefix(terminal_icon)
-                            terminal_row.set_activatable(True)
-                            terminal_row.connect('activated', lambda *_: (self.on_open_in_system_terminal_action(None, None), pop.popdown()))
-                            listbox.append(terminal_row)
+                        current_group_id = self.group_manager.get_connection_group(conn.nickname) if conn else None
+                        _section(
+                            _mi('folder-symbolic', _('Move to Group'), lambda: self.on_move_to_group_action(None, None)),
+                            _mi('edit-undo-symbolic', _('Ungroup'), lambda: self.on_move_to_ungrouped_action(None, None)) if current_group_id else None,
+                        )
 
-                        # Add grouping options
-                        current_group_id = self.group_manager.get_connection_group(row.connection.nickname)
-                        
-                        # Always show "Move to Group" option
-                        move_row = Adw.ActionRow(title=_('Move to Group'))
-                        move_icon = icon_utils.new_image_from_icon_name('folder-symbolic')
-                        move_row.add_prefix(move_icon)
-                        move_row.set_activatable(True)
-                        move_row.connect('activated', lambda *_: (self.on_move_to_group_action(None, None), pop.popdown()))
-                        listbox.append(move_row)
-                        
-                        # Show "Ungroup" option if connection is currently in a group
-                        if current_group_id:
-                            ungroup_row = Adw.ActionRow(title=_('Ungroup'))
-                            ungroup_icon = icon_utils.new_image_from_icon_name('folder-symbolic')
-                            ungroup_row.add_prefix(ungroup_icon)
-                            ungroup_row.set_activatable(True)
-                            ungroup_row.connect('activated', lambda *_: (self.on_move_to_ungrouped_action(None, None), pop.popdown()))
-                            listbox.append(ungroup_row)
+                        _section(
+                            _mi('user-trash-symbolic', _('Delete'), lambda: self.on_delete_connection_action(None, None)),
+                        )
 
-                        # Delete Connection row (moved to bottom)
-                        delete_row = Adw.ActionRow(title=_('Delete'))
-                        delete_icon = icon_utils.new_image_from_icon_name('user-trash-symbolic')
-                        delete_row.add_prefix(delete_icon)
-                        delete_row.set_activatable(True)
-                        delete_row.connect('activated', lambda *_: (self.on_delete_connection_action(None, None), pop.popdown()))
-                        listbox.append(delete_row)
-                    # Set popover parent to the selected row for proper anchoring
+                    pop = Gtk.PopoverMenu.new_from_model(menu)
+                    for wid, btn in custom_widgets:
+                        pop.add_child(btn, wid)
+                    pop.connect('closed', _on_popover_closed)
                     pop.set_parent(row)
-                    
-                    # Add a small delay to ensure proper display
-                    def show_menu():
-                        try:
-                            pop.popup()
-                            logger.debug("Context menu popup called")
-                        except Exception as e:
-                            logger.error(f"Failed to popup context menu: {e}")
-                        return False
-                    
-                    GLib.idle_add(show_menu)
+                    GLib.idle_add(lambda: (pop.popup(), False)[-1])
                     
                 except Exception as e:
                     logger.error(f"Failed to create context menu: {e}")
@@ -2377,6 +2283,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
         self._set_sidebar_widget(sidebar_box)
         logger.debug("Set sidebar widget")
+
+    def _copy_connection_address(self):
+        conn = getattr(self, '_context_menu_connection', None)
+        if conn:
+            host = getattr(conn, 'hostname', '') or getattr(conn, 'host', '')
+            if host:
+                self.get_clipboard().set(host)
 
     def _resolve_connection_list_event(
         self,
@@ -2808,7 +2721,56 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.tab_button.connect('clicked', self.on_tab_button_clicked)
         self.tab_button.set_visible(False)  # Hidden by default, shown when tabs exist
         self.header_bar.pack_start(self.tab_button)
-        
+
+        # Split-view button — opens a new split-view tab
+        from sshpilot import icon_utils as _iu
+        self.split_view_button = Gtk.Button()
+        _iu.set_button_icon(self.split_view_button, 'view-grid-symbolic')
+        from .shortcut_utils import get_primary_modifier_label as _gpm
+        self.split_view_button.set_tooltip_text(
+            _('New Split View ({primary}+Shift+S)').format(primary=_gpm())
+        )
+        self.split_view_button.add_css_class('flat')
+        self.split_view_button.connect('clicked', self.on_open_split_view_clicked)
+        self.header_bar.pack_start(self.split_view_button)
+
+        # H/V layout toggle buttons (control split-view layout or convert a
+        # regular terminal tab to a split-view tab)
+        self._updating_layout_toggles = False
+
+        self._layout_h_btn = Gtk.ToggleButton()
+        self._layout_h_btn.set_icon_name("double-ended-arrows-horizontal-symbolic")
+        self._layout_h_btn.set_tooltip_text(_("Side by Side"))
+        self._layout_h_btn.add_css_class("flat")
+        self._layout_h_btn.set_visible(False)
+        self.header_bar.pack_start(self._layout_h_btn)
+
+        self._layout_v_btn = Gtk.ToggleButton()
+        self._layout_v_btn.set_icon_name("double-ended-arrows-vertical-symbolic")
+        self._layout_v_btn.set_tooltip_text(_("Top / Bottom"))
+        self._layout_v_btn.add_css_class("flat")
+        self._layout_v_btn.set_visible(False)
+        self.header_bar.pack_start(self._layout_v_btn)
+
+        def _on_h_toggled(btn):
+            if self._updating_layout_toggles or not btn.get_active():
+                return
+            self._updating_layout_toggles = True
+            self._layout_v_btn.set_active(False)
+            self._updating_layout_toggles = False
+            self._apply_tab_layout_mode('horizontal')
+
+        def _on_v_toggled(btn):
+            if self._updating_layout_toggles or not btn.get_active():
+                return
+            self._updating_layout_toggles = True
+            self._layout_h_btn.set_active(False)
+            self._updating_layout_toggles = False
+            self._apply_tab_layout_mode('vertical')
+
+        self._layout_h_btn.connect("toggled", _on_h_toggled)
+        self._layout_v_btn.connect("toggled", _on_v_toggled)
+
         self.content_stack.add_named(self.tab_overview, "tabs")
         # Also color the stack background
         if hasattr(self.content_stack, 'add_css_class'):
@@ -3235,34 +3197,34 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         logger.info("Showing welcome view")
 
     def _focus_connection_list_first_row(self):
-        """Focus the connection list and ensure the first row is selected (startup only)."""
+        """Focus the first row of the connection list so arrow-key navigation works immediately."""
         try:
             if not hasattr(self, 'connection_list') or self.connection_list is None:
                 return False
-            
-            # Check if the connection list is properly attached to its parent
             if not self.connection_list.get_parent():
                 return False
-                
-            # Only auto-select first row during initial startup, not during normal operations
-            # Check if this is being called during startup vs normal operations
-            if not hasattr(self, '_startup_complete'):
-                # During startup - select first row if no selection exists
+
+            first_row = self.connection_list.get_row_at_index(0)
+
+            # During startup: auto-select first row if nothing is selected yet.
+            if not getattr(self, '_startup_complete', False):
                 try:
                     selected_rows = list(self.connection_list.get_selected_rows())
                 except Exception:
-                    selected_row = self.connection_list.get_selected_row()
-                    selected_rows = [selected_row] if selected_row else []
-                first_row = self.connection_list.get_row_at_index(0)
+                    sel = self.connection_list.get_selected_row()
+                    selected_rows = [sel] if sel else []
                 if not selected_rows and first_row:
                     self._select_only_row(first_row)
-            
-            # Always focus the connection list when requested
-            if self.connection_list.get_parent():
+
+            # Focus the first row directly — not just the ListBox container.
+            # GTK4 ListBox arrow-key navigation only works when a *row* has
+            # focus; grab_focus() on the container leaves no row focused.
+            if first_row:
+                first_row.grab_focus()
+            else:
                 self.connection_list.grab_focus()
         except Exception as e:
             logger.debug(f"Focus connection list failed: {e}")
-            pass
         return False
 
     def focus_connection_list(self):
@@ -4432,6 +4394,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             ('tab-prev', _('Previous Tab')),
             ('tab-close', _('Close Tab')),
             ('tab-overview', _('Tab Overview')),
+            ('new-split-view-tab', _('New Split View Tab')),
         ]
         
         for action_name, title in tab_actions:
@@ -4442,6 +4405,34 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     title=title, accelerator=accelerator))
         
         section.add_group(group_tabs)
+
+        # Split view shortcuts (hardcoded — not registered as actions)
+        group_split = Gtk.ShortcutsGroup(title=_('Split View'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Focus pane left'), accelerator='<Ctrl><Alt>h'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Focus pane down'), accelerator='<Ctrl><Alt>j'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Focus pane up'), accelerator='<Ctrl><Alt>k'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Focus pane right'), accelerator='<Ctrl><Alt>l'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Resize pane left'), accelerator='<Ctrl><Alt><Shift>h'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Resize pane down'), accelerator='<Ctrl><Alt><Shift>j'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Resize pane up'), accelerator='<Ctrl><Alt><Shift>k'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Resize pane right'), accelerator='<Ctrl><Alt><Shift>l'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Side-by-side layout'), accelerator='<Ctrl><Shift>backslash'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Top / bottom layout'), accelerator='<Ctrl><Shift>minus'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Add pane'), accelerator='<Ctrl><Shift>n'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Close pane'), accelerator='<Ctrl><Shift>w'))
+        section.add_group(group_split)
 
     def _get_safe_current_shortcuts(self):
         """Safely get current shortcuts including customizations"""
@@ -4529,6 +4520,34 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         group_tabs.add_shortcut(Gtk.ShortcutsShortcut(
             title=_('Tab Overview'), accelerator=f"{primary}<Shift>Tab"))
         section.add_group(group_tabs)
+
+        # Split view shortcuts
+        group_split = Gtk.ShortcutsGroup(title=_('Split View'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Focus pane left'), accelerator='<Ctrl><Alt>h'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Focus pane down'), accelerator='<Ctrl><Alt>j'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Focus pane up'), accelerator='<Ctrl><Alt>k'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Focus pane right'), accelerator='<Ctrl><Alt>l'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Resize pane left'), accelerator='<Ctrl><Alt><Shift>h'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Resize pane down'), accelerator='<Ctrl><Alt><Shift>j'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Resize pane up'), accelerator='<Ctrl><Alt><Shift>k'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Resize pane right'), accelerator='<Ctrl><Alt><Shift>l'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Side-by-side layout'), accelerator='<Ctrl><Shift>backslash'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Top / bottom layout'), accelerator='<Ctrl><Shift>minus'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Add pane'), accelerator='<Ctrl><Shift>n'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Close pane'), accelerator='<Ctrl><Shift>w'))
+        section.add_group(group_split)
 
     def toggle_list_focus(self):
         """Toggle focus between connection list and terminal"""
@@ -4841,6 +4860,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     def on_tab_selected(self, tab_view: Adw.TabView, _pspec=None) -> None:
         """Update active terminal mapping when the user switches tabs."""
         self._return_to_tab_view_if_welcome()
+        self._update_layout_toggle_state()
         try:
             page = tab_view.get_selected_page()
             if page is None:
@@ -4858,6 +4878,21 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     except Exception as e:
                         logger.debug(f"Failed to focus terminal on tab switch: {e}")
                 GLib.timeout_add(50, _focus_on_tab_switch)
+
+            # Split-view tabs have no single connection — clear sidebar selection
+            from .split_view import SplitViewTab
+            if isinstance(child, SplitViewTab):
+                try:
+                    if hasattr(self.connection_list, 'unselect_all'):
+                        self.connection_list.unselect_all()
+                    else:
+                        current = self.connection_list.get_selected_row()
+                        if current is not None:
+                            self.connection_list.unselect_row(current)
+                except Exception:
+                    pass
+                return
+
             connection = self.terminal_to_connection.get(child)
             if connection:
                 # Check if this is a local terminal
@@ -7111,6 +7146,36 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # close behavior to proceed.
         if getattr(self, '_suppress_close_confirmation', False):
             return False
+
+        # SplitViewTab: clean up all embedded terminals, then allow immediate close.
+        # When confirm-disconnect is enabled and there are active terminals, ask first.
+        if hasattr(page, 'get_child'):
+            child = page.get_child()
+            from .split_view import SplitViewTab
+            if isinstance(child, SplitViewTab):
+                n_terminals = sum(p.get_terminal_count() for p in child._panes)
+                confirm_disconnect = getattr(self, 'config', None) and self.config.get_setting('confirm-disconnect', True)
+                if confirm_disconnect and n_terminals > 0:
+                    self._pending_close_split_tab_view = tab_view
+                    self._pending_close_split_page = page
+                    self._pending_close_split_child = child
+                    dialog = Adw.MessageDialog(
+                        transient_for=self,
+                        modal=True,
+                        heading=_("Close split view?"),
+                        body=_("This will disconnect {n} terminal session(s). Continue?").format(n=n_terminals),
+                    )
+                    dialog.add_response('cancel', _("Cancel"))
+                    dialog.add_response('close', _("Close"))
+                    dialog.set_response_appearance('close', Adw.ResponseAppearance.DESTRUCTIVE)
+                    dialog.set_default_response('close')
+                    dialog.set_close_response('cancel')
+                    dialog.connect('response', self._on_split_tab_close_response)
+                    dialog.present()
+                    return True  # Prevent immediate close; dialog handles it
+                child.cleanup_all()
+                return False
+
         # Get the connection for this tab
         connection = None
         terminal = None
@@ -7192,10 +7257,200 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self._pending_close_page = None
         self._pending_close_connection = None
         self._pending_close_terminal = None
-    
+
+    def _on_split_tab_close_response(self, dialog, response_id):
+        """Handle the confirmation dialog for closing an entire SplitViewTab."""
+        tab_view = getattr(self, '_pending_close_split_tab_view', None)
+        page = getattr(self, '_pending_close_split_page', None)
+        child = getattr(self, '_pending_close_split_child', None)
+        if response_id == 'close':
+            if child is not None:
+                child.cleanup_all()
+            if tab_view is not None and page is not None:
+                tab_view.close_page_finish(page, True)
+            self._update_tab_button_visibility()
+            if tab_view is not None and tab_view.get_n_pages() == 0:
+                self.show_welcome_view()
+        else:
+            if tab_view is not None and page is not None:
+                tab_view.close_page_finish(page, False)
+        dialog.destroy()
+        self._pending_close_split_tab_view = None
+        self._pending_close_split_page = None
+        self._pending_close_split_child = None
+
     def on_tab_attached(self, tab_view, page, position):
         """Handle tab attached"""
         self._update_tab_button_visibility()
+        # Register a drop target on TerminalWidget pages so dragging a
+        # connection onto a terminal converts that tab into a split-view tab.
+        try:
+            from .terminal import TerminalWidget
+            child = page.get_child() if page else None
+            if isinstance(child, TerminalWidget):
+                self._register_convert_to_split_drop(child, page)
+        except Exception as exc:
+            logger.debug("Could not register convert-to-split drop: %s", exc)
+        self._update_layout_toggle_state()
+
+    def _register_convert_to_split_drop(self, terminal, page) -> None:
+        """Attach a drop target to terminal so dragging a connection converts the tab to split view."""
+        from gi.repository import Gtk, Gdk, GObject
+        dt = Gtk.DropTarget.new(type=GObject.TYPE_PYOBJECT, actions=Gdk.DragAction.MOVE)
+
+        def _on_drop(_target, value, _x, _y):
+            try:
+                if hasattr(value, 'get_value'):
+                    value = value.get_value()
+                if not isinstance(value, dict) or value.get("type") != "connection":
+                    return False
+
+                # Only convert if the terminal is still in the main tab_view
+                try:
+                    source_page = self.tab_view.get_page(terminal)
+                except Exception:
+                    source_page = None
+                if source_page is None:
+                    return False
+
+                nicknames = value.get("connection_nicknames") or []
+                if not nicknames and value.get("connection_nickname"):
+                    nicknames = [value["connection_nickname"]]
+                if not nicknames:
+                    return False
+
+                connections = []
+                for nick in nicknames:
+                    conn = self.connection_manager.find_connection_by_nickname(nick)
+                    if conn is not None:
+                        connections.append(conn)
+                if not connections:
+                    return False
+
+                from .split_view import SplitViewTab
+                from sshpilot import icon_utils
+
+                svt = SplitViewTab(self)
+
+                # Move the existing terminal out of the main tab_view into pane 0
+                title = source_page.get_title() or _("Terminal")
+                self._suppress_close_confirmation = True
+                self._moving_tab_to_pane = True
+                try:
+                    self.tab_view.close_page(source_page)
+                finally:
+                    self._suppress_close_confirmation = False
+                    self._moving_tab_to_pane = False
+                # Defer reparent so tab_view fully completes its close sequence
+                GLib.idle_add(svt._panes[0].add_terminal, terminal, title)
+
+                # Add each dropped connection to pane 1 (and extra panes beyond)
+                for i, conn in enumerate(connections):
+                    if i == 0:
+                        svt._panes[1].add_connection(conn)
+                    else:
+                        svt.add_pane().add_connection(conn)
+
+                # Append the split-view tab to the main tab_view
+                new_page = self.tab_view.append(svt)
+                new_page.set_title(_("Split View"))
+                try:
+                    new_page.set_icon(
+                        icon_utils.new_gicon_from_icon_name('view-dual-symbolic')
+                    )
+                except Exception:
+                    pass
+                svt._tab_page = new_page
+                self.show_tab_view()
+                self.tab_view.set_selected_page(new_page)
+                return True
+            except Exception as exc:
+                logger.error("Convert-to-split drop failed: %s", exc)
+                return False
+
+        dt.connect("drop", _on_drop)
+        dt.connect("enter", lambda _t, _x, _y: Gdk.DragAction.MOVE)
+        terminal.add_controller(dt)
+
+    # ── layout toggle state / apply ───────────────────────────────────────────
+
+    def _update_layout_toggle_state(self) -> None:
+        """Sync toggle button visibility and active states with the selected tab.
+
+        Buttons are shown only when the active tab is a terminal or split-view
+        tab.  They are hidden on the welcome page, file manager tabs, etc.
+        """
+        if not hasattr(self, '_layout_h_btn'):
+            return
+        try:
+            page = self.tab_view.get_selected_page()
+            child = page.get_child() if page else None
+            from .split_view import SplitViewTab
+            is_terminal_tab = isinstance(child, (TerminalWidget, SplitViewTab))
+            self._layout_h_btn.set_visible(is_terminal_tab)
+            self._layout_v_btn.set_visible(is_terminal_tab)
+            self._updating_layout_toggles = True
+            try:
+                if isinstance(child, SplitViewTab):
+                    mode = child.get_layout_mode()
+                    self._layout_h_btn.set_active(mode == 'horizontal')
+                    self._layout_v_btn.set_active(mode == 'vertical')
+                else:
+                    self._layout_h_btn.set_active(False)
+                    self._layout_v_btn.set_active(False)
+            finally:
+                self._updating_layout_toggles = False
+        except Exception as exc:
+            logger.debug("Failed to update layout toggle state: %s", exc)
+
+    def _apply_tab_layout_mode(self, mode: str) -> None:
+        """Apply H or V layout to the current tab (converts regular tab if needed)."""
+        try:
+            page = self.tab_view.get_selected_page()
+            if page is None:
+                return
+            child = page.get_child()
+            from .split_view import SplitViewTab
+            if isinstance(child, SplitViewTab):
+                child.set_layout_mode(mode)
+            elif isinstance(child, TerminalWidget):
+                self._convert_terminal_tab_to_split(page, child, mode)
+        except Exception as exc:
+            logger.error("Failed to apply tab layout mode: %s", exc)
+
+    def _convert_terminal_tab_to_split(self, source_page, terminal, mode: str) -> None:
+        """Convert a regular terminal tab into a split-view tab."""
+        from .split_view import SplitViewTab
+        from sshpilot import icon_utils
+
+        svt = SplitViewTab(self)
+        svt.set_layout_mode(mode)
+
+        title = source_page.get_title() or _("Terminal")
+        self._suppress_close_confirmation = True
+        self._moving_tab_to_pane = True
+        try:
+            self.tab_view.close_page(source_page)
+        finally:
+            self._suppress_close_confirmation = False
+            self._moving_tab_to_pane = False
+
+        # Defer reparent so tab_view fully completes its close sequence first
+        GLib.idle_add(svt._panes[0].add_terminal, terminal, title)
+
+        new_page = self.tab_view.append(svt)
+        new_page.set_title(_("Split View"))
+        try:
+            new_page.set_icon(
+                icon_utils.new_gicon_from_icon_name('view-dual-symbolic')
+            )
+        except Exception:
+            pass
+        svt._tab_page = new_page
+        self.show_tab_view()
+        self.tab_view.set_selected_page(new_page)
+
+    # ── tab button visibility ─────────────────────────────────────────────────
 
     def _update_tab_button_visibility(self):
         """Update TabButton visibility based on number of tabs"""
@@ -7208,6 +7463,17 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
     def on_tab_detached(self, tab_view, page, position):
         """Handle tab detached"""
+        # Skip dict cleanup when a terminal is being moved into a split pane
+        # (the terminal stays live; its tracking entries remain valid).
+        if getattr(self, '_moving_tab_to_pane', False):
+            self._update_tab_button_visibility()
+            if tab_view.get_n_pages() == 0:
+                self.show_welcome_view()
+            else:
+                if hasattr(self, 'view_toggle_button'):
+                    self.view_toggle_button.set_visible(True)
+            return
+
         # Cleanup terminal-to-connection maps when a page is detached
         try:
             if hasattr(page, 'get_child'):
@@ -7233,7 +7499,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
         # Update tab button visibility
         self._update_tab_button_visibility()
-        
+        self._update_layout_toggle_state()
+
         # Show welcome view if no more tabs are left
         if tab_view.get_n_pages() == 0:
             self.show_welcome_view()
@@ -7241,6 +7508,21 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             # Update button visibility when tabs remain
             if hasattr(self, 'view_toggle_button'):
                 self.view_toggle_button.set_visible(True)
+
+    def on_open_split_view_clicked(self, button):
+        """Open a new empty split-view tab."""
+        try:
+            from .split_view import SplitViewTab
+            from sshpilot import icon_utils
+            svt = SplitViewTab(self)
+            page = self.tab_view.append(svt)
+            page.set_title(_("Split View"))
+            page.set_icon(icon_utils.new_gicon_from_icon_name('view-dual-symbolic'))
+            svt._tab_page = page
+            self.show_tab_view()
+            self.tab_view.set_selected_page(page)
+        except Exception as exc:
+            logger.error("Failed to open split view: %s", exc)
 
     def on_local_terminal_button_clicked(self, button):
         """Handle local terminal button click"""
