@@ -1,9 +1,6 @@
-name: Trigger PPA on Release
+name: Trigger PPA (Manual)
 
 on:
-  release:
-    types:
-      - published
   workflow_dispatch:
     inputs:
       release_tag:
@@ -13,8 +10,7 @@ on:
 
 jobs:
   trigger-ppa:
-    # Only trigger for versioned release tags like v1.2.3
-    if: startsWith(github.event.release.tag_name || github.event.inputs.release_tag, 'v')
+    if: startsWith(github.event.inputs.release_tag, 'v')
     runs-on: ubuntu-latest
     steps:
       - name: Dispatch release event to sshpilot-ppa
@@ -25,10 +21,10 @@ jobs:
           event-type: sshpilot_release_published
           client-payload: >-
             {
-              "tag": "${{ github.event.release.tag_name || github.event.inputs.release_tag }}",
-              "release_id": "${{ github.event.release.id || 'manual-dispatch' }}",
-              "release_html_url": "${{ github.event.release.html_url || '' }}",
+              "tag": "${{ github.event.inputs.release_tag }}",
+              "release_id": "manual-dispatch",
+              "release_html_url": "https://github.com/${{ github.repository }}/releases/tag/${{ github.event.inputs.release_tag }}",
               "triggered_by_repo": "${{ github.repository }}",
-              "triggered_at": "${{ github.event.release.published_at || '' }}",
+              "triggered_at": "",
               "workflow_run_id": "${{ github.run_id }}"
             }

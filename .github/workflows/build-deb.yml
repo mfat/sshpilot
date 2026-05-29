@@ -240,3 +240,20 @@ jobs:
           body: ""
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Trigger APT repository publish
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.PPA_TRIGGER_TOKEN }}
+          repository: mfat/sshpilot-ppa
+          event-type: sshpilot_release_published
+          client-payload: >-
+            {
+              "tag": "${{ github.ref_name }}",
+              "release_id": "build-deb-dispatch",
+              "release_html_url": "https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}",
+              "triggered_by_repo": "${{ github.repository }}",
+              "triggered_at": "",
+              "workflow_run_id": "${{ github.run_id }}"
+            }
