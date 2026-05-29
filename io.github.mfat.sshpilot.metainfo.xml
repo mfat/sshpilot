@@ -58,6 +58,14 @@
 
 
 
+
+    <release version="4.9.0" date="2026-05-29">
+
+      <description>
+        <p>- New "Splt View" feature - view terminals side by side inside any terminal tab</p>
+        <p>- New context menu item to copy host address</p>
+      </description>
+    </release>
     <release version="4.8.3" date="2026-05-25">
 
       <description>
