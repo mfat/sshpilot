@@ -151,17 +151,18 @@ def run_ssh_with_password(host: str, user: str, password: str, *,
     if argv_tail:
         cmd += argv_tail  # e.g. ["uptime"] or ["-tt"] etc.
 
-    # Always strip askpass vars so OpenSSH can prompt interactively if needed
+    # Remove SSH_ASKPASS and force never so sshpass can deliver the password via PTY
+    # without OpenSSH bypassing it via askpass (including compiled-in defaults).
     env = (inherit_env or os.environ).copy()
     env.pop("SSH_ASKPASS", None)
-    env.pop("SSH_ASKPASS_REQUIRE", None)
+    env["SSH_ASKPASS_REQUIRE"] = "never"
 
     # Ensure /app/bin is first in PATH for Flatpak compatibility
     if os.path.exists('/app/bin'):
         current_path = env.get('PATH', '')
         if '/app/bin' not in current_path:
             env['PATH'] = f"/app/bin:{current_path}"
-    
+
     try:
         # Capture output or stream as you prefer
         result = subprocess.run(cmd, env=env, text=True, capture_output=True, check=False)
@@ -224,17 +225,18 @@ def run_scp_with_password(host: str, user: str, password: str,
         # sshpass not available – allow interactive password prompt
         cmd = base_cmd
 
-    # Always strip askpass vars so OpenSSH can prompt interactively if needed
+    # Remove SSH_ASKPASS and force never so sshpass can deliver the password via PTY
+    # without OpenSSH bypassing it via askpass (including compiled-in defaults).
     env = (inherit_env or os.environ).copy()
     env.pop("SSH_ASKPASS", None)
-    env.pop("SSH_ASKPASS_REQUIRE", None)
+    env["SSH_ASKPASS_REQUIRE"] = "never"
 
     # Ensure /app/bin is first in PATH for Flatpak compatibility
     if os.path.exists('/app/bin'):
         current_path = env.get('PATH', '')
         if '/app/bin' not in current_path:
             env['PATH'] = f"/app/bin:{current_path}"
-    
+
     try:
         return subprocess.run(cmd, env=env, text=True, capture_output=True, check=False)
     finally:
