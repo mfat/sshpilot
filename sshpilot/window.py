@@ -2736,14 +2736,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self._updating_layout_toggles = False
 
         self._layout_h_btn = Gtk.ToggleButton()
-        self._layout_h_btn.set_icon_name("view-dual-symbolic")
+        self._layout_h_btn.set_icon_name("double-ended-arrows-horizontal-symbolic")
         self._layout_h_btn.set_tooltip_text(_("Side by Side"))
         self._layout_h_btn.add_css_class("flat")
         self._layout_h_btn.set_visible(False)
         self.header_bar.pack_start(self._layout_h_btn)
 
         self._layout_v_btn = Gtk.ToggleButton()
-        self._layout_v_btn.set_icon_name("view-paged-symbolic")
+        self._layout_v_btn.set_icon_name("double-ended-arrows-vertical-symbolic")
         self._layout_v_btn.set_tooltip_text(_("Top / Bottom"))
         self._layout_v_btn.add_css_class("flat")
         self._layout_v_btn.set_visible(False)

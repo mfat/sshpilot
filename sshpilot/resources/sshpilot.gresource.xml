@@ -13,6 +13,8 @@
     <file alias="document-properties-symbolic.svg">icons/scalable/actions/document-properties-symbolic.svg</file>
     <file alias="document-save-symbolic.svg">icons/scalable/actions/document-save-symbolic.svg</file>
     <file alias="document-send-symbolic.svg">icons/scalable/actions/document-send-symbolic.svg</file>
+    <file alias="double-ended-arrows-horizontal-symbolic.svg">icons/scalable/actions/double-ended-arrows-horizontal-symbolic.svg</file>
+    <file alias="double-ended-arrows-vertical-symbolic.svg">icons/scalable/actions/double-ended-arrows-vertical-symbolic.svg</file>
     <file alias="edit-copy-symbolic.svg">icons/scalable/actions/edit-copy-symbolic.svg</file>
     <file alias="edit-cut-symbolic.svg">icons/scalable/actions/edit-cut-symbolic.svg</file>
     <file alias="edit-paste-symbolic.svg">icons/scalable/actions/edit-paste-symbolic.svg</file>
