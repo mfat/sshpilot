@@ -125,6 +125,21 @@ class WindowActions:
                 e,
             )
 
+    def on_new_split_view_tab(self, action, param=None):
+        """Open a new empty split-view tab."""
+        try:
+            from .split_view import SplitViewTab
+            from sshpilot import icon_utils
+            svt = SplitViewTab(self)
+            page = self.tab_view.append(svt)
+            page.set_title(_("Split View"))
+            page.set_icon(icon_utils.new_gicon_from_icon_name('view-dual-symbolic'))
+            svt._tab_page = page
+            self.show_tab_view()
+            self.tab_view.set_selected_page(page)
+        except Exception as exc:
+            logger.error("Failed to open new split view tab: %s", exc)
+
     def on_open_in_split_view_action(self, action, param=None):
         """Open the selected connection(s) in a new split-view tab."""
         try:

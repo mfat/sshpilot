@@ -2726,7 +2726,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         from sshpilot import icon_utils as _iu
         self.split_view_button = Gtk.Button()
         _iu.set_button_icon(self.split_view_button, 'view-grid-symbolic')
-        self.split_view_button.set_tooltip_text(_('New Split View'))
+        from .shortcut_utils import get_primary_modifier_label as _gpm
+        self.split_view_button.set_tooltip_text(
+            _('New Split View ({primary}+Shift+S)').format(primary=_gpm())
+        )
         self.split_view_button.add_css_class('flat')
         self.split_view_button.connect('clicked', self.on_open_split_view_clicked)
         self.header_bar.pack_start(self.split_view_button)
@@ -4391,6 +4394,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             ('tab-prev', _('Previous Tab')),
             ('tab-close', _('Close Tab')),
             ('tab-overview', _('Tab Overview')),
+            ('new-split-view-tab', _('New Split View Tab')),
         ]
         
         for action_name, title in tab_actions:
