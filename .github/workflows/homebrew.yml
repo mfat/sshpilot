@@ -4,17 +4,89 @@ on:
   push:
     tags:
       - 'v*' # Triggers on tags like v4.8.0
-  workflow_dispatch:    
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release tag to publish (example: v4.9.2)'
+        required: true
+        type: string
 
 jobs:
   bump-formula:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - name: Update formula in tap
-        uses: mislav/bump-homebrew-formula-action@v3
+      - name: Determine release tag
+        id: release
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.release_tag }}"
+          else
+            TAG="${{ github.ref_name }}"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Using tag: $TAG"
+
+      - name: Download source and compute SHA256
+        id: tarball
+        run: |
+          URL="https://github.com/mfat/sshpilot/archive/refs/tags/${{ steps.release.outputs.tag }}.tar.gz"
+          curl --fail --location "$URL" --output source.tar.gz
+          SHA256="$(sha256sum source.tar.gz | cut -d' ' -f1)"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "sha256=$SHA256" >> "$GITHUB_OUTPUT"
+          echo "Computed SHA256: $SHA256"
+
+      - name: Checkout Homebrew tap
+        uses: actions/checkout@v4
         with:
-          formula-name: sshpilot
-          homebrew-tap: mfat/homebrew-sshpilot
-          download-url: https://github.com/mfat/sshpilot/archive/refs/tags/${{ github.ref_name }}.tar.gz
-        env:
-          COMMITTER_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          repository: mfat/homebrew-sshpilot
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+
+      - name: Update formula url and sha256
+        run: |
+          python3 - <<'PY'
+          import pathlib
+          import re
+
+          formula = pathlib.Path("tap/Formula/sshpilot.rb")
+          content = formula.read_text()
+          tag = "${{ steps.release.outputs.tag }}"
+          sha = "${{ steps.tarball.outputs.sha256 }}"
+          url = f"https://github.com/mfat/sshpilot/archive/refs/tags/{tag}.tar.gz"
+
+          updated = re.sub(
+              r'url "https://github\.com/mfat/sshpilot/archive/refs/tags/v[^"]+\.tar\.gz"',
+              f'url "{url}"',
+              content,
+              count=1,
+          )
+          updated = re.sub(
+              r'sha256 "[0-9a-f]{64}"',
+              f'sha256 "{sha}"',
+              updated,
+              count=1,
+          )
+
+          if updated == content:
+              raise SystemExit("No formula changes were applied")
+
+          formula.write_text(updated)
+          print("Updated Formula/sshpilot.rb")
+          PY
+
+      - name: Commit and push formula update
+        working-directory: tap
+        run: |
+          if git diff --quiet -- Formula/sshpilot.rb; then
+            echo "Formula already up to date; nothing to commit."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/sshpilot.rb
+          git commit -m "Bump sshpilot formula to ${{ steps.release.outputs.tag }}"
+          git push
