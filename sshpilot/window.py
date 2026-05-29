@@ -2726,7 +2726,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         from sshpilot import icon_utils as _iu
         self.split_view_button = Gtk.Button()
         _iu.set_button_icon(self.split_view_button, 'view-grid-symbolic')
-        self.split_view_button.set_tooltip_text(_('Open Split View'))
+        self.split_view_button.set_tooltip_text(_('New Split View'))
         self.split_view_button.add_css_class('flat')
         self.split_view_button.connect('clicked', self.on_open_split_view_clicked)
         self.header_bar.pack_start(self.split_view_button)
