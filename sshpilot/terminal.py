@@ -1405,19 +1405,21 @@ class TerminalWidget(Gtk.Box):
                     # Use sshpass with FIFO
                     ssh_cmd = [sshpass_path, "-f", fifo] + ssh_cmd
                     
-                    # Important: strip askpass vars so OpenSSH won't try the askpass helper for passwords
+                    # Remove SSH_ASKPASS and force SSH_ASKPASS_REQUIRE=never so OpenSSH cannot
+                    # invoke askpass (including compiled-in defaults) even if a KDE/Wayland session
+                    # injects SSH_ASKPASS_REQUIRE=prefer into the environment via VTE or PAM.
                     env.pop("SSH_ASKPASS", None)
-                    env.pop("SSH_ASKPASS_REQUIRE", None)
-                    
+                    env["SSH_ASKPASS_REQUIRE"] = "never"
+
                     logger.debug("Using sshpass with FIFO for password authentication")
-                    logger.debug(f"Environment after removing SSH_ASKPASS: SSH_ASKPASS={env.get('SSH_ASKPASS', 'NOT_SET')}, SSH_ASKPASS_REQUIRE={env.get('SSH_ASKPASS_REQUIRE', 'NOT_SET')}")
+                    logger.debug(f"Environment for sshpass: SSH_ASKPASS={env.get('SSH_ASKPASS', 'NOT_SET')}, SSH_ASKPASS_REQUIRE={env.get('SSH_ASKPASS_REQUIRE')}")
                     
                     # Store tmpdir for cleanup
                     self._sshpass_tmpdir = tmpdir
                 else:
-                    # sshpass not available – allow interactive password prompt
+                    # sshpass not available – allow interactive password prompt via TTY
                     env.pop("SSH_ASKPASS", None)
-                    env.pop("SSH_ASKPASS_REQUIRE", None)
+                    env["SSH_ASKPASS_REQUIRE"] = "never"
                     logger.warning("sshpass not available; falling back to interactive password prompt")
             
             # Enable askpass log forwarding if using askpass
@@ -1543,9 +1545,9 @@ class TerminalWidget(Gtk.Box):
             if ssh_cmd and ssh_cmd[0] == 'sshpass':
                 ssh_cmd = ssh_cmd[3:]  # Remove sshpass, -f, and fifo_path
 
-            # Strip any askpass variables from the environment list
-            env_list = [e for e in env_list if not e.startswith('SSH_ASKPASS')]
-            env_list = [e for e in env_list if not e.startswith('SSH_ASKPASS_REQUIRE')]
+            # Strip any askpass variables from the environment list, then force never
+            env_list = [e for e in env_list if not e.startswith('SSH_ASKPASS=') and not e.startswith('SSH_ASKPASS_REQUIRE=')]
+            env_list.append('SSH_ASKPASS_REQUIRE=never')
 
             logger.debug(f"Fallback SSH command: {ssh_cmd}")
 
