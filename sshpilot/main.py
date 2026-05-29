@@ -676,6 +676,13 @@ class SshPilotApplication(Adw.Application):
             # Forward to the window's action
             self.props.active_window.broadcast_command_action.activate(None)
 
+    def on_new_split_view_tab(self, action, param=None):
+        """Open a new empty split-view tab (Ctrl/⌘+Shift+S)."""
+        logging.debug("New split view tab action triggered")
+        win = self.props.active_window
+        if win and hasattr(win, 'on_new_split_view_tab'):
+            win.on_new_split_view_tab(action, param)
+
     def apply_color_overrides(self, config):
         """Apply color overrides to the application"""
         try:
