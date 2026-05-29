@@ -59,6 +59,13 @@
 
 
 
+
+    <release version="4.9.2" date="2026-05-29">
+
+      <description>
+        <p>- Bug fixes</p>
+      </description>
+    </release>
     <release version="4.9.0" date="2026-05-29">
 
       <description>
