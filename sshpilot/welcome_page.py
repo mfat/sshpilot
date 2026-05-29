@@ -11,7 +11,7 @@ gi.require_version('Adw', '1')
 
 from gi.repository import Gtk, Adw, Gdk, Gio, GLib
 
-from gettext import gettext as _
+from gettext import gettext as _, ngettext
 
 from .connection_manager import Connection
 from .platform_utils import is_macos, get_ssh_dir
@@ -105,558 +105,690 @@ def _append_extra_config(data: dict, line: str) -> None:
     data["extra_ssh_config"] = (existing + "\n" + line).lstrip("\n")
 
 
-class WelcomePage(Gtk.Overlay):
-    """Welcome page shown when no tabs are open."""
+class WelcomePage(Gtk.Box):
+    """Welcome page shown when no tabs are open — carousel-based layout."""
 
-
+    # Ordered list of all carousel page definitions
+    _PAGE_DEFS = [
+        ('connections',       _('Connections'),        'network-server-symbolic'),
+        ('quick-actions',     _('Quick Actions'),      'grid-large-symbolic'),
+        ('keyboard-shortcuts',_('Keyboard Shortcuts'), 'preferences-desktop-keyboard-symbolic'),
+        ('getting-started',   _('Getting Started'),    'help-browser-symbolic'),
+        ('connection-groups', _('Connection Groups'),  'folder-symbolic'),
+        ('tips-tricks',       _('Tips & Tricks'),      'dialog-information-symbolic'),
+        ('recent-connections',_('Recent Connections'), 'document-open-recent-symbolic'),
+        ('key-manager',       _('SSH Keys'),           'dialog-password-symbolic'),
+        ('whats-new',         _('What\'s New'),        'software-update-available-symbolic'),
+    ]
 
     def __init__(self, window) -> None:
-        super().__init__()
+        super().__init__(orientation=Gtk.Orientation.VERTICAL)
         self.window = window
         self.connection_manager = window.connection_manager
         self.config = window.config
         self.set_hexpand(True)
         self.set_vexpand(True)
         self.set_can_focus(False)
-        
-        # Create a scrolled window to hold all content
+
+        # Track pin toggle buttons keyed by page_id
+        self._pin_buttons: dict = {}
+
+        # Scrolled container
         scrolled = Gtk.ScrolledWindow()
         scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         scrolled.set_vexpand(True)
         scrolled.set_hexpand(True)
         scrolled.set_can_focus(False)
-        
-        # Main content box
+        self.append(scrolled)
+
         content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         content_box.set_margin_top(12)
         content_box.set_margin_bottom(24)
         content_box.set_valign(Gtk.Align.START)
         content_box.set_can_focus(False)
-        
-        # Clamp for proper width
-        clamp = Adw.Clamp()
-        clamp.set_maximum_size(1200)
-        clamp.set_tightening_threshold(400)
-        clamp.set_child(content_box)
-        clamp.set_vexpand(False)
-        clamp.set_can_focus(False)
-        scrolled.set_child(clamp)
-        self.set_child(scrolled)
-        
-        # Get current shortcuts for tooltips
-        current_shortcuts = self._get_safe_current_shortcuts()
-        
-        # Welcome header - custom layout for better control
+
+        outer_clamp = Adw.Clamp()
+        outer_clamp.set_maximum_size(800)
+        outer_clamp.set_tightening_threshold(400)
+        outer_clamp.set_child(content_box)
+        outer_clamp.set_vexpand(False)
+        outer_clamp.set_can_focus(False)
+        scrolled.set_child(outer_clamp)
+
+        # ── Header ──────────────────────────────────────────────────────────
         header_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         header_box.set_halign(Gtk.Align.CENTER)
-        header_box.set_valign(Gtk.Align.START)
         header_box.set_margin_top(24)
-        header_box.set_margin_bottom(24)
-        header_box.set_vexpand(False)
+        header_box.set_margin_bottom(16)
         header_box.set_can_focus(False)
-        
-        # App icon
+
         from sshpilot import icon_utils
-        icon = icon_utils.new_image_from_icon_name('io.github.mfat.sshpilot')
-        icon.set_pixel_size(64)
-        icon.set_can_focus(False)
-        header_box.append(icon)
-        
-        # Welcome title
-        title_label = Gtk.Label()
-        title_label.set_text(_('Welcome to SSH Pilot'))
+        app_icon = icon_utils.new_image_from_icon_name('io.github.mfat.sshpilot')
+        app_icon.set_pixel_size(64)
+        app_icon.set_can_focus(False)
+        header_box.append(app_icon)
+
+        title_label = Gtk.Label(label=_('Welcome to SSH Pilot'))
         title_label.add_css_class('title-1')
         title_label.set_halign(Gtk.Align.CENTER)
         title_label.set_can_focus(False)
         header_box.append(title_label)
-        
-        # Description
-        desc_label = Gtk.Label()
-        #desc_label.set_text(_('A modern SSH connection manager with integrated terminal'))
-        desc_label.add_css_class('dim-label')
-        desc_label.set_halign(Gtk.Align.CENTER)
-        desc_label.set_wrap(True)
-        desc_label.set_justify(Gtk.Justification.CENTER)
-        desc_label.set_can_focus(False)
-        header_box.append(desc_label)
-        
+
         content_box.append(header_box)
-        
-        # Stack to hold both layouts
-        self.layout_stack = Gtk.Stack()
-        self.layout_stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
-        self.layout_stack.set_transition_duration(200)
-        content_box.append(self.layout_stack)
-        
-        # Build both layouts
-        cards_widget = self._build_cards_layout(current_shortcuts)
-        rows_widget = self._build_action_rows_layout(current_shortcuts)
-        
-        self.layout_stack.add_named(cards_widget, 'cards')
-        self.layout_stack.add_named(rows_widget, 'rows')
-        
-        # Load saved layout preference
-        saved_layout = self.config.get_setting('ui.welcome_page_layout', 'rows')
-        use_cards = saved_layout == 'cards'
-        
-        # Layout toggle button in top right (as overlay)
-        self.layout_toggle = Gtk.ToggleButton()
-        self.layout_toggle.set_active(use_cards)  # active = cards, inactive = rows
-        self.layout_toggle.connect('toggled', self._on_layout_toggle_changed)
-        self.layout_toggle.set_margin_start(12)
-        self.layout_toggle.set_margin_end(12)
-        self.layout_toggle.set_margin_top(12)
-        self.layout_toggle.set_halign(Gtk.Align.END)
-        self.layout_toggle.set_valign(Gtk.Align.START)
-        self.add_overlay(self.layout_toggle)
-        
-        # Set initial layout and update toggle icon
+
+        # ── Carousel ────────────────────────────────────────────────────────
+        self.carousel = Adw.Carousel()
+        self.carousel.set_allow_scroll_wheel(True)
+        self.carousel.set_allow_long_swipes(False)
+        self.carousel.set_spacing(16)
+        self.carousel.set_margin_start(12)
+        self.carousel.set_margin_end(12)
+        self.carousel.set_margin_bottom(8)
+        self.carousel.set_can_focus(False)
+
+        dots = Adw.CarouselIndicatorDots()
+        dots.set_carousel(self.carousel)
+        dots.set_margin_bottom(12)
+        content_box.append(dots)
+        content_box.append(self.carousel)
+
+        # Determine page order based on pinned page
+        pinned_id = self.config.get_setting('ui.startpage_pinned_page', None)
+        page_order = list(self._PAGE_DEFS)
+        if pinned_id:
+            pinned_def = next((p for p in page_order if p[0] == pinned_id), None)
+            if pinned_def:
+                page_order.remove(pinned_def)
+                page_order.insert(0, pinned_def)
+
+        current_shortcuts = self._get_safe_current_shortcuts()
+
+        self._page_widgets: dict = {}
+        for page_id, page_title, page_icon in page_order:
+            page_widget = self._build_page(page_id, page_title, page_icon, current_shortcuts)
+            self._page_widgets[page_id] = page_widget
+            self.carousel.append(page_widget)
+
+        self._sync_pin_buttons()
+
+    # ── Page factory ────────────────────────────────────────────────────────
+
+    def _make_page_frame(self, page_id: str, title: str, icon_name: str):
+        """Return (outer_widget, inner_content_box, pin_button) for a carousel page."""
         from sshpilot import icon_utils
-        if use_cards:
-            self.layout_stack.set_visible_child_name('cards')
-            icon_utils.set_button_icon(self.layout_toggle, 'view-list-symbolic')
-            self.layout_toggle.set_tooltip_text(_('Switch to list view'))
-        else:
-            self.layout_stack.set_visible_child_name('rows')
-            icon_utils.set_button_icon(self.layout_toggle, 'view-grid-symbolic')
-            self.layout_toggle.set_tooltip_text(_('Switch to grid view'))
-    
-    def _build_cards_layout(self, current_shortcuts):
-        """Build the cards grid layout"""
-        cards_grid = Gtk.FlowBox()
-        cards_grid.set_selection_mode(Gtk.SelectionMode.NONE)
-        cards_grid.set_max_children_per_line(3)
-        cards_grid.set_min_children_per_line(1)
-        cards_grid.set_column_spacing(12)
-        cards_grid.set_row_spacing(12)
-        cards_grid.set_margin_start(12)
-        cards_grid.set_margin_end(12)
-        cards_grid.set_margin_top(12)
-        cards_grid.set_homogeneous(True)
-        
-        # Quick Connect card
-        quick_connect_accel = self._get_action_accel_display(current_shortcuts, 'quick-connect')
-        quick_connect_btn = Gtk.Button()
-        quick_connect_btn.set_can_focus(False)
-        quick_connect_btn.add_css_class('card')
-        quick_connect_btn.set_size_request(120, 120)
-        
-        card_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        card_box.set_margin_start(8)
-        card_box.set_margin_end(8)
-        card_box.set_margin_top(8)
-        card_box.set_margin_bottom(8)
-        card_box.set_halign(Gtk.Align.CENTER)
-        card_box.set_valign(Gtk.Align.CENTER)
-        
+
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        outer.add_css_class('card')
+        outer.set_margin_start(4)
+        outer.set_margin_end(4)
+        outer.set_margin_top(4)
+        outer.set_margin_bottom(4)
+
+        # Title row
+        title_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        title_row.set_margin_start(16)
+        title_row.set_margin_end(8)
+        title_row.set_margin_top(12)
+        title_row.set_margin_bottom(8)
+
+        page_icon = icon_utils.new_image_from_icon_name(icon_name)
+        page_icon.set_pixel_size(16)
+        page_icon.set_can_focus(False)
+        title_row.append(page_icon)
+
+        page_title_label = Gtk.Label(label=title)
+        page_title_label.add_css_class('heading')
+        page_title_label.set_halign(Gtk.Align.START)
+        page_title_label.set_hexpand(True)
+        page_title_label.set_can_focus(False)
+        title_row.append(page_title_label)
+
+        pin_btn = Gtk.ToggleButton()
+        pin_btn.set_can_focus(False)
+        pin_btn.add_css_class('flat')
+        pin_btn.set_valign(Gtk.Align.CENTER)
+        pin_btn.set_tooltip_text(_('Pin this page as startup view'))
+        pin_icon = icon_utils.new_image_from_icon_name('non-starred-symbolic')
+        pin_icon.set_can_focus(False)
+        pin_btn.set_child(pin_icon)
+        pin_btn.connect('toggled', self._on_pin_toggled, page_id)
+        title_row.append(pin_btn)
+        self._pin_buttons[page_id] = (pin_btn, pin_icon)
+
+        outer.append(title_row)
+
+        sep = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
+        sep.set_can_focus(False)
+        outer.append(sep)
+
+        inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        inner.set_margin_start(12)
+        inner.set_margin_end(12)
+        inner.set_margin_top(12)
+        inner.set_margin_bottom(16)
+        outer.append(inner)
+
+        return outer, inner
+
+    def _build_page(self, page_id: str, title: str, icon_name: str, shortcuts: dict) -> Gtk.Widget:
+        builders = {
+            'connections': self._build_connections_page,
+            'quick-actions': self._build_quick_actions_page,
+            'keyboard-shortcuts': self._build_keyboard_shortcuts_page,
+            'getting-started': self._build_getting_started_page,
+            'connection-groups': self._build_connection_groups_page,
+            'tips-tricks': self._build_tips_page,
+            'recent-connections': self._build_recent_connections_page,
+            'key-manager': self._build_key_manager_page,
+            'whats-new': self._build_whats_new_page,
+        }
+        builder = builders.get(page_id)
+        if builder:
+            return builder(title, icon_name, shortcuts)
+        outer, inner = self._make_page_frame(page_id, title, icon_name)
+        inner.append(Gtk.Label(label=_('Coming soon')))
+        return outer
+
+    # ── Individual page builders ─────────────────────────────────────────────
+
+    def _build_connections_page(self, title: str, icon_name: str, shortcuts: dict) -> Gtk.Widget:
+        """Page 0: the classic action rows."""
         from sshpilot import icon_utils
-        prefix_img = icon_utils.new_image_from_icon_name('network-server-symbolic')
-        prefix_img.set_can_focus(False)
-        prefix_img.set_pixel_size(32)
-        card_box.append(prefix_img)
-        
-        title_label = Gtk.Label(label=_('Quick Connect'))
-        title_label.set_halign(Gtk.Align.CENTER)
-        title_label.add_css_class('title-4')
-        card_box.append(title_label)
-        
-        if quick_connect_accel:
-            shortcut_label = Gtk.Label(label=quick_connect_accel)
-            shortcut_label.add_css_class('dim-label')
-            shortcut_label.set_can_focus(False)
-            shortcut_label.set_halign(Gtk.Align.CENTER)
-            card_box.append(shortcut_label)
-        
-        quick_connect_btn.set_child(card_box)
-        quick_connect_btn.connect('clicked', lambda *_: self.on_quick_connect_clicked(None))
-        cards_grid.append(quick_connect_btn)
-        
-        # Add New Connection card
-        new_connection_accel = self._get_action_accel_display(current_shortcuts, 'new-connection')
-        new_connection_btn = Gtk.Button()
-        new_connection_btn.set_can_focus(False)
-        new_connection_btn.add_css_class('card')
-        new_connection_btn.set_size_request(120, 120)
-        
-        card_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        card_box.set_margin_start(8)
-        card_box.set_margin_end(8)
-        card_box.set_margin_top(8)
-        card_box.set_margin_bottom(8)
-        card_box.set_halign(Gtk.Align.CENTER)
-        card_box.set_valign(Gtk.Align.CENTER)
-        
-        prefix_img = icon_utils.new_image_from_icon_name('list-add-symbolic')
-        prefix_img.set_can_focus(False)
-        prefix_img.set_pixel_size(32)
-        card_box.append(prefix_img)
-        
-        title_label = Gtk.Label(label=_('Add a New Connection'))
-        title_label.set_halign(Gtk.Align.CENTER)
-        title_label.add_css_class('title-4')
-        card_box.append(title_label)
-        
-        if new_connection_accel:
-            shortcut_label = Gtk.Label(label=new_connection_accel)
-            shortcut_label.add_css_class('dim-label')
-            shortcut_label.set_can_focus(False)
-            shortcut_label.set_halign(Gtk.Align.CENTER)
-            card_box.append(shortcut_label)
-        
-        new_connection_btn.set_child(card_box)
-        new_connection_btn.connect('clicked', lambda *_: self.window.get_application().activate_action('new-connection'))
-        cards_grid.append(new_connection_btn)
-        
-        # Edit SSH Config action row
-        edit_config_accel = self._get_action_accel_display(current_shortcuts, 'edit-ssh-config')
-        
-        # Check if using isolated mode or default SSH config
-        if hasattr(self.config, 'isolated_mode') and self.config.isolated_mode:
-            config_location = '~/.config/sshpilot/config'
-        else:
-            config_location = '~/.ssh/config'
-        
-        edit_config_btn = Gtk.Button()
-        edit_config_btn.set_can_focus(False)
-        edit_config_btn.add_css_class('card')
-        edit_config_btn.set_size_request(120, 120)
-        
-        card_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        card_box.set_margin_start(8)
-        card_box.set_margin_end(8)
-        card_box.set_margin_top(8)
-        card_box.set_margin_bottom(8)
-        card_box.set_halign(Gtk.Align.CENTER)
-        card_box.set_valign(Gtk.Align.CENTER)
-        
-        prefix_img = icon_utils.new_image_from_icon_name('document-edit-symbolic')
-        prefix_img.set_can_focus(False)
-        prefix_img.set_pixel_size(32)
-        card_box.append(prefix_img)
-        
-        title_label = Gtk.Label(label=_('View and Edit SSH Config'))
-        title_label.set_halign(Gtk.Align.CENTER)
-        title_label.add_css_class('title-4')
-        card_box.append(title_label)
-        
-        if edit_config_accel:
-            shortcut_label = Gtk.Label(label=edit_config_accel)
-            shortcut_label.add_css_class('dim-label')
-            shortcut_label.set_can_focus(False)
-            shortcut_label.set_halign(Gtk.Align.CENTER)
-            card_box.append(shortcut_label)
-        
-        edit_config_btn.set_child(card_box)
-        edit_config_btn.connect('clicked', lambda *_: self.window.get_application().activate_action('edit-ssh-config'))
-        cards_grid.append(edit_config_btn)
-        
-        # Local Terminal card
-        local_terminal_accel = self._get_action_accel_display(current_shortcuts, 'local-terminal')
-        local_terminal_btn = Gtk.Button()
-        local_terminal_btn.set_can_focus(False)
-        local_terminal_btn.add_css_class('card')
-        local_terminal_btn.set_size_request(120, 120)
-        
-        card_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        card_box.set_margin_start(8)
-        card_box.set_margin_end(8)
-        card_box.set_margin_top(8)
-        card_box.set_margin_bottom(8)
-        card_box.set_halign(Gtk.Align.CENTER)
-        card_box.set_valign(Gtk.Align.CENTER)
-        
-        prefix_img = icon_utils.new_image_from_icon_name('utilities-terminal-symbolic')
-        prefix_img.set_can_focus(False)
-        prefix_img.set_pixel_size(32)
-        card_box.append(prefix_img)
-        
-        title_label = Gtk.Label(label=_('Open Local Terminal'))
-        title_label.set_halign(Gtk.Align.CENTER)
-        title_label.add_css_class('title-4')
-        card_box.append(title_label)
-        
-        if local_terminal_accel:
-            shortcut_label = Gtk.Label(label=local_terminal_accel)
-            shortcut_label.add_css_class('dim-label')
-            shortcut_label.set_can_focus(False)
-            shortcut_label.set_halign(Gtk.Align.CENTER)
-            card_box.append(shortcut_label)
-        
-        local_terminal_btn.set_child(card_box)
-        local_terminal_btn.connect('clicked', lambda *_: self.window.terminal_manager.show_local_terminal())
-        cards_grid.append(local_terminal_btn)
-        
-        # Keyboard Shortcuts card
-        shortcuts_accel = self._get_action_accel_display(current_shortcuts, 'shortcuts')
-        shortcuts_btn = Gtk.Button()
-        shortcuts_btn.set_can_focus(False)
-        shortcuts_btn.add_css_class('card')
-        shortcuts_btn.set_size_request(120, 120)
-        
-        card_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        card_box.set_margin_start(8)
-        card_box.set_margin_end(8)
-        card_box.set_margin_top(8)
-        card_box.set_margin_bottom(8)
-        card_box.set_halign(Gtk.Align.CENTER)
-        card_box.set_valign(Gtk.Align.CENTER)
-        
-        prefix_img = icon_utils.new_image_from_icon_name('preferences-desktop-keyboard-symbolic')
-        prefix_img.set_can_focus(False)
-        prefix_img.set_pixel_size(32)
-        card_box.append(prefix_img)
-        
-        title_label = Gtk.Label(label=_('Keyboard Shortcuts'))
-        title_label.set_halign(Gtk.Align.CENTER)
-        title_label.add_css_class('title-4')
-        card_box.append(title_label)
-        
-        if shortcuts_accel:
-            shortcut_label = Gtk.Label(label=shortcuts_accel)
-            shortcut_label.add_css_class('dim-label')
-            shortcut_label.set_can_focus(False)
-            shortcut_label.set_halign(Gtk.Align.CENTER)
-            card_box.append(shortcut_label)
-        
-        shortcuts_btn.set_child(card_box)
-        shortcuts_btn.connect('clicked', lambda *_: self.window.show_shortcuts_window())
-        cards_grid.append(shortcuts_btn)
-        
-        # Online Documentation card
-        help_accel = self._get_action_accel_display(current_shortcuts, 'help')
-        help_btn = Gtk.Button()
-        help_btn.set_can_focus(False)
-        help_btn.add_css_class('card')
-        help_btn.set_size_request(120, 120)
-        
-        card_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        card_box.set_margin_start(8)
-        card_box.set_margin_end(8)
-        card_box.set_margin_top(8)
-        card_box.set_margin_bottom(8)
-        card_box.set_halign(Gtk.Align.CENTER)
-        card_box.set_valign(Gtk.Align.CENTER)
-        
-        prefix_img = icon_utils.new_image_from_icon_name('help-browser-symbolic')
-        prefix_img.set_can_focus(False)
-        prefix_img.set_pixel_size(32)
-        card_box.append(prefix_img)
-        
-        title_label = Gtk.Label(label=_('Online Documentation'))
-        title_label.set_halign(Gtk.Align.CENTER)
-        title_label.add_css_class('title-4')
-        card_box.append(title_label)
-        
-        if help_accel:
-            shortcut_label = Gtk.Label(label=help_accel)
-            shortcut_label.add_css_class('dim-label')
-            shortcut_label.set_can_focus(False)
-            shortcut_label.set_halign(Gtk.Align.CENTER)
-            card_box.append(shortcut_label)
-        
-        help_btn.set_child(card_box)
-        help_btn.connect('clicked', lambda *_: self.open_online_help())
-        cards_grid.append(help_btn)
-        
-        # About card
-        about_accel = self._get_action_accel_display(current_shortcuts, 'about')
-        about_btn = Gtk.Button()
-        about_btn.set_can_focus(False)
-        about_btn.add_css_class('card')
-        about_btn.set_size_request(120, 120)
-        
-        card_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        card_box.set_margin_start(8)
-        card_box.set_margin_end(8)
-        card_box.set_margin_top(8)
-        card_box.set_margin_bottom(8)
-        card_box.set_halign(Gtk.Align.CENTER)
-        card_box.set_valign(Gtk.Align.CENTER)
-        
-        prefix_img = icon_utils.new_image_from_icon_name('help-about-symbolic')
-        prefix_img.set_can_focus(False)
-        prefix_img.set_pixel_size(32)
-        card_box.append(prefix_img)
-        
-        title_label = Gtk.Label(label=_('About'))
-        title_label.set_halign(Gtk.Align.CENTER)
-        title_label.add_css_class('title-4')
-        card_box.append(title_label)
-        
-        if about_accel:
-            shortcut_label = Gtk.Label(label=about_accel)
-            shortcut_label.add_css_class('dim-label')
-            shortcut_label.set_can_focus(False)
-            shortcut_label.set_halign(Gtk.Align.CENTER)
-            card_box.append(shortcut_label)
-        
-        about_btn.set_child(card_box)
-        about_btn.connect('clicked', lambda *_: self.window.get_application().activate_action('about'))
-        cards_grid.append(about_btn)
-        
-        return cards_grid
-    
-    def _build_action_rows_layout(self, current_shortcuts):
-        """Build the action rows layout"""
-        # Wrap in clamp to constrain width
-        clamp = Adw.Clamp()
-        clamp.set_maximum_size(600)
-        clamp.set_tightening_threshold(400)
-        clamp.set_vexpand(False)
-        clamp.set_can_focus(False)
-        
-        container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        
-        # Getting Started section
+        outer, inner = self._make_page_frame('connections', title, icon_name)
+
         getting_started_group = Adw.PreferencesGroup()
-        getting_started_group.set_margin_start(12)
-        getting_started_group.set_margin_end(12)
-        getting_started_group.set_margin_top(12)
-        getting_started_group.set_vexpand(False)
         getting_started_group.set_can_focus(False)
-        getting_started_group.add_css_class('separate')
-        container.append(getting_started_group)
-        
-        # Quick Connect action row
-        quick_connect_accel = self._get_action_accel_display(current_shortcuts, 'quick-connect')
-        quick_connect_row = Adw.ActionRow()
-        quick_connect_row.set_title(_('Quick Connect'))
-        quick_connect_row.set_activatable(True)
-        quick_connect_row.set_can_focus(False)
-        from sshpilot import icon_utils
-        prefix_img = icon_utils.new_image_from_icon_name('network-server-symbolic')
-        prefix_img.set_can_focus(False)
-        quick_connect_row.add_prefix(prefix_img)
-        if quick_connect_accel:
-            shortcut_label = Gtk.Label(label=quick_connect_accel)
-            shortcut_label.add_css_class('dim-label')
-            shortcut_label.set_can_focus(False)
-            quick_connect_row.add_suffix(shortcut_label)
-        quick_connect_row.connect('activated', lambda *_: self.on_quick_connect_clicked(None))
-        getting_started_group.add(quick_connect_row)
-        
-        # Add New Connection action row
-        new_connection_accel = self._get_action_accel_display(current_shortcuts, 'new-connection')
-        new_connection_row = Adw.ActionRow()
-        new_connection_row.set_title(_('Add a New Connection'))
-        new_connection_row.set_activatable(True)
-        new_connection_row.set_can_focus(False)
-        prefix_img = icon_utils.new_image_from_icon_name('list-add-symbolic')
-        prefix_img.set_can_focus(False)
-        new_connection_row.add_prefix(prefix_img)
-        if new_connection_accel:
-            shortcut_label = Gtk.Label(label=new_connection_accel)
-            shortcut_label.add_css_class('dim-label')
-            shortcut_label.set_can_focus(False)
-            new_connection_row.add_suffix(shortcut_label)
-        new_connection_row.connect('activated', lambda *_: self.window.get_application().activate_action('new-connection'))
-        getting_started_group.add(new_connection_row)
-        
-        # Edit SSH Config action row
-        edit_config_accel = self._get_action_accel_display(current_shortcuts, 'edit-ssh-config')
-        if hasattr(self.config, 'isolated_mode') and self.config.isolated_mode:
-            config_location = '~/.config/sshpilot/config'
-        else:
-            config_location = '~/.ssh/config'
-        edit_config_row = Adw.ActionRow()
-        edit_config_row.set_title(_('View and Edit SSH Config'))
-        edit_config_row.set_activatable(True)
-        edit_config_row.set_can_focus(False)
-        prefix_img = icon_utils.new_image_from_icon_name('document-edit-symbolic')
-        prefix_img.set_can_focus(False)
-        edit_config_row.add_prefix(prefix_img)
-        if edit_config_accel:
-            shortcut_label = Gtk.Label(label=edit_config_accel)
-            shortcut_label.add_css_class('dim-label')
-            shortcut_label.set_can_focus(False)
-            edit_config_row.add_suffix(shortcut_label)
-        edit_config_row.connect('activated', lambda *_: self.window.get_application().activate_action('edit-ssh-config'))
-        getting_started_group.add(edit_config_row)
-        
-        # Local Terminal action row
-        local_terminal_accel = self._get_action_accel_display(current_shortcuts, 'local-terminal')
-        local_terminal_row = Adw.ActionRow()
-        local_terminal_row.set_title(_('Open Local Terminal'))
-        local_terminal_row.set_activatable(True)
-        local_terminal_row.set_can_focus(False)
-        prefix_img = icon_utils.new_image_from_icon_name('utilities-terminal-symbolic')
-        prefix_img.set_can_focus(False)
-        local_terminal_row.add_prefix(prefix_img)
-        if local_terminal_accel:
-            shortcut_label = Gtk.Label(label=local_terminal_accel)
-            shortcut_label.add_css_class('dim-label')
-            shortcut_label.set_can_focus(False)
-            local_terminal_row.add_suffix(shortcut_label)
-        local_terminal_row.connect('activated', lambda *_: self.window.terminal_manager.show_local_terminal())
-        getting_started_group.add(local_terminal_row)
-        
-        # Help & Resources section
+        inner.append(getting_started_group)
+
+        def _row(row_title, icon, accel_key, on_activate):
+            row = Adw.ActionRow()
+            row.set_title(row_title)
+            row.set_activatable(True)
+            row.set_can_focus(False)
+            img = icon_utils.new_image_from_icon_name(icon)
+            img.set_can_focus(False)
+            row.add_prefix(img)
+            accel = self._get_action_accel_display(shortcuts, accel_key)
+            if accel:
+                lbl = Gtk.Label(label=accel)
+                lbl.add_css_class('dim-label')
+                lbl.set_can_focus(False)
+                row.add_suffix(lbl)
+            chevron = icon_utils.new_image_from_icon_name('pan-end-symbolic')
+            chevron.set_can_focus(False)
+            row.add_suffix(chevron)
+            row.connect('activated', lambda *_: on_activate())
+            return row
+
+        getting_started_group.add(_row(
+            _('Quick Connect'), 'network-server-symbolic', 'quick-connect',
+            lambda: self.on_quick_connect_clicked(None)))
+        getting_started_group.add(_row(
+            _('Add a New Connection'), 'list-add-symbolic', 'new-connection',
+            lambda: self.window.get_application().activate_action('new-connection')))
+        getting_started_group.add(_row(
+            _('View and Edit SSH Config'), 'document-edit-symbolic', 'edit-ssh-config',
+            lambda: self.window.get_application().activate_action('edit-ssh-config')))
+        getting_started_group.add(_row(
+            _('Open Local Terminal'), 'utilities-terminal-symbolic', 'local-terminal',
+            lambda: self.window.terminal_manager.show_local_terminal()))
+
         help_group = Adw.PreferencesGroup()
-        help_group.set_margin_start(12)
-        help_group.set_margin_end(12)
-        help_group.set_margin_top(24)
-        help_group.set_vexpand(False)
         help_group.set_can_focus(False)
-        help_group.add_css_class('separate')
-        container.append(help_group)
-        
-        # Shortcuts action row
-        shortcuts_accel = self._get_action_accel_display(current_shortcuts, 'shortcuts')
-        shortcuts_row = Adw.ActionRow()
-        shortcuts_row.set_title(_('Keyboard Shortcuts'))
-        shortcuts_row.set_activatable(True)
-        shortcuts_row.set_can_focus(False)
-        prefix_img = icon_utils.new_image_from_icon_name('preferences-desktop-keyboard-symbolic')
-        prefix_img.set_can_focus(False)
-        shortcuts_row.add_prefix(prefix_img)
-        if shortcuts_accel:
-            shortcut_label = Gtk.Label(label=shortcuts_accel)
-            shortcut_label.add_css_class('dim-label')
-            shortcut_label.set_can_focus(False)
-            shortcuts_row.add_suffix(shortcut_label)
-        shortcuts_row.connect('activated', lambda *_: self.window.show_shortcuts_window())
-        help_group.add(shortcuts_row)
-        
-        # Online help action row
-        help_accel = self._get_action_accel_display(current_shortcuts, 'help')
-        help_row = Adw.ActionRow()
-        help_row.set_title(_('Online Documentation'))
-        help_row.set_activatable(True)
-        help_row.set_can_focus(False)
-        prefix_img = icon_utils.new_image_from_icon_name('help-browser-symbolic')
-        prefix_img.set_can_focus(False)
-        help_row.add_prefix(prefix_img)
-        if help_accel:
-            shortcut_label = Gtk.Label(label=help_accel)
-            shortcut_label.add_css_class('dim-label')
-            shortcut_label.set_can_focus(False)
-            help_row.add_suffix(shortcut_label)
-        help_row.connect('activated', lambda *_: self.open_online_help())
-        help_group.add(help_row)
-        
-        # Set container as child of clamp
-        clamp.set_child(container)
-        
-        return clamp
-    
-    def _on_layout_toggle_changed(self, toggle):
-        """Handle layout toggle change"""
+        inner.append(help_group)
+
+        help_group.add(_row(
+            _('Keyboard Shortcuts'), 'preferences-desktop-keyboard-symbolic', 'shortcuts',
+            lambda: self.window.show_shortcuts_window()))
+        help_group.add(_row(
+            _('Online Documentation'), 'help-browser-symbolic', 'help',
+            lambda: self.open_online_help()))
+
+        return outer
+
+    def _build_quick_actions_page(self, title: str, icon_name: str, shortcuts: dict) -> Gtk.Widget:
+        """Page 1: non-duplicate menu action buttons."""
         from sshpilot import icon_utils
-        if toggle.get_active():
-            # Cards view
-            self.layout_stack.set_visible_child_name('cards')
-            icon_utils.set_button_icon(toggle, 'view-list-symbolic')
-            toggle.set_tooltip_text(_('Switch to list view'))
-            # Save preference
-            self.config.set_setting('ui.welcome_page_layout', 'cards')
+        outer, inner = self._make_page_frame('quick-actions', title, icon_name)
+
+        group = Adw.PreferencesGroup()
+        group.set_can_focus(False)
+        inner.append(group)
+
+        def _action_row(row_title, icon, on_activate, subtitle=''):
+            row = Adw.ActionRow()
+            row.set_title(row_title)
+            if subtitle:
+                row.set_subtitle(subtitle)
+            row.set_activatable(True)
+            row.set_can_focus(False)
+            img = icon_utils.new_image_from_icon_name(icon)
+            img.set_can_focus(False)
+            row.add_prefix(img)
+            chevron = icon_utils.new_image_from_icon_name('pan-end-symbolic')
+            chevron.set_can_focus(False)
+            row.add_suffix(chevron)
+            row.connect('activated', lambda *_: on_activate())
+            return row
+
+        group.add(_action_row(
+            _('Copy Key to Server'), 'dialog-password-symbolic',
+            lambda: self.window.get_application().activate_action('new-key'),
+            _('Install your SSH public key on a remote host')))
+        group.add(_action_row(
+            _('Known Hosts Editor'), 'security-high-symbolic',
+            lambda: self.window.activate_action('edit-known-hosts'),
+            _('View and manage ~/.ssh/known_hosts')))
+        group.add(_action_row(
+            _('Broadcast Command'), 'network-transmit-receive-symbolic',
+            lambda: self.window.get_application().activate_action('broadcast-command'),
+            _('Send a command to all open terminals')))
+        group.add(_action_row(
+            _('Export Configuration'), 'document-save-symbolic',
+            lambda: self.window.activate_action('export-config'),
+            _('Back up your connections and settings')))
+        group.add(_action_row(
+            _('Import Configuration'), 'document-send-symbolic',
+            lambda: self.window.activate_action('import-config'),
+            _('Restore connections from a backup')))
+        group.add(_action_row(
+            _('Preferences'), 'preferences-system-symbolic',
+            lambda: self.window.get_application().activate_action('preferences'),
+            _('Customize SSH Pilot settings')))
+
+        return outer
+
+    def _build_keyboard_shortcuts_page(self, title: str, icon_name: str, shortcuts: dict) -> Gtk.Widget:
+        """Page 2: keyboard shortcuts reference."""
+        outer, inner = self._make_page_frame('keyboard-shortcuts', title, icon_name)
+        from sshpilot import icon_utils
+
+        shortcut_sections = [
+            (_('General'), [
+                ('quit',            _('Quit')),
+                ('preferences',     _('Preferences')),
+                ('shortcuts',       _('Keyboard Shortcuts')),
+                ('help',            _('Documentation')),
+            ]),
+            (_('Connections'), [
+                ('new-connection',  _('New Connection')),
+                ('quick-connect',   _('Quick Connect')),
+                ('edit-ssh-config', _('SSH Config Editor')),
+                ('new-key',         _('Copy Key to Server')),
+            ]),
+            (_('Terminal'), [
+                ('local-terminal',  _('Local Terminal')),
+                ('broadcast-command', _('Broadcast Command')),
+            ]),
+        ]
+
+        for section_title, items in shortcut_sections:
+            group = Adw.PreferencesGroup()
+            group.set_title(section_title)
+            group.set_can_focus(False)
+            inner.append(group)
+
+            for action_name, action_label in items:
+                accel = self._get_action_accel_display(shortcuts, action_name)
+                row = Adw.ActionRow()
+                row.set_title(action_label)
+                row.set_can_focus(False)
+                if accel:
+                    accel_lbl = Gtk.Label(label=accel)
+                    accel_lbl.add_css_class('dim-label')
+                    accel_lbl.add_css_class('monospace')
+                    accel_lbl.set_can_focus(False)
+                    row.add_suffix(accel_lbl)
+                else:
+                    na_lbl = Gtk.Label(label=_('—'))
+                    na_lbl.add_css_class('dim-label')
+                    na_lbl.set_can_focus(False)
+                    row.add_suffix(na_lbl)
+                group.add(row)
+
+        return outer
+
+    def _build_getting_started_page(self, title: str, icon_name: str, shortcuts: dict) -> Gtk.Widget:
+        """Page 3: getting started guide."""
+        from sshpilot import icon_utils
+        outer, inner = self._make_page_frame('getting-started', title, icon_name)
+
+        group = Adw.PreferencesGroup()
+        group.set_can_focus(False)
+        inner.append(group)
+
+        steps = [
+            ('list-add-symbolic',
+             _('Add a Connection'),
+             _('Click + in the sidebar or choose New Connection from the menu')),
+            ('network-server-symbolic',
+             _('Connect'),
+             _('Double-click a connection or press Enter to open a terminal tab')),
+            ('input-keyboard-symbolic',
+             _('Quick Connect'),
+             _('Use Quick Connect (Ctrl+Alt+C) for one-off SSH commands')),
+            ('folder-symbolic',
+             _('Organise with Groups'),
+             _('Right-click the sidebar to create groups and drag connections into them')),
+            ('folder-remote-symbolic',
+             _('Remote File Manager'),
+             _('Right-click an active connection to open the built-in SFTP file manager')),
+        ]
+
+        for i, (step_icon, step_title, step_desc) in enumerate(steps, start=1):
+            row = Adw.ActionRow()
+            row.set_title(f'{i}. {step_title}')
+            row.set_subtitle(step_desc)
+            row.set_can_focus(False)
+            img = icon_utils.new_image_from_icon_name(step_icon)
+            img.set_can_focus(False)
+            row.add_prefix(img)
+            group.add(row)
+
+        return outer
+
+    def _build_connection_groups_page(self, title: str, icon_name: str, shortcuts: dict) -> Gtk.Widget:
+        """Page 4: connection groups overview."""
+        from sshpilot import icon_utils
+        outer, inner = self._make_page_frame('connection-groups', title, icon_name)
+
+        try:
+            all_groups = self.window.group_manager.get_all_groups()
+        except Exception:
+            all_groups = []
+
+        if not all_groups:
+            empty_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+            empty_box.set_halign(Gtk.Align.CENTER)
+            empty_box.set_valign(Gtk.Align.CENTER)
+            empty_box.set_vexpand(True)
+            empty_icon = icon_utils.new_image_from_icon_name('folder-symbolic')
+            empty_icon.set_pixel_size(48)
+            empty_icon.add_css_class('dim-label')
+            empty_box.append(empty_icon)
+            empty_lbl = Gtk.Label(label=_('No groups yet'))
+            empty_lbl.add_css_class('title-3')
+            empty_lbl.add_css_class('dim-label')
+            empty_box.append(empty_lbl)
+            sub_lbl = Gtk.Label(label=_('Create groups to organise your connections'))
+            sub_lbl.add_css_class('dim-label')
+            sub_lbl.set_wrap(True)
+            sub_lbl.set_justify(Gtk.Justification.CENTER)
+            empty_box.append(sub_lbl)
+            create_btn = Gtk.Button(label=_('Create Group'))
+            create_btn.add_css_class('suggested-action')
+            create_btn.add_css_class('pill')
+            create_btn.set_halign(Gtk.Align.CENTER)
+            create_btn.connect('clicked', lambda *_: self.window.activate_action('create-group'))
+            empty_box.append(create_btn)
+            inner.append(empty_box)
         else:
-            # List view
-            self.layout_stack.set_visible_child_name('rows')
-            icon_utils.set_button_icon(toggle, 'view-grid-symbolic')
-            toggle.set_tooltip_text(_('Switch to grid view'))
-            # Save preference
-            self.config.set_setting('ui.welcome_page_layout', 'rows')
-    
+            group = Adw.PreferencesGroup()
+            group.set_can_focus(False)
+            inner.append(group)
+
+            for group_info in all_groups:
+                gname = group_info.get('name', _('Unnamed Group'))
+                gid = group_info.get('id', '')
+                try:
+                    gm = self.window.group_manager
+                    conn_count = sum(1 for v in gm.connections.values() if v == gid)
+                except Exception:
+                    conn_count = 0
+
+                row = Adw.ActionRow()
+                row.set_title(gname)
+                row.set_subtitle(
+                    ngettext('%d connection', '%d connections', conn_count) % conn_count
+                    if conn_count else _('Empty group'))
+                row.set_can_focus(False)
+                gicon = icon_utils.new_image_from_icon_name('folder-symbolic')
+                gicon.set_can_focus(False)
+                row.add_prefix(gicon)
+                group.add(row)
+
+        return outer
+
+    def _build_tips_page(self, title: str, icon_name: str, shortcuts: dict) -> Gtk.Widget:
+        """Page 5: tips & tricks."""
+        from sshpilot import icon_utils
+        outer, inner = self._make_page_frame('tips-tricks', title, icon_name)
+
+        group = Adw.PreferencesGroup()
+        group.set_can_focus(False)
+        inner.append(group)
+
+        tips = [
+            ('view-list-symbolic',
+             _('Drag to Reorder'),
+             _('Drag connections in the sidebar to rearrange them')),
+            ('open-menu-symbolic',
+             _('Right-Click Menu'),
+             _('Right-click any connection for connect, edit, delete and more')),
+            ('view-dual-symbolic',
+             _('Split View'),
+             _('Open a second terminal side-by-side using the split view button')),
+            ('network-transmit-receive-symbolic',
+             _('Broadcast to All Terminals'),
+             _('Use Broadcast Command to send the same input to every open terminal')),
+            ('document-save-symbolic',
+             _('Back Up Your Config'),
+             _('Export your connections via the Import/Export menu item')),
+            ('tag-symbolic',
+             _('Color-Code Groups'),
+             _('Assign a colour to each group for quick visual identification')),
+        ]
+
+        for tip_icon, tip_title, tip_desc in tips:
+            row = Adw.ActionRow()
+            row.set_title(tip_title)
+            row.set_subtitle(tip_desc)
+            row.set_can_focus(False)
+            img = icon_utils.new_image_from_icon_name(tip_icon)
+            img.set_can_focus(False)
+            row.add_prefix(img)
+            group.add(row)
+
+        return outer
+
+    def _build_recent_connections_page(self, title: str, icon_name: str, shortcuts: dict) -> Gtk.Widget:
+        """Page 6: recently used connections."""
+        from sshpilot import icon_utils
+        outer, inner = self._make_page_frame('recent-connections', title, icon_name)
+
+        try:
+            meta_all = self.config.get_setting('connections_meta', {})
+            all_connections = self.connection_manager.get_connections()
+            conn_map = {c.nickname: c for c in all_connections}
+
+            recent = []
+            for nickname, meta in meta_all.items():
+                if isinstance(meta, dict) and 'last_connected' in meta:
+                    conn = conn_map.get(nickname)
+                    if conn:
+                        recent.append((meta['last_connected'], nickname, conn))
+
+            recent.sort(key=lambda x: x[0], reverse=True)
+            recent = recent[:8]
+        except Exception:
+            recent = []
+
+        if not recent:
+            empty_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+            empty_box.set_halign(Gtk.Align.CENTER)
+            empty_icon = icon_utils.new_image_from_icon_name('document-open-recent-symbolic')
+            empty_icon.set_pixel_size(48)
+            empty_icon.add_css_class('dim-label')
+            empty_box.append(empty_icon)
+            empty_lbl = Gtk.Label(label=_('No recent connections'))
+            empty_lbl.add_css_class('dim-label')
+            empty_box.append(empty_lbl)
+            inner.append(empty_box)
+        else:
+            group = Adw.PreferencesGroup()
+            group.set_can_focus(False)
+            inner.append(group)
+
+            for _ts, nickname, conn in recent:
+                row = Adw.ActionRow()
+                row.set_title(nickname)
+                host = getattr(conn, 'host', '') or getattr(conn, 'hostname', '')
+                if host and host != nickname:
+                    row.set_subtitle(host)
+                row.set_activatable(True)
+                row.set_can_focus(False)
+                img = icon_utils.new_image_from_icon_name('network-server-symbolic')
+                img.set_can_focus(False)
+                row.add_prefix(img)
+                chevron = icon_utils.new_image_from_icon_name('pan-end-symbolic')
+                chevron.set_can_focus(False)
+                row.add_suffix(chevron)
+                row.connect('activated', lambda *_, c=conn: self.window.terminal_manager.connect_to_host(c))
+                group.add(row)
+
+        return outer
+
+    def _build_key_manager_page(self, title: str, icon_name: str, shortcuts: dict) -> Gtk.Widget:
+        """Page 7: SSH key overview."""
+        from sshpilot import icon_utils
+        outer, inner = self._make_page_frame('key-manager', title, icon_name)
+
+        try:
+            from .platform_utils import get_ssh_dir
+            ssh_dir = get_ssh_dir()
+            key_files = []
+            if ssh_dir and os.path.isdir(ssh_dir):
+                for fname in sorted(os.listdir(ssh_dir)):
+                    fpath = os.path.join(ssh_dir, fname)
+                    if (os.path.isfile(fpath)
+                            and not fname.endswith('.pub')
+                            and not fname.startswith('.')
+                            and fname not in ('known_hosts', 'config', 'authorized_keys')):
+                        pub_path = fpath + '.pub'
+                        key_files.append((fname, os.path.exists(pub_path)))
+        except Exception:
+            key_files = []
+
+        group = Adw.PreferencesGroup()
+        group.set_title(_('Keys in ~/.ssh'))
+        group.set_can_focus(False)
+        inner.append(group)
+
+        if key_files:
+            for key_name, has_pub in key_files[:8]:
+                row = Adw.ActionRow()
+                row.set_title(key_name)
+                row.set_subtitle(_('Public key present') if has_pub else _('No public key found'))
+                row.set_can_focus(False)
+                img = icon_utils.new_image_from_icon_name('dialog-password-symbolic')
+                img.set_can_focus(False)
+                row.add_prefix(img)
+                group.add(row)
+        else:
+            row = Adw.ActionRow()
+            row.set_title(_('No keys found'))
+            row.set_subtitle(_('No private keys found in ~/.ssh'))
+            row.set_can_focus(False)
+            group.add(row)
+
+        copy_key_btn = Gtk.Button(label=_('Copy Key to Server…'))
+        copy_key_btn.add_css_class('suggested-action')
+        copy_key_btn.add_css_class('pill')
+        copy_key_btn.set_halign(Gtk.Align.CENTER)
+        copy_key_btn.set_margin_top(8)
+        copy_key_btn.connect('clicked',
+            lambda *_: self.window.get_application().activate_action('new-key'))
+        inner.append(copy_key_btn)
+
+        return outer
+
+    def _build_whats_new_page(self, title: str, icon_name: str, shortcuts: dict) -> Gtk.Widget:
+        """Page 8: what's new / version info."""
+        from sshpilot import icon_utils
+        from sshpilot import __version__
+        outer, inner = self._make_page_frame('whats-new', title, icon_name)
+
+        version_row = Adw.ActionRow()
+        version_row.set_title(_('Current Version'))
+        version_row.set_subtitle(f'SSH Pilot {__version__}')
+        version_row.set_can_focus(False)
+        img = icon_utils.new_image_from_icon_name('software-update-available-symbolic')
+        img.set_can_focus(False)
+        version_row.add_prefix(img)
+
+        group = Adw.PreferencesGroup()
+        group.set_title(_('Recent Highlights'))
+        group.set_can_focus(False)
+        group.add(version_row)
+        inner.append(group)
+
+        highlights = [
+            ('view-dual-symbolic',
+             _('Split View Terminals'),
+             _('Open two terminals side by side in the same window')),
+            ('folder-remote-symbolic',
+             _('Built-in SFTP File Manager'),
+             _('Transfer files without leaving the app')),
+            ('tag-symbolic',
+             _('Connection Groups'),
+             _('Organise connections with colour-coded groups')),
+            ('preferences-desktop-keyboard-symbolic',
+             _('Customisable Shortcuts'),
+             _('Rebind any keyboard shortcut from Preferences')),
+            ('network-transmit-receive-symbolic',
+             _('Broadcast Command'),
+             _('Type once, send to all open terminals simultaneously')),
+        ]
+
+        hl_group = Adw.PreferencesGroup()
+        hl_group.set_can_focus(False)
+        inner.append(hl_group)
+
+        for hl_icon, hl_title, hl_desc in highlights:
+            row = Adw.ActionRow()
+            row.set_title(hl_title)
+            row.set_subtitle(hl_desc)
+            row.set_can_focus(False)
+            img = icon_utils.new_image_from_icon_name(hl_icon)
+            img.set_can_focus(False)
+            row.add_prefix(img)
+            hl_group.add(row)
+
+        changelog_btn = Gtk.Button(label=_('View Full Changelog'))
+        changelog_btn.add_css_class('pill')
+        changelog_btn.set_halign(Gtk.Align.CENTER)
+        changelog_btn.set_margin_top(8)
+        changelog_btn.connect('clicked', lambda *_: self.open_online_help())
+        inner.append(changelog_btn)
+
+        return outer
+
+    # ── Pin mechanism ────────────────────────────────────────────────────────
+
+    def _on_pin_toggled(self, btn: Gtk.ToggleButton, page_id: str):
+        from sshpilot import icon_utils
+        if btn.get_active():
+            self.config.set_setting('ui.startpage_pinned_page', page_id)
+        else:
+            current = self.config.get_setting('ui.startpage_pinned_page', None)
+            if current == page_id:
+                self.config.set_setting('ui.startpage_pinned_page', None)
+        self._sync_pin_buttons()
+
+    def _sync_pin_buttons(self):
+        from sshpilot import icon_utils
+        pinned_id = self.config.get_setting('ui.startpage_pinned_page', None)
+        for pid, (btn, icon_widget) in self._pin_buttons.items():
+            is_pinned = (pid == pinned_id)
+            # Block signal to avoid recursion
+            btn.handler_block_by_func(self._on_pin_toggled)
+            btn.set_active(is_pinned)
+            btn.handler_unblock_by_func(self._on_pin_toggled)
+            new_icon_name = 'starred-symbolic' if is_pinned else 'non-starred-symbolic'
+            icon_widget.set_from_icon_name(new_icon_name)
+            btn.set_tooltip_text(
+                _('Unpin this page') if is_pinned else _('Pin this page as startup view'))
+
     def show_sidebar_hint(self):
         """Show a hint about using the sidebar to manage connections"""
         toast = Adw.Toast.new(_('Use the sidebar to add and manage your SSH connections'))
