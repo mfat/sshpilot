@@ -133,64 +133,42 @@ class WelcomePage(Gtk.Box):
         # Track pin toggle buttons keyed by page_id
         self._pin_buttons: dict = {}
 
-        # Scrolled container
-        scrolled = Gtk.ScrolledWindow()
-        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scrolled.set_vexpand(True)
-        scrolled.set_hexpand(True)
-        scrolled.set_can_focus(False)
-        self.append(scrolled)
-
-        content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        content_box.set_margin_top(12)
-        content_box.set_margin_bottom(24)
-        content_box.set_valign(Gtk.Align.START)
-        content_box.set_can_focus(False)
-
-        outer_clamp = Adw.Clamp()
-        outer_clamp.set_maximum_size(800)
-        outer_clamp.set_tightening_threshold(400)
-        outer_clamp.set_child(content_box)
-        outer_clamp.set_vexpand(False)
-        outer_clamp.set_can_focus(False)
-        scrolled.set_child(outer_clamp)
-
-        # ── Header ──────────────────────────────────────────────────────────
-        header_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        # ── Header (fixed, not scrollable) ──────────────────────────────────
+        from sshpilot import icon_utils
+        header_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         header_box.set_halign(Gtk.Align.CENTER)
-        header_box.set_margin_top(24)
-        header_box.set_margin_bottom(16)
+        header_box.set_margin_top(20)
+        header_box.set_margin_bottom(8)
         header_box.set_can_focus(False)
 
-        from sshpilot import icon_utils
         app_icon = icon_utils.new_image_from_icon_name('io.github.mfat.sshpilot')
-        app_icon.set_pixel_size(64)
+        app_icon.set_pixel_size(56)
         app_icon.set_can_focus(False)
         header_box.append(app_icon)
 
         title_label = Gtk.Label(label=_('Welcome to SSH Pilot'))
-        title_label.add_css_class('title-1')
+        title_label.add_css_class('title-2')
         title_label.set_halign(Gtk.Align.CENTER)
         title_label.set_can_focus(False)
         header_box.append(title_label)
 
-        content_box.append(header_box)
+        self.append(header_box)
 
-        # ── Carousel ────────────────────────────────────────────────────────
+        # ── Carousel indicator dots ──────────────────────────────────────────
         self.carousel = Adw.Carousel()
-        self.carousel.set_allow_scroll_wheel(True)
-        self.carousel.set_allow_long_swipes(False)
+        self.carousel.set_allow_scroll_wheel(False)  # avoid conflict with page scroll
+        self.carousel.set_allow_long_swipes(True)
         self.carousel.set_spacing(16)
-        self.carousel.set_margin_start(12)
-        self.carousel.set_margin_end(12)
-        self.carousel.set_margin_bottom(8)
+        self.carousel.set_hexpand(True)
+        self.carousel.set_vexpand(True)
         self.carousel.set_can_focus(False)
 
         dots = Adw.CarouselIndicatorDots()
         dots.set_carousel(self.carousel)
-        dots.set_margin_bottom(12)
-        content_box.append(dots)
-        content_box.append(self.carousel)
+        dots.set_margin_top(4)
+        dots.set_margin_bottom(6)
+        self.append(dots)
+        self.append(self.carousel)
 
         # Determine page order based on pinned page
         pinned_id = self.config.get_setting('ui.startpage_pinned_page', None)
@@ -214,37 +192,58 @@ class WelcomePage(Gtk.Box):
     # ── Page factory ────────────────────────────────────────────────────────
 
     def _make_page_frame(self, page_id: str, title: str, icon_name: str):
-        """Return (outer_widget, inner_content_box, pin_button) for a carousel page."""
+        """Return (scroll_widget, inner_content_box) for a carousel page.
+
+        Each page is a ScrolledWindow so it can scroll independently.
+        The visible card frame sits inside the scroll area.
+        """
         from sshpilot import icon_utils
 
-        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        outer.add_css_class('card')
-        outer.set_margin_start(4)
-        outer.set_margin_end(4)
-        outer.set_margin_top(4)
-        outer.set_margin_bottom(4)
+        # Outer scrolled window — fills the carousel slot entirely
+        page_scroll = Gtk.ScrolledWindow()
+        page_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        page_scroll.set_hexpand(True)
+        page_scroll.set_vexpand(True)
+        page_scroll.set_can_focus(False)
+        page_scroll.set_margin_start(12)
+        page_scroll.set_margin_end(12)
+        page_scroll.set_margin_top(4)
+        page_scroll.set_margin_bottom(12)
 
-        # Title row
+        # Card frame centred with a reasonable max width
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        card.add_css_class('card')
+        card.set_hexpand(True)
+        card.set_vexpand(False)
+        card.set_valign(Gtk.Align.START)
+
+        clamp = Adw.Clamp()
+        clamp.set_maximum_size(900)
+        clamp.set_tightening_threshold(600)
+        clamp.set_child(card)
+        clamp.set_hexpand(True)
+        page_scroll.set_child(clamp)
+
+        # Title bar inside the card
         title_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         title_row.set_margin_start(16)
         title_row.set_margin_end(8)
-        title_row.set_margin_top(12)
+        title_row.set_margin_top(14)
         title_row.set_margin_bottom(8)
 
-        page_icon = icon_utils.new_image_from_icon_name(icon_name)
-        page_icon.set_pixel_size(16)
-        page_icon.set_can_focus(False)
-        title_row.append(page_icon)
+        page_icon_widget = icon_utils.new_image_from_icon_name(icon_name)
+        page_icon_widget.set_pixel_size(18)
+        page_icon_widget.set_can_focus(False)
+        title_row.append(page_icon_widget)
 
         page_title_label = Gtk.Label(label=title)
-        page_title_label.add_css_class('heading')
+        page_title_label.add_css_class('title-4')
         page_title_label.set_halign(Gtk.Align.START)
         page_title_label.set_hexpand(True)
         page_title_label.set_can_focus(False)
         title_row.append(page_title_label)
 
         pin_btn = Gtk.ToggleButton()
-        pin_btn.set_can_focus(False)
         pin_btn.add_css_class('flat')
         pin_btn.set_valign(Gtk.Align.CENTER)
         pin_btn.set_tooltip_text(_('Pin this page as startup view'))
@@ -255,20 +254,20 @@ class WelcomePage(Gtk.Box):
         title_row.append(pin_btn)
         self._pin_buttons[page_id] = (pin_btn, pin_icon)
 
-        outer.append(title_row)
+        card.append(title_row)
 
         sep = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
         sep.set_can_focus(False)
-        outer.append(sep)
+        card.append(sep)
 
         inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        inner.set_margin_start(12)
-        inner.set_margin_end(12)
-        inner.set_margin_top(12)
-        inner.set_margin_bottom(16)
-        outer.append(inner)
+        inner.set_margin_start(16)
+        inner.set_margin_end(16)
+        inner.set_margin_top(16)
+        inner.set_margin_bottom(20)
+        card.append(inner)
 
-        return outer, inner
+        return page_scroll, inner
 
     def _build_page(self, page_id: str, title: str, icon_name: str, shortcuts: dict) -> Gtk.Widget:
         builders = {
