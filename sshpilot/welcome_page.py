@@ -130,45 +130,52 @@ class WelcomePage(Gtk.Box):
         self.set_vexpand(True)
         self.set_can_focus(False)
 
-        # Track pin toggle buttons keyed by page_id
         self._pin_buttons: dict = {}
 
-        # ── Header (fixed, not scrollable) ──────────────────────────────────
         from sshpilot import icon_utils
-        header_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        header_box.set_halign(Gtk.Align.CENTER)
-        header_box.set_margin_top(20)
-        header_box.set_margin_bottom(8)
-        header_box.set_can_focus(False)
 
-        app_icon = icon_utils.new_image_from_icon_name('io.github.mfat.sshpilot')
-        app_icon.set_pixel_size(56)
-        app_icon.set_can_focus(False)
-        header_box.append(app_icon)
-
-        title_label = Gtk.Label(label=_('Welcome to SSH Pilot'))
-        title_label.add_css_class('title-2')
-        title_label.set_halign(Gtk.Align.CENTER)
-        title_label.set_can_focus(False)
-        header_box.append(title_label)
-
-        self.append(header_box)
-
-        # ── Carousel indicator dots ──────────────────────────────────────────
+        # ── Carousel ────────────────────────────────────────────────────────
         self.carousel = Adw.Carousel()
-        self.carousel.set_allow_scroll_wheel(False)  # avoid conflict with page scroll
+        self.carousel.set_allow_scroll_wheel(False)
         self.carousel.set_allow_long_swipes(True)
         self.carousel.set_spacing(16)
         self.carousel.set_hexpand(True)
         self.carousel.set_vexpand(True)
         self.carousel.set_can_focus(False)
+        self.append(self.carousel)
+
+        # ── Navigation bar (dots + prev/next buttons) ────────────────────────
+        nav_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        nav_bar.set_halign(Gtk.Align.CENTER)
+        nav_bar.set_margin_top(4)
+        nav_bar.set_margin_bottom(8)
+
+        prev_btn = Gtk.Button()
+        prev_btn.set_icon_name('go-previous-symbolic')
+        prev_btn.add_css_class('flat')
+        prev_btn.add_css_class('circular')
+        prev_btn.set_tooltip_text(_('Previous page'))
+        prev_btn.connect('clicked', self._on_prev_clicked)
 
         dots = Adw.CarouselIndicatorDots()
         dots.set_carousel(self.carousel)
-        dots.set_margin_top(4)
-        dots.set_margin_bottom(6)
-        self.append(dots)
-        self.append(self.carousel)
+        dots.set_margin_start(8)
+        dots.set_margin_end(8)
+
+        next_btn = Gtk.Button()
+        next_btn.set_icon_name('go-next-symbolic')
+        next_btn.add_css_class('flat')
+        next_btn.add_css_class('circular')
+        next_btn.set_tooltip_text(_('Next page'))
+        next_btn.connect('clicked', self._on_next_clicked)
+
+        nav_bar.append(prev_btn)
+        nav_bar.append(dots)
+        nav_bar.append(next_btn)
+        self.append(nav_bar)
+
+        # Update prev/next sensitivity as page changes
+        self.carousel.connect('page-changed', self._on_page_changed)
 
         # Determine page order based on pinned page
         pinned_id = self.config.get_setting('ui.startpage_pinned_page', None)
@@ -187,7 +194,32 @@ class WelcomePage(Gtk.Box):
             self._page_widgets[page_id] = page_widget
             self.carousel.append(page_widget)
 
+        self._prev_btn = prev_btn
+        self._next_btn = next_btn
+        self._update_nav_buttons()
         self._sync_pin_buttons()
+
+    def _on_prev_clicked(self, _btn):
+        pos = int(self.carousel.get_position())
+        if pos > 0:
+            target = self.carousel.get_nth_page(pos - 1)
+            self.carousel.scroll_to(target, True)
+
+    def _on_next_clicked(self, _btn):
+        pos = int(self.carousel.get_position())
+        n = int(self.carousel.get_n_pages())
+        if pos < n - 1:
+            target = self.carousel.get_nth_page(pos + 1)
+            self.carousel.scroll_to(target, True)
+
+    def _on_page_changed(self, carousel, index):
+        self._update_nav_buttons()
+
+    def _update_nav_buttons(self):
+        pos = int(self.carousel.get_position())
+        n = int(self.carousel.get_n_pages())
+        self._prev_btn.set_sensitive(pos > 0)
+        self._next_btn.set_sensitive(pos < n - 1)
 
     # ── Page factory ────────────────────────────────────────────────────────
 
