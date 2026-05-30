@@ -543,7 +543,7 @@ class SplitViewTab(Gtk.Box):
 
         self._pane_scroll = Gtk.ScrolledWindow()
         self._pane_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        self._pane_scroll.set_overlay_scrolling(True)
+
         self._pane_scroll.set_hexpand(True)
         self._pane_scroll.set_vexpand(True)
         self._pane_scroll.set_child(self._content_area)

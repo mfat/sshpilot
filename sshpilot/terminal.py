@@ -267,6 +267,7 @@ class TerminalWidget(Gtk.Box):
         # Create scrolled window for terminal
         self.scrolled_window = Gtk.ScrolledWindow()
         self.scrolled_window.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        self.scrolled_window.set_overlay_scrolling(True)
         
         # Create backend first before setup
         self._shortcut_controller = None
