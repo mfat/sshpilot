@@ -741,6 +741,156 @@ class WindowActions:
         except Exception as e:
             logger.error(f"Failed to show import dialog: {e}")
 
+    def on_save_session_action(self, action, param=None):
+        """Prompt for a name and save the current set of open tabs as a session."""
+        session_manager = getattr(self, 'session_manager', None)
+        if session_manager is None:
+            return
+
+        dialog = Adw.MessageDialog(
+            transient_for=self,
+            modal=True,
+            heading=_("Save Session"),
+            body=_("Enter a name for this session. Saving with an existing name overwrites it."),
+        )
+        entry = Gtk.Entry()
+        entry.set_placeholder_text(_("Session name"))
+        entry.set_activates_default(True)
+        dialog.set_extra_child(entry)
+        dialog.add_response('cancel', _("Cancel"))
+        dialog.add_response('save', _("Save"))
+        dialog.set_response_appearance('save', Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response('save')
+        dialog.set_close_response('cancel')
+
+        def _do_save(name):
+            try:
+                session_manager.save_session(name, self.capture_session())
+            except Exception as exc:
+                logger.error(f"Failed to save session '{name}': {exc}")
+
+        def _on_response(dlg, response):
+            if response != 'save':
+                return
+            name = entry.get_text().strip()
+            if not name:
+                return
+            if session_manager.has_session(name):
+                confirm = Adw.MessageDialog(
+                    transient_for=self,
+                    modal=True,
+                    heading=_("Overwrite Session?"),
+                    body=_('A session named "{}" already exists. Overwrite it?').format(name),
+                )
+                confirm.add_response('cancel', _("Cancel"))
+                confirm.add_response('overwrite', _("Overwrite"))
+                confirm.set_response_appearance('overwrite', Adw.ResponseAppearance.DESTRUCTIVE)
+                confirm.set_close_response('cancel')
+                confirm.connect('response', lambda d, r: _do_save(name) if r == 'overwrite' else None)
+                confirm.present()
+            else:
+                _do_save(name)
+
+        dialog.connect('response', _on_response)
+        dialog.present()
+
+    def on_open_session_action(self, action, param=None):
+        """Show a list of saved sessions and open the selected one."""
+        session_manager = getattr(self, 'session_manager', None)
+        if session_manager is None:
+            return
+
+        names = session_manager.list_session_names()
+        if not names:
+            info = Adw.MessageDialog(
+                transient_for=self,
+                modal=True,
+                heading=_("No Saved Sessions"),
+                body=_("You have not saved any sessions yet."),
+            )
+            info.add_response('ok', _("OK"))
+            info.present()
+            return
+
+        dialog = Adw.MessageDialog(
+            transient_for=self,
+            modal=True,
+            heading=_("Open Session"),
+            body=_("Select a session to open:"),
+        )
+        listbox = Gtk.ListBox()
+        listbox.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        listbox.add_css_class('boxed-list')
+        for name in names:
+            row = Adw.ActionRow(title=name)
+            row._session_name = name
+            listbox.append(row)
+        first_row = listbox.get_row_at_index(0)
+        if first_row is not None:
+            listbox.select_row(first_row)
+
+        scroller = Gtk.ScrolledWindow()
+        scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroller.set_min_content_height(180)
+        scroller.set_child(listbox)
+        dialog.set_extra_child(scroller)
+
+        dialog.add_response('cancel', _("Cancel"))
+        dialog.add_response('open', _("Open"))
+        dialog.set_response_appearance('open', Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response('open')
+        dialog.set_close_response('cancel')
+
+        def _on_response(dlg, response):
+            if response != 'open':
+                return
+            row = listbox.get_selected_row()
+            if row is None:
+                return
+            name = getattr(row, '_session_name', None)
+            if not name:
+                return
+            data = session_manager.get_session(name)
+            if not data:
+                return
+            self._prompt_open_session(name, data)
+
+        dialog.connect('response', _on_response)
+        dialog.present()
+
+    def _prompt_open_session(self, name, data):
+        """Open a session, prompting to replace or add when tabs are already open."""
+        try:
+            has_open = self.tab_view.get_n_pages() > 0
+        except Exception:
+            has_open = False
+
+        if not has_open:
+            self.restore_session(data, replace=True)
+            return
+
+        dialog = Adw.MessageDialog(
+            transient_for=self,
+            modal=True,
+            heading=_("Open Session"),
+            body=_('Replace the current tabs with session "{}", or add it to the current tabs?').format(name),
+        )
+        dialog.add_response('cancel', _("Cancel"))
+        dialog.add_response('add', _("Add to Current"))
+        dialog.add_response('replace', _("Replace"))
+        dialog.set_response_appearance('replace', Adw.ResponseAppearance.DESTRUCTIVE)
+        dialog.set_default_response('replace')
+        dialog.set_close_response('cancel')
+
+        def _on_response(dlg, response):
+            if response == 'replace':
+                self.restore_session(data, replace=True)
+            elif response == 'add':
+                self.restore_session(data, replace=False)
+
+        dialog.connect('response', _on_response)
+        dialog.present()
+
     def on_move_to_group_action(self, action, param=None):
         """Handle move to group action"""
         try:
@@ -1206,6 +1356,17 @@ def register_window_actions(window):
         window.import_config_action = Gio.SimpleAction.new('import-config', None)
         window.import_config_action.connect('activate', window.on_import_config_action)
         window.add_action(window.import_config_action)
+
+    # Session save/open actions
+    if hasattr(window, 'on_save_session_action'):
+        window.save_session_action = Gio.SimpleAction.new('save-session', None)
+        window.save_session_action.connect('activate', window.on_save_session_action)
+        window.add_action(window.save_session_action)
+
+    if hasattr(window, 'on_open_session_action'):
+        window.open_session_action = Gio.SimpleAction.new('open-session', None)
+        window.open_session_action.connect('activate', window.on_open_session_action)
+        window.add_action(window.open_session_action)
     
     # Check for updates action
     if hasattr(window, 'on_check_for_updates_action'):

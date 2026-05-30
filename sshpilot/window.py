@@ -73,6 +73,7 @@ from .file_manager_integration import (
 from .sftp_utils import should_use_in_app_file_manager
 from .sshcopyid_window import SshCopyIdWindow
 from .groups import GroupManager
+from .session_manager import SessionManager
 from .sidebar import GroupRow, ConnectionRow, build_sidebar
 
 from .welcome_page import WelcomePage
@@ -711,6 +712,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             app.native_connect_enabled = native_cfg
         self.key_manager = KeyManager(key_dir)
         self.group_manager = GroupManager(self.config)
+        self.session_manager = SessionManager(self.config)
         
         # UI state
         self.active_terminals: Dict[Connection, TerminalWidget] = {}  # most recent terminal per connection
@@ -833,7 +835,17 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             startup_behavior = 'welcome'
 
         # On startup, focus the appropriate widget based on preference
-        if startup_behavior == 'terminal':
+        if startup_behavior in ('previous-session', 'saved-session'):
+            try:
+                GLib.idle_add(self._restore_startup_session, startup_behavior)
+            except Exception as e:
+                logger.error(f"Failed to restore session on startup: {e}")
+            # Late focus pass once tabs (if any) have been created
+            try:
+                GLib.timeout_add(700, self._focus_connection_list_first_row)
+            except Exception:
+                pass
+        elif startup_behavior == 'terminal':
             # Show terminal when explicitly requested
             try:
                 GLib.idle_add(self.terminal_manager.show_local_terminal)
@@ -869,7 +881,30 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
         # Mark startup as complete after a short delay to allow all initialization to finish
         GLib.timeout_add(500, self._on_startup_complete)
-    
+
+    def _restore_startup_session(self, startup_behavior):
+        """Restore a session on startup based on the configured behavior."""
+        try:
+            session_manager = getattr(self, 'session_manager', None)
+            if session_manager is None:
+                return False
+
+            data = None
+            if startup_behavior == 'previous-session':
+                data = session_manager.get_previous()
+            elif startup_behavior == 'saved-session':
+                name = self.config.get_setting('app-startup-session-name', '')
+                if name:
+                    data = session_manager.get_session(name)
+                if data is None:
+                    logger.info(f"Startup session '{name}' not found; showing start page")
+
+            if data:
+                self.restore_session(data, replace=True)
+        except Exception as e:
+            logger.error(f"Failed to restore startup session: {e}")
+        return False  # Don't repeat
+
     def _on_startup_complete(self):
         """Called when startup is complete - process any pending focus operations"""
         self._startup_complete = True
@@ -2940,6 +2975,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         menu.append('Known Hosts Editor', 'win.edit-known-hosts')
         menu.append('Broadcast Command', 'app.broadcast-command')
         
+        # Sessions submenu
+        sessions_menu = Gio.Menu()
+        sessions_menu.append('Save Session…', 'win.save-session')
+        sessions_menu.append('Open Session…', 'win.open-session')
+        menu.append_submenu('Sessions', sessions_menu)
+
         # Import/Export submenu
         import_export_menu = Gio.Menu()
         import_export_menu.append('Export Configuration', 'win.export-config')
@@ -7171,6 +7212,180 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             if hasattr(terminal, 'connection'):
                 page.set_title(terminal.connection.nickname)
 
+    def capture_session(self) -> dict:
+        """Capture the current set of open tabs as a serializable session dict.
+
+        Captures SSH terminal tabs (by connection nickname), local terminal
+        tabs, and split-view tabs (layout + per-pane connection nicknames), in
+        left-to-right tab order. File manager and other tabs are skipped.
+        """
+        from .split_view import SplitViewTab
+
+        tabs = []
+        try:
+            n_pages = self.tab_view.get_n_pages()
+        except Exception:
+            n_pages = 0
+
+        for i in range(n_pages):
+            try:
+                page = self.tab_view.get_nth_page(i)
+            except Exception:
+                page = None
+            if page is None:
+                continue
+            child = page.get_child()
+            if child is None:
+                continue
+
+            if isinstance(child, SplitViewTab):
+                panes = []
+                for pane in getattr(child, '_panes', []):
+                    pane_conns = []
+                    try:
+                        terminals = pane.get_terminals()
+                    except Exception:
+                        terminals = []
+                    for term in terminals:
+                        conn = self.terminal_to_connection.get(term)
+                        nickname = getattr(conn, 'nickname', None)
+                        if nickname:
+                            pane_conns.append({'nickname': nickname})
+                    # Preserve empty panes only if some pane has terminals
+                    panes.append(pane_conns)
+                # Drop trailing empty panes so a freshly-restored split (which
+                # always starts with two empty panes) round-trips cleanly.
+                while panes and not panes[-1]:
+                    panes.pop()
+                if not any(panes):
+                    continue
+                tabs.append({
+                    'type': 'split',
+                    'layout': child.get_layout_mode(),
+                    'custom_title': getattr(page, 'custom_tab_title', None),
+                    'panes': panes,
+                })
+                continue
+
+            if isinstance(child, TerminalWidget):
+                is_local = False
+                try:
+                    is_local = bool(child._is_local_terminal())
+                except Exception:
+                    is_local = False
+                if is_local:
+                    tabs.append({'type': 'local'})
+                    continue
+                conn = self.terminal_to_connection.get(child)
+                nickname = getattr(conn, 'nickname', None)
+                if not nickname:
+                    continue
+                tabs.append({
+                    'type': 'ssh',
+                    'nickname': nickname,
+                    'custom_title': getattr(page, 'custom_tab_title', None),
+                })
+                continue
+
+            # File manager tabs / placeholders are intentionally skipped.
+
+        return {'tabs': tabs}
+
+    def _close_all_tabs(self):
+        """Programmatically close every open tab without confirmation dialogs."""
+        self._suppress_close_confirmation = True
+        try:
+            for page in list(self.tab_view.get_pages()):
+                try:
+                    self.tab_view.close_page(page)
+                except Exception:
+                    pass
+        finally:
+            self._suppress_close_confirmation = False
+
+    def _restore_split_tab(self, entry):
+        """Recreate a split-view tab from a captured entry."""
+        from .split_view import SplitViewTab
+        from sshpilot import icon_utils
+
+        panes = entry.get('panes') or []
+        svt = SplitViewTab(self)
+        page = self.tab_view.append(svt)
+        page.set_title(_("Split View"))
+        try:
+            page.set_icon(icon_utils.new_gicon_from_icon_name('view-dual-symbolic'))
+        except Exception:
+            pass
+        svt._tab_page = page
+        layout = entry.get('layout')
+        if layout in (SplitViewTab.HORIZONTAL, SplitViewTab.VERTICAL):
+            svt.set_layout_mode(layout)
+
+        for pane_index, pane_conns in enumerate(panes):
+            if pane_index < len(svt._panes):
+                pane = svt._panes[pane_index]
+            else:
+                pane = svt.add_pane()
+            for conn_entry in pane_conns or []:
+                nickname = conn_entry.get('nickname') if isinstance(conn_entry, dict) else None
+                if not nickname:
+                    continue
+                connection = self.connection_manager.find_connection_by_nickname(nickname)
+                if connection is None:
+                    logger.warning(f"Session restore: split connection '{nickname}' not found; skipping")
+                    continue
+                try:
+                    pane.add_connection(connection)
+                except Exception as exc:
+                    logger.error(f"Failed to restore split connection '{nickname}': {exc}")
+
+        custom_title = entry.get('custom_title')
+        if custom_title:
+            self._apply_tab_title(page, custom_title)
+        self.show_tab_view()
+        self.tab_view.set_selected_page(page)
+
+    def restore_session(self, data, replace: bool = True):
+        """Recreate tabs from a captured session dict.
+
+        When ``replace`` is True, all currently-open tabs are closed first.
+        """
+        if not isinstance(data, dict):
+            logger.warning("Session restore called with invalid data")
+            return
+        tabs = data.get('tabs')
+        if not isinstance(tabs, list):
+            tabs = []
+
+        if replace:
+            self._close_all_tabs()
+
+        for entry in tabs:
+            if not isinstance(entry, dict):
+                continue
+            tab_type = entry.get('type')
+            try:
+                if tab_type == 'local':
+                    self.terminal_manager.show_local_terminal()
+                elif tab_type == 'split':
+                    self._restore_split_tab(entry)
+                elif tab_type == 'ssh':
+                    nickname = entry.get('nickname')
+                    if not nickname:
+                        continue
+                    connection = self.connection_manager.find_connection_by_nickname(nickname)
+                    if connection is None:
+                        logger.warning(f"Session restore: connection '{nickname}' not found; skipping")
+                        continue
+                    self.terminal_manager.connect_to_host(connection, force_new=True)
+                    custom_title = entry.get('custom_title')
+                    if custom_title:
+                        page = self.tab_view.get_selected_page()
+                        if page is not None and isinstance(page.get_child(), TerminalWidget):
+                            self._apply_tab_title(page, custom_title)
+            except Exception as exc:
+                logger.error(f"Failed to restore tab {entry!r}: {exc}")
+
     def on_tab_close(self, tab_view, page):
         """Handle tab close - THE KEY FIX: Never call close_page ourselves"""
         # If we are closing pages programmatically (e.g., after deleting a
@@ -7748,6 +7963,15 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         """Handle window close request - MAIN ENTRY POINT"""
         if self._is_quitting:
             return False  # Already quitting, allow close
+
+        # Capture the currently-open tabs so they can be restored next launch
+        # when the user has chosen the "previous session" startup behavior.
+        try:
+            session_manager = getattr(self, 'session_manager', None)
+            if session_manager is not None:
+                session_manager.save_previous(self.capture_session())
+        except Exception as e:
+            logger.debug(f"Failed to capture previous session on close: {e}")
             
         # Check for active connections across all tabs
         actually_connected = {}
