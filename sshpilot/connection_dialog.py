@@ -972,8 +972,6 @@ class ConnectionDialog(Adw.Window):
         # Show/hide key file and passphrase fields for key-based auth
         if hasattr(self, 'keyfile_row'):
             self.keyfile_row.set_visible(is_key_based)
-        if hasattr(self, 'key_passphrase_row'):
-            self.key_passphrase_row.set_visible(is_key_based)
         if hasattr(self, 'key_select_row'):
             self.key_select_row.set_visible(is_key_based)
         if hasattr(self, 'key_only_row'):
@@ -1010,14 +1008,14 @@ class ConnectionDialog(Adw.Window):
                 self.certificate_row.set_sensitive(use_specific)
             if hasattr(self, 'cert_dropdown'):
                 self.cert_dropdown.set_sensitive(use_specific)
+            is_key_based = (
+                hasattr(self, 'auth_method_row') and self.auth_method_row.get_selected() == 0
+            )
             if hasattr(self, 'key_only_row'):
-                is_key_based = (
-                    hasattr(self, 'auth_method_row') and self.auth_method_row.get_selected() == 0
-                )
                 self.key_only_row.set_visible(use_specific and is_key_based)
                 self.key_only_row.set_sensitive(use_specific and is_key_based)
             if hasattr(self, 'key_passphrase_row'):
-                self.key_passphrase_row.set_sensitive(use_specific)
+                self.key_passphrase_row.set_visible(use_specific and is_key_based)
 
             if use_specific:
                 key_path = getattr(self, '_selected_keyfile_path', None)
@@ -2263,6 +2261,12 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         self.keyfile_row.set_activatable(False)
         auth_group.add(self.keyfile_row)
 
+        # Key Passphrase – shown immediately after the key dropdown when "Use a specific key" is active
+        self.key_passphrase_row = Adw.PasswordEntryRow(title=_("Key Passphrase"))
+        self.key_passphrase_row.set_show_apply_button(False)
+        self.key_passphrase_row.set_visible(False)
+        auth_group.add(self.key_passphrase_row)
+
         self.key_only_row = Adw.SwitchRow()
         self.key_only_row.set_title(_("Only use the specified key"))
         self.key_only_row.set_subtitle(_("This will append \"IdentitiesOnly yes\" to the configuration."))
@@ -2322,15 +2326,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         try:
             # Ensure visibility/sensitivity matches defaults
             self.on_auth_method_changed(self.auth_method_row, None)
-            self.on_key_select_changed(self.key_select_row, None)
-        except Exception:
-            pass
-        
-        # Key Passphrase
-        self.key_passphrase_row = Adw.PasswordEntryRow(title=_("Key Passphrase"))
-        self.key_passphrase_row.set_show_apply_button(False)
-        auth_group.add(self.key_passphrase_row)
-        try:
             self.on_key_select_changed(self.key_select_row, None)
         except Exception:
             pass
