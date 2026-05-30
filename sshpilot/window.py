@@ -7596,7 +7596,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             try:
                 if hasattr(value, 'get_value'):
                     value = value.get_value()
-                if not isinstance(value, dict) or value.get("type") != "connection":
+                if not isinstance(value, dict):
+                    return False
+
+                drag_type = value.get("type")
+                if drag_type not in ("connection", "group"):
                     return False
 
                 # Only convert if the terminal is still in the main tab_view
@@ -7607,17 +7611,33 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 if source_page is None:
                     return False
 
-                nicknames = value.get("connection_nicknames") or []
-                if not nicknames and value.get("connection_nickname"):
-                    nicknames = [value["connection_nickname"]]
-                if not nicknames:
-                    return False
+                tab_title = _("Split View")
 
-                connections = []
-                for nick in nicknames:
-                    conn = self.connection_manager.find_connection_by_nickname(nick)
-                    if conn is not None:
-                        connections.append(conn)
+                if drag_type == "connection":
+                    nicknames = value.get("connection_nicknames") or []
+                    if not nicknames and value.get("connection_nickname"):
+                        nicknames = [value["connection_nickname"]]
+                    if not nicknames:
+                        return False
+                    connections = []
+                    for nick in nicknames:
+                        conn = self.connection_manager.find_connection_by_nickname(nick)
+                        if conn is not None:
+                            connections.append(conn)
+                else:  # group
+                    group_id = value.get("group_id")
+                    group_info = self.group_manager.groups.get(group_id) if group_id else None
+                    if not group_info:
+                        return False
+                    group_name = group_info.get("name", "")
+                    if group_name:
+                        tab_title = _("Split View — {name}").format(name=group_name)
+                    connections = []
+                    for nick in group_info.get("connections", []):
+                        conn = self.connection_manager.find_connection_by_nickname(nick)
+                        if conn is not None:
+                            connections.append(conn)
+
                 if not connections:
                     return False
 
@@ -7647,7 +7667,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
                 # Append the split-view tab to the main tab_view
                 new_page = self.tab_view.append(svt)
-                new_page.set_title(_("Split View"))
+                new_page.set_title(tab_title)
                 try:
                     new_page.set_icon(
                         icon_utils.new_gicon_from_icon_name('view-dual-symbolic')
