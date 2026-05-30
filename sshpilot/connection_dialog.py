@@ -2270,6 +2270,13 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         self.key_only_row.set_visible(False)
         auth_group.add(self.key_only_row)
 
+        # Password
+        self.password_row = Adw.PasswordEntryRow(title=_("Password (optional)"))
+        self.password_row.set_show_apply_button(False)
+        # Always visible; optional for key-based auth
+        self.password_row.set_visible(True)
+        auth_group.add(self.password_row)
+
         # Certificate dropdown for key-based auth with specific key
         self.certificate_row = Adw.ActionRow(title=_("SSH Certificate"), subtitle=_("Select certificate file (optional)"))
         # Build dropdown items from detected certificates
@@ -2327,13 +2334,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             self.on_key_select_changed(self.key_select_row, None)
         except Exception:
             pass
-
-        # Password
-        self.password_row = Adw.PasswordEntryRow(title=_("Password (optional)"))
-        self.password_row.set_show_apply_button(False)
-        # Always visible; optional for key-based auth
-        self.password_row.set_visible(True)
-        auth_group.add(self.password_row)
 
         # Disable pubkey authentication toggle for password auth
         self.pubkey_auth_row = Adw.SwitchRow()
