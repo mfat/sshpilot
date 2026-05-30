@@ -26,10 +26,10 @@ box.toolbar.add-pane-strip {
     background-image: linear-gradient(
         to bottom,
         alpha(@window_fg_color, 0.0),
-        alpha(@window_fg_color, 0.07)
+        alpha(@window_fg_color, 0.20)
     );
-    border-top: 1px solid alpha(@window_fg_color, 0.12);
-    padding: 6px 0;
+    border-top: 2px solid alpha(@window_fg_color, 0.25);
+    padding: 8px 0;
 }
 box.add-pane-strip.drag-over {
     background-color: rgba(42, 161, 152, 0.25);
@@ -64,10 +64,12 @@ box.row-drag-ghost {
     min-height: 2px;
 }
 
-/* Pane borders: @window_fg_color is black in light mode, white in dark mode */
+/* Pane borders: margin creates a gap; non-inset shadow fills it visibly.
+   @window_fg_color is black in light mode, white in dark mode. */
 box.split-pane {
-    box-shadow: inset 0 0 0 2px alpha(@window_fg_color, 0.55);
-    border-radius: 6px;
+    margin: 4px;
+    border-radius: 5px;
+    box-shadow: 0 0 0 2px alpha(@window_fg_color, 0.7);
 }
 """)
     Gtk.StyleContext.add_provider_for_display(
