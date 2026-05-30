@@ -64,6 +64,7 @@ _ICON_RESOURCE_MAP = {
     'vertical-arrows-long-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/vertical-arrows-long-symbolic.svg',
     'view-sort-ascending-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/view-sort-ascending-symbolic.svg',
     'preferences-system-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/preferences-system-symbolic.svg',
+    'settings-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/settings-symbolic.svg',
     'tab-new-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/tab-new-symbolic.svg',
     'dialog-warning-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/dialog-warning-symbolic.svg',
     'dialog-error-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/dialog-error-symbolic.svg',

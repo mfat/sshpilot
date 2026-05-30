@@ -537,7 +537,7 @@ class PreferencesWindow(Adw.Window):
         self.connect('destroy', self._on_destroy)
 
         # Use a consistent title for the window and header regardless of parent
-        self._base_header_title = "Preferences"
+        self._base_header_title = "Settings"
 
         # Set window properties with modern Adwaita structure
         self.set_title(self._base_header_title)

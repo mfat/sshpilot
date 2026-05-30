@@ -2569,9 +2569,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
     def _build_preferences_button(self):
         from sshpilot import icon_utils
-        button = icon_utils.new_button_from_icon_name("preferences-system-symbolic")
+        button = icon_utils.new_button_from_icon_name("settings-symbolic")
         button.set_can_focus(False)
-        button.set_tooltip_text(_("Preferences"))
+        button.set_tooltip_text(_("Settings"))
         button.connect("clicked", lambda *_: self.show_preferences())
         return button
 
@@ -2988,7 +2988,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         import_export_menu.append('Import Configuration', 'win.import-config')
         menu.append_submenu('Import/Export', import_export_menu)
         
-        menu.append('Preferences', 'app.preferences')
+        menu.append('Settings', 'app.preferences')
 
         # Help submenu with platform-aware keyboard shortcuts overlay
         help_menu = Gio.Menu()
@@ -3256,6 +3256,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.content_stack.set_visible_child_name("welcome")
         GLib.idle_add(self._focus_connection_list_first_row)
 
+        # Hide layout toggle buttons — they only apply when a terminal is active
+        if hasattr(self, '_layout_h_btn'):
+            self._layout_h_btn.set_visible(False)
+        if hasattr(self, '_layout_v_btn'):
+            self._layout_v_btn.set_visible(False)
+
         # Update view toggle button
         if hasattr(self, 'view_toggle_button'):
             # Check if there are any active tabs
@@ -3405,6 +3411,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             icon_utils.set_button_icon(self.view_toggle_button, 'go-home-symbolic')
             self.view_toggle_button.set_tooltip_text('Show Start Page')
             self.view_toggle_button.set_visible(True)  # Show button when tabs are active
+
+        # Restore layout toggle button visibility based on the active tab type
+        self._update_layout_toggle_state()
 
         logger.info("Showing tab view")
 
@@ -4408,7 +4417,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Add general shortcuts with current values
         general_actions = [
             ('quit', _('Quit')),
-            ('preferences', _('Preferences')),
+            ('preferences', _('Settings')),
             ('help', _('Documentation')),
             ('shortcuts', _('Keyboard Shortcuts')),
             ('edit-ssh-config', _('SSH Config Editor')),
@@ -4548,7 +4557,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         group_general.add_shortcut(Gtk.ShortcutsShortcut(
             title=_('SSH Config Editor'), accelerator=f"{primary}<Shift>e"))
         group_general.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Preferences'), accelerator=f"{primary}comma"))
+            title=_('Settings'), accelerator=f"{primary}comma"))
         group_general.add_shortcut(Gtk.ShortcutsShortcut(
             title=_('Documentation'), accelerator='F1'))
         group_general.add_shortcut(Gtk.ShortcutsShortcut(
