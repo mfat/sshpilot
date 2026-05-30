@@ -513,7 +513,8 @@ class SplitViewTab(Gtk.Box):
 
     HORIZONTAL = 'horizontal'
     VERTICAL = 'vertical'
-    DEFAULT_PANE_HEIGHT = 200
+    DEFAULT_PANE_HEIGHT = 200   # minimum height (hard floor)
+    INITIAL_PANE_HEIGHT = 450   # starting height for new rows
 
     def __init__(self, window) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
@@ -810,12 +811,11 @@ class SplitViewTab(Gtk.Box):
                     row_widgets.append(h_paned)
 
             old_heights = list(self._row_heights)
-            is_first_build = len(old_heights) == 0
             self._row_heights = []
             self._row_boxes = []
             for row_idx, row_widget in enumerate(row_widgets):
                 h = (old_heights[row_idx] if row_idx < len(old_heights)
-                     else self.DEFAULT_PANE_HEIGHT)
+                     else self.INITIAL_PANE_HEIGHT)
                 self._row_heights.append(h)
                 row_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
                 row_box.set_hexpand(True)
@@ -824,14 +824,9 @@ class SplitViewTab(Gtk.Box):
                 row_box.append(row_widget)
                 self._row_boxes.append(row_box)
                 self._content_area.append(row_box)
-                # Handle after every row (including the last) so every row
-                # can be grown downward; the last handle sits above the empty
-                # space and dragging it down causes the scroll area to grow.
+                # Handle after every row (including the last).
                 handle = RowResizeHandle(lambda idx=row_idx: idx, self)
                 self._content_area.append(handle)
-
-            if is_first_build:
-                GLib.idle_add(self._auto_fill_rows_to_viewport)
 
         self._normalize_pane_heights()
 
@@ -859,23 +854,6 @@ class SplitViewTab(Gtk.Box):
                 pane.set_size_request(-1, self.DEFAULT_PANE_HEIGHT)
             except Exception:
                 pass
-
-    # Pixels kept free below the last row so the last handle is easy to grab.
-    _BOTTOM_RESERVE = 80
-
-    def _auto_fill_rows_to_viewport(self) -> bool:
-        """Size rows to fill the scroll viewport on first HORIZONTAL build."""
-        viewport_h = self._pane_scroll.get_height()
-        n = len(self._row_boxes)
-        if viewport_h <= 0 or n == 0:
-            return False
-        handle_total = n * 6       # one 6-px handle after every row
-        usable = viewport_h - handle_total - self._BOTTOM_RESERVE
-        per_row = max(self.DEFAULT_PANE_HEIGHT, usable // n)
-        for i, row_box in enumerate(self._row_boxes):
-            self._row_heights[i] = per_row
-            row_box.set_size_request(-1, per_row)
-        return False
 
     def _flush_row_resize(self) -> bool:
         """Apply accumulated row-height changes in one GTK layout pass."""
