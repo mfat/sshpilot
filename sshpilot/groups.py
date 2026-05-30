@@ -317,6 +317,21 @@ class GroupManager:
         groups = self.get_connection_groups(connection_nickname)
         return groups[0] if groups else None
 
+    def resolve_display_group_id(
+        self, connection_nickname: str, context_group_id: Optional[str] = None
+    ) -> Optional[str]:
+        """Resolve which group ID should drive UI for a connection row.
+
+        When a connection appears in several groups, each sidebar row carries a
+        display context (``context_group_id``). Prefer that over the primary
+        group so colours match the group the row is listed under.
+        """
+        if context_group_id:
+            group = self.groups.get(context_group_id)
+            if group and connection_nickname in group.get('connections', []):
+                return context_group_id
+        return self.get_connection_group(connection_nickname)
+
     def get_connection_groups(self, connection_nickname: str) -> List[str]:
         """Return every group ID that contains the connection."""
         return [

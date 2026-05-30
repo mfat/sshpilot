@@ -42,6 +42,20 @@ def test_copy_connection_adds_to_multiple_groups():
     assert "srv" not in gm.root_connections
 
 
+def test_resolve_display_group_id_uses_context_after_copy():
+    gm = GroupManager(DummyConfig())
+    a = gm.create_group("A")
+    b = gm.create_group("B")
+
+    gm.move_connection("srv", a)
+    gm.copy_connection_to_group("srv", b)
+
+    assert gm.get_connection_group("srv") == a
+    assert gm.resolve_display_group_id("srv", a) == a
+    assert gm.resolve_display_group_id("srv", b) == b
+    assert gm.resolve_display_group_id("srv", None) == a
+
+
 def test_copy_ungrouped_connection_sets_primary():
     gm = GroupManager(DummyConfig())
     a = gm.create_group("A")
