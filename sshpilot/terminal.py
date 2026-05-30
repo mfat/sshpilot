@@ -4153,11 +4153,28 @@ class TerminalWidget(Gtk.Box):
         elif self.vte is not None:
             self.vte.reset(True, False)
 
+    def _apply_search_highlight_colors(self):
+        """Switch VTE highlight to a high-contrast color while search is active."""
+        try:
+            if self.vte is None:
+                return
+            search_bg = Gdk.RGBA()
+            search_bg.parse('#F4D03F')  # Bright amber — visible on dark and light backgrounds
+            search_fg = Gdk.RGBA()
+            search_fg.parse('#000000')
+            if hasattr(self.vte, 'set_color_highlight'):
+                self.vte.set_color_highlight(search_bg)
+            if hasattr(self.vte, 'set_color_highlight_foreground'):
+                self.vte.set_color_highlight_foreground(search_fg)
+        except Exception as exc:
+            logger.debug("Failed to apply search highlight colors: %s", exc)
+
     def _show_search_overlay(self, select_all: bool = False):
         """Reveal the terminal search overlay and focus the search entry."""
         try:
             if not hasattr(self, 'search_revealer') or not self.search_revealer:
                 return
+            self._apply_search_highlight_colors()
             self.search_revealer.set_reveal_child(True)
             if hasattr(self, 'search_entry') and self.search_entry:
                 if select_all:
@@ -4179,6 +4196,8 @@ class TerminalWidget(Gtk.Box):
             if hasattr(self, 'vte') and self.vte:
                 if self.backend:
                     self.backend.grab_focus()
+            # Restore theme selection color now that search is closed
+            self._apply_cursor_and_selection_colors()
         except Exception as exc:
             logger.debug("Failed to hide search overlay: %s", exc)
 
