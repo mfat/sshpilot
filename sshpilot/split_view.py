@@ -55,13 +55,13 @@ box.row-drag-ghost {
     min-height: 2px;
 }
 
-/* Pane borders — light mode */
+/* Pane borders - light mode */
 box.split-pane {
     border: 2px solid rgba(0, 0, 0, 0.25);
     border-radius: 6px;
 }
 
-/* Pane borders — dark mode */
+/* Pane borders - dark mode */
 @media (prefers-color-scheme: dark) {
     box.split-pane {
         border: 2px solid rgba(255, 255, 255, 0.18);
