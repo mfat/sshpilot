@@ -9,6 +9,32 @@ from gettext import gettext as _
 
 logger = logging.getLogger(__name__)
 
+# Installed once per process; scoped to box.add-pane-strip so it only
+# affects the strip widget and nothing else in the app.
+_drop_zone_css_installed = False
+
+def _ensure_drop_zone_css() -> None:
+    global _drop_zone_css_installed
+    if _drop_zone_css_installed:
+        return
+    provider = Gtk.CssProvider()
+    # Targets plain box.add-pane-strip so there are no Adwaita sub-node
+    # overrides to fight.  Two background-color declarations: the rgba()
+    # fallback fires on systems where @accent_bg_color is unavailable.
+    provider.load_from_data(b"""
+box.add-pane-strip.drag-over {
+    background-color: rgba(42, 161, 152, 0.25);
+}
+""")
+    # USER priority (800) beats Adwaita theme (200) and application CSS (600)
+    Gtk.StyleContext.add_provider_for_display(
+        Gdk.Display.get_default(),
+        provider,
+        Gtk.STYLE_PROVIDER_PRIORITY_USER,
+    )
+    _drop_zone_css_installed = True
+
+
 class SplitPane(Gtk.Box):
     """
     A single pane in the split view grid.
@@ -454,12 +480,21 @@ class SplitViewTab(Gtk.Box):
         self.append(self._pane_scroll)
 
         # "Add Terminal" strip below the panes
+        self._add_pane_btn: Optional[Gtk.Button] = None
+        self._add_pane_strip: Optional[Gtk.Box] = None
         self._add_strip = self._build_add_pane_strip()
         self.append(self._add_strip)
 
         # Start with 2 empty panes (minimum requirement)
         self.add_pane()
         self.add_pane()
+
+        # Monitor drag motion over the entire tab so the strip reacts as soon
+        # as a connection is dragged anywhere over the terminal area.
+        drag_motion = Gtk.DropControllerMotion()
+        drag_motion.connect("enter", self._on_drag_enter_tab)
+        drag_motion.connect("leave", self._on_drag_leave_tab)
+        self.add_controller(drag_motion)
 
         # CAPTURE-phase key controller intercepts shortcuts before VTE eats them
         key_ctrl = Gtk.EventControllerKey()
@@ -482,12 +517,12 @@ class SplitViewTab(Gtk.Box):
     # ── "Add Terminal" strip ─────────────────────────────────────────────────
 
     def _build_add_pane_strip(self) -> Gtk.Widget:
-        # Strip spans the full width so the whole area acts as a drop target.
-        # The pill button is centred within the strip via halign on the button.
+        _ensure_drop_zone_css()
+
         strip = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        strip.add_css_class("toolbar")
+        strip.add_css_class("add-pane-strip")
         strip.set_hexpand(True)
-        strip.set_margin_top(8)
-        strip.set_margin_bottom(8)
 
         btn = Gtk.Button(label=_("Add Terminal"))
         btn.add_css_class("suggested-action")
@@ -497,13 +532,32 @@ class SplitViewTab(Gtk.Box):
         btn.connect("clicked", lambda _b: self.add_pane())
         strip.append(btn)
 
-        # Drop target on the strip: create a new pane and add the connection
+        # Store refs so the tab-level DropControllerMotion can update them.
+        self._add_pane_btn = btn
+        self._add_pane_strip = strip
+
+        # Drop target accepts the actual drop; visual state is managed by the
+        # tab-level DropControllerMotion (_on_drag_enter/leave_tab).
         dt = Gtk.DropTarget.new(type=GObject.TYPE_PYOBJECT, actions=Gdk.DragAction.MOVE)
-        dt.connect("drop", self._on_add_strip_drop)
         dt.connect("enter", lambda _t, _x, _y: Gdk.DragAction.MOVE)
+        dt.connect("drop",  self._on_add_strip_drop)
         strip.add_controller(dt)
 
         return strip
+
+    # ── drag-over strip state ─────────────────────────────────────────────────
+
+    def _on_drag_enter_tab(self, _controller, _x, _y) -> None:
+        if self._add_pane_strip:
+            self._add_pane_strip.add_css_class("drag-over")
+        if self._add_pane_btn:
+            self._add_pane_btn.set_label(_("Drop here to add"))
+
+    def _on_drag_leave_tab(self, _controller) -> None:
+        if self._add_pane_strip:
+            self._add_pane_strip.remove_css_class("drag-over")
+        if self._add_pane_btn:
+            self._add_pane_btn.set_label(_("Add Terminal"))
 
     def _on_add_strip_drop(self, _target, value, _x, _y) -> bool:
         try:

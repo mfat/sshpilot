@@ -1126,6 +1126,18 @@ class ConnectionRow(Gtk.ListBoxRow):
 
     def _on_drag_begin(self, source, drag):
         try:
+            display = Gdk.Display.get_default()
+            icon_theme = Gtk.IconTheme.get_for_display(display)
+            paintable = icon_theme.lookup_icon(
+                "computer-symbolic",
+                None, 32, 1,
+                Gtk.TextDirection.NONE,
+                Gtk.IconLookupFlags.PRELOAD,
+            )
+            source.set_icon(paintable, 16, 16)
+        except Exception as e:
+            logger.debug(f"Could not set drag icon: {e}")
+        try:
             window = self.get_root()
             if window:
                 if not hasattr(window, "_dragged_connections"):
