@@ -71,6 +71,9 @@ box.split-pane {
     margin: 6px;
     box-shadow: 0 0 0 3px alpha(@window_fg_color, 0.7);
 }
+box.split-pane.split-pane-active {
+    box-shadow: 0 0 0 3px #f5c400;
+}
 """)
     Gtk.StyleContext.add_provider_for_display(
         Gdk.Display.get_default(),
@@ -143,6 +146,11 @@ class SplitPane(Gtk.Box):
         self.set_size_request(-1, 200)
         _ensure_row_handle_css()
         self.add_css_class("split-pane")
+
+        focus_ctrl = Gtk.EventControllerFocus()
+        focus_ctrl.connect("enter", lambda _c: self.add_css_class("split-pane-active"))
+        focus_ctrl.connect("leave", lambda _c: self.remove_css_class("split-pane-active"))
+        self.add_controller(focus_ctrl)
 
         # ── inner tab view (mini Adw.TabBar + Adw.TabView) ───────────────
         self._inner_tab_view = Adw.TabView()
