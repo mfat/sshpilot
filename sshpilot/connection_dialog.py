@@ -1011,8 +1011,11 @@ class ConnectionDialog(Adw.Window):
             if hasattr(self, 'cert_dropdown'):
                 self.cert_dropdown.set_sensitive(use_specific)
             if hasattr(self, 'key_only_row'):
-                self.key_only_row.set_visible(use_specific)
-                self.key_only_row.set_sensitive(use_specific)
+                is_key_based = (
+                    hasattr(self, 'auth_method_row') and self.auth_method_row.get_selected() == 0
+                )
+                self.key_only_row.set_visible(use_specific and is_key_based)
+                self.key_only_row.set_sensitive(use_specific and is_key_based)
             if hasattr(self, 'key_passphrase_row'):
                 self.key_passphrase_row.set_sensitive(use_specific)
 
