@@ -89,8 +89,10 @@ class RowResizeHandle(Gtk.DrawingArea):
         if 0 <= idx < len(tab._row_heights):
             new_h = max(tab.DEFAULT_PANE_HEIGHT, tab._row_heights[idx] + int(delta))
             tab._row_heights[idx] = new_h
-            if idx < len(tab._row_boxes):
-                tab._row_boxes[idx].set_size_request(-1, new_h)
+            # Batch the actual widget resize to one layout pass per frame.
+            if not tab._row_resize_pending:
+                tab._row_resize_pending = True
+                GLib.idle_add(tab._flush_row_resize)
 
 
 class SplitPane(Gtk.Box):
@@ -521,6 +523,7 @@ class SplitViewTab(Gtk.Box):
         self._tab_page = None
         self._row_heights: List[int] = []
         self._row_boxes: List[Gtk.Box] = []
+        self._row_resize_pending: bool = False
         self.set_hexpand(True)
         self.set_vexpand(True)
 
@@ -857,17 +860,28 @@ class SplitViewTab(Gtk.Box):
             except Exception:
                 pass
 
+    # Pixels kept free below the last row so the last handle is easy to grab.
+    _BOTTOM_RESERVE = 80
+
     def _auto_fill_rows_to_viewport(self) -> bool:
-        """Size rows to fill the scroll viewport equally on first HORIZONTAL build."""
+        """Size rows to fill the scroll viewport on first HORIZONTAL build."""
         viewport_h = self._pane_scroll.get_height()
         n = len(self._row_boxes)
         if viewport_h <= 0 or n == 0:
             return False
-        handle_total = n * 6  # one handle after every row
-        per_row = max(self.DEFAULT_PANE_HEIGHT, (viewport_h - handle_total) // n)
+        handle_total = n * 6       # one 6-px handle after every row
+        usable = viewport_h - handle_total - self._BOTTOM_RESERVE
+        per_row = max(self.DEFAULT_PANE_HEIGHT, usable // n)
         for i, row_box in enumerate(self._row_boxes):
             self._row_heights[i] = per_row
             row_box.set_size_request(-1, per_row)
+        return False
+
+    def _flush_row_resize(self) -> bool:
+        """Apply accumulated row-height changes in one GTK layout pass."""
+        self._row_resize_pending = False
+        for i, row_box in enumerate(self._row_boxes):
+            row_box.set_size_request(-1, self._row_heights[i])
         return False
 
     # ── pre-population ────────────────────────────────────────────────────────
