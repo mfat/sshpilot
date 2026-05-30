@@ -55,6 +55,7 @@
     <file alias="view-dual-symbolic.svg">icons/scalable/actions/view-dual-symbolic.svg</file>
     <file alias="view-grid-symbolic.svg">icons/scalable/actions/view-grid-symbolic.svg</file>
     <file alias="view-list-symbolic.svg">icons/scalable/actions/view-list-symbolic.svg</file>
+    <file alias="view-pin-symbolic.svg">icons/scalable/actions/view-pin-symbolic.svg</file>
     <file alias="view-refresh-symbolic.svg">icons/scalable/actions/view-refresh-symbolic.svg</file>
     <file alias="view-reveal-symbolic.svg">icons/scalable/actions/view-reveal-symbolic.svg</file>
     <file alias="view-sort-ascending-symbolic.svg">icons/scalable/actions/view-sort-ascending-symbolic.svg</file>

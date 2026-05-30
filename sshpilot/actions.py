@@ -971,8 +971,10 @@ class WindowActions:
         tab_count = len(payload.get('tabs', []) if isinstance(payload, dict) else [])
         row.set_subtitle(_("{n} tab(s)").format(n=tab_count))
 
+        from sshpilot import icon_utils
+
         pin_button = Gtk.ToggleButton()
-        pin_button.set_icon_name('view-pin-symbolic')
+        icon_utils.set_button_icon(pin_button, 'view-pin-symbolic')
         pin_button.set_tooltip_text(_("Pin to start page"))
         pin_button.set_valign(Gtk.Align.CENTER)
         pin_button.add_css_class('flat')
@@ -986,7 +988,7 @@ class WindowActions:
         row.add_suffix(pin_button)
 
         rename_button = Gtk.Button()
-        rename_button.set_icon_name('document-edit-symbolic')
+        icon_utils.set_button_icon(rename_button, 'document-edit-symbolic')
         rename_button.set_tooltip_text(_("Rename"))
         rename_button.set_valign(Gtk.Align.CENTER)
         rename_button.add_css_class('flat')
@@ -994,7 +996,7 @@ class WindowActions:
         row.add_suffix(rename_button)
 
         delete_button = Gtk.Button()
-        delete_button.set_icon_name('user-trash-symbolic')
+        icon_utils.set_button_icon(delete_button, 'user-trash-symbolic')
         delete_button.set_tooltip_text(_("Delete"))
         delete_button.set_valign(Gtk.Align.CENTER)
         delete_button.add_css_class('flat')
