@@ -310,18 +310,23 @@ class SplitPane(Gtk.Box):
 
         # macOS / Gtk.Paned rendering fix
         #
-        # When panes sit inside a Gtk.Paned the children have 0 allocated
-        # width until the Paned layout pass runs (which on macOS lags behind
-        # the GLib idle that starts the SSH connection).  VTE buffers all SSH
-        # output received while its pixel width is 0 but never repaints it
-        # because GTK only queues a redraw when the size *changes* — and by
-        # then VTE considers the viewport already up-to-date.
+        # All three SSH connections are established (confirmed by logs), but
+        # VTE widgets inside a Gtk.Paned never paint their buffered output on
+        # macOS GTK4.  Two compounding problems:
         #
-        # Fix: watch for VTE's first non-zero width allocation.  At that
-        # point call vte.set_size(cols, rows) with the *same* dimensions.
-        # VTE unconditionally sends SIGWINCH on every set_size call, which
-        # makes the remote shell redraw its prompt; VTE then receives new
-        # output, marks the viewport dirty, and repaints the full buffer.
+        #  1. vte.set_size(cols, rows) is a silent no-op when the dimensions
+        #     haven't changed — VTE checks internally and skips SIGWINCH.
+        #     Calling it with the same values does nothing.
+        #
+        #  2. queue_draw() on macOS only schedules a paint; it doesn't force
+        #     the Quartz compositor to commit the frame.  Without an explicit
+        #     GDK frame-clock phase request, the scheduled draw may never run.
+        #
+        # Fix: on first non-zero width allocation (Paned layout done):
+        #   a. Shrink VTE by 1 column then restore — guarantees a real size
+        #      change so VTE sends SIGWINCH and the shell redraws its prompt.
+        #   b. Request GDK_FRAME_CLOCK_PHASE_PAINT so the Quartz compositor
+        #      actually commits the pending frame.
         vte = getattr(terminal, 'vte', None)
         if vte is not None:
             _nudged = [False]
@@ -341,10 +346,20 @@ class SplitPane(Gtk.Box):
                     try:
                         cols = widget.get_column_count()
                         rows = widget.get_row_count()
-                        if cols > 0 and rows > 0:
-                            # Same size → still sends SIGWINCH; shell redraws
+                        if cols > 1 and rows > 0:
+                            # Shrink by 1 col then restore so VTE sees a real
+                            # size change → sends SIGWINCH → shell redraws.
+                            widget.set_size(cols - 1, rows)
                             widget.set_size(cols, rows)
                         widget.queue_draw()
+                        # Ask the GDK frame clock to commit a paint frame so
+                        # the macOS Quartz compositor actually flushes the draw.
+                        try:
+                            fc = widget.get_frame_clock()
+                            if fc is not None:
+                                fc.request_phase(Gdk.FrameClockPhase.PAINT)
+                        except Exception:
+                            pass
                     except Exception:
                         pass
                     return False
