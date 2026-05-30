@@ -65,11 +65,11 @@ box.row-drag-ghost {
 }
 
 /* Pane borders: margin creates a gap; non-inset shadow fills it visibly.
-   @window_fg_color is black in light mode, white in dark mode. */
+   @window_fg_color is black in light mode, white in dark mode.
+   margin > spread ensures corners are never clipped by the parent. */
 box.split-pane {
-    margin: 4px;
-    border-radius: 5px;
-    box-shadow: 0 0 0 2px alpha(@window_fg_color, 0.7);
+    margin: 6px;
+    box-shadow: 0 0 0 3px alpha(@window_fg_color, 0.7);
 }
 """)
     Gtk.StyleContext.add_provider_for_display(
