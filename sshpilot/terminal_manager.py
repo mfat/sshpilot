@@ -687,8 +687,7 @@ class TerminalManager:
     # Terminal signal handlers
     def on_terminal_connected(self, terminal):
         terminal.connection.is_connected = True
-        if terminal.connection in self.window.connection_rows:
-            row = self.window.connection_rows[terminal.connection]
+        for row in self.window._rows_for_connection(terminal.connection):
             row.update_status()
             row.queue_draw()
 
@@ -707,8 +706,7 @@ class TerminalManager:
 
     def on_terminal_disconnected(self, terminal):
         terminal.connection.is_connected = False
-        if terminal.connection in self.window.connection_rows:
-            row = self.window.connection_rows[terminal.connection]
+        for row in self.window._rows_for_connection(terminal.connection):
             row.update_status()
             row.queue_draw()
         host_value = getattr(

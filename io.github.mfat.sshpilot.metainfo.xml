@@ -60,6 +60,16 @@
 
 
 
+    <release version="5.0.0" date="2026-05-30">
+      <description>
+        <p>New &quot;Sessions&quot; feature — Save, open, rename, and delete snapshots of your open tabs and restore them automatically</p>
+        <p>Pin saved sessions to the start page for one-click restore</p>
+        <p>Copy to group — Add a connection to another group without removing it from its current group(s). Same connection can appear in multiple groups.</p>
+        <p>Jump host picker — Pick jump hosts from your saved connections when editing a connection.</p>
+        <p>Better Split View - Resize terminal panes freely, drag and drop an entire group onto a Split View</p>
+        <p>Minor UI fixes and improvements</p>
+      </description>
+    </release>
     <release version="4.9.2" date="2026-05-29">
 
       <description>

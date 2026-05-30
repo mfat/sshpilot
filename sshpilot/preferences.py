@@ -537,7 +537,7 @@ class PreferencesWindow(Adw.Window):
         self.connect('destroy', self._on_destroy)
 
         # Use a consistent title for the window and header regardless of parent
-        self._base_header_title = "Preferences"
+        self._base_header_title = "Settings"
 
         # Set window properties with modern Adwaita structure
         self.set_title(self._base_header_title)
@@ -1206,24 +1206,83 @@ class PreferencesWindow(Adw.Window):
             self.terminal_startup_radio.set_can_focus(True)
             self.welcome_startup_radio = Gtk.CheckButton(label="Show Start Page")
             self.welcome_startup_radio.set_can_focus(True)
+            self.previous_session_startup_radio = Gtk.CheckButton(label="Restore previous session")
+            self.previous_session_startup_radio.set_can_focus(True)
+            self.saved_session_startup_radio = Gtk.CheckButton(label="Open a saved session")
+            self.saved_session_startup_radio.set_can_focus(True)
 
             # Make them behave like radio buttons
             self.welcome_startup_radio.set_group(self.terminal_startup_radio)
+            self.previous_session_startup_radio.set_group(self.terminal_startup_radio)
+            self.saved_session_startup_radio.set_group(self.terminal_startup_radio)
 
             # Set current preference (default to welcome/start page)
             startup_behavior = self.config.get_setting('app-startup-behavior', 'welcome')
             if startup_behavior == 'terminal':
                 self.terminal_startup_radio.set_active(True)
+            elif startup_behavior == 'previous-session':
+                self.previous_session_startup_radio.set_active(True)
+            elif startup_behavior == 'saved-session':
+                self.saved_session_startup_radio.set_active(True)
             else:
                 self.welcome_startup_radio.set_active(True)
+
+            # Selector for which saved session to open on startup. This is built
+            # as a plain (non-row) widget so it stacks directly below the
+            # "Open a saved session" radio rather than being hoisted into the
+            # group's internal list box above the bare check buttons.
+            self._startup_session_names = []
+            try:
+                session_manager = getattr(self.parent_window, 'session_manager', None)
+                if session_manager is not None:
+                    self._startup_session_names = list(session_manager.list_session_names())
+            except Exception:
+                self._startup_session_names = []
+
+            session_model = Gtk.StringList()
+            if self._startup_session_names:
+                for name in self._startup_session_names:
+                    session_model.append(name)
+            else:
+                session_model.append("(no saved sessions)")
+
+            self.startup_session_row = Gtk.DropDown()
+            self.startup_session_row.set_model(session_model)
+            self.startup_session_row.set_valign(Gtk.Align.CENTER)
+
+            self.startup_session_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            self.startup_session_box.set_margin_start(24)
+            self.startup_session_box.set_margin_top(2)
+            session_label = Gtk.Label(label="Saved session")
+            session_label.set_xalign(0)
+            session_label.set_hexpand(True)
+            self.startup_session_box.append(session_label)
+            self.startup_session_box.append(self.startup_session_row)
+
+            selected_session = self.config.get_setting('app-startup-session-name', '')
+            if selected_session in self._startup_session_names:
+                self.startup_session_row.set_selected(
+                    self._startup_session_names.index(selected_session)
+                )
+            self.startup_session_box.set_sensitive(
+                bool(self._startup_session_names)
+                and self.saved_session_startup_radio.get_active()
+            )
 
             # Connect radio button changes
             self.terminal_startup_radio.connect('toggled', self.on_startup_behavior_changed)
             self.welcome_startup_radio.connect('toggled', self.on_startup_behavior_changed)
+            self.previous_session_startup_radio.connect('toggled', self.on_startup_behavior_changed)
+            self.saved_session_startup_radio.connect('toggled', self.on_startup_behavior_changed)
+            self.startup_session_row.connect('notify::selected', self.on_startup_session_changed)
 
-            # Add radio buttons to group
+            # Add radio buttons to group, with the saved-session selector placed
+            # immediately below its corresponding radio option.
             startup_group.add(self.terminal_startup_radio)
             startup_group.add(self.welcome_startup_radio)
+            startup_group.add(self.previous_session_startup_radio)
+            startup_group.add(self.saved_session_startup_radio)
+            startup_group.add(self.startup_session_box)
 
             interface_page.add(startup_group)
 
@@ -3588,10 +3647,34 @@ class PreferencesWindow(Adw.Window):
     
     def on_startup_behavior_changed(self, radio_button, *args):
         """Handle startup behavior radio button change"""
-        show_terminal = self.terminal_startup_radio.get_active()
-        behavior = 'terminal' if show_terminal else 'welcome'
+        if self.terminal_startup_radio.get_active():
+            behavior = 'terminal'
+        elif getattr(self, 'previous_session_startup_radio', None) and self.previous_session_startup_radio.get_active():
+            behavior = 'previous-session'
+        elif getattr(self, 'saved_session_startup_radio', None) and self.saved_session_startup_radio.get_active():
+            behavior = 'saved-session'
+        else:
+            behavior = 'welcome'
         logger.info(f"App startup behavior changed to: {behavior}")
         self.config.set_setting('app-startup-behavior', behavior)
+
+        # The saved-session selector is only relevant when that option is chosen.
+        target = getattr(self, 'startup_session_box', None) or getattr(self, 'startup_session_row', None)
+        if target is not None:
+            target.set_sensitive(
+                behavior == 'saved-session' and bool(getattr(self, '_startup_session_names', []))
+            )
+
+    def on_startup_session_changed(self, combo_row, *args):
+        """Persist the chosen startup session name."""
+        names = getattr(self, '_startup_session_names', [])
+        if not names:
+            return
+        index = combo_row.get_selected()
+        if 0 <= index < len(names):
+            name = names[index]
+            logger.info(f"Startup session changed to: {name}")
+            self.config.set_setting('app-startup-session-name', name)
     
     def on_terminal_choice_changed(self, radio_button, *args):
         """Handle terminal choice radio button change"""

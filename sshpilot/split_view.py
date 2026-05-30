@@ -9,6 +9,122 @@ from gettext import gettext as _
 
 logger = logging.getLogger(__name__)
 
+# Installed once per process; scoped to box.add-pane-strip so it only
+# affects the strip widget and nothing else in the app.
+_drop_zone_css_installed = False
+
+def _ensure_drop_zone_css() -> None:
+    global _drop_zone_css_installed
+    if _drop_zone_css_installed:
+        return
+    provider = Gtk.CssProvider()
+    # Targets plain box.add-pane-strip so there are no Adwaita sub-node
+    # overrides to fight.  Two background-color declarations: the rgba()
+    # fallback fires on systems where @accent_bg_color is unavailable.
+    provider.load_from_data(b"""
+box.toolbar.add-pane-strip {
+    background-image: linear-gradient(
+        to bottom,
+        alpha(@window_fg_color, 0.0),
+        alpha(@window_fg_color, 0.20)
+    );
+    border-top: 2px solid alpha(@window_fg_color, 0.25);
+    padding: 8px 0;
+}
+box.add-pane-strip.drag-over {
+    background-color: rgba(42, 161, 152, 0.25);
+}
+""")
+    # USER priority (800) beats Adwaita theme (200) and application CSS (600)
+    Gtk.StyleContext.add_provider_for_display(
+        Gdk.Display.get_default(),
+        provider,
+        Gtk.STYLE_PROVIDER_PRIORITY_USER,
+    )
+    _drop_zone_css_installed = True
+
+
+_row_handle_css_installed = False
+
+def _ensure_row_handle_css() -> None:
+    global _row_handle_css_installed
+    if _row_handle_css_installed:
+        return
+    provider = Gtk.CssProvider()
+    provider.load_from_data(b"""
+drawingarea.row-resize-handle {
+    background-color: transparent;
+    min-height: 6px;
+}
+drawingarea.row-resize-handle:hover {
+    background-color: alpha(@accent_bg_color, 0.15);
+}
+box.row-drag-ghost {
+    background-color: @accent_bg_color;
+    min-height: 2px;
+}
+
+/* Pane borders: margin creates a gap; non-inset shadow fills it visibly.
+   @window_fg_color is black in light mode, white in dark mode.
+   margin > spread ensures corners are never clipped by the parent. */
+box.split-pane {
+    margin: 6px;
+    box-shadow: 0 0 0 2px alpha(@window_fg_color, 0.7);
+}
+box.split-pane.split-pane-active {
+    box-shadow: 0 0 0 2px #f5c400;
+}
+""")
+    Gtk.StyleContext.add_provider_for_display(
+        Gdk.Display.get_default(),
+        provider,
+        Gtk.STYLE_PROVIDER_PRIORITY_USER,
+    )
+    _row_handle_css_installed = True
+
+
+class RowResizeHandle(Gtk.DrawingArea):
+    """6-px drag handle between rows; dragging adjusts the row above's height."""
+
+    def __init__(self, get_row_idx, split_view_tab: "SplitViewTab") -> None:
+        super().__init__()
+        self.set_size_request(-1, 6)
+        self.set_hexpand(True)
+        self.set_cursor(Gdk.Cursor.new_from_name("ns-resize"))
+        _ensure_row_handle_css()
+        self.add_css_class("row-resize-handle")
+        self._get_row_idx = get_row_idx
+        self._tab = split_view_tab
+        self._last_dy = 0.0
+
+        drag = Gtk.GestureDrag()
+        drag.connect("drag-begin", self._on_drag_begin)
+        drag.connect("drag-update", self._on_drag_update)
+        drag.connect("drag-end", self._on_drag_end)
+        self.add_controller(drag)
+
+    def _on_drag_begin(self, _gesture, _x, _y) -> None:
+        self._last_dy = 0.0
+
+    def _on_drag_update(self, _gesture, _offset_x, offset_y) -> None:
+        # Accumulate the target height but do NOT resize the widget yet —
+        # resizing VTE on every mouse-move event causes content to flicker.
+        # The ghost line gives live position feedback instead.
+        delta = offset_y - self._last_dy
+        self._last_dy = offset_y
+        idx = self._get_row_idx()
+        tab = self._tab
+        if 0 <= idx < len(tab._row_heights):
+            tab._row_heights[idx] = max(
+                tab.DEFAULT_PANE_HEIGHT, tab._row_heights[idx] + int(delta)
+            )
+            tab._update_drag_ghost(idx)
+
+    def _on_drag_end(self, _gesture, _offset_x, _offset_y) -> None:
+        # Apply the final height in one shot on mouse release.
+        self._tab._flush_row_resize()
+
+
 class SplitPane(Gtk.Box):
     """
     A single pane in the split view grid.
@@ -28,6 +144,13 @@ class SplitPane(Gtk.Box):
         self.set_hexpand(True)
         self.set_vexpand(True)
         self.set_size_request(-1, 200)
+        _ensure_row_handle_css()
+        self.add_css_class("split-pane")
+
+        focus_ctrl = Gtk.EventControllerFocus()
+        focus_ctrl.connect("enter", lambda _c: self.add_css_class("split-pane-active"))
+        focus_ctrl.connect("leave", lambda _c: self.remove_css_class("split-pane-active"))
+        self.add_controller(focus_ctrl)
 
         # ── inner tab view (mini Adw.TabBar + Adw.TabView) ───────────────
         self._inner_tab_view = Adw.TabView()
@@ -427,7 +550,8 @@ class SplitViewTab(Gtk.Box):
 
     HORIZONTAL = 'horizontal'
     VERTICAL = 'vertical'
-    DEFAULT_PANE_HEIGHT = 200
+    DEFAULT_PANE_HEIGHT = 200   # minimum height (hard floor)
+    INITIAL_PANE_HEIGHT = 450   # starting height for new rows
 
     def __init__(self, window) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
@@ -435,31 +559,55 @@ class SplitViewTab(Gtk.Box):
         self._panes: List[SplitPane] = []
         self._layout_mode = self.HORIZONTAL
         self._tab_page = None
+        self._row_heights: List[int] = []
+        self._row_boxes: List[Gtk.Box] = []
         self.set_hexpand(True)
         self.set_vexpand(True)
 
-        # Content area holds the Paned tree.  vexpand=True is required so the
-        # ScrolledWindow stretches the tree to fill the viewport when panes are
-        # few enough to fit; the scrollbar appears only when the aggregate
-        # natural height (n_rows × DEFAULT_PANE_HEIGHT) exceeds the viewport.
         self._content_area = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         self._content_area.set_hexpand(True)
-        self._content_area.set_vexpand(True)
+        self._content_area.set_vexpand(False)
 
         self._pane_scroll = Gtk.ScrolledWindow()
         self._pane_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+
         self._pane_scroll.set_hexpand(True)
         self._pane_scroll.set_vexpand(True)
         self._pane_scroll.set_child(self._content_area)
-        self.append(self._pane_scroll)
+
+        # Ghost line shown during row-resize drag to give live position feedback.
+        _ensure_row_handle_css()
+        self._drag_ghost = Gtk.Box()
+        self._drag_ghost.add_css_class("row-drag-ghost")
+        self._drag_ghost.set_size_request(-1, 2)
+        self._drag_ghost.set_hexpand(True)
+        self._drag_ghost.set_valign(Gtk.Align.START)
+        self._drag_ghost.set_visible(False)
+
+        self._scroll_overlay = Gtk.Overlay()
+        self._scroll_overlay.set_hexpand(True)
+        self._scroll_overlay.set_vexpand(True)
+        self._scroll_overlay.set_child(self._pane_scroll)
+        self._scroll_overlay.add_overlay(self._drag_ghost)
+        self._scroll_overlay.set_clip_overlay(self._drag_ghost, True)
+        self.append(self._scroll_overlay)
 
         # "Add Terminal" strip below the panes
+        self._add_pane_btn: Optional[Gtk.Button] = None
+        self._add_pane_strip: Optional[Gtk.Box] = None
         self._add_strip = self._build_add_pane_strip()
         self.append(self._add_strip)
 
         # Start with 2 empty panes (minimum requirement)
         self.add_pane()
         self.add_pane()
+
+        # Monitor drag motion over the entire tab so the strip reacts as soon
+        # as a connection is dragged anywhere over the terminal area.
+        drag_motion = Gtk.DropControllerMotion()
+        drag_motion.connect("enter", self._on_drag_enter_tab)
+        drag_motion.connect("leave", self._on_drag_leave_tab)
+        self.add_controller(drag_motion)
 
         # CAPTURE-phase key controller intercepts shortcuts before VTE eats them
         key_ctrl = Gtk.EventControllerKey()
@@ -482,12 +630,12 @@ class SplitViewTab(Gtk.Box):
     # ── "Add Terminal" strip ─────────────────────────────────────────────────
 
     def _build_add_pane_strip(self) -> Gtk.Widget:
-        # Strip spans the full width so the whole area acts as a drop target.
-        # The pill button is centred within the strip via halign on the button.
+        _ensure_drop_zone_css()
+
         strip = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        strip.add_css_class("toolbar")
+        strip.add_css_class("add-pane-strip")
         strip.set_hexpand(True)
-        strip.set_margin_top(8)
-        strip.set_margin_bottom(8)
 
         btn = Gtk.Button(label=_("Add Terminal"))
         btn.add_css_class("suggested-action")
@@ -497,13 +645,32 @@ class SplitViewTab(Gtk.Box):
         btn.connect("clicked", lambda _b: self.add_pane())
         strip.append(btn)
 
-        # Drop target on the strip: create a new pane and add the connection
+        # Store refs so the tab-level DropControllerMotion can update them.
+        self._add_pane_btn = btn
+        self._add_pane_strip = strip
+
+        # Drop target accepts the actual drop; visual state is managed by the
+        # tab-level DropControllerMotion (_on_drag_enter/leave_tab).
         dt = Gtk.DropTarget.new(type=GObject.TYPE_PYOBJECT, actions=Gdk.DragAction.MOVE)
-        dt.connect("drop", self._on_add_strip_drop)
         dt.connect("enter", lambda _t, _x, _y: Gdk.DragAction.MOVE)
+        dt.connect("drop",  self._on_add_strip_drop)
         strip.add_controller(dt)
 
         return strip
+
+    # ── drag-over strip state ─────────────────────────────────────────────────
+
+    def _on_drag_enter_tab(self, _controller, _x, _y) -> None:
+        if self._add_pane_strip:
+            self._add_pane_strip.add_css_class("drag-over")
+        if self._add_pane_btn:
+            self._add_pane_btn.set_label(_("Drop here to add"))
+
+    def _on_drag_leave_tab(self, _controller) -> None:
+        if self._add_pane_strip:
+            self._add_pane_strip.remove_css_class("drag-over")
+        if self._add_pane_btn:
+            self._add_pane_btn.set_label(_("Add Terminal"))
 
     def _on_add_strip_drop(self, _target, value, _x, _y) -> bool:
         try:
@@ -618,23 +785,34 @@ class SplitViewTab(Gtk.Box):
     def _rebuild_layout(self) -> None:
         """Detach all panes and rebuild a fully resizable pane tree."""
         def _release_paned(widget: Gtk.Widget) -> None:
-            """Recursively null Paned children so panes can be safely re-parented."""
-            if not isinstance(widget, Gtk.Paned):
-                return
-            start = widget.get_start_child()
-            end = widget.get_end_child()
-            if start is not None:
-                _release_paned(start)
-                try:
-                    widget.set_start_child(None)
-                except Exception:
-                    pass
-            if end is not None:
-                _release_paned(end)
-                try:
-                    widget.set_end_child(None)
-                except Exception:
-                    pass
+            """Recursively null Paned children so panes can be safely re-parented.
+
+            Also traverses Gtk.Box children so that h_paneds nested inside row_boxes
+            (used by the HORIZONTAL scrollable layout) are cleaned up correctly.
+            `set_start/end_child(None)` is used instead of unparent() because
+            unparent() on a Paned's end_child can silently fail in GTK4.
+            """
+            if isinstance(widget, Gtk.Paned):
+                start = widget.get_start_child()
+                end = widget.get_end_child()
+                if start is not None:
+                    _release_paned(start)
+                    try:
+                        widget.set_start_child(None)
+                    except Exception:
+                        pass
+                if end is not None:
+                    _release_paned(end)
+                    try:
+                        widget.set_end_child(None)
+                    except Exception:
+                        pass
+            elif isinstance(widget, Gtk.Box):
+                child = widget.get_first_child()
+                while child is not None:
+                    nxt = child.get_next_sibling()
+                    _release_paned(child)
+                    child = nxt
 
         # Release all Paned children via set_start/end_child(None) before
         # removing the Paned wrappers.  Using widget.unparent() on a Paned's
@@ -659,16 +837,39 @@ class SplitViewTab(Gtk.Box):
             except Exception:
                 pass
 
+        # Both layouts use Box rows with explicit heights so panes can grow
+        # beyond the viewport and scroll freely.
+        self._content_area.set_vexpand(False)
+
         n = len(self._panes)
         if n == 0:
             return
 
         if self._layout_mode == self.VERTICAL:
-            root = self._chain_panes(self._panes, Gtk.Orientation.VERTICAL)
-            self._content_area.append(root)
+            # VERTICAL: each pane is its own row, stacked with resize handles.
+            old_heights = list(self._row_heights)
+            self._row_heights = []
+            self._row_boxes = []
+            for row_idx, pane in enumerate(self._panes):
+                h = (old_heights[row_idx] if row_idx < len(old_heights)
+                     else self.INITIAL_PANE_HEIGHT)
+                self._row_heights.append(h)
+                row_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+                row_box.set_hexpand(True)
+                row_box.set_vexpand(False)
+                row_box.set_size_request(-1, h)
+                row_box.append(pane)
+                self._row_boxes.append(row_box)
+                self._content_area.append(row_box)
+                handle = RowResizeHandle(lambda idx=row_idx: idx, self)
+                self._content_area.append(handle)
+            spacer = Gtk.Box()
+            spacer.set_size_request(-1, 600)
+            self._content_area.append(spacer)
         else:
-            # HORIZONTAL: pane pairs become rows. Rows are chained vertically
-            # with Gtk.Paned so row heights can be manually resized.
+            # HORIZONTAL: pane pairs become rows placed directly in the Box.
+            # Custom RowResizeHandle widgets between rows allow each row to be
+            # resized independently and grow beyond the viewport (enabling scroll).
             row_widgets: List[Gtk.Widget] = []
             for i in range(0, n, 2):
                 pair = self._panes[i:i + 2]
@@ -679,8 +880,29 @@ class SplitViewTab(Gtk.Box):
                     h_paned.set_start_child(pair[0])
                     h_paned.set_end_child(pair[1])
                     row_widgets.append(h_paned)
-            root = self._chain_panes(row_widgets, Gtk.Orientation.VERTICAL)
-            self._content_area.append(root)
+
+            old_heights = list(self._row_heights)
+            self._row_heights = []
+            self._row_boxes = []
+            for row_idx, row_widget in enumerate(row_widgets):
+                h = (old_heights[row_idx] if row_idx < len(old_heights)
+                     else self.INITIAL_PANE_HEIGHT)
+                self._row_heights.append(h)
+                row_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+                row_box.set_hexpand(True)
+                row_box.set_vexpand(False)
+                row_box.set_size_request(-1, h)
+                row_box.append(row_widget)
+                self._row_boxes.append(row_box)
+                self._content_area.append(row_box)
+                # Handle after every row (including the last).
+                handle = RowResizeHandle(lambda idx=row_idx: idx, self)
+                self._content_area.append(handle)
+
+            # Spacer so there is plenty of free space below the last row.
+            spacer = Gtk.Box()
+            spacer.set_size_request(-1, 600)
+            self._content_area.append(spacer)
 
         self._normalize_pane_heights()
 
@@ -708,6 +930,24 @@ class SplitViewTab(Gtk.Box):
                 pane.set_size_request(-1, self.DEFAULT_PANE_HEIGHT)
             except Exception:
                 pass
+
+    def _flush_row_resize(self) -> bool:
+        """Apply accumulated row-height changes in one GTK layout pass."""
+        self._drag_ghost.set_visible(False)
+        for i, row_box in enumerate(self._row_boxes):
+            row_box.set_size_request(-1, self._row_heights[i])
+        return False
+
+    def _update_drag_ghost(self, row_idx: int) -> None:
+        """Move the ghost line to the projected bottom edge of row_idx."""
+        if row_idx >= len(self._row_boxes):
+            return
+        row_box = self._row_boxes[row_idx]
+        alloc = row_box.get_allocation()
+        scroll_y = self._pane_scroll.get_vadjustment().get_value()
+        ghost_y = alloc.y + self._row_heights[row_idx] - scroll_y
+        self._drag_ghost.set_margin_top(max(0, int(ghost_y)))
+        self._drag_ghost.set_visible(True)
 
     # ── pre-population ────────────────────────────────────────────────────────
 
@@ -887,6 +1127,21 @@ class SplitViewTab(Gtk.Box):
     def _resize_active_pane(self, direction: str) -> None:
         pane = self._get_focused_pane()
         if pane is None:
+            return
+
+        # In HORIZONTAL layout, vertical row resizing is done via _row_boxes /
+        # _row_heights (no Paned involved), so handle it separately.
+        if direction in ('up', 'down') and self._layout_mode == self.HORIZONTAL:
+            for idx, row_box in enumerate(self._row_boxes):
+                widget: Optional[Gtk.Widget] = pane
+                while widget is not None:
+                    if widget is row_box:
+                        delta = self._RESIZE_STEP if direction == 'down' else -self._RESIZE_STEP
+                        new_h = max(self.DEFAULT_PANE_HEIGHT, self._row_heights[idx] + delta)
+                        self._row_heights[idx] = new_h
+                        row_box.set_size_request(-1, new_h)
+                        return
+                    widget = widget.get_parent()
             return
 
         need_h = direction in ('left', 'right')

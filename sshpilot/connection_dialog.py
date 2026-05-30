@@ -972,8 +972,6 @@ class ConnectionDialog(Adw.Window):
         # Show/hide key file and passphrase fields for key-based auth
         if hasattr(self, 'keyfile_row'):
             self.keyfile_row.set_visible(is_key_based)
-        if hasattr(self, 'key_passphrase_row'):
-            self.key_passphrase_row.set_visible(is_key_based)
         if hasattr(self, 'key_select_row'):
             self.key_select_row.set_visible(is_key_based)
         if hasattr(self, 'key_only_row'):
@@ -1010,11 +1008,14 @@ class ConnectionDialog(Adw.Window):
                 self.certificate_row.set_sensitive(use_specific)
             if hasattr(self, 'cert_dropdown'):
                 self.cert_dropdown.set_sensitive(use_specific)
+            is_key_based = (
+                hasattr(self, 'auth_method_row') and self.auth_method_row.get_selected() == 0
+            )
             if hasattr(self, 'key_only_row'):
-                self.key_only_row.set_visible(use_specific)
-                self.key_only_row.set_sensitive(use_specific)
+                self.key_only_row.set_visible(use_specific and is_key_based)
+                self.key_only_row.set_sensitive(use_specific and is_key_based)
             if hasattr(self, 'key_passphrase_row'):
-                self.key_passphrase_row.set_sensitive(use_specific)
+                self.key_passphrase_row.set_visible(use_specific and is_key_based)
 
             if use_specific:
                 key_path = getattr(self, '_selected_keyfile_path', None)
@@ -2260,12 +2261,25 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         self.keyfile_row.set_activatable(False)
         auth_group.add(self.keyfile_row)
 
+        # Key Passphrase – shown immediately after the key dropdown when "Use a specific key" is active
+        self.key_passphrase_row = Adw.PasswordEntryRow(title=_("Key Passphrase"))
+        self.key_passphrase_row.set_show_apply_button(False)
+        self.key_passphrase_row.set_visible(False)
+        auth_group.add(self.key_passphrase_row)
+
         self.key_only_row = Adw.SwitchRow()
         self.key_only_row.set_title(_("Only use the specified key"))
         self.key_only_row.set_subtitle(_("This will append \"IdentitiesOnly yes\" to the configuration."))
         self.key_only_row.set_active(True)
         self.key_only_row.set_visible(False)
         auth_group.add(self.key_only_row)
+
+        # Password
+        self.password_row = Adw.PasswordEntryRow(title=_("Password (optional)"))
+        self.password_row.set_show_apply_button(False)
+        # Always visible; optional for key-based auth
+        self.password_row.set_visible(True)
+        auth_group.add(self.password_row)
 
         # Certificate dropdown for key-based auth with specific key
         self.certificate_row = Adw.ActionRow(title=_("SSH Certificate"), subtitle=_("Select certificate file (optional)"))
@@ -2315,22 +2329,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             self.on_key_select_changed(self.key_select_row, None)
         except Exception:
             pass
-        
-        # Key Passphrase
-        self.key_passphrase_row = Adw.PasswordEntryRow(title=_("Key Passphrase"))
-        self.key_passphrase_row.set_show_apply_button(False)
-        auth_group.add(self.key_passphrase_row)
-        try:
-            self.on_key_select_changed(self.key_select_row, None)
-        except Exception:
-            pass
-
-        # Password
-        self.password_row = Adw.PasswordEntryRow(title=_("Password (optional)"))
-        self.password_row.set_show_apply_button(False)
-        # Always visible; optional for key-based auth
-        self.password_row.set_visible(True)
-        auth_group.add(self.password_row)
 
         # Disable pubkey authentication toggle for password auth
         self.pubkey_auth_row = Adw.SwitchRow()
@@ -2343,6 +2341,17 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
 
         # ProxyJump hosts (comma-separated for multiple hops)
         self.proxy_jump_row = Adw.EntryRow(title=_("Multiple comma-separated hosts supported: bastion1,bastion2,bastion3"))
+
+        # Inventory picker button — lets the user pick a host from the saved inventory
+        if self.connection_manager and self.connection_manager.connections:
+            pick_btn = Gtk.Button()
+            pick_btn.set_icon_name('view-list-symbolic')
+            pick_btn.set_tooltip_text(_("Pick from inventory"))
+            pick_btn.add_css_class('flat')
+            pick_btn.set_valign(Gtk.Align.CENTER)
+            pick_btn.connect('clicked', self._show_host_picker_popover)
+            self.proxy_jump_row.add_suffix(pick_btn)
+
         proxy_group.add(self.proxy_jump_row)
 
         # Agent forwarding toggle
@@ -3418,6 +3427,102 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
 
         t = threading.Thread(target=_detect, daemon=True)
         t.start()
+
+    def _show_host_picker_popover(self, button):
+        """Show a popover to pick a jump host from the saved connection inventory."""
+        if not self.connection_manager:
+            return
+
+        current_nickname = getattr(self.connection, 'nickname', '') if self.connection else ''
+        candidates = [
+            c for c in self.connection_manager.connections
+            if c.nickname != current_nickname
+        ]
+        if not candidates:
+            return
+
+        popover = Gtk.Popover()
+        popover.set_parent(button)
+        popover.set_has_arrow(True)
+
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        outer.set_margin_top(8)
+        outer.set_margin_bottom(8)
+        outer.set_margin_start(8)
+        outer.set_margin_end(8)
+        outer.set_size_request(280, -1)
+
+        search_entry = Gtk.SearchEntry()
+        search_entry.set_placeholder_text(_("Filter hosts…"))
+        outer.append(search_entry)
+
+        scrolled = Gtk.ScrolledWindow()
+        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scrolled.set_size_request(-1, min(300, len(candidates) * 56 + 8))
+
+        list_box = Gtk.ListBox()
+        list_box.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        list_box.add_css_class('boxed-list')
+
+        def _make_row(conn):
+            row = Gtk.ListBoxRow()
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            box.set_margin_top(6)
+            box.set_margin_bottom(6)
+            box.set_margin_start(8)
+            box.set_margin_end(8)
+            lbl_nick = Gtk.Label(label=conn.nickname)
+            lbl_nick.set_halign(Gtk.Align.START)
+            lbl_nick.add_css_class('heading')
+            box.append(lbl_nick)
+            host_str = getattr(conn, 'host', '') or getattr(conn, 'hostname', '')
+            user_str = getattr(conn, 'username', '')
+            subtitle = f"{user_str}@{host_str}" if user_str and host_str else host_str
+            if subtitle:
+                lbl_host = Gtk.Label(label=subtitle)
+                lbl_host.set_halign(Gtk.Align.START)
+                lbl_host.add_css_class('caption')
+                lbl_host.add_css_class('dim-label')
+                box.append(lbl_host)
+            row.set_child(box)
+            row._conn = conn
+            return row
+
+        for c in candidates:
+            list_box.append(_make_row(c))
+
+        def _filter_func(row):
+            query = search_entry.get_text().lower().strip()
+            if not query:
+                return True
+            conn = getattr(row, '_conn', None)
+            if conn is None:
+                return False
+            host_str = getattr(conn, 'host', '') or getattr(conn, 'hostname', '')
+            return query in conn.nickname.lower() or query in host_str.lower()
+
+        list_box.set_filter_func(_filter_func)
+        search_entry.connect('search-changed', lambda _e: list_box.invalidate_filter())
+
+        def _on_row_activated(_lb, row):
+            conn = getattr(row, '_conn', None)
+            if conn is None:
+                return
+            host_str = getattr(conn, 'host', '') or getattr(conn, 'hostname', '')
+            jump_target = conn.nickname
+            current = self.proxy_jump_row.get_text().strip()
+            if current:
+                self.proxy_jump_row.set_text(current.rstrip(',') + ',' + jump_target)
+            else:
+                self.proxy_jump_row.set_text(jump_target)
+            popover.popdown()
+
+        list_box.connect('row-activated', _on_row_activated)
+        scrolled.set_child(list_box)
+        outer.append(scrolled)
+        popover.set_child(outer)
+        popover.popup()
+        search_entry.grab_focus()
 
     def on_cancel_clicked(self, button):
         """Handle cancel button click"""

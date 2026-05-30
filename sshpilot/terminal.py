@@ -267,6 +267,7 @@ class TerminalWidget(Gtk.Box):
         # Create scrolled window for terminal
         self.scrolled_window = Gtk.ScrolledWindow()
         self.scrolled_window.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        self.scrolled_window.set_overlay_scrolling(True)
         
         # Create backend first before setup
         self._shortcut_controller = None
@@ -426,11 +427,14 @@ class TerminalWidget(Gtk.Box):
 
         self.overlay.add_overlay(self.connecting_bg)
         self.overlay.add_overlay(self.connecting_box)
+        # Float search revealer over the terminal so toggling it does not
+        # change the terminal's allocated height (which would cause VTE to
+        # send a resize/SIGWINCH and make the content flicker).
+        self.overlay.add_overlay(self.search_revealer)
 
         self.terminal_stack = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self.terminal_stack.set_hexpand(True)
         self.terminal_stack.set_vexpand(True)
-        self.terminal_stack.append(self.search_revealer)
         self.terminal_stack.append(self.overlay)
 
         # Set up drag and drop for SCP upload
@@ -4149,11 +4153,28 @@ class TerminalWidget(Gtk.Box):
         elif self.vte is not None:
             self.vte.reset(True, False)
 
+    def _apply_search_highlight_colors(self):
+        """Switch VTE highlight to a high-contrast color while search is active."""
+        try:
+            if self.vte is None:
+                return
+            search_bg = Gdk.RGBA()
+            search_bg.parse('#F4D03F')  # Bright amber — visible on dark and light backgrounds
+            search_fg = Gdk.RGBA()
+            search_fg.parse('#000000')
+            if hasattr(self.vte, 'set_color_highlight'):
+                self.vte.set_color_highlight(search_bg)
+            if hasattr(self.vte, 'set_color_highlight_foreground'):
+                self.vte.set_color_highlight_foreground(search_fg)
+        except Exception as exc:
+            logger.debug("Failed to apply search highlight colors: %s", exc)
+
     def _show_search_overlay(self, select_all: bool = False):
         """Reveal the terminal search overlay and focus the search entry."""
         try:
             if not hasattr(self, 'search_revealer') or not self.search_revealer:
                 return
+            self._apply_search_highlight_colors()
             self.search_revealer.set_reveal_child(True)
             if hasattr(self, 'search_entry') and self.search_entry:
                 if select_all:
@@ -4175,6 +4196,8 @@ class TerminalWidget(Gtk.Box):
             if hasattr(self, 'vte') and self.vte:
                 if self.backend:
                     self.backend.grab_focus()
+            # Restore theme selection color now that search is closed
+            self._apply_cursor_and_selection_colors()
         except Exception as exc:
             logger.debug("Failed to hide search overlay: %s", exc)
 
@@ -4205,6 +4228,7 @@ class TerminalWidget(Gtk.Box):
         self._last_search_text = ''
         self._last_search_case_sensitive = False
         self._last_search_regex = False
+        self._search_has_match = False
         self._set_search_navigation_sensitive(False)
         self._set_search_error_state(False)
         try:
@@ -4228,11 +4252,12 @@ class TerminalWidget(Gtk.Box):
 
         try:
             if pattern_changed:
+                self._search_has_match = False
                 pattern = text if regex else re.escape(text)
                 # Use inline case-insensitive flag to avoid Vte.RegexFlags dependency
                 if not case_sensitive and not pattern.startswith("(?i)"):
                     pattern = "(?i)" + pattern
-                
+
                 # Use backend abstraction for search
                 if self.backend:
                     # For VTE backend, create Vte.Regex
@@ -4244,7 +4269,7 @@ class TerminalWidget(Gtk.Box):
                     else:
                         # For PyXterm backend, pass the pattern as string
                         self.backend.search_set_regex(pattern)
-                
+
                 self._last_search_text = text
                 self._last_search_case_sensitive = case_sensitive
                 self._last_search_regex = regex
@@ -4252,7 +4277,7 @@ class TerminalWidget(Gtk.Box):
             self._set_search_navigation_sensitive(True)
 
             if move_forward:
-                return self._run_search(True, update_entry=update_entry)
+                return self._run_search(True, update_entry=update_entry, from_text_change=True)
 
             if update_entry:
                 self._set_search_error_state(False)
@@ -4264,7 +4289,8 @@ class TerminalWidget(Gtk.Box):
                 self._set_search_error_state(True)
             return False
 
-    def _run_search(self, forward: bool = True, *, update_entry: bool = False) -> bool:
+    def _run_search(self, forward: bool = True, *, update_entry: bool = False,
+                    from_text_change: bool = False) -> bool:
         """Execute search navigation in the requested direction."""
         try:
             if self.backend:
@@ -4275,8 +4301,16 @@ class TerminalWidget(Gtk.Box):
             logger.error(f"Search navigation failed: {exc}")
             found = False
 
+        if found:
+            self._search_has_match = True
+
         if update_entry:
-            self._set_search_error_state(not found)
+            # Only show the error state when the pattern has no matches at all.
+            # When navigating (Enter / Ctrl+G), VTE may return False for a single
+            # already-highlighted match even with wrap-around enabled — that is not
+            # a "no results" condition, so don't turn the entry red.
+            no_match = not found and (from_text_change or not self._search_has_match)
+            self._set_search_error_state(no_match)
 
         return bool(found)
 

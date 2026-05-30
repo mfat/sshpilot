@@ -96,7 +96,7 @@ class StubGroupRow(DummyRowBase):
 
 
 class StubConnectionRow(DummyRowBase):
-    def __init__(self, connection, group_manager=None, config=None):
+    def __init__(self, connection, group_manager=None, config=None, **kwargs):
         super().__init__()
         self.connection = connection
         self.indentation = 0
@@ -120,9 +120,13 @@ def test_search_results_include_matching_groups(monkeypatch):
     added_connections = []
     original_add_connection_row = window_module.MainWindow.add_connection_row
 
-    def tracked_add_connection_row(self, connection, indent_level: int = 0):
-        added_connections.append((connection.nickname, indent_level))
-        return original_add_connection_row(self, connection, indent_level)
+    def tracked_add_connection_row(
+        self, connection, indent_level: int = 0, display_group_id=None
+    ):
+        added_connections.append((connection.nickname, indent_level, display_group_id))
+        return original_add_connection_row(
+            self, connection, indent_level, display_group_id=display_group_id
+        )
 
     monkeypatch.setattr(window_module.MainWindow, "add_connection_row", tracked_add_connection_row)
 
@@ -180,7 +184,10 @@ def test_search_results_include_matching_groups(monkeypatch):
         ("prod-server", "prod", ["prod-server", "prod-01"], True),
         ("prod-bastion", "prod", ["prod-bastion", "bastion"], True),
     ]
-    assert added_connections == [("prod-server", 1), ("prod-bastion", 0)]
+    assert added_connections == [
+        ("prod-server", 1, "group-1"),
+        ("prod-bastion", 0, None),
+    ]
 
     grouped_rows = [row for row in connection_rows if row.connection.nickname == "prod-server"]
     assert len(grouped_rows) == 1

@@ -3,7 +3,6 @@
 /.history
 /sshpilot/__pycache__
 .history/
-release.sh
 .DS_Store
 /dist
 /build

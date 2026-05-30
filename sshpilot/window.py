@@ -73,6 +73,7 @@ from .file_manager_integration import (
 from .sftp_utils import should_use_in_app_file_manager
 from .sshcopyid_window import SshCopyIdWindow
 from .groups import GroupManager
+from .session_manager import SessionManager
 from .sidebar import GroupRow, ConnectionRow, build_sidebar
 
 from .welcome_page import WelcomePage
@@ -82,7 +83,7 @@ from .search_utils import connection_matches
 from .shortcut_utils import get_primary_modifier_label
 from .platform_utils import is_macos, get_config_dir
 from .ssh_utils import ensure_writable_ssh_home
-from .scp_utils import assemble_scp_transfer_args, download_file, upload_file
+from .scp_utils import assemble_scp_transfer_args, classify_sftp_error, download_file, upload_file
 from .ssh_password_exec import run_ssh_with_password, run_scp_with_password
 
 logger = logging.getLogger(__name__)
@@ -711,12 +712,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             app.native_connect_enabled = native_cfg
         self.key_manager = KeyManager(key_dir)
         self.group_manager = GroupManager(self.config)
+        self.session_manager = SessionManager(self.config)
         
         # UI state
         self.active_terminals: Dict[Connection, TerminalWidget] = {}  # most recent terminal per connection
         self.connection_to_terminals: Dict[Connection, List[TerminalWidget]] = {}
         self.terminal_to_connection: Dict[TerminalWidget, Connection] = {}
-        self.connection_rows = {}   # connection -> row_widget
+        self.connection_rows = {}   # connection -> [row_widget, ...] (a connection may appear in several groups)
         self._context_menu_row = None
         # Hide hosts toggle state
         try:
@@ -833,7 +835,17 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             startup_behavior = 'welcome'
 
         # On startup, focus the appropriate widget based on preference
-        if startup_behavior == 'terminal':
+        if startup_behavior in ('previous-session', 'saved-session'):
+            try:
+                GLib.idle_add(self._restore_startup_session, startup_behavior)
+            except Exception as e:
+                logger.error(f"Failed to restore session on startup: {e}")
+            # Late focus pass once tabs (if any) have been created
+            try:
+                GLib.timeout_add(700, self._focus_connection_list_first_row)
+            except Exception:
+                pass
+        elif startup_behavior == 'terminal':
             # Show terminal when explicitly requested
             try:
                 GLib.idle_add(self.terminal_manager.show_local_terminal)
@@ -869,7 +881,30 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
         # Mark startup as complete after a short delay to allow all initialization to finish
         GLib.timeout_add(500, self._on_startup_complete)
-    
+
+    def _restore_startup_session(self, startup_behavior):
+        """Restore a session on startup based on the configured behavior."""
+        try:
+            session_manager = getattr(self, 'session_manager', None)
+            if session_manager is None:
+                return False
+
+            data = None
+            if startup_behavior == 'previous-session':
+                data = session_manager.get_previous()
+            elif startup_behavior == 'saved-session':
+                name = self.config.get_setting('app-startup-session-name', '')
+                if name:
+                    data = session_manager.get_session(name)
+                if data is None:
+                    logger.info(f"Startup session '{name}' not found; showing start page")
+
+            if data:
+                self.restore_session(data, replace=True)
+        except Exception as e:
+            logger.error(f"Failed to restore startup session: {e}")
+        return False  # Don't repeat
+
     def _on_startup_complete(self):
         """Called when startup is complete - process any pending focus operations"""
         self._startup_complete = True
@@ -1122,6 +1157,24 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         """Return connection objects targeted by the current action."""
         rows = self._get_target_connection_rows(prefer_context=prefer_context)
         return self._connections_from_rows(rows)
+
+    def _rows_for_connection(self, connection) -> List[Gtk.ListBoxRow]:
+        """Return every visible row representing ``connection``.
+
+        A connection can be shown in more than one group, so several rows may
+        map to the same connection object.
+        """
+        rows = self.connection_rows.get(connection)
+        if not rows:
+            return []
+        if isinstance(rows, list):
+            return list(rows)
+        return [rows]
+
+    def _primary_row_for_connection(self, connection) -> Optional[Gtk.ListBoxRow]:
+        """Return the first row representing ``connection`` (or ``None``)."""
+        rows = self._rows_for_connection(connection)
+        return rows[0] if rows else None
 
     def _determine_neighbor_connection_row(
         self, target_rows: List[Gtk.ListBoxRow]
@@ -1730,7 +1783,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             new_connection.extra_ssh_config = new_data.get('extra_ssh_config', '')
             new_connection.certificate = new_data.get('certificate', '')
 
-            original_group_id = self.group_manager.get_connection_group(connection.nickname)
+            original_groups = self.group_manager.get_connection_groups(connection.nickname)
+            original_group_id = original_groups[0] if original_groups else None
 
             self.connection_manager.connections.append(new_connection)
             try:
@@ -1751,6 +1805,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     self.group_manager.reorder_connection_in_group(new_nickname, connection.nickname, 'below')
                 except Exception:
                     pass
+                # Mirror any additional group memberships of the original
+                for extra_group_id in original_groups[1:]:
+                    if extra_group_id in getattr(self.group_manager, 'groups', {}):
+                        self.group_manager.copy_connection_to_group(new_nickname, extra_group_id)
             else:
                 self.group_manager.move_connection(new_nickname, None)
                 try:
@@ -1766,8 +1824,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             self.rebuild_connection_list()
 
             duplicated = self.connection_manager.find_connection_by_nickname(new_nickname)
-            if duplicated and duplicated in self.connection_rows:
-                row = self.connection_rows[duplicated]
+            row = self._primary_row_for_connection(duplicated) if duplicated else None
+            if row is not None:
                 self._select_only_row(row)
                 try:
                     self.connection_list.scroll_to_row(row)
@@ -1850,9 +1908,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 except Exception:
                     pass
                 # Update all rows
-                for row in self.connection_rows.values():
-                    if hasattr(row, 'apply_hide_hosts'):
-                        row.apply_hide_hosts(self._hide_hosts)
+                for rows in self.connection_rows.values():
+                    for row in (rows if isinstance(rows, list) else [rows]):
+                        if hasattr(row, 'apply_hide_hosts'):
+                            row.apply_hide_hosts(self._hide_hosts)
                 # Update icon/tooltip
                 _update_eye_icon(btn)
             except Exception:
@@ -2085,11 +2144,27 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                             _mi('utilities-terminal-symbolic', _('Open in System Terminal'), lambda: self.on_open_in_system_terminal_action(None, None)) if not should_hide_external_terminal_options() else None,
                         )
 
-                        current_group_id = self.group_manager.get_connection_group(conn.nickname) if conn else None
+                        current_groups = self.group_manager.get_connection_groups(conn.nickname) if conn else []
+                        row_group_id = getattr(row, '_group_id', None)
+                        ungroup_label = _('Remove from Group') if (row_group_id and len(current_groups) > 1) else _('Ungroup')
                         _section(
                             _mi('folder-symbolic', _('Move to Group'), lambda: self.on_move_to_group_action(None, None)),
-                            _mi('edit-undo-symbolic', _('Ungroup'), lambda: self.on_move_to_ungrouped_action(None, None)) if current_group_id else None,
+                            _mi('list-add-symbolic', _('Copy to Group'), lambda: self.on_copy_to_group_action(None, None)),
+                            _mi('edit-undo-symbolic', ungroup_label, lambda: self.on_move_to_ungrouped_action(None, None)) if current_groups else None,
                         )
+
+                        try:
+                            is_pinned = self.config.is_pinned(conn.nickname) if conn else False
+                            if is_pinned:
+                                _section(
+                                    _mi('starred-symbolic', _('Unpin from Start Page'), lambda: self._toggle_pin_connection(conn)),
+                                )
+                            else:
+                                _section(
+                                    _mi('non-starred-symbolic', _('Pin to Start Page'), lambda: self._toggle_pin_connection(conn)),
+                                )
+                        except Exception:
+                            pass
 
                         _section(
                             _mi('user-trash-symbolic', _('Delete'), lambda: self.on_delete_connection_action(None, None)),
@@ -2290,6 +2365,25 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             host = getattr(conn, 'hostname', '') or getattr(conn, 'host', '')
             if host:
                 self.get_clipboard().set(host)
+
+    def _toggle_pin_connection(self, conn):
+        """Pin or unpin a connection from the start page."""
+        if conn is None:
+            return
+        try:
+            nickname = conn.nickname
+            if self.config.is_pinned(nickname):
+                self.config.unpin_connection(nickname)
+                msg = _("Unpinned from start page")
+            else:
+                self.config.pin_connection(nickname)
+                msg = _("Pinned to start page")
+            if hasattr(self, 'toast_overlay') and self.toast_overlay:
+                self.toast_overlay.add_toast(Adw.Toast.new(msg))
+            if hasattr(self, 'welcome_view') and self.welcome_view:
+                self.welcome_view.refresh_pinned()
+        except Exception as e:
+            logger.error(f"Failed to toggle pin for {getattr(conn, 'nickname', '?')}: {e}")
 
     def _resolve_connection_list_event(
         self,
@@ -2502,9 +2596,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
     def _build_preferences_button(self):
         from sshpilot import icon_utils
-        button = icon_utils.new_button_from_icon_name("preferences-system-symbolic")
+        button = icon_utils.new_button_from_icon_name("settings-symbolic")
         button.set_can_focus(False)
-        button.set_tooltip_text(_("Preferences"))
+        button.set_tooltip_text(_("Settings"))
         button.connect("clicked", lambda *_: self.show_preferences())
         return button
 
@@ -2908,13 +3002,20 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         menu.append('Known Hosts Editor', 'win.edit-known-hosts')
         menu.append('Broadcast Command', 'app.broadcast-command')
         
+        # Sessions submenu
+        sessions_menu = Gio.Menu()
+        sessions_menu.append('Save Session…', 'win.save-session')
+        sessions_menu.append('Open Session…', 'win.open-session')
+        sessions_menu.append('Manage Sessions…', 'win.manage-sessions')
+        menu.append_submenu('Sessions', sessions_menu)
+
         # Import/Export submenu
         import_export_menu = Gio.Menu()
         import_export_menu.append('Export Configuration', 'win.export-config')
         import_export_menu.append('Import Configuration', 'win.import-config')
         menu.append_submenu('Import/Export', import_export_menu)
         
-        menu.append('Preferences', 'app.preferences')
+        menu.append('Settings', 'app.preferences')
 
         # Help submenu with platform-aware keyboard shortcuts overlay
         help_menu = Gio.Menu()
@@ -2990,7 +3091,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 for conn_nickname in group_info.get('connections', []):
                     if conn_nickname in connections_dict:
                         conn = connections_dict[conn_nickname]
-                        self.add_connection_row(conn, indent_level=1)
+                        self.add_connection_row(
+                            conn,
+                            indent_level=1,
+                            display_group_id=group_info.get('id'),
+                        )
                         displayed_connections.add(conn_nickname)
 
             matches = [
@@ -3016,10 +3121,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Build the list with groups
         self._build_grouped_list(hierarchy, connections_dict, 0)
 
-        # Add ungrouped connections at the end
+        # Add ungrouped connections at the end. A connection is only ungrouped
+        # when it does not belong to any group (it may belong to several).
         ungrouped_nicks = [
             conn.nickname for conn in connections
-            if not self.group_manager.get_connection_group(conn.nickname)
+            if not self.group_manager.get_connection_groups(conn.nickname)
         ]
 
         if ungrouped_nicks:
@@ -3074,7 +3180,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 for conn_nickname in group_info.get('connections', []):
                     if conn_nickname in connections_dict:
                         conn = connections_dict[conn_nickname]
-                        self.add_connection_row(conn, level + 1)
+                        self.add_connection_row(
+                            conn,
+                            level + 1,
+                            display_group_id=group_info.get('id'),
+                        )
             
             # Recursively add child groups
             if group_info.get('children'):
@@ -3090,19 +3200,33 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 self._select_only_row(row)
                 break
     
-    def add_connection_row(self, connection: Connection, indent_level: int = 0):
+    def add_connection_row(
+        self,
+        connection: Connection,
+        indent_level: int = 0,
+        display_group_id: Optional[str] = None,
+    ):
         """Add a connection row to the list with optional indentation"""
-        row = ConnectionRow(connection, self.group_manager, self.config, file_manager_callback=self._open_manage_files_for_connection)
+        row = ConnectionRow(
+            connection,
+            self.group_manager,
+            self.config,
+            file_manager_callback=self._open_manage_files_for_connection,
+            display_group_id=display_group_id,
+        )
         
         # Apply indentation preference for grouped connections
         row.set_indentation(indent_level)
         
         self.connection_list.append(row)
-        self.connection_rows[connection] = row
+        # A connection can appear under multiple groups, so keep a list of rows
+        self.connection_rows.setdefault(connection, []).append(row)
         
         # Apply current hide-hosts setting to new row
         if hasattr(row, 'apply_hide_hosts'):
             row.apply_hide_hosts(getattr(self, '_hide_hosts', False))
+
+        return row
 
     def on_search_changed(self, entry):
         """Handle search text changes and update connection list."""
@@ -3181,6 +3305,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 pass
         self.content_stack.set_visible_child_name("welcome")
         GLib.idle_add(self._focus_connection_list_first_row)
+
+        # Hide layout toggle buttons — they only apply when a terminal is active
+        if hasattr(self, '_layout_h_btn'):
+            self._layout_h_btn.set_visible(False)
+        if hasattr(self, '_layout_v_btn'):
+            self._layout_v_btn.set_visible(False)
 
         # Update view toggle button
         if hasattr(self, 'view_toggle_button'):
@@ -3331,6 +3461,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             icon_utils.set_button_icon(self.view_toggle_button, 'go-home-symbolic')
             self.view_toggle_button.set_tooltip_text('Show Start Page')
             self.view_toggle_button.set_visible(True)  # Show button when tabs are active
+
+        # Restore layout toggle button visibility based on the active tab type
+        self._update_layout_toggle_state()
 
         logger.info("Showing tab view")
 
@@ -4334,7 +4467,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Add general shortcuts with current values
         general_actions = [
             ('quit', _('Quit')),
-            ('preferences', _('Preferences')),
+            ('preferences', _('Settings')),
             ('help', _('Documentation')),
             ('shortcuts', _('Keyboard Shortcuts')),
             ('edit-ssh-config', _('SSH Config Editor')),
@@ -4474,7 +4607,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         group_general.add_shortcut(Gtk.ShortcutsShortcut(
             title=_('SSH Config Editor'), accelerator=f"{primary}<Shift>e"))
         group_general.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Preferences'), accelerator=f"{primary}comma"))
+            title=_('Settings'), accelerator=f"{primary}comma"))
         group_general.add_shortcut(Gtk.ShortcutsShortcut(
             title=_('Documentation'), accelerator='F1'))
         group_general.add_shortcut(Gtk.ShortcutsShortcut(
@@ -4911,8 +5044,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 else:
                     # Regular connection terminal - select the corresponding row
                     self.active_terminals[connection] = child
-                    row = self.connection_rows.get(connection)
-                    if row:
+                    conn_rows = self._rows_for_connection(connection)
+                    if conn_rows:
                         selected_rows = []
                         try:
                             selected_rows = list(self.connection_list.get_selected_rows())
@@ -4920,8 +5053,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                             current = self.connection_list.get_selected_row()
                             if current:
                                 selected_rows = [current]
-                        if row not in selected_rows:
-                            self._select_only_row(row)
+                        # Leave the selection alone if any row for this
+                        # connection is already selected; otherwise select the first.
+                        if not any(r in selected_rows for r in conn_rows):
+                            self._select_only_row(conn_rows[0])
             else:
                 # Other non-connection terminal - clear selection
                 try:
@@ -5672,7 +5807,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
             list_box.connect('row-selected', _on_rows_changed)
 
-            def _finish_download(success: bool, destination: Path, remote_name: str):
+            def _finish_download(success: bool, destination: Path, remote_name: str, friendly_error: Optional[str] = None):
                 list_box.set_sensitive(True)
                 refresh_button.set_sensitive(True)
                 selected_row = list_box.get_selected_row()
@@ -5694,6 +5829,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         )
                         toast.set_timeout(3)
                         self.toast_overlay.add_toast(toast)
+                elif friendly_error:
+                    status_label.set_text(friendly_error)
                 else:
                     status_label.set_text(_('Download failed. Check the log for details.'))
                 return False
@@ -5750,6 +5887,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         logger.debug("SCP Download: Using password - removed askpass from environment")
                     
                     # SSH_ASKPASS will handle passphrase retrieval from storage or GUI dialog if needed
+                    download_details: Dict[str, Any] = {}
                     success = download_file(
                         host_value,
                         username,
@@ -5767,8 +5905,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         key_mode=profile.key_mode,
                         connection_manager=self.connection_manager if hasattr(self, 'connection_manager') else None,
                         config=self.config if hasattr(self, 'config') else None,
+                        result_details=download_details,
                     )
-                    GLib.idle_add(_finish_download, success, destination_dir, remote_name)
+                    friendly_error = download_details.get('friendly') if not success else None
+                    GLib.idle_add(_finish_download, success, destination_dir, remote_name, friendly_error)
 
                 threading.Thread(target=_worker, daemon=True).start()
 
@@ -5949,6 +6089,85 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception as e:
             logger.error(f"System terminal button click failed: {e}")
 
+    @staticmethod
+    def _find_ssh_copy_id_helper(binary_name: str) -> Optional[str]:
+        """Return the preferred path for a helper used by ssh-copy-id."""
+        flatpak_path = f"/app/bin/{binary_name}"
+        if os.path.exists(flatpak_path) and os.access(flatpak_path, os.X_OK):
+            return flatpak_path
+        return shutil.which(binary_name)
+
+    def _preflight_ssh_copy_id(self, connection, ssh_key) -> Optional[Tuple[str, str]]:
+        """Validate local prerequisites before opening the ssh-copy-id terminal."""
+        if self._find_ssh_copy_id_helper('ssh-copy-id') is None:
+            return (
+                _('ssh-copy-id is not installed'),
+                _('Install ssh-copy-id, then try copying the public key again.'),
+            )
+
+        host_value = _get_connection_host(connection) or _get_connection_alias(connection)
+        if not host_value:
+            return (
+                _('Connection host is missing'),
+                _('Set a host name or SSH config alias for this connection before copying a key.'),
+            )
+
+        try:
+            port = getattr(connection, 'port', 22)
+            if port not in (None, ''):
+                port_num = int(port)
+                if port_num <= 0 or port_num > 65535:
+                    raise ValueError
+        except (TypeError, ValueError):
+            return (
+                _('Invalid SSH port'),
+                _('Set the connection port to a number between 1 and 65535.'),
+            )
+
+        public_path = getattr(ssh_key, 'public_path', '') or ''
+        if not public_path:
+            return (
+                _('Public key is missing'),
+                _('Select or generate a key with a public key file before copying it to the server.'),
+            )
+
+        expanded_public_path = os.path.expanduser(public_path)
+        if not os.path.isfile(expanded_public_path):
+            return (
+                _('Public key file not found'),
+                _('The selected public key file does not exist: {}').format(expanded_public_path),
+            )
+        if not os.access(expanded_public_path, os.R_OK):
+            return (
+                _('Public key file is not readable'),
+                _('sshPilot cannot read the selected public key file: {}').format(expanded_public_path),
+            )
+
+        try:
+            env = os.environ.copy()
+            ensure_writable_ssh_home(env)
+        except Exception as exc:
+            logger.error('ssh-copy-id preflight failed while preparing SSH home: %s', exc)
+            return (
+                _('Could not prepare SSH environment'),
+                _('sshPilot could not prepare a writable SSH home for ssh-copy-id: {}').format(exc),
+            )
+
+        try:
+            auth_method = int(getattr(connection, 'auth_method', 0) or 0)
+            username = getattr(connection, 'username', '')
+            manager = getattr(self, 'connection_manager', None)
+            has_saved_password = bool(manager.get_password(host_value, username)) if manager else False
+            if (auth_method == 1 or (auth_method == 0 and has_saved_password)) and has_saved_password:
+                if self._find_ssh_copy_id_helper('sshpass') is None:
+                    logger.warning(
+                        'ssh-copy-id preflight: sshpass unavailable; falling back to terminal password prompt',
+                    )
+        except Exception as exc:
+            logger.debug('ssh-copy-id preflight skipped optional auth-helper check: %s', exc)
+
+        return None
+
     def _show_ssh_copy_id_terminal_using_main_widget(self, connection, ssh_key, force=False):
         """Show a window with header bar and embedded terminal running ssh-copy-id.
 
@@ -5965,6 +6184,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     f"public_path: {getattr(ssh_key, 'public_path', 'unknown')}")
 
         try:
+            preflight_error = self._preflight_ssh_copy_id(connection, ssh_key)
+            if preflight_error:
+                heading, body = preflight_error
+                self._error_dialog(_("SSH Key Copy Error"), heading, body)
+                return
+
             target = f"{connection.username}@{host_value}" if getattr(connection, 'username', '') else host_value
             pub_name = os.path.basename(getattr(ssh_key, 'public_path', '') or '')
             body_text = _('This will add your public key to the server\'s ~/.ssh/authorized_keys so future logins can use SSH keys.')
@@ -6745,10 +6970,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 if '/app/bin' not in current_path:
                     env['PATH'] = f"/app/bin:{current_path}"
 
-            cmdline = ' '.join([GLib.shell_quote(a) for a in argv])
             envv = [f"{k}={v}" for k, v in env.items()]
             logger.debug(f"SCP: Final environment variables: SSH_ASKPASS={env.get('SSH_ASKPASS', 'NOT_SET')}, SSH_ASKPASS_REQUIRE={env.get('SSH_ASKPASS_REQUIRE', 'NOT_SET')}")
-            logger.debug(f"SCP: Command line: {cmdline}")
             env_dict = dict(env)
 
             def _feed_colored_line(text: str, color: str):
@@ -6767,9 +6990,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 except Exception:
                     pass
 
-            _feed_colored_line(start_message, 'yellow')
-
-            try:
+            def _spawn_scp(spawn_argv):
+                cmdline = ' '.join([GLib.shell_quote(a) for a in spawn_argv])
+                logger.debug(f"SCP: Command line: {cmdline}")
                 if hasattr(term_widget, 'backend') and term_widget.backend:
                     term_widget.backend.spawn_async(
                         argv=['bash', '-lc', cmdline],
@@ -6794,57 +7017,108 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         None
                     )
 
-                def _on_scp_exited(widget, status):
-                    exit_code = None
-                    try:
-                        if os.WIFEXITED(status):
-                            exit_code = os.WEXITSTATUS(status)
-                        else:
-                            exit_code = status if 0 <= int(status) < 256 else ((int(status) >> 8) & 0xFF)
-                    except Exception:
-                        try:
-                            exit_code = int(status)
-                        except Exception:
-                            exit_code = status
-                    ok = (exit_code == 0)
-                    if ok:
-                        _feed_colored_line(success_message, 'green')
-                    else:
-                        _feed_colored_line(failure_message, 'red')
-
-                    def _present_result_dialog():
-                        try:
-                            if hasattr(self, '_scp_askpass_helpers'):
-                                for helper_path in getattr(self, '_scp_askpass_helpers', []):
-                                    try:
-                                        os.unlink(helper_path)
-                                    except Exception:
-                                        pass
-                                self._scp_askpass_helpers.clear()
-                        except Exception:
-                            pass
-
-                        msg = Adw.MessageDialog(
-                            transient_for=dlg,
-                            modal=True,
-                            heading=result_heading_ok if ok else result_heading_fail,
-                            body=(result_body_ok if ok else _('scp exited with an error. Please review the log output.')),
-                        )
-                        msg.add_response('ok', _('OK'))
-                        msg.set_default_response('ok')
-                        msg.set_close_response('ok')
-                        msg.present()
-                        return False
-
-                    GLib.idle_add(_present_result_dialog)
-
+            def _scrape_terminal_text():
                 try:
-                    if hasattr(term_widget, 'backend') and term_widget.backend:
-                        term_widget.backend.connect_child_exited(_on_scp_exited)
-                    elif hasattr(term_widget, 'vte') and term_widget.vte:
-                        term_widget.vte.connect('child-exited', _on_scp_exited)
+                    backend = getattr(term_widget, 'backend', None)
+                    if backend and hasattr(backend, 'get_content'):
+                        content = backend.get_content()
+                        if content:
+                            return content
+                    if hasattr(term_widget, 'vte') and term_widget.vte:
+                        content_result = term_widget.vte.get_text_range(
+                            0, 0, -1, -1, lambda *args: True
+                        )
+                        return content_result[0] if content_result else None
+                except Exception as exc:
+                    logger.debug(f"SCP: Failed to scrape terminal output: {exc}")
+                return None
+
+            # Tracks whether we have already retried using the legacy SCP
+            # protocol (-O), so the fallback happens at most once.
+            scp_legacy_attempted = {'done': False}
+
+            def _present_result_dialog(failure_body=None):
+                try:
+                    if hasattr(self, '_scp_askpass_helpers'):
+                        for helper_path in getattr(self, '_scp_askpass_helpers', []):
+                            try:
+                                os.unlink(helper_path)
+                            except Exception:
+                                pass
+                        self._scp_askpass_helpers.clear()
                 except Exception:
                     pass
+
+                msg = Adw.MessageDialog(
+                    transient_for=dlg,
+                    modal=True,
+                    heading=result_heading_ok if failure_body is None else result_heading_fail,
+                    body=(result_body_ok if failure_body is None else failure_body),
+                )
+                msg.add_response('ok', _('OK'))
+                msg.set_default_response('ok')
+                msg.set_close_response('ok')
+                msg.present()
+                return False
+
+            def _on_scp_exited(widget, status):
+                exit_code = None
+                try:
+                    if os.WIFEXITED(status):
+                        exit_code = os.WEXITSTATUS(status)
+                    else:
+                        exit_code = status if 0 <= int(status) < 256 else ((int(status) >> 8) & 0xFF)
+                except Exception:
+                    try:
+                        exit_code = int(status)
+                    except Exception:
+                        exit_code = status
+                ok = (exit_code == 0)
+                if ok:
+                    _feed_colored_line(success_message, 'green')
+                    GLib.idle_add(_present_result_dialog)
+                    return
+
+                # Failure: detect a missing/unavailable remote SFTP server.
+                # OpenSSH 9+ scp uses the SFTP protocol by default, so retry
+                # once with the legacy protocol (-O), which does not need it.
+                friendly = classify_sftp_error(_scrape_terminal_text())
+                if friendly and not scp_legacy_attempted['done']:
+                    scp_legacy_attempted['done'] = True
+                    _feed_colored_line(_('Retrying with legacy SCP protocol (-O)…'), 'yellow')
+                    try:
+                        legacy_argv = self._build_scp_argv(
+                            connection,
+                            sources,
+                            destination,
+                            direction=direction,
+                            known_hosts_path=self.connection_manager.known_hosts_path,
+                            legacy=True,
+                        )
+                        # Discard askpass env repopulated by the rebuild; the
+                        # original env (env_dict) is reused for the retry.
+                        self._scp_askpass_env = {}
+                        _spawn_scp(legacy_argv)
+                        return
+                    except Exception as exc:
+                        logger.error(f'SCP: Failed to retry with legacy protocol: {exc}')
+
+                _feed_colored_line(failure_message, 'red')
+                failure_body = friendly or _('scp exited with an error. Please review the log output.')
+                GLib.idle_add(lambda: _present_result_dialog(failure_body))
+
+            _feed_colored_line(start_message, 'yellow')
+
+            try:
+                if hasattr(term_widget, 'backend') and term_widget.backend:
+                    term_widget.backend.connect_child_exited(_on_scp_exited)
+                elif hasattr(term_widget, 'vte') and term_widget.vte:
+                    term_widget.vte.connect('child-exited', _on_scp_exited)
+            except Exception:
+                pass
+
+            try:
+                _spawn_scp(argv)
             except Exception as e:
                 logger.error(f'Failed to spawn scp in TerminalWidget: {e}')
                 dlg.close()
@@ -6861,6 +7135,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         *,
         direction: str,
         known_hosts_path: Optional[str] = None,
+        legacy: bool = False,
     ):
         profile = self._build_scp_connection_profile(connection)
 
@@ -6933,6 +7208,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             ssh_extra_opts += ['-o', f'UserKnownHostsFile={known_hosts_path}']
 
         argv = ['scp', '-v']
+        # Legacy SCP/rcp protocol (-O) does not require a remote sftp-server.
+        if legacy:
+            argv.append('-O')
         try:
             if direction == 'upload' and any(os.path.isdir(path) for path in transfer_sources):
                 argv.append('-r')
@@ -7139,6 +7417,180 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             if hasattr(terminal, 'connection'):
                 page.set_title(terminal.connection.nickname)
 
+    def capture_session(self) -> dict:
+        """Capture the current set of open tabs as a serializable session dict.
+
+        Captures SSH terminal tabs (by connection nickname), local terminal
+        tabs, and split-view tabs (layout + per-pane connection nicknames), in
+        left-to-right tab order. File manager and other tabs are skipped.
+        """
+        from .split_view import SplitViewTab
+
+        tabs = []
+        try:
+            n_pages = self.tab_view.get_n_pages()
+        except Exception:
+            n_pages = 0
+
+        for i in range(n_pages):
+            try:
+                page = self.tab_view.get_nth_page(i)
+            except Exception:
+                page = None
+            if page is None:
+                continue
+            child = page.get_child()
+            if child is None:
+                continue
+
+            if isinstance(child, SplitViewTab):
+                panes = []
+                for pane in getattr(child, '_panes', []):
+                    pane_conns = []
+                    try:
+                        terminals = pane.get_terminals()
+                    except Exception:
+                        terminals = []
+                    for term in terminals:
+                        conn = self.terminal_to_connection.get(term)
+                        nickname = getattr(conn, 'nickname', None)
+                        if nickname:
+                            pane_conns.append({'nickname': nickname})
+                    # Preserve empty panes only if some pane has terminals
+                    panes.append(pane_conns)
+                # Drop trailing empty panes so a freshly-restored split (which
+                # always starts with two empty panes) round-trips cleanly.
+                while panes and not panes[-1]:
+                    panes.pop()
+                if not any(panes):
+                    continue
+                tabs.append({
+                    'type': 'split',
+                    'layout': child.get_layout_mode(),
+                    'custom_title': getattr(page, 'custom_tab_title', None),
+                    'panes': panes,
+                })
+                continue
+
+            if isinstance(child, TerminalWidget):
+                is_local = False
+                try:
+                    is_local = bool(child._is_local_terminal())
+                except Exception:
+                    is_local = False
+                if is_local:
+                    tabs.append({'type': 'local'})
+                    continue
+                conn = self.terminal_to_connection.get(child)
+                nickname = getattr(conn, 'nickname', None)
+                if not nickname:
+                    continue
+                tabs.append({
+                    'type': 'ssh',
+                    'nickname': nickname,
+                    'custom_title': getattr(page, 'custom_tab_title', None),
+                })
+                continue
+
+            # File manager tabs / placeholders are intentionally skipped.
+
+        return {'tabs': tabs}
+
+    def _close_all_tabs(self):
+        """Programmatically close every open tab without confirmation dialogs."""
+        self._suppress_close_confirmation = True
+        try:
+            for page in list(self.tab_view.get_pages()):
+                try:
+                    self.tab_view.close_page(page)
+                except Exception:
+                    pass
+        finally:
+            self._suppress_close_confirmation = False
+
+    def _restore_split_tab(self, entry):
+        """Recreate a split-view tab from a captured entry."""
+        from .split_view import SplitViewTab
+        from sshpilot import icon_utils
+
+        panes = entry.get('panes') or []
+        svt = SplitViewTab(self)
+        page = self.tab_view.append(svt)
+        page.set_title(_("Split View"))
+        try:
+            page.set_icon(icon_utils.new_gicon_from_icon_name('view-dual-symbolic'))
+        except Exception:
+            pass
+        svt._tab_page = page
+        layout = entry.get('layout')
+        if layout in (SplitViewTab.HORIZONTAL, SplitViewTab.VERTICAL):
+            svt.set_layout_mode(layout)
+
+        for pane_index, pane_conns in enumerate(panes):
+            if pane_index < len(svt._panes):
+                pane = svt._panes[pane_index]
+            else:
+                pane = svt.add_pane()
+            for conn_entry in pane_conns or []:
+                nickname = conn_entry.get('nickname') if isinstance(conn_entry, dict) else None
+                if not nickname:
+                    continue
+                connection = self.connection_manager.find_connection_by_nickname(nickname)
+                if connection is None:
+                    logger.warning(f"Session restore: split connection '{nickname}' not found; skipping")
+                    continue
+                try:
+                    pane.add_connection(connection)
+                except Exception as exc:
+                    logger.error(f"Failed to restore split connection '{nickname}': {exc}")
+
+        custom_title = entry.get('custom_title')
+        if custom_title:
+            self._apply_tab_title(page, custom_title)
+        self.show_tab_view()
+        self.tab_view.set_selected_page(page)
+
+    def restore_session(self, data, replace: bool = True):
+        """Recreate tabs from a captured session dict.
+
+        When ``replace`` is True, all currently-open tabs are closed first.
+        """
+        if not isinstance(data, dict):
+            logger.warning("Session restore called with invalid data")
+            return
+        tabs = data.get('tabs')
+        if not isinstance(tabs, list):
+            tabs = []
+
+        if replace:
+            self._close_all_tabs()
+
+        for entry in tabs:
+            if not isinstance(entry, dict):
+                continue
+            tab_type = entry.get('type')
+            try:
+                if tab_type == 'local':
+                    self.terminal_manager.show_local_terminal()
+                elif tab_type == 'split':
+                    self._restore_split_tab(entry)
+                elif tab_type == 'ssh':
+                    nickname = entry.get('nickname')
+                    if not nickname:
+                        continue
+                    connection = self.connection_manager.find_connection_by_nickname(nickname)
+                    if connection is None:
+                        logger.warning(f"Session restore: connection '{nickname}' not found; skipping")
+                        continue
+                    self.terminal_manager.connect_to_host(connection, force_new=True)
+                    custom_title = entry.get('custom_title')
+                    if custom_title:
+                        page = self.tab_view.get_selected_page()
+                        if page is not None and isinstance(page.get_child(), TerminalWidget):
+                            self._apply_tab_title(page, custom_title)
+            except Exception as exc:
+                logger.error(f"Failed to restore tab {entry!r}: {exc}")
+
     def on_tab_close(self, tab_view, page):
         """Handle tab close - THE KEY FIX: Never call close_page ourselves"""
         # If we are closing pages programmatically (e.g., after deleting a
@@ -7302,7 +7754,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             try:
                 if hasattr(value, 'get_value'):
                     value = value.get_value()
-                if not isinstance(value, dict) or value.get("type") != "connection":
+                if not isinstance(value, dict):
+                    return False
+
+                drag_type = value.get("type")
+                if drag_type not in ("connection", "group"):
                     return False
 
                 # Only convert if the terminal is still in the main tab_view
@@ -7313,17 +7769,33 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 if source_page is None:
                     return False
 
-                nicknames = value.get("connection_nicknames") or []
-                if not nicknames and value.get("connection_nickname"):
-                    nicknames = [value["connection_nickname"]]
-                if not nicknames:
-                    return False
+                tab_title = _("Split View")
 
-                connections = []
-                for nick in nicknames:
-                    conn = self.connection_manager.find_connection_by_nickname(nick)
-                    if conn is not None:
-                        connections.append(conn)
+                if drag_type == "connection":
+                    nicknames = value.get("connection_nicknames") or []
+                    if not nicknames and value.get("connection_nickname"):
+                        nicknames = [value["connection_nickname"]]
+                    if not nicknames:
+                        return False
+                    connections = []
+                    for nick in nicknames:
+                        conn = self.connection_manager.find_connection_by_nickname(nick)
+                        if conn is not None:
+                            connections.append(conn)
+                else:  # group
+                    group_id = value.get("group_id")
+                    group_info = self.group_manager.groups.get(group_id) if group_id else None
+                    if not group_info:
+                        return False
+                    group_name = group_info.get("name", "")
+                    if group_name:
+                        tab_title = _("Split View — {name}").format(name=group_name)
+                    connections = []
+                    for nick in group_info.get("connections", []):
+                        conn = self.connection_manager.find_connection_by_nickname(nick)
+                        if conn is not None:
+                            connections.append(conn)
+
                 if not connections:
                     return False
 
@@ -7353,7 +7825,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
                 # Append the split-view tab to the main tab_view
                 new_page = self.tab_view.append(svt)
-                new_page.set_title(_("Split View"))
+                new_page.set_title(tab_title)
                 try:
                     new_page.set_icon(
                         icon_utils.new_gicon_from_icon_name('view-dual-symbolic')
@@ -7566,16 +8038,21 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             if vadj:
                 scroll_position = vadj.get_value()
 
-        # Remove from UI if it exists
+        # Remove from UI if it exists (a connection may have several rows)
         if connection in self.connection_rows:
-            row = self.connection_rows[connection]
-            self.connection_list.remove(row)
+            for row in self._rows_for_connection(connection):
+                self.connection_list.remove(row)
             del self.connection_rows[connection]
         
-        # Remove from group manager
+        # Remove from group manager, including any group it was copied into
         self.group_manager.connections.pop(connection.nickname, None)
         if connection.nickname in self.group_manager.root_connections:
             self.group_manager.root_connections.remove(connection.nickname)
+        for group in self.group_manager.groups.values():
+            if connection.nickname in group.get('connections', []):
+                group['connections'] = [
+                    n for n in group['connections'] if n != connection.nickname
+                ]
         self.group_manager._save_groups()
 
         # Close all terminals for this connection and clean up maps
@@ -7622,14 +8099,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     def on_connection_status_changed(self, manager, connection, is_connected):
         """Handle connection status change"""
         logger.debug(f"Connection status changed: {connection.nickname} - {'Connected' if is_connected else 'Disconnected'}")
-        if connection in self.connection_rows:
-            row = self.connection_rows[connection]
+        rows = self._rows_for_connection(connection)
+        if rows:
             # Force update the connection's is_connected state
             connection.is_connected = is_connected
-            # Update the row's status
-            row.update_status()
-            # Force a redraw of the row
-            row.queue_draw()
+            for row in rows:
+                # Update each row's status and force a redraw
+                row.update_status()
+                row.queue_draw()
 
         # If this was a controlled reconnect and we are now connected, reset the flag
         if is_connected and getattr(self, '_is_controlled_reconnect', False):
@@ -7666,9 +8143,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             if normalized not in {'fullwidth', 'nested'}:
                 normalized = 'nested'
 
-            for row in self.connection_rows.values():
-                if hasattr(row, 'refresh_group_display_mode'):
-                    row.refresh_group_display_mode(normalized)
+            for rows in self.connection_rows.values():
+                for row in (rows if isinstance(rows, list) else [rows]):
+                    if hasattr(row, 'refresh_group_display_mode'):
+                        row.refresh_group_display_mode(normalized)
 
     def on_window_size_changed(self, window, param):
         """Handle window size change"""
@@ -7716,6 +8194,15 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         """Handle window close request - MAIN ENTRY POINT"""
         if self._is_quitting:
             return False  # Already quitting, allow close
+
+        # Capture the currently-open tabs so they can be restored next launch
+        # when the user has chosen the "previous session" startup behavior.
+        try:
+            session_manager = getattr(self, 'session_manager', None)
+            if session_manager is not None:
+                session_manager.save_previous(self.capture_session())
+        except Exception as e:
+            logger.debug(f"Failed to capture previous session on close: {e}")
             
         # Check for active connections across all tabs
         actually_connected = {}
@@ -8652,15 +9139,35 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     
     
     def on_move_to_ungrouped_action(self, action, param=None):
-        """Handle move to ungrouped action"""
+        """Handle move to ungrouped / remove from group action.
+
+        When the action is triggered from a connection shown under a specific
+        group and that connection belongs to several groups, only the
+        membership for that group is removed. Otherwise the connection is fully
+        ungrouped (removed from every group).
+        """
         try:
             connections = self._get_target_connections(prefer_context=True)
             if not connections:
                 return
 
+            context_row = getattr(self, '_context_menu_row', None)
+            context_group_id = getattr(context_row, '_group_id', None)
+
             for connection in connections:
                 nickname = getattr(connection, 'nickname', None)
-                if nickname:
+                if not nickname:
+                    continue
+                member_groups = self.group_manager.get_connection_groups(nickname)
+                if (
+                    context_group_id
+                    and len(connections) == 1
+                    and context_group_id in member_groups
+                    and len(member_groups) > 1
+                ):
+                    # Only detach from the group the row is displayed under
+                    self.group_manager.remove_connection_from_group(nickname, context_group_id)
+                else:
                     self.group_manager.move_connection(nickname, None)
             self.rebuild_connection_list()
 
@@ -8669,6 +9176,20 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     
     def on_move_to_group_action(self, action, param=None):
         """Handle move to group action"""
+        self._open_group_assignment_dialog('move')
+
+    def on_copy_to_group_action(self, action, param=None):
+        """Handle copy to group action (keeps existing memberships)"""
+        self._open_group_assignment_dialog('copy')
+
+    def _open_group_assignment_dialog(self, mode: str = 'move'):
+        """Show the dialog used by both 'Move to Group' and 'Copy to Group'.
+
+        ``mode`` is either ``'move'`` (relocate the connection to the chosen
+        group) or ``'copy'`` (add it to the chosen group while keeping it in any
+        group it already belongs to).
+        """
+        is_copy = mode == 'copy'
         try:
             connections = self._get_target_connections(prefer_context=True)
             if not connections:
@@ -8680,13 +9201,20 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             if not connection_nicknames:
                 return
 
+            def assign(nickname: str, target_group_id) -> None:
+                if is_copy:
+                    if target_group_id:
+                        self.group_manager.copy_connection_to_group(nickname, target_group_id)
+                else:
+                    self.group_manager.move_connection(nickname, target_group_id)
+
             # Get available groups
             available_groups = self.get_available_groups()
-            logger.debug(f"Available groups for move dialog: {len(available_groups)} groups")
+            logger.debug(f"Available groups for {mode} dialog: {len(available_groups)} groups")
             
             # Show group selection dialog
             dialog = Gtk.Dialog(
-                title=_("Move to Group"),
+                title=_("Copy to Group") if is_copy else _("Move to Group"),
                 transient_for=self,
                 modal=True,
                 destroy_with_parent=True
@@ -8703,7 +9231,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             content_area.set_spacing(12)
             
             # Add label
-            if len(connection_nicknames) == 1:
+            if is_copy:
+                if len(connection_nicknames) == 1:
+                    label_text = _("Select a group to copy the connection to:")
+                else:
+                    label_text = _("Select a group to copy the selected connections to:")
+            elif len(connection_nicknames) == 1:
                 label_text = _("Select a group to move the connection to:")
             else:
                 label_text = _("Select a group to move the selected connections to:")
@@ -8823,7 +9356,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             
             # Add buttons
             dialog.add_button(_('Cancel'), Gtk.ResponseType.CANCEL)
-            move_button = dialog.add_button(_('Move'), Gtk.ResponseType.OK)
+            move_button = dialog.add_button(_('Copy') if is_copy else _('Move'), Gtk.ResponseType.OK)
             move_button.get_style_context().add_class('suggested-action')
             
             dialog.set_default_response(Gtk.ResponseType.OK)
@@ -8863,7 +9396,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     existing_group_id = find_existing_group_id(group_name)
                     if existing_group_id:
                         for nickname in connection_nicknames:
-                            self.group_manager.move_connection(nickname, existing_group_id)
+                            assign(nickname, existing_group_id)
                         self.rebuild_connection_list()
                         return True
                     try:
@@ -8873,7 +9406,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                             selected_color = rgba_value.to_string()
                         new_group_id = self.group_manager.create_group(group_name, color=selected_color)
                         for nickname in connection_nicknames:
-                            self.group_manager.move_connection(nickname, new_group_id)
+                            assign(nickname, new_group_id)
                         self.rebuild_connection_list()
                         return True
                     except ValueError as e:
@@ -8916,7 +9449,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 if selected_row:
                     target_group_id = selected_row.group_id
                     for nickname in connection_nicknames:
-                        self.group_manager.move_connection(nickname, target_group_id)
+                        assign(nickname, target_group_id)
                     self.rebuild_connection_list()
                     return True
                 return False
@@ -9697,15 +10230,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
 
                 # Update UI
-                if old_connection in self.connection_rows:
-                    # Get the row before potentially modifying the dictionary
-                    row = self.connection_rows[old_connection]
-                    # Remove the old connection from the dictionary
-                    del self.connection_rows[old_connection]
-                    # Add it back with the updated connection object
-                    self.connection_rows[old_connection] = row
-                    # Update the display
-                    row.update_display()
+                rows = self._rows_for_connection(old_connection)
+                if rows:
+                    # Update the display for every row representing this connection
+                    for row in rows:
+                        row.update_display()
                 else:
                     # If the connection is not in the rows, rebuild the list
                     self.rebuild_connection_list()
@@ -9954,8 +10483,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             del self.active_terminals[connection]
             
         # Update UI to show disconnected state
-        if connection in self.connection_rows:
-            self.connection_rows[connection].update_status()
+        for row in self._rows_for_connection(connection):
+            row.update_status()
         
         # Show error dialog
         error_dialog = Gtk.MessageDialog(

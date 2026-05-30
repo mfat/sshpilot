@@ -145,6 +145,11 @@ def test_ssh_copy_id_identity_agent_disabled_uses_force(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(window_mod, "Config", DummyConfig, raising=False)
     monkeypatch.setattr(window_mod, "ensure_writable_ssh_home", lambda env: None, raising=False)
+    monkeypatch.setattr(
+        window_mod.shutil,
+        "which",
+        lambda name: "/usr/bin/ssh-copy-id" if name == "ssh-copy-id" else None,
+    )
 
     monkeypatch.setattr(
         askpass_mod,
@@ -195,3 +200,67 @@ def test_ssh_copy_id_identity_agent_disabled_uses_force(monkeypatch, tmp_path):
     spawned_env = DummyTerminalWidget.last_instance.vte.spawn_env
     assert spawned_env is not None
     assert "SSH_ASKPASS_REQUIRE=force" in spawned_env
+
+
+def test_ssh_copy_id_preflight_blocks_missing_binary(monkeypatch, tmp_path):
+    window_mod = importlib.import_module("sshpilot.window")
+
+    monkeypatch.setattr(window_mod.shutil, "which", lambda name: None)
+    monkeypatch.setattr(window_mod.os.path, "exists", lambda path: False)
+
+    private_path = tmp_path / "id_test"
+    private_path.write_text("private")
+    public_path = private_path.with_suffix(private_path.suffix + ".pub")
+    public_path.write_text("public")
+
+    ssh_key = types.SimpleNamespace(
+        private_path=str(private_path),
+        public_path=str(public_path),
+    )
+    connection = types.SimpleNamespace(
+        username="demo",
+        hostname="example.com",
+        host="",
+        port=22,
+        auth_method=0,
+    )
+
+    errors = []
+    window_instance = window_mod.MainWindow.__new__(window_mod.MainWindow)
+    window_instance._error_dialog = lambda *args: errors.append(args)
+
+    window_instance._show_ssh_copy_id_terminal_using_main_widget(connection, ssh_key)
+
+    assert errors
+    assert errors[0][0] == "SSH Key Copy Error"
+    assert "ssh-copy-id" in errors[0][1]
+
+
+def test_ssh_copy_id_preflight_rejects_unreadable_public_key(monkeypatch, tmp_path):
+    window_mod = importlib.import_module("sshpilot.window")
+
+    monkeypatch.setattr(
+        window_mod.shutil,
+        "which",
+        lambda name: "/usr/bin/ssh-copy-id" if name == "ssh-copy-id" else None,
+    )
+    monkeypatch.setattr(window_mod, "ensure_writable_ssh_home", lambda env: None, raising=False)
+
+    public_path = tmp_path / "id_test.pub"
+    public_path.write_text("public")
+    monkeypatch.setattr(window_mod.os, "access", lambda path, mode: False)
+
+    ssh_key = types.SimpleNamespace(public_path=str(public_path))
+    connection = types.SimpleNamespace(
+        username="demo",
+        hostname="example.com",
+        host="",
+        port=22,
+        auth_method=0,
+    )
+
+    window_instance = window_mod.MainWindow.__new__(window_mod.MainWindow)
+    result = window_instance._preflight_ssh_copy_id(connection, ssh_key)
+
+    assert result is not None
+    assert result[0] == "Public key file is not readable"

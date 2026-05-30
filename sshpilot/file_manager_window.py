@@ -1648,7 +1648,20 @@ class AsyncSFTPManager(GObject.GObject):
         transport: Optional[Any] = None
         try:
             client.connect(**connect_kwargs)
-            sftp = client.open_sftp()
+            try:
+                sftp = client.open_sftp()
+            except paramiko.SSHException as sftp_exc:
+                # TCP/auth succeeded but the SFTP subsystem could not be
+                # started (e.g. the remote sshd has no 'Subsystem sftp' or
+                # sftp-server is not installed). Surface a clear message.
+                from .scp_utils import classify_sftp_error, SFTP_UNAVAILABLE_MESSAGE
+
+                friendly = classify_sftp_error(str(sftp_exc)) or SFTP_UNAVAILABLE_MESSAGE
+                logger.error(
+                    "Failed to open SFTP session (remote SFTP server may be missing): %s",
+                    sftp_exc,
+                )
+                raise paramiko.SSHException(friendly) from sftp_exc
             transport = client.get_transport()
             interval = 0
             with self._lock:

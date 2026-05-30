@@ -118,6 +118,12 @@ class WelcomePage(Gtk.Overlay):
         self.set_hexpand(True)
         self.set_vexpand(True)
         self.set_can_focus(False)
+
+        # Placeholders populated after layouts are built
+        self._pinned_rows_box = None
+        self._pinned_cards_box = None
+
+        self.connection_manager.connect_after('connection-removed', self._on_connection_removed)
         
         # Create a scrolled window to hold all content
         scrolled = Gtk.ScrolledWindow()
@@ -223,6 +229,13 @@ class WelcomePage(Gtk.Overlay):
     
     def _build_cards_layout(self, current_shortcuts):
         """Build the cards grid layout"""
+        # Outer box so the pinned section can sit above the cards grid
+        outer_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+
+        self._pinned_cards_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        outer_box.append(self._pinned_cards_box)
+        self._populate_pinned_cards_box()
+
         cards_grid = Gtk.FlowBox()
         cards_grid.set_selection_mode(Gtk.SelectionMode.NONE)
         cards_grid.set_max_children_per_line(3)
@@ -493,8 +506,9 @@ class WelcomePage(Gtk.Overlay):
         about_btn.set_child(card_box)
         about_btn.connect('clicked', lambda *_: self.window.get_application().activate_action('about'))
         cards_grid.append(about_btn)
-        
-        return cards_grid
+
+        outer_box.append(cards_grid)
+        return outer_box
     
     def _build_action_rows_layout(self, current_shortcuts):
         """Build the action rows layout"""
@@ -506,7 +520,12 @@ class WelcomePage(Gtk.Overlay):
         clamp.set_can_focus(False)
         
         container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        
+
+        # Pinned connections section (populated dynamically)
+        self._pinned_rows_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        container.append(self._pinned_rows_box)
+        self._populate_pinned_rows_box()
+
         # Getting Started section
         getting_started_group = Adw.PreferencesGroup()
         getting_started_group.set_margin_start(12)
@@ -657,6 +676,154 @@ class WelcomePage(Gtk.Overlay):
             # Save preference
             self.config.set_setting('ui.welcome_page_layout', 'rows')
     
+    # --- Pinned connections ---
+
+    def _build_pinned_section(self) -> 'Adw.PreferencesGroup | None':
+        """Build an Adw.PreferencesGroup of pinned hosts, or None if none are pinned."""
+        from sshpilot import icon_utils
+        pinned_nicknames = self.config.get_pinned_nicknames()
+        if not pinned_nicknames:
+            return None
+
+        conn_map = {c.nickname: c for c in self.connection_manager.connections}
+        rows_added = 0
+        group = Adw.PreferencesGroup(title=_("Pinned Connections"))
+        group.set_margin_start(12)
+        group.set_margin_end(12)
+        group.set_margin_top(12)
+        group.set_margin_bottom(4)
+        group.set_can_focus(False)
+        group.add_css_class('separate')
+
+        for nickname in pinned_nicknames:
+            conn = conn_map.get(nickname)
+            if conn is None:
+                continue
+            row = Adw.ActionRow()
+            row.set_title(nickname)
+            host_label = getattr(conn, 'host', '') or getattr(conn, 'hostname', '')
+            username = getattr(conn, 'username', '')
+            if username and host_label:
+                row.set_subtitle(f"{username}@{host_label}")
+            elif host_label:
+                row.set_subtitle(host_label)
+            row.set_activatable(True)
+            row.set_can_focus(False)
+
+            prefix_img = icon_utils.new_image_from_icon_name('network-server-symbolic')
+            prefix_img.set_can_focus(False)
+            row.add_prefix(prefix_img)
+
+            connect_btn = Gtk.Button(label=_("Connect"))
+            connect_btn.set_valign(Gtk.Align.CENTER)
+            connect_btn.add_css_class('suggested-action')
+            connect_btn.add_css_class('pill')
+            connect_btn.set_can_focus(False)
+            _conn = conn
+            connect_btn.connect('clicked', lambda _b, c=_conn: self.window.terminal_manager.connect_to_host(c))
+            row.add_suffix(connect_btn)
+
+            row.connect('activated', lambda _r, c=_conn: self.window.terminal_manager.connect_to_host(c))
+            group.add(row)
+            rows_added += 1
+
+        return group if rows_added > 0 else None
+
+    def _build_pinned_sessions_section(self) -> 'Adw.PreferencesGroup | None':
+        """Build an Adw.PreferencesGroup of pinned sessions, or None if none are pinned."""
+        from sshpilot import icon_utils
+        session_manager = getattr(self.window, 'session_manager', None)
+        if session_manager is None:
+            return None
+        pinned_names = session_manager.get_pinned_session_names()
+        if not pinned_names:
+            return None
+
+        group = Adw.PreferencesGroup(title=_("Pinned Sessions"))
+        group.set_margin_start(12)
+        group.set_margin_end(12)
+        group.set_margin_top(12)
+        group.set_margin_bottom(4)
+        group.set_can_focus(False)
+        group.add_css_class('separate')
+
+        rows_added = 0
+        for name in pinned_names:
+            data = session_manager.get_session(name)
+            if not isinstance(data, dict):
+                continue
+            row = Adw.ActionRow()
+            row.set_title(name)
+            tab_count = len(data.get('tabs', []))
+            row.set_subtitle(_("{n} tab(s)").format(n=tab_count))
+            row.set_activatable(True)
+            row.set_can_focus(False)
+
+            prefix_img = icon_utils.new_image_from_icon_name('view-dual-symbolic')
+            prefix_img.set_can_focus(False)
+            row.add_prefix(prefix_img)
+
+            open_btn = Gtk.Button(label=_("Open"))
+            open_btn.set_valign(Gtk.Align.CENTER)
+            open_btn.add_css_class('suggested-action')
+            open_btn.add_css_class('pill')
+            open_btn.set_can_focus(False)
+            open_btn.connect('clicked', lambda _b, n=name, d=data: self.window._prompt_open_session(n, d))
+            row.add_suffix(open_btn)
+
+            row.connect('activated', lambda _r, n=name, d=data: self.window._prompt_open_session(n, d))
+            group.add(row)
+            rows_added += 1
+
+        return group if rows_added > 0 else None
+
+    def _populate_pinned_rows_box(self):
+        """Fill _pinned_rows_box with the current pinned group (rows layout)."""
+        if self._pinned_rows_box is None:
+            return
+        child = self._pinned_rows_box.get_first_child()
+        while child:
+            nxt = child.get_next_sibling()
+            self._pinned_rows_box.remove(child)
+            child = nxt
+        group = self._build_pinned_section()
+        if group is not None:
+            self._pinned_rows_box.append(group)
+        sessions_group = self._build_pinned_sessions_section()
+        if sessions_group is not None:
+            self._pinned_rows_box.append(sessions_group)
+
+    def _populate_pinned_cards_box(self):
+        """Fill _pinned_cards_box with the current pinned group (cards layout)."""
+        if self._pinned_cards_box is None:
+            return
+        child = self._pinned_cards_box.get_first_child()
+        while child:
+            nxt = child.get_next_sibling()
+            self._pinned_cards_box.remove(child)
+            child = nxt
+        group = self._build_pinned_section()
+        if group is not None:
+            self._pinned_cards_box.append(group)
+        sessions_group = self._build_pinned_sessions_section()
+        if sessions_group is not None:
+            self._pinned_cards_box.append(sessions_group)
+
+    def refresh_pinned(self):
+        """Rebuild the pinned section in both layouts after a pin/unpin action."""
+        self._populate_pinned_rows_box()
+        self._populate_pinned_cards_box()
+
+    def _on_connection_removed(self, _manager, connection):
+        """Auto-unpin a connection when it is deleted from the inventory."""
+        try:
+            nickname = getattr(connection, 'nickname', None)
+            if nickname and self.config.is_pinned(nickname):
+                self.config.unpin_connection(nickname)
+                self.refresh_pinned()
+        except Exception:
+            pass
+
     def show_sidebar_hint(self):
         """Show a hint about using the sidebar to manage connections"""
         toast = Adw.Toast.new(_('Use the sidebar to add and manage your SSH connections'))
@@ -1059,13 +1226,14 @@ class QuickConnectDialog(Adw.MessageDialog):
 
         self.set_modal(True)
         self.set_transient_for(parent_window)
-        self.set_title(_("Quick Connect"))
+        self.set_heading(_("Quick Connect"))
 
         content_area = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         content_area.set_margin_top(12)
         content_area.set_margin_bottom(12)
         content_area.set_margin_start(12)
         content_area.set_margin_end(12)
+        content_area.set_size_request(420, -1)
 
         # Inline error banner (hidden until validation fails)
         self.error_label = Gtk.Label()
@@ -1075,23 +1243,42 @@ class QuickConnectDialog(Adw.MessageDialog):
         self.error_label.add_css_class("error")
         content_area.append(self.error_label)
 
-        description = Gtk.Label()
-        description.set_text(_("Enter SSH command or connection details:"))
-        description.set_halign(Gtk.Align.START)
-        content_area.append(description)
-
-        self.entry = Gtk.Entry()
-        self.entry.set_placeholder_text("ssh -p 2222 user@host")
-        self.entry.set_hexpand(True)
-        self.entry.connect('activate', self.on_connect)
-        self.entry.connect('changed', self._on_entry_changed)
-        content_area.append(self.entry)
-
-        # Auth fields group
+        # Connection fields group
         prefs_group = Adw.PreferencesGroup()
 
+        self.host_row = Adw.EntryRow()
+        self.host_row.set_title(_("Host"))
+        self.host_row.connect('entry-activated', self.on_connect)
+        self.host_row.connect('changed', self._on_host_changed)
+
+        # Port entry inline next to host
+        port_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        port_box.set_valign(Gtk.Align.CENTER)
+        port_sep = Gtk.Label(label=":")
+        port_sep.add_css_class("dim-label")
+        self.port_entry = Gtk.Entry()
+        self.port_entry.set_placeholder_text("22")
+        self.port_entry.set_width_chars(5)
+        self.port_entry.set_max_width_chars(5)
+        self.port_entry.set_input_purpose(Gtk.InputPurpose.DIGITS)
+        self.port_entry.connect('activate', self.on_connect)
+        port_box.append(port_sep)
+        port_box.append(self.port_entry)
+        self.host_row.add_suffix(port_box)
+
+        prefs_group.add(self.host_row)
+
+        self.user_row = Adw.EntryRow()
+        self.user_row.set_title(_("Username (optional)"))
+        prefs_group.add(self.user_row)
+
+        content_area.append(prefs_group)
+
+        # Auth fields group
+        auth_group = Adw.PreferencesGroup()
+
         self.password_row = Adw.PasswordEntryRow(title=_("Password (optional)"))
-        prefs_group.add(self.password_row)
+        auth_group.add(self.password_row)
 
         self.keyfile_row = Adw.ActionRow()
         self.keyfile_row.set_title(_("Key File (optional)"))
@@ -1100,9 +1287,9 @@ class QuickConnectDialog(Adw.MessageDialog):
         browse_button.set_valign(Gtk.Align.CENTER)
         browse_button.connect('clicked', self._browse_for_key_file)
         self.keyfile_row.add_suffix(browse_button)
-        prefs_group.add(self.keyfile_row)
+        auth_group.add(self.keyfile_row)
 
-        content_area.append(prefs_group)
+        content_area.append(auth_group)
 
         self.set_extra_child(content_area)
 
@@ -1112,9 +1299,9 @@ class QuickConnectDialog(Adw.MessageDialog):
         self.set_response_appearance("connect", Adw.ResponseAppearance.SUGGESTED)
 
         self.connect('response', self.on_response)
-        self.entry.grab_focus()
+        self.host_row.grab_focus()
 
-    def _on_entry_changed(self, entry):
+    def _on_host_changed(self, entry):
         if self.error_label.get_visible():
             self.error_label.set_visible(False)
 
@@ -1130,17 +1317,43 @@ class QuickConnectDialog(Adw.MessageDialog):
         else:
             self.destroy()
 
-    def on_connect(self, *args):
-        text = self.entry.get_text().strip()
-        if not text:
-            return
+    def _build_result_from_fields(self):
+        """Build a connection data dict from the Host/Username/Port entry rows.
 
-        result = self._parse_ssh_command(text)
-        if result is None:
-            self._show_error(_("Could not parse command. Use: ssh user@host or user@host"))
-            return
-        if "error" in result:
-            self._show_error(result["error"])
+        Returns a dict on success, or raises ValueError with a user-facing message.
+        """
+        host = self.host_row.get_text().strip()
+        if not host:
+            raise ValueError(_("Host is required."))
+
+        username = self.user_row.get_text().strip()
+
+        port_text = self.port_entry.get_text().strip()
+        if port_text:
+            try:
+                port = int(port_text)
+            except ValueError:
+                raise ValueError(_("Port must be a number."))
+        else:
+            port = 22
+
+        return {
+            "nickname": host,
+            "host": host,
+            "hostname": host,
+            "username": username,
+            "port": port,
+            "auth_method": 0,
+            "key_select_mode": 0,
+            "quick_connect_command": "",
+            "unparsed_args": [],
+        }
+
+    def on_connect(self, *args):
+        try:
+            result = self._build_result_from_fields()
+        except ValueError as exc:
+            self._show_error(str(exc))
             return
 
         errors = self._validate_parsed(result)
@@ -1161,16 +1374,10 @@ class QuickConnectDialog(Adw.MessageDialog):
         self.destroy()
 
     def _on_save_connection(self):
-        text = self.entry.get_text().strip()
-        if not text:
-            return
-
-        result = self._parse_ssh_command(text)
-        if result is None:
-            self._show_error(_("Could not parse command. Use: ssh user@host or user@host"))
-            return
-        if "error" in result:
-            self._show_error(result["error"])
+        try:
+            result = self._build_result_from_fields()
+        except ValueError as exc:
+            self._show_error(str(exc))
             return
 
         errors = self._validate_parsed(result)

@@ -55,7 +55,7 @@ ACTION_LABELS: Dict[str, str] = {
     'manage-files': _('Manage Files'),
     'edit-ssh-config': _('SSH Config Editor'),
     'local-terminal': _('Local Terminal'),
-    'preferences': _('Preferences'),
+    'preferences': _('Settings'),
     'tab-close': _('Close Tab'),
     'broadcast-command': _('Broadcast Command'),
     'help': _('Documentation'),

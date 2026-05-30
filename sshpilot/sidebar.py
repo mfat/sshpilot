@@ -638,7 +638,14 @@ class GroupRow(Gtk.ListBoxRow):
 class ConnectionRow(Gtk.ListBoxRow):
     """Row widget for connection list."""
 
-    def __init__(self, connection: Connection, group_manager: GroupManager, config, file_manager_callback=None):
+    def __init__(
+        self,
+        connection: Connection,
+        group_manager: GroupManager,
+        config,
+        file_manager_callback=None,
+        display_group_id: Optional[str] = None,
+    ):
         super().__init__()
         _install_sidebar_color_css()
         #self.add_css_class("navigation-sidebar")
@@ -646,6 +653,7 @@ class ConnectionRow(Gtk.ListBoxRow):
         self.connection = connection
         self.group_manager = group_manager
         self.config = config
+        self._group_id = display_group_id
         self._file_manager_callback = file_manager_callback
         self._tint_provider = None
         self._color_badge_provider = None
@@ -768,6 +776,11 @@ class ConnectionRow(Gtk.ListBoxRow):
         self.update_status()
         self._update_forwarding_indicators()
         self._setup_drag_source()
+        self._apply_group_color_style()
+
+    def set_display_group_id(self, group_id: Optional[str]) -> None:
+        """Set which group this row is listed under and refresh its color."""
+        self._group_id = group_id
         self._apply_group_color_style()
 
     def _on_file_manager_clicked(self, button):
@@ -939,7 +952,10 @@ class ConnectionRow(Gtk.ListBoxRow):
             return None
 
         try:
-            group_id = manager.get_connection_group(self.connection.nickname)
+            group_id = manager.resolve_display_group_id(
+                self.connection.nickname,
+                getattr(self, '_group_id', None),
+            )
         except Exception:
             group_id = None
 
@@ -1125,6 +1141,18 @@ class ConnectionRow(Gtk.ListBoxRow):
         )
 
     def _on_drag_begin(self, source, drag):
+        try:
+            display = Gdk.Display.get_default()
+            icon_theme = Gtk.IconTheme.get_for_display(display)
+            paintable = icon_theme.lookup_icon(
+                "computer-symbolic",
+                None, 32, 1,
+                Gtk.TextDirection.NONE,
+                Gtk.IconLookupFlags.PRELOAD,
+            )
+            source.set_icon(paintable, 16, 16)
+        except Exception as e:
+            logger.debug(f"Could not set drag icon: {e}")
         try:
             window = self.get_root()
             if window:

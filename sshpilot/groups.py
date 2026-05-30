@@ -138,10 +138,26 @@ class GroupManager:
         group = self.groups[group_id]
         parent_id = group.get('parent_id')
 
-        # Move connections to parent or root
-        for conn_nickname in group['connections']:
-            self.connections[conn_nickname] = parent_id
-            if parent_id is None:
+        # Move connections to parent or root. A connection may belong to more
+        # than one group, so it only becomes ungrouped when no other group
+        # still references it.
+        for conn_nickname in list(group.get('connections', [])):
+            other_groups = [
+                gid for gid in self.get_connection_groups(conn_nickname)
+                if gid != group_id
+            ]
+            if parent_id and parent_id in self.groups:
+                parent_conns = self.groups[parent_id].setdefault('connections', [])
+                if conn_nickname not in parent_conns:
+                    parent_conns.append(conn_nickname)
+                if self.connections.get(conn_nickname) in (None, group_id):
+                    self.connections[conn_nickname] = parent_id
+            elif other_groups:
+                # Still a member of another group; just repoint the primary
+                if self.connections.get(conn_nickname) in (None, group_id):
+                    self.connections[conn_nickname] = other_groups[0]
+            else:
+                self.connections[conn_nickname] = None
                 if conn_nickname not in self.root_connections:
                     self.root_connections.append(conn_nickname)
 
@@ -182,36 +198,82 @@ class GroupManager:
 
         self._save_groups()
 
+    def copy_connection_to_group(self, connection_nickname: str, target_group_id: str):
+        """Add a connection to ``target_group_id`` without removing it from any
+        group it already belongs to.
+
+        Unlike :meth:`move_connection`, this keeps existing memberships so the
+        same connection can appear in several groups at once.
+        """
+        if not target_group_id or target_group_id not in self.groups:
+            return
+
+        target_conns = self.groups[target_group_id].setdefault('connections', [])
+        if connection_nickname not in target_conns:
+            target_conns.append(connection_nickname)
+
+        # A grouped connection is never part of the ungrouped/root list
+        if connection_nickname in self.root_connections:
+            self.root_connections.remove(connection_nickname)
+
+        # Record the first group as the "primary" one for legacy single-group
+        # lookups (used for colours, etc.) without overriding an existing one.
+        if not self.connections.get(connection_nickname):
+            self.connections[connection_nickname] = target_group_id
+
+        self._save_groups()
+
+    def remove_connection_from_group(self, connection_nickname: str, group_id: str):
+        """Remove a connection from a single group.
+
+        The connection stays in any other groups it belongs to. If it ends up
+        without any group it returns to the ungrouped/root list.
+        """
+        group = self.groups.get(group_id)
+        if group and connection_nickname in group.get('connections', []):
+            group['connections'] = [
+                n for n in group['connections'] if n != connection_nickname
+            ]
+
+        remaining = self.get_connection_groups(connection_nickname)
+        if remaining:
+            if self.connections.get(connection_nickname) not in remaining:
+                self.connections[connection_nickname] = remaining[0]
+            if connection_nickname in self.root_connections:
+                self.root_connections.remove(connection_nickname)
+        else:
+            self.connections[connection_nickname] = None
+            if connection_nickname not in self.root_connections:
+                self.root_connections.append(connection_nickname)
+
+        self._save_groups()
+
     def rename_connection(self, old_nickname: str, new_nickname: str):
-        """Rename a connection while preserving its group membership."""
+        """Rename a connection while preserving all of its group memberships."""
         if old_nickname == new_nickname:
             return
 
-        group_id = self.connections.pop(old_nickname, None)
-        self.connections[new_nickname] = group_id
+        primary_group = self.connections.pop(old_nickname, None)
+        self.connections[new_nickname] = primary_group
 
-        # Remove any stray references to the old nickname
-        if old_nickname in self.root_connections:
-            self.root_connections = [n for n in self.root_connections if n != old_nickname]
+        # Replace the nickname in every group's ordered list, preserving its
+        # position so multi-group membership and ordering survive the rename.
         for group in self.groups.values():
-            if old_nickname in group.get('connections', []):
-                group['connections'] = [n for n in group['connections'] if n != old_nickname]
+            conns = group.get('connections', [])
+            if old_nickname in conns or new_nickname in conns:
+                renamed = [new_nickname if n == old_nickname else n for n in conns]
+                seen = set()
+                group['connections'] = [n for n in renamed if not (n in seen or seen.add(n))]
 
-        if group_id and group_id in self.groups:
-            conn_list = self.groups[group_id].setdefault('connections', [])
-            if new_nickname not in conn_list:
-                conn_list.append(new_nickname)
-            if new_nickname in self.root_connections:
-                self.root_connections.remove(new_nickname)
-        else:
-            if new_nickname not in self.root_connections:
-                self.root_connections.append(new_nickname)
-
-        # Deduplicate connections within groups
-        for group in self.groups.values():
+        # Replace in the root (ungrouped) list as well
+        if old_nickname in self.root_connections or new_nickname in self.root_connections:
+            renamed_root = [new_nickname if n == old_nickname else n for n in self.root_connections]
             seen = set()
-            group['connections'] = [n for n in group.get('connections', []) if not (n in seen or seen.add(n))]
+            self.root_connections = [n for n in renamed_root if not (n in seen or seen.add(n))]
 
+        # A connection that belongs to a group must not linger in the root list
+        if any(new_nickname in g.get('connections', []) for g in self.groups.values()):
+            self.root_connections = [n for n in self.root_connections if n != new_nickname]
 
         self._save_groups()
 
@@ -242,8 +304,41 @@ class GroupManager:
         return sorted(result, key=lambda x: x.get('order', 0))
 
     def get_connection_group(self, connection_nickname: str) -> str:
-        """Get the group ID for a connection"""
-        return self.connections.get(connection_nickname)
+        """Get the primary group ID for a connection (or ``None``).
+
+        A connection may belong to several groups; this returns a single
+        representative group for legacy callers (e.g. colour resolution).
+        """
+        primary = self.connections.get(connection_nickname)
+        if primary and connection_nickname in self.groups.get(primary, {}).get('connections', []):
+            return primary
+        # Fall back to the authoritative group lists if the primary pointer is
+        # stale or unset.
+        groups = self.get_connection_groups(connection_nickname)
+        return groups[0] if groups else None
+
+    def resolve_display_group_id(
+        self, connection_nickname: str, context_group_id: Optional[str] = None
+    ) -> Optional[str]:
+        """Resolve which group ID should drive UI for a connection row.
+
+        When a connection appears in several groups, each sidebar row carries a
+        display context (``context_group_id``). Prefer that over the primary
+        group so colours match the group the row is listed under.
+        """
+        if context_group_id:
+            group = self.groups.get(context_group_id)
+            if group and connection_nickname in group.get('connections', []):
+                return context_group_id
+        return self.get_connection_group(connection_nickname)
+
+    def get_connection_groups(self, connection_nickname: str) -> List[str]:
+        """Return every group ID that contains the connection."""
+        return [
+            group_id
+            for group_id, group in self.groups.items()
+            if connection_nickname in group.get('connections', [])
+        ]
 
     def set_group_expanded(self, group_id: str, expanded: bool):
         """Set whether a group is expanded"""
