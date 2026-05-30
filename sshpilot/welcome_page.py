@@ -1172,13 +1172,14 @@ class QuickConnectDialog(Adw.MessageDialog):
 
         self.set_modal(True)
         self.set_transient_for(parent_window)
-        self.set_title(_("Quick Connect"))
+        self.set_heading(_("Quick Connect"))
 
         content_area = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         content_area.set_margin_top(12)
         content_area.set_margin_bottom(12)
         content_area.set_margin_start(12)
         content_area.set_margin_end(12)
+        content_area.set_size_request(420, -1)
 
         # Inline error banner (hidden until validation fails)
         self.error_label = Gtk.Label()
@@ -1188,23 +1189,42 @@ class QuickConnectDialog(Adw.MessageDialog):
         self.error_label.add_css_class("error")
         content_area.append(self.error_label)
 
-        description = Gtk.Label()
-        description.set_text(_("Enter SSH command or connection details:"))
-        description.set_halign(Gtk.Align.START)
-        content_area.append(description)
-
-        self.entry = Gtk.Entry()
-        self.entry.set_placeholder_text("ssh -p 2222 user@host")
-        self.entry.set_hexpand(True)
-        self.entry.connect('activate', self.on_connect)
-        self.entry.connect('changed', self._on_entry_changed)
-        content_area.append(self.entry)
-
-        # Auth fields group
+        # Connection fields group
         prefs_group = Adw.PreferencesGroup()
 
+        self.host_row = Adw.EntryRow()
+        self.host_row.set_title(_("Host"))
+        self.host_row.connect('entry-activated', self.on_connect)
+        self.host_row.connect('changed', self._on_host_changed)
+
+        # Port entry inline next to host
+        port_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        port_box.set_valign(Gtk.Align.CENTER)
+        port_sep = Gtk.Label(label=":")
+        port_sep.add_css_class("dim-label")
+        self.port_entry = Gtk.Entry()
+        self.port_entry.set_placeholder_text("22")
+        self.port_entry.set_width_chars(5)
+        self.port_entry.set_max_width_chars(5)
+        self.port_entry.set_input_purpose(Gtk.InputPurpose.DIGITS)
+        self.port_entry.connect('activate', self.on_connect)
+        port_box.append(port_sep)
+        port_box.append(self.port_entry)
+        self.host_row.add_suffix(port_box)
+
+        prefs_group.add(self.host_row)
+
+        self.user_row = Adw.EntryRow()
+        self.user_row.set_title(_("Username (optional)"))
+        prefs_group.add(self.user_row)
+
+        content_area.append(prefs_group)
+
+        # Auth fields group
+        auth_group = Adw.PreferencesGroup()
+
         self.password_row = Adw.PasswordEntryRow(title=_("Password (optional)"))
-        prefs_group.add(self.password_row)
+        auth_group.add(self.password_row)
 
         self.keyfile_row = Adw.ActionRow()
         self.keyfile_row.set_title(_("Key File (optional)"))
@@ -1213,9 +1233,9 @@ class QuickConnectDialog(Adw.MessageDialog):
         browse_button.set_valign(Gtk.Align.CENTER)
         browse_button.connect('clicked', self._browse_for_key_file)
         self.keyfile_row.add_suffix(browse_button)
-        prefs_group.add(self.keyfile_row)
+        auth_group.add(self.keyfile_row)
 
-        content_area.append(prefs_group)
+        content_area.append(auth_group)
 
         self.set_extra_child(content_area)
 
@@ -1225,9 +1245,9 @@ class QuickConnectDialog(Adw.MessageDialog):
         self.set_response_appearance("connect", Adw.ResponseAppearance.SUGGESTED)
 
         self.connect('response', self.on_response)
-        self.entry.grab_focus()
+        self.host_row.grab_focus()
 
-    def _on_entry_changed(self, entry):
+    def _on_host_changed(self, entry):
         if self.error_label.get_visible():
             self.error_label.set_visible(False)
 
@@ -1243,17 +1263,43 @@ class QuickConnectDialog(Adw.MessageDialog):
         else:
             self.destroy()
 
-    def on_connect(self, *args):
-        text = self.entry.get_text().strip()
-        if not text:
-            return
+    def _build_result_from_fields(self):
+        """Build a connection data dict from the Host/Username/Port entry rows.
 
-        result = self._parse_ssh_command(text)
-        if result is None:
-            self._show_error(_("Could not parse command. Use: ssh user@host or user@host"))
-            return
-        if "error" in result:
-            self._show_error(result["error"])
+        Returns a dict on success, or raises ValueError with a user-facing message.
+        """
+        host = self.host_row.get_text().strip()
+        if not host:
+            raise ValueError(_("Host is required."))
+
+        username = self.user_row.get_text().strip()
+
+        port_text = self.port_entry.get_text().strip()
+        if port_text:
+            try:
+                port = int(port_text)
+            except ValueError:
+                raise ValueError(_("Port must be a number."))
+        else:
+            port = 22
+
+        return {
+            "nickname": host,
+            "host": host,
+            "hostname": host,
+            "username": username,
+            "port": port,
+            "auth_method": 0,
+            "key_select_mode": 0,
+            "quick_connect_command": "",
+            "unparsed_args": [],
+        }
+
+    def on_connect(self, *args):
+        try:
+            result = self._build_result_from_fields()
+        except ValueError as exc:
+            self._show_error(str(exc))
             return
 
         errors = self._validate_parsed(result)
@@ -1274,16 +1320,10 @@ class QuickConnectDialog(Adw.MessageDialog):
         self.destroy()
 
     def _on_save_connection(self):
-        text = self.entry.get_text().strip()
-        if not text:
-            return
-
-        result = self._parse_ssh_command(text)
-        if result is None:
-            self._show_error(_("Could not parse command. Use: ssh user@host or user@host"))
-            return
-        if "error" in result:
-            self._show_error(result["error"])
+        try:
+            result = self._build_result_from_fields()
+        except ValueError as exc:
+            self._show_error(str(exc))
             return
 
         errors = self._validate_parsed(result)
