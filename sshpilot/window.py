@@ -6074,6 +6074,85 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception as e:
             logger.error(f"System terminal button click failed: {e}")
 
+    @staticmethod
+    def _find_ssh_copy_id_helper(binary_name: str) -> Optional[str]:
+        """Return the preferred path for a helper used by ssh-copy-id."""
+        flatpak_path = f"/app/bin/{binary_name}"
+        if os.path.exists(flatpak_path) and os.access(flatpak_path, os.X_OK):
+            return flatpak_path
+        return shutil.which(binary_name)
+
+    def _preflight_ssh_copy_id(self, connection, ssh_key) -> Optional[Tuple[str, str]]:
+        """Validate local prerequisites before opening the ssh-copy-id terminal."""
+        if self._find_ssh_copy_id_helper('ssh-copy-id') is None:
+            return (
+                _('ssh-copy-id is not installed'),
+                _('Install ssh-copy-id, then try copying the public key again.'),
+            )
+
+        host_value = _get_connection_host(connection) or _get_connection_alias(connection)
+        if not host_value:
+            return (
+                _('Connection host is missing'),
+                _('Set a host name or SSH config alias for this connection before copying a key.'),
+            )
+
+        try:
+            port = getattr(connection, 'port', 22)
+            if port not in (None, ''):
+                port_num = int(port)
+                if port_num <= 0 or port_num > 65535:
+                    raise ValueError
+        except (TypeError, ValueError):
+            return (
+                _('Invalid SSH port'),
+                _('Set the connection port to a number between 1 and 65535.'),
+            )
+
+        public_path = getattr(ssh_key, 'public_path', '') or ''
+        if not public_path:
+            return (
+                _('Public key is missing'),
+                _('Select or generate a key with a public key file before copying it to the server.'),
+            )
+
+        expanded_public_path = os.path.expanduser(public_path)
+        if not os.path.isfile(expanded_public_path):
+            return (
+                _('Public key file not found'),
+                _('The selected public key file does not exist: {}').format(expanded_public_path),
+            )
+        if not os.access(expanded_public_path, os.R_OK):
+            return (
+                _('Public key file is not readable'),
+                _('sshPilot cannot read the selected public key file: {}').format(expanded_public_path),
+            )
+
+        try:
+            env = os.environ.copy()
+            ensure_writable_ssh_home(env)
+        except Exception as exc:
+            logger.error('ssh-copy-id preflight failed while preparing SSH home: %s', exc)
+            return (
+                _('Could not prepare SSH environment'),
+                _('sshPilot could not prepare a writable SSH home for ssh-copy-id: {}').format(exc),
+            )
+
+        try:
+            auth_method = int(getattr(connection, 'auth_method', 0) or 0)
+            username = getattr(connection, 'username', '')
+            manager = getattr(self, 'connection_manager', None)
+            has_saved_password = bool(manager.get_password(host_value, username)) if manager else False
+            if (auth_method == 1 or (auth_method == 0 and has_saved_password)) and has_saved_password:
+                if self._find_ssh_copy_id_helper('sshpass') is None:
+                    logger.warning(
+                        'ssh-copy-id preflight: sshpass unavailable; falling back to terminal password prompt',
+                    )
+        except Exception as exc:
+            logger.debug('ssh-copy-id preflight skipped optional auth-helper check: %s', exc)
+
+        return None
+
     def _show_ssh_copy_id_terminal_using_main_widget(self, connection, ssh_key, force=False):
         """Show a window with header bar and embedded terminal running ssh-copy-id.
 
@@ -6090,6 +6169,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     f"public_path: {getattr(ssh_key, 'public_path', 'unknown')}")
 
         try:
+            preflight_error = self._preflight_ssh_copy_id(connection, ssh_key)
+            if preflight_error:
+                heading, body = preflight_error
+                self._error_dialog(_("SSH Key Copy Error"), heading, body)
+                return
+
             target = f"{connection.username}@{host_value}" if getattr(connection, 'username', '') else host_value
             pub_name = os.path.basename(getattr(ssh_key, 'public_path', '') or '')
             body_text = _('This will add your public key to the server\'s ~/.ssh/authorized_keys so future logins can use SSH keys.')
