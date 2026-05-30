@@ -4228,6 +4228,7 @@ class TerminalWidget(Gtk.Box):
         self._last_search_text = ''
         self._last_search_case_sensitive = False
         self._last_search_regex = False
+        self._search_has_match = False
         self._set_search_navigation_sensitive(False)
         self._set_search_error_state(False)
         try:
@@ -4251,11 +4252,12 @@ class TerminalWidget(Gtk.Box):
 
         try:
             if pattern_changed:
+                self._search_has_match = False
                 pattern = text if regex else re.escape(text)
                 # Use inline case-insensitive flag to avoid Vte.RegexFlags dependency
                 if not case_sensitive and not pattern.startswith("(?i)"):
                     pattern = "(?i)" + pattern
-                
+
                 # Use backend abstraction for search
                 if self.backend:
                     # For VTE backend, create Vte.Regex
@@ -4267,7 +4269,7 @@ class TerminalWidget(Gtk.Box):
                     else:
                         # For PyXterm backend, pass the pattern as string
                         self.backend.search_set_regex(pattern)
-                
+
                 self._last_search_text = text
                 self._last_search_case_sensitive = case_sensitive
                 self._last_search_regex = regex
@@ -4275,7 +4277,7 @@ class TerminalWidget(Gtk.Box):
             self._set_search_navigation_sensitive(True)
 
             if move_forward:
-                return self._run_search(True, update_entry=update_entry)
+                return self._run_search(True, update_entry=update_entry, from_text_change=True)
 
             if update_entry:
                 self._set_search_error_state(False)
@@ -4287,7 +4289,8 @@ class TerminalWidget(Gtk.Box):
                 self._set_search_error_state(True)
             return False
 
-    def _run_search(self, forward: bool = True, *, update_entry: bool = False) -> bool:
+    def _run_search(self, forward: bool = True, *, update_entry: bool = False,
+                    from_text_change: bool = False) -> bool:
         """Execute search navigation in the requested direction."""
         try:
             if self.backend:
@@ -4298,8 +4301,16 @@ class TerminalWidget(Gtk.Box):
             logger.error(f"Search navigation failed: {exc}")
             found = False
 
+        if found:
+            self._search_has_match = True
+
         if update_entry:
-            self._set_search_error_state(not found)
+            # Only show the error state when the pattern has no matches at all.
+            # When navigating (Enter / Ctrl+G), VTE may return False for a single
+            # already-highlighted match even with wrap-around enabled — that is not
+            # a "no results" condition, so don't turn the entry red.
+            no_match = not found and (from_text_change or not self._search_has_match)
+            self._set_search_error_state(no_match)
 
         return bool(found)
 
