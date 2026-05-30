@@ -810,17 +810,35 @@ class SplitViewTab(Gtk.Box):
             except Exception:
                 pass
 
-        # VERTICAL layout uses Paned (fills viewport); HORIZONTAL uses Box rows
-        # with explicit heights so rows can grow beyond the viewport and scroll.
-        self._content_area.set_vexpand(self._layout_mode == self.VERTICAL)
+        # Both layouts use Box rows with explicit heights so panes can grow
+        # beyond the viewport and scroll freely.
+        self._content_area.set_vexpand(False)
 
         n = len(self._panes)
         if n == 0:
             return
 
         if self._layout_mode == self.VERTICAL:
-            root = self._chain_panes(self._panes, Gtk.Orientation.VERTICAL)
-            self._content_area.append(root)
+            # VERTICAL: each pane is its own row, stacked with resize handles.
+            old_heights = list(self._row_heights)
+            self._row_heights = []
+            self._row_boxes = []
+            for row_idx, pane in enumerate(self._panes):
+                h = (old_heights[row_idx] if row_idx < len(old_heights)
+                     else self.INITIAL_PANE_HEIGHT)
+                self._row_heights.append(h)
+                row_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+                row_box.set_hexpand(True)
+                row_box.set_vexpand(False)
+                row_box.set_size_request(-1, h)
+                row_box.append(pane)
+                self._row_boxes.append(row_box)
+                self._content_area.append(row_box)
+                handle = RowResizeHandle(lambda idx=row_idx: idx, self)
+                self._content_area.append(handle)
+            spacer = Gtk.Box()
+            spacer.set_size_request(-1, 600)
+            self._content_area.append(spacer)
         else:
             # HORIZONTAL: pane pairs become rows placed directly in the Box.
             # Custom RowResizeHandle widgets between rows allow each row to be
