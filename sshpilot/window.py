@@ -2091,6 +2091,19 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                             _mi('edit-undo-symbolic', _('Ungroup'), lambda: self.on_move_to_ungrouped_action(None, None)) if current_group_id else None,
                         )
 
+                        try:
+                            is_pinned = self.config.is_pinned(conn.nickname) if conn else False
+                            if is_pinned:
+                                _section(
+                                    _mi('starred-symbolic', _('Unpin from Start Page'), lambda: self._toggle_pin_connection(conn)),
+                                )
+                            else:
+                                _section(
+                                    _mi('non-starred-symbolic', _('Pin to Start Page'), lambda: self._toggle_pin_connection(conn)),
+                                )
+                        except Exception:
+                            pass
+
                         _section(
                             _mi('user-trash-symbolic', _('Delete'), lambda: self.on_delete_connection_action(None, None)),
                         )
@@ -2290,6 +2303,25 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             host = getattr(conn, 'hostname', '') or getattr(conn, 'host', '')
             if host:
                 self.get_clipboard().set(host)
+
+    def _toggle_pin_connection(self, conn):
+        """Pin or unpin a connection from the start page."""
+        if conn is None:
+            return
+        try:
+            nickname = conn.nickname
+            if self.config.is_pinned(nickname):
+                self.config.unpin_connection(nickname)
+                msg = _("Unpinned from start page")
+            else:
+                self.config.pin_connection(nickname)
+                msg = _("Pinned to start page")
+            if hasattr(self, 'toast_overlay') and self.toast_overlay:
+                self.toast_overlay.add_toast(Adw.Toast.new(msg))
+            if hasattr(self, 'welcome_view') and self.welcome_view:
+                self.welcome_view.refresh_pinned()
+        except Exception as e:
+            logger.error(f"Failed to toggle pin for {getattr(conn, 'nickname', '?')}: {e}")
 
     def _resolve_connection_list_event(
         self,

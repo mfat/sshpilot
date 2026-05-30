@@ -118,6 +118,12 @@ class WelcomePage(Gtk.Overlay):
         self.set_hexpand(True)
         self.set_vexpand(True)
         self.set_can_focus(False)
+
+        # Placeholders populated after layouts are built
+        self._pinned_rows_box = None
+        self._pinned_cards_box = None
+
+        self.connection_manager.connect_after('connection-removed', self._on_connection_removed)
         
         # Create a scrolled window to hold all content
         scrolled = Gtk.ScrolledWindow()
@@ -223,6 +229,13 @@ class WelcomePage(Gtk.Overlay):
     
     def _build_cards_layout(self, current_shortcuts):
         """Build the cards grid layout"""
+        # Outer box so the pinned section can sit above the cards grid
+        outer_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+
+        self._pinned_cards_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        outer_box.append(self._pinned_cards_box)
+        self._populate_pinned_cards_box()
+
         cards_grid = Gtk.FlowBox()
         cards_grid.set_selection_mode(Gtk.SelectionMode.NONE)
         cards_grid.set_max_children_per_line(3)
@@ -493,8 +506,9 @@ class WelcomePage(Gtk.Overlay):
         about_btn.set_child(card_box)
         about_btn.connect('clicked', lambda *_: self.window.get_application().activate_action('about'))
         cards_grid.append(about_btn)
-        
-        return cards_grid
+
+        outer_box.append(cards_grid)
+        return outer_box
     
     def _build_action_rows_layout(self, current_shortcuts):
         """Build the action rows layout"""
@@ -506,7 +520,12 @@ class WelcomePage(Gtk.Overlay):
         clamp.set_can_focus(False)
         
         container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        
+
+        # Pinned connections section (populated dynamically)
+        self._pinned_rows_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        container.append(self._pinned_rows_box)
+        self._populate_pinned_rows_box()
+
         # Getting Started section
         getting_started_group = Adw.PreferencesGroup()
         getting_started_group.set_margin_start(12)
@@ -657,6 +676,100 @@ class WelcomePage(Gtk.Overlay):
             # Save preference
             self.config.set_setting('ui.welcome_page_layout', 'rows')
     
+    # --- Pinned connections ---
+
+    def _build_pinned_section(self) -> 'Adw.PreferencesGroup | None':
+        """Build an Adw.PreferencesGroup of pinned hosts, or None if none are pinned."""
+        from sshpilot import icon_utils
+        pinned_nicknames = self.config.get_pinned_nicknames()
+        if not pinned_nicknames:
+            return None
+
+        conn_map = {c.nickname: c for c in self.connection_manager.connections}
+        rows_added = 0
+        group = Adw.PreferencesGroup(title=_("Pinned Connections"))
+        group.set_margin_start(12)
+        group.set_margin_end(12)
+        group.set_margin_top(12)
+        group.set_margin_bottom(4)
+        group.set_can_focus(False)
+        group.add_css_class('separate')
+
+        for nickname in pinned_nicknames:
+            conn = conn_map.get(nickname)
+            if conn is None:
+                continue
+            row = Adw.ActionRow()
+            row.set_title(nickname)
+            host_label = getattr(conn, 'host', '') or getattr(conn, 'hostname', '')
+            username = getattr(conn, 'username', '')
+            if username and host_label:
+                row.set_subtitle(f"{username}@{host_label}")
+            elif host_label:
+                row.set_subtitle(host_label)
+            row.set_activatable(True)
+            row.set_can_focus(False)
+
+            prefix_img = icon_utils.new_image_from_icon_name('network-server-symbolic')
+            prefix_img.set_can_focus(False)
+            row.add_prefix(prefix_img)
+
+            connect_btn = Gtk.Button(label=_("Connect"))
+            connect_btn.set_valign(Gtk.Align.CENTER)
+            connect_btn.add_css_class('suggested-action')
+            connect_btn.add_css_class('pill')
+            connect_btn.set_can_focus(False)
+            _conn = conn
+            connect_btn.connect('clicked', lambda _b, c=_conn: self.window.terminal_manager.connect_to_host(c))
+            row.add_suffix(connect_btn)
+
+            row.connect('activated', lambda _r, c=_conn: self.window.terminal_manager.connect_to_host(c))
+            group.add(row)
+            rows_added += 1
+
+        return group if rows_added > 0 else None
+
+    def _populate_pinned_rows_box(self):
+        """Fill _pinned_rows_box with the current pinned group (rows layout)."""
+        if self._pinned_rows_box is None:
+            return
+        child = self._pinned_rows_box.get_first_child()
+        while child:
+            nxt = child.get_next_sibling()
+            self._pinned_rows_box.remove(child)
+            child = nxt
+        group = self._build_pinned_section()
+        if group is not None:
+            self._pinned_rows_box.append(group)
+
+    def _populate_pinned_cards_box(self):
+        """Fill _pinned_cards_box with the current pinned group (cards layout)."""
+        if self._pinned_cards_box is None:
+            return
+        child = self._pinned_cards_box.get_first_child()
+        while child:
+            nxt = child.get_next_sibling()
+            self._pinned_cards_box.remove(child)
+            child = nxt
+        group = self._build_pinned_section()
+        if group is not None:
+            self._pinned_cards_box.append(group)
+
+    def refresh_pinned(self):
+        """Rebuild the pinned section in both layouts after a pin/unpin action."""
+        self._populate_pinned_rows_box()
+        self._populate_pinned_cards_box()
+
+    def _on_connection_removed(self, _manager, connection):
+        """Auto-unpin a connection when it is deleted from the inventory."""
+        try:
+            nickname = getattr(connection, 'nickname', None)
+            if nickname and self.config.is_pinned(nickname):
+                self.config.unpin_connection(nickname)
+                self.refresh_pinned()
+        except Exception:
+            pass
+
     def show_sidebar_hint(self):
         """Show a hint about using the sidebar to manage connections"""
         toast = Adw.Toast.new(_('Use the sidebar to add and manage your SSH connections'))

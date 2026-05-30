@@ -597,6 +597,32 @@ class Config(GObject.Object):
         except Exception:
             logger.error(f"Failed to persist connection meta for {key}")
 
+    def pin_connection(self, nickname: str) -> None:
+        """Mark a connection as pinned to the start page."""
+        meta = self.get_connection_meta(nickname)
+        meta['pinned'] = True
+        self.set_connection_meta(nickname, meta)
+
+    def unpin_connection(self, nickname: str) -> None:
+        """Remove a connection's pinned flag."""
+        meta = self.get_connection_meta(nickname)
+        meta.pop('pinned', None)
+        self.set_connection_meta(nickname, meta)
+
+    def is_pinned(self, nickname: str) -> bool:
+        """Return True if the connection is pinned to the start page."""
+        return bool(self.get_connection_meta(nickname).get('pinned', False))
+
+    def get_pinned_nicknames(self) -> list:
+        """Return a list of nicknames that are currently pinned."""
+        try:
+            meta_all = self.get_setting('connections_meta', {})
+            if not isinstance(meta_all, dict):
+                return []
+            return [k for k, v in meta_all.items() if isinstance(v, dict) and v.get('pinned')]
+        except Exception:
+            return []
+
     def add_custom_theme(self, name: str, theme_data: Dict[str, str]):
         """Add a custom theme"""
         self.terminal_themes[name] = theme_data
