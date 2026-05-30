@@ -76,23 +76,27 @@ class RowResizeHandle(Gtk.DrawingArea):
         drag = Gtk.GestureDrag()
         drag.connect("drag-begin", self._on_drag_begin)
         drag.connect("drag-update", self._on_drag_update)
+        drag.connect("drag-end", self._on_drag_end)
         self.add_controller(drag)
 
     def _on_drag_begin(self, _gesture, _x, _y) -> None:
         self._last_dy = 0.0
 
     def _on_drag_update(self, _gesture, _offset_x, offset_y) -> None:
+        # Accumulate the target height but do NOT resize the widget yet —
+        # resizing VTE on every mouse-move event causes content to flicker.
         delta = offset_y - self._last_dy
         self._last_dy = offset_y
         idx = self._get_row_idx()
         tab = self._tab
         if 0 <= idx < len(tab._row_heights):
-            new_h = max(tab.DEFAULT_PANE_HEIGHT, tab._row_heights[idx] + int(delta))
-            tab._row_heights[idx] = new_h
-            # Batch the actual widget resize to one layout pass per frame.
-            if not tab._row_resize_pending:
-                tab._row_resize_pending = True
-                GLib.idle_add(tab._flush_row_resize)
+            tab._row_heights[idx] = max(
+                tab.DEFAULT_PANE_HEIGHT, tab._row_heights[idx] + int(delta)
+            )
+
+    def _on_drag_end(self, _gesture, _offset_x, _offset_y) -> None:
+        # Apply the final height in one shot on mouse release.
+        self._tab._flush_row_resize()
 
 
 class SplitPane(Gtk.Box):
@@ -524,7 +528,6 @@ class SplitViewTab(Gtk.Box):
         self._tab_page = None
         self._row_heights: List[int] = []
         self._row_boxes: List[Gtk.Box] = []
-        self._row_resize_pending: bool = False
         self.set_hexpand(True)
         self.set_vexpand(True)
 
