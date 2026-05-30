@@ -308,39 +308,6 @@ class SplitPane(Gtk.Box):
         self._inner_tab_view.set_selected_page(page)
         self._split_view_tab._update_tab_title()
 
-        # macOS: VTE's framebuffer is not flushed automatically when a widget
-        # first becomes visible inside a nested AdwTabView on the Quartz
-        # backend.  The result is a blank pane until the user presses Enter
-        # (which triggers a shell prompt write and a forced repaint).  We hook
-        # the terminal's "map" signal and, once the widget is on-screen, queue
-        # both a draw and a resize pass after a short delay so the compositor
-        # has time to allocate the widget before we force the repaint.
-        def _on_pane_terminal_map(widget, *_):
-            widget.disconnect_by_func(_on_pane_terminal_map)
-
-            def _force_repaint():
-                try:
-                    vte = getattr(terminal, 'vte', None)
-                    backend = getattr(terminal, 'backend', None)
-                    if backend:
-                        backend.queue_draw()
-                        backend.queue_resize()
-                    if vte:
-                        vte.queue_draw()
-                        vte.queue_resize()
-                    # queue_draw on the whole terminal container as well
-                    terminal.queue_draw()
-                except Exception:
-                    pass
-                return False  # one-shot
-
-            GLib.timeout_add(100, _force_repaint)
-
-        try:
-            terminal.connect('map', _on_pane_terminal_map)
-        except Exception:
-            pass
-
     def add_connection(self, connection) -> None:
         """Create a new terminal for connection and add it to this pane."""
         terminal = self._window.terminal_manager.create_terminal_for_pane(connection)
@@ -988,16 +955,26 @@ class SplitViewTab(Gtk.Box):
         """
         Fill panes from a list of Connection objects.
 
-        The two initial empty panes absorb the first two connections;
-        extra connections each get a new pane.
+        All panes are created and the layout is rebuilt ONCE before any
+        terminals are connected.  The previous approach called add_pane()
+        (which calls _rebuild_layout()) for each connection beyond the
+        initial two, reparenting already-created panes mid-way through
+        connection setup.  On macOS this reparenting leaves VTE widgets
+        in an unrealized state when spawn_async is called, so the SSH
+        process starts but produces no output until the user presses Enter.
         """
         if not connections:
             return
+
+        # Pre-create all panes needed so the layout is stable before any
+        # terminals are spawned.  SplitPane.__init__ calls register_pane,
+        # so we only need a single _rebuild_layout() at the end.
+        while len(self._panes) < len(connections):
+            SplitPane(self, self.window)
+        self._rebuild_layout()
+
         for i, conn in enumerate(connections):
-            if i < len(self._panes):
-                self._panes[i].add_connection(conn)
-            else:
-                self.add_pane().add_connection(conn)
+            self._panes[i].add_connection(conn)
 
     # ── terminal lifecycle ────────────────────────────────────────────────────
 
