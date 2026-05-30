@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:4.9.2}
+Version:        %{?version}%{!?version:5.0.0}
 Release:        1%{?dist}
 Summary:        Manage your servers with ease
 
@@ -92,6 +92,14 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/io.github.mfat.sshpil
 %{_datadir}/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg
 
 %changelog
+* Sat May 30 2026 mFat <newmfat@gmail.com> - 5.0.0
+- New "Sessions" feature — Save, open, rename, and delete snapshots of your open tabs and restore them automatically
+- Pin saved sessions to the start page for one-click restore
+- Copy to group — Add a connection to another group without removing it from its current group(s). Same connection can appear in multiple groups.
+- Jump host picker — Pick jump hosts from your saved connections when editing a connection.
+- Better Split View - Resize terminal panes freely, drag and drop an entire group onto a Split View
+- Minor UI fixes and improvements
+
 * Fri May 29 2026 mFat <newmfat@gmail.com> - 4.9.2
 - - Bug fixes
 
