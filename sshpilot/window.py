@@ -3091,9 +3091,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 for conn_nickname in group_info.get('connections', []):
                     if conn_nickname in connections_dict:
                         conn = connections_dict[conn_nickname]
-                        row = self.add_connection_row(conn, indent_level=1)
-                        if row is not None:
-                            row._group_id = group_info.get('id')
+                        row = self.add_connection_row(conn, indent_level=1, group_id=group_info.get('id'))
                         displayed_connections.add(conn_nickname)
 
             matches = [
@@ -3178,9 +3176,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 for conn_nickname in group_info.get('connections', []):
                     if conn_nickname in connections_dict:
                         conn = connections_dict[conn_nickname]
-                        row = self.add_connection_row(conn, level + 1)
-                        if row is not None:
-                            row._group_id = group_info.get('id')
+                        row = self.add_connection_row(conn, level + 1, group_id=group_info.get('id'))
             
             # Recursively add child groups
             if group_info.get('children'):
@@ -3196,9 +3192,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 self._select_only_row(row)
                 break
     
-    def add_connection_row(self, connection: Connection, indent_level: int = 0):
+    def add_connection_row(self, connection: Connection, indent_level: int = 0, group_id: str = None):
         """Add a connection row to the list with optional indentation"""
-        row = ConnectionRow(connection, self.group_manager, self.config, file_manager_callback=self._open_manage_files_for_connection)
+        row = ConnectionRow(connection, self.group_manager, self.config, file_manager_callback=self._open_manage_files_for_connection, group_id=group_id)
         
         # Apply indentation preference for grouped connections
         row.set_indentation(indent_level)

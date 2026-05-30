@@ -638,7 +638,7 @@ class GroupRow(Gtk.ListBoxRow):
 class ConnectionRow(Gtk.ListBoxRow):
     """Row widget for connection list."""
 
-    def __init__(self, connection: Connection, group_manager: GroupManager, config, file_manager_callback=None):
+    def __init__(self, connection: Connection, group_manager: GroupManager, config, file_manager_callback=None, group_id=None):
         super().__init__()
         _install_sidebar_color_css()
         #self.add_css_class("navigation-sidebar")
@@ -653,6 +653,7 @@ class ConnectionRow(Gtk.ListBoxRow):
         self._group_display_mode = None
         self._row_margin_base = None
         self._content_margin_base = None
+        self._group_id = group_id
 
         # Main container with drop indicators
         main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
