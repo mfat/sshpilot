@@ -955,26 +955,16 @@ class SplitViewTab(Gtk.Box):
         """
         Fill panes from a list of Connection objects.
 
-        All panes are created and the layout is rebuilt ONCE before any
-        terminals are connected.  The previous approach called add_pane()
-        (which calls _rebuild_layout()) for each connection beyond the
-        initial two, reparenting already-created panes mid-way through
-        connection setup.  On macOS this reparenting leaves VTE widgets
-        in an unrealized state when spawn_async is called, so the SSH
-        process starts but produces no output until the user presses Enter.
+        The two initial empty panes absorb the first two connections;
+        extra connections each get a new pane.
         """
         if not connections:
             return
-
-        # Pre-create all panes needed so the layout is stable before any
-        # terminals are spawned.  SplitPane.__init__ calls register_pane,
-        # so we only need a single _rebuild_layout() at the end.
-        while len(self._panes) < len(connections):
-            SplitPane(self, self.window)
-        self._rebuild_layout()
-
         for i, conn in enumerate(connections):
-            self._panes[i].add_connection(conn)
+            if i < len(self._panes):
+                self._panes[i].add_connection(conn)
+            else:
+                self.add_pane().add_connection(conn)
 
     # ── terminal lifecycle ────────────────────────────────────────────────────
 
