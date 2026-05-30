@@ -83,7 +83,7 @@ from .search_utils import connection_matches
 from .shortcut_utils import get_primary_modifier_label
 from .platform_utils import is_macos, get_config_dir
 from .ssh_utils import ensure_writable_ssh_home
-from .scp_utils import assemble_scp_transfer_args, download_file, upload_file
+from .scp_utils import assemble_scp_transfer_args, classify_sftp_error, download_file, upload_file
 from .ssh_password_exec import run_ssh_with_password, run_scp_with_password
 
 logger = logging.getLogger(__name__)
@@ -5792,7 +5792,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
             list_box.connect('row-selected', _on_rows_changed)
 
-            def _finish_download(success: bool, destination: Path, remote_name: str):
+            def _finish_download(success: bool, destination: Path, remote_name: str, friendly_error: Optional[str] = None):
                 list_box.set_sensitive(True)
                 refresh_button.set_sensitive(True)
                 selected_row = list_box.get_selected_row()
@@ -5814,6 +5814,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         )
                         toast.set_timeout(3)
                         self.toast_overlay.add_toast(toast)
+                elif friendly_error:
+                    status_label.set_text(friendly_error)
                 else:
                     status_label.set_text(_('Download failed. Check the log for details.'))
                 return False
@@ -5870,6 +5872,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         logger.debug("SCP Download: Using password - removed askpass from environment")
                     
                     # SSH_ASKPASS will handle passphrase retrieval from storage or GUI dialog if needed
+                    download_details: Dict[str, Any] = {}
                     success = download_file(
                         host_value,
                         username,
@@ -5887,8 +5890,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         key_mode=profile.key_mode,
                         connection_manager=self.connection_manager if hasattr(self, 'connection_manager') else None,
                         config=self.config if hasattr(self, 'config') else None,
+                        result_details=download_details,
                     )
-                    GLib.idle_add(_finish_download, success, destination_dir, remote_name)
+                    friendly_error = download_details.get('friendly') if not success else None
+                    GLib.idle_add(_finish_download, success, destination_dir, remote_name, friendly_error)
 
                 threading.Thread(target=_worker, daemon=True).start()
 
@@ -6865,10 +6870,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 if '/app/bin' not in current_path:
                     env['PATH'] = f"/app/bin:{current_path}"
 
-            cmdline = ' '.join([GLib.shell_quote(a) for a in argv])
             envv = [f"{k}={v}" for k, v in env.items()]
             logger.debug(f"SCP: Final environment variables: SSH_ASKPASS={env.get('SSH_ASKPASS', 'NOT_SET')}, SSH_ASKPASS_REQUIRE={env.get('SSH_ASKPASS_REQUIRE', 'NOT_SET')}")
-            logger.debug(f"SCP: Command line: {cmdline}")
             env_dict = dict(env)
 
             def _feed_colored_line(text: str, color: str):
@@ -6887,9 +6890,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 except Exception:
                     pass
 
-            _feed_colored_line(start_message, 'yellow')
-
-            try:
+            def _spawn_scp(spawn_argv):
+                cmdline = ' '.join([GLib.shell_quote(a) for a in spawn_argv])
+                logger.debug(f"SCP: Command line: {cmdline}")
                 if hasattr(term_widget, 'backend') and term_widget.backend:
                     term_widget.backend.spawn_async(
                         argv=['bash', '-lc', cmdline],
@@ -6914,57 +6917,108 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         None
                     )
 
-                def _on_scp_exited(widget, status):
-                    exit_code = None
-                    try:
-                        if os.WIFEXITED(status):
-                            exit_code = os.WEXITSTATUS(status)
-                        else:
-                            exit_code = status if 0 <= int(status) < 256 else ((int(status) >> 8) & 0xFF)
-                    except Exception:
-                        try:
-                            exit_code = int(status)
-                        except Exception:
-                            exit_code = status
-                    ok = (exit_code == 0)
-                    if ok:
-                        _feed_colored_line(success_message, 'green')
-                    else:
-                        _feed_colored_line(failure_message, 'red')
-
-                    def _present_result_dialog():
-                        try:
-                            if hasattr(self, '_scp_askpass_helpers'):
-                                for helper_path in getattr(self, '_scp_askpass_helpers', []):
-                                    try:
-                                        os.unlink(helper_path)
-                                    except Exception:
-                                        pass
-                                self._scp_askpass_helpers.clear()
-                        except Exception:
-                            pass
-
-                        msg = Adw.MessageDialog(
-                            transient_for=dlg,
-                            modal=True,
-                            heading=result_heading_ok if ok else result_heading_fail,
-                            body=(result_body_ok if ok else _('scp exited with an error. Please review the log output.')),
-                        )
-                        msg.add_response('ok', _('OK'))
-                        msg.set_default_response('ok')
-                        msg.set_close_response('ok')
-                        msg.present()
-                        return False
-
-                    GLib.idle_add(_present_result_dialog)
-
+            def _scrape_terminal_text():
                 try:
-                    if hasattr(term_widget, 'backend') and term_widget.backend:
-                        term_widget.backend.connect_child_exited(_on_scp_exited)
-                    elif hasattr(term_widget, 'vte') and term_widget.vte:
-                        term_widget.vte.connect('child-exited', _on_scp_exited)
+                    backend = getattr(term_widget, 'backend', None)
+                    if backend and hasattr(backend, 'get_content'):
+                        content = backend.get_content()
+                        if content:
+                            return content
+                    if hasattr(term_widget, 'vte') and term_widget.vte:
+                        content_result = term_widget.vte.get_text_range(
+                            0, 0, -1, -1, lambda *args: True
+                        )
+                        return content_result[0] if content_result else None
+                except Exception as exc:
+                    logger.debug(f"SCP: Failed to scrape terminal output: {exc}")
+                return None
+
+            # Tracks whether we have already retried using the legacy SCP
+            # protocol (-O), so the fallback happens at most once.
+            scp_legacy_attempted = {'done': False}
+
+            def _present_result_dialog(failure_body=None):
+                try:
+                    if hasattr(self, '_scp_askpass_helpers'):
+                        for helper_path in getattr(self, '_scp_askpass_helpers', []):
+                            try:
+                                os.unlink(helper_path)
+                            except Exception:
+                                pass
+                        self._scp_askpass_helpers.clear()
                 except Exception:
                     pass
+
+                msg = Adw.MessageDialog(
+                    transient_for=dlg,
+                    modal=True,
+                    heading=result_heading_ok if failure_body is None else result_heading_fail,
+                    body=(result_body_ok if failure_body is None else failure_body),
+                )
+                msg.add_response('ok', _('OK'))
+                msg.set_default_response('ok')
+                msg.set_close_response('ok')
+                msg.present()
+                return False
+
+            def _on_scp_exited(widget, status):
+                exit_code = None
+                try:
+                    if os.WIFEXITED(status):
+                        exit_code = os.WEXITSTATUS(status)
+                    else:
+                        exit_code = status if 0 <= int(status) < 256 else ((int(status) >> 8) & 0xFF)
+                except Exception:
+                    try:
+                        exit_code = int(status)
+                    except Exception:
+                        exit_code = status
+                ok = (exit_code == 0)
+                if ok:
+                    _feed_colored_line(success_message, 'green')
+                    GLib.idle_add(_present_result_dialog)
+                    return
+
+                # Failure: detect a missing/unavailable remote SFTP server.
+                # OpenSSH 9+ scp uses the SFTP protocol by default, so retry
+                # once with the legacy protocol (-O), which does not need it.
+                friendly = classify_sftp_error(_scrape_terminal_text())
+                if friendly and not scp_legacy_attempted['done']:
+                    scp_legacy_attempted['done'] = True
+                    _feed_colored_line(_('Retrying with legacy SCP protocol (-O)…'), 'yellow')
+                    try:
+                        legacy_argv = self._build_scp_argv(
+                            connection,
+                            sources,
+                            destination,
+                            direction=direction,
+                            known_hosts_path=self.connection_manager.known_hosts_path,
+                            legacy=True,
+                        )
+                        # Discard askpass env repopulated by the rebuild; the
+                        # original env (env_dict) is reused for the retry.
+                        self._scp_askpass_env = {}
+                        _spawn_scp(legacy_argv)
+                        return
+                    except Exception as exc:
+                        logger.error(f'SCP: Failed to retry with legacy protocol: {exc}')
+
+                _feed_colored_line(failure_message, 'red')
+                failure_body = friendly or _('scp exited with an error. Please review the log output.')
+                GLib.idle_add(lambda: _present_result_dialog(failure_body))
+
+            _feed_colored_line(start_message, 'yellow')
+
+            try:
+                if hasattr(term_widget, 'backend') and term_widget.backend:
+                    term_widget.backend.connect_child_exited(_on_scp_exited)
+                elif hasattr(term_widget, 'vte') and term_widget.vte:
+                    term_widget.vte.connect('child-exited', _on_scp_exited)
+            except Exception:
+                pass
+
+            try:
+                _spawn_scp(argv)
             except Exception as e:
                 logger.error(f'Failed to spawn scp in TerminalWidget: {e}')
                 dlg.close()
@@ -6981,6 +7035,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         *,
         direction: str,
         known_hosts_path: Optional[str] = None,
+        legacy: bool = False,
     ):
         profile = self._build_scp_connection_profile(connection)
 
@@ -7053,6 +7108,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             ssh_extra_opts += ['-o', f'UserKnownHostsFile={known_hosts_path}']
 
         argv = ['scp', '-v']
+        # Legacy SCP/rcp protocol (-O) does not require a remote sftp-server.
+        if legacy:
+            argv.append('-O')
         try:
             if direction == 'upload' and any(os.path.isdir(path) for path in transfer_sources):
                 argv.append('-r')
