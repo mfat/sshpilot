@@ -22,8 +22,19 @@ def _ensure_drop_zone_css() -> None:
     # overrides to fight.  Two background-color declarations: the rgba()
     # fallback fires on systems where @accent_bg_color is unavailable.
     provider.load_from_data(b"""
+box.add-pane-strip {
+    background: linear-gradient(to bottom, rgba(0,0,0,0.0), rgba(0,0,0,0.08));
+    border-top: 1px solid rgba(0,0,0,0.12);
+    padding: 6px 0;
+}
 box.add-pane-strip.drag-over {
     background-color: rgba(42, 161, 152, 0.25);
+}
+@media (prefers-color-scheme: dark) {
+    box.add-pane-strip {
+        background: linear-gradient(to bottom, rgba(255,255,255,0.0), rgba(255,255,255,0.05));
+        border-top: 1px solid rgba(255,255,255,0.10);
+    }
 }
 """)
     # USER priority (800) beats Adwaita theme (200) and application CSS (600)
@@ -55,16 +66,16 @@ box.row-drag-ghost {
     min-height: 2px;
 }
 
-/* Pane borders - light mode */
+/* Pane borders - light mode: dark border */
 box.split-pane {
-    border: 2px solid rgba(0, 0, 0, 0.25);
+    border: 2px solid rgba(0, 0, 0, 0.55);
     border-radius: 6px;
 }
 
-/* Pane borders - dark mode */
+/* Pane borders - dark mode: white border */
 @media (prefers-color-scheme: dark) {
     box.split-pane {
-        border: 2px solid rgba(255, 255, 255, 0.18);
+        border: 2px solid rgba(255, 255, 255, 0.55);
     }
 }
 """)
