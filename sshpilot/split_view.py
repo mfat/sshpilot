@@ -69,10 +69,10 @@ box.row-drag-ghost {
    margin > spread ensures corners are never clipped by the parent. */
 box.split-pane {
     margin: 6px;
-    box-shadow: 0 0 0 3px alpha(@window_fg_color, 0.7);
+    box-shadow: 0 0 0 2px alpha(@window_fg_color, 0.7);
 }
 box.split-pane.split-pane-active {
-    box-shadow: 0 0 0 3px #f5c400;
+    box-shadow: 0 0 0 2px #f5c400;
 }
 """)
     Gtk.StyleContext.add_provider_for_display(
