@@ -104,15 +104,24 @@ class SessionManager:
         return self.sessions.get(name)
 
     def save_session(self, name: str, data: dict) -> None:
-        """Create or overwrite a named session."""
+        """Create or overwrite a named session.
+
+        When overwriting an existing session, its pinned state is preserved
+        unless the incoming payload explicitly carries a ``pinned`` flag.
+        """
         name = (name or "").strip()
         if not name:
             raise ValueError("Session name must not be empty")
         if not isinstance(data, dict):
             raise TypeError("Session data must be a dict")
-        self.sessions[name] = data
+        payload = dict(data)
+        if 'pinned' not in payload:
+            existing = self.sessions.get(name)
+            if isinstance(existing, dict) and existing.get('pinned'):
+                payload['pinned'] = True
+        self.sessions[name] = payload
         self._save()
-        logger.info(f"Saved session '{name}' ({len(data.get('tabs', []))} tabs)")
+        logger.info(f"Saved session '{name}' ({len(payload.get('tabs', []))} tabs)")
 
     def delete_session(self, name: str) -> bool:
         """Remove a named session. Returns True if it existed."""
@@ -122,6 +131,50 @@ class SessionManager:
             logger.info(f"Deleted session '{name}'")
             return True
         return False
+
+    def rename_session(self, old_name: str, new_name: str) -> None:
+        """Rename a session, preserving its payload and pinned state."""
+        new_name = (new_name or "").strip()
+        if not new_name:
+            raise ValueError("Session name must not be empty")
+        if old_name not in self.sessions:
+            raise KeyError(f"Session '{old_name}' does not exist")
+        if new_name == old_name:
+            return
+        if new_name in self.sessions:
+            raise ValueError(f"A session named '{new_name}' already exists")
+        # Preserve insertion order as closely as possible by rebuilding the dict
+        self.sessions = {
+            (new_name if key == old_name else key): value
+            for key, value in self.sessions.items()
+        }
+        self._save()
+        logger.info(f"Renamed session '{old_name}' to '{new_name}'")
+
+    # ── pinning (quick launch from the start page) ─────────────────────────────
+
+    def set_pinned(self, name: str, pinned: bool) -> None:
+        """Pin or unpin a session for display on the start page."""
+        payload = self.sessions.get(name)
+        if not isinstance(payload, dict):
+            return
+        if pinned:
+            payload['pinned'] = True
+        else:
+            payload.pop('pinned', None)
+        self._save()
+
+    def is_pinned(self, name: str) -> bool:
+        payload = self.sessions.get(name)
+        return bool(isinstance(payload, dict) and payload.get('pinned'))
+
+    def get_pinned_session_names(self) -> List[str]:
+        """Return pinned session names sorted case-insensitively."""
+        return sorted(
+            (name for name, payload in self.sessions.items()
+             if isinstance(payload, dict) and payload.get('pinned')),
+            key=str.lower,
+        )
 
     # ── previous session (auto captured on quit) ──────────────────────────────
 

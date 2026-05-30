@@ -891,6 +891,198 @@ class WindowActions:
         dialog.connect('response', _on_response)
         dialog.present()
 
+    def on_manage_sessions_action(self, action, param=None):
+        """Open a manager to rename, delete, or pin saved sessions."""
+        session_manager = getattr(self, 'session_manager', None)
+        if session_manager is None:
+            return
+
+        existing = getattr(self, '_session_manager_window', None)
+        if existing is not None:
+            try:
+                existing.present()
+                return
+            except Exception:
+                self._session_manager_window = None
+
+        window = Adw.Window(transient_for=self, modal=True)
+        window.set_title(_("Session Manager"))
+        window.set_default_size(480, 460)
+        self._session_manager_window = window
+
+        def _on_closed(_w):
+            self._session_manager_window = None
+
+        window.connect('close-request', lambda _w: (_on_closed(_w), False)[1])
+
+        toolbar_view = Adw.ToolbarView()
+        header = Adw.HeaderBar()
+        toolbar_view.add_top_bar(header)
+
+        scroller = Gtk.ScrolledWindow()
+        scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroller.set_vexpand(True)
+
+        clamp = Adw.Clamp()
+        clamp.set_margin_top(18)
+        clamp.set_margin_bottom(18)
+        clamp.set_margin_start(12)
+        clamp.set_margin_end(12)
+
+        content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        clamp.set_child(content_box)
+        scroller.set_child(clamp)
+        toolbar_view.set_content(scroller)
+        window.set_content(toolbar_view)
+
+        def rebuild():
+            child = content_box.get_first_child()
+            while child is not None:
+                nxt = child.get_next_sibling()
+                content_box.remove(child)
+                child = nxt
+
+            names = session_manager.list_session_names()
+            if not names:
+                status = Adw.StatusPage()
+                status.set_icon_name('document-open-recent-symbolic')
+                status.set_title(_("No Saved Sessions"))
+                status.set_description(_("Use Save Session to capture your open tabs."))
+                status.set_vexpand(True)
+                content_box.append(status)
+                return
+
+            listbox = Gtk.ListBox()
+            listbox.set_selection_mode(Gtk.SelectionMode.NONE)
+            listbox.add_css_class('boxed-list')
+            for name in names:
+                listbox.append(self._build_session_manager_row(name, rebuild))
+            content_box.append(listbox)
+
+        rebuild()
+        window.present()
+
+    def _build_session_manager_row(self, name, rebuild):
+        """Build an action row for one session with pin/rename/delete controls."""
+        session_manager = self.session_manager
+        row = Adw.ActionRow()
+        row.set_title(name)
+        payload = session_manager.get_session(name) or {}
+        tab_count = len(payload.get('tabs', []) if isinstance(payload, dict) else [])
+        row.set_subtitle(_("{n} tab(s)").format(n=tab_count))
+
+        pin_button = Gtk.ToggleButton()
+        pin_button.set_icon_name('view-pin-symbolic')
+        pin_button.set_tooltip_text(_("Pin to start page"))
+        pin_button.set_valign(Gtk.Align.CENTER)
+        pin_button.add_css_class('flat')
+        pin_button.set_active(session_manager.is_pinned(name))
+
+        def _on_pin_toggled(btn):
+            session_manager.set_pinned(name, btn.get_active())
+            self._refresh_pinned_sessions()
+
+        pin_button.connect('toggled', _on_pin_toggled)
+        row.add_suffix(pin_button)
+
+        rename_button = Gtk.Button()
+        rename_button.set_icon_name('document-edit-symbolic')
+        rename_button.set_tooltip_text(_("Rename"))
+        rename_button.set_valign(Gtk.Align.CENTER)
+        rename_button.add_css_class('flat')
+        rename_button.connect('clicked', lambda _b: self._prompt_rename_session(name, rebuild))
+        row.add_suffix(rename_button)
+
+        delete_button = Gtk.Button()
+        delete_button.set_icon_name('user-trash-symbolic')
+        delete_button.set_tooltip_text(_("Delete"))
+        delete_button.set_valign(Gtk.Align.CENTER)
+        delete_button.add_css_class('flat')
+        delete_button.connect('clicked', lambda _b: self._prompt_delete_session(name, rebuild))
+        row.add_suffix(delete_button)
+
+        return row
+
+    def _prompt_rename_session(self, name, rebuild):
+        session_manager = self.session_manager
+        parent = getattr(self, '_session_manager_window', None) or self
+        dialog = Adw.MessageDialog(
+            transient_for=parent,
+            modal=True,
+            heading=_("Rename Session"),
+            body=_('Enter a new name for "{}".').format(name),
+        )
+        entry = Gtk.Entry()
+        entry.set_text(name)
+        entry.set_activates_default(True)
+        dialog.set_extra_child(entry)
+        dialog.add_response('cancel', _("Cancel"))
+        dialog.add_response('rename', _("Rename"))
+        dialog.set_response_appearance('rename', Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response('rename')
+        dialog.set_close_response('cancel')
+
+        def _on_response(dlg, response):
+            if response != 'rename':
+                return
+            new_name = entry.get_text().strip()
+            if not new_name or new_name == name:
+                return
+            try:
+                session_manager.rename_session(name, new_name)
+            except Exception as exc:
+                self._show_session_error(_("Could not rename session"), str(exc))
+                return
+            rebuild()
+            self._refresh_pinned_sessions()
+
+        dialog.connect('response', _on_response)
+        dialog.present()
+
+    def _prompt_delete_session(self, name, rebuild):
+        session_manager = self.session_manager
+        parent = getattr(self, '_session_manager_window', None) or self
+        dialog = Adw.MessageDialog(
+            transient_for=parent,
+            modal=True,
+            heading=_("Delete Session?"),
+            body=_('The session "{}" will be permanently deleted.').format(name),
+        )
+        dialog.add_response('cancel', _("Cancel"))
+        dialog.add_response('delete', _("Delete"))
+        dialog.set_response_appearance('delete', Adw.ResponseAppearance.DESTRUCTIVE)
+        dialog.set_default_response('cancel')
+        dialog.set_close_response('cancel')
+
+        def _on_response(dlg, response):
+            if response != 'delete':
+                return
+            session_manager.delete_session(name)
+            rebuild()
+            self._refresh_pinned_sessions()
+
+        dialog.connect('response', _on_response)
+        dialog.present()
+
+    def _show_session_error(self, heading, body):
+        parent = getattr(self, '_session_manager_window', None) or self
+        dialog = Adw.MessageDialog(
+            transient_for=parent,
+            modal=True,
+            heading=heading,
+            body=body,
+        )
+        dialog.add_response('ok', _("OK"))
+        dialog.present()
+
+    def _refresh_pinned_sessions(self):
+        """Refresh the start page so pinned-session changes are reflected."""
+        try:
+            if hasattr(self, 'welcome_view') and self.welcome_view:
+                self.welcome_view.refresh_pinned()
+        except Exception as exc:
+            logger.debug(f"Failed to refresh pinned sessions: {exc}")
+
     def on_move_to_group_action(self, action, param=None):
         """Handle move to group action"""
         try:
@@ -1367,6 +1559,11 @@ def register_window_actions(window):
         window.open_session_action = Gio.SimpleAction.new('open-session', None)
         window.open_session_action.connect('activate', window.on_open_session_action)
         window.add_action(window.open_session_action)
+
+    if hasattr(window, 'on_manage_sessions_action'):
+        window.manage_sessions_action = Gio.SimpleAction.new('manage-sessions', None)
+        window.manage_sessions_action.connect('activate', window.on_manage_sessions_action)
+        window.add_action(window.manage_sessions_action)
     
     # Check for updates action
     if hasattr(window, 'on_check_for_updates_action'):

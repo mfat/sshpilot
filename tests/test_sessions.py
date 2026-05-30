@@ -65,6 +65,59 @@ def test_session_manager_empty_name_rejected(tmp_path, monkeypatch):
         raise AssertionError("Expected ValueError for empty session name")
 
 
+def test_session_manager_rename(tmp_path, monkeypatch):
+    from sshpilot import session_manager as sm
+
+    monkeypatch.setattr(sm, 'get_config_dir', lambda: str(tmp_path))
+    manager = sm.SessionManager()
+
+    data = {'tabs': [{'type': 'local'}]}
+    manager.save_session('Old', data)
+    manager.set_pinned('Old', True)
+
+    manager.rename_session('Old', 'New')
+    assert not manager.has_session('Old')
+    assert manager.has_session('New')
+    # Payload and pinned state preserved
+    assert manager.get_session('New').get('tabs') == data['tabs']
+    assert manager.is_pinned('New')
+
+    # Renaming to an existing name is rejected
+    manager.save_session('Other', {'tabs': []})
+    try:
+        manager.rename_session('New', 'Other')
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("Expected ValueError when renaming to existing name")
+
+
+def test_session_manager_pin_round_trip(tmp_path, monkeypatch):
+    from sshpilot import session_manager as sm
+
+    monkeypatch.setattr(sm, 'get_config_dir', lambda: str(tmp_path))
+    manager = sm.SessionManager()
+
+    manager.save_session('A', {'tabs': []})
+    manager.save_session('B', {'tabs': []})
+    assert manager.get_pinned_session_names() == []
+
+    manager.set_pinned('A', True)
+    assert manager.is_pinned('A')
+    assert manager.get_pinned_session_names() == ['A']
+
+    # Re-saving over a pinned session preserves the pin
+    manager.save_session('A', {'tabs': [{'type': 'local'}]})
+    assert manager.is_pinned('A')
+
+    # Reload from disk keeps pinned state
+    reloaded = sm.SessionManager()
+    assert reloaded.get_pinned_session_names() == ['A']
+
+    reloaded.set_pinned('A', False)
+    assert reloaded.get_pinned_session_names() == []
+
+
 # ── capture_session ─────────────────────────────────────────────────────────────
 
 def _make_page(child, custom_title=None):

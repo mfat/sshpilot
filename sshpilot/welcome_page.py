@@ -729,6 +729,54 @@ class WelcomePage(Gtk.Overlay):
 
         return group if rows_added > 0 else None
 
+    def _build_pinned_sessions_section(self) -> 'Adw.PreferencesGroup | None':
+        """Build an Adw.PreferencesGroup of pinned sessions, or None if none are pinned."""
+        from sshpilot import icon_utils
+        session_manager = getattr(self.window, 'session_manager', None)
+        if session_manager is None:
+            return None
+        pinned_names = session_manager.get_pinned_session_names()
+        if not pinned_names:
+            return None
+
+        group = Adw.PreferencesGroup(title=_("Pinned Sessions"))
+        group.set_margin_start(12)
+        group.set_margin_end(12)
+        group.set_margin_top(12)
+        group.set_margin_bottom(4)
+        group.set_can_focus(False)
+        group.add_css_class('separate')
+
+        rows_added = 0
+        for name in pinned_names:
+            data = session_manager.get_session(name)
+            if not isinstance(data, dict):
+                continue
+            row = Adw.ActionRow()
+            row.set_title(name)
+            tab_count = len(data.get('tabs', []))
+            row.set_subtitle(_("{n} tab(s)").format(n=tab_count))
+            row.set_activatable(True)
+            row.set_can_focus(False)
+
+            prefix_img = icon_utils.new_image_from_icon_name('view-dual-symbolic')
+            prefix_img.set_can_focus(False)
+            row.add_prefix(prefix_img)
+
+            open_btn = Gtk.Button(label=_("Open"))
+            open_btn.set_valign(Gtk.Align.CENTER)
+            open_btn.add_css_class('suggested-action')
+            open_btn.add_css_class('pill')
+            open_btn.set_can_focus(False)
+            open_btn.connect('clicked', lambda _b, n=name, d=data: self.window._prompt_open_session(n, d))
+            row.add_suffix(open_btn)
+
+            row.connect('activated', lambda _r, n=name, d=data: self.window._prompt_open_session(n, d))
+            group.add(row)
+            rows_added += 1
+
+        return group if rows_added > 0 else None
+
     def _populate_pinned_rows_box(self):
         """Fill _pinned_rows_box with the current pinned group (rows layout)."""
         if self._pinned_rows_box is None:
@@ -741,6 +789,9 @@ class WelcomePage(Gtk.Overlay):
         group = self._build_pinned_section()
         if group is not None:
             self._pinned_rows_box.append(group)
+        sessions_group = self._build_pinned_sessions_section()
+        if sessions_group is not None:
+            self._pinned_rows_box.append(sessions_group)
 
     def _populate_pinned_cards_box(self):
         """Fill _pinned_cards_box with the current pinned group (cards layout)."""
@@ -754,6 +805,9 @@ class WelcomePage(Gtk.Overlay):
         group = self._build_pinned_section()
         if group is not None:
             self._pinned_cards_box.append(group)
+        sessions_group = self._build_pinned_sessions_section()
+        if sessions_group is not None:
+            self._pinned_cards_box.append(sessions_group)
 
     def refresh_pinned(self):
         """Rebuild the pinned section in both layouts after a pin/unpin action."""

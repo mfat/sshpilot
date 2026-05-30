@@ -2979,6 +2979,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         sessions_menu = Gio.Menu()
         sessions_menu.append('Save Session…', 'win.save-session')
         sessions_menu.append('Open Session…', 'win.open-session')
+        sessions_menu.append('Manage Sessions…', 'win.manage-sessions')
         menu.append_submenu('Sessions', sessions_menu)
 
         # Import/Export submenu
