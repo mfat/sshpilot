@@ -828,6 +828,11 @@ class SplitViewTab(Gtk.Box):
                 handle = RowResizeHandle(lambda idx=row_idx: idx, self)
                 self._content_area.append(handle)
 
+            # Spacer so there is plenty of free space below the last row.
+            spacer = Gtk.Box()
+            spacer.set_size_request(-1, 600)
+            self._content_area.append(spacer)
+
         self._normalize_pane_heights()
 
     def _chain_panes(
