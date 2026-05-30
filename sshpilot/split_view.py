@@ -806,19 +806,29 @@ class SplitViewTab(Gtk.Box):
                     h_paned.set_end_child(pair[1])
                     row_widgets.append(h_paned)
 
-            self._row_heights = [self.DEFAULT_PANE_HEIGHT] * len(row_widgets)
+            old_heights = list(self._row_heights)
+            is_first_build = len(old_heights) == 0
+            self._row_heights = []
             self._row_boxes = []
             for row_idx, row_widget in enumerate(row_widgets):
+                h = (old_heights[row_idx] if row_idx < len(old_heights)
+                     else self.DEFAULT_PANE_HEIGHT)
+                self._row_heights.append(h)
                 row_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
                 row_box.set_hexpand(True)
                 row_box.set_vexpand(False)
-                row_box.set_size_request(-1, self._row_heights[row_idx])
+                row_box.set_size_request(-1, h)
                 row_box.append(row_widget)
                 self._row_boxes.append(row_box)
                 self._content_area.append(row_box)
-                if row_idx < len(row_widgets) - 1:
-                    handle = RowResizeHandle(lambda idx=row_idx: idx, self)
-                    self._content_area.append(handle)
+                # Handle after every row (including the last) so every row
+                # can be grown downward; the last handle sits above the empty
+                # space and dragging it down causes the scroll area to grow.
+                handle = RowResizeHandle(lambda idx=row_idx: idx, self)
+                self._content_area.append(handle)
+
+            if is_first_build:
+                GLib.idle_add(self._auto_fill_rows_to_viewport)
 
         self._normalize_pane_heights()
 
@@ -846,6 +856,19 @@ class SplitViewTab(Gtk.Box):
                 pane.set_size_request(-1, self.DEFAULT_PANE_HEIGHT)
             except Exception:
                 pass
+
+    def _auto_fill_rows_to_viewport(self) -> bool:
+        """Size rows to fill the scroll viewport equally on first HORIZONTAL build."""
+        viewport_h = self._pane_scroll.get_height()
+        n = len(self._row_boxes)
+        if viewport_h <= 0 or n == 0:
+            return False
+        handle_total = n * 6  # one handle after every row
+        per_row = max(self.DEFAULT_PANE_HEIGHT, (viewport_h - handle_total) // n)
+        for i, row_box in enumerate(self._row_boxes):
+            self._row_heights[i] = per_row
+            row_box.set_size_request(-1, per_row)
+        return False
 
     # ── pre-population ────────────────────────────────────────────────────────
 
