@@ -96,7 +96,7 @@ class StubGroupRow(DummyRowBase):
 
 
 class StubConnectionRow(DummyRowBase):
-    def __init__(self, connection, group_manager=None, config=None):
+    def __init__(self, connection, group_manager=None, config=None, **kwargs):
         super().__init__()
         self.connection = connection
         self.indentation = 0

@@ -718,7 +718,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.active_terminals: Dict[Connection, TerminalWidget] = {}  # most recent terminal per connection
         self.connection_to_terminals: Dict[Connection, List[TerminalWidget]] = {}
         self.terminal_to_connection: Dict[TerminalWidget, Connection] = {}
-        self.connection_rows = {}   # connection -> row_widget
+        self.connection_rows = {}   # connection -> [row_widget, ...] (a connection may appear in several groups)
         self._context_menu_row = None
         # Hide hosts toggle state
         try:
@@ -1157,6 +1157,24 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         """Return connection objects targeted by the current action."""
         rows = self._get_target_connection_rows(prefer_context=prefer_context)
         return self._connections_from_rows(rows)
+
+    def _rows_for_connection(self, connection) -> List[Gtk.ListBoxRow]:
+        """Return every visible row representing ``connection``.
+
+        A connection can be shown in more than one group, so several rows may
+        map to the same connection object.
+        """
+        rows = self.connection_rows.get(connection)
+        if not rows:
+            return []
+        if isinstance(rows, list):
+            return list(rows)
+        return [rows]
+
+    def _primary_row_for_connection(self, connection) -> Optional[Gtk.ListBoxRow]:
+        """Return the first row representing ``connection`` (or ``None``)."""
+        rows = self._rows_for_connection(connection)
+        return rows[0] if rows else None
 
     def _determine_neighbor_connection_row(
         self, target_rows: List[Gtk.ListBoxRow]
@@ -1765,7 +1783,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             new_connection.extra_ssh_config = new_data.get('extra_ssh_config', '')
             new_connection.certificate = new_data.get('certificate', '')
 
-            original_group_id = self.group_manager.get_connection_group(connection.nickname)
+            original_groups = self.group_manager.get_connection_groups(connection.nickname)
+            original_group_id = original_groups[0] if original_groups else None
 
             self.connection_manager.connections.append(new_connection)
             try:
@@ -1786,6 +1805,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     self.group_manager.reorder_connection_in_group(new_nickname, connection.nickname, 'below')
                 except Exception:
                     pass
+                # Mirror any additional group memberships of the original
+                for extra_group_id in original_groups[1:]:
+                    if extra_group_id in getattr(self.group_manager, 'groups', {}):
+                        self.group_manager.copy_connection_to_group(new_nickname, extra_group_id)
             else:
                 self.group_manager.move_connection(new_nickname, None)
                 try:
@@ -1801,8 +1824,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             self.rebuild_connection_list()
 
             duplicated = self.connection_manager.find_connection_by_nickname(new_nickname)
-            if duplicated and duplicated in self.connection_rows:
-                row = self.connection_rows[duplicated]
+            row = self._primary_row_for_connection(duplicated) if duplicated else None
+            if row is not None:
                 self._select_only_row(row)
                 try:
                     self.connection_list.scroll_to_row(row)
@@ -1885,9 +1908,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 except Exception:
                     pass
                 # Update all rows
-                for row in self.connection_rows.values():
-                    if hasattr(row, 'apply_hide_hosts'):
-                        row.apply_hide_hosts(self._hide_hosts)
+                for rows in self.connection_rows.values():
+                    for row in (rows if isinstance(rows, list) else [rows]):
+                        if hasattr(row, 'apply_hide_hosts'):
+                            row.apply_hide_hosts(self._hide_hosts)
                 # Update icon/tooltip
                 _update_eye_icon(btn)
             except Exception:
@@ -2120,10 +2144,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                             _mi('utilities-terminal-symbolic', _('Open in System Terminal'), lambda: self.on_open_in_system_terminal_action(None, None)) if not should_hide_external_terminal_options() else None,
                         )
 
-                        current_group_id = self.group_manager.get_connection_group(conn.nickname) if conn else None
+                        current_groups = self.group_manager.get_connection_groups(conn.nickname) if conn else []
+                        row_group_id = getattr(row, '_group_id', None)
+                        ungroup_label = _('Remove from Group') if (row_group_id and len(current_groups) > 1) else _('Ungroup')
                         _section(
                             _mi('folder-symbolic', _('Move to Group'), lambda: self.on_move_to_group_action(None, None)),
-                            _mi('edit-undo-symbolic', _('Ungroup'), lambda: self.on_move_to_ungrouped_action(None, None)) if current_group_id else None,
+                            _mi('list-add-symbolic', _('Copy to Group'), lambda: self.on_copy_to_group_action(None, None)),
+                            _mi('edit-undo-symbolic', ungroup_label, lambda: self.on_move_to_ungrouped_action(None, None)) if current_groups else None,
                         )
 
                         try:
@@ -3064,7 +3091,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 for conn_nickname in group_info.get('connections', []):
                     if conn_nickname in connections_dict:
                         conn = connections_dict[conn_nickname]
-                        self.add_connection_row(conn, indent_level=1)
+                        row = self.add_connection_row(conn, indent_level=1)
+                        if row is not None:
+                            row._group_id = group_info.get('id')
                         displayed_connections.add(conn_nickname)
 
             matches = [
@@ -3090,10 +3119,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Build the list with groups
         self._build_grouped_list(hierarchy, connections_dict, 0)
 
-        # Add ungrouped connections at the end
+        # Add ungrouped connections at the end. A connection is only ungrouped
+        # when it does not belong to any group (it may belong to several).
         ungrouped_nicks = [
             conn.nickname for conn in connections
-            if not self.group_manager.get_connection_group(conn.nickname)
+            if not self.group_manager.get_connection_groups(conn.nickname)
         ]
 
         if ungrouped_nicks:
@@ -3148,7 +3178,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 for conn_nickname in group_info.get('connections', []):
                     if conn_nickname in connections_dict:
                         conn = connections_dict[conn_nickname]
-                        self.add_connection_row(conn, level + 1)
+                        row = self.add_connection_row(conn, level + 1)
+                        if row is not None:
+                            row._group_id = group_info.get('id')
             
             # Recursively add child groups
             if group_info.get('children'):
@@ -3172,11 +3204,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         row.set_indentation(indent_level)
         
         self.connection_list.append(row)
-        self.connection_rows[connection] = row
+        # A connection can appear under multiple groups, so keep a list of rows
+        self.connection_rows.setdefault(connection, []).append(row)
         
         # Apply current hide-hosts setting to new row
         if hasattr(row, 'apply_hide_hosts'):
             row.apply_hide_hosts(getattr(self, '_hide_hosts', False))
+
+        return row
 
     def on_search_changed(self, entry):
         """Handle search text changes and update connection list."""
@@ -4994,8 +5029,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 else:
                     # Regular connection terminal - select the corresponding row
                     self.active_terminals[connection] = child
-                    row = self.connection_rows.get(connection)
-                    if row:
+                    conn_rows = self._rows_for_connection(connection)
+                    if conn_rows:
                         selected_rows = []
                         try:
                             selected_rows = list(self.connection_list.get_selected_rows())
@@ -5003,8 +5038,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                             current = self.connection_list.get_selected_row()
                             if current:
                                 selected_rows = [current]
-                        if row not in selected_rows:
-                            self._select_only_row(row)
+                        # Leave the selection alone if any row for this
+                        # connection is already selected; otherwise select the first.
+                        if not any(r in selected_rows for r in conn_rows):
+                            self._select_only_row(conn_rows[0])
             else:
                 # Other non-connection terminal - clear selection
                 try:
@@ -7823,16 +7860,21 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             if vadj:
                 scroll_position = vadj.get_value()
 
-        # Remove from UI if it exists
+        # Remove from UI if it exists (a connection may have several rows)
         if connection in self.connection_rows:
-            row = self.connection_rows[connection]
-            self.connection_list.remove(row)
+            for row in self._rows_for_connection(connection):
+                self.connection_list.remove(row)
             del self.connection_rows[connection]
         
-        # Remove from group manager
+        # Remove from group manager, including any group it was copied into
         self.group_manager.connections.pop(connection.nickname, None)
         if connection.nickname in self.group_manager.root_connections:
             self.group_manager.root_connections.remove(connection.nickname)
+        for group in self.group_manager.groups.values():
+            if connection.nickname in group.get('connections', []):
+                group['connections'] = [
+                    n for n in group['connections'] if n != connection.nickname
+                ]
         self.group_manager._save_groups()
 
         # Close all terminals for this connection and clean up maps
@@ -7879,14 +7921,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     def on_connection_status_changed(self, manager, connection, is_connected):
         """Handle connection status change"""
         logger.debug(f"Connection status changed: {connection.nickname} - {'Connected' if is_connected else 'Disconnected'}")
-        if connection in self.connection_rows:
-            row = self.connection_rows[connection]
+        rows = self._rows_for_connection(connection)
+        if rows:
             # Force update the connection's is_connected state
             connection.is_connected = is_connected
-            # Update the row's status
-            row.update_status()
-            # Force a redraw of the row
-            row.queue_draw()
+            for row in rows:
+                # Update each row's status and force a redraw
+                row.update_status()
+                row.queue_draw()
 
         # If this was a controlled reconnect and we are now connected, reset the flag
         if is_connected and getattr(self, '_is_controlled_reconnect', False):
@@ -7923,9 +7965,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             if normalized not in {'fullwidth', 'nested'}:
                 normalized = 'nested'
 
-            for row in self.connection_rows.values():
-                if hasattr(row, 'refresh_group_display_mode'):
-                    row.refresh_group_display_mode(normalized)
+            for rows in self.connection_rows.values():
+                for row in (rows if isinstance(rows, list) else [rows]):
+                    if hasattr(row, 'refresh_group_display_mode'):
+                        row.refresh_group_display_mode(normalized)
 
     def on_window_size_changed(self, window, param):
         """Handle window size change"""
@@ -8918,15 +8961,35 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     
     
     def on_move_to_ungrouped_action(self, action, param=None):
-        """Handle move to ungrouped action"""
+        """Handle move to ungrouped / remove from group action.
+
+        When the action is triggered from a connection shown under a specific
+        group and that connection belongs to several groups, only the
+        membership for that group is removed. Otherwise the connection is fully
+        ungrouped (removed from every group).
+        """
         try:
             connections = self._get_target_connections(prefer_context=True)
             if not connections:
                 return
 
+            context_row = getattr(self, '_context_menu_row', None)
+            context_group_id = getattr(context_row, '_group_id', None)
+
             for connection in connections:
                 nickname = getattr(connection, 'nickname', None)
-                if nickname:
+                if not nickname:
+                    continue
+                member_groups = self.group_manager.get_connection_groups(nickname)
+                if (
+                    context_group_id
+                    and len(connections) == 1
+                    and context_group_id in member_groups
+                    and len(member_groups) > 1
+                ):
+                    # Only detach from the group the row is displayed under
+                    self.group_manager.remove_connection_from_group(nickname, context_group_id)
+                else:
                     self.group_manager.move_connection(nickname, None)
             self.rebuild_connection_list()
 
@@ -8935,6 +8998,20 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     
     def on_move_to_group_action(self, action, param=None):
         """Handle move to group action"""
+        self._open_group_assignment_dialog('move')
+
+    def on_copy_to_group_action(self, action, param=None):
+        """Handle copy to group action (keeps existing memberships)"""
+        self._open_group_assignment_dialog('copy')
+
+    def _open_group_assignment_dialog(self, mode: str = 'move'):
+        """Show the dialog used by both 'Move to Group' and 'Copy to Group'.
+
+        ``mode`` is either ``'move'`` (relocate the connection to the chosen
+        group) or ``'copy'`` (add it to the chosen group while keeping it in any
+        group it already belongs to).
+        """
+        is_copy = mode == 'copy'
         try:
             connections = self._get_target_connections(prefer_context=True)
             if not connections:
@@ -8946,13 +9023,20 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             if not connection_nicknames:
                 return
 
+            def assign(nickname: str, target_group_id) -> None:
+                if is_copy:
+                    if target_group_id:
+                        self.group_manager.copy_connection_to_group(nickname, target_group_id)
+                else:
+                    self.group_manager.move_connection(nickname, target_group_id)
+
             # Get available groups
             available_groups = self.get_available_groups()
-            logger.debug(f"Available groups for move dialog: {len(available_groups)} groups")
+            logger.debug(f"Available groups for {mode} dialog: {len(available_groups)} groups")
             
             # Show group selection dialog
             dialog = Gtk.Dialog(
-                title=_("Move to Group"),
+                title=_("Copy to Group") if is_copy else _("Move to Group"),
                 transient_for=self,
                 modal=True,
                 destroy_with_parent=True
@@ -8969,7 +9053,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             content_area.set_spacing(12)
             
             # Add label
-            if len(connection_nicknames) == 1:
+            if is_copy:
+                if len(connection_nicknames) == 1:
+                    label_text = _("Select a group to copy the connection to:")
+                else:
+                    label_text = _("Select a group to copy the selected connections to:")
+            elif len(connection_nicknames) == 1:
                 label_text = _("Select a group to move the connection to:")
             else:
                 label_text = _("Select a group to move the selected connections to:")
@@ -9089,7 +9178,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             
             # Add buttons
             dialog.add_button(_('Cancel'), Gtk.ResponseType.CANCEL)
-            move_button = dialog.add_button(_('Move'), Gtk.ResponseType.OK)
+            move_button = dialog.add_button(_('Copy') if is_copy else _('Move'), Gtk.ResponseType.OK)
             move_button.get_style_context().add_class('suggested-action')
             
             dialog.set_default_response(Gtk.ResponseType.OK)
@@ -9129,7 +9218,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     existing_group_id = find_existing_group_id(group_name)
                     if existing_group_id:
                         for nickname in connection_nicknames:
-                            self.group_manager.move_connection(nickname, existing_group_id)
+                            assign(nickname, existing_group_id)
                         self.rebuild_connection_list()
                         return True
                     try:
@@ -9139,7 +9228,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                             selected_color = rgba_value.to_string()
                         new_group_id = self.group_manager.create_group(group_name, color=selected_color)
                         for nickname in connection_nicknames:
-                            self.group_manager.move_connection(nickname, new_group_id)
+                            assign(nickname, new_group_id)
                         self.rebuild_connection_list()
                         return True
                     except ValueError as e:
@@ -9182,7 +9271,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 if selected_row:
                     target_group_id = selected_row.group_id
                     for nickname in connection_nicknames:
-                        self.group_manager.move_connection(nickname, target_group_id)
+                        assign(nickname, target_group_id)
                     self.rebuild_connection_list()
                     return True
                 return False
@@ -9963,15 +10052,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
 
                 # Update UI
-                if old_connection in self.connection_rows:
-                    # Get the row before potentially modifying the dictionary
-                    row = self.connection_rows[old_connection]
-                    # Remove the old connection from the dictionary
-                    del self.connection_rows[old_connection]
-                    # Add it back with the updated connection object
-                    self.connection_rows[old_connection] = row
-                    # Update the display
-                    row.update_display()
+                rows = self._rows_for_connection(old_connection)
+                if rows:
+                    # Update the display for every row representing this connection
+                    for row in rows:
+                        row.update_display()
                 else:
                     # If the connection is not in the rows, rebuild the list
                     self.rebuild_connection_list()
@@ -10220,8 +10305,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             del self.active_terminals[connection]
             
         # Update UI to show disconnected state
-        if connection in self.connection_rows:
-            self.connection_rows[connection].update_status()
+        for row in self._rows_for_connection(connection):
+            row.update_status()
         
         # Show error dialog
         error_dialog = Gtk.MessageDialog(

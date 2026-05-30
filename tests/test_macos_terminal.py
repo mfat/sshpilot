@@ -44,7 +44,12 @@ stub_modules = {
     "sshpilot.config": types.SimpleNamespace(Config=object),
     "sshpilot.key_manager": types.SimpleNamespace(KeyManager=object, SSHKey=object),
     "sshpilot.connection_dialog": types.SimpleNamespace(ConnectionDialog=object),
-    "sshpilot.askpass_utils": types.SimpleNamespace(ensure_askpass_script=lambda: None),
+    "sshpilot.askpass_utils": types.SimpleNamespace(
+        ensure_askpass_script=lambda: None,
+        get_ssh_env_with_askpass=lambda *a, **k: {},
+        ensure_key_in_agent=lambda *a, **k: None,
+        lookup_passphrase=lambda *a, **k: None,
+    ),
     "sshpilot.preferences": types.SimpleNamespace(
         PreferencesWindow=object,
         should_hide_external_terminal_options=lambda: False,
@@ -53,7 +58,10 @@ stub_modules = {
     "sshpilot.sshcopyid_window": types.SimpleNamespace(SshCopyIdWindow=object),
     "sshpilot.groups": types.SimpleNamespace(GroupManager=object),
     "sshpilot.sidebar": types.SimpleNamespace(GroupRow=object, ConnectionRow=object, build_sidebar=lambda *a, **k: None),
-    "sshpilot.sftp_utils": types.SimpleNamespace(open_remote_in_file_manager=lambda *a, **k: None),
+    "sshpilot.sftp_utils": types.SimpleNamespace(
+        open_remote_in_file_manager=lambda *a, **k: None,
+        should_use_in_app_file_manager=lambda *a, **k: False,
+    ),
     "sshpilot.welcome_page": types.SimpleNamespace(WelcomePage=object),
     "sshpilot.actions": types.SimpleNamespace(WindowActions=object, register_window_actions=lambda *a, **k: None),
     "sshpilot.shutdown": types.SimpleNamespace(),
@@ -66,20 +74,24 @@ for name, module in stub_modules.items():
     original_stubs[name] = sys.modules.get(name)
     sys.modules[name] = module
 
-import sshpilot.window as window_mod
-from sshpilot.window import MainWindow
-
-# Restore original modules so other tests see real implementations
-for name, mod in original_stubs.items():
-    if mod is None:
-        del sys.modules[name]
-    else:
-        sys.modules[name] = mod
-for name, mod in original_gi.items():
-    if mod is None:
-        del sys.modules[name]
-    else:
-        sys.modules[name] = mod
+# Import the window module while the stubs are installed. Use try/finally so
+# the stubs are always restored even if the import fails, otherwise the partial
+# stubs would leak into sys.modules and break unrelated tests in the same run.
+try:
+    import sshpilot.window as window_mod
+    from sshpilot.window import MainWindow
+finally:
+    # Restore original modules so other tests see real implementations
+    for name, mod in original_stubs.items():
+        if mod is None:
+            sys.modules.pop(name, None)
+        else:
+            sys.modules[name] = mod
+    for name, mod in original_gi.items():
+        if mod is None:
+            sys.modules.pop(name, None)
+        else:
+            sys.modules[name] = mod
 
 
 class DummyConfig:

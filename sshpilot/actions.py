@@ -1529,6 +1529,12 @@ def register_window_actions(window):
     window.move_to_group_action.connect('activate', window.on_move_to_group_action)
     window.add_action(window.move_to_group_action)
 
+    # Add copy to group action (keeps existing memberships)
+    if hasattr(window, 'on_copy_to_group_action'):
+        window.copy_to_group_action = Gio.SimpleAction.new('copy-to-group', None)
+        window.copy_to_group_action.connect('activate', window.on_copy_to_group_action)
+        window.add_action(window.copy_to_group_action)
+
     # Sidebar toggle action and accelerators
     try:
         sidebar_action = Gio.SimpleAction.new('toggle_sidebar', None)
