@@ -58,14 +58,20 @@ if os.name == 'posix':
         import asyncio.events
         import asyncio.base_events
         import asyncio.unix_events
-        
-        class GLibEventLoopPolicy(asyncio.events.BaseDefaultEventLoopPolicy):
-            _loop_factory = asyncio.SelectorEventLoop
-            
-            def new_event_loop(self):
-                return asyncio.unix_events.DefaultEventLoopPolicy.new_event_loop(self)
-        
-        asyncio.set_event_loop_policy(GLibEventLoopPolicy())
+
+        # ``BaseDefaultEventLoopPolicy`` and the event loop policy machinery were
+        # removed in Python 3.14. Only install the custom policy on interpreters
+        # that still provide it; on newer versions ``_ensure_event_loop`` takes
+        # care of provisioning a loop instead.
+        _base_event_loop_policy = getattr(asyncio.events, 'BaseDefaultEventLoopPolicy', None)
+        if _base_event_loop_policy is not None:
+            class GLibEventLoopPolicy(_base_event_loop_policy):
+                _loop_factory = asyncio.SelectorEventLoop
+
+                def new_event_loop(self):
+                    return asyncio.unix_events.DefaultEventLoopPolicy.new_event_loop(self)
+
+            asyncio.set_event_loop_policy(GLibEventLoopPolicy())
 
 logger = logging.getLogger(__name__)
 _SERVICE_NAME = "sshPilot"
