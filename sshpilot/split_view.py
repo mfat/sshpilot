@@ -728,23 +728,34 @@ class SplitViewTab(Gtk.Box):
     def _rebuild_layout(self) -> None:
         """Detach all panes and rebuild a fully resizable pane tree."""
         def _release_paned(widget: Gtk.Widget) -> None:
-            """Recursively null Paned children so panes can be safely re-parented."""
-            if not isinstance(widget, Gtk.Paned):
-                return
-            start = widget.get_start_child()
-            end = widget.get_end_child()
-            if start is not None:
-                _release_paned(start)
-                try:
-                    widget.set_start_child(None)
-                except Exception:
-                    pass
-            if end is not None:
-                _release_paned(end)
-                try:
-                    widget.set_end_child(None)
-                except Exception:
-                    pass
+            """Recursively null Paned children so panes can be safely re-parented.
+
+            Also traverses Gtk.Box children so that h_paneds nested inside row_boxes
+            (used by the HORIZONTAL scrollable layout) are cleaned up correctly.
+            `set_start/end_child(None)` is used instead of unparent() because
+            unparent() on a Paned's end_child can silently fail in GTK4.
+            """
+            if isinstance(widget, Gtk.Paned):
+                start = widget.get_start_child()
+                end = widget.get_end_child()
+                if start is not None:
+                    _release_paned(start)
+                    try:
+                        widget.set_start_child(None)
+                    except Exception:
+                        pass
+                if end is not None:
+                    _release_paned(end)
+                    try:
+                        widget.set_end_child(None)
+                    except Exception:
+                        pass
+            elif isinstance(widget, Gtk.Box):
+                child = widget.get_first_child()
+                while child is not None:
+                    nxt = child.get_next_sibling()
+                    _release_paned(child)
+                    child = nxt
 
         # Release all Paned children via set_start/end_child(None) before
         # removing the Paned wrappers.  Using widget.unparent() on a Paned's
