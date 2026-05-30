@@ -938,10 +938,14 @@ class ConnectionRow(Gtk.ListBoxRow):
         if not manager:
             return None
 
-        try:
-            group_id = manager.get_connection_group(self.connection.nickname)
-        except Exception:
-            group_id = None
+        # Use the display-context group if available (e.g. when a connection
+        # is copied into multiple groups), otherwise fall back to the primary.
+        group_id = getattr(self, '_group_id', None)
+        if not group_id:
+            try:
+                group_id = manager.get_connection_group(self.connection.nickname)
+            except Exception:
+                group_id = None
 
         visited = set()
         while group_id:
