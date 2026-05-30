@@ -288,60 +288,7 @@ class TerminalManager:
             except Exception as exc:
                 logger.error(f"Error initialising pane terminal: {exc}")
 
-        # Defer connection setup until the VTE widget is realized.
-        #
-        # A plain GLib.idle_add fires before macOS (Quartz backend) has had a
-        # chance to realize widgets that were just added to a freshly-built
-        # Gtk.Paned.  When that happens, spawn_async runs on an unrealized VTE
-        # and the SSH process either fails silently or starts but produces no
-        # visible output until the user presses Enter.
-        #
-        # Strategy:
-        #   1. On the next idle tick the terminal widget is already parented
-        #      (add_terminal() is called synchronously right after this
-        #      function returns).  Check whether VTE is realized at that point.
-        #   2. If realized → call _set_terminal_colors() immediately.
-        #   3. If not realized → wait for the VTE "realize" signal, then call
-        #      _set_terminal_colors().  A 3-second fallback timeout ensures we
-        #      always connect even if the signal is never received.
-        def _connect_when_realized():
-            vte = getattr(terminal, 'vte', None)
-            if vte is None or vte.get_realized():
-                # Already realized (or no VTE widget) — proceed normally.
-                _set_terminal_colors()
-                return False
-
-            # Not realized yet: arm a one-shot realize handler.
-            _fired = [False]
-
-            def _on_realized(*_):
-                if _fired[0]:
-                    return
-                _fired[0] = True
-                try:
-                    vte.disconnect_by_func(_on_realized)
-                except Exception:
-                    pass
-                _set_terminal_colors()
-
-            vte.connect('realize', _on_realized)
-
-            # Safety net: connect anyway after 3 s in case realize never fires.
-            def _fallback():
-                if not _fired[0]:
-                    _fired[0] = True
-                    try:
-                        vte.disconnect_by_func(_on_realized)
-                    except Exception:
-                        pass
-                    logger.warning("VTE realize signal never fired; connecting anyway")
-                    _set_terminal_colors()
-                return False  # one-shot
-
-            GLib.timeout_add(3000, _fallback)
-            return False  # one-shot idle
-
-        GLib.idle_add(_connect_when_realized)
+        GLib.idle_add(_set_terminal_colors)
         return terminal
 
     def _on_pane_terminal_title_changed(self, terminal, title):

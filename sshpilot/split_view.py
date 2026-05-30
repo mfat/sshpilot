@@ -308,6 +308,54 @@ class SplitPane(Gtk.Box):
         self._inner_tab_view.set_selected_page(page)
         self._split_view_tab._update_tab_title()
 
+        # macOS / Gtk.Paned rendering fix
+        #
+        # When panes sit inside a Gtk.Paned the children have 0 allocated
+        # width until the Paned layout pass runs (which on macOS lags behind
+        # the GLib idle that starts the SSH connection).  VTE buffers all SSH
+        # output received while its pixel width is 0 but never repaints it
+        # because GTK only queues a redraw when the size *changes* — and by
+        # then VTE considers the viewport already up-to-date.
+        #
+        # Fix: watch for VTE's first non-zero width allocation.  At that
+        # point call vte.set_size(cols, rows) with the *same* dimensions.
+        # VTE unconditionally sends SIGWINCH on every set_size call, which
+        # makes the remote shell redraw its prompt; VTE then receives new
+        # output, marks the viewport dirty, and repaints the full buffer.
+        vte = getattr(terminal, 'vte', None)
+        if vte is not None:
+            _nudged = [False]
+
+            def _on_vte_width_changed(widget, _param):
+                if _nudged[0]:
+                    return
+                if widget.get_width() <= 0:
+                    return
+                _nudged[0] = True
+                try:
+                    widget.disconnect_by_func(_on_vte_width_changed)
+                except Exception:
+                    pass
+
+                def _do_nudge():
+                    try:
+                        cols = widget.get_column_count()
+                        rows = widget.get_row_count()
+                        if cols > 0 and rows > 0:
+                            # Same size → still sends SIGWINCH; shell redraws
+                            widget.set_size(cols, rows)
+                        widget.queue_draw()
+                    except Exception:
+                        pass
+                    return False
+
+                GLib.idle_add(_do_nudge)
+
+            try:
+                vte.connect('notify::allocated-width', _on_vte_width_changed)
+            except Exception:
+                pass
+
     def add_connection(self, connection) -> None:
         """Create a new terminal for connection and add it to this pane."""
         terminal = self._window.terminal_manager.create_terminal_for_pane(connection)
