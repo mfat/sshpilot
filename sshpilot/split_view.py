@@ -35,6 +35,64 @@ box.add-pane-strip.drag-over {
     _drop_zone_css_installed = True
 
 
+_row_handle_css_installed = False
+
+def _ensure_row_handle_css() -> None:
+    global _row_handle_css_installed
+    if _row_handle_css_installed:
+        return
+    provider = Gtk.CssProvider()
+    provider.load_from_data(b"""
+drawingarea.row-resize-handle {
+    background-color: transparent;
+    min-height: 6px;
+}
+drawingarea.row-resize-handle:hover {
+    background-color: alpha(@accent_bg_color, 0.15);
+}
+""")
+    Gtk.StyleContext.add_provider_for_display(
+        Gdk.Display.get_default(),
+        provider,
+        Gtk.STYLE_PROVIDER_PRIORITY_USER,
+    )
+    _row_handle_css_installed = True
+
+
+class RowResizeHandle(Gtk.DrawingArea):
+    """6-px drag handle between rows; dragging adjusts the row above's height."""
+
+    def __init__(self, get_row_idx, split_view_tab: "SplitViewTab") -> None:
+        super().__init__()
+        self.set_size_request(-1, 6)
+        self.set_hexpand(True)
+        self.set_cursor(Gdk.Cursor.new_from_name("ns-resize"))
+        _ensure_row_handle_css()
+        self.add_css_class("row-resize-handle")
+        self._get_row_idx = get_row_idx
+        self._tab = split_view_tab
+        self._last_dy = 0.0
+
+        drag = Gtk.GestureDrag()
+        drag.connect("drag-begin", self._on_drag_begin)
+        drag.connect("drag-update", self._on_drag_update)
+        self.add_controller(drag)
+
+    def _on_drag_begin(self, _gesture, _x, _y) -> None:
+        self._last_dy = 0.0
+
+    def _on_drag_update(self, _gesture, _offset_x, offset_y) -> None:
+        delta = offset_y - self._last_dy
+        self._last_dy = offset_y
+        idx = self._get_row_idx()
+        tab = self._tab
+        if 0 <= idx < len(tab._row_heights):
+            new_h = max(tab.DEFAULT_PANE_HEIGHT, tab._row_heights[idx] + int(delta))
+            tab._row_heights[idx] = new_h
+            if idx < len(tab._row_boxes):
+                tab._row_boxes[idx].set_size_request(-1, new_h)
+
+
 class SplitPane(Gtk.Box):
     """
     A single pane in the split view grid.
@@ -461,16 +519,14 @@ class SplitViewTab(Gtk.Box):
         self._panes: List[SplitPane] = []
         self._layout_mode = self.HORIZONTAL
         self._tab_page = None
+        self._row_heights: List[int] = []
+        self._row_boxes: List[Gtk.Box] = []
         self.set_hexpand(True)
         self.set_vexpand(True)
 
-        # Content area holds the Paned tree.  vexpand=True is required so the
-        # ScrolledWindow stretches the tree to fill the viewport when panes are
-        # few enough to fit; the scrollbar appears only when the aggregate
-        # natural height (n_rows × DEFAULT_PANE_HEIGHT) exceeds the viewport.
         self._content_area = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         self._content_area.set_hexpand(True)
-        self._content_area.set_vexpand(True)
+        self._content_area.set_vexpand(False)
 
         self._pane_scroll = Gtk.ScrolledWindow()
         self._pane_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
@@ -713,6 +769,10 @@ class SplitViewTab(Gtk.Box):
             except Exception:
                 pass
 
+        # VERTICAL layout uses Paned (fills viewport); HORIZONTAL uses Box rows
+        # with explicit heights so rows can grow beyond the viewport and scroll.
+        self._content_area.set_vexpand(self._layout_mode == self.VERTICAL)
+
         n = len(self._panes)
         if n == 0:
             return
@@ -721,8 +781,9 @@ class SplitViewTab(Gtk.Box):
             root = self._chain_panes(self._panes, Gtk.Orientation.VERTICAL)
             self._content_area.append(root)
         else:
-            # HORIZONTAL: pane pairs become rows. Rows are chained vertically
-            # with Gtk.Paned so row heights can be manually resized.
+            # HORIZONTAL: pane pairs become rows placed directly in the Box.
+            # Custom RowResizeHandle widgets between rows allow each row to be
+            # resized independently and grow beyond the viewport (enabling scroll).
             row_widgets: List[Gtk.Widget] = []
             for i in range(0, n, 2):
                 pair = self._panes[i:i + 2]
@@ -733,8 +794,20 @@ class SplitViewTab(Gtk.Box):
                     h_paned.set_start_child(pair[0])
                     h_paned.set_end_child(pair[1])
                     row_widgets.append(h_paned)
-            root = self._chain_panes(row_widgets, Gtk.Orientation.VERTICAL)
-            self._content_area.append(root)
+
+            self._row_heights = [self.DEFAULT_PANE_HEIGHT] * len(row_widgets)
+            self._row_boxes = []
+            for row_idx, row_widget in enumerate(row_widgets):
+                row_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+                row_box.set_hexpand(True)
+                row_box.set_vexpand(False)
+                row_box.set_size_request(-1, self._row_heights[row_idx])
+                row_box.append(row_widget)
+                self._row_boxes.append(row_box)
+                self._content_area.append(row_box)
+                if row_idx < len(row_widgets) - 1:
+                    handle = RowResizeHandle(lambda idx=row_idx: idx, self)
+                    self._content_area.append(handle)
 
         self._normalize_pane_heights()
 
@@ -941,6 +1014,21 @@ class SplitViewTab(Gtk.Box):
     def _resize_active_pane(self, direction: str) -> None:
         pane = self._get_focused_pane()
         if pane is None:
+            return
+
+        # In HORIZONTAL layout, vertical row resizing is done via _row_boxes /
+        # _row_heights (no Paned involved), so handle it separately.
+        if direction in ('up', 'down') and self._layout_mode == self.HORIZONTAL:
+            for idx, row_box in enumerate(self._row_boxes):
+                widget: Optional[Gtk.Widget] = pane
+                while widget is not None:
+                    if widget is row_box:
+                        delta = self._RESIZE_STEP if direction == 'down' else -self._RESIZE_STEP
+                        new_h = max(self.DEFAULT_PANE_HEIGHT, self._row_heights[idx] + delta)
+                        self._row_heights[idx] = new_h
+                        row_box.set_size_request(-1, new_h)
+                        return
+                    widget = widget.get_parent()
             return
 
         need_h = direction in ('left', 'right')
