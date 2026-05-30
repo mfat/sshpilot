@@ -50,6 +50,10 @@ drawingarea.row-resize-handle {
 drawingarea.row-resize-handle:hover {
     background-color: alpha(@accent_bg_color, 0.15);
 }
+box.row-drag-ghost {
+    background-color: @accent_bg_color;
+    min-height: 2px;
+}
 """)
     Gtk.StyleContext.add_provider_for_display(
         Gdk.Display.get_default(),
@@ -85,6 +89,7 @@ class RowResizeHandle(Gtk.DrawingArea):
     def _on_drag_update(self, _gesture, _offset_x, offset_y) -> None:
         # Accumulate the target height but do NOT resize the widget yet —
         # resizing VTE on every mouse-move event causes content to flicker.
+        # The ghost line gives live position feedback instead.
         delta = offset_y - self._last_dy
         self._last_dy = offset_y
         idx = self._get_row_idx()
@@ -93,6 +98,7 @@ class RowResizeHandle(Gtk.DrawingArea):
             tab._row_heights[idx] = max(
                 tab.DEFAULT_PANE_HEIGHT, tab._row_heights[idx] + int(delta)
             )
+            tab._update_drag_ghost(idx)
 
     def _on_drag_end(self, _gesture, _offset_x, _offset_y) -> None:
         # Apply the final height in one shot on mouse release.
@@ -540,7 +546,23 @@ class SplitViewTab(Gtk.Box):
         self._pane_scroll.set_hexpand(True)
         self._pane_scroll.set_vexpand(True)
         self._pane_scroll.set_child(self._content_area)
-        self.append(self._pane_scroll)
+
+        # Ghost line shown during row-resize drag to give live position feedback.
+        _ensure_row_handle_css()
+        self._drag_ghost = Gtk.Box()
+        self._drag_ghost.add_css_class("row-drag-ghost")
+        self._drag_ghost.set_size_request(-1, 2)
+        self._drag_ghost.set_hexpand(True)
+        self._drag_ghost.set_valign(Gtk.Align.START)
+        self._drag_ghost.set_visible(False)
+
+        self._scroll_overlay = Gtk.Overlay()
+        self._scroll_overlay.set_hexpand(True)
+        self._scroll_overlay.set_vexpand(True)
+        self._scroll_overlay.set_child(self._pane_scroll)
+        self._scroll_overlay.add_overlay(self._drag_ghost)
+        self._scroll_overlay.set_clip_overlay(self._drag_ghost, True)
+        self.append(self._scroll_overlay)
 
         # "Add Terminal" strip below the panes
         self._add_pane_btn: Optional[Gtk.Button] = None
@@ -865,10 +887,21 @@ class SplitViewTab(Gtk.Box):
 
     def _flush_row_resize(self) -> bool:
         """Apply accumulated row-height changes in one GTK layout pass."""
-        self._row_resize_pending = False
+        self._drag_ghost.set_visible(False)
         for i, row_box in enumerate(self._row_boxes):
             row_box.set_size_request(-1, self._row_heights[i])
         return False
+
+    def _update_drag_ghost(self, row_idx: int) -> None:
+        """Move the ghost line to the projected bottom edge of row_idx."""
+        if row_idx >= len(self._row_boxes):
+            return
+        row_box = self._row_boxes[row_idx]
+        alloc = row_box.get_allocation()
+        scroll_y = self._pane_scroll.get_vadjustment().get_value()
+        ghost_y = alloc.y + self._row_heights[row_idx] - scroll_y
+        self._drag_ghost.set_margin_top(max(0, int(ghost_y)))
+        self._drag_ghost.set_visible(True)
 
     # ── pre-population ────────────────────────────────────────────────────────
 
