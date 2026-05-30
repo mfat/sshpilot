@@ -54,6 +54,19 @@ box.row-drag-ghost {
     background-color: @accent_bg_color;
     min-height: 2px;
 }
+
+/* Pane borders — light mode */
+box.split-pane {
+    border: 2px solid rgba(0, 0, 0, 0.25);
+    border-radius: 6px;
+}
+
+/* Pane borders — dark mode */
+@media (prefers-color-scheme: dark) {
+    box.split-pane {
+        border: 2px solid rgba(255, 255, 255, 0.18);
+    }
+}
 """)
     Gtk.StyleContext.add_provider_for_display(
         Gdk.Display.get_default(),
@@ -124,6 +137,8 @@ class SplitPane(Gtk.Box):
         self.set_hexpand(True)
         self.set_vexpand(True)
         self.set_size_request(-1, 200)
+        _ensure_row_handle_css()
+        self.add_css_class("split-pane")
 
         # ── inner tab view (mini Adw.TabBar + Adw.TabView) ───────────────
         self._inner_tab_view = Adw.TabView()
