@@ -288,7 +288,48 @@ class TerminalManager:
             except Exception as exc:
                 logger.error(f"Error initialising pane terminal: {exc}")
 
-        GLib.idle_add(_set_terminal_colors)
+        # On macOS, terminals inside a Gtk.Paned (the top row in horizontal
+        # split view) have a zero pixel width until the Paned layout pass
+        # runs.  Spawning SSH into a VTE with zero pixel size leaves the PTY
+        # in a non-functional state on macOS: the SSH process starts but
+        # cannot complete session setup (port forwarding, shell prompt) until
+        # something forces the PTY to become active — which normally only
+        # happens when the user presses Enter.
+        #
+        # Fix: poll every 50 ms until the VTE widget has a non-zero pixel
+        # width (i.e. the Paned has been laid out), then connect.  Fall back
+        # to connecting unconditionally after 3 seconds so a widget that
+        # never gets sized (e.g. on Linux where this is a no-op) still works.
+        _poll_count = [0]
+        _MAX_POLLS = 60  # 60 × 50 ms = 3 s
+
+        def _connect_when_vte_sized():
+            _poll_count[0] += 1
+            vte = getattr(terminal, 'vte', None)
+
+            # No VTE widget (PyXterm backend etc.) or waited long enough →
+            # connect now regardless.
+            if vte is None or _poll_count[0] >= _MAX_POLLS:
+                if vte is None or _poll_count[0] >= _MAX_POLLS:
+                    logger.debug(
+                        "Pane terminal: connecting now "
+                        "(vte=%s, polls=%d)", vte is not None, _poll_count[0]
+                    )
+                _set_terminal_colors()
+                return False  # stop polling
+
+            # If VTE has non-zero pixel width the Paned is sized → connect.
+            if vte.get_width() > 0:
+                logger.debug(
+                    "Pane terminal: VTE width=%d after %d polls, connecting",
+                    vte.get_width(), _poll_count[0],
+                )
+                _set_terminal_colors()
+                return False  # stop polling
+
+            return True  # keep polling
+
+        GLib.timeout_add(50, _connect_when_vte_sized)
         return terminal
 
     def _on_pane_terminal_title_changed(self, terminal, title):
