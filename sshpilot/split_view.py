@@ -308,6 +308,39 @@ class SplitPane(Gtk.Box):
         self._inner_tab_view.set_selected_page(page)
         self._split_view_tab._update_tab_title()
 
+        # macOS: VTE's framebuffer is not flushed automatically when a widget
+        # first becomes visible inside a nested AdwTabView on the Quartz
+        # backend.  The result is a blank pane until the user presses Enter
+        # (which triggers a shell prompt write and a forced repaint).  We hook
+        # the terminal's "map" signal and, once the widget is on-screen, queue
+        # both a draw and a resize pass after a short delay so the compositor
+        # has time to allocate the widget before we force the repaint.
+        def _on_pane_terminal_map(widget, *_):
+            widget.disconnect_by_func(_on_pane_terminal_map)
+
+            def _force_repaint():
+                try:
+                    vte = getattr(terminal, 'vte', None)
+                    backend = getattr(terminal, 'backend', None)
+                    if backend:
+                        backend.queue_draw()
+                        backend.queue_resize()
+                    if vte:
+                        vte.queue_draw()
+                        vte.queue_resize()
+                    # queue_draw on the whole terminal container as well
+                    terminal.queue_draw()
+                except Exception:
+                    pass
+                return False  # one-shot
+
+            GLib.timeout_add(100, _force_repaint)
+
+        try:
+            terminal.connect('map', _on_pane_terminal_map)
+        except Exception:
+            pass
+
     def add_connection(self, connection) -> None:
         """Create a new terminal for connection and add it to this pane."""
         terminal = self._window.terminal_manager.create_terminal_for_pane(connection)
