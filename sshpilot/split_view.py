@@ -739,6 +739,25 @@ class SplitViewTab(Gtk.Box):
         except Exception:
             pass
 
+    def reset_all_row_heights(self, ratio: float) -> None:
+        """Reset every row to `ratio` × viewport height, clearing all manual overrides."""
+        viewport = self._get_scroll_viewport_height()
+        if viewport <= 0:
+            GLib.idle_add(lambda: self.reset_all_row_heights(ratio) or False)
+            return
+        self._manual_row_indices.clear()
+        self._row_height_ratios.clear()
+        self._fill_viewport = False
+        height = max(self.ABSOLUTE_MIN_ROW_HEIGHT, int(viewport * ratio))
+        num_rows = len(self._row_boxes)
+        self._row_heights = [height] * num_rows
+        for i, row_box in enumerate(self._row_boxes):
+            row_box.set_size_request(-1, height)
+            self._manual_row_indices.add(i)
+            self._row_height_ratios.append(ratio)
+        self._normalize_pane_heights()
+        self.scroll_panes_to_top()
+
     # ── toolbar strip ────────────────────────────────────────────────────────
 
     def _build_add_pane_strip(self) -> Gtk.Widget:
@@ -774,6 +793,18 @@ class SplitViewTab(Gtk.Box):
         scroll_bottom_btn.add_css_class("pill")
         scroll_bottom_btn.connect("clicked", lambda _b: self.scroll_panes_to_bottom())
         strip.append(scroll_bottom_btn)
+
+        large_btn = Gtk.Button(label=_("Large"))
+        large_btn.add_css_class("pill")
+        large_btn.set_tooltip_text(_("Reset all pane heights to 50% of visible area"))
+        large_btn.connect("clicked", lambda _b: self.reset_all_row_heights(0.5))
+        strip.append(large_btn)
+
+        compact_btn = Gtk.Button(label=_("Compact"))
+        compact_btn.add_css_class("pill")
+        compact_btn.set_tooltip_text(_("Reset all pane heights to 30% of visible area"))
+        compact_btn.connect("clicked", lambda _b: self.reset_all_row_heights(0.3))
+        strip.append(compact_btn)
 
         add_btn = Gtk.Button(label=_("Add Terminal"))
         add_btn.add_css_class("suggested-action")
