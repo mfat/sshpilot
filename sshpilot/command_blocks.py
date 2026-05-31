@@ -1187,6 +1187,50 @@ class CommandBlocksPanel(Gtk.Box):
         else:
             self._feed_terminal(cmd.get('command', ''), cmd.get('id'))
 
+    def _broadcast_command(self, cmd: dict) -> None:
+        if cmd.get('has_placeholders'):
+            dlg = PlaceholderDialog(self.window, cmd)
+            dlg.connect('send', lambda d, filled: self._do_broadcast(filled, cmd.get('id')))
+            dlg.present()
+        else:
+            self._do_broadcast(cmd.get('command', ''), cmd.get('id'))
+
+    def _do_broadcast(self, command_text: str, cmd_id: str | None = None) -> None:
+        command = command_text.strip()
+        if not command:
+            return
+
+        terminal_manager = getattr(self.window, 'terminal_manager', None)
+        if terminal_manager is None:
+            return
+
+        sent_count, failed_count = terminal_manager.broadcast_command(command)
+
+        if sent_count == 0 and failed_count == 0:
+            message = _('No SSH terminals open — connect to a server first')
+        elif failed_count:
+            message = _('Command broadcast to {} terminals ({} failed)').format(
+                sent_count, failed_count,
+            )
+        else:
+            message = _('Command broadcast to {} terminals').format(sent_count)
+
+        toast = Adw.Toast.new(message)
+        toast.set_timeout(3)
+        try:
+            self.window.add_toast(toast)
+        except Exception:
+            pass
+
+        if cmd_id and sent_count > 0:
+            self.store.record_use(cmd_id)
+            try:
+                wp = getattr(self.window, 'welcome_view', None)
+                if wp and hasattr(wp, 'refresh_pinned'):
+                    wp.refresh_pinned()
+            except Exception:
+                pass
+
     def _feed_terminal(self, command_text: str, cmd_id: str | None = None) -> None:
         terminal = None
         try:
@@ -1235,6 +1279,7 @@ class CommandBlocksPanel(Gtk.Box):
         menu.add_section(
             menu.add_item('document-edit-symbolic', _('Edit'), lambda: self._open_edit_dialog(cmd)),
             menu.add_item('edit-copy-symbolic', _('Duplicate'), lambda: self._duplicate_command(cmd)),
+            menu.add_item('document-send-symbolic', _('Broadcast Command'), lambda: self._broadcast_command(cmd)),
         )
 
         if cmd.get('is_favorite'):
