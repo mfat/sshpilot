@@ -106,7 +106,7 @@ box.row-drag-ghost {
    @window_fg_color is black in light mode, white in dark mode.
    margin > spread ensures corners are never clipped by the parent. */
 box.split-pane {
-    margin: 6px;
+    margin: 1px;
     box-shadow: 0 0 0 2px alpha(@window_fg_color, 0.7);
 }
 box.split-pane.split-pane-active {
