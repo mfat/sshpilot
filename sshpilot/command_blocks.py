@@ -379,21 +379,12 @@ class PlaceholderDialog(Adw.Window):
         self.set_content(root)
 
         header = Adw.HeaderBar()
-        header.set_show_start_title_buttons(False)
         header.set_show_end_title_buttons(False)
-        cancel_btn = Gtk.Button(label=_('Cancel'))
-        cancel_btn.connect('clicked', lambda _: self.close())
-        header.pack_start(cancel_btn)
         send_btn = Gtk.Button(label=_('Send'))
         send_btn.add_css_class('suggested-action')
         send_btn.connect('clicked', self._on_confirm)
         header.pack_end(send_btn)
         root.append(header)
-
-        esc_ctrl = Gtk.EventControllerKey()
-        esc_ctrl.connect('key-pressed', lambda c, kv, kc, s: self.close() or True
-                         if kv == Gdk.KEY_Escape else False)
-        root.add_controller(esc_ctrl)
 
         scr = Gtk.ScrolledWindow()
         scr.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
@@ -821,54 +812,37 @@ class CommandBlocksPanel(Gtk.Box):
             fid = cmd.get('folder_id')
             cmds_by_folder.setdefault(fid, []).append(cmd)
 
-        # Root commands (no folder) — no header
+        # Root commands (no folder)
         for cmd in cmds_by_folder.get(None, []):
             row = self._build_command_row(cmd)
             self._tree_list.append(row)
 
-        # Folders as flat sections: non-selectable header + individual command rows
+        # Folders in order
         sorted_folders = sorted(folders, key=lambda f: f.get('order', 0))
         for folder in sorted_folders:
             fid = folder['id']
             folder_cmds = cmds_by_folder.get(fid, [])
-            if not folder_cmds:
-                continue
-            header_row = self._build_folder_header_row(folder, len(folder_cmds))
-            self._tree_list.append(header_row)
-            for cmd in folder_cmds:
-                row = self._build_command_row(cmd)
-                self._tree_list.append(row)
+            expander = self._build_folder_expander(folder, folder_cmds)
+            self._tree_list.append(expander)
 
-    def _build_folder_header_row(self, folder: dict, count: int) -> Gtk.ListBoxRow:
-        row = Gtk.ListBoxRow()
-        row.set_activatable(False)
-        row.set_selectable(False)
+    def _build_folder_expander(self, folder: dict, cmds: list[dict]) -> Adw.ExpanderRow:
+        expander = Adw.ExpanderRow()
+        expander.set_title(folder.get('name', ''))
+        expander.set_expanded(folder.get('expanded', True))
+        expander.connect('notify::expanded', lambda row, _: self.store.update_folder(
+            folder['id'], expanded=row.get_expanded()
+        ))
 
-        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        box.set_margin_start(10)
-        box.set_margin_end(10)
-        box.set_margin_top(10)
-        box.set_margin_bottom(2)
-
-        icon = Gtk.Image.new_from_icon_name('folder-symbolic')
-        icon.set_pixel_size(13)
-        icon.add_css_class('dim-label')
-        box.append(icon)
-
-        lbl = Gtk.Label(label=folder.get('name', ''))
-        lbl.set_xalign(0)
-        lbl.set_hexpand(True)
-        lbl.add_css_class('caption')
-        lbl.add_css_class('dim-label')
-        box.append(lbl)
-
-        count_lbl = Gtk.Label(label=str(count))
-        count_lbl.add_css_class('caption')
+        count_lbl = Gtk.Label(label=str(len(cmds)))
         count_lbl.add_css_class('dim-label')
-        box.append(count_lbl)
+        count_lbl.set_valign(Gtk.Align.CENTER)
+        expander.add_suffix(count_lbl)
 
-        row.set_child(box)
-        return row
+        for cmd in cmds:
+            row = self._build_command_row(cmd)
+            expander.add_row(row)
+
+        return expander
 
     def _build_command_row(self, cmd: dict) -> Adw.ActionRow:
         row = Adw.ActionRow()
@@ -1078,34 +1052,39 @@ class CommandBlocksPanel(Gtk.Box):
     # ------------------------------------------------------------------
 
     def _show_command_context_menu(self, row: Adw.ActionRow, cmd: dict) -> None:
-        pop = Gtk.Popover()
-        pop.set_parent(row)
-        pop.set_autohide(True)
-        pop.add_css_class('menu')
+        menu = Gio.Menu()
+        counter = [0]
+        custom_widgets: list[tuple[str, Gtk.Widget]] = []
 
-        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        outer.set_margin_top(4)
-        outer.set_margin_bottom(4)
-        pop.set_child(outer)
+        def _mi(icon_name: str, label: str, cb):
+            wid = f'cb-ctx-{counter[0]}'
+            counter[0] += 1
+            item = Gio.MenuItem.new(None, None)
+            item.set_attribute_value('custom', GLib.Variant('s', wid))
 
-        def _mi(icon_name: str, label_text: str, cb):
             btn = Gtk.Button()
             btn.add_css_class('flat')
-            btn.set_hexpand(True)
-            inner = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-            inner.set_margin_start(10)
-            inner.set_margin_end(16)
-            inner.set_margin_top(6)
-            inner.set_margin_bottom(6)
+            box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            box.set_margin_start(8)
+            box.set_margin_end(8)
+            box.set_margin_top(4)
+            box.set_margin_bottom(4)
             icon = Gtk.Image.new_from_icon_name(icon_name)
-            inner.append(icon)
-            lbl = Gtk.Label(label=label_text)
-            lbl.set_xalign(0)
-            lbl.set_hexpand(True)
-            inner.append(lbl)
-            btn.set_child(inner)
-            btn.connect('clicked', lambda b, _cb=cb: (_cb(), pop.popdown()))
-            outer.append(btn)
+            box.append(icon)
+            lbl_widget = Gtk.Label(label=label)
+            lbl_widget.set_xalign(0)
+            lbl_widget.set_hexpand(True)
+            box.append(lbl_widget)
+            btn.set_child(box)
+
+            def _clicked(b, _cb=cb):
+                _cb()
+                if pop:
+                    pop.popdown()
+
+            btn.connect('clicked', _clicked)
+            custom_widgets.append((wid, btn))
+            menu.append_item(item)
 
         _mi('document-edit-symbolic', _('Edit'), lambda: self._open_edit_dialog(cmd))
         _mi('edit-copy-symbolic', _('Duplicate'), lambda: self._duplicate_command(cmd))
@@ -1122,6 +1101,10 @@ class CommandBlocksPanel(Gtk.Box):
 
         _mi('user-trash-symbolic', _('Delete'), lambda: self._delete_command(cmd))
 
+        pop = Gtk.PopoverMenu.new_from_model(menu)
+        for wid, btn in custom_widgets:
+            pop.add_child(btn, wid)
+        pop.set_parent(row)
         GLib.idle_add(pop.popup)
 
     # ------------------------------------------------------------------
