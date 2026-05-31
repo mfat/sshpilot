@@ -2918,11 +2918,15 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             content_wrapper.append(self.update_banner_container)
             content_wrapper.append(self.broadcast_banner)
             content_wrapper.append(self.content_stack)
-            content_box.set_content(content_wrapper)
-            # Add banners to the main content area instead of toolbar view
+            # Wrap only the content area (below the header bar) so the command
+            # blocks sidebar opens inside the terminal pane, not across the full window.
+            self._wrap_content_with_command_panel(content_wrapper, set_as_window_content=False)
+            content_box.set_content(
+                self.cmd_split_view if self.cmd_split_view is not None else content_wrapper
+            )
             main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
             main_box.append(content_box)
-            self._wrap_content_with_command_panel(main_box)
+            self._set_content_widget(main_box)
             logger.debug("Set content widget for OverlaySplitView")
         elif HAS_NAV_SPLIT:
             content_box = Adw.ToolbarView()
@@ -2932,11 +2936,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             content_wrapper.append(self.update_banner_container)
             content_wrapper.append(self.broadcast_banner)
             content_wrapper.append(self.content_stack)
-            content_box.set_content(content_wrapper)
-            # Add banners to the main content area instead of toolbar view
+            # Same: scope the sidebar to the content pane only.
+            self._wrap_content_with_command_panel(content_wrapper, set_as_window_content=False)
+            content_box.set_content(
+                self.cmd_split_view if self.cmd_split_view is not None else content_wrapper
+            )
             main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
             main_box.append(content_box)
-            self._wrap_content_with_command_panel(main_box)
+            self._set_content_widget(main_box)
             logger.debug("Set content widget for NavigationSplitView")
         else:
             # For non-split views, create a vertical box to contain banners and content
@@ -2947,10 +2954,17 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             self._set_content_widget(main_box)
             logger.debug("Set content widget for other split view types")
 
-    def _wrap_content_with_command_panel(self, content_widget: Gtk.Widget) -> None:
-        """Wrap main_box in a right-side OverlaySplitView for the command blocks panel."""
+    def _wrap_content_with_command_panel(self, content_widget: Gtk.Widget, *, set_as_window_content: bool = True) -> None:
+        """Build a right-side OverlaySplitView for the command blocks panel around content_widget.
+
+        When set_as_window_content is True (default) the resulting split view is
+        installed as the window content via _set_content_widget.  Pass False when
+        the caller wants to place the split view itself (e.g. as the content of an
+        inner ToolbarView so the sidebar sits next to the terminal only).
+        """
         if not HAS_OVERLAY_SPLIT:
-            self._set_content_widget(content_widget)
+            if set_as_window_content:
+                self._set_content_widget(content_widget)
             logger.warning("Command blocks panel requires Adw.OverlaySplitView; panel disabled")
             return
         try:
@@ -2978,11 +2992,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 self.cmd_split_view.set_sidebar(self.command_blocks_panel)
 
             self.cmd_split_view.set_content(content_widget)
-            self._set_content_widget(self.cmd_split_view)
+            if set_as_window_content:
+                self._set_content_widget(self.cmd_split_view)
             logger.debug("Command blocks panel created")
         except Exception as exc:
             logger.error("Failed to create command blocks panel: %s", exc)
-            self._set_content_widget(content_widget)
+            if set_as_window_content:
+                self._set_content_widget(content_widget)
 
     def _toggle_command_blocks_panel(self, visible: bool | None = None) -> None:
         """Show or hide the command blocks right sidebar."""
