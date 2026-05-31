@@ -106,7 +106,7 @@ box.row-drag-ghost {
    @window_fg_color is black in light mode, white in dark mode.
    margin > spread ensures corners are never clipped by the parent. */
 box.split-pane {
-    margin: 6px;
+    margin: 1px;
     box-shadow: 0 0 0 2px alpha(@window_fg_color, 0.7);
 }
 box.split-pane.split-pane-active {
@@ -627,6 +627,7 @@ class SplitViewTab(Gtk.Box):
         self._row_boxes: List[Gtk.Box] = []
         self._fill_viewport = True
         self._viewport_sync_scheduled = False
+        self._pending_scroll_pane: Optional[SplitPane] = None
         self._scroll_spacer: Optional[Gtk.Box] = None
         self._last_active_pane: Optional[SplitPane] = None
         self.set_hexpand(True)
@@ -738,6 +739,42 @@ class SplitViewTab(Gtk.Box):
             adj.set_value(max(adj.get_lower(), upper - page))
         except Exception:
             pass
+
+    def _scroll_to_pane(self, pane: SplitPane) -> bool:
+        """Scroll the viewport so pane's row is visible (called after layout)."""
+        if pane not in self._panes:
+            return False
+
+        row_idx: Optional[int] = None
+        for i, row_box in enumerate(self._row_boxes):
+            if self._widget_in_row_box(pane, row_box):
+                row_idx = i
+                break
+        if row_idx is None:
+            return False
+
+        row_box = self._row_boxes[row_idx]
+        alloc = row_box.get_allocation()
+        if alloc.height <= 0:
+            GLib.idle_add(self._scroll_to_pane, pane)
+            return False
+
+        try:
+            adj = self._pane_scroll.get_vadjustment()
+            row_y = alloc.y
+            row_h = self._row_heights[row_idx] if row_idx < len(self._row_heights) else alloc.height
+            page = adj.get_page_size()
+            current = adj.get_value()
+            # Row fully visible — nothing to do.
+            if row_y >= current and row_y + row_h <= current + page:
+                return False
+            # Prefer aligning the row top with the viewport top; clamp to range.
+            target = max(adj.get_lower(), row_y)
+            max_y = max(adj.get_lower(), adj.get_upper() - page)
+            adj.set_value(min(target, max_y))
+        except Exception:
+            pass
+        return False
 
     # ── toolbar strip ────────────────────────────────────────────────────────
 
@@ -865,6 +902,7 @@ class SplitViewTab(Gtk.Box):
     def add_pane(self) -> SplitPane:
         """Add a new empty pane and rebuild the layout. Returns the new pane."""
         pane = SplitPane(self, self.window)  # SplitPane.__init__ calls register_pane
+        self._pending_scroll_pane = pane
         self._rebuild_layout()
         return pane
 
@@ -1296,6 +1334,12 @@ class SplitViewTab(Gtk.Box):
         for i, row_box in enumerate(self._row_boxes):
             row_box.set_size_request(-1, heights[i])
         self._normalize_pane_heights()
+
+        pending = self._pending_scroll_pane
+        if pending is not None:
+            self._pending_scroll_pane = None
+            GLib.idle_add(self._scroll_to_pane, pending)
+            return False
 
         if exceeds:
             return self._restore_scroll_position(scroll_y)
