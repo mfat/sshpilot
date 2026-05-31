@@ -1355,6 +1355,121 @@ class CommandBlocksPanel(Gtk.Box):
             self.store.record_use(cmd_id)
 
     # ------------------------------------------------------------------
+    # Run on host
+    # ------------------------------------------------------------------
+
+    def _show_run_on_host_picker(self, cmd: dict, anchor: Gtk.Widget) -> None:
+        tm = getattr(self.window, 'terminal_manager', None)
+        if tm is None:
+            return
+
+        seen, terminals = set(), []
+        for t in tm.iter_ssh_terminals():
+            nick = getattr(getattr(t, 'connection', None), 'nickname', None)
+            if nick and nick not in seen:
+                seen.add(nick)
+                terminals.append(t)
+
+        if not terminals:
+            self._show_toast(_('No connected hosts — connect to a server first'))
+            return
+
+        popover = Gtk.Popover()
+        popover.set_parent(anchor)
+        popover.set_has_arrow(True)
+
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        outer.set_margin_top(8)
+        outer.set_margin_bottom(8)
+        outer.set_margin_start(8)
+        outer.set_margin_end(8)
+        outer.set_size_request(280, -1)
+
+        search_entry = Gtk.SearchEntry()
+        search_entry.set_placeholder_text(_('Filter hosts…'))
+        outer.append(search_entry)
+
+        scrolled = Gtk.ScrolledWindow()
+        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scrolled.set_size_request(-1, min(300, len(terminals) * 56 + 8))
+
+        list_box = Gtk.ListBox()
+        list_box.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        list_box.add_css_class('boxed-list')
+
+        for t in terminals:
+            conn = t.connection
+            list_row = Gtk.ListBoxRow()
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            box.set_margin_top(6)
+            box.set_margin_bottom(6)
+            box.set_margin_start(8)
+            box.set_margin_end(8)
+            lbl = Gtk.Label(label=conn.nickname)
+            lbl.set_halign(Gtk.Align.START)
+            lbl.add_css_class('heading')
+            box.append(lbl)
+            host = getattr(conn, 'hostname', '') or getattr(conn, 'host', '')
+            user = getattr(conn, 'username', '')
+            subtitle = f"{user}@{host}" if user and host else host
+            if subtitle:
+                lbl2 = Gtk.Label(label=subtitle)
+                lbl2.set_halign(Gtk.Align.START)
+                lbl2.add_css_class('caption')
+                lbl2.add_css_class('dim-label')
+                box.append(lbl2)
+            list_row.set_child(box)
+            list_row._terminal = t
+            list_box.append(list_row)
+
+        def _filter(list_row):
+            q = search_entry.get_text().lower().strip()
+            if not q:
+                return True
+            t = getattr(list_row, '_terminal', None)
+            if t is None:
+                return False
+            conn = t.connection
+            host = getattr(conn, 'hostname', '') or getattr(conn, 'host', '')
+            return q in conn.nickname.lower() or q in host.lower()
+
+        list_box.set_filter_func(_filter)
+        search_entry.connect('search-changed', lambda _e: list_box.invalidate_filter())
+
+        def _on_activated(_lb, list_row):
+            t = getattr(list_row, '_terminal', None)
+            if t:
+                popover.popdown()
+                self._run_command_on_terminal(cmd, t)
+
+        list_box.connect('row-activated', _on_activated)
+        scrolled.set_child(list_box)
+        outer.append(scrolled)
+        popover.set_child(outer)
+        GLib.idle_add(popover.popup)
+
+    def _run_command_on_terminal(self, cmd: dict, terminal) -> None:
+        if cmd.get('has_placeholders'):
+            dlg = PlaceholderDialog(self.window, cmd)
+            dlg.connect('send', lambda d, filled: self._feed_specific_terminal(filled, terminal, cmd.get('id')))
+            dlg.present()
+        else:
+            self._feed_specific_terminal(cmd.get('command', ''), terminal, cmd.get('id'))
+
+    def _feed_specific_terminal(self, command_text: str, terminal, cmd_id: str | None = None) -> None:
+        data = (command_text + '\n').encode('utf-8')
+        try:
+            if hasattr(terminal, 'backend') and terminal.backend:
+                terminal.backend.feed_child(data)
+            elif hasattr(terminal, 'vte') and terminal.vte:
+                terminal.vte.feed_child(data)
+        except Exception as exc:
+            logger.error("Failed to send command to terminal: %s", exc)
+            return
+        if cmd_id:
+            self.store.record_use(cmd_id)
+
+    # ------------------------------------------------------------------
     # Context menu
     # ------------------------------------------------------------------
 
@@ -1368,6 +1483,7 @@ class CommandBlocksPanel(Gtk.Box):
             menu.add_item('document-edit-symbolic', _('Edit'), lambda: self._open_edit_dialog(cmd)),
             menu.add_item('edit-copy-symbolic', _('Duplicate'), lambda: self._duplicate_command(cmd)),
             menu.add_item('document-send-symbolic', _('Broadcast Command'), lambda: self._broadcast_command(cmd)),
+            menu.add_item('computer-symbolic', _('Run on host…'), lambda: self._show_run_on_host_picker(cmd, row)),
         )
 
         if cmd.get('is_favorite'):
