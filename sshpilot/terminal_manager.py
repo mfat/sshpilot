@@ -650,36 +650,108 @@ class TerminalManager:
             except Exception:
                 pass
 
+    # Terminal discovery (regular tabs + split-view panes)
+    def _is_broadcastable_ssh_terminal(self, terminal) -> bool:
+        if terminal is None:
+            return False
+        if not (hasattr(terminal, 'backend') or hasattr(terminal, 'vte')):
+            return False
+        connection = getattr(terminal, 'connection', None)
+        if connection is None:
+            return False
+        nickname = getattr(connection, 'nickname', None)
+        if nickname == "Local Terminal":
+            return False
+        return hasattr(connection, 'hostname')
+
+    def iter_terminals(self):
+        """Yield TerminalWidgets from regular tabs and split-view panes."""
+        from .split_view import SplitViewTab
+
+        tab_view = getattr(self.window, 'tab_view', None)
+        if tab_view is None:
+            return
+
+        try:
+            n_pages = tab_view.get_n_pages()
+        except Exception:
+            return
+
+        for i in range(n_pages):
+            try:
+                page = tab_view.get_nth_page(i)
+            except Exception:
+                continue
+            if page is None:
+                continue
+            try:
+                child = page.get_child()
+            except Exception:
+                child = None
+            if child is None:
+                continue
+
+            if isinstance(child, TerminalWidget):
+                yield child
+            elif isinstance(child, SplitViewTab):
+                yield from child.get_all_terminals()
+
+    def iter_ssh_terminals(self):
+        """Yield SSH TerminalWidgets from regular tabs and split-view panes."""
+        for terminal in self.iter_terminals():
+            if self._is_broadcastable_ssh_terminal(terminal):
+                yield terminal
+
+    def get_focused_terminal(self):
+        """Return the focused TerminalWidget from the selected main tab, if any."""
+        from .split_view import SplitViewTab
+
+        tab_view = getattr(self.window, 'tab_view', None)
+        if tab_view is None:
+            return None
+
+        try:
+            page = tab_view.get_selected_page()
+        except Exception:
+            return None
+        if page is None:
+            return None
+
+        try:
+            child = page.get_child()
+        except Exception:
+            return None
+
+        if isinstance(child, TerminalWidget):
+            return child
+        if isinstance(child, SplitViewTab):
+            return child.get_focused_terminal()
+        return None
+
     # Broadcast commands
     def broadcast_command(self, command: str):
         cmd = (command + "\n").encode("utf-8")
         sent_count = 0
         failed_count = 0
-        for i in range(self.window.tab_view.get_n_pages()):
-            page = self.window.tab_view.get_nth_page(i)
-            if page is None:
-                continue
-            terminal_widget = page.get_child()
-            if terminal_widget is None or not (hasattr(terminal_widget, 'backend') or hasattr(terminal_widget, 'vte')):
-                continue
-            if hasattr(terminal_widget, 'connection'):
-                if (hasattr(terminal_widget.connection, 'nickname') and
-                        terminal_widget.connection.nickname == "Local Terminal"):
-                    continue
-                if not hasattr(terminal_widget.connection, 'hostname'):
-                    continue
-                try:
-                    if hasattr(terminal_widget, 'backend') and terminal_widget.backend:
-                        terminal_widget.backend.feed_child(cmd)
-                    elif hasattr(terminal_widget, 'vte') and terminal_widget.vte:
-                        terminal_widget.vte.feed_child(cmd)
-                    sent_count += 1
-                    logger.debug(
-                        f"Sent command to SSH terminal: {terminal_widget.connection.nickname}")
-                except Exception as e:
-                    failed_count += 1
-                    logger.error(
-                        f"Failed to send command to terminal {terminal_widget.connection.nickname}: {e}")
+        for terminal_widget in self.iter_ssh_terminals():
+            connection = terminal_widget.connection
+            try:
+                if hasattr(terminal_widget, 'backend') and terminal_widget.backend:
+                    terminal_widget.backend.feed_child(cmd)
+                elif hasattr(terminal_widget, 'vte') and terminal_widget.vte:
+                    terminal_widget.vte.feed_child(cmd)
+                sent_count += 1
+                logger.debug(
+                    "Sent command to SSH terminal: %s",
+                    getattr(connection, 'nickname', ''),
+                )
+            except Exception as e:
+                failed_count += 1
+                logger.error(
+                    "Failed to send command to terminal %s: %s",
+                    getattr(connection, 'nickname', ''),
+                    e,
+                )
         logger.info(
             f"Broadcast command completed: {sent_count} terminals received command, {failed_count} failed")
         return sent_count, failed_count
@@ -780,26 +852,23 @@ class TerminalManager:
             list: List of dicts with terminal info and job status
         """
         statuses = []
-        
-        for i in range(self.window.tab_view.get_n_pages()):
-            page = self.window.tab_view.get_nth_page(i)
-            if page is None:
+
+        for terminal_widget in self.iter_terminals():
+            if not (hasattr(terminal_widget, 'backend') or hasattr(terminal_widget, 'vte')):
                 continue
-                
-            terminal_widget = page.get_child()
-            if terminal_widget is None or not (hasattr(terminal_widget, 'backend') or hasattr(terminal_widget, 'vte')):
-                continue
-            
-            # Get connection info
-            connection_info = terminal_widget.get_connection_info() if hasattr(terminal_widget, 'get_connection_info') else None
-            
-            # Get job status
+
+            connection_info = (
+                terminal_widget.get_connection_info()
+                if hasattr(terminal_widget, 'get_connection_info') else None
+            )
             job_status = self.get_terminal_job_status(terminal_widget)
-            
+            connection = getattr(terminal_widget, 'connection', None)
+            page_title = getattr(connection, 'nickname', None) or _('Terminal')
+
             statuses.append({
-                'page_title': page.get_title(),
+                'page_title': page_title,
                 'connection_info': connection_info,
-                'job_status': job_status
+                'job_status': job_status,
             })
-        
+
         return statuses

@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:5.0.0}
+Version:        %{?version}%{!?version:5.1.0}
 Release:        1%{?dist}
 Summary:        Manage your servers with ease
 
@@ -92,6 +92,11 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/io.github.mfat.sshpil
 %{_datadir}/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg
 
 %changelog
+* Mon Jun 01 2026 mFat <newmfat@gmail.com> - 5.1.0
+- Introducing Command Blocks - Organize your favorite commands in folders, insert them into terminal with a simple double-click
+- Choose a command from your command snippet intventory to run on a single host or a group of machines
+- More improvements to Split View
+
 * Sat May 30 2026 mFat <newmfat@gmail.com> - 5.0.0
 - New "Sessions" feature — Save, open, rename, and delete snapshots of your open tabs and restore them automatically
 - Pin saved sessions to the start page for one-click restore

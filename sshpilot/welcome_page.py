@@ -119,9 +119,8 @@ class WelcomePage(Gtk.Overlay):
         self.set_vexpand(True)
         self.set_can_focus(False)
 
-        # Placeholders populated after layouts are built
+        # Placeholder populated after layout is built
         self._pinned_rows_box = None
-        self._pinned_cards_box = None
 
         self.connection_manager.connect_after('connection-removed', self._on_connection_removed)
         
@@ -187,329 +186,9 @@ class WelcomePage(Gtk.Overlay):
         header_box.append(desc_label)
         
         content_box.append(header_box)
-        
-        # Stack to hold both layouts
-        self.layout_stack = Gtk.Stack()
-        self.layout_stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
-        self.layout_stack.set_transition_duration(200)
-        content_box.append(self.layout_stack)
-        
-        # Build both layouts
-        cards_widget = self._build_cards_layout(current_shortcuts)
-        rows_widget = self._build_action_rows_layout(current_shortcuts)
-        
-        self.layout_stack.add_named(cards_widget, 'cards')
-        self.layout_stack.add_named(rows_widget, 'rows')
-        
-        # Load saved layout preference
-        saved_layout = self.config.get_setting('ui.welcome_page_layout', 'rows')
-        use_cards = saved_layout == 'cards'
-        
-        # Layout toggle button in top right (as overlay)
-        self.layout_toggle = Gtk.ToggleButton()
-        self.layout_toggle.set_active(use_cards)  # active = cards, inactive = rows
-        self.layout_toggle.connect('toggled', self._on_layout_toggle_changed)
-        self.layout_toggle.set_margin_start(12)
-        self.layout_toggle.set_margin_end(12)
-        self.layout_toggle.set_margin_top(12)
-        self.layout_toggle.set_halign(Gtk.Align.END)
-        self.layout_toggle.set_valign(Gtk.Align.START)
-        self.add_overlay(self.layout_toggle)
-        
-        # Set initial layout and update toggle icon
-        from sshpilot import icon_utils
-        if use_cards:
-            self.layout_stack.set_visible_child_name('cards')
-            icon_utils.set_button_icon(self.layout_toggle, 'view-list-symbolic')
-            self.layout_toggle.set_tooltip_text(_('Switch to list view'))
-        else:
-            self.layout_stack.set_visible_child_name('rows')
-            icon_utils.set_button_icon(self.layout_toggle, 'view-grid-symbolic')
-            self.layout_toggle.set_tooltip_text(_('Switch to grid view'))
-    
-    def _build_cards_layout(self, current_shortcuts):
-        """Build the cards grid layout"""
-        # Outer box so the pinned section can sit above the cards grid
-        outer_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
 
-        self._pinned_cards_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        outer_box.append(self._pinned_cards_box)
-        self._populate_pinned_cards_box()
+        content_box.append(self._build_action_rows_layout(current_shortcuts))
 
-        cards_grid = Gtk.FlowBox()
-        cards_grid.set_selection_mode(Gtk.SelectionMode.NONE)
-        cards_grid.set_max_children_per_line(3)
-        cards_grid.set_min_children_per_line(1)
-        cards_grid.set_column_spacing(12)
-        cards_grid.set_row_spacing(12)
-        cards_grid.set_margin_start(12)
-        cards_grid.set_margin_end(12)
-        cards_grid.set_margin_top(12)
-        cards_grid.set_homogeneous(True)
-        
-        # Quick Connect card
-        quick_connect_accel = self._get_action_accel_display(current_shortcuts, 'quick-connect')
-        quick_connect_btn = Gtk.Button()
-        quick_connect_btn.set_can_focus(False)
-        quick_connect_btn.add_css_class('card')
-        quick_connect_btn.set_size_request(120, 120)
-        
-        card_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        card_box.set_margin_start(8)
-        card_box.set_margin_end(8)
-        card_box.set_margin_top(8)
-        card_box.set_margin_bottom(8)
-        card_box.set_halign(Gtk.Align.CENTER)
-        card_box.set_valign(Gtk.Align.CENTER)
-        
-        from sshpilot import icon_utils
-        prefix_img = icon_utils.new_image_from_icon_name('network-server-symbolic')
-        prefix_img.set_can_focus(False)
-        prefix_img.set_pixel_size(32)
-        card_box.append(prefix_img)
-        
-        title_label = Gtk.Label(label=_('Quick Connect'))
-        title_label.set_halign(Gtk.Align.CENTER)
-        title_label.add_css_class('title-4')
-        card_box.append(title_label)
-        
-        if quick_connect_accel:
-            shortcut_label = Gtk.Label(label=quick_connect_accel)
-            shortcut_label.add_css_class('dim-label')
-            shortcut_label.set_can_focus(False)
-            shortcut_label.set_halign(Gtk.Align.CENTER)
-            card_box.append(shortcut_label)
-        
-        quick_connect_btn.set_child(card_box)
-        quick_connect_btn.connect('clicked', lambda *_: self.on_quick_connect_clicked(None))
-        cards_grid.append(quick_connect_btn)
-        
-        # Add New Connection card
-        new_connection_accel = self._get_action_accel_display(current_shortcuts, 'new-connection')
-        new_connection_btn = Gtk.Button()
-        new_connection_btn.set_can_focus(False)
-        new_connection_btn.add_css_class('card')
-        new_connection_btn.set_size_request(120, 120)
-        
-        card_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        card_box.set_margin_start(8)
-        card_box.set_margin_end(8)
-        card_box.set_margin_top(8)
-        card_box.set_margin_bottom(8)
-        card_box.set_halign(Gtk.Align.CENTER)
-        card_box.set_valign(Gtk.Align.CENTER)
-        
-        prefix_img = icon_utils.new_image_from_icon_name('list-add-symbolic')
-        prefix_img.set_can_focus(False)
-        prefix_img.set_pixel_size(32)
-        card_box.append(prefix_img)
-        
-        title_label = Gtk.Label(label=_('Add a New Connection'))
-        title_label.set_halign(Gtk.Align.CENTER)
-        title_label.add_css_class('title-4')
-        card_box.append(title_label)
-        
-        if new_connection_accel:
-            shortcut_label = Gtk.Label(label=new_connection_accel)
-            shortcut_label.add_css_class('dim-label')
-            shortcut_label.set_can_focus(False)
-            shortcut_label.set_halign(Gtk.Align.CENTER)
-            card_box.append(shortcut_label)
-        
-        new_connection_btn.set_child(card_box)
-        new_connection_btn.connect('clicked', lambda *_: self.window.get_application().activate_action('new-connection'))
-        cards_grid.append(new_connection_btn)
-        
-        # Edit SSH Config action row
-        edit_config_accel = self._get_action_accel_display(current_shortcuts, 'edit-ssh-config')
-        
-        # Check if using isolated mode or default SSH config
-        if hasattr(self.config, 'isolated_mode') and self.config.isolated_mode:
-            config_location = '~/.config/sshpilot/config'
-        else:
-            config_location = '~/.ssh/config'
-        
-        edit_config_btn = Gtk.Button()
-        edit_config_btn.set_can_focus(False)
-        edit_config_btn.add_css_class('card')
-        edit_config_btn.set_size_request(120, 120)
-        
-        card_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        card_box.set_margin_start(8)
-        card_box.set_margin_end(8)
-        card_box.set_margin_top(8)
-        card_box.set_margin_bottom(8)
-        card_box.set_halign(Gtk.Align.CENTER)
-        card_box.set_valign(Gtk.Align.CENTER)
-        
-        prefix_img = icon_utils.new_image_from_icon_name('document-edit-symbolic')
-        prefix_img.set_can_focus(False)
-        prefix_img.set_pixel_size(32)
-        card_box.append(prefix_img)
-        
-        title_label = Gtk.Label(label=_('View and Edit SSH Config'))
-        title_label.set_halign(Gtk.Align.CENTER)
-        title_label.add_css_class('title-4')
-        card_box.append(title_label)
-        
-        if edit_config_accel:
-            shortcut_label = Gtk.Label(label=edit_config_accel)
-            shortcut_label.add_css_class('dim-label')
-            shortcut_label.set_can_focus(False)
-            shortcut_label.set_halign(Gtk.Align.CENTER)
-            card_box.append(shortcut_label)
-        
-        edit_config_btn.set_child(card_box)
-        edit_config_btn.connect('clicked', lambda *_: self.window.get_application().activate_action('edit-ssh-config'))
-        cards_grid.append(edit_config_btn)
-        
-        # Local Terminal card
-        local_terminal_accel = self._get_action_accel_display(current_shortcuts, 'local-terminal')
-        local_terminal_btn = Gtk.Button()
-        local_terminal_btn.set_can_focus(False)
-        local_terminal_btn.add_css_class('card')
-        local_terminal_btn.set_size_request(120, 120)
-        
-        card_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        card_box.set_margin_start(8)
-        card_box.set_margin_end(8)
-        card_box.set_margin_top(8)
-        card_box.set_margin_bottom(8)
-        card_box.set_halign(Gtk.Align.CENTER)
-        card_box.set_valign(Gtk.Align.CENTER)
-        
-        prefix_img = icon_utils.new_image_from_icon_name('utilities-terminal-symbolic')
-        prefix_img.set_can_focus(False)
-        prefix_img.set_pixel_size(32)
-        card_box.append(prefix_img)
-        
-        title_label = Gtk.Label(label=_('Open Local Terminal'))
-        title_label.set_halign(Gtk.Align.CENTER)
-        title_label.add_css_class('title-4')
-        card_box.append(title_label)
-        
-        if local_terminal_accel:
-            shortcut_label = Gtk.Label(label=local_terminal_accel)
-            shortcut_label.add_css_class('dim-label')
-            shortcut_label.set_can_focus(False)
-            shortcut_label.set_halign(Gtk.Align.CENTER)
-            card_box.append(shortcut_label)
-        
-        local_terminal_btn.set_child(card_box)
-        local_terminal_btn.connect('clicked', lambda *_: self.window.terminal_manager.show_local_terminal())
-        cards_grid.append(local_terminal_btn)
-        
-        # Keyboard Shortcuts card
-        shortcuts_accel = self._get_action_accel_display(current_shortcuts, 'shortcuts')
-        shortcuts_btn = Gtk.Button()
-        shortcuts_btn.set_can_focus(False)
-        shortcuts_btn.add_css_class('card')
-        shortcuts_btn.set_size_request(120, 120)
-        
-        card_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        card_box.set_margin_start(8)
-        card_box.set_margin_end(8)
-        card_box.set_margin_top(8)
-        card_box.set_margin_bottom(8)
-        card_box.set_halign(Gtk.Align.CENTER)
-        card_box.set_valign(Gtk.Align.CENTER)
-        
-        prefix_img = icon_utils.new_image_from_icon_name('preferences-desktop-keyboard-symbolic')
-        prefix_img.set_can_focus(False)
-        prefix_img.set_pixel_size(32)
-        card_box.append(prefix_img)
-        
-        title_label = Gtk.Label(label=_('Keyboard Shortcuts'))
-        title_label.set_halign(Gtk.Align.CENTER)
-        title_label.add_css_class('title-4')
-        card_box.append(title_label)
-        
-        if shortcuts_accel:
-            shortcut_label = Gtk.Label(label=shortcuts_accel)
-            shortcut_label.add_css_class('dim-label')
-            shortcut_label.set_can_focus(False)
-            shortcut_label.set_halign(Gtk.Align.CENTER)
-            card_box.append(shortcut_label)
-        
-        shortcuts_btn.set_child(card_box)
-        shortcuts_btn.connect('clicked', lambda *_: self.window.show_shortcuts_window())
-        cards_grid.append(shortcuts_btn)
-        
-        # Online Documentation card
-        help_accel = self._get_action_accel_display(current_shortcuts, 'help')
-        help_btn = Gtk.Button()
-        help_btn.set_can_focus(False)
-        help_btn.add_css_class('card')
-        help_btn.set_size_request(120, 120)
-        
-        card_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        card_box.set_margin_start(8)
-        card_box.set_margin_end(8)
-        card_box.set_margin_top(8)
-        card_box.set_margin_bottom(8)
-        card_box.set_halign(Gtk.Align.CENTER)
-        card_box.set_valign(Gtk.Align.CENTER)
-        
-        prefix_img = icon_utils.new_image_from_icon_name('help-browser-symbolic')
-        prefix_img.set_can_focus(False)
-        prefix_img.set_pixel_size(32)
-        card_box.append(prefix_img)
-        
-        title_label = Gtk.Label(label=_('Online Documentation'))
-        title_label.set_halign(Gtk.Align.CENTER)
-        title_label.add_css_class('title-4')
-        card_box.append(title_label)
-        
-        if help_accel:
-            shortcut_label = Gtk.Label(label=help_accel)
-            shortcut_label.add_css_class('dim-label')
-            shortcut_label.set_can_focus(False)
-            shortcut_label.set_halign(Gtk.Align.CENTER)
-            card_box.append(shortcut_label)
-        
-        help_btn.set_child(card_box)
-        help_btn.connect('clicked', lambda *_: self.open_online_help())
-        cards_grid.append(help_btn)
-        
-        # About card
-        about_accel = self._get_action_accel_display(current_shortcuts, 'about')
-        about_btn = Gtk.Button()
-        about_btn.set_can_focus(False)
-        about_btn.add_css_class('card')
-        about_btn.set_size_request(120, 120)
-        
-        card_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        card_box.set_margin_start(8)
-        card_box.set_margin_end(8)
-        card_box.set_margin_top(8)
-        card_box.set_margin_bottom(8)
-        card_box.set_halign(Gtk.Align.CENTER)
-        card_box.set_valign(Gtk.Align.CENTER)
-        
-        prefix_img = icon_utils.new_image_from_icon_name('help-about-symbolic')
-        prefix_img.set_can_focus(False)
-        prefix_img.set_pixel_size(32)
-        card_box.append(prefix_img)
-        
-        title_label = Gtk.Label(label=_('About'))
-        title_label.set_halign(Gtk.Align.CENTER)
-        title_label.add_css_class('title-4')
-        card_box.append(title_label)
-        
-        if about_accel:
-            shortcut_label = Gtk.Label(label=about_accel)
-            shortcut_label.add_css_class('dim-label')
-            shortcut_label.set_can_focus(False)
-            shortcut_label.set_halign(Gtk.Align.CENTER)
-            card_box.append(shortcut_label)
-        
-        about_btn.set_child(card_box)
-        about_btn.connect('clicked', lambda *_: self.window.get_application().activate_action('about'))
-        cards_grid.append(about_btn)
-
-        outer_box.append(cards_grid)
-        return outer_box
-    
     def _build_action_rows_layout(self, current_shortcuts):
         """Build the action rows layout"""
         # Wrap in clamp to constrain width
@@ -608,6 +287,37 @@ class WelcomePage(Gtk.Overlay):
             local_terminal_row.add_suffix(shortcut_label)
         local_terminal_row.connect('activated', lambda *_: self.window.terminal_manager.show_local_terminal())
         getting_started_group.add(local_terminal_row)
+
+        # Command Blocks action row
+        cmd_blocks_accel = self._get_action_accel_display(
+            current_shortcuts, 'toggle-command-blocks'
+        )
+        if not cmd_blocks_accel:
+            try:
+                app = self.window.get_application()
+                if app:
+                    accels = app.get_accels_for_action('win.toggle-command-blocks')
+                    if accels:
+                        cmd_blocks_accel = self._format_accelerator_display(accels[0])
+            except Exception:
+                pass
+        if not cmd_blocks_accel:
+            cmd_blocks_accel = self._format_accelerator_display('<primary><shift>c')
+        command_blocks_row = Adw.ActionRow()
+        command_blocks_row.set_title(_('Browse Command Snippets'))
+        command_blocks_row.set_activatable(True)
+        command_blocks_row.set_can_focus(False)
+        prefix_img = icon_utils.new_image_from_icon_name('star-large-symbolic')
+        prefix_img.set_can_focus(False)
+        command_blocks_row.add_prefix(prefix_img)
+        shortcut_label = Gtk.Label(label=cmd_blocks_accel)
+        shortcut_label.add_css_class('dim-label')
+        shortcut_label.set_can_focus(False)
+        command_blocks_row.add_suffix(shortcut_label)
+        command_blocks_row.connect(
+            'activated', lambda *_: self._open_command_blocks_sidebar()
+        )
+        getting_started_group.add(command_blocks_row)
         
         # Help & Resources section
         help_group = Adw.PreferencesGroup()
@@ -657,24 +367,11 @@ class WelcomePage(Gtk.Overlay):
         clamp.set_child(container)
         
         return clamp
-    
-    def _on_layout_toggle_changed(self, toggle):
-        """Handle layout toggle change"""
-        from sshpilot import icon_utils
-        if toggle.get_active():
-            # Cards view
-            self.layout_stack.set_visible_child_name('cards')
-            icon_utils.set_button_icon(toggle, 'view-list-symbolic')
-            toggle.set_tooltip_text(_('Switch to list view'))
-            # Save preference
-            self.config.set_setting('ui.welcome_page_layout', 'cards')
-        else:
-            # List view
-            self.layout_stack.set_visible_child_name('rows')
-            icon_utils.set_button_icon(toggle, 'view-grid-symbolic')
-            toggle.set_tooltip_text(_('Switch to grid view'))
-            # Save preference
-            self.config.set_setting('ui.welcome_page_layout', 'rows')
+
+    def _open_command_blocks_sidebar(self) -> None:
+        """Show the command blocks right sidebar from the start page."""
+        if hasattr(self.window, '_toggle_command_blocks_panel'):
+            self.window._toggle_command_blocks_panel(True)
     
     # --- Pinned connections ---
 
@@ -793,26 +490,9 @@ class WelcomePage(Gtk.Overlay):
         if sessions_group is not None:
             self._pinned_rows_box.append(sessions_group)
 
-    def _populate_pinned_cards_box(self):
-        """Fill _pinned_cards_box with the current pinned group (cards layout)."""
-        if self._pinned_cards_box is None:
-            return
-        child = self._pinned_cards_box.get_first_child()
-        while child:
-            nxt = child.get_next_sibling()
-            self._pinned_cards_box.remove(child)
-            child = nxt
-        group = self._build_pinned_section()
-        if group is not None:
-            self._pinned_cards_box.append(group)
-        sessions_group = self._build_pinned_sessions_section()
-        if sessions_group is not None:
-            self._pinned_cards_box.append(sessions_group)
-
     def refresh_pinned(self):
-        """Rebuild the pinned section in both layouts after a pin/unpin action."""
+        """Rebuild the pinned section after a pin/unpin action."""
         self._populate_pinned_rows_box()
-        self._populate_pinned_cards_box()
 
     def _on_connection_removed(self, _manager, connection):
         """Auto-unpin a connection when it is deleted from the inventory."""

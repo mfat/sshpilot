@@ -60,6 +60,13 @@
 
 
 
+    <release version="5.1.0" date="2026-06-01">
+      <description>
+        <p>Introducing Command Blocks - Organize your favorite commands in folders, insert them into terminal with a simple double-click</p>
+        <p>Choose a command from your command snippet intventory to run on a single host or a group of machines</p>
+        <p>More improvements to Split View</p>
+      </description>
+    </release>
     <release version="5.0.0" date="2026-05-30">
       <description>
         <p>New &quot;Sessions&quot; feature — Save, open, rename, and delete snapshots of your open tabs and restore them automatically</p>

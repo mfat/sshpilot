@@ -1578,3 +1578,12 @@ def register_window_actions(window):
         window.check_for_updates_action = Gio.SimpleAction.new('check-for-updates', None)
         window.check_for_updates_action.connect('activate', window.on_check_for_updates_action)
         window.add_action(window.check_for_updates_action)
+
+    # Command blocks panel toggle
+    if hasattr(window, '_toggle_command_blocks_panel'):
+        cb_action = Gio.SimpleAction.new('toggle-command-blocks', None)
+        cb_action.connect('activate', lambda a, p: window._toggle_command_blocks_panel())
+        window.add_action(cb_action)
+        app = window.get_application()
+        if app:
+            app.set_accels_for_action('win.toggle-command-blocks', ['<primary><shift>c'])

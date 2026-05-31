@@ -211,7 +211,12 @@ class Config(GObject.Object):
             'security': {
                 'store_passwords': True,
                 'ssh_agent_forwarding': True,
-            }
+            },
+            'command_blocks': {
+                'folders': [],
+                'commands': [],
+                'defaults_loaded': False,
+            },
         }
 
     def load_builtin_themes(self) -> Dict[str, Dict[str, str]]:
@@ -1029,6 +1034,18 @@ class Config(GObject.Object):
         elif not isinstance(ssh_cfg['use_isolated_config'], bool):
             ssh_cfg['use_isolated_config'] = bool(ssh_cfg['use_isolated_config'])
             updated = True
+
+        if not isinstance(config.get('command_blocks'), dict):
+            config['command_blocks'] = self.get_default_config()['command_blocks'].copy()
+            updated = True
+        else:
+            cb = config['command_blocks']
+            if not isinstance(cb.get('folders'), list):
+                cb['folders'] = []
+                updated = True
+            if not isinstance(cb.get('commands'), list):
+                cb['commands'] = []
+                updated = True
 
         return config, updated
 

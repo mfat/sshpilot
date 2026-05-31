@@ -23,15 +23,13 @@ def _ensure_drop_zone_css() -> None:
     # fallback fires on systems where @accent_bg_color is unavailable.
     provider.load_from_data(b"""
 box.toolbar.add-pane-strip {
-    background-image: linear-gradient(
-        to bottom,
-        alpha(@window_fg_color, 0.0),
-        alpha(@window_fg_color, 0.20)
-    );
     border-top: 2px solid alpha(@window_fg_color, 0.25);
-    padding: 8px 0;
+    padding: 8px 12px;
 }
 box.add-pane-strip.drag-over {
+    background-color: rgba(42, 161, 152, 0.25);
+}
+box.add-pane-scroll-spacer.drag-over {
     background-color: rgba(42, 161, 152, 0.25);
 }
 """)
@@ -42,6 +40,46 @@ box.add-pane-strip.drag-over {
         Gtk.STYLE_PROVIDER_PRIORITY_USER,
     )
     _drop_zone_css_installed = True
+
+
+def create_layout_toggle_buttons(
+    on_horizontal,
+    on_vertical,
+    *,
+    as_pill: bool = False,
+) -> tuple[Gtk.ToggleButton, Gtk.ToggleButton, list]:
+    """Create H/V layout toggle buttons (same icons/tooltips as the header bar)."""
+    updating = [False]
+
+    h_btn = Gtk.ToggleButton()
+    h_btn.set_icon_name("double-ended-arrows-horizontal-symbolic")
+    h_btn.set_tooltip_text(_("Side by Side"))
+    h_btn.add_css_class("pill" if as_pill else "flat")
+
+    v_btn = Gtk.ToggleButton()
+    v_btn.set_icon_name("double-ended-arrows-vertical-symbolic")
+    v_btn.set_tooltip_text(_("Top / Bottom"))
+    v_btn.add_css_class("pill" if as_pill else "flat")
+
+    def _on_h_toggled(btn: Gtk.ToggleButton) -> None:
+        if updating[0] or not btn.get_active():
+            return
+        updating[0] = True
+        v_btn.set_active(False)
+        updating[0] = False
+        on_horizontal()
+
+    def _on_v_toggled(btn: Gtk.ToggleButton) -> None:
+        if updating[0] or not btn.get_active():
+            return
+        updating[0] = True
+        h_btn.set_active(False)
+        updating[0] = False
+        on_vertical()
+
+    h_btn.connect("toggled", _on_h_toggled)
+    v_btn.connect("toggled", _on_v_toggled)
+    return h_btn, v_btn, updating
 
 
 _row_handle_css_installed = False
@@ -68,7 +106,7 @@ box.row-drag-ghost {
    @window_fg_color is black in light mode, white in dark mode.
    margin > spread ensures corners are never clipped by the parent. */
 box.split-pane {
-    margin: 6px;
+    margin: 1px;
     box-shadow: 0 0 0 2px alpha(@window_fg_color, 0.7);
 }
 box.split-pane.split-pane-active {
@@ -96,6 +134,7 @@ class RowResizeHandle(Gtk.DrawingArea):
         self._get_row_idx = get_row_idx
         self._tab = split_view_tab
         self._last_dy = 0.0
+        self._drag_moved = False
 
         drag = Gtk.GestureDrag()
         drag.connect("drag-begin", self._on_drag_begin)
@@ -105,6 +144,7 @@ class RowResizeHandle(Gtk.DrawingArea):
 
     def _on_drag_begin(self, _gesture, _x, _y) -> None:
         self._last_dy = 0.0
+        self._drag_moved = False
 
     def _on_drag_update(self, _gesture, _offset_x, offset_y) -> None:
         # Accumulate the target height but do NOT resize the widget yet —
@@ -112,16 +152,21 @@ class RowResizeHandle(Gtk.DrawingArea):
         # The ghost line gives live position feedback instead.
         delta = offset_y - self._last_dy
         self._last_dy = offset_y
+        if delta:
+            self._drag_moved = True
         idx = self._get_row_idx()
         tab = self._tab
         if 0 <= idx < len(tab._row_heights):
             tab._row_heights[idx] = max(
-                tab.DEFAULT_PANE_HEIGHT, tab._row_heights[idx] + int(delta)
+                tab.ABSOLUTE_MIN_ROW_HEIGHT, tab._row_heights[idx] + int(delta)
             )
             tab._update_drag_ghost(idx)
 
     def _on_drag_end(self, _gesture, _offset_x, _offset_y) -> None:
-        # Apply the final height in one shot on mouse release.
+        if self._drag_moved:
+            idx = self._get_row_idx()
+            if 0 <= idx < len(self._tab._row_heights):
+                self._tab._mark_row_manual(idx)
         self._tab._flush_row_resize()
 
 
@@ -143,20 +188,29 @@ class SplitPane(Gtk.Box):
         self._has_terminals = False
         self.set_hexpand(True)
         self.set_vexpand(True)
-        self.set_size_request(-1, 200)
+        self.set_size_request(-1, max(
+            split_view_tab.ABSOLUTE_MIN_ROW_HEIGHT,
+            split_view_tab._get_default_row_height(),
+        ))
         _ensure_row_handle_css()
         self.add_css_class("split-pane")
 
         focus_ctrl = Gtk.EventControllerFocus()
-        focus_ctrl.connect("enter", lambda _c: self.add_css_class("split-pane-active"))
-        focus_ctrl.connect("leave", lambda _c: self.remove_css_class("split-pane-active"))
+        focus_ctrl.connect('enter', self._on_pane_focus_enter)
+        focus_ctrl.connect('leave', lambda _c: self.remove_css_class('split-pane-active'))
         self.add_controller(focus_ctrl)
+
+        click_ctrl = Gtk.GestureClick()
+        click_ctrl.set_button(0)
+        click_ctrl.connect('pressed', lambda *_: self._split_view_tab._note_active_pane(self))
+        self.add_controller(click_ctrl)
 
         # ── inner tab view (mini Adw.TabBar + Adw.TabView) ───────────────
         self._inner_tab_view = Adw.TabView()
         self._inner_tab_view.set_hexpand(True)
         self._inner_tab_view.set_vexpand(True)
-        self._inner_tab_view.connect("close-page", self._on_inner_close)
+        self._inner_tab_view.connect('close-page', self._on_inner_close)
+        self._inner_tab_view.connect('notify::selected-page', self._on_inner_tab_selected)
 
         self._inner_tab_bar = Adw.TabBar()
         self._inner_tab_bar.set_view(self._inner_tab_view)
@@ -188,6 +242,13 @@ class SplitPane(Gtk.Box):
 
         # Register with parent tab
         split_view_tab.register_pane(self)
+
+    def _on_pane_focus_enter(self, _controller) -> None:
+        self.add_css_class('split-pane-active')
+        self._split_view_tab._note_active_pane(self)
+
+    def _on_inner_tab_selected(self, *_args) -> None:
+        self._split_view_tab._note_active_pane(self)
 
     # ── placeholder ──────────────────────────────────────────────────────────
 
@@ -307,6 +368,7 @@ class SplitPane(Gtk.Box):
             pass
         self._inner_tab_view.set_selected_page(page)
         self._split_view_tab._update_tab_title()
+        self._split_view_tab._note_active_pane(self)
 
     def add_connection(self, connection) -> None:
         """Create a new terminal for connection and add it to this pane."""
@@ -540,18 +602,18 @@ class SplitViewTab(Gtk.Box):
     Contains:
     - A Gtk.Box (content area) holding a dynamically rebuilt nested Gtk.Paned
       structure so every pane boundary is drag-resizable.
-    - An "Add Terminal" pill button strip below the panes.
-
-    The H/V layout toggle lives in a global autohiding overlay managed by
-    the main window (window.py), not inside this widget.
+    - A toolbar strip below the panes with layout, scroll, and add controls.
     """
 
     __gtype_name__ = "SshPilotSplitViewTab"
 
     HORIZONTAL = 'horizontal'
     VERTICAL = 'vertical'
-    DEFAULT_PANE_HEIGHT = 200   # minimum height (hard floor)
-    INITIAL_PANE_HEIGHT = 450   # starting height for new rows
+    MIN_PANE_HEIGHT_RATIO = 0.5   # default row height as fraction of viewport
+    ABSOLUTE_MIN_ROW_HEIGHT = 100  # hard floor when manually shrinking a row
+    MIN_PANE_WIDTH = 200          # minimum width per pane in side-by-side splits (px)
+    SCROLL_SPACER_HEIGHT = 600  # extra scroll room below the last row
+    ROW_HANDLE_HEIGHT = 6
 
     def __init__(self, window) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
@@ -560,7 +622,13 @@ class SplitViewTab(Gtk.Box):
         self._layout_mode = self.HORIZONTAL
         self._tab_page = None
         self._row_heights: List[int] = []
+        self._row_height_ratios: List[float] = []
+        self._manual_row_indices: set[int] = set()
         self._row_boxes: List[Gtk.Box] = []
+        self._fill_viewport = True
+        self._viewport_sync_scheduled = False
+        self._scroll_spacer: Optional[Gtk.Box] = None
+        self._last_active_pane: Optional[SplitPane] = None
         self.set_hexpand(True)
         self.set_vexpand(True)
 
@@ -592,9 +660,21 @@ class SplitViewTab(Gtk.Box):
         self._scroll_overlay.set_clip_overlay(self._drag_ghost, True)
         self.append(self._scroll_overlay)
 
-        # "Add Terminal" strip below the panes
+        for widget in (self, self._scroll_overlay, self._pane_scroll):
+            widget.connect('notify::height', self._schedule_viewport_sync)
+        self.connect('map', self._schedule_viewport_sync)
+        try:
+            window.connect('notify::default-height', self._schedule_viewport_sync)
+            window.connect('notify::height', self._schedule_viewport_sync)
+        except Exception:
+            pass
+
+        # Toolbar strip below the panes
         self._add_pane_btn: Optional[Gtk.Button] = None
         self._add_pane_strip: Optional[Gtk.Box] = None
+        self._layout_h_btn: Optional[Gtk.ToggleButton] = None
+        self._layout_v_btn: Optional[Gtk.ToggleButton] = None
+        self._layout_toggle_updating: list = [False]
         self._add_strip = self._build_add_pane_strip()
         self.append(self._add_strip)
 
@@ -626,34 +706,133 @@ class SplitViewTab(Gtk.Box):
         if mode != self._layout_mode:
             self._layout_mode = mode
             self._rebuild_layout()
+        self._sync_layout_toggle_buttons()
+        try:
+            if hasattr(self.window, '_update_layout_toggle_state'):
+                self.window._update_layout_toggle_state()
+        except Exception:
+            pass
 
-    # ── "Add Terminal" strip ─────────────────────────────────────────────────
+    def _sync_layout_toggle_buttons(self) -> None:
+        if self._layout_h_btn is None or self._layout_v_btn is None:
+            return
+        self._layout_toggle_updating[0] = True
+        try:
+            self._layout_h_btn.set_active(self._layout_mode == self.HORIZONTAL)
+            self._layout_v_btn.set_active(self._layout_mode == self.VERTICAL)
+        finally:
+            self._layout_toggle_updating[0] = False
+
+    def scroll_panes_to_top(self) -> None:
+        try:
+            adj = self._pane_scroll.get_vadjustment()
+            adj.set_value(adj.get_lower())
+        except Exception:
+            pass
+
+    def scroll_panes_to_bottom(self) -> None:
+        try:
+            adj = self._pane_scroll.get_vadjustment()
+            upper = adj.get_upper()
+            page = adj.get_page_size()
+            adj.set_value(max(adj.get_lower(), upper - page))
+        except Exception:
+            pass
+
+    def reset_all_row_heights(self, ratio: float) -> None:
+        """Reset every row to `ratio` × viewport height, clearing all manual overrides.
+        Also resets any horizontal pane-width splits back to 50/50."""
+        viewport = self._get_scroll_viewport_height()
+        if viewport <= 0:
+            GLib.idle_add(lambda: self.reset_all_row_heights(ratio) or False)
+            return
+        self._manual_row_indices.clear()
+        self._row_height_ratios.clear()
+        self._fill_viewport = False
+        height = max(self.ABSOLUTE_MIN_ROW_HEIGHT, int(viewport * ratio))
+        num_rows = len(self._row_boxes)
+        self._row_heights = [height] * num_rows
+        for i, row_box in enumerate(self._row_boxes):
+            row_box.set_size_request(-1, height)
+            self._manual_row_indices.add(i)
+            self._row_height_ratios.append(ratio)
+            child = row_box.get_first_child()
+            if (child is not None
+                    and isinstance(child, Gtk.Paned)
+                    and child.get_orientation() == Gtk.Orientation.HORIZONTAL
+                    and hasattr(child, '_split_ratio')):
+                child._split_ratio = 0.5
+                total = child.get_allocated_width()
+                if total > 0:
+                    child._in_ratio_update = True
+                    child.set_position(total // 2)
+                    child._in_ratio_update = False
+        self._normalize_pane_heights()
+        self.scroll_panes_to_top()
+
+    # ── toolbar strip ────────────────────────────────────────────────────────
 
     def _build_add_pane_strip(self) -> Gtk.Widget:
         _ensure_drop_zone_css()
 
-        strip = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        strip = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         strip.add_css_class("toolbar")
         strip.add_css_class("add-pane-strip")
         strip.set_hexpand(True)
 
-        btn = Gtk.Button(label=_("Add Terminal"))
-        btn.add_css_class("suggested-action")
-        btn.add_css_class("pill")
-        btn.set_halign(Gtk.Align.CENTER)
-        btn.set_hexpand(True)
-        btn.connect("clicked", lambda _b: self.add_pane())
-        strip.append(btn)
+        self._layout_h_btn, self._layout_v_btn, self._layout_toggle_updating = (
+            create_layout_toggle_buttons(
+                lambda: self.set_layout_mode(self.HORIZONTAL),
+                lambda: self.set_layout_mode(self.VERTICAL),
+                as_pill=True,
+            )
+        )
+        strip.append(self._layout_h_btn)
+        strip.append(self._layout_v_btn)
 
-        # Store refs so the tab-level DropControllerMotion can update them.
-        self._add_pane_btn = btn
+        from sshpilot import icon_utils  # noqa: PLC0415
+
+        scroll_top_btn = Gtk.Button()
+        icon_utils.set_button_icon(scroll_top_btn, 'top-large-symbolic')
+        scroll_top_btn.set_tooltip_text(_("Scroll to top"))
+        scroll_top_btn.add_css_class("pill")
+        scroll_top_btn.connect("clicked", lambda _b: self.scroll_panes_to_top())
+        strip.append(scroll_top_btn)
+
+        scroll_bottom_btn = Gtk.Button()
+        icon_utils.set_button_icon(scroll_bottom_btn, 'bottom-large-symbolic')
+        scroll_bottom_btn.set_tooltip_text(_("Scroll to bottom"))
+        scroll_bottom_btn.add_css_class("pill")
+        scroll_bottom_btn.connect("clicked", lambda _b: self.scroll_panes_to_bottom())
+        strip.append(scroll_bottom_btn)
+
+        large_btn = Gtk.Button(label=_("Default"))
+        large_btn.add_css_class("pill")
+        large_btn.set_tooltip_text(_("Reset panes to their default size"))
+        large_btn.connect("clicked", lambda _b: self.reset_all_row_heights(0.5))
+        strip.append(large_btn)
+
+        compact_btn = Gtk.Button(label=_("Compact"))
+        compact_btn.add_css_class("pill")
+        compact_btn.set_tooltip_text(_("Reset panes to a smaller size"))
+        compact_btn.connect("clicked", lambda _b: self.reset_all_row_heights(0.3))
+        strip.append(compact_btn)
+
+        add_btn = Gtk.Button(label=_("Add Terminal"))
+        add_btn.add_css_class("suggested-action")
+        add_btn.add_css_class("pill")
+        add_btn.set_halign(Gtk.Align.END)
+        add_btn.set_hexpand(True)
+        add_btn.connect("clicked", lambda _b: self.add_pane())
+        strip.append(add_btn)
+
+        self._add_pane_btn = add_btn
         self._add_pane_strip = strip
+        self._sync_layout_toggle_buttons()
 
-        # Drop target accepts the actual drop; visual state is managed by the
-        # tab-level DropControllerMotion (_on_drag_enter/leave_tab).
         dt = Gtk.DropTarget.new(type=GObject.TYPE_PYOBJECT, actions=Gdk.DragAction.MOVE)
         dt.connect("enter", lambda _t, _x, _y: Gdk.DragAction.MOVE)
-        dt.connect("drop",  self._on_add_strip_drop)
+        dt.connect("drop", self._on_add_pane_drop)
         strip.add_controller(dt)
 
         return strip
@@ -661,18 +840,28 @@ class SplitViewTab(Gtk.Box):
     # ── drag-over strip state ─────────────────────────────────────────────────
 
     def _on_drag_enter_tab(self, _controller, _x, _y) -> None:
-        if self._add_pane_strip:
-            self._add_pane_strip.add_css_class("drag-over")
-        if self._add_pane_btn:
-            self._add_pane_btn.set_label(_("Drop here to add"))
+        self._set_add_pane_drop_highlight(True)
 
     def _on_drag_leave_tab(self, _controller) -> None:
-        if self._add_pane_strip:
-            self._add_pane_strip.remove_css_class("drag-over")
-        if self._add_pane_btn:
-            self._add_pane_btn.set_label(_("Add Terminal"))
+        self._set_add_pane_drop_highlight(False)
 
-    def _on_add_strip_drop(self, _target, value, _x, _y) -> bool:
+    def _set_add_pane_drop_highlight(self, active: bool) -> None:
+        if self._add_pane_strip:
+            if active:
+                self._add_pane_strip.add_css_class("drag-over")
+            else:
+                self._add_pane_strip.remove_css_class("drag-over")
+        if self._scroll_spacer:
+            if active:
+                self._scroll_spacer.add_css_class("drag-over")
+            else:
+                self._scroll_spacer.remove_css_class("drag-over")
+        if self._add_pane_btn:
+            self._add_pane_btn.set_label(
+                _("Drop here to add") if active else _("Add Terminal")
+            )
+
+    def _on_add_pane_drop(self, _target, value, _x, _y) -> bool:
         try:
             if hasattr(value, 'get_value'):
                 value = value.get_value()
@@ -687,8 +876,32 @@ class SplitViewTab(Gtk.Box):
                     self.add_pane().add_connection(conn)
             return bool(nicknames)
         except Exception as exc:
-            logger.error("add-strip drop failed: %s", exc)
+            logger.error("add-pane drop failed: %s", exc)
             return False
+
+    def _append_scroll_spacer(self) -> None:
+        """Append the extra scroll area below rows; accepts connection drops."""
+        _ensure_drop_zone_css()
+        spacer = Gtk.Box()
+        spacer.add_css_class("add-pane-scroll-spacer")
+        spacer.set_hexpand(True)
+        spacer.set_size_request(-1, self.SCROLL_SPACER_HEIGHT)
+
+        dt = Gtk.DropTarget.new(type=GObject.TYPE_PYOBJECT, actions=Gdk.DragAction.MOVE)
+        dt.connect("enter", lambda _t, _x, _y: self._on_scroll_spacer_drag_enter())
+        dt.connect("leave", lambda _t: self._on_scroll_spacer_drag_leave())
+        dt.connect("drop", self._on_add_pane_drop)
+        spacer.add_controller(dt)
+
+        self._scroll_spacer = spacer
+        self._content_area.append(spacer)
+
+    def _on_scroll_spacer_drag_enter(self) -> Gdk.DragAction:
+        self._set_add_pane_drop_highlight(True)
+        return Gdk.DragAction.MOVE
+
+    def _on_scroll_spacer_drag_leave(self) -> None:
+        self._set_add_pane_drop_highlight(False)
 
     # ── pane management ──────────────────────────────────────────────────────
 
@@ -716,6 +929,11 @@ class SplitViewTab(Gtk.Box):
     def register_pane(self, pane: SplitPane) -> None:
         if pane not in self._panes:
             self._panes.append(pane)
+
+    def _note_active_pane(self, pane: SplitPane) -> None:
+        """Remember which pane the user last interacted with."""
+        if pane in self._panes:
+            self._last_active_pane = pane
 
     def get_pane_count(self) -> int:
         return len(self._panes)
@@ -753,7 +971,9 @@ class SplitViewTab(Gtk.Box):
             if total <= 0:
                 return
             pos = int(paned._split_ratio * total)
-            pos = max(self.DEFAULT_PANE_HEIGHT, min(total - self.DEFAULT_PANE_HEIGHT, pos))
+            min_ext = (self._min_extent_for_total(total) if is_vertical
+                       else self.MIN_PANE_WIDTH)
+            pos = max(min_ext, min(total - min_ext, pos))
             paned._in_ratio_update = True
             paned.set_position(pos)
             paned._in_ratio_update = False
@@ -784,6 +1004,8 @@ class SplitViewTab(Gtk.Box):
 
     def _rebuild_layout(self) -> None:
         """Detach all panes and rebuild a fully resizable pane tree."""
+        self._scroll_spacer = None
+
         def _release_paned(widget: Gtk.Widget) -> None:
             """Recursively null Paned children so panes can be safely re-parented.
 
@@ -837,8 +1059,8 @@ class SplitViewTab(Gtk.Box):
             except Exception:
                 pass
 
-        # Both layouts use Box rows with explicit heights so panes can grow
-        # beyond the viewport and scroll freely.
+        # Row heights fill the scroll viewport at startup; the spacer below
+        # adds extra scroll room once rows are resized taller.
         self._content_area.set_vexpand(False)
 
         n = len(self._panes)
@@ -851,8 +1073,7 @@ class SplitViewTab(Gtk.Box):
             self._row_heights = []
             self._row_boxes = []
             for row_idx, pane in enumerate(self._panes):
-                h = (old_heights[row_idx] if row_idx < len(old_heights)
-                     else self.INITIAL_PANE_HEIGHT)
+                h = self._row_height_for_rebuild(old_heights, row_idx)
                 self._row_heights.append(h)
                 row_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
                 row_box.set_hexpand(True)
@@ -863,9 +1084,7 @@ class SplitViewTab(Gtk.Box):
                 self._content_area.append(row_box)
                 handle = RowResizeHandle(lambda idx=row_idx: idx, self)
                 self._content_area.append(handle)
-            spacer = Gtk.Box()
-            spacer.set_size_request(-1, 600)
-            self._content_area.append(spacer)
+            self._append_scroll_spacer()
         else:
             # HORIZONTAL: pane pairs become rows placed directly in the Box.
             # Custom RowResizeHandle widgets between rows allow each row to be
@@ -885,8 +1104,7 @@ class SplitViewTab(Gtk.Box):
             self._row_heights = []
             self._row_boxes = []
             for row_idx, row_widget in enumerate(row_widgets):
-                h = (old_heights[row_idx] if row_idx < len(old_heights)
-                     else self.INITIAL_PANE_HEIGHT)
+                h = self._row_height_for_rebuild(old_heights, row_idx)
                 self._row_heights.append(h)
                 row_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
                 row_box.set_hexpand(True)
@@ -899,12 +1117,16 @@ class SplitViewTab(Gtk.Box):
                 handle = RowResizeHandle(lambda idx=row_idx: idx, self)
                 self._content_area.append(handle)
 
-            # Spacer so there is plenty of free space below the last row.
-            spacer = Gtk.Box()
-            spacer.set_size_request(-1, 600)
-            self._content_area.append(spacer)
+            self._append_scroll_spacer()
+
+        num_rows = len(self._row_boxes)
+        self._manual_row_indices = {
+            i for i in self._manual_row_indices if i < num_rows
+        }
+        self._row_height_ratios = self._row_height_ratios[:num_rows]
 
         self._normalize_pane_heights()
+        self._schedule_viewport_sync()
 
     def _chain_panes(
         self,
@@ -923,19 +1145,213 @@ class SplitViewTab(Gtk.Box):
         return root
 
     def _normalize_pane_heights(self) -> None:
-        """Enforce minimum pane height while allowing growth to fill the viewport."""
+        """Set per-pane minimum height to match its row (manual rows may be < 50%)."""
+        default_min = self._get_default_row_height()
         for pane in self._panes:
+            row_min = default_min
+            for i, row_box in enumerate(self._row_boxes):
+                if self._widget_in_row_box(pane, row_box):
+                    if i < len(self._row_heights):
+                        row_min = self._row_heights[i]
+                    break
             try:
                 pane.set_vexpand(True)
-                pane.set_size_request(-1, self.DEFAULT_PANE_HEIGHT)
+                pane.set_size_request(-1, row_min)
             except Exception:
                 pass
 
+    def _widget_in_row_box(self, widget: Gtk.Widget, row_box: Gtk.Box) -> bool:
+        while widget is not None:
+            if widget is row_box:
+                return True
+            widget = widget.get_parent()
+        return False
+
+    def _row_height_for_rebuild(self, old_heights: List[int], row_idx: int) -> int:
+        """Return the row height to use during layout rebuild."""
+        if row_idx in self._manual_row_indices and row_idx < len(old_heights):
+            return old_heights[row_idx]
+        if self._fill_viewport:
+            return self._get_default_row_height()
+        if row_idx < len(old_heights):
+            return old_heights[row_idx]
+        return self._get_default_row_height()
+
+    def _get_scroll_viewport_height(self) -> int:
+        try:
+            for widget in (self._pane_scroll, self._scroll_overlay, self):
+                height = widget.get_height()
+                if height <= 0:
+                    height = widget.get_allocated_height()
+                if height > 0:
+                    if widget is self and self._add_strip is not None:
+                        strip_h = self._add_strip.get_height()
+                        if strip_h <= 0:
+                            strip_h = self._add_strip.get_allocated_height()
+                        height = max(0, height - strip_h)
+                    return max(0, int(height))
+        except Exception:
+            pass
+        return 0
+
+    def _min_extent_for_total(self, total: int) -> int:
+        """Size along an axis as a fraction of the available total."""
+        if total <= 0:
+            return 1
+        return max(1, int(total * self.MIN_PANE_HEIGHT_RATIO))
+
+    def _get_default_row_height(self) -> int:
+        """Default row height (50% of scroll viewport) for non-manual rows."""
+        return self._min_extent_for_total(self._get_scroll_viewport_height())
+
+    def _minimum_rows_content_height(self, num_rows: int) -> int:
+        if num_rows <= 0:
+            return 0
+        total = 0
+        default_h = self._get_default_row_height()
+        for i in range(num_rows):
+            if i in self._manual_row_indices and i < len(self._row_heights):
+                total += self._row_heights[i]
+            else:
+                total += default_h
+        return total + num_rows * self.ROW_HANDLE_HEIGHT
+
+    def _save_scroll_position(self) -> float:
+        try:
+            return self._pane_scroll.get_vadjustment().get_value()
+        except Exception:
+            return 0.0
+
+    def _restore_scroll_position(self, scroll_y: float) -> bool:
+        try:
+            adj = self._pane_scroll.get_vadjustment()
+            upper = adj.get_upper()
+            page = adj.get_page_size()
+            max_y = max(adj.get_lower(), upper - page)
+            adj.set_value(max(adj.get_lower(), min(scroll_y, max_y)))
+        except Exception:
+            pass
+        return False
+
+    def _mark_row_manual(self, row_idx: int) -> None:
+        """Remember a user-chosen row height (may be below the 50% default)."""
+        if row_idx < 0 or row_idx >= len(self._row_heights):
+            return
+        viewport = self._get_scroll_viewport_height()
+        self._manual_row_indices.add(row_idx)
+        while len(self._row_height_ratios) <= row_idx:
+            self._row_height_ratios.append(self.MIN_PANE_HEIGHT_RATIO)
+        if viewport > 0:
+            self._row_height_ratios[row_idx] = (
+                self._row_heights[row_idx] / viewport
+            )
+        self._fill_viewport = False
+
+    def _schedule_viewport_sync(self, *_args) -> None:
+        if self._viewport_sync_scheduled:
+            return
+        self._viewport_sync_scheduled = True
+        GLib.idle_add(self._run_viewport_sync)
+
+    def _run_viewport_sync(self) -> bool:
+        self._viewport_sync_scheduled = False
+        viewport = self._get_scroll_viewport_height()
+        if viewport <= 0:
+            GLib.idle_add(self._run_viewport_sync)
+            return False
+        before = viewport
+        self._sync_row_heights_to_viewport()
+        after = self._get_scroll_viewport_height()
+        if after != before:
+            self._schedule_viewport_sync()
+        return False
+
+    def _compute_fill_row_height(self, num_rows: int) -> Optional[int]:
+        """Height for each auto row so rows fill the scroll viewport."""
+        if num_rows <= 0:
+            return None
+        viewport = self._get_scroll_viewport_height()
+        if viewport <= 0:
+            return None
+        manual_total = sum(
+            self._row_heights[i]
+            for i in self._manual_row_indices
+            if i < len(self._row_heights)
+        )
+        auto_rows = num_rows - len(self._manual_row_indices)
+        if auto_rows <= 0:
+            return None
+        available = (
+            viewport - manual_total - (num_rows * self.ROW_HANDLE_HEIGHT)
+        )
+        if available <= 0:
+            return self._get_default_row_height()
+        return max(self._get_default_row_height(), available // auto_rows)
+
+    def _compute_target_row_heights(self) -> List[int]:
+        num_rows = len(self._row_boxes)
+        if num_rows <= 0:
+            return []
+
+        viewport = self._get_scroll_viewport_height()
+        default_h = self._get_default_row_height()
+        exceeds = self._minimum_rows_content_height(num_rows) > viewport
+
+        if exceeds:
+            self._fill_viewport = False
+
+        auto_fill_h: Optional[int] = None
+        if self._fill_viewport and not exceeds:
+            auto_fill_h = self._compute_fill_row_height(num_rows)
+
+        heights: List[int] = []
+        for i in range(num_rows):
+            if i in self._manual_row_indices:
+                ratio = (self._row_height_ratios[i]
+                         if i < len(self._row_height_ratios)
+                         else self.MIN_PANE_HEIGHT_RATIO)
+                h = max(int(ratio * viewport), self.ABSOLUTE_MIN_ROW_HEIGHT)
+            elif auto_fill_h is not None:
+                h = auto_fill_h
+            elif exceeds:
+                h = default_h
+            else:
+                h = default_h
+            heights.append(h)
+        return heights
+
+    def _sync_row_heights_to_viewport(self, *_args) -> bool:
+        """Recompute row heights; manual rows keep user ratios, others use 50%/fill."""
+        if not self._row_boxes:
+            return False
+
+        viewport = self._get_scroll_viewport_height()
+        if viewport <= 0:
+            return False
+
+        scroll_y = self._save_scroll_position()
+        heights = self._compute_target_row_heights()
+        if not heights:
+            return False
+
+        exceeds = self._minimum_rows_content_height(len(self._row_boxes)) > viewport
+        self._row_heights = heights
+        for i, row_box in enumerate(self._row_boxes):
+            row_box.set_size_request(-1, heights[i])
+        self._normalize_pane_heights()
+
+        if exceeds:
+            return self._restore_scroll_position(scroll_y)
+        return False
+
     def _flush_row_resize(self) -> bool:
         """Apply accumulated row-height changes in one GTK layout pass."""
+        scroll_y = self._save_scroll_position()
         self._drag_ghost.set_visible(False)
         for i, row_box in enumerate(self._row_boxes):
             row_box.set_size_request(-1, self._row_heights[i])
+        self._normalize_pane_heights()
+        GLib.idle_add(self._restore_scroll_position, scroll_y)
         return False
 
     def _update_drag_ghost(self, row_idx: int) -> None:
@@ -1010,6 +1426,32 @@ class SplitViewTab(Gtk.Box):
             self._tab_page.set_title(_("Split View ({n} terminals)").format(n=n))
         else:
             self._tab_page.set_title(_("Split View"))
+
+    def get_all_terminals(self) -> list:
+        """Return every TerminalWidget embedded in this split tab."""
+        result = []
+        for pane in self._panes:
+            result.extend(pane.get_terminals())
+        return result
+
+    def get_focused_terminal(self):
+        """Return the terminal in the focused pane's selected inner tab, if any."""
+        pane = self._get_focused_pane()
+        if pane is None:
+            pane = self._last_active_pane
+        if pane is None:
+            for candidate in self._panes:
+                if candidate.get_terminal_count() > 0:
+                    pane = candidate
+                    break
+        if pane is None:
+            return None
+
+        page = pane._inner_tab_view.get_selected_page()
+        if page is None:
+            terminals = pane.get_terminals()
+            return terminals[0] if terminals else None
+        return page.get_child()
 
     # ── keyboard navigation ───────────────────────────────────────────────────
 
@@ -1114,6 +1556,7 @@ class SplitViewTab(Gtk.Box):
             self._focus_pane(target)
 
     def _focus_pane(self, pane: SplitPane) -> None:
+        self._note_active_pane(pane)
         page = pane._inner_tab_view.get_selected_page()
         if page is None:
             pane.grab_focus()
@@ -1132,14 +1575,21 @@ class SplitViewTab(Gtk.Box):
         # In HORIZONTAL layout, vertical row resizing is done via _row_boxes /
         # _row_heights (no Paned involved), so handle it separately.
         if direction in ('up', 'down') and self._layout_mode == self.HORIZONTAL:
+            scroll_y = self._save_scroll_position()
             for idx, row_box in enumerate(self._row_boxes):
                 widget: Optional[Gtk.Widget] = pane
                 while widget is not None:
                     if widget is row_box:
                         delta = self._RESIZE_STEP if direction == 'down' else -self._RESIZE_STEP
-                        new_h = max(self.DEFAULT_PANE_HEIGHT, self._row_heights[idx] + delta)
+                        new_h = max(
+                            self.ABSOLUTE_MIN_ROW_HEIGHT,
+                            self._row_heights[idx] + delta,
+                        )
                         self._row_heights[idx] = new_h
                         row_box.set_size_request(-1, new_h)
+                        self._mark_row_manual(idx)
+                        self._normalize_pane_heights()
+                        GLib.idle_add(self._restore_scroll_position, scroll_y)
                         return
                     widget = widget.get_parent()
             return
@@ -1168,5 +1618,10 @@ class SplitViewTab(Gtk.Box):
         else:
             delta = -self._RESIZE_STEP if is_start else self._RESIZE_STEP
 
-        new_pos = max(self.DEFAULT_PANE_HEIGHT, paned.get_position() + delta)
+        is_h_paned = paned.get_orientation() == Gtk.Orientation.HORIZONTAL
+        total = (paned.get_allocated_width() if is_h_paned
+                 else paned.get_allocated_height())
+        min_ext = (self.MIN_PANE_WIDTH if is_h_paned
+                   else self._min_extent_for_total(total))
+        new_pos = max(min_ext, min(total - min_ext, paned.get_position() + delta))
         paned.set_position(new_pos)
