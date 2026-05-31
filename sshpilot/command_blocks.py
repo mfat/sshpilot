@@ -1355,6 +1355,198 @@ class CommandBlocksPanel(Gtk.Box):
             self.store.record_use(cmd_id)
 
     # ------------------------------------------------------------------
+    # Run command picker (called from sidebar context menu)
+    # ------------------------------------------------------------------
+
+    def show_command_picker_for_target(
+        self,
+        anchor: Gtk.Widget,
+        *,
+        connection=None,
+        group: dict | None = None,
+    ) -> None:
+        """Show a command picker popover anchored to *anchor*.
+
+        Either *connection* (a Connection object) or *group* (a group dict)
+        must be supplied to specify the target.
+        """
+        commands = self.store.get_commands()
+
+        popover = Gtk.Popover()
+        popover.set_parent(anchor)
+        popover.set_has_arrow(True)
+
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        outer.set_margin_top(8)
+        outer.set_margin_bottom(8)
+        outer.set_margin_start(8)
+        outer.set_margin_end(8)
+        outer.set_size_request(300, -1)
+
+        search_entry = Gtk.SearchEntry()
+        search_entry.set_placeholder_text(_('Search commands…'))
+        outer.append(search_entry)
+
+        scrolled = Gtk.ScrolledWindow()
+        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scrolled.set_size_request(-1, min(360, (len(commands) + 1) * 52 + 8))
+
+        list_box = Gtk.ListBox()
+        list_box.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        list_box.add_css_class('boxed-list')
+
+        # "Custom command…" pseudo-row — always first, never filtered out
+        custom_row = Gtk.ListBoxRow()
+        custom_row._cmd = None
+        cbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        cbox.set_margin_top(6)
+        cbox.set_margin_bottom(6)
+        cbox.set_margin_start(8)
+        cbox.set_margin_end(8)
+        cicon = Gtk.Image.new_from_icon_name('utilities-terminal-symbolic')
+        cicon.set_pixel_size(16)
+        cicon.set_valign(Gtk.Align.CENTER)
+        cbox.append(cicon)
+        clbl = Gtk.Label(label=_('Custom command…'))
+        clbl.set_halign(Gtk.Align.START)
+        clbl.set_hexpand(True)
+        clbl.add_css_class('dim-label')
+        cbox.append(clbl)
+        custom_row.set_child(cbox)
+        list_box.append(custom_row)
+
+        # One row per command block
+        for cmd in commands:
+            list_row = Gtk.ListBoxRow()
+            list_row._cmd = cmd
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            box.set_margin_top(6)
+            box.set_margin_bottom(6)
+            box.set_margin_start(8)
+            box.set_margin_end(8)
+            lbl = Gtk.Label(label=cmd.get('name', ''))
+            lbl.set_halign(Gtk.Align.START)
+            lbl.add_css_class('heading')
+            lbl.set_ellipsize(Pango.EllipsizeMode.END)
+            box.append(lbl)
+            cmd_preview = cmd.get('command', '').split('\n')[0][:60]
+            if cmd_preview:
+                lbl2 = Gtk.Label(label=cmd_preview)
+                lbl2.set_halign(Gtk.Align.START)
+                lbl2.add_css_class('caption')
+                lbl2.add_css_class('dim-label')
+                lbl2.set_ellipsize(Pango.EllipsizeMode.END)
+                box.append(lbl2)
+            list_row.set_child(box)
+            list_box.append(list_row)
+
+        def _filter(list_row):
+            if getattr(list_row, '_cmd', None) is None:
+                return True  # always show custom row
+            q = search_entry.get_text().lower().strip()
+            if not q:
+                return True
+            cmd = list_row._cmd
+            haystack = ' '.join([
+                cmd.get('name', ''),
+                cmd.get('command', ''),
+                cmd.get('description', ''),
+                ' '.join(cmd.get('tags', [])),
+            ]).lower()
+            return q in haystack
+
+        list_box.set_filter_func(_filter)
+        search_entry.connect('search-changed', lambda _e: list_box.invalidate_filter())
+
+        def _on_activated(_lb, list_row):
+            cmd = getattr(list_row, '_cmd', None)
+            popover.popdown()
+            if cmd is None:
+                self._show_custom_command_dialog(connection=connection, group=group)
+            else:
+                self._run_cmd_block_on_target(cmd, connection=connection, group=group)
+
+        list_box.connect('row-activated', _on_activated)
+        scrolled.set_child(list_box)
+        outer.append(scrolled)
+        popover.set_child(outer)
+        GLib.idle_add(popover.popup)
+
+    def _run_cmd_block_on_target(self, cmd: dict, *, connection=None, group=None) -> None:
+        if cmd.get('has_placeholders'):
+            dlg = PlaceholderDialog(self.window, cmd)
+            dlg.connect('send', lambda d, filled: self._dispatch_to_target(
+                filled, cmd.get('id'), connection=connection, group=group))
+            dlg.present()
+        else:
+            self._dispatch_to_target(cmd.get('command', ''), cmd.get('id'),
+                                     connection=connection, group=group)
+
+    def _dispatch_to_target(self, command_text: str, cmd_id=None, *,
+                            connection=None, group=None) -> None:
+        if connection is not None:
+            self._connect_and_feed(connection, command_text, cmd_id)
+        elif group is not None:
+            self._feed_group_in_split_view(group, command_text, cmd_id)
+
+    def _show_custom_command_dialog(self, *, connection=None, group=None) -> None:
+        dlg = Adw.AlertDialog(
+            heading=_('Run Custom Command'),
+            body=_('Enter a shell command to run:'),
+        )
+        entry = Gtk.Entry()
+        entry.set_activates_default(True)
+        dlg.set_extra_child(entry)
+        dlg.add_response('cancel', _('Cancel'))
+        dlg.add_response('run', _('Run'))
+        dlg.set_default_response('run')
+        dlg.set_response_appearance('run', Adw.ResponseAppearance.SUGGESTED)
+
+        def _on_response(d, response):
+            if response == 'run':
+                text = entry.get_text().strip()
+                if text:
+                    self._dispatch_to_target(text, None, connection=connection, group=group)
+
+        dlg.connect('response', _on_response)
+        dlg.present(self.window)
+
+    def _feed_group_in_split_view(self, group: dict, command_text: str,
+                                  cmd_id: str | None = None) -> None:
+        from .split_view import SplitViewTab
+        from sshpilot import icon_utils
+
+        cm = getattr(self.window, 'connection_manager', None)
+        if cm is None:
+            return
+        nicknames = set(group.get('connections', []))
+        connections = [c for c in cm.connections if c.nickname in nicknames]
+        if not connections:
+            self._show_toast(_('No connections in group'))
+            return
+
+        svt = SplitViewTab(self.window)
+        page = self.window.tab_view.append(svt)
+        page.set_title(group.get('name', _('Group')))
+        page.set_icon(icon_utils.new_gicon_from_icon_name('view-dual-symbolic'))
+        svt._tab_page = page
+        svt.populate(connections)
+        self.window.show_tab_view()
+        self.window.tab_view.set_selected_page(page)
+
+        for terminal in svt.get_all_terminals():
+            def _make_handler(t):
+                handler_id = [None]
+
+                def _on_connected(_t):
+                    GObject.signal_handler_disconnect(_t, handler_id[0])
+                    self._feed_specific_terminal(command_text, _t, cmd_id)
+
+                handler_id[0] = t.connect('connection-established', _on_connected)
+
+            _make_handler(terminal)
+
+    # ------------------------------------------------------------------
     # Run on host
     # ------------------------------------------------------------------
 

@@ -2087,6 +2087,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         menu.add_section(
                             menu.add_item('document-edit-symbolic', _('Edit Group'), lambda: self.on_edit_group_action(None, None)),
                             menu.add_item('view-grid-symbolic', _('Open in Split View'), lambda: self.on_open_group_in_split_view_action(None, None)),
+                            menu.add_item('utilities-terminal-symbolic', _('Run Command…'), lambda: self.on_run_command_action()),
                             menu.add_item('user-trash-symbolic', _('Delete Group'), lambda: self.on_delete_group_action(None, None)),
                         )
                     else:
@@ -2095,6 +2096,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         menu.add_section(
                             menu.add_item('list-add-symbolic', _('Open New Connection'), lambda: self.on_open_new_connection_action(None, None)),
                             menu.add_item('view-grid-symbolic', _('Open in Split View'), lambda: self.on_open_in_split_view_action(None, None)),
+                            menu.add_item('utilities-terminal-symbolic', _('Run Command…'), lambda: self.on_run_command_action()),
                             menu.add_item('document-edit-symbolic', _('Edit Connection'), lambda: self.on_edit_connection_action(None, None)),
                             menu.add_item('edit-copy-symbolic', _('Duplicate Connection'), lambda: self.on_duplicate_connection_action(None, None)),
                             menu.add_item('edit-copy-symbolic', _('Copy Address'), lambda: self._copy_connection_address()),
@@ -8871,6 +8873,25 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             except Exception:
                 pass
     
+    def on_run_command_action(self, action=None, param=None):
+        """Open the command picker for the right-clicked connection or group."""
+        panel = getattr(self, 'command_blocks_panel', None)
+        if panel is None:
+            return
+        anchor = getattr(self, '_context_menu_row', None) or self
+        connection = getattr(self, '_context_menu_connection', None)
+        group_row = getattr(self, '_context_menu_group_row', None)
+
+        if connection is not None:
+            panel.show_command_picker_for_target(anchor, connection=connection)
+        elif group_row is not None:
+            gm = getattr(self, 'group_manager', None)
+            if gm is None:
+                return
+            group = gm.groups.get(group_row.group_id)
+            if group:
+                panel.show_command_picker_for_target(anchor, group=group)
+
     def on_create_group_action(self, action, param=None):
         """Handle create group action"""
         try:
