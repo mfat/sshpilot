@@ -808,13 +808,13 @@ class SplitViewTab(Gtk.Box):
 
         large_btn = Gtk.Button(label=_("Default"))
         large_btn.add_css_class("pill")
-        large_btn.set_tooltip_text(_("Tidy up panes to their default size"))
+        large_btn.set_tooltip_text(_("Reset panes to their default size"))
         large_btn.connect("clicked", lambda _b: self.reset_all_row_heights(0.5))
         strip.append(large_btn)
 
         compact_btn = Gtk.Button(label=_("Compact"))
         compact_btn.add_css_class("pill")
-        compact_btn.set_tooltip_text(_("Tidy up panes to a smaller size"))
+        compact_btn.set_tooltip_text(_("Reset panes to a smaller size"))
         compact_btn.connect("clicked", lambda _b: self.reset_all_row_heights(0.3))
         strip.append(compact_btn)
 
