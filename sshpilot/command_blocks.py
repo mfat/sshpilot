@@ -1269,7 +1269,27 @@ class CommandBlocksPanel(Gtk.Box):
     # Send command to terminal
     # ------------------------------------------------------------------
 
+    def _show_toast(self, message: str, timeout: int = 3) -> None:
+        toast = Adw.Toast.new(message)
+        toast.set_timeout(timeout)
+        try:
+            overlay = getattr(self.window, 'toast_overlay', None)
+            if overlay is not None:
+                overlay.add_toast(toast)
+            else:
+                self.window.add_toast(toast)
+        except Exception:
+            pass
+
     def _send_command_to_terminal(self, cmd: dict) -> None:
+        terminal = None
+        try:
+            terminal = self.window._get_active_terminal_widget()
+        except Exception:
+            pass
+        if terminal is None:
+            self._show_toast(_('No active terminal — open a connection first'), timeout=3)
+            return
         if cmd.get('has_placeholders'):
             dlg = PlaceholderDialog(self.window, cmd)
             dlg.connect('send', lambda d, filled: self._feed_terminal(filled, cmd.get('id')))
@@ -1305,21 +1325,10 @@ class CommandBlocksPanel(Gtk.Box):
         else:
             message = _('Command broadcast to {} terminals').format(sent_count)
 
-        toast = Adw.Toast.new(message)
-        toast.set_timeout(3)
-        try:
-            self.window.add_toast(toast)
-        except Exception:
-            pass
+        self._show_toast(message, timeout=3)
 
         if cmd_id and sent_count > 0:
             self.store.record_use(cmd_id)
-            try:
-                wp = getattr(self.window, 'welcome_view', None)
-                if wp and hasattr(wp, 'refresh_pinned'):
-                    wp.refresh_pinned()
-            except Exception:
-                pass
 
     def _feed_terminal(self, command_text: str, cmd_id: str | None = None) -> None:
         terminal = None
@@ -1329,12 +1338,7 @@ class CommandBlocksPanel(Gtk.Box):
             pass
 
         if terminal is None:
-            toast = Adw.Toast.new(_('No active terminal — open a connection first'))
-            toast.set_timeout(2)
-            try:
-                self.window.add_toast(toast)
-            except Exception:
-                pass
+            self._show_toast(_('No active terminal — open a connection first'), timeout=3)
             return
 
         data = (command_text + '\n').encode('utf-8')
@@ -1400,12 +1404,7 @@ class CommandBlocksPanel(Gtk.Box):
     def _delete_command(self, cmd: dict) -> None:
         self.store.delete_command(cmd['id'])
         self.refresh()
-        toast = Adw.Toast.new(_('Command deleted'))
-        toast.set_timeout(2)
-        try:
-            self.window.add_toast(toast)
-        except Exception:
-            pass
+        self._show_toast(_('Command deleted'), timeout=2)
 
     def _duplicate_command(self, cmd: dict) -> None:
         self.store.duplicate_command(cmd['id'])
