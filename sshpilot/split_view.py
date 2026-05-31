@@ -626,6 +626,7 @@ class SplitViewTab(Gtk.Box):
         self._manual_row_indices: set[int] = set()
         self._row_boxes: List[Gtk.Box] = []
         self._fill_viewport = True
+        self._row_height_ratio: float = self.MIN_PANE_HEIGHT_RATIO
         self._viewport_sync_scheduled = False
         self._scroll_spacer: Optional[Gtk.Box] = None
         self._last_active_pane: Optional[SplitPane] = None
@@ -742,20 +743,11 @@ class SplitViewTab(Gtk.Box):
     def reset_all_row_heights(self, ratio: float) -> None:
         """Reset every row to `ratio` × viewport height, clearing all manual overrides.
         Also resets any horizontal pane-width splits back to 50/50."""
-        viewport = self._get_scroll_viewport_height()
-        if viewport <= 0:
-            GLib.idle_add(lambda: self.reset_all_row_heights(ratio) or False)
-            return
+        self._row_height_ratio = ratio
         self._manual_row_indices.clear()
         self._row_height_ratios.clear()
-        self._fill_viewport = False
-        height = max(self.ABSOLUTE_MIN_ROW_HEIGHT, int(viewport * ratio))
-        num_rows = len(self._row_boxes)
-        self._row_heights = [height] * num_rows
-        for i, row_box in enumerate(self._row_boxes):
-            row_box.set_size_request(-1, height)
-            self._manual_row_indices.add(i)
-            self._row_height_ratios.append(ratio)
+        self._fill_viewport = True
+        for row_box in self._row_boxes:
             child = row_box.get_first_child()
             if (child is not None
                     and isinstance(child, Gtk.Paned)
@@ -767,7 +759,7 @@ class SplitViewTab(Gtk.Box):
                     child._in_ratio_update = True
                     child.set_position(total // 2)
                     child._in_ratio_update = False
-        self._normalize_pane_heights()
+        self._sync_row_heights_to_viewport()
         self.scroll_panes_to_top()
 
     # ── toolbar strip ────────────────────────────────────────────────────────
@@ -1201,8 +1193,9 @@ class SplitViewTab(Gtk.Box):
         return max(1, int(total * self.MIN_PANE_HEIGHT_RATIO))
 
     def _get_default_row_height(self) -> int:
-        """Default row height (50% of scroll viewport) for non-manual rows."""
-        return self._min_extent_for_total(self._get_scroll_viewport_height())
+        """Default row height (ratio × scroll viewport) for non-manual rows."""
+        viewport = self._get_scroll_viewport_height()
+        return max(self.ABSOLUTE_MIN_ROW_HEIGHT, int(viewport * self._row_height_ratio))
 
     def _minimum_rows_content_height(self, num_rows: int) -> int:
         if num_rows <= 0:
@@ -1299,6 +1292,8 @@ class SplitViewTab(Gtk.Box):
 
         if exceeds:
             self._fill_viewport = False
+        elif not self._manual_row_indices:
+            self._fill_viewport = True
 
         auto_fill_h: Optional[int] = None
         if self._fill_viewport and not exceeds:
