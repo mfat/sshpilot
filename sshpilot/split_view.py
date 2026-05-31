@@ -134,6 +134,7 @@ class RowResizeHandle(Gtk.DrawingArea):
         self._get_row_idx = get_row_idx
         self._tab = split_view_tab
         self._last_dy = 0.0
+        self._drag_moved = False
 
         drag = Gtk.GestureDrag()
         drag.connect("drag-begin", self._on_drag_begin)
@@ -142,8 +143,8 @@ class RowResizeHandle(Gtk.DrawingArea):
         self.add_controller(drag)
 
     def _on_drag_begin(self, _gesture, _x, _y) -> None:
-        self._tab._fill_viewport = False
         self._last_dy = 0.0
+        self._drag_moved = False
 
     def _on_drag_update(self, _gesture, _offset_x, offset_y) -> None:
         # Accumulate the target height but do NOT resize the widget yet —
@@ -151,16 +152,21 @@ class RowResizeHandle(Gtk.DrawingArea):
         # The ghost line gives live position feedback instead.
         delta = offset_y - self._last_dy
         self._last_dy = offset_y
+        if delta:
+            self._drag_moved = True
         idx = self._get_row_idx()
         tab = self._tab
         if 0 <= idx < len(tab._row_heights):
             tab._row_heights[idx] = max(
-                tab._get_min_row_height(), tab._row_heights[idx] + int(delta)
+                tab.ABSOLUTE_MIN_ROW_HEIGHT, tab._row_heights[idx] + int(delta)
             )
             tab._update_drag_ghost(idx)
 
     def _on_drag_end(self, _gesture, _offset_x, _offset_y) -> None:
-        # Apply the final height in one shot on mouse release.
+        if self._drag_moved:
+            idx = self._get_row_idx()
+            if 0 <= idx < len(self._tab._row_heights):
+                self._tab._mark_row_manual(idx)
         self._tab._flush_row_resize()
 
 
@@ -182,7 +188,10 @@ class SplitPane(Gtk.Box):
         self._has_terminals = False
         self.set_hexpand(True)
         self.set_vexpand(True)
-        self.set_size_request(-1, split_view_tab._get_min_row_height())
+        self.set_size_request(-1, max(
+            split_view_tab.ABSOLUTE_MIN_ROW_HEIGHT,
+            split_view_tab._get_default_row_height(),
+        ))
         _ensure_row_handle_css()
         self.add_css_class("split-pane")
 
@@ -600,7 +609,8 @@ class SplitViewTab(Gtk.Box):
 
     HORIZONTAL = 'horizontal'
     VERTICAL = 'vertical'
-    MIN_PANE_HEIGHT_RATIO = 0.5   # minimum row/pane height as fraction of viewport
+    MIN_PANE_HEIGHT_RATIO = 0.5   # default row height as fraction of viewport
+    ABSOLUTE_MIN_ROW_HEIGHT = 100  # hard floor when manually shrinking a row
     MIN_PANE_WIDTH = 200          # minimum width per pane in side-by-side splits (px)
     SCROLL_SPACER_HEIGHT = 600  # extra scroll room below the last row
     ROW_HANDLE_HEIGHT = 6
@@ -612,8 +622,11 @@ class SplitViewTab(Gtk.Box):
         self._layout_mode = self.HORIZONTAL
         self._tab_page = None
         self._row_heights: List[int] = []
+        self._row_height_ratios: List[float] = []
+        self._manual_row_indices: set[int] = set()
         self._row_boxes: List[Gtk.Box] = []
         self._fill_viewport = True
+        self._viewport_sync_scheduled = False
         self._scroll_spacer: Optional[Gtk.Box] = None
         self._last_active_pane: Optional[SplitPane] = None
         self.set_hexpand(True)
@@ -629,7 +642,6 @@ class SplitViewTab(Gtk.Box):
         self._pane_scroll.set_hexpand(True)
         self._pane_scroll.set_vexpand(True)
         self._pane_scroll.set_child(self._content_area)
-        self._pane_scroll.connect('notify::height', self._on_scroll_viewport_changed)
 
         # Ghost line shown during row-resize drag to give live position feedback.
         _ensure_row_handle_css()
@@ -646,8 +658,16 @@ class SplitViewTab(Gtk.Box):
         self._scroll_overlay.set_child(self._pane_scroll)
         self._scroll_overlay.add_overlay(self._drag_ghost)
         self._scroll_overlay.set_clip_overlay(self._drag_ghost, True)
-        self._scroll_overlay.connect('map', self._on_scroll_viewport_changed)
         self.append(self._scroll_overlay)
+
+        for widget in (self, self._scroll_overlay, self._pane_scroll):
+            widget.connect('notify::height', self._schedule_viewport_sync)
+        self.connect('map', self._schedule_viewport_sync)
+        try:
+            window.connect('notify::default-height', self._schedule_viewport_sync)
+            window.connect('notify::height', self._schedule_viewport_sync)
+        except Exception:
+            pass
 
         # Toolbar strip below the panes
         self._add_pane_btn: Optional[Gtk.Button] = None
@@ -1056,9 +1076,14 @@ class SplitViewTab(Gtk.Box):
 
             self._append_scroll_spacer()
 
+        num_rows = len(self._row_boxes)
+        self._manual_row_indices = {
+            i for i in self._manual_row_indices if i < num_rows
+        }
+        self._row_height_ratios = self._row_height_ratios[:num_rows]
+
         self._normalize_pane_heights()
-        if self._fill_viewport:
-            GLib.idle_add(self._sync_row_heights_to_viewport)
+        self._schedule_viewport_sync()
 
     def _chain_panes(
         self,
@@ -1077,78 +1102,213 @@ class SplitViewTab(Gtk.Box):
         return root
 
     def _normalize_pane_heights(self) -> None:
-        """Enforce minimum pane height while allowing growth to fill the viewport."""
-        min_h = self._get_min_row_height()
+        """Set per-pane minimum height to match its row (manual rows may be < 50%)."""
+        default_min = self._get_default_row_height()
         for pane in self._panes:
+            row_min = default_min
+            for i, row_box in enumerate(self._row_boxes):
+                if self._widget_in_row_box(pane, row_box):
+                    if i < len(self._row_heights):
+                        row_min = self._row_heights[i]
+                    break
             try:
                 pane.set_vexpand(True)
-                pane.set_size_request(-1, min_h)
+                pane.set_size_request(-1, row_min)
             except Exception:
                 pass
 
+    def _widget_in_row_box(self, widget: Gtk.Widget, row_box: Gtk.Box) -> bool:
+        while widget is not None:
+            if widget is row_box:
+                return True
+            widget = widget.get_parent()
+        return False
+
     def _row_height_for_rebuild(self, old_heights: List[int], row_idx: int) -> int:
         """Return the row height to use during layout rebuild."""
+        if row_idx in self._manual_row_indices and row_idx < len(old_heights):
+            return old_heights[row_idx]
         if self._fill_viewport:
-            return self._get_min_row_height()
+            return self._get_default_row_height()
         if row_idx < len(old_heights):
             return old_heights[row_idx]
-        return self._get_min_row_height()
+        return self._get_default_row_height()
 
     def _get_scroll_viewport_height(self) -> int:
         try:
-            height = self._pane_scroll.get_height()
-            if height <= 0:
-                height = self._pane_scroll.get_allocated_height()
-            return max(0, int(height))
+            for widget in (self._pane_scroll, self._scroll_overlay, self):
+                height = widget.get_height()
+                if height <= 0:
+                    height = widget.get_allocated_height()
+                if height > 0:
+                    if widget is self and self._add_strip is not None:
+                        strip_h = self._add_strip.get_height()
+                        if strip_h <= 0:
+                            strip_h = self._add_strip.get_allocated_height()
+                        height = max(0, height - strip_h)
+                    return max(0, int(height))
         except Exception:
-            return 0
+            pass
+        return 0
 
     def _min_extent_for_total(self, total: int) -> int:
-        """Minimum size along an axis as a fraction of the available total."""
+        """Size along an axis as a fraction of the available total."""
         if total <= 0:
             return 1
         return max(1, int(total * self.MIN_PANE_HEIGHT_RATIO))
 
-    def _get_min_row_height(self) -> int:
-        """Minimum row height (50% of scroll viewport)."""
+    def _get_default_row_height(self) -> int:
+        """Default row height (50% of scroll viewport) for non-manual rows."""
         return self._min_extent_for_total(self._get_scroll_viewport_height())
 
+    def _minimum_rows_content_height(self, num_rows: int) -> int:
+        if num_rows <= 0:
+            return 0
+        total = 0
+        default_h = self._get_default_row_height()
+        for i in range(num_rows):
+            if i in self._manual_row_indices and i < len(self._row_heights):
+                total += self._row_heights[i]
+            else:
+                total += default_h
+        return total + num_rows * self.ROW_HANDLE_HEIGHT
+
+    def _save_scroll_position(self) -> float:
+        try:
+            return self._pane_scroll.get_vadjustment().get_value()
+        except Exception:
+            return 0.0
+
+    def _restore_scroll_position(self, scroll_y: float) -> bool:
+        try:
+            adj = self._pane_scroll.get_vadjustment()
+            upper = adj.get_upper()
+            page = adj.get_page_size()
+            max_y = max(adj.get_lower(), upper - page)
+            adj.set_value(max(adj.get_lower(), min(scroll_y, max_y)))
+        except Exception:
+            pass
+        return False
+
+    def _mark_row_manual(self, row_idx: int) -> None:
+        """Remember a user-chosen row height (may be below the 50% default)."""
+        if row_idx < 0 or row_idx >= len(self._row_heights):
+            return
+        viewport = self._get_scroll_viewport_height()
+        self._manual_row_indices.add(row_idx)
+        while len(self._row_height_ratios) <= row_idx:
+            self._row_height_ratios.append(self.MIN_PANE_HEIGHT_RATIO)
+        if viewport > 0:
+            self._row_height_ratios[row_idx] = (
+                self._row_heights[row_idx] / viewport
+            )
+        self._fill_viewport = False
+
+    def _schedule_viewport_sync(self, *_args) -> None:
+        if self._viewport_sync_scheduled:
+            return
+        self._viewport_sync_scheduled = True
+        GLib.idle_add(self._run_viewport_sync)
+
+    def _run_viewport_sync(self) -> bool:
+        self._viewport_sync_scheduled = False
+        viewport = self._get_scroll_viewport_height()
+        if viewport <= 0:
+            GLib.idle_add(self._run_viewport_sync)
+            return False
+        before = viewport
+        self._sync_row_heights_to_viewport()
+        after = self._get_scroll_viewport_height()
+        if after != before:
+            self._schedule_viewport_sync()
+        return False
+
     def _compute_fill_row_height(self, num_rows: int) -> Optional[int]:
-        """Height for each row so rows fill the scroll viewport (spacer is extra)."""
+        """Height for each auto row so rows fill the scroll viewport."""
         if num_rows <= 0:
             return None
         viewport = self._get_scroll_viewport_height()
         if viewport <= 0:
             return None
-        available = viewport - (num_rows * self.ROW_HANDLE_HEIGHT)
+        manual_total = sum(
+            self._row_heights[i]
+            for i in self._manual_row_indices
+            if i < len(self._row_heights)
+        )
+        auto_rows = num_rows - len(self._manual_row_indices)
+        if auto_rows <= 0:
+            return None
+        available = (
+            viewport - manual_total - (num_rows * self.ROW_HANDLE_HEIGHT)
+        )
         if available <= 0:
-            return self._get_min_row_height()
-        return max(self._get_min_row_height(), available // num_rows)
+            return self._get_default_row_height()
+        return max(self._get_default_row_height(), available // auto_rows)
+
+    def _compute_target_row_heights(self) -> List[int]:
+        num_rows = len(self._row_boxes)
+        if num_rows <= 0:
+            return []
+
+        viewport = self._get_scroll_viewport_height()
+        default_h = self._get_default_row_height()
+        exceeds = self._minimum_rows_content_height(num_rows) > viewport
+
+        if exceeds:
+            self._fill_viewport = False
+
+        auto_fill_h: Optional[int] = None
+        if self._fill_viewport and not exceeds:
+            auto_fill_h = self._compute_fill_row_height(num_rows)
+
+        heights: List[int] = []
+        for i in range(num_rows):
+            if i in self._manual_row_indices:
+                ratio = (self._row_height_ratios[i]
+                         if i < len(self._row_height_ratios)
+                         else self.MIN_PANE_HEIGHT_RATIO)
+                h = max(int(ratio * viewport), self.ABSOLUTE_MIN_ROW_HEIGHT)
+            elif auto_fill_h is not None:
+                h = auto_fill_h
+            elif exceeds:
+                h = default_h
+            else:
+                h = default_h
+            heights.append(h)
+        return heights
 
     def _sync_row_heights_to_viewport(self, *_args) -> bool:
-        """Size rows to fill the scroll viewport; spacer adds extra scroll room."""
-        if not self._fill_viewport or not self._row_boxes:
+        """Recompute row heights; manual rows keep user ratios, others use 50%/fill."""
+        if not self._row_boxes:
             return False
-        num_rows = len(self._row_boxes)
-        row_h = self._compute_fill_row_height(num_rows)
-        if row_h is None:
-            return False
-        self._row_heights = [row_h] * num_rows
-        for i, row_box in enumerate(self._row_boxes):
-            row_box.set_size_request(-1, row_h)
-        return False
 
-    def _on_scroll_viewport_changed(self, *_args) -> None:
+        viewport = self._get_scroll_viewport_height()
+        if viewport <= 0:
+            return False
+
+        scroll_y = self._save_scroll_position()
+        heights = self._compute_target_row_heights()
+        if not heights:
+            return False
+
+        exceeds = self._minimum_rows_content_height(len(self._row_boxes)) > viewport
+        self._row_heights = heights
+        for i, row_box in enumerate(self._row_boxes):
+            row_box.set_size_request(-1, heights[i])
         self._normalize_pane_heights()
-        if self._fill_viewport:
-            GLib.idle_add(self._sync_row_heights_to_viewport)
+
+        if exceeds:
+            return self._restore_scroll_position(scroll_y)
+        return False
 
     def _flush_row_resize(self) -> bool:
         """Apply accumulated row-height changes in one GTK layout pass."""
-        self._fill_viewport = False
+        scroll_y = self._save_scroll_position()
         self._drag_ghost.set_visible(False)
         for i, row_box in enumerate(self._row_boxes):
             row_box.set_size_request(-1, self._row_heights[i])
+        self._normalize_pane_heights()
+        GLib.idle_add(self._restore_scroll_position, scroll_y)
         return False
 
     def _update_drag_ghost(self, row_idx: int) -> None:
@@ -1372,15 +1532,21 @@ class SplitViewTab(Gtk.Box):
         # In HORIZONTAL layout, vertical row resizing is done via _row_boxes /
         # _row_heights (no Paned involved), so handle it separately.
         if direction in ('up', 'down') and self._layout_mode == self.HORIZONTAL:
-            self._fill_viewport = False
+            scroll_y = self._save_scroll_position()
             for idx, row_box in enumerate(self._row_boxes):
                 widget: Optional[Gtk.Widget] = pane
                 while widget is not None:
                     if widget is row_box:
                         delta = self._RESIZE_STEP if direction == 'down' else -self._RESIZE_STEP
-                        new_h = max(self._get_min_row_height(), self._row_heights[idx] + delta)
+                        new_h = max(
+                            self.ABSOLUTE_MIN_ROW_HEIGHT,
+                            self._row_heights[idx] + delta,
+                        )
                         self._row_heights[idx] = new_h
                         row_box.set_size_request(-1, new_h)
+                        self._mark_row_manual(idx)
+                        self._normalize_pane_heights()
+                        GLib.idle_add(self._restore_scroll_position, scroll_y)
                         return
                     widget = widget.get_parent()
             return
