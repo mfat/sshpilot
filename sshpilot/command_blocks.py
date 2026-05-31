@@ -1501,6 +1501,116 @@ class CommandBlocksPanel(Gtk.Box):
             self.store.record_use(cmd_id)
 
     # ------------------------------------------------------------------
+    # Run for group
+    # ------------------------------------------------------------------
+
+    def _show_run_for_group_picker(self, cmd: dict, anchor: Gtk.Widget) -> None:
+        gm = getattr(self.window, 'group_manager', None)
+        if gm is None:
+            return
+        groups = [g for g in gm.groups.values() if g.get('connections')]
+        if not groups:
+            self._show_toast(_('No groups with connections'))
+            return
+
+        groups = sorted(groups, key=lambda g: g.get('order', 0))
+
+        popover = Gtk.Popover()
+        popover.set_parent(anchor)
+        popover.set_has_arrow(True)
+
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        outer.set_margin_top(8)
+        outer.set_margin_bottom(8)
+        outer.set_margin_start(8)
+        outer.set_margin_end(8)
+        outer.set_size_request(260, -1)
+
+        search_entry = Gtk.SearchEntry()
+        search_entry.set_placeholder_text(_('Filter groups…'))
+        outer.append(search_entry)
+
+        scrolled = Gtk.ScrolledWindow()
+        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scrolled.set_size_request(-1, min(300, len(groups) * 52 + 8))
+
+        list_box = Gtk.ListBox()
+        list_box.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        list_box.add_css_class('boxed-list')
+
+        for group in groups:
+            list_row = Gtk.ListBoxRow()
+            row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            row_box.set_margin_top(6)
+            row_box.set_margin_bottom(6)
+            row_box.set_margin_start(8)
+            row_box.set_margin_end(8)
+
+            color = group.get('color')
+            if color:
+                dot = Gtk.Image.new_from_icon_name('media-record-symbolic')
+                dot.set_pixel_size(12)
+                dot.set_valign(Gtk.Align.CENTER)
+                row_box.append(dot)
+
+            info = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            info.set_hexpand(True)
+            lbl = Gtk.Label(label=group.get('name', ''))
+            lbl.set_halign(Gtk.Align.START)
+            lbl.add_css_class('heading')
+            info.append(lbl)
+            count = len(group.get('connections', []))
+            lbl2 = Gtk.Label(label=_('%d connections') % count if count != 1 else _('1 connection'))
+            lbl2.set_halign(Gtk.Align.START)
+            lbl2.add_css_class('caption')
+            lbl2.add_css_class('dim-label')
+            info.append(lbl2)
+            row_box.append(info)
+
+            list_row.set_child(row_box)
+            list_row._group = group
+            list_box.append(list_row)
+
+        def _filter(list_row):
+            q = search_entry.get_text().lower().strip()
+            if not q:
+                return True
+            g = getattr(list_row, '_group', None)
+            return g is not None and q in g.get('name', '').lower()
+
+        list_box.set_filter_func(_filter)
+        search_entry.connect('search-changed', lambda _e: list_box.invalidate_filter())
+
+        def _on_activated(_lb, list_row):
+            g = getattr(list_row, '_group', None)
+            if g:
+                popover.popdown()
+                self._run_command_for_group(cmd, g)
+
+        list_box.connect('row-activated', _on_activated)
+        scrolled.set_child(list_box)
+        outer.append(scrolled)
+        popover.set_child(outer)
+        GLib.idle_add(popover.popup)
+
+    def _run_command_for_group(self, cmd: dict, group: dict) -> None:
+        if cmd.get('has_placeholders'):
+            dlg = PlaceholderDialog(self.window, cmd)
+            dlg.connect('send', lambda d, filled: self._feed_group(group, filled, cmd.get('id')))
+            dlg.present()
+        else:
+            self._feed_group(group, cmd.get('command', ''), cmd.get('id'))
+
+    def _feed_group(self, group: dict, command_text: str, cmd_id: str | None = None) -> None:
+        cm = getattr(self.window, 'connection_manager', None)
+        if cm is None:
+            return
+        nicknames = set(group.get('connections', []))
+        connections = [c for c in cm.connections if c.nickname in nicknames]
+        for connection in connections:
+            self._connect_and_feed(connection, command_text, cmd_id)
+
+    # ------------------------------------------------------------------
     # Context menu
     # ------------------------------------------------------------------
 
@@ -1515,6 +1625,7 @@ class CommandBlocksPanel(Gtk.Box):
             menu.add_item('edit-copy-symbolic', _('Duplicate'), lambda: self._duplicate_command(cmd)),
             menu.add_item('document-send-symbolic', _('Broadcast Command'), lambda: self._broadcast_command(cmd)),
             menu.add_item('computer-symbolic', _('Run on host…'), lambda: self._show_run_on_host_picker(cmd, row)),
+            menu.add_item('folder-symbolic', _('Run for group…'), lambda: self._show_run_for_group_picker(cmd, row)),
         )
 
         if cmd.get('is_favorite'):
