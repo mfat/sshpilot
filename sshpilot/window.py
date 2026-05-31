@@ -2909,24 +2909,32 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         banner_box.add_controller(banner_controller)
 
         if HAS_OVERLAY_SPLIT:
-            # outer_toolbar spans the full window width (including the command panel
-            # sidebar), so the close button always stays at the far-right edge.
-            outer_toolbar = Adw.ToolbarView()
-            outer_toolbar.add_top_bar(self.header_bar)
+            content_box = Adw.ToolbarView()
+            content_box.add_top_bar(self.header_bar)
+            # Create content wrapper with banner below header bar
             content_wrapper = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
             content_wrapper.append(self.update_banner_container)
             content_wrapper.append(self.broadcast_banner)
             content_wrapper.append(self.content_stack)
-            self._wrap_content_with_command_panel(content_wrapper, outer_toolbar)
+            content_box.set_content(content_wrapper)
+            # Add banners to the main content area instead of toolbar view
+            main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            main_box.append(content_box)
+            self._wrap_content_with_command_panel(main_box)
             logger.debug("Set content widget for OverlaySplitView")
         elif HAS_NAV_SPLIT:
-            outer_toolbar = Adw.ToolbarView()
-            outer_toolbar.add_top_bar(self.header_bar)
+            content_box = Adw.ToolbarView()
+            content_box.add_top_bar(self.header_bar)
+            # Create content wrapper with banner below header bar
             content_wrapper = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
             content_wrapper.append(self.update_banner_container)
             content_wrapper.append(self.broadcast_banner)
             content_wrapper.append(self.content_stack)
-            self._wrap_content_with_command_panel(content_wrapper, outer_toolbar)
+            content_box.set_content(content_wrapper)
+            # Add banners to the main content area instead of toolbar view
+            main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            main_box.append(content_box)
+            self._wrap_content_with_command_panel(main_box)
             logger.debug("Set content widget for NavigationSplitView")
         else:
             # For non-split views, create a vertical box to contain banners and content
@@ -2937,7 +2945,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             self._set_content_widget(main_box)
             logger.debug("Set content widget for other split view types")
 
-    def _wrap_content_with_command_panel(self, content_widget: Gtk.Widget, outer_toolbar=None) -> None:
+    def _wrap_content_with_command_panel(self, content_widget: Gtk.Widget) -> None:
         """Wrap main_box in a right-side OverlaySplitView for the command blocks panel."""
         if not HAS_OVERLAY_SPLIT:
             self._set_content_widget(content_widget)
@@ -2968,15 +2976,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 self.cmd_split_view.set_sidebar(self.command_blocks_panel)
 
             self.cmd_split_view.set_content(content_widget)
-            if outer_toolbar is not None:
-                outer_toolbar.set_content(self.cmd_split_view)
-                self._set_content_widget(outer_toolbar)
-            else:
-                self._set_content_widget(self.cmd_split_view)
+            self._set_content_widget(self.cmd_split_view)
             logger.debug("Command blocks panel created")
         except Exception as exc:
             logger.error("Failed to create command blocks panel: %s", exc)
-            self._set_content_widget(outer_toolbar if outer_toolbar is not None else content_widget)
+            self._set_content_widget(content_widget)
 
     def _toggle_command_blocks_panel(self, visible: bool | None = None) -> None:
         """Show or hide the command blocks right sidebar."""
