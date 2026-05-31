@@ -82,6 +82,7 @@ from . import shutdown
 from .search_utils import connection_matches
 from .shortcut_utils import get_primary_modifier_label
 from .platform_utils import is_macos, get_config_dir
+from .command_blocks import CommandBlocksPanel, CommandBlockStore
 from .ssh_utils import ensure_writable_ssh_home
 from .scp_utils import assemble_scp_transfer_args, classify_sftp_error, download_file, upload_file
 from .ssh_password_exec import run_ssh_with_password, run_scp_with_password
@@ -673,6 +674,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self._is_quitting = False  # Flag to prevent multiple quit attempts
         self._is_controlled_reconnect = False  # Flag to track controlled reconnection
         self._internal_file_manager_windows: List[Any] = []
+
+        # Command Blocks panel (right-side sidebar)
+        self.command_block_store: Optional[CommandBlockStore] = None
+        self.command_blocks_panel: Optional[CommandBlocksPanel] = None
+        self.cmd_split_view = None
+        self._command_sidebar_visible: bool = False
+        self._cmd_blocks_toggle_btn = None
         
         # Update notification
         self.update_banner = None
@@ -2828,6 +2836,21 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.split_view_button.connect('clicked', self.on_open_split_view_clicked)
         self.header_bar.pack_start(self.split_view_button)
 
+        # Command blocks toggle button (right sidebar)
+        self._cmd_blocks_toggle_btn = Gtk.ToggleButton()
+        self._cmd_blocks_toggle_btn.set_icon_name('format-justify-left-symbolic')
+        self._cmd_blocks_toggle_btn.add_css_class('flat')
+        self._cmd_blocks_toggle_btn.set_tooltip_text(_('Toggle Command Blocks (Ctrl+Shift+C)'))
+        self._updating_cmd_toggle = False
+
+        def _on_cmd_toggle_btn_toggled(btn):
+            if self._updating_cmd_toggle:
+                return
+            self._toggle_command_blocks_panel(btn.get_active())
+
+        self._cmd_blocks_toggle_btn.connect('toggled', _on_cmd_toggle_btn_toggled)
+        self.header_bar.pack_end(self._cmd_blocks_toggle_btn)
+
         # H/V layout toggle buttons (control split-view layout or convert a
         # regular terminal tab to a split-view tab)
         self._updating_layout_toggles = False
@@ -2962,7 +2985,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             # Add banners to the main content area instead of toolbar view
             main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
             main_box.append(content_box)
-            self._set_content_widget(main_box)
+            self._wrap_content_with_command_panel(main_box)
             logger.debug("Set content widget for OverlaySplitView")
         elif HAS_NAV_SPLIT:
             content_box = Adw.ToolbarView()
@@ -2976,7 +2999,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             # Add banners to the main content area instead of toolbar view
             main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
             main_box.append(content_box)
-            self._set_content_widget(main_box)
+            self._wrap_content_with_command_panel(main_box)
             logger.debug("Set content widget for NavigationSplitView")
         else:
             # For non-split views, create a vertical box to contain banners and content
@@ -2987,7 +3010,58 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             self._set_content_widget(main_box)
             logger.debug("Set content widget for other split view types")
 
+    def _wrap_content_with_command_panel(self, content_widget: Gtk.Widget) -> None:
+        """Wrap main_box in a right-side OverlaySplitView for the command blocks panel."""
+        if not HAS_OVERLAY_SPLIT:
+            self._set_content_widget(content_widget)
+            logger.warning("Command blocks panel requires Adw.OverlaySplitView; panel disabled")
+            return
+        try:
+            app = self.get_application()
+            config = getattr(app, 'config', None) if app else None
+            if config is None:
+                config = getattr(self, 'config', None)
+            if self.command_block_store is None and config is not None:
+                self.command_block_store = CommandBlockStore(config)
 
+            self.cmd_split_view = Adw.OverlaySplitView()
+            self.cmd_split_view.set_sidebar_position(Gtk.PackType.END)
+            self.cmd_split_view.set_show_sidebar(False)
+            try:
+                self.cmd_split_view.set_min_sidebar_width(240)
+                self.cmd_split_view.set_max_sidebar_width(400)
+                self.cmd_split_view.set_sidebar_width_fraction(0.28)
+            except Exception:
+                pass
+            self.cmd_split_view.set_hexpand(True)
+            self.cmd_split_view.set_vexpand(True)
+
+            if self.command_block_store is not None:
+                self.command_blocks_panel = CommandBlocksPanel(self, self.command_block_store)
+                self.cmd_split_view.set_sidebar(self.command_blocks_panel)
+
+            self.cmd_split_view.set_content(content_widget)
+            self._set_content_widget(self.cmd_split_view)
+            logger.debug("Command blocks panel created")
+        except Exception as exc:
+            logger.error("Failed to create command blocks panel: %s", exc)
+            self._set_content_widget(content_widget)
+
+    def _toggle_command_blocks_panel(self, visible: bool | None = None) -> None:
+        """Show or hide the command blocks right sidebar."""
+        if self.cmd_split_view is None:
+            return
+        try:
+            if visible is None:
+                visible = not self.cmd_split_view.get_show_sidebar()
+            self.cmd_split_view.set_show_sidebar(visible)
+            self._command_sidebar_visible = visible
+            if self._cmd_blocks_toggle_btn is not None:
+                self._updating_cmd_toggle = True
+                self._cmd_blocks_toggle_btn.set_active(visible)
+                self._updating_cmd_toggle = False
+        except Exception as exc:
+            logger.debug("_toggle_command_blocks_panel: %s", exc)
 
     def create_menu(self):
         """Create application menu"""
@@ -7758,6 +7832,28 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     return False
 
                 drag_type = value.get("type")
+
+                if drag_type == "command_block":
+                    cmd_dict = {
+                        'id': value.get('command_id'),
+                        'name': value.get('name', ''),
+                        'command': value.get('command', ''),
+                        'has_placeholders': value.get('has_placeholders', False),
+                    }
+                    panel = getattr(self, 'command_blocks_panel', None)
+                    if panel is not None:
+                        panel._send_command_to_terminal(cmd_dict)
+                    else:
+                        data = (cmd_dict['command'] + '\n').encode('utf-8')
+                        try:
+                            if hasattr(terminal, 'backend') and terminal.backend:
+                                terminal.backend.feed_child(data)
+                            elif hasattr(terminal, 'vte') and terminal.vte:
+                                terminal.vte.feed_child(data)
+                        except Exception:
+                            pass
+                    return True
+
                 if drag_type not in ("connection", "group"):
                     return False
 

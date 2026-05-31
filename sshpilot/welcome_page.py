@@ -777,6 +777,107 @@ class WelcomePage(Gtk.Overlay):
 
         return group if rows_added > 0 else None
 
+    def _build_pinned_commands_section(self) -> 'Adw.PreferencesGroup | None':
+        """Build an Adw.PreferencesGroup of pinned command blocks, or None if none are pinned."""
+        from sshpilot import icon_utils
+        store = getattr(self.window, 'command_block_store', None)
+        if store is None:
+            return None
+        pinned = store.get_pinned()
+        if not pinned:
+            return None
+
+        group = Adw.PreferencesGroup(title=_('Pinned Commands'))
+        group.set_margin_start(12)
+        group.set_margin_end(12)
+        group.set_margin_top(12)
+        group.set_margin_bottom(4)
+        group.set_can_focus(False)
+        group.add_css_class('separate')
+
+        rows_added = 0
+        for cmd in pinned:
+            row = Adw.ActionRow()
+            row.set_title(cmd.get('name', ''))
+            subtitle = cmd.get('description') or cmd.get('command', '')[:60]
+            if subtitle:
+                row.set_subtitle(subtitle)
+            row.set_activatable(True)
+            row.set_can_focus(False)
+
+            prefix_img = icon_utils.new_image_from_icon_name('utilities-terminal-symbolic')
+            prefix_img.set_can_focus(False)
+            row.add_prefix(prefix_img)
+
+            run_btn = Gtk.Button(label=_('Run'))
+            run_btn.set_valign(Gtk.Align.CENTER)
+            run_btn.add_css_class('suggested-action')
+            run_btn.add_css_class('pill')
+            run_btn.set_can_focus(False)
+            _cmd = cmd
+
+            def _run(b, c=_cmd):
+                panel = getattr(self.window, 'command_blocks_panel', None)
+                if panel is not None:
+                    panel._send_command_to_terminal(c)
+
+            run_btn.connect('clicked', _run)
+            row.add_suffix(run_btn)
+            row.connect('activated', lambda r, c=_cmd: _run(None, c))
+            group.add(row)
+            rows_added += 1
+
+        return group if rows_added > 0 else None
+
+    def _build_most_used_commands_section(self) -> 'Adw.PreferencesGroup | None':
+        """Build a group of frequently used command blocks, or None if none have been used."""
+        from sshpilot import icon_utils
+        store = getattr(self.window, 'command_block_store', None)
+        if store is None:
+            return None
+        most_used = store.get_most_used(5)
+        if not most_used:
+            return None
+
+        group = Adw.PreferencesGroup(title=_('Frequently Used Commands'))
+        group.set_margin_start(12)
+        group.set_margin_end(12)
+        group.set_margin_top(12)
+        group.set_margin_bottom(4)
+        group.set_can_focus(False)
+        group.add_css_class('separate')
+
+        for cmd in most_used:
+            row = Adw.ActionRow()
+            row.set_title(cmd.get('name', ''))
+            subtitle = cmd.get('description') or cmd.get('command', '')[:60]
+            if subtitle:
+                row.set_subtitle(subtitle)
+            row.set_activatable(True)
+            row.set_can_focus(False)
+
+            prefix_img = icon_utils.new_image_from_icon_name('utilities-terminal-symbolic')
+            prefix_img.set_can_focus(False)
+            row.add_prefix(prefix_img)
+
+            run_btn = Gtk.Button(label=_('Run'))
+            run_btn.set_valign(Gtk.Align.CENTER)
+            run_btn.add_css_class('pill')
+            run_btn.set_can_focus(False)
+            _cmd = cmd
+
+            def _run(b, c=_cmd):
+                panel = getattr(self.window, 'command_blocks_panel', None)
+                if panel is not None:
+                    panel._send_command_to_terminal(c)
+
+            run_btn.connect('clicked', _run)
+            row.add_suffix(run_btn)
+            row.connect('activated', lambda r, c=_cmd: _run(None, c))
+            group.add(row)
+
+        return group
+
     def _populate_pinned_rows_box(self):
         """Fill _pinned_rows_box with the current pinned group (rows layout)."""
         if self._pinned_rows_box is None:
@@ -792,6 +893,12 @@ class WelcomePage(Gtk.Overlay):
         sessions_group = self._build_pinned_sessions_section()
         if sessions_group is not None:
             self._pinned_rows_box.append(sessions_group)
+        cmd_group = self._build_pinned_commands_section()
+        if cmd_group is not None:
+            self._pinned_rows_box.append(cmd_group)
+        most_used_group = self._build_most_used_commands_section()
+        if most_used_group is not None:
+            self._pinned_rows_box.append(most_used_group)
 
     def _populate_pinned_cards_box(self):
         """Fill _pinned_cards_box with the current pinned group (cards layout)."""
@@ -808,6 +915,12 @@ class WelcomePage(Gtk.Overlay):
         sessions_group = self._build_pinned_sessions_section()
         if sessions_group is not None:
             self._pinned_cards_box.append(sessions_group)
+        cmd_group = self._build_pinned_commands_section()
+        if cmd_group is not None:
+            self._pinned_cards_box.append(cmd_group)
+        most_used_group = self._build_most_used_commands_section()
+        if most_used_group is not None:
+            self._pinned_cards_box.append(most_used_group)
 
     def refresh_pinned(self):
         """Rebuild the pinned section in both layouts after a pin/unpin action."""
