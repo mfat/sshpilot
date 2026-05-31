@@ -41,105 +41,105 @@ DEFAULT_COMMANDS = [
     # System Info
     {"id": "c-uname",    "name": "Kernel info",         "command": "uname -a",
      "description": "Kernel & architecture", "tags": ["system"], "folder_id": "f-sysinfo",
-     "is_favorite": True, "has_placeholders": False, "is_pinned": False},
+     "is_favorite": True, "has_placeholders": False},
     {"id": "c-osrel",    "name": "OS release",           "command": "cat /etc/os-release",
      "description": "Distribution details", "tags": ["system"], "folder_id": "f-sysinfo",
-     "is_favorite": False, "has_placeholders": False, "is_pinned": False},
+     "is_favorite": False, "has_placeholders": False},
     {"id": "c-uptime",   "name": "Uptime",               "command": "uptime -p",
      "description": "System uptime", "tags": ["system"], "folder_id": "f-sysinfo",
-     "is_favorite": False, "has_placeholders": False, "is_pinned": False},
+     "is_favorite": False, "has_placeholders": False},
     {"id": "c-mem",      "name": "Memory usage",         "command": "free -h",
      "description": "RAM & swap usage", "tags": ["system", "resources"], "folder_id": "f-sysinfo",
-     "is_favorite": False, "has_placeholders": False, "is_pinned": False},
+     "is_favorite": False, "has_placeholders": False},
     # Network
     {"id": "c-iface",    "name": "Network interfaces",   "command": "ip addr show",
      "description": "All interfaces and IPs", "tags": ["network"], "folder_id": "f-network",
-     "is_favorite": True, "has_placeholders": False, "is_pinned": False},
+     "is_favorite": True, "has_placeholders": False},
     {"id": "c-sockets",  "name": "Listening sockets",    "command": "ss -tulnp",
      "description": "Open ports & services", "tags": ["network", "ports"], "folder_id": "f-network",
-     "is_favorite": False, "has_placeholders": False, "is_pinned": False},
+     "is_favorite": False, "has_placeholders": False},
     {"id": "c-pubip",    "name": "Public IP",            "command": "curl -s ifconfig.me",
      "description": "Show public IP address", "tags": ["network"], "folder_id": "f-network",
-     "is_favorite": False, "has_placeholders": False, "is_pinned": False},
+     "is_favorite": False, "has_placeholders": False},
     {"id": "c-ping",     "name": "Ping host",            "command": "ping -c 4 ${HOST}",
      "description": "Ping a host 4 times", "tags": ["network"], "folder_id": "f-network",
-     "is_favorite": False, "has_placeholders": True, "is_pinned": False},
+     "is_favorite": False, "has_placeholders": True},
     # Processes
     {"id": "c-cpu-top",  "name": "Top CPU processes",    "command": "ps aux --sort=-%cpu | head -20",
      "description": "20 most CPU-hungry processes", "tags": ["processes", "resources"], "folder_id": "f-procs",
-     "is_favorite": False, "has_placeholders": False, "is_pinned": False},
+     "is_favorite": False, "has_placeholders": False},
     {"id": "c-proc-snap","name": "Process snapshot",     "command": "top -bn1 | head -30",
      "description": "One-shot top output", "tags": ["processes"], "folder_id": "f-procs",
-     "is_favorite": False, "has_placeholders": False, "is_pinned": False},
+     "is_favorite": False, "has_placeholders": False},
     {"id": "c-kill",     "name": "Force kill PID",       "command": "kill -9 ${PID}",
      "description": "Kill process by PID", "tags": ["processes"], "folder_id": "f-procs",
-     "is_favorite": False, "has_placeholders": True, "is_pinned": False},
+     "is_favorite": False, "has_placeholders": True},
     # Docker
     {"id": "c-dps",      "name": "List containers",      "command": "docker ps -a",
      "description": "All Docker containers", "tags": ["docker"], "folder_id": "f-docker",
-     "is_favorite": True, "has_placeholders": False, "is_pinned": False},
+     "is_favorite": True, "has_placeholders": False},
     {"id": "c-dimages",  "name": "List images",          "command": "docker images",
      "description": "Local Docker images", "tags": ["docker"], "folder_id": "f-docker",
-     "is_favorite": False, "has_placeholders": False, "is_pinned": False},
+     "is_favorite": False, "has_placeholders": False},
     {"id": "c-dlogs",    "name": "Container logs",       "command": "docker logs --tail 100 -f ${CONTAINER}",
      "description": "Follow container logs", "tags": ["docker", "logs"], "folder_id": "f-docker",
-     "is_favorite": False, "has_placeholders": True, "is_pinned": False},
+     "is_favorite": False, "has_placeholders": True},
     {"id": "c-dexec",    "name": "Shell into container", "command": "docker exec -it ${CONTAINER} /bin/bash",
      "description": "Interactive shell in container", "tags": ["docker"], "folder_id": "f-docker",
-     "is_favorite": False, "has_placeholders": True, "is_pinned": False},
+     "is_favorite": False, "has_placeholders": True},
     {"id": "c-dstats",   "name": "Container stats",      "command": "docker stats --no-stream",
      "description": "Resource usage per container", "tags": ["docker", "resources"], "folder_id": "f-docker",
-     "is_favorite": False, "has_placeholders": False, "is_pinned": False},
+     "is_favorite": False, "has_placeholders": False},
     {"id": "c-dprune",   "name": "Prune Docker",         "command": "docker system prune -f",
      "description": "Remove unused Docker resources", "tags": ["docker"], "folder_id": "f-docker",
-     "is_favorite": False, "has_placeholders": False, "is_pinned": False},
+     "is_favorite": False, "has_placeholders": False},
     # Systemd
     {"id": "c-svc-stat", "name": "Service status",       "command": "systemctl status ${SERVICE}",
      "description": "Status of a systemd service", "tags": ["systemd", "services"], "folder_id": "f-systemd",
-     "is_favorite": True, "has_placeholders": True, "is_pinned": False},
+     "is_favorite": True, "has_placeholders": True},
     {"id": "c-svc-log",  "name": "Service logs",         "command": "journalctl -u ${SERVICE} -n 100 --no-pager",
      "description": "Last 100 lines of service journal", "tags": ["systemd", "logs"], "folder_id": "f-systemd",
-     "is_favorite": False, "has_placeholders": True, "is_pinned": False},
+     "is_favorite": False, "has_placeholders": True},
     {"id": "c-svc-fail", "name": "Failed units",         "command": "systemctl list-units --state=failed",
      "description": "All failed systemd units", "tags": ["systemd"], "folder_id": "f-systemd",
-     "is_favorite": False, "has_placeholders": False, "is_pinned": False},
+     "is_favorite": False, "has_placeholders": False},
     {"id": "c-svc-rst",  "name": "Restart service",      "command": "systemctl restart ${SERVICE}",
      "description": "Restart a systemd service", "tags": ["systemd", "services"], "folder_id": "f-systemd",
-     "is_favorite": False, "has_placeholders": True, "is_pinned": False},
+     "is_favorite": False, "has_placeholders": True},
     # Disk
     {"id": "c-df",       "name": "Disk usage",           "command": "df -h",
      "description": "Disk usage by mount point", "tags": ["disk"], "folder_id": "f-disk",
-     "is_favorite": False, "has_placeholders": False, "is_pinned": False},
+     "is_favorite": False, "has_placeholders": False},
     {"id": "c-du-logs",  "name": "Log dir sizes",        "command": "du -sh /var/log/*",
      "description": "Size of each log file/dir", "tags": ["disk", "logs"], "folder_id": "f-disk",
-     "is_favorite": False, "has_placeholders": False, "is_pinned": False},
+     "is_favorite": False, "has_placeholders": False},
     {"id": "c-lsblk",    "name": "Block devices",        "command": "lsblk",
      "description": "List all block devices", "tags": ["disk"], "folder_id": "f-disk",
-     "is_favorite": False, "has_placeholders": False, "is_pinned": False},
+     "is_favorite": False, "has_placeholders": False},
     {"id": "c-bigfiles", "name": "Largest files",
      "command": "find / -xdev -size +100M -printf '%s %p\\n' 2>/dev/null | sort -rn | head -10",
      "description": "Files over 100 MB", "tags": ["disk"], "folder_id": "f-disk",
-     "is_favorite": False, "has_placeholders": False, "is_pinned": False},
+     "is_favorite": False, "has_placeholders": False},
     # Logs
     {"id": "c-syslog",   "name": "Follow syslog",        "command": "tail -f /var/log/syslog",
      "description": "Live syslog (Ctrl+C to stop)", "tags": ["logs"], "folder_id": "f-logs",
-     "is_favorite": False, "has_placeholders": False, "is_pinned": False},
+     "is_favorite": False, "has_placeholders": False},
     {"id": "c-journal",  "name": "Follow journal",       "command": "journalctl -f -n 50",
      "description": "Live systemd journal", "tags": ["logs", "systemd"], "folder_id": "f-logs",
-     "is_favorite": False, "has_placeholders": False, "is_pinned": False},
+     "is_favorite": False, "has_placeholders": False},
     {"id": "c-errlogs",  "name": "Recent errors",        "command": "grep -i error /var/log/syslog | tail -50",
      "description": "Last 50 error lines in syslog", "tags": ["logs"], "folder_id": "f-logs",
-     "is_favorite": False, "has_placeholders": False, "is_pinned": False},
+     "is_favorite": False, "has_placeholders": False},
     # Security
     {"id": "c-last",     "name": "Recent logins",        "command": "last -n 20",
      "description": "Last 20 login events", "tags": ["security"], "folder_id": "f-security",
-     "is_favorite": False, "has_placeholders": False, "is_pinned": False},
+     "is_favorite": False, "has_placeholders": False},
     {"id": "c-who",      "name": "Who is logged in",     "command": "who",
      "description": "Currently logged-in users", "tags": ["security"], "folder_id": "f-security",
-     "is_favorite": False, "has_placeholders": False, "is_pinned": False},
+     "is_favorite": False, "has_placeholders": False},
     {"id": "c-lastb",    "name": "Failed logins",        "command": "lastb | head -20",
      "description": "Last 20 failed login attempts", "tags": ["security"], "folder_id": "f-security",
-     "is_favorite": False, "has_placeholders": False, "is_pinned": False},
+     "is_favorite": False, "has_placeholders": False},
 ]
 
 
@@ -205,7 +205,6 @@ class CommandBlockStore:
                 'use_count': 0,
                 'last_used': None,
                 'has_placeholders': bool(c.get('has_placeholders', False)),
-                'is_pinned': bool(c.get('is_pinned', False)),
                 'created_at': _now_iso(),
             }
             if not any(x['id'] == entry['id'] for x in data.get('commands', [])):
@@ -267,7 +266,6 @@ class CommandBlockStore:
             'use_count': 0,
             'last_used': None,
             'has_placeholders': bool(kwargs.get('has_placeholders', False)),
-            'is_pinned': bool(kwargs.get('is_pinned', False)),
             'created_at': _now_iso(),
         }
         self._data().setdefault('commands', []).append(entry)
@@ -276,7 +274,7 @@ class CommandBlockStore:
 
     def update_command(self, cmd_id: str, **kwargs) -> None:
         allowed = {'name', 'command', 'description', 'tags', 'folder_id',
-                   'is_favorite', 'has_placeholders', 'is_pinned'}
+                   'is_favorite', 'has_placeholders'}
         for cmd in self._data().get('commands', []):
             if cmd['id'] == cmd_id:
                 for k, v in kwargs.items():
@@ -331,14 +329,6 @@ class CommandBlockStore:
             if q in haystack:
                 results.append(cmd)
         return results
-
-    def get_pinned(self) -> list[dict]:
-        return [c for c in self._data().get('commands', []) if c.get('is_pinned')]
-
-    def get_most_used(self, n: int = 5) -> list[dict]:
-        cmds = [c for c in self._data().get('commands', []) if c.get('use_count', 0) > 0]
-        cmds.sort(key=lambda c: c.get('use_count', 0), reverse=True)
-        return cmds[:n]
 
     def get_favorites(self) -> list[dict]:
         return [c for c in self._data().get('commands', []) if c.get('is_favorite')]
@@ -453,6 +443,83 @@ class PlaceholderDialog(Adw.Window):
 # ---------------------------------------------------------------------------
 
 _FOLDER_INDENT_PX = 24
+
+
+class FavoritesRow(Gtk.ListBoxRow):
+    """Virtual 'Favorites' folder header — unremovable, always first."""
+
+    __gsignals__ = {
+        'folder-toggled': (GObject.SignalFlags.RUN_FIRST, None, (bool,)),
+    }
+
+    def __init__(self, cmd_count: int) -> None:
+        super().__init__()
+        self._expanded = True
+        self.set_selectable(True)
+        self.set_can_focus(True)
+
+        content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        content.set_margin_start(12)
+        content.set_margin_end(12)
+        content.set_margin_top(6)
+        content.set_margin_bottom(6)
+
+        icon = Gtk.Image.new_from_icon_name('starred-symbolic')
+        icon.set_pixel_size(16)
+        icon.set_valign(Gtk.Align.CENTER)
+        content.append(icon)
+
+        info = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        info.set_hexpand(True)
+        info.set_valign(Gtk.Align.CENTER)
+
+        name_lbl = Gtk.Label(label=_('Favorites'))
+        name_lbl.set_halign(Gtk.Align.START)
+        name_lbl.set_xalign(0)
+        name_lbl.set_hexpand(True)
+        name_lbl.set_ellipsize(Pango.EllipsizeMode.END)
+        info.append(name_lbl)
+
+        self._count_lbl = Gtk.Label(
+            label=_('%d commands') % cmd_count if cmd_count != 1 else _('1 command')
+        )
+        self._count_lbl.set_halign(Gtk.Align.START)
+        self._count_lbl.set_xalign(0)
+        self._count_lbl.add_css_class('dim-label')
+        info.append(self._count_lbl)
+
+        content.append(info)
+
+        self._expand_btn = Gtk.Button()
+        self._expand_btn.set_icon_name('pan-down-symbolic')
+        self._expand_btn.add_css_class('flat')
+        self._expand_btn.set_can_focus(False)
+        self._expand_btn.connect('clicked', self._on_expand_clicked)
+        content.append(self._expand_btn)
+
+        self.set_child(content)
+
+        gesture = Gtk.GestureClick()
+        gesture.set_button(1)
+        gesture.connect('pressed', self._on_click)
+        self.add_controller(gesture)
+
+    def _on_click(self, _gesture, n_press, _x, _y) -> None:
+        listbox = self.get_parent()
+        if listbox and n_press == 1:
+            listbox.select_row(self)
+        elif n_press == 2:
+            self._toggle_expand()
+
+    def _on_expand_clicked(self, _button) -> None:
+        self._toggle_expand()
+
+    def _toggle_expand(self) -> None:
+        self._expanded = not self._expanded
+        self._expand_btn.set_icon_name(
+            'pan-down-symbolic' if self._expanded else 'pan-end-symbolic'
+        )
+        self.emit('folder-toggled', self._expanded)
 
 
 class FolderRow(Gtk.ListBoxRow):
@@ -707,11 +774,6 @@ class CommandEditDialog(Adw.Window):
             self._favorite_row.set_active(self._cmd.get('is_favorite', False))
         opts_group.add(self._favorite_row)
 
-        self._pin_row = Adw.SwitchRow(title=_('Pin to Start Page'))
-        if self._cmd:
-            self._pin_row.set_active(self._cmd.get('is_pinned', False))
-        opts_group.add(self._pin_row)
-
     def _on_save(self, *_) -> None:
         name = self._name_row.get_text().strip()
         buf = self._cmd_view.get_buffer()
@@ -734,7 +796,6 @@ class CommandEditDialog(Adw.Window):
                 folder_id=folder_id,
                 has_placeholders=self._placeholder_row.get_active(),
                 is_favorite=self._favorite_row.get_active(),
-                is_pinned=self._pin_row.get_active(),
             )
             saved = next((c for c in self._store.get_commands() if c['id'] == self._cmd['id']), None)
         else:
@@ -745,7 +806,6 @@ class CommandEditDialog(Adw.Window):
                 folder_id=folder_id,
                 has_placeholders=self._placeholder_row.get_active(),
                 is_favorite=self._favorite_row.get_active(),
-                is_pinned=self._pin_row.get_active(),
             )
 
         self.emit('saved', saved)
@@ -817,6 +877,7 @@ class CommandBlocksPanel(Gtk.Box):
         self.window = window
         self.store = store
         self._search_query = ''
+        self._favorites_expanded = True
         self._build_ui()
         self.refresh()
 
@@ -968,6 +1029,17 @@ class CommandBlocksPanel(Gtk.Box):
             fid = cmd.get('folder_id')
             cmds_by_folder.setdefault(fid, []).append(cmd)
 
+        # Virtual Favorites folder — always first, unremovable
+        favorites = self.store.get_favorites()
+        if favorites:
+            fav_row = FavoritesRow(len(favorites))
+            fav_row.connect('folder-toggled', self._on_favorites_toggled)
+            self._tree_list.append(fav_row)
+            if self._favorites_expanded:
+                for cmd in favorites:
+                    row = self._build_command_row(cmd, indent=True)
+                    self._tree_list.append(row)
+
         # Root commands (no folder)
         for cmd in cmds_by_folder.get(None, []):
             row = self._build_command_row(cmd)
@@ -995,6 +1067,24 @@ class CommandBlocksPanel(Gtk.Box):
             index += 1
             child = child.get_next_sibling()
         return -1
+
+    def _on_favorites_toggled(self, fav_row: FavoritesRow, expanded: bool) -> None:
+        self._favorites_expanded = expanded
+        if expanded:
+            position = self._row_index(fav_row) + 1
+            for cmd in self.store.get_favorites():
+                row = self._build_command_row(cmd, indent=True)
+                self._tree_list.insert(row, position)
+                position += 1
+        else:
+            sibling = fav_row.get_next_sibling()
+            while sibling is not None:
+                next_s = sibling.get_next_sibling()
+                if isinstance(sibling, (FolderRow, FavoritesRow)):
+                    break
+                if isinstance(sibling, CommandRow) and sibling._cmd_data.get('is_favorite'):
+                    self._tree_list.remove(sibling)
+                sibling = next_s
 
     def _on_folder_toggled(self, folder_row: FolderRow, folder_id: str, expanded: bool) -> None:
         self.store.update_folder(folder_id, expanded=expanded)
@@ -1259,12 +1349,6 @@ class CommandBlocksPanel(Gtk.Box):
 
         if cmd_id:
             self.store.record_use(cmd_id)
-            try:
-                wp = getattr(self.window, 'welcome_view', None)
-                if wp and hasattr(wp, 'refresh_pinned'):
-                    wp.refresh_pinned()
-            except Exception:
-                pass
 
     # ------------------------------------------------------------------
     # Context menu
@@ -1293,18 +1377,7 @@ class CommandBlocksPanel(Gtk.Box):
                 lambda: self._toggle_favorite(cmd),
             )
 
-        if cmd.get('is_pinned'):
-            pin_item = menu.add_item(
-                'view-pin-symbolic', _('Unpin from Start Page'),
-                lambda: self._toggle_pinned(cmd),
-            )
-        else:
-            pin_item = menu.add_item(
-                'view-pin-symbolic', _('Pin to Start Page'),
-                lambda: self._toggle_pinned(cmd),
-            )
-
-        menu.add_section(fav_item, pin_item)
+        menu.add_section(fav_item)
         menu.add_section(
             menu.add_item('user-trash-symbolic', _('Delete'), lambda: self._delete_command(cmd)),
         )
@@ -1344,14 +1417,3 @@ class CommandBlocksPanel(Gtk.Box):
         cmd['is_favorite'] = new_val
         self.refresh()
 
-    def _toggle_pinned(self, cmd: dict) -> None:
-        new_val = not cmd.get('is_pinned', False)
-        self.store.update_command(cmd['id'], is_pinned=new_val)
-        cmd['is_pinned'] = new_val
-        self.refresh()
-        try:
-            wp = getattr(self.window, 'welcome_view', None)
-            if wp and hasattr(wp, 'refresh_pinned'):
-                wp.refresh_pinned()
-        except Exception:
-            pass
