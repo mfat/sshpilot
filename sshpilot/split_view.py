@@ -104,6 +104,7 @@ class RowResizeHandle(Gtk.DrawingArea):
         self.add_controller(drag)
 
     def _on_drag_begin(self, _gesture, _x, _y) -> None:
+        self._tab._fill_viewport = False
         self._last_dy = 0.0
 
     def _on_drag_update(self, _gesture, _offset_x, offset_y) -> None:
@@ -565,7 +566,8 @@ class SplitViewTab(Gtk.Box):
     HORIZONTAL = 'horizontal'
     VERTICAL = 'vertical'
     DEFAULT_PANE_HEIGHT = 200   # minimum height (hard floor)
-    INITIAL_PANE_HEIGHT = 450   # starting height for new rows
+    SCROLL_SPACER_HEIGHT = 600  # extra scroll room below the last row
+    ROW_HANDLE_HEIGHT = 6
 
     def __init__(self, window) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
@@ -575,6 +577,7 @@ class SplitViewTab(Gtk.Box):
         self._tab_page = None
         self._row_heights: List[int] = []
         self._row_boxes: List[Gtk.Box] = []
+        self._fill_viewport = True
         self._last_active_pane: Optional[SplitPane] = None
         self.set_hexpand(True)
         self.set_vexpand(True)
@@ -589,6 +592,7 @@ class SplitViewTab(Gtk.Box):
         self._pane_scroll.set_hexpand(True)
         self._pane_scroll.set_vexpand(True)
         self._pane_scroll.set_child(self._content_area)
+        self._pane_scroll.connect('notify::height', self._on_scroll_viewport_changed)
 
         # Ghost line shown during row-resize drag to give live position feedback.
         _ensure_row_handle_css()
@@ -605,6 +609,7 @@ class SplitViewTab(Gtk.Box):
         self._scroll_overlay.set_child(self._pane_scroll)
         self._scroll_overlay.add_overlay(self._drag_ghost)
         self._scroll_overlay.set_clip_overlay(self._drag_ghost, True)
+        self._scroll_overlay.connect('map', self._on_scroll_viewport_changed)
         self.append(self._scroll_overlay)
 
         # "Add Terminal" strip below the panes
@@ -857,8 +862,8 @@ class SplitViewTab(Gtk.Box):
             except Exception:
                 pass
 
-        # Both layouts use Box rows with explicit heights so panes can grow
-        # beyond the viewport and scroll freely.
+        # Row heights fill the scroll viewport at startup; the spacer below
+        # adds extra scroll room once rows are resized taller.
         self._content_area.set_vexpand(False)
 
         n = len(self._panes)
@@ -871,8 +876,7 @@ class SplitViewTab(Gtk.Box):
             self._row_heights = []
             self._row_boxes = []
             for row_idx, pane in enumerate(self._panes):
-                h = (old_heights[row_idx] if row_idx < len(old_heights)
-                     else self.INITIAL_PANE_HEIGHT)
+                h = self._row_height_for_rebuild(old_heights, row_idx)
                 self._row_heights.append(h)
                 row_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
                 row_box.set_hexpand(True)
@@ -884,7 +888,7 @@ class SplitViewTab(Gtk.Box):
                 handle = RowResizeHandle(lambda idx=row_idx: idx, self)
                 self._content_area.append(handle)
             spacer = Gtk.Box()
-            spacer.set_size_request(-1, 600)
+            spacer.set_size_request(-1, self.SCROLL_SPACER_HEIGHT)
             self._content_area.append(spacer)
         else:
             # HORIZONTAL: pane pairs become rows placed directly in the Box.
@@ -905,8 +909,7 @@ class SplitViewTab(Gtk.Box):
             self._row_heights = []
             self._row_boxes = []
             for row_idx, row_widget in enumerate(row_widgets):
-                h = (old_heights[row_idx] if row_idx < len(old_heights)
-                     else self.INITIAL_PANE_HEIGHT)
+                h = self._row_height_for_rebuild(old_heights, row_idx)
                 self._row_heights.append(h)
                 row_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
                 row_box.set_hexpand(True)
@@ -921,10 +924,12 @@ class SplitViewTab(Gtk.Box):
 
             # Spacer so there is plenty of free space below the last row.
             spacer = Gtk.Box()
-            spacer.set_size_request(-1, 600)
+            spacer.set_size_request(-1, self.SCROLL_SPACER_HEIGHT)
             self._content_area.append(spacer)
 
         self._normalize_pane_heights()
+        if self._fill_viewport:
+            GLib.idle_add(self._sync_row_heights_to_viewport)
 
     def _chain_panes(
         self,
@@ -951,8 +956,55 @@ class SplitViewTab(Gtk.Box):
             except Exception:
                 pass
 
+    def _row_height_for_rebuild(self, old_heights: List[int], row_idx: int) -> int:
+        """Return the row height to use during layout rebuild."""
+        if self._fill_viewport:
+            return self.DEFAULT_PANE_HEIGHT
+        if row_idx < len(old_heights):
+            return old_heights[row_idx]
+        return self.DEFAULT_PANE_HEIGHT
+
+    def _get_scroll_viewport_height(self) -> int:
+        try:
+            height = self._pane_scroll.get_height()
+            if height <= 0:
+                height = self._pane_scroll.get_allocated_height()
+            return max(0, int(height))
+        except Exception:
+            return 0
+
+    def _compute_fill_row_height(self, num_rows: int) -> Optional[int]:
+        """Height for each row so rows fill the scroll viewport (spacer is extra)."""
+        if num_rows <= 0:
+            return None
+        viewport = self._get_scroll_viewport_height()
+        if viewport <= 0:
+            return None
+        available = viewport - (num_rows * self.ROW_HANDLE_HEIGHT)
+        if available <= 0:
+            return self.DEFAULT_PANE_HEIGHT
+        return max(self.DEFAULT_PANE_HEIGHT, available // num_rows)
+
+    def _sync_row_heights_to_viewport(self, *_args) -> bool:
+        """Size rows to fill the scroll viewport; spacer adds extra scroll room."""
+        if not self._fill_viewport or not self._row_boxes:
+            return False
+        num_rows = len(self._row_boxes)
+        row_h = self._compute_fill_row_height(num_rows)
+        if row_h is None:
+            return False
+        self._row_heights = [row_h] * num_rows
+        for i, row_box in enumerate(self._row_boxes):
+            row_box.set_size_request(-1, row_h)
+        return False
+
+    def _on_scroll_viewport_changed(self, *_args) -> None:
+        if self._fill_viewport:
+            GLib.idle_add(self._sync_row_heights_to_viewport)
+
     def _flush_row_resize(self) -> bool:
         """Apply accumulated row-height changes in one GTK layout pass."""
+        self._fill_viewport = False
         self._drag_ghost.set_visible(False)
         for i, row_box in enumerate(self._row_boxes):
             row_box.set_size_request(-1, self._row_heights[i])
@@ -1179,6 +1231,7 @@ class SplitViewTab(Gtk.Box):
         # In HORIZONTAL layout, vertical row resizing is done via _row_boxes /
         # _row_heights (no Paned involved), so handle it separately.
         if direction in ('up', 'down') and self._layout_mode == self.HORIZONTAL:
+            self._fill_viewport = False
             for idx, row_box in enumerate(self._row_boxes):
                 widget: Optional[Gtk.Widget] = pane
                 while widget is not None:
