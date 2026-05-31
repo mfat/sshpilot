@@ -740,7 +740,8 @@ class SplitViewTab(Gtk.Box):
             pass
 
     def reset_all_row_heights(self, ratio: float) -> None:
-        """Reset every row to `ratio` × viewport height, clearing all manual overrides."""
+        """Reset every row to `ratio` × viewport height, clearing all manual overrides.
+        Also resets any horizontal pane-width splits back to 50/50."""
         viewport = self._get_scroll_viewport_height()
         if viewport <= 0:
             GLib.idle_add(lambda: self.reset_all_row_heights(ratio) or False)
@@ -755,6 +756,17 @@ class SplitViewTab(Gtk.Box):
             row_box.set_size_request(-1, height)
             self._manual_row_indices.add(i)
             self._row_height_ratios.append(ratio)
+            child = row_box.get_first_child()
+            if (child is not None
+                    and isinstance(child, Gtk.Paned)
+                    and child.get_orientation() == Gtk.Orientation.HORIZONTAL
+                    and hasattr(child, '_split_ratio')):
+                child._split_ratio = 0.5
+                total = child.get_allocated_width()
+                if total > 0:
+                    child._in_ratio_update = True
+                    child.set_position(total // 2)
+                    child._in_ratio_update = False
         self._normalize_pane_heights()
         self.scroll_panes_to_top()
 
