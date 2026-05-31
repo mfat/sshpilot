@@ -1482,7 +1482,7 @@ class CommandBlocksPanel(Gtk.Box):
         handler_id = [None]
 
         def _on_connected(t):
-            t.disconnect(handler_id[0])
+            GObject.signal_handler_disconnect(t, handler_id[0])
             self._feed_specific_terminal(command_text, t, cmd_id)
 
         handler_id[0] = terminal.connect('connection-established', _on_connected)
