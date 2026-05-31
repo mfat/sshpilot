@@ -23,13 +23,8 @@ def _ensure_drop_zone_css() -> None:
     # fallback fires on systems where @accent_bg_color is unavailable.
     provider.load_from_data(b"""
 box.toolbar.add-pane-strip {
-    background-image: linear-gradient(
-        to bottom,
-        alpha(@window_fg_color, 0.0),
-        alpha(@window_fg_color, 0.20)
-    );
     border-top: 2px solid alpha(@window_fg_color, 0.25);
-    padding: 8px 0;
+    padding: 8px 12px;
 }
 box.add-pane-strip.drag-over {
     background-color: rgba(42, 161, 152, 0.25);
@@ -45,6 +40,46 @@ box.add-pane-scroll-spacer.drag-over {
         Gtk.STYLE_PROVIDER_PRIORITY_USER,
     )
     _drop_zone_css_installed = True
+
+
+def create_layout_toggle_buttons(
+    on_horizontal,
+    on_vertical,
+    *,
+    as_pill: bool = False,
+) -> tuple[Gtk.ToggleButton, Gtk.ToggleButton, list]:
+    """Create H/V layout toggle buttons (same icons/tooltips as the header bar)."""
+    updating = [False]
+
+    h_btn = Gtk.ToggleButton()
+    h_btn.set_icon_name("double-ended-arrows-horizontal-symbolic")
+    h_btn.set_tooltip_text(_("Side by Side"))
+    h_btn.add_css_class("pill" if as_pill else "flat")
+
+    v_btn = Gtk.ToggleButton()
+    v_btn.set_icon_name("double-ended-arrows-vertical-symbolic")
+    v_btn.set_tooltip_text(_("Top / Bottom"))
+    v_btn.add_css_class("pill" if as_pill else "flat")
+
+    def _on_h_toggled(btn: Gtk.ToggleButton) -> None:
+        if updating[0] or not btn.get_active():
+            return
+        updating[0] = True
+        v_btn.set_active(False)
+        updating[0] = False
+        on_horizontal()
+
+    def _on_v_toggled(btn: Gtk.ToggleButton) -> None:
+        if updating[0] or not btn.get_active():
+            return
+        updating[0] = True
+        h_btn.set_active(False)
+        updating[0] = False
+        on_vertical()
+
+    h_btn.connect("toggled", _on_h_toggled)
+    v_btn.connect("toggled", _on_v_toggled)
+    return h_btn, v_btn, updating
 
 
 _row_handle_css_installed = False
@@ -558,10 +593,7 @@ class SplitViewTab(Gtk.Box):
     Contains:
     - A Gtk.Box (content area) holding a dynamically rebuilt nested Gtk.Paned
       structure so every pane boundary is drag-resizable.
-    - An "Add Terminal" pill button strip below the panes.
-
-    The H/V layout toggle lives in a global autohiding overlay managed by
-    the main window (window.py), not inside this widget.
+    - A toolbar strip below the panes with layout, scroll, and add controls.
     """
 
     __gtype_name__ = "SshPilotSplitViewTab"
@@ -616,9 +648,12 @@ class SplitViewTab(Gtk.Box):
         self._scroll_overlay.connect('map', self._on_scroll_viewport_changed)
         self.append(self._scroll_overlay)
 
-        # "Add Terminal" strip below the panes
+        # Toolbar strip below the panes
         self._add_pane_btn: Optional[Gtk.Button] = None
         self._add_pane_strip: Optional[Gtk.Box] = None
+        self._layout_h_btn: Optional[Gtk.ToggleButton] = None
+        self._layout_v_btn: Optional[Gtk.ToggleButton] = None
+        self._layout_toggle_updating: list = [False]
         self._add_strip = self._build_add_pane_strip()
         self.append(self._add_strip)
 
@@ -650,34 +685,88 @@ class SplitViewTab(Gtk.Box):
         if mode != self._layout_mode:
             self._layout_mode = mode
             self._rebuild_layout()
+        self._sync_layout_toggle_buttons()
+        try:
+            if hasattr(self.window, '_update_layout_toggle_state'):
+                self.window._update_layout_toggle_state()
+        except Exception:
+            pass
 
-    # ── "Add Terminal" strip ─────────────────────────────────────────────────
+    def _sync_layout_toggle_buttons(self) -> None:
+        if self._layout_h_btn is None or self._layout_v_btn is None:
+            return
+        self._layout_toggle_updating[0] = True
+        try:
+            self._layout_h_btn.set_active(self._layout_mode == self.HORIZONTAL)
+            self._layout_v_btn.set_active(self._layout_mode == self.VERTICAL)
+        finally:
+            self._layout_toggle_updating[0] = False
+
+    def scroll_panes_to_top(self) -> None:
+        try:
+            adj = self._pane_scroll.get_vadjustment()
+            adj.set_value(adj.get_lower())
+        except Exception:
+            pass
+
+    def scroll_panes_to_bottom(self) -> None:
+        try:
+            adj = self._pane_scroll.get_vadjustment()
+            upper = adj.get_upper()
+            page = adj.get_page_size()
+            adj.set_value(max(adj.get_lower(), upper - page))
+        except Exception:
+            pass
+
+    # ── toolbar strip ────────────────────────────────────────────────────────
 
     def _build_add_pane_strip(self) -> Gtk.Widget:
         _ensure_drop_zone_css()
 
-        strip = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        strip = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         strip.add_css_class("toolbar")
         strip.add_css_class("add-pane-strip")
         strip.set_hexpand(True)
 
-        btn = Gtk.Button(label=_("Add Terminal"))
-        btn.add_css_class("suggested-action")
-        btn.add_css_class("pill")
-        btn.set_halign(Gtk.Align.CENTER)
-        btn.set_hexpand(True)
-        btn.connect("clicked", lambda _b: self.add_pane())
-        strip.append(btn)
+        self._layout_h_btn, self._layout_v_btn, self._layout_toggle_updating = (
+            create_layout_toggle_buttons(
+                lambda: self.set_layout_mode(self.HORIZONTAL),
+                lambda: self.set_layout_mode(self.VERTICAL),
+                as_pill=True,
+            )
+        )
+        strip.append(self._layout_h_btn)
+        strip.append(self._layout_v_btn)
 
-        # Store refs so the tab-level DropControllerMotion can update them.
-        self._add_pane_btn = btn
+        scroll_top_btn = Gtk.Button()
+        scroll_top_btn.set_icon_name("go-top-symbolic")
+        scroll_top_btn.set_tooltip_text(_("Scroll to top"))
+        scroll_top_btn.add_css_class("pill")
+        scroll_top_btn.connect("clicked", lambda _b: self.scroll_panes_to_top())
+        strip.append(scroll_top_btn)
+
+        scroll_bottom_btn = Gtk.Button()
+        scroll_bottom_btn.set_icon_name("go-bottom-symbolic")
+        scroll_bottom_btn.set_tooltip_text(_("Scroll to bottom"))
+        scroll_bottom_btn.add_css_class("pill")
+        scroll_bottom_btn.connect("clicked", lambda _b: self.scroll_panes_to_bottom())
+        strip.append(scroll_bottom_btn)
+
+        add_btn = Gtk.Button(label=_("Add Terminal"))
+        add_btn.add_css_class("suggested-action")
+        add_btn.add_css_class("pill")
+        add_btn.set_halign(Gtk.Align.END)
+        add_btn.set_hexpand(True)
+        add_btn.connect("clicked", lambda _b: self.add_pane())
+        strip.append(add_btn)
+
+        self._add_pane_btn = add_btn
         self._add_pane_strip = strip
+        self._sync_layout_toggle_buttons()
 
-        # Drop target accepts the actual drop; visual state is managed by the
-        # tab-level DropControllerMotion (_on_drag_enter/leave_tab).
         dt = Gtk.DropTarget.new(type=GObject.TYPE_PYOBJECT, actions=Gdk.DragAction.MOVE)
         dt.connect("enter", lambda _t, _x, _y: Gdk.DragAction.MOVE)
-        dt.connect("drop",  self._on_add_pane_drop)
+        dt.connect("drop", self._on_add_pane_drop)
         strip.add_controller(dt)
 
         return strip

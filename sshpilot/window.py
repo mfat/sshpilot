@@ -2810,40 +2810,18 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
         # H/V layout toggle buttons (control split-view layout or convert a
         # regular terminal tab to a split-view tab)
-        self._updating_layout_toggles = False
+        from .split_view import create_layout_toggle_buttons
 
-        self._layout_h_btn = Gtk.ToggleButton()
-        self._layout_h_btn.set_icon_name("double-ended-arrows-horizontal-symbolic")
-        self._layout_h_btn.set_tooltip_text(_("Side by Side"))
-        self._layout_h_btn.add_css_class("flat")
+        self._layout_h_btn, self._layout_v_btn, self._layout_toggle_updating = (
+            create_layout_toggle_buttons(
+                lambda: self._apply_tab_layout_mode('horizontal'),
+                lambda: self._apply_tab_layout_mode('vertical'),
+            )
+        )
         self._layout_h_btn.set_visible(False)
-        self.header_bar.pack_start(self._layout_h_btn)
-
-        self._layout_v_btn = Gtk.ToggleButton()
-        self._layout_v_btn.set_icon_name("double-ended-arrows-vertical-symbolic")
-        self._layout_v_btn.set_tooltip_text(_("Top / Bottom"))
-        self._layout_v_btn.add_css_class("flat")
         self._layout_v_btn.set_visible(False)
+        self.header_bar.pack_start(self._layout_h_btn)
         self.header_bar.pack_start(self._layout_v_btn)
-
-        def _on_h_toggled(btn):
-            if self._updating_layout_toggles or not btn.get_active():
-                return
-            self._updating_layout_toggles = True
-            self._layout_v_btn.set_active(False)
-            self._updating_layout_toggles = False
-            self._apply_tab_layout_mode('horizontal')
-
-        def _on_v_toggled(btn):
-            if self._updating_layout_toggles or not btn.get_active():
-                return
-            self._updating_layout_toggles = True
-            self._layout_h_btn.set_active(False)
-            self._updating_layout_toggles = False
-            self._apply_tab_layout_mode('vertical')
-
-        self._layout_h_btn.connect("toggled", _on_h_toggled)
-        self._layout_v_btn.connect("toggled", _on_v_toggled)
 
         self.content_stack.add_named(self.tab_overview, "tabs")
         # Also color the stack background
@@ -7902,7 +7880,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             is_terminal_tab = isinstance(child, (TerminalWidget, SplitViewTab))
             self._layout_h_btn.set_visible(is_terminal_tab)
             self._layout_v_btn.set_visible(is_terminal_tab)
-            self._updating_layout_toggles = True
+            self._layout_toggle_updating[0] = True
             try:
                 if isinstance(child, SplitViewTab):
                     mode = child.get_layout_mode()
@@ -7912,7 +7890,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     self._layout_h_btn.set_active(False)
                     self._layout_v_btn.set_active(False)
             finally:
-                self._updating_layout_toggles = False
+                self._layout_toggle_updating[0] = False
         except Exception as exc:
             logger.debug("Failed to update layout toggle state: %s", exc)
 
