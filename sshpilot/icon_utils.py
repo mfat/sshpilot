@@ -37,6 +37,8 @@ _ICON_RESOURCE_MAP = {
     'go-previous-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/go-previous-symbolic.svg',
     'go-up-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/go-up-symbolic.svg',
     'go-down-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/go-down-symbolic.svg',
+    'top-large-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/top-large-symbolic.svg',
+    'bottom-large-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/bottom-large-symbolic.svg',
     'go-home-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/go-home-symbolic.svg',
     'view-refresh-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/view-refresh-symbolic.svg',
     'view-list-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/view-list-symbolic.svg',

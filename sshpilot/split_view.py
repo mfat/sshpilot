@@ -738,15 +738,17 @@ class SplitViewTab(Gtk.Box):
         strip.append(self._layout_h_btn)
         strip.append(self._layout_v_btn)
 
+        from sshpilot import icon_utils  # noqa: PLC0415
+
         scroll_top_btn = Gtk.Button()
-        scroll_top_btn.set_icon_name("go-top-symbolic")
+        icon_utils.set_button_icon(scroll_top_btn, 'top-large-symbolic')
         scroll_top_btn.set_tooltip_text(_("Scroll to top"))
         scroll_top_btn.add_css_class("pill")
         scroll_top_btn.connect("clicked", lambda _b: self.scroll_panes_to_top())
         strip.append(scroll_top_btn)
 
         scroll_bottom_btn = Gtk.Button()
-        scroll_bottom_btn.set_icon_name("go-bottom-symbolic")
+        icon_utils.set_button_icon(scroll_bottom_btn, 'bottom-large-symbolic')
         scroll_bottom_btn.set_tooltip_text(_("Scroll to bottom"))
         scroll_bottom_btn.add_css_class("pill")
         scroll_bottom_btn.connect("clicked", lambda _b: self.scroll_panes_to_bottom())
