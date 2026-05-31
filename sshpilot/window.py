@@ -83,6 +83,7 @@ from .search_utils import connection_matches
 from .shortcut_utils import get_primary_modifier_label
 from .platform_utils import is_macos, get_config_dir
 from .command_blocks import CommandBlocksPanel, CommandBlockStore
+from .context_menu import IconContextMenu
 from .ssh_utils import ensure_writable_ssh_home
 from .scp_utils import assemble_scp_transfer_args, classify_sftp_error, download_file, upload_file
 from .ssh_password_exec import run_ssh_with_password, run_scp_with_password
@@ -2075,115 +2076,71 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     self._context_menu_connection = getattr(row, 'connection', None)
                     self._context_menu_group_row = row if hasattr(row, 'group_id') else None
 
-                    # Build a Gtk.PopoverMenu from a Gio.Menu that uses the
-                    # 'custom' attribute for each item so we can supply a
-                    # Gtk.Button with an icon.  Native model-button rendering
-                    # does not show icons for regular (non-hint) sections.
-                    menu = Gio.Menu()
-                    custom_widgets = []   # [(widget_id, btn)]
-                    widget_counter = [0]
-
-                    def _mi(icon_name, label_text, callback):
-                        wid = f'ctx-{widget_counter[0]}'
-                        widget_counter[0] += 1
-
-                        item = Gio.MenuItem.new(None, None)
-                        item.set_attribute_value('custom', GLib.Variant('s', wid))
-
-                        btn = Gtk.Button()
-                        btn.add_css_class('flat')
-                        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-                        box.set_margin_start(8)
-                        box.set_margin_end(8)
-                        box.append(Gtk.Image.new_from_icon_name(icon_name))
-                        lbl = Gtk.Label(label=label_text)
-                        lbl.set_xalign(0)
-                        lbl.set_hexpand(True)
-                        attrs = Pango.AttrList.new()
-                        attrs.insert(Pango.attr_weight_new(Pango.Weight.NORMAL))
-                        lbl.set_attributes(attrs)
-                        box.append(lbl)
-                        btn.set_child(box)
-                        btn.connect('clicked', lambda b, cb=callback: (cb(), pop.popdown()))
-
-                        custom_widgets.append((wid, btn))
-                        return item
-
-                    def _section(*items):
-                        s = Gio.Menu()
-                        for it in items:
-                            if it is not None:
-                                s.append_item(it)
-                        if s.get_n_items():
-                            menu.append_section(None, s)
+                    # Build a Gtk.PopoverMenu from the shared sidebar context menu helper.
+                    menu = IconContextMenu()
 
                     def _on_popover_closed(*_):
                         self._context_menu_row = None
                         self._context_menu_connection = None
 
                     if hasattr(row, 'group_id'):
-                        _section(
-                            _mi('document-edit-symbolic', _('Edit Group'), lambda: self.on_edit_group_action(None, None)),
-                            _mi('view-grid-symbolic', _('Open in Split View'), lambda: self.on_open_group_in_split_view_action(None, None)),
-                            _mi('user-trash-symbolic', _('Delete Group'), lambda: self.on_delete_group_action(None, None)),
+                        menu.add_section(
+                            menu.add_item('document-edit-symbolic', _('Edit Group'), lambda: self.on_edit_group_action(None, None)),
+                            menu.add_item('view-grid-symbolic', _('Open in Split View'), lambda: self.on_open_group_in_split_view_action(None, None)),
+                            menu.add_item('user-trash-symbolic', _('Delete Group'), lambda: self.on_delete_group_action(None, None)),
                         )
                     else:
                         conn = getattr(row, 'connection', None)
 
-                        _section(
-                            _mi('list-add-symbolic', _('Open New Connection'), lambda: self.on_open_new_connection_action(None, None)),
-                            _mi('view-grid-symbolic', _('Open in Split View'), lambda: self.on_open_in_split_view_action(None, None)),
-                            _mi('document-edit-symbolic', _('Edit Connection'), lambda: self.on_edit_connection_action(None, None)),
-                            _mi('edit-copy-symbolic', _('Duplicate Connection'), lambda: self.on_duplicate_connection_action(None, None)),
-                            _mi('edit-copy-symbolic', _('Copy Address'), lambda: self._copy_connection_address()),
+                        menu.add_section(
+                            menu.add_item('list-add-symbolic', _('Open New Connection'), lambda: self.on_open_new_connection_action(None, None)),
+                            menu.add_item('view-grid-symbolic', _('Open in Split View'), lambda: self.on_open_in_split_view_action(None, None)),
+                            menu.add_item('document-edit-symbolic', _('Edit Connection'), lambda: self.on_edit_connection_action(None, None)),
+                            menu.add_item('edit-copy-symbolic', _('Duplicate Connection'), lambda: self.on_duplicate_connection_action(None, None)),
+                            menu.add_item('edit-copy-symbolic', _('Copy Address'), lambda: self._copy_connection_address()),
                         )
 
                         wol_item = None
                         try:
                             conn_meta = self.config.get_connection_meta(conn.nickname) if conn else {}
                             if (conn_meta or {}).get('wol_mac', '').strip():
-                                wol_item = _mi('network-wireless-symbolic', _('Wake on LAN'), lambda: self.on_wake_on_lan_action(None, None))
+                                wol_item = menu.add_item('network-wireless-symbolic', _('Wake on LAN'), lambda: self.on_wake_on_lan_action(None, None))
                         except Exception:
                             pass
-                        _section(
-                            _mi('folder-symbolic', _('Manage Files'), lambda: self.on_manage_files_action(None, None)) if not should_hide_file_manager_options() else None,
-                            _mi('dialog-password-symbolic', _('Copy Key to Server'), lambda: self.on_copy_key_to_server_action(None, None)),
+                        menu.add_section(
+                            menu.add_item('folder-symbolic', _('Manage Files'), lambda: self.on_manage_files_action(None, None)) if not should_hide_file_manager_options() else None,
+                            menu.add_item('dialog-password-symbolic', _('Copy Key to Server'), lambda: self.on_copy_key_to_server_action(None, None)),
                             wol_item,
-                            _mi('utilities-terminal-symbolic', _('Open in System Terminal'), lambda: self.on_open_in_system_terminal_action(None, None)) if not should_hide_external_terminal_options() else None,
+                            menu.add_item('utilities-terminal-symbolic', _('Open in System Terminal'), lambda: self.on_open_in_system_terminal_action(None, None)) if not should_hide_external_terminal_options() else None,
                         )
 
                         current_groups = self.group_manager.get_connection_groups(conn.nickname) if conn else []
                         row_group_id = getattr(row, '_group_id', None)
                         ungroup_label = _('Remove from Group') if (row_group_id and len(current_groups) > 1) else _('Ungroup')
-                        _section(
-                            _mi('folder-symbolic', _('Move to Group'), lambda: self.on_move_to_group_action(None, None)),
-                            _mi('list-add-symbolic', _('Copy to Group'), lambda: self.on_copy_to_group_action(None, None)),
-                            _mi('edit-undo-symbolic', ungroup_label, lambda: self.on_move_to_ungrouped_action(None, None)) if current_groups else None,
+                        menu.add_section(
+                            menu.add_item('folder-symbolic', _('Move to Group'), lambda: self.on_move_to_group_action(None, None)),
+                            menu.add_item('list-add-symbolic', _('Copy to Group'), lambda: self.on_copy_to_group_action(None, None)),
+                            menu.add_item('edit-undo-symbolic', ungroup_label, lambda: self.on_move_to_ungrouped_action(None, None)) if current_groups else None,
                         )
 
                         try:
                             is_pinned = self.config.is_pinned(conn.nickname) if conn else False
                             if is_pinned:
-                                _section(
-                                    _mi('starred-symbolic', _('Unpin from Start Page'), lambda: self._toggle_pin_connection(conn)),
+                                menu.add_section(
+                                    menu.add_item('starred-symbolic', _('Unpin from Start Page'), lambda: self._toggle_pin_connection(conn)),
                                 )
                             else:
-                                _section(
-                                    _mi('non-starred-symbolic', _('Pin to Start Page'), lambda: self._toggle_pin_connection(conn)),
+                                menu.add_section(
+                                    menu.add_item('non-starred-symbolic', _('Pin to Start Page'), lambda: self._toggle_pin_connection(conn)),
                                 )
                         except Exception:
                             pass
 
-                        _section(
-                            _mi('user-trash-symbolic', _('Delete'), lambda: self.on_delete_connection_action(None, None)),
+                        menu.add_section(
+                            menu.add_item('user-trash-symbolic', _('Delete'), lambda: self.on_delete_connection_action(None, None)),
                         )
 
-                    pop = Gtk.PopoverMenu.new_from_model(menu)
-                    for wid, btn in custom_widgets:
-                        pop.add_child(btn, wid)
-                    pop.connect('closed', _on_popover_closed)
-                    pop.set_parent(row)
-                    GLib.idle_add(lambda: (pop.popup(), False)[-1])
+                    menu.show(row, on_closed=_on_popover_closed)
                     
                 except Exception as e:
                     logger.error(f"Failed to create context menu: {e}")
@@ -2838,7 +2795,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
         # Command blocks toggle button (right sidebar)
         self._cmd_blocks_toggle_btn = Gtk.ToggleButton()
-        self._cmd_blocks_toggle_btn.set_icon_name('format-justify-left-symbolic')
+        self._cmd_blocks_toggle_btn.set_icon_name('star-large-symbolic')
         self._cmd_blocks_toggle_btn.add_css_class('flat')
         self._cmd_blocks_toggle_btn.set_tooltip_text(_('Toggle Command Blocks (Ctrl+Shift+C)'))
         self._updating_cmd_toggle = False

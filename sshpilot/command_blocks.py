@@ -6,15 +6,13 @@ import re
 import uuid
 import logging
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
 
 import gi
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
-from gi.repository import Gtk, Adw, Gio, GLib, GObject, Gdk
+from gi.repository import Gtk, Adw, Gio, GLib, GObject, Gdk, Pango
 
-if TYPE_CHECKING:
-    from .config import Config
+from .context_menu import IconContextMenu
 
 logger = logging.getLogger(__name__)
 
@@ -379,12 +377,18 @@ class PlaceholderDialog(Adw.Window):
         self.set_content(root)
 
         header = Adw.HeaderBar()
-        header.set_show_end_title_buttons(False)
+        cancel_btn = Gtk.Button(label=_('Cancel'))
+        cancel_btn.connect('clicked', lambda _: self.close())
+        header.pack_start(cancel_btn)
         send_btn = Gtk.Button(label=_('Send'))
         send_btn.add_css_class('suggested-action')
         send_btn.connect('clicked', self._on_confirm)
         header.pack_end(send_btn)
         root.append(header)
+
+        key_ctrl = Gtk.EventControllerKey()
+        key_ctrl.connect('key-pressed', self._on_key_pressed)
+        self.add_controller(key_ctrl)
 
         scr = Gtk.ScrolledWindow()
         scr.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
@@ -430,12 +434,163 @@ class PlaceholderDialog(Adw.Window):
             result = result.replace(f'${{{var}}}', entry.get_text() or f'${{{var}}}')
         self._preview.set_text(result)
 
+    def _on_key_pressed(self, _ctrl, keyval, _keycode, _state) -> bool:
+        if keyval == Gdk.KEY_Escape:
+            self.close()
+            return True
+        return False
+
     def _on_confirm(self, *_) -> None:
         result = self._cmd.get('command', '')
         for var, entry in self._entries.items():
             result = result.replace(f'${{{var}}}', entry.get_text())
         self.emit('send', result)
         self.close()
+
+
+# ---------------------------------------------------------------------------
+# FolderRow / CommandRow — flat list rows (matches connection list pattern)
+# ---------------------------------------------------------------------------
+
+_FOLDER_INDENT_PX = 24
+
+
+class FolderRow(Gtk.ListBoxRow):
+    """Folder header row in the command blocks tree."""
+
+    __gsignals__ = {
+        'folder-toggled': (GObject.SignalFlags.RUN_FIRST, None, (str, bool)),
+    }
+
+    def __init__(self, folder: dict, cmd_count: int) -> None:
+        super().__init__()
+        self.folder_id = folder['id']
+        self._folder = folder
+        self.set_selectable(True)
+        self.set_can_focus(True)
+
+        content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        content.set_margin_start(12)
+        content.set_margin_end(12)
+        content.set_margin_top(6)
+        content.set_margin_bottom(6)
+
+        icon = Gtk.Image.new_from_icon_name('folder-symbolic')
+        icon.set_pixel_size(16)
+        icon.set_valign(Gtk.Align.CENTER)
+        content.append(icon)
+
+        info = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        info.set_hexpand(True)
+        info.set_valign(Gtk.Align.CENTER)
+
+        name_lbl = Gtk.Label(label=folder.get('name', ''))
+        name_lbl.set_halign(Gtk.Align.START)
+        name_lbl.set_xalign(0)
+        name_lbl.set_hexpand(True)
+        name_lbl.set_ellipsize(Pango.EllipsizeMode.END)
+        info.append(name_lbl)
+
+        count_lbl = Gtk.Label(label=_('%d commands') % cmd_count if cmd_count != 1 else _('1 command'))
+        count_lbl.set_halign(Gtk.Align.START)
+        count_lbl.set_xalign(0)
+        count_lbl.add_css_class('dim-label')
+        info.append(count_lbl)
+
+        content.append(info)
+
+        self._expand_btn = Gtk.Button()
+        self._update_expand_icon()
+        self._expand_btn.add_css_class('flat')
+        self._expand_btn.set_can_focus(False)
+        self._expand_btn.connect('clicked', self._on_expand_clicked)
+        content.append(self._expand_btn)
+
+        self.set_child(content)
+        self._setup_double_click_gesture()
+
+    def _setup_double_click_gesture(self) -> None:
+        gesture = Gtk.GestureClick()
+        gesture.set_button(1)
+        gesture.connect('pressed', self._on_click)
+        self.add_controller(gesture)
+
+    def _on_click(self, _gesture, n_press, _x, _y) -> None:
+        listbox = self.get_parent()
+        if listbox and n_press == 1:
+            listbox.select_row(self)
+        elif n_press == 2:
+            self._toggle_expand()
+
+    def _update_expand_icon(self) -> None:
+        icon_name = ('pan-down-symbolic' if self._folder.get('expanded', True)
+                     else 'pan-end-symbolic')
+        self._expand_btn.set_icon_name(icon_name)
+
+    def _on_expand_clicked(self, _button) -> None:
+        self._toggle_expand()
+
+    def _toggle_expand(self) -> None:
+        expanded = not self._folder.get('expanded', True)
+        self._folder['expanded'] = expanded
+        self._update_expand_icon()
+        self.emit('folder-toggled', self.folder_id, expanded)
+
+
+class CommandRow(Gtk.ListBoxRow):
+    """Individual command row — direct ListBox child for proper selection."""
+
+    def __init__(self, cmd: dict, indent: bool = False) -> None:
+        super().__init__()
+        self._cmd_data = cmd
+        self.set_selectable(True)
+
+        content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        margin_start = 12 + (_FOLDER_INDENT_PX if indent else 0)
+        content.set_margin_start(margin_start)
+        content.set_margin_end(12)
+        content.set_margin_top(6)
+        content.set_margin_bottom(6)
+
+        prefix = Gtk.Image.new_from_icon_name('utilities-terminal-symbolic')
+        prefix.set_pixel_size(16)
+        prefix.set_valign(Gtk.Align.CENTER)
+        content.append(prefix)
+
+        info = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        info.set_hexpand(True)
+        info.set_valign(Gtk.Align.CENTER)
+
+        title = Gtk.Label(label=cmd.get('name', ''))
+        title.set_halign(Gtk.Align.START)
+        title.set_xalign(0)
+        title.set_hexpand(True)
+        title.set_ellipsize(Pango.EllipsizeMode.END)
+        info.append(title)
+
+        subtitle = cmd.get('description') or cmd.get('command', '')[:60]
+        if subtitle:
+            sub = Gtk.Label(label=subtitle)
+            sub.set_halign(Gtk.Align.START)
+            sub.set_xalign(0)
+            sub.set_hexpand(True)
+            sub.set_ellipsize(Pango.EllipsizeMode.END)
+            sub.add_css_class('dim-label')
+            info.append(sub)
+
+        content.append(info)
+
+        self._star_btn = Gtk.ToggleButton()
+        self._star_btn.set_icon_name(
+            'starred-symbolic' if cmd.get('is_favorite') else 'non-starred-symbolic'
+        )
+        self._star_btn.set_active(bool(cmd.get('is_favorite')))
+        self._star_btn.add_css_class('flat')
+        self._star_btn.set_valign(Gtk.Align.CENTER)
+        self._star_btn.set_tooltip_text(_('Toggle favorite'))
+        content.append(self._star_btn)
+
+        self.set_child(content)
 
 
 # ---------------------------------------------------------------------------
@@ -527,6 +682,7 @@ class CommandEditDialog(Adw.Window):
         cmd_group.add(cmd_frame)
 
         self._cmd_view = Gtk.TextView()
+        self._cmd_view.set_size_request(-1, 96)
         self._cmd_view.set_monospace(True)
         self._cmd_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
         self._cmd_view.set_top_margin(8)
@@ -736,6 +892,7 @@ class CommandBlocksPanel(Gtk.Box):
         self._tree_scroll.set_vexpand(True)
         self._tree_list = Gtk.ListBox()
         self._tree_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        self._tree_list.set_activate_on_single_click(False)
         self._tree_list.add_css_class('navigation-sidebar')
         self._tree_list.set_show_separators(False)
         self._tree_scroll.set_child(self._tree_list)
@@ -806,7 +963,6 @@ class CommandBlocksPanel(Gtk.Box):
 
         self._main_stack.set_visible_child_name('tree')
 
-        folder_map = {f['id']: f for f in folders}
         cmds_by_folder: dict[str | None, list[dict]] = {}
         for cmd in commands:
             fid = cmd.get('folder_id')
@@ -817,78 +973,97 @@ class CommandBlocksPanel(Gtk.Box):
             row = self._build_command_row(cmd)
             self._tree_list.append(row)
 
-        # Folders in order
+        # Folders in order — flat list like the connection sidebar
         sorted_folders = sorted(folders, key=lambda f: f.get('order', 0))
         for folder in sorted_folders:
             fid = folder['id']
             folder_cmds = cmds_by_folder.get(fid, [])
-            expander = self._build_folder_expander(folder, folder_cmds)
-            self._tree_list.append(expander)
+            folder_row = FolderRow(folder, len(folder_cmds))
+            folder_row.connect('folder-toggled', self._on_folder_toggled)
+            self._tree_list.append(folder_row)
+            if folder.get('expanded', True):
+                for cmd in folder_cmds:
+                    row = self._build_command_row(cmd, indent=True)
+                    self._tree_list.append(row)
 
-    def _build_folder_expander(self, folder: dict, cmds: list[dict]) -> Adw.ExpanderRow:
-        expander = Adw.ExpanderRow()
-        expander.set_title(folder.get('name', ''))
-        expander.set_expanded(folder.get('expanded', True))
-        expander.connect('notify::expanded', lambda row, _: self.store.update_folder(
-            folder['id'], expanded=row.get_expanded()
-        ))
+    def _row_index(self, target: Gtk.ListBoxRow) -> int:
+        index = 0
+        child = self._tree_list.get_first_child()
+        while child is not None:
+            if child == target:
+                return index
+            index += 1
+            child = child.get_next_sibling()
+        return -1
 
-        count_lbl = Gtk.Label(label=str(len(cmds)))
-        count_lbl.add_css_class('dim-label')
-        count_lbl.set_valign(Gtk.Align.CENTER)
-        expander.add_suffix(count_lbl)
+    def _on_folder_toggled(self, folder_row: FolderRow, folder_id: str, expanded: bool) -> None:
+        self.store.update_folder(folder_id, expanded=expanded)
+        if expanded:
+            self._insert_folder_commands(folder_row, folder_id)
+        else:
+            self._remove_folder_commands(folder_row, folder_id)
 
+    def _insert_folder_commands(self, folder_row: FolderRow, folder_id: str) -> None:
+        sibling = folder_row.get_next_sibling()
+        while sibling is not None:
+            if isinstance(sibling, FolderRow):
+                break
+            if (isinstance(sibling, CommandRow)
+                    and sibling._cmd_data.get('folder_id') == folder_id):
+                return
+            sibling = sibling.get_next_sibling()
+
+        cmds = [c for c in self.store.get_commands() if c.get('folder_id') == folder_id]
+        position = self._row_index(folder_row) + 1
         for cmd in cmds:
-            row = self._build_command_row(cmd)
-            expander.add_row(row)
+            row = self._build_command_row(cmd, indent=True)
+            self._tree_list.insert(row, position)
+            position += 1
 
-        return expander
+    def _remove_folder_commands(self, folder_row: FolderRow, folder_id: str) -> None:
+        selected = self._tree_list.get_selected_row()
+        selected_in_folder = (
+            isinstance(selected, CommandRow)
+            and selected._cmd_data.get('folder_id') == folder_id
+        )
 
-    def _build_command_row(self, cmd: dict) -> Adw.ActionRow:
-        row = Adw.ActionRow()
-        row.set_title(GLib.markup_escape_text(cmd.get('name', '')))
+        sibling = folder_row.get_next_sibling()
+        while sibling is not None:
+            next_sibling = sibling.get_next_sibling()
+            if isinstance(sibling, FolderRow):
+                break
+            if (isinstance(sibling, CommandRow)
+                    and sibling._cmd_data.get('folder_id') == folder_id):
+                self._tree_list.remove(sibling)
+            sibling = next_sibling
 
-        subtitle = cmd.get('description') or cmd.get('command', '')[:60]
-        if subtitle:
-            row.set_subtitle(GLib.markup_escape_text(subtitle))
+        if selected_in_folder:
+            self._tree_list.select_row(folder_row)
 
-        row.set_activatable(False)
-
-        prefix = Gtk.Image.new_from_icon_name('utilities-terminal-symbolic')
-        prefix.set_pixel_size(16)
-        row.add_prefix(prefix)
-
-        # Favorite star button
-        star_btn = Gtk.ToggleButton()
-        star_btn.set_icon_name('starred-symbolic' if cmd.get('is_favorite') else 'non-starred-symbolic')
-        star_btn.set_active(bool(cmd.get('is_favorite')))
-        star_btn.add_css_class('flat')
-        star_btn.set_valign(Gtk.Align.CENTER)
-        star_btn.set_tooltip_text(_('Toggle favorite'))
+    def _build_command_row(self, cmd: dict, indent: bool = False) -> CommandRow:
+        row = CommandRow(cmd, indent=indent)
         _cmd = cmd
 
         def _on_star_toggled(btn, c=_cmd):
             self._toggle_favorite(c)
-            btn.set_icon_name('starred-symbolic' if c.get('is_favorite') else 'non-starred-symbolic')
-        star_btn.connect('toggled', _on_star_toggled)
-        row.add_suffix(star_btn)
+            btn.set_icon_name(
+                'starred-symbolic' if c.get('is_favorite') else 'non-starred-symbolic'
+            )
+        row._star_btn.connect('toggled', _on_star_toggled)
 
-        # Double-click gesture
         dbl_click = Gtk.GestureClick()
         dbl_click.set_button(1)
         dbl_click.connect('pressed', lambda g, n, x, y, c=_cmd: self._on_row_click(g, n, x, y, c))
         row.add_controller(dbl_click)
 
-        # Right-click for context menu
         right_click = Gtk.GestureClick()
         right_click.set_button(3)
-        right_click.connect('pressed', lambda g, n, x, y, r=row, c=_cmd: self._show_command_context_menu(r, c))
+        right_click.connect(
+            'pressed', lambda g, n, x, y, r=row, c=_cmd: self._show_command_context_menu(r, c)
+        )
         row.add_controller(right_click)
 
-        # Drag source
         self._setup_command_drag_source(row, cmd)
-
-        row._cmd_data = cmd
         return row
 
     # ------------------------------------------------------------------
@@ -1051,61 +1226,44 @@ class CommandBlocksPanel(Gtk.Box):
     # Context menu
     # ------------------------------------------------------------------
 
-    def _show_command_context_menu(self, row: Adw.ActionRow, cmd: dict) -> None:
-        menu = Gio.Menu()
-        counter = [0]
-        custom_widgets: list[tuple[str, Gtk.Widget]] = []
+    def _show_command_context_menu(self, row: Gtk.ListBoxRow, cmd: dict) -> None:
+        listbox = row.get_parent()
+        if listbox:
+            listbox.select_row(row)
 
-        def _mi(icon_name: str, label: str, cb):
-            wid = f'cb-ctx-{counter[0]}'
-            counter[0] += 1
-            item = Gio.MenuItem.new(None, None)
-            item.set_attribute_value('custom', GLib.Variant('s', wid))
-
-            btn = Gtk.Button()
-            btn.add_css_class('flat')
-            box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-            box.set_margin_start(8)
-            box.set_margin_end(8)
-            box.set_margin_top(4)
-            box.set_margin_bottom(4)
-            icon = Gtk.Image.new_from_icon_name(icon_name)
-            box.append(icon)
-            lbl_widget = Gtk.Label(label=label)
-            lbl_widget.set_xalign(0)
-            lbl_widget.set_hexpand(True)
-            box.append(lbl_widget)
-            btn.set_child(box)
-
-            def _clicked(b, _cb=cb):
-                _cb()
-                if pop:
-                    pop.popdown()
-
-            btn.connect('clicked', _clicked)
-            custom_widgets.append((wid, btn))
-            menu.append_item(item)
-
-        _mi('document-edit-symbolic', _('Edit'), lambda: self._open_edit_dialog(cmd))
-        _mi('edit-copy-symbolic', _('Duplicate'), lambda: self._duplicate_command(cmd))
+        menu = IconContextMenu()
+        menu.add_section(
+            menu.add_item('document-edit-symbolic', _('Edit'), lambda: self._open_edit_dialog(cmd)),
+            menu.add_item('edit-copy-symbolic', _('Duplicate'), lambda: self._duplicate_command(cmd)),
+        )
 
         if cmd.get('is_favorite'):
-            _mi('non-starred-symbolic', _('Remove from Favorites'), lambda: self._toggle_favorite(cmd))
+            fav_item = menu.add_item(
+                'non-starred-symbolic', _('Remove from Favorites'),
+                lambda: self._toggle_favorite(cmd),
+            )
         else:
-            _mi('starred-symbolic', _('Add to Favorites'), lambda: self._toggle_favorite(cmd))
+            fav_item = menu.add_item(
+                'starred-symbolic', _('Add to Favorites'),
+                lambda: self._toggle_favorite(cmd),
+            )
 
         if cmd.get('is_pinned'):
-            _mi('view-pin-symbolic', _('Unpin from Start Page'), lambda: self._toggle_pinned(cmd))
+            pin_item = menu.add_item(
+                'view-pin-symbolic', _('Unpin from Start Page'),
+                lambda: self._toggle_pinned(cmd),
+            )
         else:
-            _mi('view-pin-symbolic', _('Pin to Start Page'), lambda: self._toggle_pinned(cmd))
+            pin_item = menu.add_item(
+                'view-pin-symbolic', _('Pin to Start Page'),
+                lambda: self._toggle_pinned(cmd),
+            )
 
-        _mi('user-trash-symbolic', _('Delete'), lambda: self._delete_command(cmd))
-
-        pop = Gtk.PopoverMenu.new_from_model(menu)
-        for wid, btn in custom_widgets:
-            pop.add_child(btn, wid)
-        pop.set_parent(row)
-        GLib.idle_add(pop.popup)
+        menu.add_section(fav_item, pin_item)
+        menu.add_section(
+            menu.add_item('user-trash-symbolic', _('Delete'), lambda: self._delete_command(cmd)),
+        )
+        menu.show(row)
 
     # ------------------------------------------------------------------
     # Actions
