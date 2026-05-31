@@ -148,15 +148,21 @@ class SplitPane(Gtk.Box):
         self.add_css_class("split-pane")
 
         focus_ctrl = Gtk.EventControllerFocus()
-        focus_ctrl.connect("enter", lambda _c: self.add_css_class("split-pane-active"))
-        focus_ctrl.connect("leave", lambda _c: self.remove_css_class("split-pane-active"))
+        focus_ctrl.connect('enter', self._on_pane_focus_enter)
+        focus_ctrl.connect('leave', lambda _c: self.remove_css_class('split-pane-active'))
         self.add_controller(focus_ctrl)
+
+        click_ctrl = Gtk.GestureClick()
+        click_ctrl.set_button(0)
+        click_ctrl.connect('pressed', lambda *_: self._split_view_tab._note_active_pane(self))
+        self.add_controller(click_ctrl)
 
         # ── inner tab view (mini Adw.TabBar + Adw.TabView) ───────────────
         self._inner_tab_view = Adw.TabView()
         self._inner_tab_view.set_hexpand(True)
         self._inner_tab_view.set_vexpand(True)
-        self._inner_tab_view.connect("close-page", self._on_inner_close)
+        self._inner_tab_view.connect('close-page', self._on_inner_close)
+        self._inner_tab_view.connect('notify::selected-page', self._on_inner_tab_selected)
 
         self._inner_tab_bar = Adw.TabBar()
         self._inner_tab_bar.set_view(self._inner_tab_view)
@@ -188,6 +194,13 @@ class SplitPane(Gtk.Box):
 
         # Register with parent tab
         split_view_tab.register_pane(self)
+
+    def _on_pane_focus_enter(self, _controller) -> None:
+        self.add_css_class('split-pane-active')
+        self._split_view_tab._note_active_pane(self)
+
+    def _on_inner_tab_selected(self, *_args) -> None:
+        self._split_view_tab._note_active_pane(self)
 
     # ── placeholder ──────────────────────────────────────────────────────────
 
@@ -307,6 +320,7 @@ class SplitPane(Gtk.Box):
             pass
         self._inner_tab_view.set_selected_page(page)
         self._split_view_tab._update_tab_title()
+        self._split_view_tab._note_active_pane(self)
 
     def add_connection(self, connection) -> None:
         """Create a new terminal for connection and add it to this pane."""
@@ -561,6 +575,7 @@ class SplitViewTab(Gtk.Box):
         self._tab_page = None
         self._row_heights: List[int] = []
         self._row_boxes: List[Gtk.Box] = []
+        self._last_active_pane: Optional[SplitPane] = None
         self.set_hexpand(True)
         self.set_vexpand(True)
 
@@ -716,6 +731,11 @@ class SplitViewTab(Gtk.Box):
     def register_pane(self, pane: SplitPane) -> None:
         if pane not in self._panes:
             self._panes.append(pane)
+
+    def _note_active_pane(self, pane: SplitPane) -> None:
+        """Remember which pane the user last interacted with."""
+        if pane in self._panes:
+            self._last_active_pane = pane
 
     def get_pane_count(self) -> int:
         return len(self._panes)
@@ -1011,6 +1031,32 @@ class SplitViewTab(Gtk.Box):
         else:
             self._tab_page.set_title(_("Split View"))
 
+    def get_all_terminals(self) -> list:
+        """Return every TerminalWidget embedded in this split tab."""
+        result = []
+        for pane in self._panes:
+            result.extend(pane.get_terminals())
+        return result
+
+    def get_focused_terminal(self):
+        """Return the terminal in the focused pane's selected inner tab, if any."""
+        pane = self._get_focused_pane()
+        if pane is None:
+            pane = self._last_active_pane
+        if pane is None:
+            for candidate in self._panes:
+                if candidate.get_terminal_count() > 0:
+                    pane = candidate
+                    break
+        if pane is None:
+            return None
+
+        page = pane._inner_tab_view.get_selected_page()
+        if page is None:
+            terminals = pane.get_terminals()
+            return terminals[0] if terminals else None
+        return page.get_child()
+
     # ── keyboard navigation ───────────────────────────────────────────────────
 
     _RESIZE_STEP = 50  # pixels per Ctrl+Alt+Shift+HJKL keypress
@@ -1114,6 +1160,7 @@ class SplitViewTab(Gtk.Box):
             self._focus_pane(target)
 
     def _focus_pane(self, pane: SplitPane) -> None:
+        self._note_active_pane(pane)
         page = pane._inner_tab_view.get_selected_page()
         if page is None:
             pane.grab_focus()

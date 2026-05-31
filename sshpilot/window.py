@@ -4982,21 +4982,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
     def _get_active_terminal_widget(self) -> Optional[TerminalWidget]:
         """Return the TerminalWidget for the currently selected tab, if any."""
-        try:
-            page = self.tab_view.get_selected_page()
-        except Exception:
-            return None
-
-        if page is None:
-            return None
-
-        try:
-            child = page.get_child()
-        except Exception:
-            child = None
-
-        if isinstance(child, TerminalWidget):
-            return child
+        terminal_manager = getattr(self, 'terminal_manager', None)
+        if terminal_manager is not None:
+            return terminal_manager.get_focused_terminal()
         return None
 
     def toggle_terminal_search_overlay(self, select_all: bool = False) -> None:
@@ -8868,20 +8856,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         """Handle broadcast command action - shows banner to input command"""
         try:
             # Check if there are any SSH terminals open
-            ssh_terminals_count = 0
-            for i in range(self.tab_view.get_n_pages()):
-                page = self.tab_view.get_nth_page(i)
-                if page is None:
-                    continue
-                terminal_widget = page.get_child()
-                if terminal_widget is None or not hasattr(terminal_widget, 'vte'):
-                    continue
-                if hasattr(terminal_widget, 'connection'):
-                    if (hasattr(terminal_widget.connection, 'nickname') and
-                            terminal_widget.connection.nickname == "Local Terminal"):
-                        continue
-                    if hasattr(terminal_widget.connection, 'hostname'):
-                        ssh_terminals_count += 1
+            ssh_terminals_count = sum(
+                1 for _ in self.terminal_manager.iter_ssh_terminals()
+            )
             
             if ssh_terminals_count == 0:
                 # Show message dialog
