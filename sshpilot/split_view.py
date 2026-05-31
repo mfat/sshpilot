@@ -34,6 +34,9 @@ box.toolbar.add-pane-strip {
 box.add-pane-strip.drag-over {
     background-color: rgba(42, 161, 152, 0.25);
 }
+box.add-pane-scroll-spacer.drag-over {
+    background-color: rgba(42, 161, 152, 0.25);
+}
 """)
     # USER priority (800) beats Adwaita theme (200) and application CSS (600)
     Gtk.StyleContext.add_provider_for_display(
@@ -578,6 +581,7 @@ class SplitViewTab(Gtk.Box):
         self._row_heights: List[int] = []
         self._row_boxes: List[Gtk.Box] = []
         self._fill_viewport = True
+        self._scroll_spacer: Optional[Gtk.Box] = None
         self._last_active_pane: Optional[SplitPane] = None
         self.set_hexpand(True)
         self.set_vexpand(True)
@@ -673,7 +677,7 @@ class SplitViewTab(Gtk.Box):
         # tab-level DropControllerMotion (_on_drag_enter/leave_tab).
         dt = Gtk.DropTarget.new(type=GObject.TYPE_PYOBJECT, actions=Gdk.DragAction.MOVE)
         dt.connect("enter", lambda _t, _x, _y: Gdk.DragAction.MOVE)
-        dt.connect("drop",  self._on_add_strip_drop)
+        dt.connect("drop",  self._on_add_pane_drop)
         strip.add_controller(dt)
 
         return strip
@@ -681,18 +685,28 @@ class SplitViewTab(Gtk.Box):
     # ── drag-over strip state ─────────────────────────────────────────────────
 
     def _on_drag_enter_tab(self, _controller, _x, _y) -> None:
-        if self._add_pane_strip:
-            self._add_pane_strip.add_css_class("drag-over")
-        if self._add_pane_btn:
-            self._add_pane_btn.set_label(_("Drop here to add"))
+        self._set_add_pane_drop_highlight(True)
 
     def _on_drag_leave_tab(self, _controller) -> None:
-        if self._add_pane_strip:
-            self._add_pane_strip.remove_css_class("drag-over")
-        if self._add_pane_btn:
-            self._add_pane_btn.set_label(_("Add Terminal"))
+        self._set_add_pane_drop_highlight(False)
 
-    def _on_add_strip_drop(self, _target, value, _x, _y) -> bool:
+    def _set_add_pane_drop_highlight(self, active: bool) -> None:
+        if self._add_pane_strip:
+            if active:
+                self._add_pane_strip.add_css_class("drag-over")
+            else:
+                self._add_pane_strip.remove_css_class("drag-over")
+        if self._scroll_spacer:
+            if active:
+                self._scroll_spacer.add_css_class("drag-over")
+            else:
+                self._scroll_spacer.remove_css_class("drag-over")
+        if self._add_pane_btn:
+            self._add_pane_btn.set_label(
+                _("Drop here to add") if active else _("Add Terminal")
+            )
+
+    def _on_add_pane_drop(self, _target, value, _x, _y) -> bool:
         try:
             if hasattr(value, 'get_value'):
                 value = value.get_value()
@@ -707,8 +721,32 @@ class SplitViewTab(Gtk.Box):
                     self.add_pane().add_connection(conn)
             return bool(nicknames)
         except Exception as exc:
-            logger.error("add-strip drop failed: %s", exc)
+            logger.error("add-pane drop failed: %s", exc)
             return False
+
+    def _append_scroll_spacer(self) -> None:
+        """Append the extra scroll area below rows; accepts connection drops."""
+        _ensure_drop_zone_css()
+        spacer = Gtk.Box()
+        spacer.add_css_class("add-pane-scroll-spacer")
+        spacer.set_hexpand(True)
+        spacer.set_size_request(-1, self.SCROLL_SPACER_HEIGHT)
+
+        dt = Gtk.DropTarget.new(type=GObject.TYPE_PYOBJECT, actions=Gdk.DragAction.MOVE)
+        dt.connect("enter", lambda _t, _x, _y: self._on_scroll_spacer_drag_enter())
+        dt.connect("leave", lambda _t: self._on_scroll_spacer_drag_leave())
+        dt.connect("drop", self._on_add_pane_drop)
+        spacer.add_controller(dt)
+
+        self._scroll_spacer = spacer
+        self._content_area.append(spacer)
+
+    def _on_scroll_spacer_drag_enter(self) -> Gdk.DragAction:
+        self._set_add_pane_drop_highlight(True)
+        return Gdk.DragAction.MOVE
+
+    def _on_scroll_spacer_drag_leave(self) -> None:
+        self._set_add_pane_drop_highlight(False)
 
     # ── pane management ──────────────────────────────────────────────────────
 
@@ -809,6 +847,8 @@ class SplitViewTab(Gtk.Box):
 
     def _rebuild_layout(self) -> None:
         """Detach all panes and rebuild a fully resizable pane tree."""
+        self._scroll_spacer = None
+
         def _release_paned(widget: Gtk.Widget) -> None:
             """Recursively null Paned children so panes can be safely re-parented.
 
@@ -887,9 +927,7 @@ class SplitViewTab(Gtk.Box):
                 self._content_area.append(row_box)
                 handle = RowResizeHandle(lambda idx=row_idx: idx, self)
                 self._content_area.append(handle)
-            spacer = Gtk.Box()
-            spacer.set_size_request(-1, self.SCROLL_SPACER_HEIGHT)
-            self._content_area.append(spacer)
+            self._append_scroll_spacer()
         else:
             # HORIZONTAL: pane pairs become rows placed directly in the Box.
             # Custom RowResizeHandle widgets between rows allow each row to be
@@ -922,10 +960,7 @@ class SplitViewTab(Gtk.Box):
                 handle = RowResizeHandle(lambda idx=row_idx: idx, self)
                 self._content_area.append(handle)
 
-            # Spacer so there is plenty of free space below the last row.
-            spacer = Gtk.Box()
-            spacer.set_size_request(-1, self.SCROLL_SPACER_HEIGHT)
-            self._content_area.append(spacer)
+            self._append_scroll_spacer()
 
         self._normalize_pane_heights()
         if self._fill_viewport:
