@@ -1467,20 +1467,14 @@ class CommandBlocksPanel(Gtk.Box):
         if tm is None:
             return
         active = getattr(self.window, 'active_terminals', {})
-        terminal = active.get(connection)
 
-        if terminal is not None and getattr(terminal, 'is_connected', False):
-            self._feed_specific_terminal(command_text, terminal, cmd_id)
-            return
-
-        # Open the connection (registers new terminal in active_terminals synchronously)
-        tm.connect_to_host(connection)
+        # Always open a new terminal tab
+        tm.connect_to_host(connection, force_new=True)
         terminal = active.get(connection)
         if terminal is None:
             # External terminal mode — cannot feed programmatically
             return
         if getattr(terminal, 'is_connected', False):
-            # Tab was reused and is already live
             self._feed_specific_terminal(command_text, terminal, cmd_id)
             return
 
