@@ -1359,20 +1359,15 @@ class CommandBlocksPanel(Gtk.Box):
     # ------------------------------------------------------------------
 
     def _show_run_on_host_picker(self, cmd: dict, anchor: Gtk.Widget) -> None:
-        tm = getattr(self.window, 'terminal_manager', None)
-        if tm is None:
+        cm = getattr(self.window, 'connection_manager', None)
+        if cm is None:
+            return
+        connections = getattr(cm, 'connections', [])
+        if not connections:
+            self._show_toast(_('No connections in inventory'))
             return
 
-        seen, terminals = set(), []
-        for t in tm.iter_ssh_terminals():
-            nick = getattr(getattr(t, 'connection', None), 'nickname', None)
-            if nick and nick not in seen:
-                seen.add(nick)
-                terminals.append(t)
-
-        if not terminals:
-            self._show_toast(_('No connected hosts — connect to a server first'))
-            return
+        active_terminals = getattr(self.window, 'active_terminals', {})
 
         popover = Gtk.Popover()
         popover.set_parent(anchor)
@@ -1391,24 +1386,27 @@ class CommandBlocksPanel(Gtk.Box):
 
         scrolled = Gtk.ScrolledWindow()
         scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scrolled.set_size_request(-1, min(300, len(terminals) * 56 + 8))
+        scrolled.set_size_request(-1, min(300, len(connections) * 56 + 8))
 
         list_box = Gtk.ListBox()
         list_box.set_selection_mode(Gtk.SelectionMode.SINGLE)
         list_box.add_css_class('boxed-list')
 
-        for t in terminals:
-            conn = t.connection
+        for conn in connections:
+            is_open = conn in active_terminals
             list_row = Gtk.ListBoxRow()
-            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-            box.set_margin_top(6)
-            box.set_margin_bottom(6)
-            box.set_margin_start(8)
-            box.set_margin_end(8)
+            row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            row_box.set_margin_top(6)
+            row_box.set_margin_bottom(6)
+            row_box.set_margin_start(8)
+            row_box.set_margin_end(8)
+
+            info = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            info.set_hexpand(True)
             lbl = Gtk.Label(label=conn.nickname)
             lbl.set_halign(Gtk.Align.START)
             lbl.add_css_class('heading')
-            box.append(lbl)
+            info.append(lbl)
             host = getattr(conn, 'hostname', '') or getattr(conn, 'host', '')
             user = getattr(conn, 'username', '')
             subtitle = f"{user}@{host}" if user and host else host
@@ -1417,19 +1415,27 @@ class CommandBlocksPanel(Gtk.Box):
                 lbl2.set_halign(Gtk.Align.START)
                 lbl2.add_css_class('caption')
                 lbl2.add_css_class('dim-label')
-                box.append(lbl2)
-            list_row.set_child(box)
-            list_row._terminal = t
+                info.append(lbl2)
+            row_box.append(info)
+
+            if is_open:
+                dot = Gtk.Image.new_from_icon_name('media-record-symbolic')
+                dot.set_pixel_size(10)
+                dot.set_valign(Gtk.Align.CENTER)
+                dot.add_css_class('success')
+                row_box.append(dot)
+
+            list_row.set_child(row_box)
+            list_row._connection = conn
             list_box.append(list_row)
 
         def _filter(list_row):
             q = search_entry.get_text().lower().strip()
             if not q:
                 return True
-            t = getattr(list_row, '_terminal', None)
-            if t is None:
+            conn = getattr(list_row, '_connection', None)
+            if conn is None:
                 return False
-            conn = t.connection
             host = getattr(conn, 'hostname', '') or getattr(conn, 'host', '')
             return q in conn.nickname.lower() or q in host.lower()
 
@@ -1437,10 +1443,10 @@ class CommandBlocksPanel(Gtk.Box):
         search_entry.connect('search-changed', lambda _e: list_box.invalidate_filter())
 
         def _on_activated(_lb, list_row):
-            t = getattr(list_row, '_terminal', None)
-            if t:
+            conn = getattr(list_row, '_connection', None)
+            if conn:
                 popover.popdown()
-                self._run_command_on_terminal(cmd, t)
+                self._run_command_on_connection(cmd, conn)
 
         list_box.connect('row-activated', _on_activated)
         scrolled.set_child(list_box)
@@ -1448,13 +1454,44 @@ class CommandBlocksPanel(Gtk.Box):
         popover.set_child(outer)
         GLib.idle_add(popover.popup)
 
-    def _run_command_on_terminal(self, cmd: dict, terminal) -> None:
+    def _run_command_on_connection(self, cmd: dict, connection) -> None:
         if cmd.get('has_placeholders'):
             dlg = PlaceholderDialog(self.window, cmd)
-            dlg.connect('send', lambda d, filled: self._feed_specific_terminal(filled, terminal, cmd.get('id')))
+            dlg.connect('send', lambda d, filled: self._connect_and_feed(connection, filled, cmd.get('id')))
             dlg.present()
         else:
-            self._feed_specific_terminal(cmd.get('command', ''), terminal, cmd.get('id'))
+            self._connect_and_feed(connection, cmd.get('command', ''), cmd.get('id'))
+
+    def _connect_and_feed(self, connection, command_text: str, cmd_id: str | None = None) -> None:
+        tm = getattr(self.window, 'terminal_manager', None)
+        if tm is None:
+            return
+        active = getattr(self.window, 'active_terminals', {})
+        terminal = active.get(connection)
+
+        if terminal is not None and getattr(terminal, 'is_connected', False):
+            self._feed_specific_terminal(command_text, terminal, cmd_id)
+            return
+
+        # Open the connection (registers new terminal in active_terminals synchronously)
+        tm.connect_to_host(connection)
+        terminal = active.get(connection)
+        if terminal is None:
+            # External terminal mode — cannot feed programmatically
+            return
+        if getattr(terminal, 'is_connected', False):
+            # Tab was reused and is already live
+            self._feed_specific_terminal(command_text, terminal, cmd_id)
+            return
+
+        # New terminal: wait for SSH handshake before feeding
+        handler_id = [None]
+
+        def _on_connected(t):
+            t.disconnect(handler_id[0])
+            self._feed_specific_terminal(command_text, t, cmd_id)
+
+        handler_id[0] = terminal.connect('connection-established', _on_connected)
 
     def _feed_specific_terminal(self, command_text: str, terminal, cmd_id: str | None = None) -> None:
         data = (command_text + '\n').encode('utf-8')
