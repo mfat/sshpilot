@@ -3015,6 +3015,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 self._updating_cmd_toggle = False
             if visible and self.command_blocks_panel is not None:
                 GLib.idle_add(self.command_blocks_panel.focus_search)
+            elif not visible:
+                terminal = self._get_active_terminal_widget()
+                if terminal is not None:
+                    self._focus_terminal_widget(terminal)
         except Exception as exc:
             logger.debug("_toggle_command_blocks_panel: %s", exc)
 
