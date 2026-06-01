@@ -878,6 +878,7 @@ class CommandBlocksPanel(Gtk.Box):
         self.store = store
         self._search_query = ''
         self._favorites_expanded = True
+        self._auto_hide_timer_id = None
         self._build_ui()
         self.refresh()
 
@@ -1344,7 +1345,8 @@ class CommandBlocksPanel(Gtk.Box):
             self._show_toast(_('No active terminal — open a connection first'), timeout=3)
             return
 
-        data = (command_text + '\n').encode('utf-8')
+        insert_only = bool(self.store._config.get_setting('command_blocks.insert_only', False))
+        data = command_text.encode('utf-8') if insert_only else (command_text + '\n').encode('utf-8')
         try:
             if hasattr(terminal, 'backend') and terminal.backend:
                 terminal.backend.feed_child(data)
@@ -1356,6 +1358,23 @@ class CommandBlocksPanel(Gtk.Box):
 
         if cmd_id:
             self.store.record_use(cmd_id)
+
+        if self.store._config.get_setting('command_blocks.auto_hide_sidebar', False):
+            if self._auto_hide_timer_id is not None:
+                try:
+                    GLib.source_remove(self._auto_hide_timer_id)
+                except Exception:
+                    pass
+                self._auto_hide_timer_id = None
+            timeout = max(1, min(30, int(self.store._config.get_setting('command_blocks.auto_hide_timeout', 3))))
+            def _do_hide():
+                try:
+                    self.window._toggle_command_blocks_panel(False)
+                except Exception:
+                    pass
+                self._auto_hide_timer_id = None
+                return GLib.SOURCE_REMOVE
+            self._auto_hide_timer_id = GLib.timeout_add_seconds(timeout, _do_hide)
 
     # ------------------------------------------------------------------
     # Run command picker (called from sidebar context menu)
