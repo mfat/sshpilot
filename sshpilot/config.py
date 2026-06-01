@@ -207,6 +207,10 @@ class Config(GObject.Object):
                 'sftp_keepalive_interval': 30,
                 'sftp_keepalive_count_max': 5,
                 'sftp_connect_timeout': 20,
+                # Icon size step used by the built-in SFTP file manager. Integer
+                # in [0, 4]; index into the per-view size tables in
+                # file_manager_window.py. Default 1 = list 24px / grid 72px.
+                'icon_size_level': 1,
             },
             'security': {
                 'store_passwords': True,
@@ -803,12 +807,22 @@ class Config(GObject.Object):
                 return default_value
             return coerced
 
+        def _get_icon_size_level() -> int:
+            default_value = int(defaults.get('icon_size_level', 1))
+            raw_value = self.get_setting('file_manager.icon_size_level', default_value)
+            try:
+                coerced = int(raw_value)
+            except (TypeError, ValueError):
+                return default_value
+            return max(0, min(4, coerced))
+
         return {
             'force_internal': _get_bool('force_internal'),
             'open_externally': _get_bool('open_externally'),
             'sftp_keepalive_interval': _get_non_negative_int('sftp_keepalive_interval'),
             'sftp_keepalive_count_max': _get_non_negative_int('sftp_keepalive_count_max'),
             'sftp_connect_timeout': _get_non_negative_int('sftp_connect_timeout'),
+            'icon_size_level': _get_icon_size_level(),
         }
 
     def get_security_config(self) -> Dict[str, Any]:
@@ -982,6 +996,17 @@ class Config(GObject.Object):
                     updated = True
                 else:
                     _ensure_non_negative_int(int_key)
+
+            icon_size_default = int(file_manager_defaults.get('icon_size_level', 1))
+            icon_size_value = file_manager_cfg.get('icon_size_level', icon_size_default)
+            try:
+                coerced_icon_size = int(icon_size_value)
+            except (TypeError, ValueError):
+                coerced_icon_size = icon_size_default
+            clamped_icon_size = max(0, min(4, coerced_icon_size))
+            if file_manager_cfg.get('icon_size_level') != clamped_icon_size:
+                file_manager_cfg['icon_size_level'] = clamped_icon_size
+                updated = True
 
         ui_cfg = config.get('ui')
         if not isinstance(ui_cfg, dict):

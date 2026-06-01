@@ -697,6 +697,16 @@ class SFTPProgressDialog(Adw.MessageDialog):
         return False
 
 
+# Icon size steps for the SFTP file manager. Both tuples are indexed by the
+# same level; level 0 = smallest, len-1 = largest. Defaults match the GNOME
+# Files / Adwaita HIG for rich list rows (24 px) and grid cells (72 px).
+_LIST_ICON_SIZES = (16, 24, 32, 48, 64)
+_GRID_ICON_SIZES = (48, 72, 96, 128, 192)
+_DEFAULT_ICON_LEVEL = 1
+_MIN_ICON_LEVEL = 0
+_MAX_ICON_LEVEL = len(_LIST_ICON_SIZES) - 1
+
+
 @dataclasses.dataclass
 class FileEntry:
     """Light weight description of a directory entry."""
@@ -2272,6 +2282,7 @@ class PaneToolbar(Gtk.Box):
     __gsignals__ = {
         "view-changed": (GObject.SignalFlags.RUN_LAST, None, (str,)),
         "show-hidden-toggled": (GObject.SignalFlags.RUN_LAST, None, (bool,)),
+        "zoom-changed": (GObject.SignalFlags.RUN_LAST, None, (int,)),
     }
 
     def __init__(self):
@@ -2329,6 +2340,16 @@ class PaneToolbar(Gtk.Box):
     # Keep your factory
     def _create_sort_split_button(self) -> Adw.SplitButton:
         menu_model = Gio.Menu()
+
+        # Custom widget slot: the icon-size slider lives at the top of the
+        # dropdown. The "custom" attribute names a slot that PopoverMenu
+        # fills with whatever widget we add_child() under the same id.
+        size_section = Gio.Menu()
+        zoom_item = Gio.MenuItem.new("Icon Size", None)
+        zoom_item.set_attribute_value("custom", GLib.Variant.new_string("zoom_slider"))
+        size_section.append_item(zoom_item)
+        menu_model.append_section(None, size_section)
+
         sort_section = Gio.Menu()
         sort_section.append("Name", "pane.sort-by-name")
         sort_section.append("Size", "pane.sort-by-size")
@@ -2338,17 +2359,76 @@ class PaneToolbar(Gtk.Box):
         direction_section.append("Ascending", "pane.sort-direction-asc")
         direction_section.append("Descending", "pane.sort-direction-desc")
         menu_model.append_section("Order", direction_section)
+
+        # Build a PopoverMenu from the model so we can inject the slider widget
+        # into the named custom slot.
+        popover = Gtk.PopoverMenu.new_from_model(menu_model)
+        popover.add_child(self._build_zoom_slider_widget(), "zoom_slider")
+
         split_button = Adw.SplitButton()
-        split_button.set_menu_model(menu_model)
+        split_button.set_popover(popover)
         split_button.set_tooltip_text("Toggle view mode")
-        split_button.set_dropdown_tooltip("Sort files and folders")
+        split_button.set_dropdown_tooltip("Adjust icon size & sort order")
         from sshpilot import icon_utils
-        # Adw.SplitButton doesn't have set_icon(), use set_icon_name() with bundled icon
-        # We'll need to use set_icon_name() but ensure our resource path is checked first
-        # For now, use set_icon_name() - the icon theme should find our bundled icon
         split_button.set_icon_name("view-list-symbolic")
         split_button.connect("clicked", self._on_view_toggle_clicked)
         return split_button
+
+    def _build_zoom_slider_widget(self) -> Gtk.Widget:
+        """Build the icon-size slider that sits inside the view-toggle dropdown."""
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        box.set_margin_top(6)
+        box.set_margin_bottom(2)
+        box.set_margin_start(10)
+        box.set_margin_end(10)
+        box.set_size_request(220, -1)
+
+        header = Gtk.Label(label="Icon Size", xalign=0)
+        header.add_css_class("caption-heading")
+        header.add_css_class("dim-label")
+        box.append(header)
+
+        scale = Gtk.Scale.new_with_range(
+            Gtk.Orientation.HORIZONTAL,
+            float(_MIN_ICON_LEVEL),
+            float(_MAX_ICON_LEVEL),
+            1.0,
+        )
+        scale.set_digits(0)
+        scale.set_draw_value(False)
+        scale.set_hexpand(True)
+        scale.set_round_digits(0)
+        for lvl in range(_MIN_ICON_LEVEL, _MAX_ICON_LEVEL + 1):
+            scale.add_mark(float(lvl), Gtk.PositionType.BOTTOM, None)
+        scale.set_value(float(_DEFAULT_ICON_LEVEL))
+        self._zoom_scale = scale
+        self._zoom_scale_handler_id = scale.connect(
+            "value-changed", self._on_zoom_scale_changed
+        )
+        box.append(scale)
+        return box
+
+    def _on_zoom_scale_changed(self, scale: Gtk.Scale) -> None:
+        level = int(round(scale.get_value()))
+        level = max(_MIN_ICON_LEVEL, min(_MAX_ICON_LEVEL, level))
+        self.emit("zoom-changed", level)
+
+    def set_zoom_level(self, level: int) -> None:
+        """Sync the slider to *level* without firing zoom-changed."""
+        scale = getattr(self, "_zoom_scale", None)
+        if scale is None:
+            return
+        clamped = float(max(_MIN_ICON_LEVEL, min(_MAX_ICON_LEVEL, level)))
+        if abs(scale.get_value() - clamped) < 0.5:
+            return
+        handler_id = getattr(self, "_zoom_scale_handler_id", None)
+        if handler_id is not None:
+            scale.handler_block(handler_id)
+        try:
+            scale.set_value(clamped)
+        finally:
+            if handler_id is not None:
+                scale.handler_unblock(handler_id)
 
     # Example handler
     def _on_view_toggle_clicked(self, *_):
@@ -2844,6 +2924,19 @@ class FilePane(Gtk.Box):
 
         self._is_remote = label.lower() == "remote"
         self._window: Optional["FileManagerWindow"] = None
+        # Icon zoom level (index into _LIST_ICON_SIZES / _GRID_ICON_SIZES).
+        # Set silently here so __init__ paths that build factory widgets get a
+        # sane initial size; the parent FileManagerWindow may overwrite this
+        # with the user's persisted value before the first directory load.
+        self._icon_size_level: int = _DEFAULT_ICON_LEVEL
+        # Track currently bound icon widgets so zoom updates them in place
+        # (O(visible)) instead of forcing a full list-store rebuild. Use plain
+        # sets (not WeakSet): PyGObject can drop the Python wrapper for a live
+        # GTK widget between bind/unbind cycles, which would make WeakSet
+        # entries vanish unpredictably. The factory's bind/unbind pair makes
+        # explicit add/discard reliable.
+        self._bound_list_icons: set = set()
+        self._bound_grid_images: set = set()
 
         self._stack = Gtk.Stack()
         self._stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
@@ -2891,6 +2984,16 @@ class FilePane(Gtk.Box):
         grid_scrolled = Gtk.ScrolledWindow()
         grid_scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         grid_scrolled.set_child(grid_view)
+
+        # Ctrl/Cmd + wheel = zoom icons. Attach to each scrolled view so the
+        # modifier+scroll combination is captured before the regular scroll
+        # reaches the ScrolledWindow.
+        for scrolled in (list_scrolled, grid_scrolled):
+            scroll_ctrl = Gtk.EventControllerScroll.new(
+                Gtk.EventControllerScrollFlags.VERTICAL
+            )
+            scroll_ctrl.connect("scroll", self._on_pane_scroll)
+            scrolled.add_controller(scroll_ctrl)
 
         self._stack.add_named(list_scrolled, "list")
         self._stack.add_named(grid_scrolled, "grid")
@@ -3050,6 +3153,7 @@ class FilePane(Gtk.Box):
         # Connect to view-changed signal from toolbar
         self.toolbar.connect("view-changed", self._on_view_toggle)
         self.toolbar.connect("show-hidden-toggled", self._on_toolbar_show_hidden_toggled)
+        self.toolbar.connect("zoom-changed", self._on_toolbar_zoom_changed)
         self.toolbar.path_entry.connect("activate", self._on_path_entry)
         # Wire navigation buttons
         self.toolbar.controls.up_button.connect("clicked", self._on_up_clicked)
@@ -3175,13 +3279,16 @@ class FilePane(Gtk.Box):
     def _on_toolbar_show_hidden_toggled(self, _toolbar, show_hidden: bool) -> None:
         self.set_show_hidden(show_hidden)
 
+    def _on_toolbar_zoom_changed(self, _toolbar, level: int) -> None:
+        self.set_icon_size_level(level)
+
     def _on_path_entry(self, entry: Gtk.Entry) -> None:
         self.emit("path-changed", entry.get_text() or "/")
 
     def _on_list_setup(self, factory: Gtk.SignalListItemFactory, item):
         from .icon_utils import new_image_from_icon_name
         box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        icon = new_image_from_icon_name("folder-symbolic")
+        icon = new_image_from_icon_name("folder-symbolic", size=self._list_icon_px())
         icon.set_valign(Gtk.Align.CENTER)
         name_label = Gtk.Label(xalign=0)
         name_label.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
@@ -3222,6 +3329,13 @@ class FilePane(Gtk.Box):
         icon: Gtk.Image = box.icon
         name_label: Gtk.Label = box.name_label
         metadata_label: Gtk.Label = box.metadata_label
+
+        # Row widgets are pooled by GtkListView; reset the pixel size every
+        # bind so zoom changes are visible without rebuilding the widget.
+        icon.set_pixel_size(self._list_icon_px())
+        # Track this icon so a zoom event can update it in place without
+        # rebuilding the list store.
+        self._bound_list_icons.add(icon)
 
         position = item.get_position()
         entry: Optional[FileEntry] = None
@@ -3270,11 +3384,116 @@ class FilePane(Gtk.Box):
         box = item.get_child()
         if box is None:
             return
+        icon = getattr(box, "icon", None)
+        if icon is not None:
+            self._bound_list_icons.discard(icon)
 
     def _resolve_entry_icon(self, name: str, is_dir: bool) -> str:
         """Return the Adwaita mimetype icon name to use for a directory entry."""
         from .file_type_icons import get_icon_for_name
         return get_icon_for_name(name, is_dir)
+
+    def _list_icon_px(self) -> int:
+        return _LIST_ICON_SIZES[self._icon_size_level]
+
+    def _grid_icon_px(self) -> int:
+        return _GRID_ICON_SIZES[self._icon_size_level]
+
+    def set_icon_size_level(self, level: int) -> None:
+        """Update the icon zoom level for this pane and resize visible rows."""
+        clamped = max(_MIN_ICON_LEVEL, min(_MAX_ICON_LEVEL, level))
+        if clamped == self._icon_size_level:
+            return
+        self._icon_size_level = clamped
+        # Resize the currently bound icon widgets in place. This is O(visible)
+        # — far cheaper than rebuilding the list store, which produces a
+        # noticeable freeze on large remote directories. New rows that get
+        # bound while scrolling will pick up the size from the bind callback
+        # (which reads self._icon_size_level directly). queue_resize() forces
+        # GtkGridView to re-measure cell sizes; set_pixel_size alone updates
+        # the image's request but the grid caches its cell extents.
+        list_px = self._list_icon_px()
+        for icon in list(self._bound_list_icons):
+            try:
+                icon.set_pixel_size(list_px)
+                icon.queue_resize()
+            except Exception:
+                pass
+        grid_px = self._grid_icon_px()
+        for image in list(self._bound_grid_images):
+            try:
+                image.set_pixel_size(grid_px)
+                image.queue_resize()
+            except Exception:
+                pass
+        # Nudge the views themselves so cached layouts (especially GridView's
+        # column-width calc) get refreshed.
+        for view in (getattr(self, "_list_view", None), getattr(self, "_grid_view", None)):
+            if view is not None:
+                try:
+                    view.queue_resize()
+                except Exception:
+                    pass
+        # Keep the toolbar's slider in sync — e.g. when the level was changed
+        # via Ctrl+wheel rather than by the user dragging the slider itself.
+        toolbar = getattr(self, "toolbar", None)
+        if toolbar is not None and hasattr(toolbar, "set_zoom_level"):
+            try:
+                toolbar.set_zoom_level(self._icon_size_level)
+            except Exception as exc:
+                logger.debug("Failed to sync toolbar slider: %s", exc)
+        # Persist whichever pane was zoomed last as the new default for any
+        # newly opened file manager windows.
+        self._persist_icon_size_level()
+
+    def _request_zoom(self, direction: int) -> None:
+        """Zoom this pane by *direction* (+1 / -1)."""
+        self.set_icon_size_level(self._icon_size_level + direction)
+
+    @staticmethod
+    def _load_saved_icon_size_level() -> int:
+        """Return the persisted default icon zoom level for new panes."""
+        try:
+            from .config import Config
+            fm = Config().get_file_manager_config() or {}
+            value = int(fm.get('icon_size_level', _DEFAULT_ICON_LEVEL))
+        except Exception as exc:
+            logger.debug("Could not read file_manager.icon_size_level: %s", exc)
+            return _DEFAULT_ICON_LEVEL
+        return max(_MIN_ICON_LEVEL, min(_MAX_ICON_LEVEL, value))
+
+    def _persist_icon_size_level(self) -> None:
+        """Save this pane's current level as the default for new windows."""
+        try:
+            from .config import Config
+            Config().set_setting('file_manager.icon_size_level', self._icon_size_level)
+        except Exception as exc:
+            logger.debug("Failed to persist file_manager.icon_size_level: %s", exc)
+
+    def _on_pane_scroll(self, controller: Gtk.EventControllerScroll, dx: float, dy: float) -> bool:
+        """Intercept Ctrl/Cmd + wheel to zoom icons; otherwise let it scroll."""
+        try:
+            event = controller.get_current_event()
+            state = event.get_modifier_state() if event is not None else Gdk.ModifierType(0)
+        except Exception:
+            state = Gdk.ModifierType(0)
+
+        if is_macos():
+            primary = bool(state & Gdk.ModifierType.META_MASK)
+        else:
+            primary = bool(state & Gdk.ModifierType.CONTROL_MASK)
+        if not primary:
+            return False  # propagate; ScrolledWindow handles normal scrolling
+
+        if dy > 0:
+            direction = -1
+        elif dy < 0:
+            direction = +1
+        else:
+            return False
+
+        self._request_zoom(direction)
+        return True  # consume; don't also scroll the view
 
     @staticmethod
     def _format_size(size_bytes: int) -> str:
@@ -3299,7 +3518,7 @@ class FilePane(Gtk.Box):
         content.set_valign(Gtk.Align.CENTER)
 
         from .icon_utils import new_image_from_icon_name
-        image = new_image_from_icon_name("folder-symbolic", size=64)
+        image = new_image_from_icon_name("folder-symbolic", size=self._grid_icon_px())
         image.set_halign(Gtk.Align.CENTER)
         content.append(image)
 
@@ -3310,8 +3529,11 @@ class FilePane(Gtk.Box):
         label.set_wrap(True)
         label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
         label.set_lines(2)
-        # Set normal font weight to override any bold styling
-        label.add_css_class("caption")
+        # Force normal weight: Gtk.Button styling makes its label bold by
+        # default, which looks wrong for filenames in a grid cell.
+        normal_weight_attrs = Pango.AttrList()
+        normal_weight_attrs.insert(Pango.attr_weight_new(Pango.Weight.NORMAL))
+        label.set_attributes(normal_weight_attrs)
         content.append(label)
 
         button.set_child(content)
@@ -3359,6 +3581,12 @@ class FilePane(Gtk.Box):
         image = content.get_first_child()
         label = content.get_last_child()
 
+        # Grid cells are pooled by GtkGridView; reset pixel size every bind so
+        # the current zoom level wins after re-binding.
+        image.set_pixel_size(self._grid_icon_px())
+        # Track this image so a zoom event can update it in place.
+        self._bound_grid_images.add(image)
+
         value = item.get_item().get_string()
         display_text = value[:-1] if value.endswith('/') else value
 
@@ -3390,6 +3618,11 @@ class FilePane(Gtk.Box):
         button = item.get_child()
         if button is None:
             return
+        content = button.get_child()
+        if content is not None:
+            image = content.get_first_child()
+            if image is not None:
+                self._bound_grid_images.discard(image)
 
     def _on_grid_cell_pressed(
         self,
@@ -5344,6 +5577,17 @@ class FileManagerWindow(Adw.Window):
         self._right_pane.set_partner_pane(self._left_pane)
         panes.set_start_child(self._left_pane)
         panes.set_end_child(self._right_pane)
+
+        # Seed each pane with the persisted default zoom level. Each pane
+        # tracks its own level from here on (zooming one does not affect the
+        # other); the last pane zoomed persists its level so new file manager
+        # windows pick up the most recent choice.
+        initial_level = FilePane._load_saved_icon_size_level()
+        for pane in (self._left_pane, self._right_pane):
+            pane._icon_size_level = initial_level
+            if pane.toolbar is not None and hasattr(pane.toolbar, "set_zoom_level"):
+                pane.toolbar.set_zoom_level(initial_level)
+
         
         # Store reference to panes for resize handling
         self._panes = panes
@@ -7142,6 +7386,7 @@ class FileManagerWindow(Adw.Window):
                         pane.show_toast(f"Error downloading {entry_name}: {str(e)}")
 
             self._check_file_conflicts(files_to_transfer, "download", _proceed_with_download)
+
 
     def _on_window_resize(self, window, pspec) -> None:
         """Maintain proportional paned split when window is resized following GNOME HIG"""
