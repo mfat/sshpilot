@@ -875,6 +875,56 @@ class AsyncSFTPManager(GObject.GObject):
             logger.debug(f"Error shutting down executor: {exc}")
         logger.info("AsyncSFTPManager.close() completed")
 
+    def _reset_sftp_channel(self) -> None:
+        """Recreate the SFTP channel after a botched in-flight transfer.
+
+        paramiko's SFTPClient channel can be left in an unrecoverable state
+        when ``put()``/``get()`` is interrupted mid-stream by raising from
+        the progress callback. The transfer uses pipelined writes, so when
+        the exception propagates there are typically packets in flight whose
+        responses paramiko's reader never matches up. The channel then sits
+        forever waiting for responses that never come, and every subsequent
+        ``listdir``/``stat``/etc. queued on this manager hangs behind it.
+
+        Tearing down the SFTPClient and asking the still-alive SSH client
+        for a new channel via ``open_sftp()`` is cheap (no re-auth, no
+        re-handshake) and unblocks the worker.
+        """
+        with self._lock:
+            client = self._client
+            old_sftp = self._sftp
+            # Drop the reference first so any concurrent reader (e.g. the
+            # keepalive thread) sees the channel as unavailable rather than
+            # holding a stale reference to the broken one.
+            self._sftp = None
+
+        if old_sftp is not None:
+            try:
+                old_sftp.close()
+            except Exception as exc:
+                logger.debug(
+                    "Old SFTP close error (expected after cancel): %s", exc
+                )
+
+        if client is None:
+            logger.warning(
+                "Cannot reset SFTP channel: SSH client is no longer available"
+            )
+            return
+
+        try:
+            new_sftp = client.open_sftp()
+        except Exception as exc:
+            logger.error(
+                "Failed to reopen SFTP channel after cancelled transfer: %s",
+                exc,
+            )
+            return
+
+        with self._lock:
+            self._sftp = new_sftp
+        logger.info("SFTP channel reset after cancelled transfer")
+
     def _start_keepalive_worker(self) -> None:
         with self._lock:
             if self._keepalive_interval <= 0 or self._sftp is None:
@@ -2042,6 +2092,15 @@ class AsyncSFTPManager(GObject.GObject):
                     pass
                 self.emit("progress", 0.0, "Download cancelled")
                 print(f"DEBUG: Download operation {operation_id} was cancelled")
+                # paramiko's SFTP channel is left in a broken state after a
+                # mid-stream cancel. Recreate it so subsequent listdir/refresh
+                # ops don't hang.
+                try:
+                    self._reset_sftp_channel()
+                except Exception as reset_exc:
+                    logger.error(
+                        "SFTP reset after download cancel failed: %s", reset_exc
+                    )
             finally:
                 # Clean up the cancellation flag
                 self._cancelled_operations.discard(operation_id)
@@ -2099,6 +2158,16 @@ class AsyncSFTPManager(GObject.GObject):
             except TransferCancelledException:
                 self.emit("progress", 0.0, "Upload cancelled")
                 print(f"DEBUG: Upload operation {operation_id} was cancelled")
+                # paramiko's SFTP channel is left in a broken state after a
+                # mid-stream cancel — every subsequent op on this channel
+                # would hang. Recreate the channel before returning so the
+                # next listdir/refresh actually completes.
+                try:
+                    self._reset_sftp_channel()
+                except Exception as reset_exc:
+                    logger.error(
+                        "SFTP reset after upload cancel failed: %s", reset_exc
+                    )
             except Exception as e:
                 # Re-raise to ensure it's propagated to the future
                 logger.error(f"Upload failed for {destination}: {e}", exc_info=True)
@@ -2108,7 +2177,7 @@ class AsyncSFTPManager(GObject.GObject):
                 self._cancelled_operations.discard(operation_id)
 
         future = self._submit(_impl)
-        
+
         # Store the operation ID so we can cancel it
         original_cancel = future.cancel
         def cancel_with_cleanup():
