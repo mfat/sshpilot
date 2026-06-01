@@ -65,6 +65,7 @@ ACTION_LABELS: Dict[str, str] = {
     'tab-overview': _('Tab Overview'),
     'quick-connect': _('Quick Connect'),
     'new-split-view-tab': _('New Split View Tab'),
+    'toggle-command-blocks': _('Command Blocks Sidebar'),
 }
 
 PASS_THROUGH_NOTICE = _('Shortcuts disabled while terminal pass-through mode is active')
@@ -268,7 +269,7 @@ class ShortcutsPreferencesPage(PreferencesPageBase):
             'edit-ssh-config',
             'quick-connect',
         ]
-        terminal_actions = ['local-terminal', 'terminal-search', 'broadcast-command']
+        terminal_actions = ['local-terminal', 'terminal-search', 'broadcast-command', 'toggle-command-blocks']
         tab_actions = ['tab-next', 'tab-prev', 'tab-close', 'tab-overview', 'new-split-view-tab']
 
         for name in self._action_names:

@@ -413,7 +413,7 @@ class SshPilotApplication(Adw.Application):
             effective = override
             source = 'override'
 
-        action_name = f"app.{name}"
+        action_name = f"win.{name}" if self.lookup_action(name) is None else f"app.{name}"
         accelerators_blocked = not getattr(self, '_accelerators_enabled', True)
         if accelerators_blocked:
             self.set_accels_for_action(action_name, [])

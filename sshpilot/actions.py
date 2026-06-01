@@ -1586,4 +1586,7 @@ def register_window_actions(window):
         window.add_action(cb_action)
         app = window.get_application()
         if app:
-            app.set_accels_for_action('win.toggle-command-blocks', ['<primary><shift>c'])
+            app.set_accels_for_action('win.toggle-command-blocks', ['<primary><alt>c'])
+            if hasattr(app, '_action_order') and 'toggle-command-blocks' not in app._action_order:
+                app._action_order.append('toggle-command-blocks')
+                app._default_shortcuts['toggle-command-blocks'] = ['<primary><alt>c']
