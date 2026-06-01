@@ -302,7 +302,7 @@ class WelcomePage(Gtk.Overlay):
             except Exception:
                 pass
         if not cmd_blocks_accel:
-            cmd_blocks_accel = self._format_accelerator_display('<primary><shift>c')
+            cmd_blocks_accel = self._format_accelerator_display('<primary><alt>s')
         command_blocks_row = Adw.ActionRow()
         command_blocks_row.set_title(_('Browse Command Snippets'))
         command_blocks_row.set_activatable(True)
