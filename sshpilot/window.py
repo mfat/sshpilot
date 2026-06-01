@@ -780,6 +780,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
     def _on_config_setting_changed(self, _config, key, value):
         """Synchronize runtime state when configuration values change."""
+        if key == 'command_blocks.always_show_sidebar':
+            if bool(value):
+                self._toggle_command_blocks_panel(True)
+            return
+
         if key == 'terminal.pass_through_mode':
             try:
                 self._update_sidebar_accelerators()
