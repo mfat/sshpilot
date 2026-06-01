@@ -2977,7 +2977,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
             self.cmd_split_view = Adw.OverlaySplitView()
             self.cmd_split_view.set_sidebar_position(Gtk.PackType.END)
-            self.cmd_split_view.set_show_sidebar(False)
+            _always_show = bool(config.get_setting('command_blocks.always_show_sidebar', False)) if config else False
+            self.cmd_split_view.set_show_sidebar(_always_show)
+            self._command_sidebar_visible = _always_show
+            if _always_show and getattr(self, '_cmd_blocks_toggle_btn', None) is not None:
+                self._updating_cmd_toggle = True
+                self._cmd_blocks_toggle_btn.set_active(True)
+                self._updating_cmd_toggle = False
             try:
                 self.cmd_split_view.set_min_sidebar_width(240)
                 self.cmd_split_view.set_max_sidebar_width(400)

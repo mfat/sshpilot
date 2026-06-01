@@ -2235,6 +2235,13 @@ class PreferencesWindow(Adw.Window):
 
         group = Adw.PreferencesGroup(title=_("Behavior"))
 
+        always_show_row = Adw.SwitchRow()
+        always_show_row.set_title(_("Always Show Sidebar"))
+        always_show_row.set_subtitle(_("Keep the commands sidebar open on startup"))
+        always_show_row.set_active(bool(self.config.get_setting('command_blocks.always_show_sidebar', False)))
+        always_show_row.connect('notify::active', lambda r, _: self.config.set_setting('command_blocks.always_show_sidebar', r.get_active()))
+        group.add(always_show_row)
+
         insert_only_row = Adw.SwitchRow()
         insert_only_row.set_title(_("Insert Only (no execute)"))
         insert_only_row.set_subtitle(_("Paste the command into the terminal without running it"))
