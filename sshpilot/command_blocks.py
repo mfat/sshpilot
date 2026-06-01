@@ -1706,7 +1706,8 @@ class CommandBlocksPanel(Gtk.Box):
         handler_id[0] = terminal.connect('connection-established', _on_connected)
 
     def _feed_specific_terminal(self, command_text: str, terminal, cmd_id: str | None = None) -> None:
-        data = (command_text + '\n').encode('utf-8')
+        insert_only = bool(self.store._config.get_setting('command_blocks.insert_only', False))
+        data = command_text.encode('utf-8') if insert_only else (command_text + '\n').encode('utf-8')
         try:
             if hasattr(terminal, 'backend') and terminal.backend:
                 terminal.backend.feed_child(data)
