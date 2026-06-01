@@ -128,7 +128,11 @@ fi
 echo
 echo "Enter changelog for v$VERSION (plain lines; do not prefix with '-'):"
 echo "End with Ctrl-D:"
-CHANGELOG=$(</dev/stdin)
+CHANGELOG=""
+while IFS= read -re line; do
+  CHANGELOG="${CHANGELOG}${line}"$'\n'
+done
+CHANGELOG="${CHANGELOG%$'\n'}"
 if [[ -z "${CHANGELOG}" ]]; then
   echo "WARNING: Empty changelog."
 fi
