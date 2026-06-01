@@ -1,7 +1,7 @@
 [Icon Theme]
 Name=SSHPilot
 Comment=SSHPilot bundled icons
-Directories=scalable/actions
+Directories=scalable/actions,scalable/mimetypes
 
 [scalable/actions]
 Size=16
@@ -10,3 +10,9 @@ Type=Scalable
 MinSize=16
 MaxSize=512
 
+[scalable/mimetypes]
+Size=128
+Context=MimeTypes
+Type=Scalable
+MinSize=16
+MaxSize=512

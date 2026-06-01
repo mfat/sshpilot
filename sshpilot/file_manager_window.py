@@ -2507,12 +2507,11 @@ class PropertiesDialog(Adw.Window):
         """Create the header block with icon, name, and summary."""
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, halign=Gtk.Align.CENTER)
         
-        # Icon
+        # Icon — use the file-type-aware icon resolved from the entry's name.
         from sshpilot import icon_utils
-        if self._entry.is_dir:
-            icon = icon_utils.new_image_from_icon_name("folder-symbolic")
-        else:
-            icon = icon_utils.new_image_from_icon_name("text-x-generic-symbolic")
+        from .file_type_icons import get_icon_for_name
+        icon_name = get_icon_for_name(self._entry.name, self._entry.is_dir)
+        icon = icon_utils.new_image_from_icon_name(icon_name)
         # Set a larger custom size instead of using predefined sizes
         icon.set_pixel_size(64)
         icon.add_css_class("icon-dropshadow")
@@ -3239,7 +3238,9 @@ class FilePane(Gtk.Box):
             metadata_label.set_text("—")
             metadata_label.set_tooltip_text(None)
             from .icon_utils import set_icon_from_name
-            set_icon_from_name(icon, "folder-symbolic" if value.endswith('/') else "text-x-generic-symbolic")
+            is_dir = value.endswith('/')
+            raw_name = value[:-1] if is_dir else value
+            set_icon_from_name(icon, self._resolve_entry_icon(raw_name, is_dir))
             return
 
         display_name = entry.name + ("/" if entry.is_dir else "")
@@ -3260,10 +3261,7 @@ class FilePane(Gtk.Box):
             metadata_label.set_tooltip_text(size_text)
 
         from .icon_utils import set_icon_from_name
-        if entry.is_dir:
-            set_icon_from_name(icon, "folder-symbolic")
-        else:
-            set_icon_from_name(icon, "text-x-generic-symbolic")
+        set_icon_from_name(icon, self._resolve_entry_icon(entry.name, entry.is_dir))
 
         box._pane_entry = entry
         box._pane_index = position
@@ -3272,6 +3270,11 @@ class FilePane(Gtk.Box):
         box = item.get_child()
         if box is None:
             return
+
+    def _resolve_entry_icon(self, name: str, is_dir: bool) -> str:
+        """Return the Adwaita mimetype icon name to use for a directory entry."""
+        from .file_type_icons import get_icon_for_name
+        return get_icon_for_name(name, is_dir)
 
     @staticmethod
     def _format_size(size_bytes: int) -> str:
@@ -3363,17 +3366,21 @@ class FilePane(Gtk.Box):
         label.set_tooltip_text(display_text)
         button.set_tooltip_text(display_text)
 
-        # Update the image icon based on type
-        from .icon_utils import set_icon_from_name
-        if value.endswith('/'):
-            set_icon_from_name(image, "folder-symbolic")
-        else:
-            set_icon_from_name(image, "text-x-generic-symbolic")
-
         entry: Optional[FileEntry] = None
         position = item.get_position()
         if position is not None and 0 <= position < len(self._entries):
             entry = self._entries[position]
+
+        # Update the image icon based on type (using the resolved FileEntry when
+        # available so the icon reflects the real filename rather than the
+        # display string with its trailing '/').
+        from .icon_utils import set_icon_from_name
+        if entry is not None:
+            set_icon_from_name(image, self._resolve_entry_icon(entry.name, entry.is_dir))
+        else:
+            is_dir = value.endswith('/')
+            raw_name = value[:-1] if is_dir else value
+            set_icon_from_name(image, self._resolve_entry_icon(raw_name, is_dir))
             
         # Store position in the button for drag operations
         button.drag_position = position

@@ -1,0 +1,7 @@
+These SVG mimetype icons are sourced from the GNOME Adwaita Icon Theme
+(https://gitlab.gnome.org/GNOME/adwaita-icon-theme) and are redistributed
+under their original license (CC-BY-SA 3.0 / LGPL, see Adwaita's COPYING).
+
+They are vendored here so the built-in SFTP file manager renders consistent
+file-type icons across all installations (including Flatpak sandboxes and
+distributions that do not ship the Adwaita scalable mimetypes).

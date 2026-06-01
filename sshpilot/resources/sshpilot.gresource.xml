@@ -68,4 +68,34 @@
     <file alias="zoom-in-symbolic.svg">icons/scalable/actions/zoom-in-symbolic.svg</file>
     <file alias="zoom-out-symbolic.svg">icons/scalable/actions/zoom-out-symbolic.svg</file>
   </gresource>
+
+  <gresource prefix="/io/github/mfat/sshpilot/icons/scalable/mimetypes">
+    <file alias="application-certificate.svg">icons/scalable/mimetypes/application-certificate.svg</file>
+    <file alias="application-x-addon.svg">icons/scalable/mimetypes/application-x-addon.svg</file>
+    <file alias="application-x-executable.svg">icons/scalable/mimetypes/application-x-executable.svg</file>
+    <file alias="application-x-firmware.svg">icons/scalable/mimetypes/application-x-firmware.svg</file>
+    <file alias="application-x-generic.svg">icons/scalable/mimetypes/application-x-generic.svg</file>
+    <file alias="application-x-sharedlib.svg">icons/scalable/mimetypes/application-x-sharedlib.svg</file>
+    <file alias="audio-x-generic.svg">icons/scalable/mimetypes/audio-x-generic.svg</file>
+    <file alias="font-x-generic.svg">icons/scalable/mimetypes/font-x-generic.svg</file>
+    <file alias="image-x-generic.svg">icons/scalable/mimetypes/image-x-generic.svg</file>
+    <file alias="inode-directory.svg">icons/scalable/mimetypes/inode-directory.svg</file>
+    <file alias="inode-symlink.svg">icons/scalable/mimetypes/inode-symlink.svg</file>
+    <file alias="model.svg">icons/scalable/mimetypes/model.svg</file>
+    <file alias="package-x-generic.svg">icons/scalable/mimetypes/package-x-generic.svg</file>
+    <file alias="text-html.svg">icons/scalable/mimetypes/text-html.svg</file>
+    <file alias="text-x-generic.svg">icons/scalable/mimetypes/text-x-generic.svg</file>
+    <file alias="text-x-preview.svg">icons/scalable/mimetypes/text-x-preview.svg</file>
+    <file alias="text-x-script.svg">icons/scalable/mimetypes/text-x-script.svg</file>
+    <file alias="video-x-generic.svg">icons/scalable/mimetypes/video-x-generic.svg</file>
+    <file alias="x-office-addressbook.svg">icons/scalable/mimetypes/x-office-addressbook.svg</file>
+    <file alias="x-office-document.svg">icons/scalable/mimetypes/x-office-document.svg</file>
+    <file alias="x-office-document-template.svg">icons/scalable/mimetypes/x-office-document-template.svg</file>
+    <file alias="x-office-drawing.svg">icons/scalable/mimetypes/x-office-drawing.svg</file>
+    <file alias="x-office-presentation.svg">icons/scalable/mimetypes/x-office-presentation.svg</file>
+    <file alias="x-office-presentation-template.svg">icons/scalable/mimetypes/x-office-presentation-template.svg</file>
+    <file alias="x-office-spreadsheet.svg">icons/scalable/mimetypes/x-office-spreadsheet.svg</file>
+    <file alias="x-office-spreadsheet-template.svg">icons/scalable/mimetypes/x-office-spreadsheet-template.svg</file>
+    <file alias="x-package-repository.svg">icons/scalable/mimetypes/x-package-repository.svg</file>
+  </gresource>
 </gresources>
