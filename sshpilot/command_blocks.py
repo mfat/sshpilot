@@ -1297,6 +1297,7 @@ class CommandBlocksPanel(Gtk.Box):
             else:
                 self._show_toast(_('No active terminal — open a connection first'), timeout=3)
             return
+        self.window._return_to_tab_view_if_welcome()
         if cmd.get('has_placeholders'):
             dlg = PlaceholderDialog(self.window, cmd)
             dlg.connect('send', lambda d, filled: self._feed_terminal(filled, cmd.get('id')))
