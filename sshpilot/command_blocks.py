@@ -1226,7 +1226,7 @@ class CommandBlocksPanel(Gtk.Box):
         cmd = getattr(selected, '_cmd_data', None) if selected else None
 
         if keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter) and mods == 0 and cmd:
-            self._send_command_to_terminal(cmd)
+            self._send_command_to_terminal(cmd, anchor=selected)
             return True
         if keyval == Gdk.KEY_Delete and mods == 0 and cmd:
             self._delete_command(cmd)
@@ -1242,7 +1242,7 @@ class CommandBlocksPanel(Gtk.Box):
 
     def _on_row_click(self, gesture, n_press, x, y, cmd: dict) -> None:
         if n_press == 2:
-            self._send_command_to_terminal(cmd)
+            self._send_command_to_terminal(cmd, anchor=gesture.get_widget())
 
     # ------------------------------------------------------------------
     # Drag source
@@ -1285,14 +1285,17 @@ class CommandBlocksPanel(Gtk.Box):
         except Exception:
             pass
 
-    def _send_command_to_terminal(self, cmd: dict) -> None:
+    def _send_command_to_terminal(self, cmd: dict, anchor: Gtk.Widget | None = None) -> None:
         terminal = None
         try:
             terminal = self.window._get_active_terminal_widget()
         except Exception:
             pass
         if terminal is None:
-            self._show_toast(_('No active terminal — open a connection first'), timeout=3)
+            if anchor is not None:
+                self._show_run_on_host_picker(cmd, anchor)
+            else:
+                self._show_toast(_('No active terminal — open a connection first'), timeout=3)
             return
         if cmd.get('has_placeholders'):
             dlg = PlaceholderDialog(self.window, cmd)
