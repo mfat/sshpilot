@@ -216,6 +216,9 @@ class Config(GObject.Object):
                 'folders': [],
                 'commands': [],
                 'defaults_loaded': False,
+                'auto_hide_sidebar': False,
+                'auto_hide_timeout': 3,
+                'insert_only': False,
             },
         }
 
@@ -1045,6 +1048,21 @@ class Config(GObject.Object):
                 updated = True
             if not isinstance(cb.get('commands'), list):
                 cb['commands'] = []
+                updated = True
+            if 'insert_only' not in cb:
+                cb['insert_only'] = False
+                updated = True
+            if 'auto_hide_sidebar' not in cb:
+                cb['auto_hide_sidebar'] = False
+                updated = True
+            try:
+                timeout_val = int(cb.get('auto_hide_timeout', 3))
+                if timeout_val < 1 or timeout_val > 30:
+                    raise ValueError
+            except (TypeError, ValueError):
+                timeout_val = 3
+            if cb.get('auto_hide_timeout') != timeout_val:
+                cb['auto_hide_timeout'] = timeout_val
                 updated = True
 
         return config, updated

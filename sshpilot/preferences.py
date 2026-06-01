@@ -1946,6 +1946,8 @@ class PreferencesWindow(Adw.Window):
             self.add_page_to_layout("Groups", "folder-open-symbolic", groups_page)
             self.add_page_to_layout("SSH Options", "network-workgroup-symbolic", ssh_settings_page)
             self.add_page_to_layout("Updates", "software-update-available-symbolic", updates_page)
+            command_blocks_page = self._create_command_blocks_page()
+            self.add_page_to_layout("Command Blocks", "view-list-symbolic", command_blocks_page)
             self.add_page_to_layout("Advanced", "applications-system-symbolic", advanced_page)
             
             logger.info("Preferences window initialized")
@@ -2226,6 +2228,50 @@ class PreferencesWindow(Adw.Window):
             logger.debug(
                 "Failed to restyle terminals after preference change: %s", exc
             )
+
+    def _create_command_blocks_page(self):
+        """Build the Command Blocks preferences page."""
+        page = Adw.PreferencesPage()
+
+        group = Adw.PreferencesGroup(title=_("Behavior"))
+
+        insert_only_row = Adw.SwitchRow()
+        insert_only_row.set_title(_("Insert Only (no execute)"))
+        insert_only_row.set_subtitle(_("Paste the command into the terminal without running it"))
+        insert_only_row.set_active(bool(self.config.get_setting('command_blocks.insert_only', False)))
+        insert_only_row.connect('notify::active', lambda r, _: self.config.set_setting('command_blocks.insert_only', r.get_active()))
+        group.add(insert_only_row)
+
+        auto_hide_row = Adw.SwitchRow()
+        auto_hide_row.set_title(_("Auto-hide Sidebar After Sending"))
+        auto_hide_row.set_subtitle(_("Automatically hide the command panel after a command is sent"))
+        auto_hide_enabled = bool(self.config.get_setting('command_blocks.auto_hide_sidebar', False))
+        auto_hide_row.set_active(auto_hide_enabled)
+        self._cb_auto_hide_row = auto_hide_row
+        group.add(auto_hide_row)
+
+        timeout_row = Adw.SpinRow.new_with_range(1, 30, 1)
+        timeout_row.set_title(_("Hide Delay (seconds)"))
+        timeout_row.set_subtitle(_("Seconds to wait before hiding the panel"))
+        try:
+            timeout_val = max(1, min(30, int(self.config.get_setting('command_blocks.auto_hide_timeout', 3))))
+        except (TypeError, ValueError):
+            timeout_val = 3
+        timeout_row.set_value(timeout_val)
+        timeout_row.set_sensitive(auto_hide_enabled)
+        timeout_row.connect('notify::value', lambda r, _: self.config.set_setting('command_blocks.auto_hide_timeout', int(r.get_value())))
+        self._cb_timeout_row = timeout_row
+        group.add(timeout_row)
+
+        def _on_auto_hide_toggled(row, _param):
+            active = row.get_active()
+            self.config.set_setting('command_blocks.auto_hide_sidebar', active)
+            self._cb_timeout_row.set_sensitive(active)
+
+        auto_hide_row.connect('notify::active', _on_auto_hide_toggled)
+
+        page.add(group)
+        return page
 
     def _create_group_display_preview(self, mode: str, title: str):
         """Create a small sample widget that illustrates the layout mode."""

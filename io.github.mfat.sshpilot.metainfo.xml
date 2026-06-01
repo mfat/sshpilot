@@ -60,6 +60,11 @@
 
 
 
+    <release version="5.1.1" date="2026-06-01">
+      <description>
+        <p>Bug fixes</p>
+      </description>
+    </release>
     <release version="5.1.0" date="2026-06-01">
       <description>
         <p>Introducing Command Blocks - Organize your favorite commands in folders, insert them into terminal with a simple double-click</p>

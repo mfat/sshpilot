@@ -2799,7 +2799,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self._cmd_blocks_toggle_btn = Gtk.ToggleButton()
         self._cmd_blocks_toggle_btn.set_icon_name('star-large-symbolic')
         self._cmd_blocks_toggle_btn.add_css_class('flat')
-        self._cmd_blocks_toggle_btn.set_tooltip_text(_('Toggle Command Blocks (Ctrl+Shift+C)'))
+        self._cmd_blocks_toggle_btn.set_tooltip_text(_('Toggle Command Blocks (Ctrl+Alt+S)'))
         self._updating_cmd_toggle = False
 
         def _on_cmd_toggle_btn_toggled(btn):
@@ -3013,6 +3013,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 self._updating_cmd_toggle = True
                 self._cmd_blocks_toggle_btn.set_active(visible)
                 self._updating_cmd_toggle = False
+            if visible and self.command_blocks_panel is not None:
+                GLib.idle_add(self.command_blocks_panel.focus_search)
+            elif not visible:
+                terminal = self._get_active_terminal_widget()
+                if terminal is not None:
+                    self._focus_terminal_widget(terminal)
         except Exception as exc:
             logger.debug("_toggle_command_blocks_panel: %s", exc)
 
