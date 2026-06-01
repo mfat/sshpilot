@@ -1224,6 +1224,9 @@ class CommandBlocksPanel(Gtk.Box):
         selected = active_list.get_selected_row()
         cmd = getattr(selected, '_cmd_data', None) if selected else None
 
+        if keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter) and mods == 0 and cmd:
+            self._send_command_to_terminal(cmd)
+            return True
         if keyval == Gdk.KEY_Delete and mods == 0 and cmd:
             self._delete_command(cmd)
             return True
