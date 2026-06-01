@@ -1354,6 +1354,8 @@ class CommandBlocksPanel(Gtk.Box):
         if cmd_id:
             self.store.record_use(cmd_id)
 
+        GLib.idle_add(terminal.grab_focus)
+
     # ------------------------------------------------------------------
     # Run command picker (called from sidebar context menu)
     # ------------------------------------------------------------------

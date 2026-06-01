@@ -3013,6 +3013,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 self._updating_cmd_toggle = True
                 self._cmd_blocks_toggle_btn.set_active(visible)
                 self._updating_cmd_toggle = False
+            if visible and self.command_blocks_panel is not None:
+                GLib.idle_add(self.command_blocks_panel.focus_search)
         except Exception as exc:
             logger.debug("_toggle_command_blocks_panel: %s", exc)
 
