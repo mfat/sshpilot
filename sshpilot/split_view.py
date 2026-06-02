@@ -52,12 +52,12 @@ def create_layout_toggle_buttons(
     updating = [False]
 
     h_btn = Gtk.ToggleButton()
-    h_btn.set_icon_name("double-ended-arrows-horizontal-symbolic")
+    h_btn.set_icon_name("terminal-split-horizontal-symbolic")
     h_btn.set_tooltip_text(_("Side by Side"))
     h_btn.add_css_class("pill" if as_pill else "flat")
 
     v_btn = Gtk.ToggleButton()
-    v_btn.set_icon_name("double-ended-arrows-vertical-symbolic")
+    v_btn.set_icon_name("terminal-split-vertical-symbolic")
     v_btn.set_tooltip_text(_("Top / Bottom"))
     v_btn.add_css_class("pill" if as_pill else "flat")
 

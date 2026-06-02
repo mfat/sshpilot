@@ -8681,6 +8681,21 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # as a minimum content width.
         content_box.set_size_request(440, -1)
 
+        try:
+            # Gtk.Image is for app-chosen icon sizes (pixel-size); Gtk.Picture
+            # shows paintables at natural size — see GTK 4 docs for each widget.
+            illustration = Gtk.Image.new_from_resource(
+                '/io/github/mfat/sshpilot/file-manager-choice.png'
+            )
+            illustration.set_pixel_size(180)
+            illustration.set_halign(Gtk.Align.CENTER)
+            illustration.set_vexpand(False)
+            content_box.append(illustration)
+        except GLib.Error as exc:
+            logger.debug(
+                "File manager choice dialog illustration unavailable: %s", exc
+            )
+
         group = Adw.PreferencesGroup()
 
         # Built-in option (recommended → pre-selected).

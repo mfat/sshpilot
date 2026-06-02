@@ -49,6 +49,8 @@ _ICON_RESOURCE_MAP = {
     'view-pin-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/view-pin-symbolic.svg',
     'double-ended-arrows-horizontal-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/double-ended-arrows-horizontal-symbolic.svg',
     'double-ended-arrows-vertical-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/double-ended-arrows-vertical-symbolic.svg',
+    'terminal-split-horizontal-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/terminal-split-horizontal.svg',
+    'terminal-split-vertical-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/terminal-split-vertical.svg',
     'format-justify-fill-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/format-justify-fill-symbolic.svg',
     'list-add-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/list-add-symbolic.svg',
     'user-trash-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/user-trash-symbolic.svg',

@@ -21,13 +21,27 @@ import signal
 import pwd
 import json
 import logging
+import tempfile
 from typing import Optional, Tuple
 
-# Set up logging
-logging.basicConfig(
-    level=logging.DEBUG if '--verbose' in sys.argv else logging.WARNING,
-    format='[sshpilot-agent] %(levelname)s: %(message)s'
-)
+# Set up logging.
+#
+# In the local-terminal path the agent's stderr IS the interactive VTE terminal,
+# so logging there pollutes the shell output. Worse, once io_loop() puts the tty
+# in raw mode (OPOST cleared) a log line's trailing "\n" is no longer translated
+# to "\r\n", which leaves the cursor mid-line and staircases the shell prompt.
+# Route logs to a file instead so they never touch the terminal, while staying
+# available for debugging. Never fall back to stderr (it may be the terminal).
+_log_level = logging.DEBUG if '--verbose' in sys.argv else logging.WARNING
+try:
+    logging.basicConfig(
+        level=_log_level,
+        format='[sshpilot-agent] %(levelname)s: %(message)s',
+        filename=os.path.join(tempfile.gettempdir(), 'sshpilot-agent.log'),
+        filemode='a',
+    )
+except Exception:
+    logging.basicConfig(level=_log_level, handlers=[logging.NullHandler()])
 logger = logging.getLogger(__name__)
 
 
