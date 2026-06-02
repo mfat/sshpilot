@@ -3432,7 +3432,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 
                 # Show toast notification
                 toast = Adw.Toast.new(
-                    f"Switched to connection list — ↑/↓ navigate, Enter open, {get_primary_modifier_label()}+Enter new tab"
+                    f"Switched to connection list — ↑/↓ navigate, Enter open, {get_primary_modifier_label()}+Enter new tab, {get_primary_modifier_label()}+Shift+L back to terminal"
                 )
                 toast.set_timeout(3)  # seconds
                 if hasattr(self, 'toast_overlay'):
@@ -4669,7 +4669,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         group_connections.add_shortcut(Gtk.ShortcutsShortcut(
             title=_('Search Connections'), accelerator=f"{primary}f"))
         group_connections.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Focus Connection List'), accelerator=f"{primary}l"))
+            title=_('Focus Connection List'), accelerator=f"{primary}<Shift>l"))
         group_connections.add_shortcut(Gtk.ShortcutsShortcut(
             title=_('Quick Connect'), accelerator=f"{primary}<Alt>c"))
         group_connections.add_shortcut(Gtk.ShortcutsShortcut(
