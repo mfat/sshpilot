@@ -3961,22 +3961,20 @@ class TerminalWidget(Gtk.Box):
     
     def disconnect(self):
         """Close the SSH connection and clean up resources"""
-        if not self.is_connected:
-            return
-            
-        logger.debug(f"Disconnecting SSH session {self.session_id}...")
         was_connected = self.is_connected
-        self.is_connected = False
-        
-        # Guard UI emissions when the root window is quitting
-        root = self.get_root() if hasattr(self, 'get_root') else None
-        is_quitting = bool(getattr(root, '_is_quitting', False))
-        
-        # Only update manager / UI if not quitting
-        if was_connected and hasattr(self, 'connection') and self.connection and not is_quitting:
-            self.connection.is_connected = False
-            if hasattr(self, 'connection_manager') and self.connection_manager:
-                GLib.idle_add(self.connection_manager.emit, 'connection-status-changed', self.connection, False)
+        if self.is_connected:
+            logger.debug(f"Disconnecting SSH session {self.session_id}...")
+            self.is_connected = False
+
+            # Guard UI emissions when the root window is quitting
+            root = self.get_root() if hasattr(self, 'get_root') else None
+            is_quitting = bool(getattr(root, '_is_quitting', False))
+
+            # Only update manager / UI if not quitting
+            if hasattr(self, 'connection') and self.connection and not is_quitting:
+                self.connection.is_connected = False
+                if hasattr(self, 'connection_manager') and self.connection_manager:
+                    GLib.idle_add(self.connection_manager.emit, 'connection-status-changed', self.connection, False)
         
         try:
             # Try to get the terminal's child PID (with timeout protection)

@@ -7706,9 +7706,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             # Prevent the default close behavior while we show confirmation
             return True
         else:
-            # If no confirmation is needed, just allow the default close behavior.
-            # The default handler will close the page, which in turn triggers the
-            # terminal disconnection via the page's 'unmap' or 'destroy' signal.
+            # Explicitly disconnect so the SSH process (including any port
+            # forwarding) is killed immediately rather than relying on the
+            # widget destroy signal, which can be deferred indefinitely.
+            if terminal and hasattr(terminal, 'disconnect'):
+                terminal.disconnect()
             return False
 
     def _on_tab_close_response(self, dialog, response_id):
