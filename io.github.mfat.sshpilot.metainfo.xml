@@ -60,6 +60,17 @@
 
 
 
+    <release version="5.1.2" date="2026-06-02">
+      <description>
+        <p>Better look and feel for built-in file manager</p>
+        <p>New live log viewer</p>
+        <p>Zoom control for file manager</p>
+        <p>New option to always show Commands sidebar</p>
+        <p>More reliable SFTP file transfers</p>
+        <p>Changed default connection list shortcut to Ctrl+Shift+L</p>
+        <p>Various bug fixes and UI improvements</p>
+      </description>
+    </release>
     <release version="5.1.1" date="2026-06-01">
       <description>
         <p>Bug fixes</p>
