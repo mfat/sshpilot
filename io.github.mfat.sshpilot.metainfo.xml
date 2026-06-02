@@ -60,11 +60,6 @@
 
 
 
-    <release version="5.1.2" date="2026-06-02">
-      <description>
-        <p>Better look and feel for built-in file manager</p>
-      </description>
-    </release>
     <release version="5.1.1" date="2026-06-01">
       <description>
         <p>Bug fixes</p>
