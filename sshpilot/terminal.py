@@ -2335,6 +2335,57 @@ class TerminalWidget(Gtk.Box):
             except Exception as e:
                 logger.warning(f"Failed to copy link '{uri}': {e}")
 
+    def _do_save_contents(self):
+        """Save the terminal's scrollback to a plain-text file.
+
+        Uses Gtk.FileDialog (portal-backed, so it works inside the Flatpak
+        sandbox) to pick the destination, then dumps VTE's retained buffer via
+        write_contents_sync. Only the in-memory scrollback is available; lines
+        scrolled past the scrollback limit are gone.
+        """
+        if self.vte is None:
+            logger.warning("Save Output is only available with the VTE backend")
+            return
+
+        # Default file name from the connection nickname when available.
+        base = getattr(self.connection, 'nickname', None) or 'terminal'
+        safe = ''.join(c if (c.isalnum() or c in '-_.') else '_' for c in str(base)) or 'terminal'
+
+        dialog = Gtk.FileDialog.new()
+        dialog.set_title(_("Save Terminal Output"))
+        dialog.set_initial_name(f"{safe}.txt")
+
+        def _on_done(dlg, result):
+            try:
+                gfile = dlg.save_finish(result)
+            except GLib.Error:
+                return  # user cancelled or portal denied
+            if gfile is None:
+                return
+            stream = None
+            try:
+                stream = gfile.replace(None, False, Gio.FileCreateFlags.NONE, None)
+                self.vte.write_contents_sync(stream, Vte.WriteFlags.DEFAULT, None)
+            except GLib.Error as exc:
+                logger.error("Failed to save terminal output: %s", exc)
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.error("Failed to save terminal output: %s", exc, exc_info=True)
+            finally:
+                if stream is not None:
+                    try:
+                        stream.close(None)
+                    except Exception:
+                        pass
+
+        try:
+            parent = self.get_root()
+        except Exception:
+            parent = None
+        try:
+            dialog.save(parent, None, _on_done)
+        except Exception as exc:
+            logger.error("Could not open save dialog: %s", exc, exc_info=True)
+
     def _get_supported_encodings(self):
         if self._supported_encodings is not None:
             return self._supported_encodings
@@ -2951,6 +3002,10 @@ class TerminalWidget(Gtk.Box):
             act_search.connect("activate", lambda a, p: self._show_search_overlay(select_all=True))
             self._menu_actions.add_action(act_search)
 
+            act_save = Gio.SimpleAction.new("save_contents", None)
+            act_save.connect("activate", lambda a, p: self._do_save_contents())
+            self._menu_actions.add_action(act_save)
+
             self.insert_action_group('term', self._menu_actions)
 
             # Menu model with keyboard shortcuts
@@ -2976,6 +3031,7 @@ class TerminalWidget(Gtk.Box):
                 self._menu_model.append_section(None, zoom_section)
                 search_section = Gio.Menu()
                 search_section.append(_("Search\t⌘F"), "term.search")
+                search_section.append(_("Save Output…"), "term.save_contents")
                 self._menu_model.append_section(None, search_section)
             else:
                 self._menu_model.append(_("Copy\tCtrl+Shift+C"), "term.copy")
@@ -2988,6 +3044,7 @@ class TerminalWidget(Gtk.Box):
                 self._menu_model.append_section(None, zoom_section)
                 search_section = Gio.Menu()
                 search_section.append(_("Search\tCtrl+Shift+F"), "term.search")
+                search_section.append(_("Save Output…"), "term.save_contents")
                 self._menu_model.append_section(None, search_section)
 
             # Popover - set parent to the terminal widget
