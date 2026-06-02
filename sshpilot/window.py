@@ -1120,8 +1120,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             index += 1
 
     def _on_connection_list_nav_key(self, controller, keyval, keycode, state):
-        """While the search bar is open, Arrow Up from the first row returns
-        focus to the search entry so the user can keep typing."""
+        """Keyboard handling while the connection list has focus.
+
+        - Arrow Up from the first row returns focus to the search entry (when
+          the search bar is open) so the user can keep editing the query.
+        - Typing a printable character starts a search (type-ahead): the search
+          bar opens, takes focus, and receives the character.
+        """
         if keyval in (Gdk.KEY_Up, Gdk.KEY_KP_Up):
             if (
                 getattr(self, 'search_container', None)
@@ -1137,7 +1142,30 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     if text:
                         self.search_entry.select_region(0, len(text))
                     return True
-        return False
+            return False
+
+        # Type-ahead: a printable key starts/continues a search.
+        if not getattr(self, 'search_entry', None):
+            return False
+        shortcut_modifiers = (
+            Gdk.ModifierType.CONTROL_MASK
+            | Gdk.ModifierType.ALT_MASK
+            | getattr(Gdk.ModifierType, 'META_MASK', 0)
+            | getattr(Gdk.ModifierType, 'SUPER_MASK', 0)
+        )
+        if state & shortcut_modifiers:
+            return False
+        unicode_point = Gdk.keyval_to_unicode(keyval)
+        if not unicode_point:
+            return False
+        char = chr(unicode_point)
+        # Skip control chars and Space (Space toggles row selection in the list).
+        if not char.isprintable() or char == ' ':
+            return False
+        self.activate_search_entry()
+        self.search_entry.set_text(self.search_entry.get_text() + char)
+        self.search_entry.set_position(-1)
+        return True
 
     def _focus_is_in_connection_list(self) -> bool:
         """Return True if keyboard focus is currently on/within the connection list."""
