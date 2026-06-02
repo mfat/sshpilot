@@ -1446,6 +1446,29 @@ class WindowActions:
             logger.error(f"Failed to install update banner CSS: {e}")
 
 
+def _on_view_logs_action_factory(window):
+    """Build the ``win.view-logs`` activation handler.
+
+    Creates a fresh ``LogViewerWindow`` parented to *window* on each call so
+    closing & reopening the viewer works as expected. We import lazily so
+    ``actions`` doesn't pay the cost on every app start.
+    """
+
+    def _activate(_action, _param):
+        try:
+            from .log_viewer import LogViewerWindow
+        except Exception as exc:
+            logger.error("Could not load log viewer: %s", exc)
+            return
+        try:
+            viewer = LogViewerWindow(parent=window)
+            viewer.present()
+        except Exception as exc:
+            logger.error("Could not open log viewer: %s", exc, exc_info=True)
+
+    return _activate
+
+
 def register_window_actions(window):
     """Register SimpleActions with the provided main window."""
     # Context menu action to force opening a new connection tab
@@ -1578,6 +1601,11 @@ def register_window_actions(window):
         window.check_for_updates_action = Gio.SimpleAction.new('check-for-updates', None)
         window.check_for_updates_action.connect('activate', window.on_check_for_updates_action)
         window.add_action(window.check_for_updates_action)
+
+    # View Logs action — opens the log viewer dialog for bug-report sharing.
+    window.view_logs_action = Gio.SimpleAction.new('view-logs', None)
+    window.view_logs_action.connect('activate', _on_view_logs_action_factory(window))
+    window.add_action(window.view_logs_action)
 
     # Command blocks panel toggle
     if hasattr(window, '_toggle_command_blocks_panel'):

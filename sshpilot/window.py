@@ -3067,6 +3067,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         help_menu.append('Keyboard Shortcuts', 'app.shortcuts')
         help_menu.append('Documentation', 'app.help')
         help_menu.append('Check for Updates', 'win.check-for-updates')
+        help_menu.append('View Logs…', 'win.view-logs')
         menu.append_submenu('Help', help_menu)
 
         menu.append('About', 'app.about')

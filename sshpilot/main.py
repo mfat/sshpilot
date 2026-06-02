@@ -443,10 +443,58 @@ class SshPilotApplication(Adw.Application):
                     record.short_name = name or '-'
                 return True
 
+        # --- Category filters for the per-feature log files. -------------
+        # Master ``sshpilot.log`` always receives everything (it's what bug
+        # reports cite). The category files are filtered convenience views.
+        _SSH_CATEGORY_NAMES: tuple = (
+            'paramiko',
+            'sshpilot.connection_manager',
+            'sshpilot.terminal',
+            'sshpilot.terminal_manager',
+            'sshpilot.terminal_backends',
+            'sshpilot.ssh_utils',
+            'sshpilot.ssh_config_utils',
+            'sshpilot.ssh_config_editor',
+            'sshpilot.ssh_connection_builder',
+            'sshpilot.ssh_password_exec',
+            'sshpilot.sshcopyid_window',
+            'sshpilot.sshpilot_agent',
+            'sshpilot.scp_utils',
+            'sshpilot.sftp_utils',
+            'sshpilot.known_hosts_editor',
+        )
+
+        def _matches_any(name: str, prefixes: tuple) -> bool:
+            for p in prefixes:
+                if name == p or name.startswith(p + '.'):
+                    return True
+            return False
+
+        class _SshCategoryFilter(logging.Filter):
+            """Pass paramiko + our SSH/connection/terminal modules."""
+
+            def filter(self, record: logging.LogRecord) -> bool:
+                return _matches_any(record.name or '', _SSH_CATEGORY_NAMES)
+
+        class _AppCategoryFilter(logging.Filter):
+            """Pass our own loggers EXCEPT the SSH-category ones.
+
+            We deliberately don't let arbitrary third-party loggers leak into
+            the app log — they'd just add noise no one can act on. Paramiko
+            already goes to ssh.log via the filter above.
+            """
+
+            def filter(self, record: logging.LogRecord) -> bool:
+                name = record.name or ''
+                if not (name == 'sshpilot' or name.startswith('sshpilot.') or name == 'root'):
+                    return False
+                return not _matches_any(name, _SSH_CATEGORY_NAMES)
+
         # Clear any existing handlers
         logging.getLogger().handlers.clear()
 
-        # File handler with rotation
+        # --- Master file (everything) ------------------------------------
+        # ``sshpilot.log`` is the authoritative log used by bug reports.
         file_handler = RotatingFileHandler(
             os.path.join(log_dir, 'sshpilot.log'),
             maxBytes=10*1024*1024,  # 10MB
@@ -455,6 +503,24 @@ class SshPilotApplication(Adw.Application):
         )
         file_handler.setLevel(log_level)
         file_handler.setFormatter(file_formatter)
+
+        # --- App-only file -----------------------------------------------
+        app_file_handler = RotatingFileHandler(
+            os.path.join(log_dir, 'app.log'),
+            maxBytes=10*1024*1024, backupCount=5, encoding='utf-8',
+        )
+        app_file_handler.setLevel(log_level)
+        app_file_handler.setFormatter(file_formatter)
+        app_file_handler.addFilter(_AppCategoryFilter())
+
+        # --- SSH-only file ------------------------------------------------
+        ssh_file_handler = RotatingFileHandler(
+            os.path.join(log_dir, 'ssh.log'),
+            maxBytes=10*1024*1024, backupCount=5, encoding='utf-8',
+        )
+        ssh_file_handler.setLevel(log_level)
+        ssh_file_handler.setFormatter(file_formatter)
+        ssh_file_handler.addFilter(_SshCategoryFilter())
 
         # Console handler
         console_handler = logging.StreamHandler()
@@ -466,7 +532,12 @@ class SshPilotApplication(Adw.Application):
         root_logger = logging.getLogger()
         root_logger.setLevel(log_level)
         root_logger.addHandler(file_handler)
+        root_logger.addHandler(app_file_handler)
+        root_logger.addHandler(ssh_file_handler)
         root_logger.addHandler(console_handler)
+        # Track the per-category handlers so subsequent level changes
+        # (verbose / quiet) can be applied uniformly below.
+        self._category_handlers = (file_handler, app_file_handler, ssh_file_handler)
 
         # Determine verbosity. Precedence (highest first):
         #   CLI --quiet  →  WARNING (ERROR-and-up only)
@@ -490,7 +561,8 @@ class SshPilotApplication(Adw.Application):
             effective_level = logging.DEBUG
         else:
             effective_level = logging.INFO
-        file_handler.setLevel(effective_level)
+        for h in self._category_handlers:
+            h.setLevel(effective_level)
         console_handler.setLevel(effective_level)
         root_logger.setLevel(effective_level)
 
