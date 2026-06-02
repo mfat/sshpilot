@@ -5566,103 +5566,133 @@ class FilePane(Gtk.Box):
             source_file_path = current_entry_path
 
         logger.debug(f"Drop operation: {entry.name} from {source_file_path}")
-        
+
+        # If the user dropped onto a folder in this pane, route the file INTO
+        # that folder rather than into the pane's current directory.
+        target_folder = self._resolve_drop_target_folder(x, y)
+        if target_folder is not None:
+            logger.debug(
+                "Drop targeted folder: %s (within %s)",
+                target_folder.name, self._current_path,
+            )
+
         # Determine operation type based on source and target panes
         if self._is_remote and not source_pane._is_remote:
             # Local to remote - upload
             logger.debug("Starting upload operation")
-            self._handle_upload_from_drag(source_file_path, entry)
+            self._handle_upload_from_drag(source_file_path, entry, target_folder)
         elif not self._is_remote and source_pane._is_remote:
             # Remote to local - download
             logger.debug("Starting download operation")
-            self._handle_download_from_drag(source_file_path, entry)
+            self._handle_download_from_drag(source_file_path, entry, target_folder)
         else:
             # Same type of pane - not supported for now
             logger.debug("Drop rejected: same pane type")
             return False
-        
+
         return True
 
-    def _handle_upload_from_drag(self, source_path: str, entry: FileEntry) -> None:
-        """Handle upload operation from drag and drop."""
+    def _handle_upload_from_drag(self, source_path: str, entry: FileEntry,
+                                  target_folder: Optional[FileEntry] = None) -> None:
+        """Handle upload operation from drag and drop.
+
+        When *target_folder* is supplied, the file is uploaded INTO that
+        folder rather than into the pane's current directory.
+        """
         try:
             import pathlib
             source_path_obj = pathlib.Path(source_path)
-            destination_path = posixpath.join(self._current_path, entry.name)
-            
+            # Build destination — drop-on-folder means destination parent is
+            # current_path/target_folder, not current_path itself.
+            dest_parent = self._current_path
+            if target_folder is not None:
+                dest_parent = posixpath.join(self._current_path, target_folder.name)
+            destination_path = posixpath.join(dest_parent, entry.name)
+
             # Get the file manager window to access the SFTP manager
             window = self._get_file_manager_window()
             if not isinstance(window, FileManagerWindow):
                 self.show_toast("Upload failed: Invalid window context")
                 return
-                
+
             manager = window._manager
-            
+
             # Check for file conflicts first
             files_to_transfer = [(str(source_path_obj), destination_path)]
-            
+
             def _proceed_with_upload(resolved_files: List[Tuple[str, str]]) -> None:
                 for local_path_str, dest_path in resolved_files:
                     path_obj = pathlib.Path(local_path_str)
-                    
+
                     if entry.is_dir:
                         # Upload directory
                         future = manager.upload_directory(path_obj, dest_path)
                     else:
                         # Upload file
                         future = manager.upload(path_obj, dest_path)
-                    
+
                     # Show progress dialog for upload
                     window._show_progress_dialog("upload", entry.name, future)
+                    # Don't try to highlight the dropped file if it landed in
+                    # a subfolder — it won't appear in the current listing.
                     window._attach_refresh(
                         future,
                         refresh_remote=self,
-                        highlight_name=entry.name,
+                        highlight_name=None if target_folder is not None else entry.name,
                     )
-            
+
             window._check_file_conflicts(files_to_transfer, "upload", _proceed_with_upload)
-            
+
         except Exception as e:
             self.show_toast(f"Upload failed: {str(e)}")
 
-    def _handle_download_from_drag(self, source_path: str, entry: FileEntry) -> None:
-        """Handle download operation from drag and drop."""
+    def _handle_download_from_drag(self, source_path: str, entry: FileEntry,
+                                    target_folder: Optional[FileEntry] = None) -> None:
+        """Handle download operation from drag and drop.
+
+        When *target_folder* is supplied, the file is downloaded INTO that
+        folder rather than into the pane's current directory.
+        """
         try:
             import pathlib
-            destination_path = pathlib.Path(self._current_path) / entry.name
-            
+            dest_parent = pathlib.Path(self._current_path)
+            if target_folder is not None:
+                dest_parent = dest_parent / target_folder.name
+            destination_path = dest_parent / entry.name
+
             # Get the file manager window to access the SFTP manager
             window = self._get_file_manager_window()
             if not isinstance(window, FileManagerWindow):
                 self.show_toast("Download failed: Invalid window context")
                 return
-                
+
             manager = window._manager
-            
+
             # Check for file conflicts first
             files_to_transfer = [(source_path, str(destination_path))]
-            
+
             def _proceed_with_download(resolved_files: List[Tuple[str, str]]) -> None:
                 for source, target_path_str in resolved_files:
                     target_path = pathlib.Path(target_path_str)
-                    
+
                     if entry.is_dir:
                         # Download directory
                         future = manager.download_directory(source, target_path)
                     else:
                         # Download file
                         future = manager.download(source, target_path)
-                    
+
                     # Show progress dialog for download
                     window._show_progress_dialog("download", entry.name, future)
+                    # Skip highlight when target was a subfolder.
                     window._attach_refresh(
                         future,
                         refresh_local_path=str(self._current_path),
-                        highlight_name=entry.name,
+                        highlight_name=None if target_folder is not None else entry.name,
                     )
-            
+
             window._check_file_conflicts(files_to_transfer, "download", _proceed_with_download)
-            
+
         except Exception as e:
             self.show_toast(f"Download failed: {str(e)}")
 
@@ -5678,6 +5708,32 @@ class FilePane(Gtk.Box):
         logger.debug(f"Drop leave: pane={self._is_remote}")
         # Remove visual feedback
         self.remove_css_class("drop-target-active")
+
+    def _resolve_drop_target_folder(self, x: float, y: float) -> Optional[FileEntry]:
+        """Hit-test (x, y) and return the folder entry under the cursor, if any.
+
+        Returns ``None`` when the cursor isn't over a directory row — callers
+        then drop into the pane's current path. Walks up from the picked
+        leaf widget looking for the per-row ``drag_position`` attribute set
+        by ``_on_list_bind`` / ``_on_grid_bind``; that gives us an index into
+        ``self._entries`` so we can check ``is_dir``.
+        """
+        try:
+            picked = self.pick(x, y, Gtk.PickFlags.DEFAULT)
+        except Exception:
+            return None
+        widget = picked
+        entries = getattr(self, "_entries", None) or []
+        while widget is not None and widget is not self:
+            position = getattr(widget, "drag_position", None)
+            if isinstance(position, int) and 0 <= position < len(entries):
+                entry = entries[position]
+                # If they dropped on a file (not a folder), explicitly return
+                # None — the caller falls back to the current path rather
+                # than producing a nonsensical "copy into a file" attempt.
+                return entry if entry.is_dir else None
+            widget = widget.get_parent()
+        return None
 
     def _on_up_clicked(self, _button) -> None:
         parent = os.path.dirname(self._current_path.rstrip('/')) or '/'
