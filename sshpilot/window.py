@@ -1034,16 +1034,17 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             }
 
             .navigation-sidebar row.tinted:selected {
-              background-color: alpha(@accent_bg_color, 0.36);
-              box-shadow: inset 0 0 0 1px alpha(@accent_bg_color, 0.65);
+              background-color: @accent_bg_color;
+              color: @accent_fg_color;
+              box-shadow: inset 0 0 0 1px @accent_bg_color;
             }
 
             .navigation-sidebar row.tinted:selected:hover {
-              background-color: alpha(@accent_bg_color, 0.42);
+              background-color: shade(@accent_bg_color, 0.95);
             }
 
             .navigation-sidebar row.tinted:selected:active {
-              background-color: alpha(@accent_bg_color, 0.48);
+              background-color: shade(@accent_bg_color, 0.90);
             }
             
             /* Group drop target highlight */
@@ -1101,6 +1102,70 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             widget.remove_css_class(name)
 
 
+
+    def _first_connection_row(self) -> Optional[Gtk.ListBoxRow]:
+        """Return the first row in the connection list that is a connection.
+
+        Skips group header rows so search results that start with a matching
+        group still resolve to the first matching host."""
+        if not getattr(self, 'connection_list', None):
+            return None
+        index = 0
+        while True:
+            row = self.connection_list.get_row_at_index(index)
+            if row is None:
+                return None
+            if hasattr(row, 'connection'):
+                return row
+            index += 1
+
+    def _on_connection_list_nav_key(self, controller, keyval, keycode, state):
+        """Keyboard handling while the connection list has focus.
+
+        - Arrow Up from the first row returns focus to the search entry (when
+          the search bar is open) so the user can keep editing the query.
+        - Typing a printable character starts a search (type-ahead): the search
+          bar opens, takes focus, and receives the character.
+        """
+        if keyval in (Gdk.KEY_Up, Gdk.KEY_KP_Up):
+            if (
+                getattr(self, 'search_container', None)
+                and self.search_container.get_visible()
+                and getattr(self, 'search_entry', None)
+                and getattr(self, 'connection_list', None)
+            ):
+                first_row = self.connection_list.get_row_at_index(0)
+                focused = self.connection_list.get_focus_child()
+                if first_row is not None and focused is first_row:
+                    self.search_entry.grab_focus()
+                    text = self.search_entry.get_text()
+                    if text:
+                        self.search_entry.select_region(0, len(text))
+                    return True
+            return False
+
+        # Type-ahead: a printable key starts/continues a search.
+        if not getattr(self, 'search_entry', None):
+            return False
+        shortcut_modifiers = (
+            Gdk.ModifierType.CONTROL_MASK
+            | Gdk.ModifierType.ALT_MASK
+            | getattr(Gdk.ModifierType, 'META_MASK', 0)
+            | getattr(Gdk.ModifierType, 'SUPER_MASK', 0)
+        )
+        if state & shortcut_modifiers:
+            return False
+        unicode_point = Gdk.keyval_to_unicode(keyval)
+        if not unicode_point:
+            return False
+        char = chr(unicode_point)
+        # Skip control chars and Space (Space toggles row selection in the list).
+        if not char.isprintable() or char == ' ':
+            return False
+        self.activate_search_entry()
+        self.search_entry.set_text(self.search_entry.get_text() + char)
+        self.search_entry.set_position(-1)
+        return True
 
     def _focus_is_in_connection_list(self) -> bool:
         """Return True if keyboard focus is currently on/within the connection list."""
@@ -2049,6 +2114,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # look deselected (the focus ring vanishes) even though it still holds
         # focus and selection. Re-assert it while focus stays in the list.
         self.connect('notify::focus-visible', self._on_focus_visible_changed)
+
+        # Arrow Up from the first row hops back to the search entry (capture
+        # phase so we intercept before the ListBox's own boundary handling).
+        nav_key = Gtk.EventControllerKey()
+        nav_key.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        nav_key.connect('key-pressed', self._on_connection_list_nav_key)
+        self.connection_list.add_controller(nav_key)
         
         # Make sure the connection list is focusable and can receive key events
         self.connection_list.set_focusable(True)
@@ -3333,9 +3405,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
     def _on_search_entry_key_pressed(self, controller, keyval, keycode, state):
         """Handle key presses in search entry."""
-        if keyval in (Gdk.KEY_Down, Gdk.KEY_Up):
+        if keyval == Gdk.KEY_Down:
             # Move focus into the connection list and select the first result so
-            # the user can navigate matches with the arrow keys.
+            # the user can navigate matches with the arrow keys. (Arrow Up from
+            # the first result returns here — see _on_connection_list_nav_key.)
             if hasattr(self, 'connection_list') and self.connection_list:
                 first_row = self.connection_list.get_row_at_index(0)
                 if first_row:
@@ -3347,17 +3420,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     self.connection_list.grab_focus()
             return True
         elif keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
-            # Select the first result and move focus into the list, but do NOT
-            # open/execute it. The user activates it from the connection list.
-            # Consume the event so it doesn't trigger the search entry's default
-            # activation (which would open the connection).
-            if hasattr(self, 'connection_list') and self.connection_list:
-                first_row = self.connection_list.get_row_at_index(0)
-                if first_row:
-                    self._select_only_row(first_row)
-                    first_row.grab_focus()
-                else:
-                    self.connection_list.grab_focus()
+            # Enter connects to the first matching host. Picking a different
+            # match is done with the arrow keys.
+            row = self._first_connection_row()
+            if row is not None:
+                self._select_only_row(row)
+                self._return_to_tab_view_if_welcome()
+                self._cycle_connection_tabs_or_open(row.connection)
             return True
         return False
 
@@ -3450,7 +3519,18 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 if hasattr(self, 'sidebar_toggle_button') and self.sidebar_toggle_button:
                     if self.sidebar_toggle_button.get_active():
                         self.sidebar_toggle_button.set_active(False)
-                
+
+                # Close the search bar (if open) and clear the filter so the
+                # full connection list is shown when focus moves here.
+                if (
+                    getattr(self, 'search_container', None)
+                    and self.search_container.get_visible()
+                ):
+                    if getattr(self, 'search_entry', None):
+                        self.search_entry.set_text('')
+                    self.rebuild_connection_list()
+                    self.search_container.set_visible(False)
+
                 # Ensure a row is selected before focusing
                 try:
                     selected_rows = list(self.connection_list.get_selected_rows())
@@ -3458,15 +3538,22 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     selected_row = self.connection_list.get_selected_row()
                     selected_rows = [selected_row] if selected_row else []
                 logger.debug(f"Focus connection list - current selection count: {len(selected_rows)}")
-                if not selected_rows:
+                target_row = selected_rows[0] if selected_rows else None
+                if target_row is None:
                     # Select the first row regardless of type
-                    first_row = self.connection_list.get_row_at_index(0)
-                    logger.debug(f"Focus connection list - first row: {first_row}")
-                    if first_row:
-                        self._select_only_row(first_row)
-                        logger.debug(f"Focus connection list - selected first row: {first_row}")
-                
-                self.connection_list.grab_focus()
+                    target_row = self.connection_list.get_row_at_index(0)
+                    logger.debug(f"Focus connection list - first row: {target_row}")
+                    if target_row:
+                        self._select_only_row(target_row)
+                        logger.debug(f"Focus connection list - selected first row: {target_row}")
+
+                # Focus the row directly (not the ListBox container): GTK4
+                # arrow-key navigation only works when a row holds focus, and
+                # after a rebuild the container won't delegate focus to a row.
+                if target_row is not None:
+                    target_row.grab_focus()
+                else:
+                    self.connection_list.grab_focus()
                 
                 
                 # Show toast notification
@@ -4808,7 +4895,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
     def toggle_list_focus(self):
         """Toggle focus between connection list and terminal"""
-        if self.connection_list.has_focus():
+        # Use the focus-ancestry check (not connection_list.has_focus()): after
+        # focusing, a child *row* holds focus, so has_focus() on the ListBox
+        # itself is False and the toggle would never return to the terminal.
+        if self._focus_is_in_connection_list():
             # Focus current terminal
             current_page = self.tab_view.get_selected_page()
             if current_page:
