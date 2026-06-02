@@ -2,6 +2,8 @@
 <gresources>
   <gresource prefix="/io/github/mfat/sshpilot">
     <file>sshpilot.svg</file>
+    <file>file-manager-choice.png</file>
+    <file>keychain.png</file>
   </gresource>
   
   <gresource prefix="/io/github/mfat/sshpilot/icons/scalable/actions">
@@ -45,6 +47,8 @@
     <file alias="preferences-system-symbolic.svg">icons/scalable/actions/preferences-system-symbolic.svg</file>
     <file alias="settings-symbolic.svg">icons/scalable/actions/settings-symbolic.svg</file>
     <file alias="sidebar-show-symbolic.svg">icons/scalable/actions/sidebar-show-symbolic.svg</file>
+    <file alias="terminal-split-horizontal-symbolic.svg">icons/scalable/actions/terminal-split-horizontal.svg</file>
+    <file alias="terminal-split-vertical-symbolic.svg">icons/scalable/actions/terminal-split-vertical.svg</file>
     <file alias="star-large-symbolic.svg">icons/scalable/actions/star-large-symbolic.svg</file>
     <file alias="system-search-symbolic.svg">icons/scalable/actions/system-search-symbolic.svg</file>
     <file alias="tag-symbolic.svg">icons/scalable/actions/tag-symbolic.svg</file>

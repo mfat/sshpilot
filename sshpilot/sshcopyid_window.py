@@ -1,7 +1,7 @@
 import os
 import logging
 from gettext import gettext as _
-from gi.repository import Gtk, Adw
+from gi.repository import Gtk, Adw, GLib
 
 from .key_manager import KeyManager, SSHKey
 from .connection_manager import ConnectionManager, Connection
@@ -83,17 +83,19 @@ class SshCopyIdWindow(Adw.Window):
             content.set_margin_start(18); content.set_margin_end(18)
             tv.set_content(content)
 
-            # ---------- Intro text ----------
-            server_name = getattr(self._conn, "nickname", None) or \
-                          f"{getattr(self._conn, 'username', 'user')}@{getattr(self._conn, 'hostname', getattr(self._conn, 'host', 'host'))}"
-            
-            # Create a simple label instead of StatusPage for normal font size
-            intro_label = Gtk.Label()
-            intro_label.set_markup(f'Copy your public key to "{server_name}".')
-            intro_label.set_halign(Gtk.Align.CENTER)
-            intro_label.set_margin_bottom(12)
-            content.append(intro_label)
-            logger.info(f"SshCopyIdWindow: Intro text created for server: {server_name}")
+            try:
+                illustration = Gtk.Image.new_from_resource(
+                    '/io/github/mfat/sshpilot/keychain.png'
+                )
+                illustration.set_pixel_size(160)
+                illustration.set_halign(Gtk.Align.CENTER)
+                illustration.set_vexpand(False)
+                illustration.set_margin_bottom(12)
+                content.append(illustration)
+            except GLib.Error as exc:
+                logger.debug(
+                    "ssh-copy-id dialog illustration unavailable: %s", exc
+                )
         except Exception as e:
             logger.error(f"SshCopyIdWindow: Failed to create outer layout: {e}")
             raise
