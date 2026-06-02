@@ -735,6 +735,13 @@ class LogViewerWindow(Adw.Window):
         self._current_lines.extend(new_lines)
         self._current_total += len(new_lines)
 
+        # Keep the in-memory tail bounded: leaving the viewer open with
+        # live-tail running must not grow without limit as the log file does.
+        # _current_total keeps the true running count for the stats line.
+        # Full-file mode is an explicit request to hold everything, so skip it.
+        if not self._showing_full_file and len(self._current_lines) > self._tail_lines:
+            del self._current_lines[:-self._tail_lines]
+
         min_level = _LEVEL_FILTER_OPTIONS[self._level_filter_idx][1]
         visible = [
             ln for ln in new_lines
@@ -759,6 +766,21 @@ class LogViewerWindow(Adw.Window):
         # Update counters and stats. _filtered_visible is the running count
         # of lines actually displayed.
         self._filtered_visible = getattr(self, "_filtered_visible", 0) + len(visible)
+
+        # Bound the displayed buffer too — the GTK TextBuffer is the heavier
+        # memory consumer. Drop the oldest visible lines from the top once we
+        # exceed the tail cap. A filter-dropdown change rebuilds the buffer
+        # from _current_lines, so any divergence self-heals. Trimming the top
+        # doesn't affect the bottom-scroll handling below.
+        if not self._showing_full_file:
+            overflow = self._filtered_visible - self._tail_lines
+            if overflow > 0:
+                start = buf.get_start_iter()
+                end = buf.get_start_iter()
+                end.forward_lines(overflow)
+                buf.delete(start, end)
+                self._filtered_visible -= overflow
+
         self._update_stats_label()
 
         if was_at_bottom:
