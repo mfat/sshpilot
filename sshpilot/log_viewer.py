@@ -217,7 +217,7 @@ class LogViewerWindow(Adw.Window):
         header.pack_start(self._category_dropdown)
 
         # Primary action: copy a self-contained diagnostic bundle.
-        copy_btn = Gtk.Button(label=_("Copy for bug report"))
+        copy_btn = Gtk.Button(label=_("Copy log output"))
         copy_btn.add_css_class("suggested-action")
         copy_btn.set_tooltip_text(
             _("Copy platform info and recent log lines to the clipboard, "
