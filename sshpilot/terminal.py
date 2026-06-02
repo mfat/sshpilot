@@ -939,28 +939,60 @@ class TerminalWidget(Gtk.Box):
         except Exception:
             pass
 
+    def _shortcut_label(self, action_name: str, fallback: str) -> str:
+        """Human-readable label for an action's current accelerator.
+
+        Honors user customizations: prefers a configured override, else the
+        app's registered default. Falls back to *fallback* when the shortcut
+        can't be resolved (or the user disabled it).
+        """
+        try:
+            accels = None
+            override = None
+            try:
+                override = self.config.get_shortcut_override(action_name)
+            except Exception:
+                override = None
+            if override is not None:
+                accels = override
+            else:
+                app = Gio.Application.get_default()
+                if app is not None and hasattr(app, 'get_registered_shortcut_defaults'):
+                    accels = app.get_registered_shortcut_defaults().get(action_name)
+            if not accels:
+                return fallback
+            ok, keyval, mods = Gtk.accelerator_parse(accels[0])
+            if ok and keyval:
+                label = Gtk.accelerator_get_label(keyval, mods)
+                if label:
+                    return label
+        except Exception:
+            pass
+        return fallback
+
     def _build_terminal_tips(self):
         """Return the list of short usage tips shown in the terminal banner.
 
         The connection-list shortcut comes first since that's the original
-        prompt; the rest surface other handy shortcuts. Modifier labels are
-        platform-aware via get_primary_modifier_label().
+        prompt; the rest surface other handy shortcuts. Each shortcut label
+        reflects the action's current (possibly customized) accelerator and is
+        platform-aware.
         """
         mod = get_primary_modifier_label()
         return [
             _('Press {shortcut} to switch to the connection list').format(
-                shortcut=f"{mod}+Shift+L"),
+                shortcut=self._shortcut_label('toggle-list', f"{mod}+Shift+L")),
             _('Press {shortcut} to search your connections').format(
-                shortcut=f"{mod}+F"),
+                shortcut=self._shortcut_label('search', f"{mod}+F")),
             _('Press {shortcut} to open a new connection').format(
-                shortcut=f"{mod}+N"),
+                shortcut=self._shortcut_label('new-connection', f"{mod}+N")),
             _('Press {shortcut} to search inside the terminal').format(
-                shortcut=f"{mod}+Shift+F"),
+                shortcut=self._shortcut_label('terminal-search', f"{mod}+Shift+F")),
             _('Press {shortcut} to copy your SSH key to a server').format(
-                shortcut=f"{mod}+Shift+K"),
+                shortcut=self._shortcut_label('new-key', f"{mod}+Shift+K")),
             _('Press F9 to toggle the sidebar'),
             _('Press {shortcut} to see all keyboard shortcuts').format(
-                shortcut=f"{mod}+?"),
+                shortcut=self._shortcut_label('shortcuts', f"{mod}+?")),
         ]
 
     def _reveal_connection_list_hint(self, *args):
@@ -975,6 +1007,12 @@ class TerminalWidget(Gtk.Box):
             self._connection_list_hint_handled = True
             if not bool(self.config.get_setting('terminal.show_tips', True)):
                 return
+            # Rebuild so labels reflect any shortcut customizations made since
+            # this terminal was created.
+            self._tips = self._build_terminal_tips()
+            self._tip_index = 0
+            if self._tips:
+                self._tip_label.set_text(self._tips[self._tip_index])
             self.connection_list_hint_revealer.set_reveal_child(True)
         except Exception:
             pass
