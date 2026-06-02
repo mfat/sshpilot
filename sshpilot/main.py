@@ -357,9 +357,36 @@ class SshPilotApplication(Adw.Application):
         spec (state data includes "actions history (logs, …)"). We previously
         stored them in ``$XDG_DATA_HOME/sshpilot/``; existing log files there
         are migrated on first launch so users don't lose history.
+
+        Inside a Flatpak sandbox the path resolves to
+        ``~/.var/app/io.github.mfat.sshpilot/.local/state/sshpilot/`` which
+        the sandbox grants the app write access to — verified by simulation
+        and matches the convention used by other Flatpak GNOME apps on this
+        system (Bitwarden, Authenticator, Cambalache, …).
         """
         log_dir = get_state_dir()
-        os.makedirs(log_dir, exist_ok=True)
+        # Defensive fallback: if the state dir can't be created for any
+        # reason (filesystem mount-point quirks, exotic Flatpak versions,
+        # corrupted XDG env vars), fall back to the old data-dir path so
+        # the app still logs *somewhere* instead of crashing at startup.
+        try:
+            os.makedirs(log_dir, exist_ok=True)
+        except OSError as exc:
+            fallback = get_data_dir()
+            try:
+                os.makedirs(fallback, exist_ok=True)
+            except OSError:
+                # Last-ditch: tmpdir. Logging to a transient location is
+                # better than failing setup_logging entirely.
+                import tempfile
+                fallback = os.path.join(tempfile.gettempdir(), 'sshpilot')
+                os.makedirs(fallback, exist_ok=True)
+            print(
+                f"sshpilot: state dir {log_dir!r} unusable ({exc}); "
+                f"logging to {fallback!r} instead",
+                flush=True,
+            )
+            log_dir = fallback
 
         # One-shot migration of any pre-existing log files from the old
         # data-dir location. Runs only when the new dir has no main log yet
