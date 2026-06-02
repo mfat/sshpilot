@@ -1976,6 +1976,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.search_entry.connect('search-changed', self.on_search_changed)
         self.search_entry.connect('stop-search', self.on_search_stopped)
         search_key = Gtk.EventControllerKey()
+        # Use the capture phase so Down/Up/Enter are handled before the
+        # SearchEntry's internal text widget consumes them (otherwise arrow
+        # keys move the cursor and Enter triggers default activation).
+        search_key.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
         search_key.connect('key-pressed', self._on_search_entry_key_pressed)
         self.search_entry.add_controller(search_key)
         # Prevent search entry from being the default focus widget
@@ -3294,32 +3298,32 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
     def _on_search_entry_key_pressed(self, controller, keyval, keycode, state):
         """Handle key presses in search entry."""
-        if keyval == Gdk.KEY_Down:
-            # Move focus to connection list
+        if keyval in (Gdk.KEY_Down, Gdk.KEY_Up):
+            # Move focus into the connection list and select the first result so
+            # the user can navigate matches with the arrow keys.
             if hasattr(self, 'connection_list') and self.connection_list:
                 first_row = self.connection_list.get_row_at_index(0)
                 if first_row:
                     self._select_only_row(first_row)
-                self.connection_list.grab_focus()
-            return True
-        elif keyval == Gdk.KEY_Return:
-            # If there's search text, move to first result
-            if hasattr(self, 'search_entry') and self.search_entry:
-                search_text = self.search_entry.get_text().strip()
-                if search_text:
-                    first_row = self.connection_list.get_row_at_index(0)
-                    if first_row:
-                        self._select_only_row(first_row)
-                        self.connection_list.grab_focus()
-                    return True
+                    # Focus the row directly (not the container) so GTK4
+                    # ListBox arrow-key navigation works immediately.
+                    first_row.grab_focus()
                 else:
-                    # No search text, just move to connection list
-                    if hasattr(self, 'connection_list') and self.connection_list:
-                        first_row = self.connection_list.get_row_at_index(0)
-                        if first_row:
-                            self._select_only_row(first_row)
-                        self.connection_list.grab_focus()
-                    return True
+                    self.connection_list.grab_focus()
+            return True
+        elif keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
+            # Select the first result and move focus into the list, but do NOT
+            # open/execute it. The user activates it from the connection list.
+            # Consume the event so it doesn't trigger the search entry's default
+            # activation (which would open the connection).
+            if hasattr(self, 'connection_list') and self.connection_list:
+                first_row = self.connection_list.get_row_at_index(0)
+                if first_row:
+                    self._select_only_row(first_row)
+                    first_row.grab_focus()
+                else:
+                    self.connection_list.grab_focus()
+            return True
         return False
 
     def setup_signals(self):
@@ -3439,6 +3443,45 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     self.toast_overlay.add_toast(toast)
         except Exception as e:
             logger.error(f"Error focusing connection list: {e}")
+
+    def activate_search_entry(self):
+        """Show (if hidden) and focus the connection search entry.
+
+        Bound to the Ctrl/Cmd+F shortcut. It only ever turns search *on* and
+        focuses it so the user can always press the shortcut and start typing.
+        Hiding the search bar is done exclusively via the toolbar search button
+        (``focus_search_entry``)."""
+        try:
+            if not (hasattr(self, 'search_entry') and self.search_entry):
+                return
+
+            # If the sidebar is hidden, reveal it first
+            if hasattr(self, 'sidebar_toggle_button') and self.sidebar_toggle_button:
+                if self.sidebar_toggle_button.get_active():
+                    self.sidebar_toggle_button.set_active(False)
+
+            was_visible = True
+            if hasattr(self, 'search_container') and self.search_container:
+                was_visible = self.search_container.get_visible()
+                if not was_visible:
+                    self.search_container.set_visible(True)
+
+            # Always focus and select any existing text so typing replaces it
+            self.search_entry.grab_focus()
+            text = self.search_entry.get_text()
+            if text:
+                self.search_entry.select_region(0, len(text))
+
+            # Only show the hint toast when search was just revealed
+            if not was_visible:
+                toast = Adw.Toast.new(
+                    "Search mode — Type to filter connections, Esc to clear and hide"
+                )
+                toast.set_timeout(3)  # seconds
+                if hasattr(self, 'toast_overlay'):
+                    self.toast_overlay.add_toast(toast)
+        except Exception as e:
+            logger.error(f"Failed to activate search entry: {e}")
 
     def focus_search_entry(self):
         """Toggle search on/off and show appropriate toast notification."""
