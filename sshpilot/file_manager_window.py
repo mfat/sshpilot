@@ -18,6 +18,7 @@ indicators and toast based feedback.
 
 from __future__ import annotations
 
+import collections
 import dataclasses
 import errno
 import json
@@ -393,42 +394,96 @@ class TransferCancelledException(Exception):
 # Utility data structures
 
 
-class SFTPProgressDialog(Adw.MessageDialog):
-    """Modern GNOME HIG-compliant SFTP file transfer progress dialog"""
+# Prefer Adw.AlertDialog (libadwaita ≥ 1.5, May 2024) — Adw.MessageDialog is
+# deprecated since 1.6. Fall back to MessageDialog on older systems so the
+# file manager still works there. The two classes differ in:
+#   * constructor: AlertDialog uses ``heading=``, MessageDialog uses ``title=``
+#   * setter: ``set_heading`` vs ``set_title``
+#   * present: AlertDialog takes a parent widget; MessageDialog uses
+#     set_transient_for + set_modal then present()
+# All three differences are bridged below.
+_HAS_ALERT_DIALOG = hasattr(Adw, "AlertDialog")
+_PROGRESS_DIALOG_BASE = Adw.AlertDialog if _HAS_ALERT_DIALOG else Adw.MessageDialog
+
+
+class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
+    """Modern GNOME HIG-compliant SFTP file transfer progress dialog.
+
+    Subclasses ``Adw.AlertDialog`` when available (libadwaita ≥ 1.5) and
+    falls back to the deprecated ``Adw.MessageDialog`` on older systems.
+
+    UI is driven from a fixed-cadence ``GLib.timeout`` (the canonical GTK
+    ProgressBar pattern). The worker's per-chunk callbacks only mutate a few
+    state fields and push samples into a sliding window — they do not touch
+    widgets. The render tick reads that state and updates labels + bar at
+    ~4 Hz, which keeps the UI responsive without burning cycles on transfers
+    that emit thousands of callbacks per second.
+    """
 
     _LABEL_WIDTH_CHARS = 48
+    _RENDER_INTERVAL_MS = 250
+    _SPEED_WINDOW_SECONDS = 5.0
 
     def __init__(self, parent=None, operation_type="transfer"):
-        # Set appropriate title based on operation
         title = "Downloading Files" if operation_type == "download" else "Uploading Files"
 
-        super().__init__(
-            title=title,
-            body="Transferring files…",
-            default_response="cancel"
-        )
-        
-        # Dialog properties
-        self.set_modal(True)
-        if parent:
-            self.set_transient_for(parent)
-        
+        # Different constructor kwargs for the two base classes.
+        if _HAS_ALERT_DIALOG:
+            super().__init__(
+                heading=title,
+                body="Transferring files…",
+                default_response="cancel",
+            )
+        else:
+            super().__init__(
+                title=title,
+                body="Transferring files…",
+                default_response="cancel",
+            )
+            # MessageDialog is a Gtk.Window — old API: set transient + modal.
+            if parent is not None:
+                try:
+                    self.set_transient_for(parent)
+                except Exception:
+                    pass
+            try:
+                self.set_modal(True)
+            except Exception:
+                pass
+
         # Transfer state
         self.is_cancelled = False
         self.current_file = ""
-        self.transferred_bytes = 0
-        self.total_bytes = 0
         self.files_completed = 0
         self.total_files = 0
-        self.start_time = time.time()
         self.operation_type = operation_type
         self._current_future = None
         self._futures = []  # Track all futures for multi-file operations
-        self._completion_shown = False  # Flag to prevent multiple completion dialogs
-        self._file_progress = {}  # Track progress per file: {future_id: (progress, filename)}
-        self._failed_files = []  # Track failed files: [(filename, error_message), ...]
-        
+        self._completion_shown = False
+        self._failed_files = []
+
+        # Bytes-driven speed/ETA state (populated by progress-bytes signal).
+        # Always read/written on the main thread.
+        self._transferred_bytes = 0
+        self._total_bytes = 0
+        # Sliding window of (monotonic_time, transferred_bytes) samples used
+        # to compute the *recent* throughput rather than the lifetime average.
+        self._byte_samples: "collections.deque[tuple[float, int]]" = collections.deque()
+
+        # Latest fraction/message/file pushed by ``update_progress``. The
+        # render tick reads these — neither the worker callback nor the
+        # signal handler touches widgets directly.
+        self._latest_fraction: Optional[float] = None
+        self._latest_message: Optional[str] = None
+        self._latest_file: Optional[str] = None
+
         self._build_ui()
+
+        # Start the render loop. Returning False from _render_tick removes the
+        # source; we also clear the id on dialog close as a belt-and-braces.
+        self._render_timeout_id: Optional[int] = GLib.timeout_add(
+            self._RENDER_INTERVAL_MS, self._render_tick
+        )
         
     def _build_ui(self):
         """Build the modern GNOME HIG-compliant UI"""
@@ -532,84 +587,132 @@ class SFTPProgressDialog(Adw.MessageDialog):
             for future in self._futures:
                 if future and hasattr(future, 'cancel') and not future.done():
                     future.cancel()
+            self._stop_render_timer()
             self.close()
         elif response == "done":
+            self._stop_render_timer()
             self.close()
+
+    def _stop_render_timer(self) -> None:
+        """Remove the render GLib.timeout source if it's still scheduled."""
+        if self._render_timeout_id is not None:
+            try:
+                GLib.source_remove(self._render_timeout_id)
+            except Exception:
+                pass
+            self._render_timeout_id = None
     
     def update_progress(self, fraction, message=None, current_file=None):
-        """Update progress bar and status"""
-        GLib.idle_add(self._update_progress_ui, fraction, message, current_file)
-    
-    def _update_progress_ui(self, fraction, message, current_file):
-        """Update UI elements (must be called from main thread)"""
-        
-        # For multi-file operations, calculate overall progress
-        if self.total_files > 1:
-            # Calculate overall progress: (completed_files + current_file_progress) / total_files
-            # We use the fraction passed in as the current file's progress
-            overall_progress = (self.files_completed + fraction) / self.total_files
-            
-            # Ensure we never show 100% until all files are completed
-            # Maximum progress = (total_files - 1) / total_files when at least one file is still active
-            if self.files_completed < self.total_files:
-                max_progress = (self.total_files - 1) / self.total_files
-                overall_progress = min(overall_progress, max_progress)
-            
-            percentage = int(overall_progress * 100)
-            self.progress_bar.set_fraction(overall_progress)
-            self.progress_bar.set_text(f"{percentage}%")
-        else:
-            # Single file - use progress directly
-            percentage = int(fraction * 100)
-            self.progress_bar.set_fraction(fraction)
-            self.progress_bar.set_text(f"{percentage}%")
-        
-        # Update status label with status message
+        """Stash the latest fraction/message/file. Render tick paints it.
+
+        Cheap: no widget access. Safe to call from any thread (we hop to the
+        main loop). The caller is expected to have already computed the
+        overall-progress fraction for multi-file batches — this dialog does
+        not re-apply ``(files_completed + fraction) / total_files``.
+        """
+        GLib.idle_add(self._update_progress_state, fraction, message, current_file)
+
+    def _update_progress_state(self, fraction, message, current_file):
+        if fraction is not None:
+            self._latest_fraction = fraction
         if message:
-            self.status_label.set_text(message)
-        
-        # Update current file
+            self._latest_message = message
         if current_file:
             self.current_file = current_file
-            self.file_label.set_text(current_file)
-        
-        # Calculate and update speed/time estimates
-        elapsed = time.time() - self.start_time
-        if elapsed > 1.0 and fraction > 0:  # Wait at least 1 second for meaningful estimates
-            # Calculate transferred bytes and speed
-            if self.total_bytes > 0:
-                transferred_bytes = int(self.total_bytes * fraction)
-                bytes_per_second = transferred_bytes / elapsed
-                
-                # Update speed display
-                if bytes_per_second > 1024 * 1024:  # MB/s
-                    speed_text = f"{bytes_per_second / (1024 * 1024):.1f} MB/s"
-                elif bytes_per_second > 1024:  # KB/s
-                    speed_text = f"{bytes_per_second / 1024:.1f} KB/s"
-                else:
-                    speed_text = f"{bytes_per_second:.0f} B/s"
-                
-                self.speed_label.set_text(speed_text)
-                
-                # Show size information
-                transferred_size = self._format_size(transferred_bytes)
-                total_size = self._format_size(self.total_bytes)
-                size_info = f"{transferred_size} of {total_size}"
-                
-                # Update file label to show size info
-                if current_file:
-                    self.file_label.set_text(f"{current_file} ({size_info})")
-            
-            # Estimate total time and remaining time
-            estimated_total_time = elapsed / fraction
-            remaining_time = estimated_total_time - elapsed
-            
-            if remaining_time > 0:
-                self.time_label.set_text(self._format_time(remaining_time))
-            else:
-                self.time_label.set_text("Almost done…")
-        
+            self._latest_file = current_file
         return False
+
+    def on_bytes(self, transferred: int, total: int) -> None:
+        """Receive raw byte counts from the manager (main thread)."""
+        try:
+            transferred_int = int(transferred or 0)
+            total_int = int(total or 0)
+        except (TypeError, ValueError):
+            return
+        self._transferred_bytes = transferred_int
+        if total_int > 0:
+            self._total_bytes = total_int
+        now = time.monotonic()
+        self._byte_samples.append((now, transferred_int))
+        cutoff = now - self._SPEED_WINDOW_SECONDS
+        while self._byte_samples and self._byte_samples[0][0] < cutoff:
+            self._byte_samples.popleft()
+
+    def _render_tick(self) -> bool:
+        """Repaint speed/ETA/progress at fixed cadence. Returns False to stop."""
+        # If the dialog has been dismissed, drop the timer.
+        try:
+            visible = self.get_visible()
+        except Exception:
+            visible = False
+        if not visible or self._completion_shown:
+            self._render_timeout_id = None
+            return False
+
+        # Status + current-file text.
+        if self._latest_message:
+            try:
+                self.status_label.set_text(self._latest_message)
+            except (AttributeError, RuntimeError):
+                pass
+        if self._latest_file:
+            try:
+                self.file_label.set_text(self._latest_file)
+            except (AttributeError, RuntimeError):
+                pass
+
+        # Progress bar: pulse when we don't yet know what we're transferring,
+        # otherwise show the fraction the caller computed.
+        try:
+            if self._total_bytes <= 0 and self._latest_fraction in (None, 0.0):
+                self.progress_bar.pulse()
+                self.progress_bar.set_text("")
+            elif self._latest_fraction is not None:
+                fraction = max(0.0, min(1.0, float(self._latest_fraction)))
+                self.progress_bar.set_fraction(fraction)
+                self.progress_bar.set_text(f"{int(fraction * 100)}%")
+        except (AttributeError, RuntimeError):
+            pass
+
+        # Speed (sliding-window) + ETA from real byte counts.
+        speed_text = None
+        eta_text = None
+        if len(self._byte_samples) >= 2:
+            t0, b0 = self._byte_samples[0]
+            t1, b1 = self._byte_samples[-1]
+            dt = t1 - t0
+            db = b1 - b0
+            if dt > 0 and db > 0:
+                bps = db / dt
+                speed_text = self._format_speed(bps)
+                if self._total_bytes > 0 and bps > 0:
+                    remaining = max(0, self._total_bytes - self._transferred_bytes)
+                    eta_text = (
+                        "Almost done…" if remaining == 0
+                        else self._format_time(remaining / bps)
+                    )
+        try:
+            self.speed_label.set_text(speed_text or "—")
+            self.time_label.set_text(eta_text or "—")
+        except (AttributeError, RuntimeError):
+            pass
+
+        return True  # keep the timer running
+
+    @staticmethod
+    def _format_speed(bps: float) -> str:
+        if bps >= 1024 * 1024:
+            return f"{bps / (1024 * 1024):.1f} MB/s"
+        if bps >= 1024:
+            return f"{bps / 1024:.1f} KB/s"
+        return f"{int(bps)} B/s"
+
+    def _set_dialog_heading(self, text: str) -> None:
+        """Set the dialog's primary heading on either base class."""
+        if _HAS_ALERT_DIALOG:
+            self.set_heading(text)
+        else:
+            self.set_title(text)
     
     def increment_file_count(self):
         """Increment completed file counter"""
@@ -626,10 +729,6 @@ class SFTPProgressDialog(Adw.MessageDialog):
         self._current_future = future
         if future not in self._futures:
             self._futures.append(future)
-    
-    def set_total_bytes(self, total_bytes):
-        """Set the total bytes for the operation"""
-        self.total_bytes = total_bytes
     
     def _format_time(self, seconds):
         """Format time remaining for display"""
@@ -664,15 +763,16 @@ class SFTPProgressDialog(Adw.MessageDialog):
         if self._completion_shown:
             return False
         self._completion_shown = True
+        self._stop_render_timer()
         
         if success:
-            self.set_title("Transfer Complete")
+            self._set_dialog_heading("Transfer Complete")
             self.status_label.set_text("Transfer completed successfully")
             self.file_label.set_text(f"Successfully transferred {self.files_completed} files")
             self.progress_bar.set_fraction(1.0)
             self.progress_bar.set_text("100%")
         else:
-            self.set_title("Transfer Failed")
+            self._set_dialog_heading("Transfer Failed")
             self.status_label.set_text("Transfer failed")
             if error_message:
                 self.file_label.set_text(f"Error: {error_message}")
@@ -752,6 +852,11 @@ class AsyncSFTPManager(GObject.GObject):
             (str,),
         ),
         "progress": (GObject.SignalFlags.RUN_FIRST, None, (float, str)),
+        # Carries actual byte counts so the progress dialog can compute speed
+        # and ETA without back-deriving them from fraction × hard-coded total.
+        # Args: (transferred_bytes, total_bytes_or_zero_if_unknown). Both are
+        # Python ints (boxed via 'object') to avoid 32-bit truncation.
+        "progress-bytes": (GObject.SignalFlags.RUN_FIRST, None, (object, object)),
         "operation-error": (
             GObject.SignalFlags.RUN_FIRST,
             None,
@@ -792,7 +897,22 @@ class AsyncSFTPManager(GObject.GObject):
             )
         )
         self._lock = threading.Lock()
+        # NOTE: ``_cancelled_operations`` is intentionally NOT protected by
+        # ``_lock``. ``_lock`` is held for the entire duration of an SFTP
+        # ``put()``/``get()`` call. If cancel signaling shared that lock:
+        #   * the UI thread's cancel button would block until the transfer
+        #     finished (no cancel possible during a transfer);
+        #   * the progress callback (which runs in the worker thread already
+        #     holding ``_lock``) would deadlock on its first invocation,
+        #     because ``threading.Lock`` is non-reentrant — freezing the
+        #     transfer too.
+        # A dedicated, never-long-held lock decouples the two concerns.
+        self._cancel_lock = threading.Lock()
         self._cancelled_operations = set()  # Track cancelled operation IDs
+        # Monotonic counter for operation IDs. Combined with time_ns() it
+        # guarantees no two transfers (within or across threads) ever share an
+        # ID, even when scheduled in the same nanosecond. Bumped under _lock.
+        self._operation_seq = 0
         self._connection = connection
         self._connection_manager = connection_manager
         self._ssh_config = dict(ssh_config) if ssh_config else None
@@ -925,6 +1045,75 @@ class AsyncSFTPManager(GObject.GObject):
             self._sftp = new_sftp
         logger.info("SFTP channel reset after cancelled transfer")
 
+    def _remove_remote_best_effort(self, path: str, *, context: str) -> None:
+        """Try to delete a remote file; swallow errors and log them.
+
+        Used to scrub partial files left by cancelled transfers. The remote
+        file may or may not exist — depending on when in the put() the
+        cancel landed — so a missing-file error is normal and logged at
+        debug rather than reported to the user.
+        """
+        with self._lock:
+            sftp = self._sftp
+        if sftp is None:
+            logger.debug(
+                "Skipping %s cleanup of %s: SFTP unavailable", context, path
+            )
+            return
+        try:
+            with self._lock:
+                if self._sftp is None:
+                    return
+                self._sftp.remove(path)
+            logger.debug("Removed partial remote file (%s): %s", context, path)
+        except IOError as exc:
+            # FileNotFoundError or permission issues — partial may legitimately
+            # never have been created, or the user can't delete it.
+            logger.debug(
+                "Could not remove partial remote file (%s) %s: %s",
+                context, path, exc,
+            )
+        except Exception as exc:
+            logger.debug(
+                "Unexpected error removing partial remote file (%s) %s: %s",
+                context, path, exc,
+            )
+
+    def _mark_cancelled(self, operation_id: str) -> None:
+        """Thread-safe insert into the cancelled-operations set.
+
+        Uses the dedicated ``_cancel_lock`` — see comment in ``__init__`` for
+        why this must NOT use ``_lock``.
+        """
+        with self._cancel_lock:
+            self._cancelled_operations.add(operation_id)
+
+    def _discard_cancellation_flag(self, operation_id: str) -> None:
+        """Thread-safe removal from the cancelled-operations set."""
+        with self._cancel_lock:
+            self._cancelled_operations.discard(operation_id)
+
+    def _is_cancelled(self, operation_id: str) -> bool:
+        """Thread-safe membership check for the cancelled-operations set."""
+        with self._cancel_lock:
+            return operation_id in self._cancelled_operations
+
+    def _next_operation_id(self, kind: str) -> str:
+        """Generate a unique operation ID for a transfer.
+
+        Combines a monotonic counter with the current wall-clock nanoseconds
+        so two transfers started in the same tick — or even the same
+        nanosecond — can never share an ID. Uses ``_cancel_lock`` (the short
+        bookkeeping lock) rather than the SFTP-ops ``_lock``: this method is
+        called from the UI thread at the top of every ``upload``/``download``,
+        and ``_lock`` is held for the entire duration of in-progress
+        transfers, so contending on it would freeze the UI.
+        """
+        with self._cancel_lock:
+            self._operation_seq += 1
+            seq = self._operation_seq
+        return f"{kind}_{id(self)}_{time.time_ns()}_{seq}"
+
     def _start_keepalive_worker(self) -> None:
         with self._lock:
             if self._keepalive_interval <= 0 or self._sftp is None:
@@ -941,16 +1130,27 @@ class AsyncSFTPManager(GObject.GObject):
             logger.debug("SFTP keepalive worker started for %s", self._host)
             try:
                 while not stop_event.wait(interval):
+                    # Do the stat under the lock so close()/reset cannot pull
+                    # the channel out from under us between the None-check and
+                    # the call. An active transfer holds the lock, but that's
+                    # fine — a transfer IS keepalive traffic.
+                    stat_error: Optional[Exception] = None
+                    sftp_exited = False
                     with self._lock:
                         sftp = self._sftp
                         count_max = self._keepalive_count_max
-                    if sftp is None:
+                        if sftp is None:
+                            sftp_exited = True
+                        else:
+                            try:
+                                sftp.stat(".")
+                            except Exception as exc:
+                                stat_error = exc
+                    if sftp_exited:
                         logger.debug("Keepalive worker exiting because SFTP client is gone")
                         break
 
-                    try:
-                        sftp.stat(".")
-                    except Exception as exc:  # pragma: no cover - defensive logging
+                    if stat_error is not None:
                         with self._lock:
                             self._keepalive_failures += 1
                             failures = self._keepalive_failures
@@ -959,7 +1159,7 @@ class AsyncSFTPManager(GObject.GObject):
                             "SFTP keepalive attempt failed (%s/%s): %s",
                             failures,
                             count_max,
-                            exc,
+                            stat_error,
                         )
                         if count_max >= 0 and failures > count_max:
                             message = (
@@ -1869,10 +2069,13 @@ class AsyncSFTPManager(GObject.GObject):
 
     def mkdir(self, path: str) -> Future:
         logger.debug(f"Creating directory: {path}")
-        return self._submit(
-            lambda: self._sftp.mkdir(path),
-            # Don't call listdir from callback - let the UI handle refresh
-        )
+        def _impl() -> None:
+            with self._lock:
+                if self._sftp is None:
+                    raise IOError("SFTP connection is not available")
+                self._sftp.mkdir(path)
+        # Don't call listdir from callback - let the UI handle refresh
+        return self._submit(_impl)
 
     def path_exists(self, path: str) -> Future:
         """Return a future that resolves to whether *path* exists remotely."""
@@ -2018,10 +2221,13 @@ class AsyncSFTPManager(GObject.GObject):
 
     def rename(self, source: str, target: str) -> Future:
         logger.debug(f"Renaming {source} to {target}")
-        return self._submit(
-            lambda: self._sftp.rename(source, target),
-            # Don't call listdir from callback - let the UI handle refresh
-        )
+        def _impl() -> None:
+            with self._lock:
+                if self._sftp is None:
+                    raise IOError("SFTP connection is not available")
+                self._sftp.rename(source, target)
+        # Don't call listdir from callback - let the UI handle refresh
+        return self._submit(_impl)
 
     def download(self, source: str, destination: pathlib.Path) -> Future:
         try:
@@ -2045,7 +2251,7 @@ class AsyncSFTPManager(GObject.GObject):
             logger.error(f"Download: failed to prepare destination directory {destination.parent}: {e}")
             # Continue anyway - maybe the directory already exists or will be created by the SFTP operation
         
-        operation_id = f"download_{id(self)}_{time.time()}"
+        operation_id = self._next_operation_id("download")
 
         def _impl() -> None:
             assert self._sftp is not None
@@ -2053,9 +2259,11 @@ class AsyncSFTPManager(GObject.GObject):
             
             def progress_callback(transferred: int, total: int) -> None:
                 # Check if this operation was cancelled
-                if operation_id in self._cancelled_operations:
+                if self._is_cancelled(operation_id):
                     raise TransferCancelledException("Download was cancelled")
-                    
+
+                # Emit raw bytes first so the dialog can do its own speed/ETA.
+                self.emit("progress-bytes", transferred, total)
                 if total > 0:
                     progress = transferred / total
                     transferred_size = self._format_size(transferred)
@@ -2074,7 +2282,7 @@ class AsyncSFTPManager(GObject.GObject):
                     self._sftp.get(source, str(destination), callback=progress_callback)
                 
                 # Only emit completion if not cancelled
-                if operation_id not in self._cancelled_operations:
+                if not self._is_cancelled(operation_id):
                     # Verify the file was actually created
                     if destination.exists():
                         file_size = destination.stat().st_size
@@ -2087,11 +2295,14 @@ class AsyncSFTPManager(GObject.GObject):
                 try:
                     if destination.exists():
                         destination.unlink()
-                        print(f"DEBUG: Cleaned up partial download: {destination}")
-                except Exception:
-                    pass
+                        logger.debug("Cleaned up partial download: %s", destination)
+                except Exception as cleanup_exc:
+                    logger.debug(
+                        "Partial download cleanup failed for %s: %s",
+                        destination, cleanup_exc,
+                    )
                 self.emit("progress", 0.0, "Download cancelled")
-                print(f"DEBUG: Download operation {operation_id} was cancelled")
+                logger.info("Download operation %s was cancelled", operation_id)
                 # paramiko's SFTP channel is left in a broken state after a
                 # mid-stream cancel. Recreate it so subsequent listdir/refresh
                 # ops don't hang.
@@ -2101,24 +2312,26 @@ class AsyncSFTPManager(GObject.GObject):
                     logger.error(
                         "SFTP reset after download cancel failed: %s", reset_exc
                     )
+                # Re-raise so the Future reflects the cancellation.
+                raise
             finally:
                 # Clean up the cancellation flag
-                self._cancelled_operations.discard(operation_id)
+                self._discard_cancellation_flag(operation_id)
 
         future = self._submit(_impl)
         
         # Store the operation ID so we can cancel it
         original_cancel = future.cancel
         def cancel_with_cleanup():
-            print(f"DEBUG: Cancelling download operation {operation_id}")
-            self._cancelled_operations.add(operation_id)
+            logger.debug("Cancelling download operation %s", operation_id)
+            self._mark_cancelled(operation_id)
             return original_cancel()
         future.cancel = cancel_with_cleanup
-        
+
         return future
 
     def upload(self, source: pathlib.Path, destination: str) -> Future:
-        operation_id = f"upload_{id(self)}_{time.time()}"
+        operation_id = self._next_operation_id("upload")
         
         def _impl() -> None:
             # Check connection before starting
@@ -2130,9 +2343,11 @@ class AsyncSFTPManager(GObject.GObject):
             
             def progress_callback(transferred: int, total: int) -> None:
                 # Check if this operation was cancelled
-                if operation_id in self._cancelled_operations:
+                if self._is_cancelled(operation_id):
                     raise TransferCancelledException("Upload was cancelled")
-                    
+
+                # Emit raw bytes first so the dialog can do its own speed/ETA.
+                self.emit("progress-bytes", transferred, total)
                 if total > 0:
                     progress = transferred / total
                     transferred_size = self._format_size(transferred)
@@ -2153,136 +2368,291 @@ class AsyncSFTPManager(GObject.GObject):
                     self._sftp.put(str(source), destination, callback=progress_callback)
                 
                 # Only emit completion if not cancelled
-                if operation_id not in self._cancelled_operations:
+                if not self._is_cancelled(operation_id):
                     self.emit("progress", 1.0, "Upload complete")
             except TransferCancelledException:
                 self.emit("progress", 0.0, "Upload cancelled")
-                print(f"DEBUG: Upload operation {operation_id} was cancelled")
+                logger.info("Upload operation %s was cancelled", operation_id)
                 # paramiko's SFTP channel is left in a broken state after a
                 # mid-stream cancel — every subsequent op on this channel
-                # would hang. Recreate the channel before returning so the
-                # next listdir/refresh actually completes.
+                # would hang. Recreate the channel first so cleanup + future
+                # operations work.
                 try:
                     self._reset_sftp_channel()
                 except Exception as reset_exc:
                     logger.error(
                         "SFTP reset after upload cancel failed: %s", reset_exc
                     )
+                # Symmetry with download cancellation: delete the partial
+                # remote file so cancel = nothing left behind on either side.
+                self._remove_remote_best_effort(
+                    destination, context="cancelled upload"
+                )
+                # Re-raise so the Future reflects the cancellation; otherwise
+                # _attach_refresh would treat this as success and highlight
+                # a file that doesn't exist on the remote.
+                raise
             except Exception as e:
                 # Re-raise to ensure it's propagated to the future
                 logger.error(f"Upload failed for {destination}: {e}", exc_info=True)
                 raise
             finally:
                 # Clean up the cancellation flag
-                self._cancelled_operations.discard(operation_id)
+                self._discard_cancellation_flag(operation_id)
 
         future = self._submit(_impl)
 
         # Store the operation ID so we can cancel it
         original_cancel = future.cancel
         def cancel_with_cleanup():
-            print(f"DEBUG: Cancelling upload operation {operation_id}")
-            self._cancelled_operations.add(operation_id)
+            logger.debug("Cancelling upload operation %s", operation_id)
+            self._mark_cancelled(operation_id)
             return original_cancel()
         future.cancel = cancel_with_cleanup
-        
+
         return future
 
     # Helpers for directory recursion – these are intentionally simplistic
     # and rely on Paramiko's high level API.
 
     def download_directory(self, source: str, destination: pathlib.Path) -> Future:
+        operation_id = self._next_operation_id("download_dir")
+        # Holder so the cancel cleanup knows which file was in flight.
+        in_progress = {"local": None}  # type: Dict[str, Optional[str]]
+
         def _impl() -> None:
             assert self._sftp is not None
             self.emit("progress", 0.0, "Preparing download…")
-            
-            # First, collect all files to get total count
-            all_files = []
-            for root, dirs, files in walk_remote(self._sftp, source):
-                rel_root = os.path.relpath(root, source)
-                target_root = destination / rel_root
-                target_root.mkdir(parents=True, exist_ok=True)
-                for name in files:
-                    all_files.append((os.path.join(root, name), str(target_root / name)))
-            
+
+            # Collect files with their sizes in a single pass so we can emit
+            # grand-total byte counts and get a meaningful sliding-window
+            # speed across file boundaries.
+            all_files: List[Tuple[str, str, int]] = []
+
+            def _collect(remote_root: str, local_root: pathlib.Path) -> None:
+                local_root.mkdir(parents=True, exist_ok=True)
+                for entry in self._sftp.listdir_attr(remote_root):
+                    remote_path = os.path.join(remote_root, entry.filename)
+                    if stat_isdir(entry):
+                        _collect(remote_path, local_root / entry.filename)
+                    else:
+                        size = int(getattr(entry, "st_size", 0) or 0)
+                        all_files.append(
+                            (remote_path, str(local_root / entry.filename), size)
+                        )
+
+            with self._lock:
+                if self._sftp is None:
+                    raise IOError("SFTP connection closed during directory download")
+                _collect(source, destination)
+
             total_files = len(all_files)
             if total_files == 0:
                 self.emit("progress", 1.0, "Directory downloaded (no files)")
                 return
-            
-            # Download files with progress tracking
-            for i, (remote_path, local_path) in enumerate(all_files):
-                file_progress = i / total_files
-                self.emit("progress", file_progress, f"Downloading {os.path.basename(remote_path)}...")
-                
-                def progress_callback(transferred: int, total: int) -> None:
-                    if total > 0:
-                        file_progress = transferred / total
-                        overall_progress = (i + file_progress) / total_files
-                        self.emit("progress", overall_progress, 
-                                f"Downloading {os.path.basename(remote_path)} ({transferred:,}/{total:,} bytes)")
-                
-                # Serialize SFTP operations
-                with self._lock:
-                    if self._sftp is None:
-                        raise IOError("SFTP connection closed during directory download")
-                    self._sftp.get(remote_path, local_path, callback=progress_callback)
-            
-            self.emit("progress", 1.0, "Directory downloaded")
 
-        return self._submit(_impl)
+            grand_total = sum(size for _, _, size in all_files)
+            bytes_done = 0
+
+            try:
+                for i, (remote_path, local_path, file_size) in enumerate(all_files):
+                    if self._is_cancelled(operation_id):
+                        raise TransferCancelledException("Directory download was cancelled")
+
+                    in_progress["local"] = local_path
+                    file_progress = i / total_files
+                    self.emit("progress", file_progress, f"Downloading {os.path.basename(remote_path)}...")
+
+                    def progress_callback(transferred: int, total: int,
+                                          _i=i, _remote=remote_path,
+                                          _base=bytes_done) -> None:
+                        if self._is_cancelled(operation_id):
+                            raise TransferCancelledException("Directory download was cancelled")
+                        # Grand-total bytes so sliding-window speed survives
+                        # file boundaries.
+                        self.emit(
+                            "progress-bytes",
+                            _base + transferred,
+                            grand_total if grand_total > 0 else 0,
+                        )
+                        if total > 0:
+                            file_progress = transferred / total
+                            overall_progress = (_i + file_progress) / total_files
+                            self.emit(
+                                "progress", overall_progress,
+                                f"Downloading {os.path.basename(_remote)} ({transferred:,}/{total:,} bytes)",
+                            )
+
+                    with self._lock:
+                        if self._sftp is None:
+                            raise IOError("SFTP connection closed during directory download")
+                        self._sftp.get(remote_path, local_path, callback=progress_callback)
+
+                    bytes_done += file_size
+                    in_progress["local"] = None
+
+                self.emit("progress", 1.0, "Directory downloaded")
+            except TransferCancelledException:
+                self.emit("progress", 0.0, "Download cancelled")
+                logger.info("Directory download %s was cancelled", operation_id)
+                try:
+                    self._reset_sftp_channel()
+                except Exception as reset_exc:
+                    logger.error(
+                        "SFTP reset after directory download cancel failed: %s",
+                        reset_exc,
+                    )
+                # Symmetry with single-file cancel: drop the partial local file.
+                partial = in_progress.get("local")
+                if partial:
+                    try:
+                        partial_path = pathlib.Path(partial)
+                        if partial_path.exists():
+                            partial_path.unlink()
+                            logger.debug("Cleaned up partial download: %s", partial_path)
+                    except Exception as cleanup_exc:
+                        logger.debug(
+                            "Partial download cleanup failed for %s: %s",
+                            partial, cleanup_exc,
+                        )
+                raise
+            finally:
+                self._discard_cancellation_flag(operation_id)
+
+        future = self._submit(_impl)
+        original_cancel = future.cancel
+        def cancel_with_cleanup():
+            logger.debug("Cancelling directory-download operation %s", operation_id)
+            self._mark_cancelled(operation_id)
+            return original_cancel()
+        future.cancel = cancel_with_cleanup
+        return future
 
     def upload_directory(self, source: pathlib.Path, destination: str) -> Future:
+        operation_id = self._next_operation_id("upload_dir")
+        in_progress = {"remote": None}  # type: Dict[str, Optional[str]]
+
         def _impl() -> None:
             assert self._sftp is not None
             self.emit("progress", 0.0, "Preparing upload…")
-            
-            # First, collect all files to get total count
+
+            # First, collect all files to get total count + create remote dirs.
             all_files = []
             for root, dirs, files in os.walk(source):
+                if self._is_cancelled(operation_id):
+                    raise TransferCancelledException("Directory upload was cancelled")
                 rel_root = os.path.relpath(root, str(source))
                 remote_root = (
                     destination if rel_root == "." else os.path.join(destination, rel_root)
                 )
                 try:
-                    # Serialize SFTP operations
                     with self._lock:
                         if self._sftp is None:
                             raise IOError("SFTP connection closed during directory upload")
                         self._sftp.mkdir(remote_root)
-                except IOError:
-                    pass
+                except IOError as mkdir_exc:
+                    # paramiko surfaces SSH_FX_FAILURE for "already exists" as
+                    # IOError without a real errno — accept that case silently
+                    # but re-raise anything that looks like a real problem
+                    # (permission denied, parent missing, disk full, etc.)
+                    # rather than hiding it behind a later, more confusing
+                    # "no such file" from the subsequent put().
+                    err_text = str(mkdir_exc).lower()
+                    looks_like_exists = (
+                        getattr(mkdir_exc, "errno", None) == errno.EEXIST
+                        or "exists" in err_text
+                    )
+                    if not looks_like_exists:
+                        logger.error(
+                            "mkdir failed for %s during directory upload: %s",
+                            remote_root, mkdir_exc,
+                        )
+                        raise
                 for name in files:
                     local_path = os.path.join(root, name)
                     remote_path = os.path.join(remote_root, name)
-                    all_files.append((local_path, remote_path))
-            
+                    try:
+                        size = os.path.getsize(local_path)
+                    except OSError:
+                        size = 0
+                    all_files.append((local_path, remote_path, size))
+
             total_files = len(all_files)
             if total_files == 0:
                 self.emit("progress", 1.0, "Directory uploaded (no files)")
                 return
-            
-            # Upload files with progress tracking
-            for i, (local_path, remote_path) in enumerate(all_files):
-                file_progress = i / total_files
-                self.emit("progress", file_progress, f"Uploading {os.path.basename(local_path)}...")
-                
-                def progress_callback(transferred: int, total: int) -> None:
-                    if total > 0:
-                        file_progress = transferred / total
-                        overall_progress = (i + file_progress) / total_files
-                        self.emit("progress", overall_progress, 
-                                f"Uploading {os.path.basename(local_path)} ({transferred:,}/{total:,} bytes)")
-                
-                # Serialize SFTP operations
-                with self._lock:
-                    if self._sftp is None:
-                        raise IOError("SFTP connection closed during directory upload")
-                    self._sftp.put(local_path, remote_path, callback=progress_callback)
-            
-            self.emit("progress", 1.0, "Directory uploaded")
 
-        return self._submit(_impl)
+            grand_total = sum(size for _, _, size in all_files)
+            bytes_done = 0
+
+            try:
+                for i, (local_path, remote_path, file_size) in enumerate(all_files):
+                    if self._is_cancelled(operation_id):
+                        raise TransferCancelledException("Directory upload was cancelled")
+
+                    in_progress["remote"] = remote_path
+                    file_progress = i / total_files
+                    self.emit("progress", file_progress, f"Uploading {os.path.basename(local_path)}...")
+
+                    def progress_callback(transferred: int, total: int,
+                                          _i=i, _local=local_path,
+                                          _base=bytes_done) -> None:
+                        if self._is_cancelled(operation_id):
+                            raise TransferCancelledException("Directory upload was cancelled")
+                        # Grand-total bytes so sliding-window speed survives
+                        # file boundaries.
+                        self.emit(
+                            "progress-bytes",
+                            _base + transferred,
+                            grand_total if grand_total > 0 else 0,
+                        )
+                        if total > 0:
+                            file_progress = transferred / total
+                            overall_progress = (_i + file_progress) / total_files
+                            self.emit(
+                                "progress", overall_progress,
+                                f"Uploading {os.path.basename(_local)} ({transferred:,}/{total:,} bytes)",
+                            )
+
+                    with self._lock:
+                        if self._sftp is None:
+                            raise IOError("SFTP connection closed during directory upload")
+                        self._sftp.put(local_path, remote_path, callback=progress_callback)
+
+                    bytes_done += file_size
+                    in_progress["remote"] = None
+
+                self.emit("progress", 1.0, "Directory uploaded")
+            except TransferCancelledException:
+                self.emit("progress", 0.0, "Upload cancelled")
+                logger.info("Directory upload %s was cancelled", operation_id)
+                try:
+                    self._reset_sftp_channel()
+                except Exception as reset_exc:
+                    logger.error(
+                        "SFTP reset after directory upload cancel failed: %s",
+                        reset_exc,
+                    )
+                # Drop the partial remote file. Previously-completed files in
+                # the same batch are intentionally left alone — they are
+                # complete, not partial.
+                partial = in_progress.get("remote")
+                if partial:
+                    self._remove_remote_best_effort(
+                        partial, context="cancelled directory upload"
+                    )
+                raise
+            finally:
+                self._discard_cancellation_flag(operation_id)
+
+        future = self._submit(_impl)
+        original_cancel = future.cancel
+        def cancel_with_cleanup():
+            logger.debug("Cancelling directory-upload operation %s", operation_id)
+            self._mark_cancelled(operation_id)
+            return original_cancel()
+        future.cancel = cancel_with_cleanup
+        return future
 
 
 def stat_isdir(attr: paramiko.SFTPAttributes) -> bool:
@@ -7556,16 +7926,23 @@ class FileManagerWindow(Adw.Window):
 
         def _on_done(completed: Future) -> None:
             operation_succeeded = False
-            socket_closed_error = False
+            apply_highlight = True
             try:
                 completed.result()
                 operation_succeeded = True
                 logger.debug("_attach_refresh: operation completed successfully")
+            except TransferCancelledException:
+                # Transfer was cancelled mid-stream. The partial file (if any)
+                # was already cleaned up by the worker. Refresh the listing so
+                # the user sees the directory's current state, but skip the
+                # highlight — the file we were transferring isn't there.
+                logger.debug("_attach_refresh: transfer cancelled — refresh without highlight")
+                operation_succeeded = True
+                apply_highlight = False
             except Exception as e:
                 error_str = str(e).lower()
                 # Check if it's a socket/connection closed error - upload might still have succeeded
                 if "socket is closed" in error_str or "connection" in error_str and "closed" in error_str:
-                    socket_closed_error = True
                     logger.debug(f"_attach_refresh: operation completed but socket closed: {e}")
                     # Still try to refresh - the upload might have succeeded before socket closed
                     operation_succeeded = True
@@ -7573,10 +7950,10 @@ class FileManagerWindow(Adw.Window):
                     logger.debug(f"_attach_refresh: operation failed with {e}")
                     # For other errors, don't refresh
                     return
-            
+
             # Only refresh if operation succeeded (or socket closed, which might mean success)
             if operation_succeeded:
-                if highlight_name:
+                if highlight_name and apply_highlight:
                     if refresh_remote is not None:
                         self._pending_highlights[refresh_remote] = highlight_name
                         logger.debug(f"_attach_refresh: set pending highlight {highlight_name} for remote pane")
@@ -7987,31 +8364,22 @@ class FileManagerWindow(Adw.Window):
 
                 self._progress_dialog = SFTPProgressDialog(parent=dialog_parent, operation_type=operation_type)
                 self._progress_dialog.set_operation_details(total_files=total_files, filename=filename)
-                self._progress_dialog.present()
-                print(f"DEBUG: Progress dialog created and shown successfully")
+                # AlertDialog.present takes a parent widget; MessageDialog
+                # already had it set via set_transient_for in the dialog ctor.
+                if _HAS_ALERT_DIALOG:
+                    self._progress_dialog.present(dialog_parent)
+                else:
+                    self._progress_dialog.present()
+                logger.debug("Progress dialog created and shown successfully")
             
-            # Add future to dialog (will update total_files if needed)
+            # Add future to dialog (will update total_files if needed). Real
+            # byte counts arrive via the manager's progress-bytes signal — no
+            # need to pre-set total_bytes here.
             self._progress_dialog.set_operation_details(total_files=total_files, filename=filename)
             self._progress_dialog.set_future(future)
-            
-            # Try to get file size for better progress display (only for new dialogs)
-            if not reuse_dialog:
-                try:
-                    if operation_type == "download":
-                        # For downloads, we'll get the size from the SFTP manager if available
-                        # This is a rough estimate, the actual implementation would need to
-                        # query the remote file size
-                        self._progress_dialog.total_bytes = 1024 * 1024  # Default to 1MB estimate
-                    else:  # upload
-                        # For uploads, we could get the local file size
-                        self._progress_dialog.total_bytes = 1024 * 1024  # Default to 1MB estimate
-                except Exception:
-                    self._progress_dialog.total_bytes = 0
-            
+
         except Exception as exc:
-            print(f"DEBUG: Error in _show_progress_dialog: {exc}")
-            import traceback
-            traceback.print_exc()
+            logger.error("Error in _show_progress_dialog: %s", exc, exc_info=True)
             return
         
         # Only connect progress signal handler when creating a new dialog
@@ -8019,54 +8387,54 @@ class FileManagerWindow(Adw.Window):
         if not reuse_dialog:
             # Store references for cleanup
             self._progress_handler_id = None
+            self._progress_bytes_handler_id = None
             self._active_futures = []  # Track all active futures for multi-file transfers
             self._future_to_filename = {}  # Map futures to filenames for progress tracking
             
-            # Connect progress signal
+            # Connect progress signal. We compute the overall-progress
+            # fraction exactly once here — the dialog stores and renders it
+            # verbatim without re-applying multi-file math.
             def _on_progress(manager, progress: float, message: str) -> None:
-                # Check if dialog exists and operation hasn't been cancelled
-                # Accept progress from any active future
-                if (self._progress_dialog and 
-                    not self._progress_dialog.is_cancelled and
-                    hasattr(self, '_active_futures') and self._active_futures):
-                    # Check if any active future is still running
-                    active_count = sum(1 for f in self._active_futures 
-                                     if f and not f.done() and not f.cancelled())
-                    if active_count > 0:
-                        try:
-                            # For multi-file operations, calculate overall progress
-                            if self._progress_dialog.total_files > 1:
-                                # Calculate overall progress: (completed_files + current_file_progress) / total_files
-                                completed = self._progress_dialog.files_completed
-                                total = self._progress_dialog.total_files
-                                
-                                # Calculate overall progress
-                                # Each file contributes 1/total to the overall progress
-                                # Completed files contribute: completed / total
-                                # Current file contributes: progress / total
-                                # Total: (completed + progress) / total
-                                overall_progress = (completed + progress) / total
-                                
-                                # Clamp to ensure we never show 100% until all files are done
-                                # When there are active files, the maximum progress is:
-                                # (total - active_count) completed files + 1.0 for the current file
-                                # = (total - active_count + 1.0) / total
-                                # But we should cap at (total - 1) / total to be safe (when 1 file is active)
-                                if active_count > 0 and completed < total:
-                                    # Maximum is when all but one file is completed and current is at 100%
-                                    max_progress = (total - 1) / total
-                                    overall_progress = min(overall_progress, max_progress)
-                                
-                                self._progress_dialog.update_progress(overall_progress, message)
-                            else:
-                                # Single file - use progress directly
-                                self._progress_dialog.update_progress(progress, message)
-                        except (AttributeError, RuntimeError, GLib.GError):
-                            # Dialog may have been destroyed
-                            pass
-            
-            # Connect progress signal and store handler ID
+                if not (self._progress_dialog and
+                        not self._progress_dialog.is_cancelled and
+                        getattr(self, '_active_futures', None)):
+                    return
+                active_count = sum(
+                    1 for f in self._active_futures
+                    if f and not f.done() and not f.cancelled()
+                )
+                if active_count == 0:
+                    return
+                try:
+                    if self._progress_dialog.total_files > 1:
+                        # Single-file directory transfers emit per-file
+                        # fractions; flatten to one overall progress value.
+                        completed = self._progress_dialog.files_completed
+                        total = self._progress_dialog.total_files
+                        overall_progress = (completed + progress) / total
+                        # Don't claim 100% while files are still active.
+                        if completed < total:
+                            cap = (total - 1) / total
+                            overall_progress = min(overall_progress, cap)
+                        self._progress_dialog.update_progress(overall_progress, message)
+                    else:
+                        self._progress_dialog.update_progress(progress, message)
+                except (AttributeError, RuntimeError, GLib.GError):
+                    # Dialog may have been destroyed mid-emit.
+                    pass
+
+            def _on_progress_bytes(manager, transferred, total) -> None:
+                if not (self._progress_dialog and not self._progress_dialog.is_cancelled):
+                    return
+                try:
+                    GLib.idle_add(self._progress_dialog.on_bytes, transferred, total)
+                except (AttributeError, RuntimeError, GLib.GError):
+                    pass
+
             self._progress_handler_id = self._manager.connect("progress", _on_progress)
+            self._progress_bytes_handler_id = self._manager.connect(
+                "progress-bytes", _on_progress_bytes
+            )
         
         # Add this future to the active futures list
         if not hasattr(self, '_active_futures'):
@@ -8089,8 +8457,8 @@ class FileManagerWindow(Adw.Window):
                 if hasattr(self, '_active_futures') and future_result in self._active_futures:
                     self._active_futures.remove(future_result)
                 
-                # Only disconnect progress signal if all futures are done
-                active_count = sum(1 for f in getattr(self, '_active_futures', []) 
+                # Only disconnect progress signals if all futures are done
+                active_count = sum(1 for f in getattr(self, '_active_futures', [])
                                  if f and not f.done())
                 if active_count == 0:
                     if (hasattr(self, '_progress_handler_id') and self._progress_handler_id and
@@ -8100,6 +8468,13 @@ class FileManagerWindow(Adw.Window):
                         except (TypeError, RuntimeError, AttributeError):
                             pass
                         self._progress_handler_id = None
+                    if (hasattr(self, '_progress_bytes_handler_id') and self._progress_bytes_handler_id and
+                        hasattr(self, '_manager') and self._manager is not None):
+                        try:
+                            self._manager.disconnect(self._progress_bytes_handler_id)
+                        except (TypeError, RuntimeError, AttributeError):
+                            pass
+                        self._progress_bytes_handler_id = None
                 
                 # Update dialog to show completion
                 if self._progress_dialog:
