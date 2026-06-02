@@ -3519,7 +3519,18 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 if hasattr(self, 'sidebar_toggle_button') and self.sidebar_toggle_button:
                     if self.sidebar_toggle_button.get_active():
                         self.sidebar_toggle_button.set_active(False)
-                
+
+                # Close the search bar (if open) and clear the filter so the
+                # full connection list is shown when focus moves here.
+                if (
+                    getattr(self, 'search_container', None)
+                    and self.search_container.get_visible()
+                ):
+                    if getattr(self, 'search_entry', None):
+                        self.search_entry.set_text('')
+                    self.rebuild_connection_list()
+                    self.search_container.set_visible(False)
+
                 # Ensure a row is selected before focusing
                 try:
                     selected_rows = list(self.connection_list.get_selected_rows())
@@ -3527,15 +3538,22 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     selected_row = self.connection_list.get_selected_row()
                     selected_rows = [selected_row] if selected_row else []
                 logger.debug(f"Focus connection list - current selection count: {len(selected_rows)}")
-                if not selected_rows:
+                target_row = selected_rows[0] if selected_rows else None
+                if target_row is None:
                     # Select the first row regardless of type
-                    first_row = self.connection_list.get_row_at_index(0)
-                    logger.debug(f"Focus connection list - first row: {first_row}")
-                    if first_row:
-                        self._select_only_row(first_row)
-                        logger.debug(f"Focus connection list - selected first row: {first_row}")
-                
-                self.connection_list.grab_focus()
+                    target_row = self.connection_list.get_row_at_index(0)
+                    logger.debug(f"Focus connection list - first row: {target_row}")
+                    if target_row:
+                        self._select_only_row(target_row)
+                        logger.debug(f"Focus connection list - selected first row: {target_row}")
+
+                # Focus the row directly (not the ListBox container): GTK4
+                # arrow-key navigation only works when a row holds focus, and
+                # after a rebuild the container won't delegate focus to a row.
+                if target_row is not None:
+                    target_row.grab_focus()
+                else:
+                    self.connection_list.grab_focus()
                 
                 
                 # Show toast notification
@@ -4877,7 +4895,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
     def toggle_list_focus(self):
         """Toggle focus between connection list and terminal"""
-        if self.connection_list.has_focus():
+        # Use the focus-ancestry check (not connection_list.has_focus()): after
+        # focusing, a child *row* holds focus, so has_focus() on the ListBox
+        # itself is False and the toggle would never return to the terminal.
+        if self._focus_is_in_connection_list():
             # Focus current terminal
             current_page = self.tab_view.get_selected_page()
             if current_page:
