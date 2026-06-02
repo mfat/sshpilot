@@ -40,6 +40,45 @@ _CATEGORY_SSH = 'ssh'
 _CATEGORY_ASKPASS = 'askpass'
 
 
+# Level-filter dropdown options. The integer is the *minimum* logging level
+# whose records pass through (0 = no filtering — show everything). Logging
+# constants: DEBUG=10, INFO=20, WARNING=30, ERROR=40.
+_LEVEL_FILTER_OPTIONS = (
+    # (label, minimum_level)
+    ("All levels",   0),
+    ("Info and up",  logging.INFO),
+    ("Warning and up", logging.WARNING),
+    ("Error only",   logging.ERROR),
+)
+
+
+# Map textual level → numeric. Matches our file formatter's output.
+_LEVEL_NAME_TO_INT = {
+    "DEBUG":    logging.DEBUG,
+    "INFO":     logging.INFO,
+    "WARNING":  logging.WARNING,
+    "WARN":     logging.WARNING,
+    "ERROR":    logging.ERROR,
+    "CRITICAL": logging.CRITICAL,
+    "FATAL":    logging.CRITICAL,
+}
+
+
+def _level_of_line(line: str) -> int:
+    """Best-effort extraction of a record's level from a formatted log line.
+
+    Our file formatter writes ``YYYY-MM-DD HH:MM:SS - name - LEVEL - msg``.
+    Any line that doesn't match (e.g. multi-line tracebacks, askpass output)
+    is treated as INFO so it survives all real filters — we'd rather show a
+    little extra than hide something the user is looking for.
+    """
+    # Split on ``" - "`` up to 4 fields. The third field is the level.
+    parts = line.split(" - ", 3)
+    if len(parts) >= 3:
+        return _LEVEL_NAME_TO_INT.get(parts[2].strip(), logging.INFO)
+    return logging.INFO
+
+
 def _resolve_log_path(category: str = _CATEGORY_MASTER) -> str:
     """Return the absolute path to the log file for *category*."""
     if category == _CATEGORY_APP:
@@ -193,6 +232,25 @@ class LogViewerWindow(Adw.Window):
         self._current_lines: List[str] = []
         self._current_total: int = 0
 
+        # --- Live-tail state ---------------------------------------------
+        # File monitor + last-known byte position, so we only read the bytes
+        # appended since the previous tick rather than re-scanning the whole
+        # file on every change event.
+        self._file_monitor: Optional[Gio.FileMonitor] = None
+        self._tail_pos: int = 0
+        # When True, new lines auto-append AND we auto-scroll to the end.
+        # Toggled by the Follow switch in the header.
+        self._follow_enabled: bool = True
+
+        # --- Level filter state ------------------------------------------
+        # Viewer-side filter; INDEPENDENT of the persistent app log level
+        # ("logging.level" in Preferences → Advanced). The app log level
+        # controls what gets *captured* on disk; this filter only controls
+        # what we *show* from what's already there. Hiding here doesn't drop
+        # anything from the file.
+        # Index aligns with _LEVEL_FILTER_OPTIONS below.
+        self._level_filter_idx: int = 0
+
         toolbar = Adw.ToolbarView()
         self.set_content(toolbar)
 
@@ -215,6 +273,35 @@ class LogViewerWindow(Adw.Window):
             "notify::selected", self._on_category_changed
         )
         header.pack_start(self._category_dropdown)
+
+        # Level filter dropdown — VIEWER-side, independent of the persistent
+        # app log level. Tooltip explains the distinction so users don't
+        # confuse it with Preferences → Advanced → Logging.
+        level_model = Gtk.StringList()
+        for label, _lvl in _LEVEL_FILTER_OPTIONS:
+            level_model.append(label)
+        self._level_dropdown = Gtk.DropDown(model=level_model)
+        self._level_dropdown.set_selected(self._level_filter_idx)
+        self._level_dropdown.set_tooltip_text(
+            _("Hide lines below the selected level (display only). To control "
+              "what is actually written to the log files, use Preferences → "
+              "Advanced → Logging.")
+        )
+        self._level_dropdown.connect(
+            "notify::selected", self._on_level_filter_changed
+        )
+        header.pack_start(self._level_dropdown)
+
+        # Follow toggle — when active, newly written log lines are appended
+        # live and the view auto-scrolls to the end. Mirrors `tail -f`.
+        self._follow_toggle = Gtk.ToggleButton()
+        self._follow_toggle.set_icon_name("go-bottom-symbolic")
+        self._follow_toggle.set_active(self._follow_enabled)
+        self._follow_toggle.set_tooltip_text(
+            _("Follow new log entries as they are written")
+        )
+        self._follow_toggle.connect("toggled", self._on_follow_toggled)
+        header.pack_start(self._follow_toggle)
 
         # Primary action: copy a self-contained diagnostic bundle.
         copy_btn = Gtk.Button(label=_("Copy log output"))
@@ -306,12 +393,26 @@ class LogViewerWindow(Adw.Window):
         scrolled.set_child(self._textview)
         body.append(scrolled)
 
+        # Make sure we drop the file monitor when the window closes —
+        # otherwise the GFile handle stays bound for the rest of the session.
+        self.connect("close-request", self._on_close_request)
+
         self._do_refresh()
+
+    def _on_close_request(self, _window) -> bool:
+        self._stop_monitor()
+        return False  # let the window close normally
 
     # ------------------------------------------------------------------ load
 
     def _load(self) -> None:
-        """Read the log (either tail or full) and render it."""
+        """(Re)read the log, render with the active level filter, and start
+        watching for live updates."""
+        # Drop any monitor pointing at a previously-shown file. We always
+        # restart so category switches / refresh / rotation handling all
+        # converge on a single code path.
+        self._stop_monitor()
+
         if self._showing_full_file:
             text = _read_full_file(self._log_path)
             self._current_lines = text.splitlines()
@@ -321,7 +422,27 @@ class LogViewerWindow(Adw.Window):
                 self._log_path, self._tail_lines
             )
 
+        # Record the byte position so future live-tail reads only pick up
+        # what's been appended since now.
+        self._tail_pos = self._current_file_size()
+
+        self._render_buffer()
+
+        # Update the stats line — separate from the buffer text so we can
+        # reuse the same code for live appends.
+        self._update_stats_label()
+
+        # Auto-scroll to the bottom on a fresh load — newest log lines are
+        # the most useful.
+        GLib.idle_add(self._scroll_to_end)
+
+        # Start watching the file we just loaded.
+        self._start_monitor()
+
+    def _render_buffer(self) -> None:
+        """Filter ``_current_lines`` by the active level and write to the view."""
         buf = self._textview.get_buffer()
+
         if not self._current_lines and not os.path.isfile(self._log_path):
             buf.set_text(_(
                 "No log file at {path} yet.\n\n"
@@ -331,22 +452,44 @@ class LogViewerWindow(Adw.Window):
             self._stats_label.set_text("")
             return
 
-        buf.set_text("\n".join(self._current_lines) if self._current_lines else _("(log is empty)"))
+        if not self._current_lines:
+            buf.set_text(_("(log is empty)"))
+            return
 
+        min_level = _LEVEL_FILTER_OPTIONS[self._level_filter_idx][1]
+        if min_level <= 0:
+            shown = self._current_lines
+        else:
+            shown = [
+                ln for ln in self._current_lines
+                if _level_of_line(ln) >= min_level
+            ]
+
+        if shown:
+            buf.set_text("\n".join(shown))
+        else:
+            buf.set_text(_(
+                "No lines match the current level filter "
+                "({label}). Try selecting a lower level above."
+            ).format(label=_LEVEL_FILTER_OPTIONS[self._level_filter_idx][0]))
+
+        self._filtered_visible = len(shown)
+
+    def _update_stats_label(self) -> None:
+        """Refresh the right-aligned ``last N of M lines`` indicator."""
+        filtered_count = getattr(self, "_filtered_visible", len(self._current_lines))
         if self._showing_full_file:
-            self._stats_label.set_text(
-                _("{n} lines (full file)").format(n=self._current_total)
-            )
+            base = _("{n} lines (full file)").format(n=self._current_total)
         elif self._current_total > len(self._current_lines):
-            self._stats_label.set_text(
-                _("last {shown} of {total} lines").format(
-                    shown=len(self._current_lines), total=self._current_total
-                )
+            base = _("last {shown} of {total} lines").format(
+                shown=len(self._current_lines), total=self._current_total,
             )
         else:
-            self._stats_label.set_text(
-                _("{n} lines").format(n=self._current_total)
-            )
+            base = _("{n} lines").format(n=self._current_total)
+
+        if self._level_filter_idx > 0 and filtered_count != len(self._current_lines):
+            base += _(" · {f} after filter").format(f=filtered_count)
+        self._stats_label.set_text(base)
 
         # Auto-scroll to the bottom — newest log lines are what's interesting.
         GLib.idle_add(self._scroll_to_end)
@@ -361,6 +504,183 @@ class LogViewerWindow(Adw.Window):
         return False
 
     # ---------------------------------------------------------------- actions
+
+    # --------------------------------------------------------------- live tail
+
+    def _current_file_size(self) -> int:
+        try:
+            return os.path.getsize(self._log_path) if os.path.isfile(self._log_path) else 0
+        except OSError:
+            return 0
+
+    def _start_monitor(self) -> None:
+        """Begin watching ``self._log_path`` for appends / rotation."""
+        if not self._log_path:
+            return
+        try:
+            gfile = Gio.File.new_for_path(self._log_path)
+            monitor = gfile.monitor_file(Gio.FileMonitorFlags.NONE, None)
+        except Exception as exc:
+            logger.debug("Could not start file monitor for %s: %s", self._log_path, exc)
+            return
+        # Coalesce rapid bursts so the GTK main loop isn't hammered when
+        # logging is busy (e.g. DEBUG with chatty SFTP traffic).
+        try:
+            monitor.set_rate_limit(150)  # milliseconds
+        except Exception:
+            pass
+        monitor.connect("changed", self._on_log_file_changed)
+        self._file_monitor = monitor
+
+    def _stop_monitor(self) -> None:
+        if self._file_monitor is not None:
+            try:
+                self._file_monitor.cancel()
+            except Exception:
+                pass
+            self._file_monitor = None
+
+    def _on_log_file_changed(self, _monitor, _file, _other, event_type) -> None:
+        """React to FileMonitor events: append new bytes, handle rotation."""
+        if not self._follow_enabled:
+            # User explicitly paused following. We still leave the monitor
+            # connected so we resume cleanly when they toggle it back on,
+            # but skip the work.
+            return
+
+        # Rotation / re-creation. The handler logger may have truncated the
+        # old file or created a new one with the same name; either way the
+        # safe play is to re-load from disk and reset our position.
+        if event_type in (
+            Gio.FileMonitorEvent.DELETED,
+            Gio.FileMonitorEvent.MOVED_OUT,
+            Gio.FileMonitorEvent.CREATED,
+            Gio.FileMonitorEvent.MOVED_IN,
+        ):
+            self._reload_after_rotation()
+            return
+
+        new_size = self._current_file_size()
+        if new_size < self._tail_pos:
+            # The file shrank — almost always rotation.
+            self._reload_after_rotation()
+            return
+        if new_size == self._tail_pos:
+            return  # nothing actually new
+
+        self._append_since(self._tail_pos, new_size)
+        self._tail_pos = new_size
+
+    def _reload_after_rotation(self) -> None:
+        # Defer to idle so we don't fight ongoing FileMonitor events.
+        def _do() -> bool:
+            self._stop_monitor()
+            self._load()
+            return False
+        GLib.idle_add(_do)
+
+    def _append_since(self, start_pos: int, end_pos: int) -> None:
+        """Read bytes ``[start_pos, end_pos)`` and append survivors to the view."""
+        try:
+            with open(self._log_path, 'rb') as fh:
+                fh.seek(start_pos)
+                chunk = fh.read(max(0, end_pos - start_pos))
+        except Exception as exc:
+            logger.debug("Could not read appended log bytes: %s", exc)
+            return
+        if not chunk:
+            return
+        try:
+            text = chunk.decode('utf-8', errors='replace')
+        except Exception:
+            return
+
+        # Split into individual lines; ignore a trailing partial line by
+        # leaving it for the next tick (rare in practice — log handlers
+        # flush whole records).
+        new_lines = text.split('\n')
+        if not new_lines:
+            return
+        if new_lines[-1] == '':
+            new_lines.pop()
+        if not new_lines:
+            return
+
+        # Track full set (for refilter on dropdown change) and filter for
+        # display in one pass.
+        self._current_lines.extend(new_lines)
+        self._current_total += len(new_lines)
+
+        min_level = _LEVEL_FILTER_OPTIONS[self._level_filter_idx][1]
+        if min_level <= 0:
+            visible = new_lines
+        else:
+            visible = [
+                ln for ln in new_lines if _level_of_line(ln) >= min_level
+            ]
+        if not visible:
+            # Nothing passed the filter, but the file did grow — refresh
+            # the stats line so the user can see the running totals.
+            self._filtered_visible = getattr(self, "_filtered_visible", 0)
+            self._update_stats_label()
+            return
+
+        was_at_bottom = self._user_is_at_bottom()
+
+        buf = self._textview.get_buffer()
+        end_iter = buf.get_end_iter()
+        # Prepend newline only if the buffer already has content.
+        prefix = "\n" if buf.get_char_count() > 0 else ""
+        buf.insert(end_iter, prefix + "\n".join(visible))
+
+        # Update counters and stats. _filtered_visible is the running count
+        # of lines actually displayed.
+        self._filtered_visible = getattr(self, "_filtered_visible", 0) + len(visible)
+        self._update_stats_label()
+
+        if was_at_bottom:
+            GLib.idle_add(self._scroll_to_end)
+
+    def _user_is_at_bottom(self, epsilon: float = 4.0) -> bool:
+        """True when the scroll position is at (or within a few px of) the end.
+
+        Used to decide whether to keep auto-following: yanking the scroll
+        position to the bottom while the user is reading older content is
+        worse UX than them missing a few live lines.
+        """
+        try:
+            parent = self._textview.get_parent()
+            # Walk up to the ScrolledWindow.
+            while parent is not None and not isinstance(parent, Gtk.ScrolledWindow):
+                parent = parent.get_parent()
+            if parent is None:
+                return True  # no scrolling possible → always at end
+            vadj = parent.get_vadjustment()
+            if vadj is None:
+                return True
+            return (
+                vadj.get_value() + vadj.get_page_size()
+                >= vadj.get_upper() - epsilon
+            )
+        except Exception:
+            return True
+
+    def _on_follow_toggled(self, button: Gtk.ToggleButton) -> None:
+        self._follow_enabled = bool(button.get_active())
+        if self._follow_enabled:
+            # Pull in anything that arrived while we were paused.
+            new_size = self._current_file_size()
+            if new_size > self._tail_pos:
+                self._append_since(self._tail_pos, new_size)
+                self._tail_pos = new_size
+
+    def _on_level_filter_changed(self, dropdown: Gtk.DropDown, _pspec) -> None:
+        idx = int(dropdown.get_selected())
+        if 0 <= idx < len(_LEVEL_FILTER_OPTIONS) and idx != self._level_filter_idx:
+            self._level_filter_idx = idx
+            self._render_buffer()
+            self._update_stats_label()
+            GLib.idle_add(self._scroll_to_end)
 
     def _do_refresh(self) -> None:
         self._load()

@@ -8494,7 +8494,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         widget, so clicking anywhere on a row toggles the selection.
         """
         heading = _("Choose your file manager")
-        body = _("How should SSH Pilot manage files on remote ?")
+        body = _("How should SSH Pilot manage files on remote hs?")
 
         use_alert = hasattr(Adw, 'AlertDialog')
         if use_alert:
@@ -8517,7 +8517,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         builtin_row = Adw.ActionRow()
         builtin_row.set_title(_("Use the built-in, dual-pane File Manager"))
         builtin_row.set_subtitle(
-            _("Recommended — opens in a tab inside the application")
+            _("Recommended — opens in a tab inside sshPilot")
         )
         builtin_radio = Gtk.CheckButton()
         builtin_radio.set_valign(Gtk.Align.CENTER)
@@ -8530,7 +8530,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         system_row = Adw.ActionRow()
         system_row.set_title(_("Use the system file manager"))
         system_row.set_subtitle(
-            _("Opens your desktop file manager (e.g. GNOME Files, Dolphin)")
+            _("Opens your desktop file manager (e.g. GNOME Files)")
         )
         system_radio = Gtk.CheckButton()
         system_radio.set_valign(Gtk.Align.CENTER)
