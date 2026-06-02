@@ -43,12 +43,15 @@ _CATEGORY_ASKPASS = 'askpass'
 # Level-filter dropdown options. The integer is the *minimum* logging level
 # whose records pass through (0 = no filtering — show everything). Logging
 # constants: DEBUG=10, INFO=20, WARNING=30, ERROR=40.
+# Labels follow the "show this level and above" convention every logging
+# system uses; we don't spell that out because the dropdown's tooltip
+# already explains it and the labels need to fit a compact header bar.
 _LEVEL_FILTER_OPTIONS = (
     # (label, minimum_level)
-    ("All levels",   0),
-    ("Info and up",  logging.INFO),
-    ("Warning and up", logging.WARNING),
-    ("Error only",   logging.ERROR),
+    ("All",      0),
+    ("Info",     logging.INFO),
+    ("Warning",  logging.WARNING),
+    ("Error",    logging.ERROR),
 )
 
 
@@ -251,6 +254,11 @@ class LogViewerWindow(Adw.Window):
         # Index aligns with _LEVEL_FILTER_OPTIONS below.
         self._level_filter_idx: int = 0
 
+        # Free-text search query, lowercased. Empty string = no filter.
+        # Always-visible search entry — no keyboard shortcut binding (user
+        # request) — so it's discoverable purely by sight.
+        self._search_query: str = ""
+
         toolbar = Adw.ToolbarView()
         self.set_content(toolbar)
 
@@ -283,9 +291,9 @@ class LogViewerWindow(Adw.Window):
         self._level_dropdown = Gtk.DropDown(model=level_model)
         self._level_dropdown.set_selected(self._level_filter_idx)
         self._level_dropdown.set_tooltip_text(
-            _("Hide lines below the selected level (display only). To control "
-              "what is actually written to the log files, use Preferences → "
-              "Advanced → Logging.")
+            _("Show lines at the selected level and above (display only). "
+              "What is actually written to the log files is controlled in "
+              "Preferences → Advanced → Logging.")
         )
         self._level_dropdown.connect(
             "notify::selected", self._on_level_filter_changed
@@ -376,6 +384,25 @@ class LogViewerWindow(Adw.Window):
         path_row.append(self._stats_label)
         body.append(path_row)
 
+        # Always-visible search entry. Filters lines client-side by
+        # substring (case-insensitive); combines with the level filter via
+        # AND. No keyboard shortcut binding by design — the entry is
+        # always on screen so users find it by sight, and no accelerator
+        # can collide with the rest of the app's shortcuts.
+        search_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        search_row.set_margin_top(2)
+        search_row.set_margin_bottom(8)
+        search_row.set_margin_start(12)
+        search_row.set_margin_end(12)
+        self._search_entry = Gtk.SearchEntry()
+        self._search_entry.set_placeholder_text(
+            _("Search visible lines (case-insensitive)")
+        )
+        self._search_entry.set_hexpand(True)
+        self._search_entry.connect("search-changed", self._on_search_changed)
+        search_row.append(self._search_entry)
+        body.append(search_row)
+
         # Scrollable monospace log view.
         self._textview = Gtk.TextView()
         self._textview.set_monospace(True)
@@ -386,6 +413,28 @@ class LogViewerWindow(Adw.Window):
         self._textview.set_bottom_margin(8)
         self._textview.set_left_margin(12)
         self._textview.set_right_margin(12)
+
+        # Per-level highlight tags. INFO/DEBUG are intentionally left
+        # unstyled so they read as background context; only the levels that
+        # warrant attention get color. Foregrounds are mid-tones chosen to
+        # remain legible in both light and dark Adwaita variants.
+        buf = self._textview.get_buffer()
+        self._tag_warning = buf.create_tag(
+            "level-warning", foreground="#e66100"
+        )
+        self._tag_error = buf.create_tag(
+            "level-error", foreground="#c01c28",
+            weight=Pango.Weight.BOLD,
+        )
+        self._tag_critical = buf.create_tag(
+            "level-critical", foreground="#ffffff",
+            background="#c01c28", weight=Pango.Weight.BOLD,
+        )
+        # Search-match highlight (gets layered on top of level tags).
+        self._tag_match = buf.create_tag(
+            "search-match", background="#f5c211",
+            foreground="#000000",
+        )
 
         scrolled = Gtk.ScrolledWindow()
         scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
@@ -439,9 +488,34 @@ class LogViewerWindow(Adw.Window):
         # Start watching the file we just loaded.
         self._start_monitor()
 
+    def _level_tag(self, level: int):
+        """Pick the TextTag for *level*, or None for unstyled (INFO/DEBUG)."""
+        if level >= logging.CRITICAL:
+            return self._tag_critical
+        if level >= logging.ERROR:
+            return self._tag_error
+        if level >= logging.WARNING:
+            return self._tag_warning
+        return None
+
+    def _line_passes_filters(self, line: str, min_level: int) -> bool:
+        """Apply level + search filters together. Both must allow the line."""
+        if min_level > 0 and _level_of_line(line) < min_level:
+            return False
+        query = getattr(self, "_search_query", "")
+        if query and query not in line.lower():
+            return False
+        return True
+
     def _render_buffer(self) -> None:
-        """Filter ``_current_lines`` by the active level and write to the view."""
+        """Filter ``_current_lines`` by the active filters and write to the view.
+
+        Writes one line at a time so we can apply a level-specific TextTag
+        per line. Slightly slower than a single ``set_text`` but only on the
+        initial paint — subsequent live appends use the same per-line path.
+        """
         buf = self._textview.get_buffer()
+        buf.set_text("")  # clear, also resets tags
 
         if not self._current_lines and not os.path.isfile(self._log_path):
             buf.set_text(_(
@@ -457,23 +531,45 @@ class LogViewerWindow(Adw.Window):
             return
 
         min_level = _LEVEL_FILTER_OPTIONS[self._level_filter_idx][1]
-        if min_level <= 0:
-            shown = self._current_lines
-        else:
-            shown = [
-                ln for ln in self._current_lines
-                if _level_of_line(ln) >= min_level
-            ]
+        shown_count = 0
+        for line in self._current_lines:
+            if not self._line_passes_filters(line, min_level):
+                continue
+            self._append_line_with_tag(buf, line, first=(shown_count == 0))
+            shown_count += 1
 
-        if shown:
-            buf.set_text("\n".join(shown))
-        else:
+        if shown_count == 0:
             buf.set_text(_(
-                "No lines match the current level filter "
-                "({label}). Try selecting a lower level above."
-            ).format(label=_LEVEL_FILTER_OPTIONS[self._level_filter_idx][0]))
+                "No lines match the current filters. Try lowering the level "
+                "filter or clearing the search box."
+            ))
 
-        self._filtered_visible = len(shown)
+        self._filtered_visible = shown_count
+
+    def _append_line_with_tag(self, buf, line: str, first: bool = False) -> None:
+        """Append *line* (with leading newline if not first) and tag by level."""
+        prefix = "" if first else "\n"
+        end = buf.get_end_iter()
+        line_start_offset = end.get_offset() + len(prefix)
+        buf.insert(end, prefix + line)
+        tag = self._level_tag(_level_of_line(line))
+        if tag is not None:
+            start_iter = buf.get_iter_at_offset(line_start_offset)
+            end_iter = buf.get_iter_at_offset(line_start_offset + len(line))
+            buf.apply_tag(tag, start_iter, end_iter)
+        # Search-match overlay (layered on top of the level tag).
+        query = getattr(self, "_search_query", "")
+        if query:
+            lower_line = line.lower()
+            search_from = 0
+            while True:
+                idx = lower_line.find(query, search_from)
+                if idx == -1:
+                    break
+                m_start = buf.get_iter_at_offset(line_start_offset + idx)
+                m_end = buf.get_iter_at_offset(line_start_offset + idx + len(query))
+                buf.apply_tag(self._tag_match, m_start, m_end)
+                search_from = idx + len(query)
 
     def _update_stats_label(self) -> None:
         """Refresh the right-aligned ``last N of M lines`` indicator."""
@@ -612,14 +708,12 @@ class LogViewerWindow(Adw.Window):
         self._current_total += len(new_lines)
 
         min_level = _LEVEL_FILTER_OPTIONS[self._level_filter_idx][1]
-        if min_level <= 0:
-            visible = new_lines
-        else:
-            visible = [
-                ln for ln in new_lines if _level_of_line(ln) >= min_level
-            ]
+        visible = [
+            ln for ln in new_lines
+            if self._line_passes_filters(ln, min_level)
+        ]
         if not visible:
-            # Nothing passed the filter, but the file did grow — refresh
+            # Nothing passed the filters, but the file did grow — refresh
             # the stats line so the user can see the running totals.
             self._filtered_visible = getattr(self, "_filtered_visible", 0)
             self._update_stats_label()
@@ -628,10 +722,11 @@ class LogViewerWindow(Adw.Window):
         was_at_bottom = self._user_is_at_bottom()
 
         buf = self._textview.get_buffer()
-        end_iter = buf.get_end_iter()
-        # Prepend newline only if the buffer already has content.
-        prefix = "\n" if buf.get_char_count() > 0 else ""
-        buf.insert(end_iter, prefix + "\n".join(visible))
+        # Per-line append so each gets its level tag. First line gets the
+        # leading newline only if the buffer already has content.
+        first_first = (buf.get_char_count() == 0)
+        for i, ln in enumerate(visible):
+            self._append_line_with_tag(buf, ln, first=(first_first and i == 0))
 
         # Update counters and stats. _filtered_visible is the running count
         # of lines actually displayed.
@@ -681,6 +776,15 @@ class LogViewerWindow(Adw.Window):
             self._render_buffer()
             self._update_stats_label()
             GLib.idle_add(self._scroll_to_end)
+
+    def _on_search_changed(self, entry: Gtk.SearchEntry) -> None:
+        new_query = entry.get_text().lower()
+        if new_query == self._search_query:
+            return
+        self._search_query = new_query
+        # Re-render from the cached lines; no file I/O needed.
+        self._render_buffer()
+        self._update_stats_label()
 
     def _do_refresh(self) -> None:
         self._load()
