@@ -462,6 +462,12 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
         self._completion_shown = False
         self._failed_files = []
 
+        # Tracks whether the dialog is currently presented. Used to make
+        # close() idempotent so that the shutdown cleanup path (which calls
+        # close again after the user has dismissed the dialog) doesn't trip
+        # the "trying to close a dialog that's not presented" Adwaita-CRITICAL.
+        self._closed = False
+
         # Bytes-driven speed/ETA state (populated by progress-bytes signal).
         # Always read/written on the main thread.
         self._transferred_bytes = 0
@@ -659,6 +665,27 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
         if not self._completion_shown and not self.is_cancelled:
             self._cancel_active_transfers()
         self._stop_render_timer()
+        # Mark as closed so a subsequent .close() (e.g. from the file
+        # manager's shutdown cleanup) becomes a silent no-op.
+        self._closed = True
+
+    def close(self) -> bool:  # type: ignore[override]
+        """Idempotent close — safe to call after the dialog is already gone.
+
+        Adw.Dialog.close() asserts that the dialog is currently presented and
+        emits an Adwaita-CRITICAL otherwise. The file manager calls close()
+        from several places (action button, completion, shutdown cleanup),
+        and timing means we sometimes hit a dialog that has already been
+        dismissed. Bail early in that case instead of letting the assert
+        fire.
+        """
+        if getattr(self, "_closed", False):
+            return False
+        self._closed = True
+        try:
+            return super().close()
+        except Exception:
+            return False
 
     def _cancel_active_transfers(self) -> None:
         """Flip the cancel flag and call .cancel() on every tracked future."""
@@ -2378,7 +2405,7 @@ class AsyncSFTPManager(GObject.GObject):
                         destination, cleanup_exc,
                     )
                 self.emit("progress", 0.0, "Download cancelled")
-                logger.info("Download operation %s was cancelled", operation_id)
+                logger.info("Download cancelled: %s", source)
                 # paramiko's SFTP channel is left in a broken state after a
                 # mid-stream cancel. Recreate it so subsequent listdir/refresh
                 # ops don't hang.
@@ -2455,10 +2482,14 @@ class AsyncSFTPManager(GObject.GObject):
                 
                 # Only emit completion if not cancelled
                 if not self._is_cancelled(operation_id):
+                    logger.info(
+                        "Upload complete: %s → %s",
+                        source, destination,
+                    )
                     self.emit("progress", 1.0, "Upload complete")
             except TransferCancelledException:
                 self.emit("progress", 0.0, "Upload cancelled")
-                logger.info("Upload operation %s was cancelled", operation_id)
+                logger.info("Upload cancelled: %s", destination)
                 # paramiko's SFTP channel is left in a broken state after a
                 # mid-stream cancel — every subsequent op on this channel
                 # would hang. Recreate the channel first so cleanup + future
@@ -2583,10 +2614,14 @@ class AsyncSFTPManager(GObject.GObject):
                     bytes_done += file_size
                     in_progress["local"] = None
 
+                logger.info(
+                    "Directory download complete: %s → %s (%d files)",
+                    source, destination, total_files,
+                )
                 self.emit("progress", 1.0, "Directory downloaded")
             except TransferCancelledException:
                 self.emit("progress", 0.0, "Download cancelled")
-                logger.info("Directory download %s was cancelled", operation_id)
+                logger.info("Directory download cancelled: %s", source)
                 try:
                     self._reset_sftp_channel()
                 except Exception as reset_exc:
@@ -2723,10 +2758,14 @@ class AsyncSFTPManager(GObject.GObject):
                     bytes_done += file_size
                     in_progress["remote"] = None
 
+                logger.info(
+                    "Directory upload complete: %s → %s (%d files)",
+                    source, destination, total_files,
+                )
                 self.emit("progress", 1.0, "Directory uploaded")
             except TransferCancelledException:
                 self.emit("progress", 0.0, "Upload cancelled")
-                logger.info("Directory upload %s was cancelled", operation_id)
+                logger.info("Directory upload cancelled: %s", source)
                 try:
                     self._reset_sftp_channel()
                 except Exception as reset_exc:
@@ -2917,7 +2956,9 @@ class PaneToolbar(Gtk.Box):
         split_button = Adw.SplitButton()
         split_button.set_popover(popover)
         split_button.set_tooltip_text("Toggle view mode")
-        split_button.set_dropdown_tooltip("Adjust icon size & sort order")
+        # Tooltip text is parsed as Pango markup; escape the ampersand or
+        # use a plain word to avoid "entity did not end with a semicolon".
+        split_button.set_dropdown_tooltip("Adjust icon size and sort order")
         from sshpilot import icon_utils
         split_button.set_icon_name("view-list-symbolic")
         split_button.connect("clicked", self._on_view_toggle_clicked)
@@ -7890,7 +7931,10 @@ class FileManagerWindow(Adw.Window):
                     return
                 
                 total_files = len(resolved_files)
-                logger.info(f"_proceed_with_upload: Starting upload of {total_files} files")
+                logger.info(
+                    "Starting upload of %d file%s",
+                    total_files, "" if total_files == 1 else "s",
+                )
                 
                 for local_path_str, destination in resolved_files:
                     path_obj = pathlib.Path(local_path_str)
@@ -8517,15 +8561,15 @@ class FileManagerWindow(Adw.Window):
                                destination_path: Optional[str] = None) -> None:
         """Show and manage the progress dialog for a file operation."""
         try:
-            print(f"DEBUG: _show_progress_dialog called for {operation_type} {filename}")
-            
+            logger.debug("_show_progress_dialog called for %s %s", operation_type, filename)
+
             # Check if we can reuse an existing dialog for the same operation type
             reuse_dialog = False
-            if (hasattr(self, '_progress_dialog') and self._progress_dialog and 
+            if (hasattr(self, '_progress_dialog') and self._progress_dialog and
                 self._progress_dialog.operation_type == operation_type and
                 not self._progress_dialog.is_cancelled):
                 reuse_dialog = True
-                print(f"DEBUG: Reusing existing progress dialog for {operation_type}")
+                logger.debug("Reusing existing progress dialog for %s", operation_type)
             else:
                 # Dismiss any existing progress dialog for different operation type
                 if hasattr(self, '_progress_dialog') and self._progress_dialog:
@@ -8534,10 +8578,10 @@ class FileManagerWindow(Adw.Window):
                     except (AttributeError, RuntimeError):
                         pass
                     self._progress_dialog = None
-            
+
             if not reuse_dialog:
                 # Create new progress dialog
-                print(f"DEBUG: Creating progress dialog")
+                logger.debug("Creating progress dialog")
                 dialog_parent = self
                 if self._embedded_parent is not None:
                     dialog_parent = self._embedded_parent

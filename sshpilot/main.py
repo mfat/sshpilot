@@ -10,6 +10,29 @@ import logging
 import argparse
 from logging.handlers import RotatingFileHandler
 
+
+def _clamp_thirdparty_loggers() -> None:
+    """Pin chatty third-party loggers to WARNING.
+
+    Called BEFORE any other module is imported so that keyring/paramiko/etc.
+    don't dump DEBUG noise to the root logger at import-time, which happens
+    before :meth:`SshPilotApplication.setup_logging` has had a chance to run.
+    Re-applied (idempotently) inside setup_logging so direct callers of that
+    method are also covered.
+    """
+    for noisy in (
+        'keyring', 'keyring.backend',
+        'paramiko', 'paramiko.transport', 'paramiko.transport.sftp',
+        'gi', 'PIL', 'urllib3', 'asyncio',
+    ):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
+
+
+_clamp_thirdparty_loggers()
+
+# Module logger — used for any non-class-attached logging below.
+logger = logging.getLogger(__name__)
+
 import gi
 gi.require_version('Adw', '1')
 gi.require_version('Gtk', '4.0')
@@ -31,8 +54,8 @@ def load_resources():
             try:
                 resource = Gio.Resource.load(path)
                 Gio.resources_register(resource)
-                print(f"Loaded resources from: {path}")
-                
+                logger.debug("Loaded resources from: %s", path)
+
                 # Add resource path to icon theme EARLY, before any UI is created
                 # Following GNOME docs: https://developer.gnome.org/documentation/tutorials/themed-icons.html
                 # and GTK4 API: https://docs.gtk.org/gtk4/class.IconTheme.html
@@ -50,21 +73,24 @@ def load_resources():
                             # Prepend our path using set_resource_path() API (replaces all paths)
                             new_paths = [base_path] + existing_paths
                             theme.set_resource_path(new_paths)
-                            print(f"Set icon theme resource paths (bundled first): {new_paths[:2]}...")
+                            logger.debug(
+                                "Set icon theme resource paths (bundled first): %s...",
+                                new_paths[:2],
+                            )
                         elif existing_paths[0] != base_path:
                             # Already added, but ensure it's first using set_resource_path()
                             new_paths = [base_path] + [p for p in existing_paths if p != base_path]
                             theme.set_resource_path(new_paths)
-                            print(f"Reordered resource paths to prioritize bundled icons")
+                            logger.debug("Reordered resource paths to prioritize bundled icons")
                         else:
-                            print(f"Bundled icon path already first: {base_path}")
+                            logger.debug("Bundled icon path already first: %s", base_path)
                 except Exception as e:
-                    print(f"Warning: Could not configure icon theme for bundled icons: {e}")
-                
+                    logger.warning("Could not configure icon theme for bundled icons: %s", e)
+
                 return True
             except GLib.Error as e:
-                print(f"Failed to load resources from {path}: {e}")
-    print("ERROR: Could not load GResource bundle")
+                logger.error("Failed to load resources from %s: %s", path, e)
+    logger.error("Could not load GResource bundle")
     return False
 
 if not load_resources():
@@ -82,14 +108,17 @@ from .startup_info import print_startup_info
 class SshPilotApplication(Adw.Application):
     """Main application class for sshPilot"""
 
-    def __init__(self, verbose: bool = False, isolated: bool = False, native_connect: bool = False):
+    def __init__(self, verbose: bool = False, quiet: bool = False,
+                 isolated: bool = False, native_connect: bool = False):
         super().__init__(
             application_id='io.github.mfat.sshpilot',
             flags=Gio.ApplicationFlags.FLAGS_NONE
         )
 
-        # Command line verbosity override
-        self.verbose_override = verbose
+        # Command line verbosity overrides — mutually exclusive at argparse,
+        # but defensively normalise here too.
+        self.verbose_override = verbose and not quiet
+        self.quiet_override = quiet and not verbose
         self.isolated_mode = isolated
 
         # Track whether native connect mode should be used for this run
@@ -173,7 +202,7 @@ class SshPilotApplication(Adw.Application):
             self.create_action('edit-ssh-config', self.on_edit_ssh_config, ['<Meta><Shift>e'])
             if not should_hide_file_manager_options():
                 self.create_action('manage-files', self.on_manage_files, ['<Meta><Shift>o'])
-            logging.info("Using macOS-specific shortcuts (Meta key = Command key)")
+            logger.debug("Using macOS-specific shortcuts (Meta key = Command key)")
         else:
             # Linux/Windows shortcuts using Primary key
             self.create_action('quit', self.on_quit_action, ['<primary><shift>q'])
@@ -186,12 +215,15 @@ class SshPilotApplication(Adw.Application):
             self.create_action('edit-ssh-config', self.on_edit_ssh_config, ['<primary><shift>e'])
             if not should_hide_file_manager_options():
                 self.create_action('manage-files', self.on_manage_files, ['<primary><shift>o'])
-            logging.info("Using Linux/Windows shortcuts (Primary key = Ctrl key)")
-        
-        # Debug: Log registered shortcuts
-        logging.info("Registered keyboard shortcuts:")
-        logging.info("  Cmd+N: new-connection")
-        logging.info("  Cmd+Shift+K: new-key")
+            logger.debug("Using Linux/Windows shortcuts (Primary key = Ctrl key)")
+
+        # Detailed shortcut list is verbose noise at INFO. Help → Keyboard
+        # Shortcuts already shows this to users.
+        if logger.isEnabledFor(logging.DEBUG):
+            mod_label = "Cmd" if mac else "Ctrl"
+            logger.debug("Registered keyboard shortcuts:")
+            logger.debug("  %s+N: new-connection", mod_label)
+            logger.debug("  %s+Shift+K: new-key", mod_label)
         if mac:
             self.create_action('local-terminal', self.on_local_terminal, ['<Meta><Shift>t'])
             self.create_action('preferences', self.on_preferences, ['<Meta>comma'])
@@ -255,7 +287,7 @@ class SshPilotApplication(Adw.Application):
         # Initialize window reference
         self.window = None
         
-        logging.info("sshPilot application initialized")
+        logger.info("sshPilot application initialized")
     
     def on_activate(self, app):
         """Handle application activation"""
@@ -267,7 +299,7 @@ class SshPilotApplication(Adw.Application):
         
     def on_shutdown(self, app):
         """Clean up all resources when application is shutting down"""
-        logging.info("Application shutdown initiated, cleaning up...")
+        logger.info("Application shutdown initiated, cleaning up...")
         
         # Close all file manager windows
         try:
@@ -280,31 +312,31 @@ class SshPilotApplication(Adw.Application):
                     window._manager = None
             
             windows = list(app.get_windows())
-            logging.info(f"Found {len(windows)} windows from application during shutdown")
+            logger.info(f"Found {len(windows)} windows from application during shutdown")
             for window in windows:
                 try:
                     _cleanup_window(window)
                 except Exception as exc:
-                    logging.error(f"Error cleaning up window {window}: {exc}", exc_info=True)
+                    logger.error(f"Error cleaning up window {window}: {exc}", exc_info=True)
             
             # Also check the global registry as a fallback
             try:
                 from .file_manager_window import _file_manager_windows_registry
                 registry_windows = list(_file_manager_windows_registry)
-                logging.info(f"Found {len(registry_windows)} file manager windows in registry")
+                logger.info(f"Found {len(registry_windows)} file manager windows in registry")
                 for window in registry_windows:
                     if window in windows:
                         continue
                     try:
                         _cleanup_window(window)
                     except Exception as exc:
-                        logging.error(f"Error cleaning up registry window {window}: {exc}", exc_info=True)
+                        logger.error(f"Error cleaning up registry window {window}: {exc}", exc_info=True)
             except ImportError:
                 pass  # Module might not be loaded
             except Exception as exc:
-                logging.debug(f"Error accessing file manager registry: {exc}")
+                logger.debug(f"Error accessing file manager registry: {exc}")
         except Exception as exc:
-            logging.error(f"Error closing file manager windows: {exc}", exc_info=True)
+            logger.error(f"Error closing file manager windows: {exc}", exc_info=True)
         
         if self._config_handler is not None and self.config is not None:
             try:
@@ -316,7 +348,7 @@ class SshPilotApplication(Adw.Application):
         self._update_accelerators_enabled_flag()
         from .terminal import process_manager
         process_manager.cleanup_all()
-        logging.info("Cleanup completed")
+        logger.info("Cleanup completed")
 
     def setup_logging(self):
         """Set up logging configuration"""
@@ -327,10 +359,28 @@ class SshPilotApplication(Adw.Application):
         # Default log level is INFO for cleaner logs
         log_level = logging.INFO
 
-        formatter = logging.Formatter(
+        # Full timestamp + fully-qualified logger name on the file handler —
+        # we want detail in bug-report logs. Console gets a shorter format
+        # that's easier to scan.
+        file_formatter = logging.Formatter(
             '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S'
+            datefmt='%Y-%m-%d %H:%M:%S',
         )
+        console_formatter = logging.Formatter(
+            '%(asctime)s %(levelname)-5s %(short_name)s: %(message)s',
+            datefmt='%H:%M:%S',
+        )
+
+        class _ShortNameFilter(logging.Filter):
+            """Strip the leading ``sshpilot.`` from logger names for the console."""
+
+            def filter(self, record: logging.LogRecord) -> bool:
+                name = record.name or ''
+                if name.startswith('sshpilot.'):
+                    record.short_name = name[len('sshpilot.'):]
+                else:
+                    record.short_name = name or '-'
+                return True
 
         # Clear any existing handlers
         logging.getLogger().handlers.clear()
@@ -343,12 +393,13 @@ class SshPilotApplication(Adw.Application):
             encoding='utf-8'
         )
         file_handler.setLevel(log_level)
-        file_handler.setFormatter(formatter)
+        file_handler.setFormatter(file_formatter)
 
         # Console handler
         console_handler = logging.StreamHandler()
         console_handler.setLevel(log_level)
-        console_handler.setFormatter(formatter)
+        console_handler.setFormatter(console_formatter)
+        console_handler.addFilter(_ShortNameFilter())
 
         # Add handlers to root logger
         root_logger = logging.getLogger()
@@ -356,24 +407,41 @@ class SshPilotApplication(Adw.Application):
         root_logger.addHandler(file_handler)
         root_logger.addHandler(console_handler)
 
-        # Determine verbosity via config or command line
-        try:
-            from .config import Config
-            cfg = Config()
-            verbose = bool(cfg.get_setting('ssh.debug_enabled', False))
-        except Exception:
-            verbose = False
-        if getattr(self, 'verbose_override', False):
-            verbose = True
+        # Determine verbosity. Precedence (highest first):
+        #   CLI --quiet  →  WARNING (ERROR-and-up only)
+        #   CLI --verbose → DEBUG
+        #   logging.level config key ('info' | 'debug')
+        #   legacy ssh.debug_enabled (already migrated in config validator)
+        quiet = bool(getattr(self, 'quiet_override', False))
+        verbose = bool(getattr(self, 'verbose_override', False))
+        if not (quiet or verbose):
+            try:
+                from .config import Config
+                cfg = Config()
+                level_setting = cfg.get_setting('logging.level', 'info')
+                verbose = str(level_setting).lower() == 'debug'
+            except Exception:
+                verbose = False
 
-        effective_level = logging.DEBUG if verbose else logging.INFO
+        if quiet:
+            effective_level = logging.WARNING
+        elif verbose:
+            effective_level = logging.DEBUG
+        else:
+            effective_level = logging.INFO
         file_handler.setLevel(effective_level)
         console_handler.setLevel(effective_level)
         root_logger.setLevel(effective_level)
 
-        logging.getLogger('asyncio').setLevel(logging.DEBUG if verbose else logging.INFO)
-        logging.getLogger('gi').setLevel(logging.INFO if verbose else logging.WARNING)
-        logging.getLogger('PIL').setLevel(logging.INFO if verbose else logging.WARNING)
+        # Reapply third-party clamp — verbose lifts them one notch, otherwise
+        # they stay at WARNING.
+        _clamp_thirdparty_loggers()
+        if verbose:
+            for noisy in (
+                'keyring', 'paramiko', 'paramiko.transport', 'paramiko.transport.sftp',
+                'gi', 'PIL', 'urllib3', 'asyncio',
+            ):
+                logging.getLogger(noisy).setLevel(logging.INFO)
 
         app_level = logging.DEBUG if verbose else logging.INFO
         logging.getLogger('sshpilot').setLevel(app_level)
@@ -417,20 +485,20 @@ class SshPilotApplication(Adw.Application):
         accelerators_blocked = not getattr(self, '_accelerators_enabled', True)
         if accelerators_blocked:
             self.set_accels_for_action(action_name, [])
-            logging.debug(
+            logger.debug(
                 "Skipping accelerators for action '%s' because accelerators are suspended",
                 name,
             )
             return
         if effective is None:
             self.set_accels_for_action(action_name, [])
-            logging.debug(f"Registered action '{name}' without shortcuts")
+            logger.debug(f"Registered action '{name}' without shortcuts")
         elif len(effective) == 0:
             self.set_accels_for_action(action_name, [])
-            logging.debug(f"Action '{name}' shortcuts disabled via {source}")
+            logger.debug(f"Action '{name}' shortcuts disabled via {source}")
         else:
             self.set_accels_for_action(action_name, effective)
-            logging.debug(
+            logger.debug(
                 "Registered action '%s' with shortcuts from %s: %s",
                 name,
                 source,
@@ -454,7 +522,7 @@ class SshPilotApplication(Adw.Application):
                 try:
                     win._update_sidebar_accelerators()
                 except Exception:
-                    logging.debug("Failed to update window accelerators for current state")
+                    logger.debug("Failed to update window accelerators for current state")
 
     def _update_accelerators_enabled_flag(self):
         """Update the exposed accelerator enabled flag considering focus state."""
@@ -498,54 +566,54 @@ class SshPilotApplication(Adw.Application):
 
     def on_new_connection(self, action, param):
         """Handle new connection action"""
-        logging.info("New connection action triggered (Cmd+N)")
+        logger.debug("New connection action triggered")
         if self.props.active_window:
             try:
                 self.props.active_window.show_connection_dialog()
-                logging.debug("Connection dialog shown successfully")
+                logger.debug("Connection dialog shown successfully")
             except Exception as e:
-                logging.error(f"Failed to show connection dialog: {e}")
+                logger.error(f"Failed to show connection dialog: {e}")
         else:
-            logging.warning("No active window found for new connection action")
+            logger.warning("No active window found for new connection action")
 
     def on_open_new_connection_tab(self, action, param):
         """Handle open new connection tab action (Ctrl/⌘+Alt+N)"""
-        logging.debug("Open new connection tab action triggered")
+        logger.debug("Open new connection tab action triggered")
         if self.props.active_window:
             # Forward to the window's action
             self.props.active_window.open_new_connection_tab_action.activate(None)
 
     def on_toggle_list(self, action, param):
         """Handle toggle list focus action"""
-        logging.debug("Toggle list focus action triggered")
+        logger.debug("Toggle list focus action triggered")
         if self.props.active_window:
             self.props.active_window.toggle_list_focus()
 
     def on_search(self, action, param):
         """Handle search action"""
-        logging.debug("Search action triggered")
+        logger.debug("Search action triggered")
         if self.props.active_window:
             self.props.active_window.focus_search_entry()
 
     def on_new_key(self, action, param):
         """Handle new SSH key action"""
-        logging.info("New SSH key action triggered (Cmd+Shift+K)")
+        logger.debug("New SSH key action triggered")
         if self.props.active_window:
             try:
                 # Check if there's a selected connection
                 selected_row = self.props.active_window.connection_list.get_selected_row()
                 if not selected_row or not getattr(selected_row, "connection", None):
                     # No connection selected, show a dialog to select one
-                    logging.info("No connection selected, showing connection selection dialog")
+                    logger.info("No connection selected, showing connection selection dialog")
                     self.props.active_window.show_connection_selection_for_ssh_copy()
                 else:
                     # Use the selected connection
                     self.props.active_window.on_copy_key_to_server_clicked(None)
-                logging.debug("SSH key copy dialog shown successfully")
+                logger.debug("SSH key copy dialog shown successfully")
             except Exception as e:
-                logging.error(f"Failed to show SSH key copy dialog: {e}")
+                logger.error(f"Failed to show SSH key copy dialog: {e}")
         else:
-            logging.warning("No active window found for new SSH key action")
+            logger.warning("No active window found for new SSH key action")
 
     def on_manage_files(self, action, param):
         """Handle manage files shortcut."""
@@ -571,7 +639,7 @@ class SshPilotApplication(Adw.Application):
             if connection and hasattr(win, '_open_manage_files_for_connection'):
                 win._open_manage_files_for_connection(connection)
         except Exception as exc:
-            logging.error(f"Failed to open file manager via shortcut: {exc}")
+            logger.error(f"Failed to open file manager via shortcut: {exc}")
             try:
                 connection_name = getattr(connection, 'nickname', '') if 'connection' in locals() else ''
                 if connection_name and hasattr(win, '_show_manage_files_error'):
@@ -581,7 +649,7 @@ class SshPilotApplication(Adw.Application):
 
     def on_local_terminal(self, action, param):
         """Handle local terminal action"""
-        logging.debug("Local terminal action triggered")
+        logger.debug("Local terminal action triggered")
         if self.props.active_window:
             self.props.active_window.terminal_manager.show_local_terminal()
 
@@ -597,25 +665,25 @@ class SshPilotApplication(Adw.Application):
 
     def on_preferences(self, action, param):
         """Handle preferences action"""
-        logging.debug("Preferences action triggered")
+        logger.debug("Preferences action triggered")
         if self.props.active_window:
             self.props.active_window.show_preferences()
 
     def on_about(self, action, param):
         """Handle about dialog action"""
-        logging.debug("About dialog action triggered")
+        logger.debug("About dialog action triggered")
         if self.props.active_window:
             self.props.active_window.show_about_dialog()
 
     def on_help(self, action, param):
         """Handle help action"""
-        logging.debug("Help action triggered")
+        logger.debug("Help action triggered")
         if self.props.active_window:
             self.props.active_window.open_help_url()
 
     def on_shortcuts(self, action, param):
         """Handle keyboard shortcuts overlay action"""
-        logging.debug("Shortcuts action triggered")
+        logger.debug("Shortcuts action triggered")
         if self.props.active_window:
             self.props.active_window.show_shortcuts_window()
 
@@ -654,7 +722,7 @@ class SshPilotApplication(Adw.Application):
             is_open = win.tab_overview.get_open()
             win.tab_overview.set_open(not is_open)
         except Exception as e:
-            logging.error(f"Failed to toggle tab overview: {e}")
+            logger.error(f"Failed to toggle tab overview: {e}")
 
     def on_quick_connect(self, action, param):
         """Open quick connect dialog"""
@@ -667,18 +735,18 @@ class SshPilotApplication(Adw.Application):
             dialog = QuickConnectDialog(win)
             dialog.present()
         except Exception as e:
-            logging.error(f"Failed to open quick connect dialog: {e}")
+            logger.error(f"Failed to open quick connect dialog: {e}")
 
     def on_broadcast_command(self, action, param):
         """Handle broadcast command action (Ctrl/⌘+Shift+B)"""
-        logging.debug("Broadcast command action triggered")
+        logger.debug("Broadcast command action triggered")
         if self.props.active_window:
             # Forward to the window's action
             self.props.active_window.broadcast_command_action.activate(None)
 
     def on_new_split_view_tab(self, action, param=None):
         """Open a new empty split-view tab (Ctrl/⌘+Shift+S)."""
-        logging.debug("New split view tab action triggered")
+        logger.debug("New split view tab action triggered")
         win = self.props.active_window
         if win and hasattr(win, 'on_new_split_view_tab'):
             win.on_new_split_view_tab(action, param)
@@ -752,10 +820,10 @@ class SshPilotApplication(Adw.Application):
                     )
                     # Store provider reference for cleanup
                     display._color_override_provider = provider
-                    logging.info("Applied accent color override on startup")
+                    logger.info("Applied accent color override on startup")
 
         except Exception as e:
-            logging.error(f"Failed to apply color overrides: {e}")
+            logger.error(f"Failed to apply color overrides: {e}")
 
 def main():
     """Main entry point"""
@@ -768,7 +836,15 @@ def main():
         sys.exit(run_askpass_and_write(prompt))
 
     parser = argparse.ArgumentParser(description="sshPilot SSH connection manager")
-    parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose debug logging")
+    verbosity = parser.add_mutually_exclusive_group()
+    verbosity.add_argument(
+        "--verbose", "-v", action="store_true",
+        help="Verbose debug logging (overrides config)",
+    )
+    verbosity.add_argument(
+        "--quiet", "-q", action="store_true",
+        help="Only show warnings and errors (overrides config)",
+    )
     parser.add_argument("--isolated", action="store_true", help="Use isolated SSH configuration")
     parser.add_argument(
         "--native-connect",
@@ -778,6 +854,7 @@ def main():
     args = parser.parse_args()
     app = SshPilotApplication(
         verbose=args.verbose,
+        quiet=args.quiet,
         isolated=args.isolated,
         native_connect=args.native_connect,
     )

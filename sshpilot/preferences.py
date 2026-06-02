@@ -1615,8 +1615,34 @@ class PreferencesWindow(Adw.Window):
             )
             self.confirm_disconnect_switch.connect('notify::active', self.on_confirm_disconnect_changed)
             behavior_group.add(self.confirm_disconnect_switch)
-            
+
             advanced_page.add(behavior_group)
+
+            # Logging group ------------------------------------------------
+            logging_group = Adw.PreferencesGroup(title="Logging")
+            logging_group.set_description(
+                "Controls how verbose sshPilot is in the console and the rotated log file. "
+                "The command-line flags --verbose / --quiet always override this."
+            )
+
+            self.logging_level_row = Adw.ComboRow()
+            self.logging_level_row.set_title("Log Level")
+            self.logging_level_row.set_subtitle(
+                "Default is concise; switch to Debug if you're filing a bug or chasing an issue"
+            )
+            log_levels_model = Gtk.StringList()
+            log_levels_model.append("Info — concise (recommended)")
+            log_levels_model.append("Debug — verbose")
+            self.logging_level_row.set_model(log_levels_model)
+            saved_level = str(
+                self.config.get_setting('logging.level', 'info') or 'info'
+            ).lower()
+            self.logging_level_row.set_selected(1 if saved_level == 'debug' else 0)
+            self.logging_level_row.connect(
+                'notify::selected', self.on_logging_level_changed
+            )
+            logging_group.add(self.logging_level_row)
+            advanced_page.add(logging_group)
 
             # File management preferences moved to dedicated page
 
@@ -3691,6 +3717,27 @@ class PreferencesWindow(Adw.Window):
         confirm = switch.get_active()
         logger.info(f"Confirm before disconnect setting changed to: {confirm}")
         self.config.set_setting('confirm-disconnect', confirm)
+
+    def on_logging_level_changed(self, combo_row, _param):
+        """Persist the chosen log level and apply it on the fly."""
+        level = 'debug' if combo_row.get_selected() == 1 else 'info'
+        try:
+            self.config.set_setting('logging.level', level)
+        except Exception as exc:
+            logger.error("Failed to update logging.level: %s", exc)
+            return
+        # Apply immediately to the running process so the user sees the
+        # change without restarting. CLI overrides still win if the app was
+        # launched with --verbose / --quiet.
+        try:
+            import logging as _logging
+            target = _logging.DEBUG if level == 'debug' else _logging.INFO
+            _logging.getLogger().setLevel(target)
+            for h in _logging.getLogger().handlers:
+                h.setLevel(target)
+            _logging.getLogger('sshpilot').setLevel(target)
+        except Exception as exc:
+            logger.debug("Could not apply log level on the fly: %s", exc)
     
     def on_check_updates_changed(self, switch, *args):
         """Handle check for updates on startup setting change"""

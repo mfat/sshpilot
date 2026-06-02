@@ -37,9 +37,9 @@ class Config(GObject.Object):
             if schema is not None:
                 self.settings = Gio.Settings.new_full(schema, None, None)
                 self.use_gsettings = True
-                logger.info("Using GSettings for configuration")
+                logger.debug("Using GSettings for configuration")
             else:
-                logger.info("GSettings schema not found; using JSON config")
+                logger.debug("GSettings schema not found; using JSON config")
         except Exception as e:
             logger.warning(f"GSettings unavailable; using JSON config: {e}")
 
@@ -220,6 +220,12 @@ class Config(GObject.Object):
             'security': {
                 'store_passwords': True,
                 'ssh_agent_forwarding': True,
+            },
+            'logging': {
+                # 'info' (default) or 'debug'. CLI --verbose / --quiet always
+                # win over this. Migrated from the legacy ssh.debug_enabled
+                # key on first load (see _ensure_config_defaults).
+                'level': 'info',
             },
             'command_blocks': {
                 'folders': [],
@@ -1024,6 +1030,21 @@ class Config(GObject.Object):
             if file_manager_cfg.get('icon_size_level') != clamped_icon_size:
                 file_manager_cfg['icon_size_level'] = clamped_icon_size
                 updated = True
+
+        # --- Logging level: migrate from legacy ssh.debug_enabled --------
+        logging_cfg = config.get('logging')
+        if not isinstance(logging_cfg, dict):
+            logging_cfg = {}
+            config['logging'] = logging_cfg
+            updated = True
+        if logging_cfg.get('level') not in ('info', 'debug'):
+            # One-shot migration: if the old hidden ssh.debug_enabled key was
+            # True, preserve that as the new 'debug' level. Otherwise default
+            # to 'info'.
+            legacy_ssh = config.get('ssh') if isinstance(config.get('ssh'), dict) else {}
+            legacy_debug = bool(legacy_ssh.get('debug_enabled', False)) if legacy_ssh else False
+            logging_cfg['level'] = 'debug' if legacy_debug else 'info'
+            updated = True
 
         ui_cfg = config.get('ui')
         if not isinstance(ui_cfg, dict):

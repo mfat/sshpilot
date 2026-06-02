@@ -8,6 +8,7 @@ import platform
 import shutil
 import logging
 from pathlib import Path
+from typing import Optional
 
 try:
     import gi
@@ -483,14 +484,79 @@ class StartupInfo:
 
 def print_startup_info(isolated: bool = False, verbose: bool = False):
     """
-    Print startup information to console
-    
+    Emit startup information.
+
     Args:
-        isolated: Whether running in isolated mode
-        verbose: Whether to print full details (verbose only affects other logging, not startup info)
+        isolated: Whether running in isolated mode.
+        verbose: When True, dump the full platform/library/path diagnostic
+            (~40 lines) to stdout — useful for bug reports. When False, only
+            log a single-line summary at INFO so default startup output stays
+            concise. Re-run with ``--verbose`` to get the full diagnostic.
     """
     info = StartupInfo(isolated=isolated)
-    
-    # Always print the clean formatted output to console
-    info.print_info()
+
+    if verbose:
+        info.print_info()
+        return
+
+    # Concise default: a small, multi-line block at INFO level. Still ~5
+    # lines vs the 40-line full dump, but rich enough that bug reports and
+    # day-to-day output carry meaningful context.
+    def _get(*path, default=None):
+        cur = info.info
+        for k in path:
+            if not isinstance(cur, dict):
+                return default
+            cur = cur.get(k)
+            if cur is None:
+                return default
+        return cur
+
+    version_str = _get('version', 'version', default='?')
+    logger.info("sshPilot %s starting", version_str)
+
+    # OS line — Linux (Ubuntu 26.04 LTS) x86_64; flag Flatpak when relevant.
+    os_name = _get('platform', 'system') or '?'
+    distro = _get('platform', 'distro')
+    arch = _get('platform', 'architecture') or '?'
+    os_bits = [os_name]
+    if distro and distro != os_name:
+        os_bits[-1] = f"{os_name} ({distro})"
+    os_bits.append(arch)
+    if _get('platform', 'flatpak'):
+        os_bits.append("Flatpak")
+    logger.info("  OS:        %s", " ".join(os_bits))
+
+    # Python + GUI stack on one line, so the runtime versions are easy to
+    # cross-reference against a bug report.
+    py_ver = _get('python', 'version') or '?'
+    py_impl = _get('python', 'implementation') or 'CPython'
+    libs = info.info.get('libraries') or {}
+    def _lib(key: str) -> Optional[str]:
+        entry = libs.get(key)
+        return entry.get('version') if isinstance(entry, dict) else None
+    gtk_ver = _lib('gtk4')
+    adw_ver = _lib('libadwaita')
+    vte_ver = _lib('vte')
+    gui_bits = []
+    if gtk_ver:
+        gui_bits.append(f"GTK {gtk_ver}")
+    if adw_ver:
+        gui_bits.append(f"libadwaita {adw_ver}")
+    if vte_ver:
+        gui_bits.append(f"VTE {vte_ver}")
+    gui_str = " / ".join(gui_bits) if gui_bits else "—"
+    logger.info("  Runtime:   Python %s (%s) · %s", py_ver, py_impl, gui_str)
+
+    # Secure storage + SSH binary in one line — these are the two things
+    # that most commonly explain "why didn't this connection work".
+    backend = _get('storage', 'effective_backend') or 'none'
+    ssh_path = _get('tools', 'ssh', 'path') or _get('tools', 'ssh') or '—'
+    ssh_ver = _get('tools', 'ssh', 'version')
+    ssh_str = f"{ssh_path}" if not ssh_ver else f"{ssh_path} ({ssh_ver})"
+    logger.info("  Storage:   %s · SSH: %s", backend, ssh_str)
+
+    # Only call out non-default modes so happy-path startup stays clean.
+    if _get('config', 'isolated_mode'):
+        logger.info("  Mode:      isolated SSH configuration")
 
