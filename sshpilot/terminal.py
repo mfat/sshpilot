@@ -24,6 +24,7 @@ from .port_utils import get_port_checker
 from .platform_utils import is_flatpak, is_macos, get_sshpass_path
 from .terminal_backends import BaseTerminalBackend, VTETerminalBackend, PyXtermTerminalBackend
 from .ssh_connection_builder import build_ssh_connection, ConnectionContext
+from .shortcut_utils import get_primary_modifier_label
 
 gi.require_version('Gtk', '4.0')
 gi.require_version('Vte', '3.91')
@@ -540,6 +541,81 @@ class TerminalWidget(Gtk.Box):
         # terminal natural height (which would otherwise resize split panes).
         self.overlay.add_overlay(self.disconnected_banner)
 
+        # Tips banner. Cycles through short usage tips (the first points at the
+        # connection-list shortcut) and is revealed once the terminal connects
+        # (see _reveal_connection_list_hint). Floated as an overlay like the
+        # search banner so revealing it never changes the terminal's allocated
+        # height (which would trigger a VTE SIGWINCH / column reflow).
+        self._connection_list_hint_handled = False
+        self._tips = self._build_terminal_tips()
+        self._tip_index = 0
+        self.connection_list_hint_revealer = Gtk.Revealer()
+        self.connection_list_hint_revealer.set_reveal_child(False)
+        self.connection_list_hint_revealer.set_transition_type(
+            Gtk.RevealerTransitionType.SLIDE_DOWN
+        )
+        self.connection_list_hint_revealer.set_halign(Gtk.Align.FILL)
+        self.connection_list_hint_revealer.set_valign(Gtk.Align.START)
+        self.connection_list_hint_revealer.set_hexpand(True)
+
+        # The stock ``.banner`` style class only paints a background on the
+        # real AdwBanner widget — on a plain box it renders transparent — so
+        # install our own accent-colored style once per display.
+        try:
+            display = Gdk.Display.get_default()
+            if display and not getattr(display, '_sshpilot_hint_banner_css_installed', False):
+                hint_css = Gtk.CssProvider()
+                hint_css.load_from_data(b"""
+                    .connection-list-hint-banner {
+                        background-color: @accent_bg_color;
+                        color: @accent_fg_color;
+                        padding: 6px 12px;
+                    }
+                    .connection-list-hint-banner label { color: @accent_fg_color; }
+                """)
+                Gtk.StyleContext.add_provider_for_display(
+                    display, hint_css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+                )
+                setattr(display, '_sshpilot_hint_banner_css_installed', True)
+        except Exception:
+            pass
+
+        hint_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        hint_box.add_css_class('connection-list-hint-banner')
+        hint_box.set_hexpand(True)
+
+        self._tip_label = Gtk.Label()
+        self._tip_label.set_text(self._tips[self._tip_index] if self._tips else '')
+        self._tip_label.set_halign(Gtk.Align.START)
+        self._tip_label.set_valign(Gtk.Align.CENTER)
+        self._tip_label.set_hexpand(True)
+        self._tip_label.set_wrap(True)
+        hint_box.append(self._tip_label)
+
+        # Only offer "Next tip" when there's more than one to cycle through.
+        if len(self._tips) > 1:
+            hint_next_button = Gtk.Button.new_with_label(_('Next tip'))
+            hint_next_button.set_valign(Gtk.Align.CENTER)
+            hint_next_button.add_css_class('flat')
+            hint_next_button.connect('clicked', self._on_connection_list_hint_next_tip)
+            hint_box.append(hint_next_button)
+
+        hint_dismiss_button = Gtk.Button.new_with_label(_('Dismiss'))
+        hint_dismiss_button.set_valign(Gtk.Align.CENTER)
+        hint_dismiss_button.add_css_class('flat')
+        hint_dismiss_button.connect('clicked', self._on_connection_list_hint_dismiss)
+        hint_box.append(hint_dismiss_button)
+
+        hint_dont_show_button = Gtk.Button.new_with_label(_("Don't show again"))
+        hint_dont_show_button.set_valign(Gtk.Align.CENTER)
+        hint_dont_show_button.add_css_class('flat')
+        hint_dont_show_button.connect('clicked', self._on_connection_list_hint_dont_show_again)
+        hint_box.append(hint_dont_show_button)
+
+        self.connection_list_hint_revealer.set_child(hint_box)
+        self.overlay.add_overlay(self.connection_list_hint_revealer)
+        self.connect('connection-established', self._reveal_connection_list_hint)
+
         # Container for terminal stack only
         self.container_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self.container_box.set_hexpand(True)
@@ -854,7 +930,72 @@ class TerminalWidget(Gtk.Box):
                 self.connecting_box.set_visible(visible)
         except Exception:
             pass
-    
+
+    def _build_terminal_tips(self):
+        """Return the list of short usage tips shown in the terminal banner.
+
+        The connection-list shortcut comes first since that's the original
+        prompt; the rest surface other handy shortcuts. Modifier labels are
+        platform-aware via get_primary_modifier_label().
+        """
+        mod = get_primary_modifier_label()
+        return [
+            _('Press {shortcut} to switch to the connection list').format(
+                shortcut=f"{mod}+Shift+L"),
+            _('Press {shortcut} to search your connections').format(
+                shortcut=f"{mod}+F"),
+            _('Press {shortcut} to open a new connection').format(
+                shortcut=f"{mod}+N"),
+            _('Press {shortcut} to search inside the terminal').format(
+                shortcut=f"{mod}+Shift+F"),
+            _('Press {shortcut} to copy your SSH key to a server').format(
+                shortcut=f"{mod}+Shift+K"),
+            _('Press F9 to toggle the sidebar'),
+            _('Press {shortcut} to see all keyboard shortcuts').format(
+                shortcut=f"{mod}+Shift+/"),
+        ]
+
+    def _reveal_connection_list_hint(self, *args):
+        """Show the tips banner once the terminal connects.
+
+        Only reveals while the user hasn't opted out, and at most once per
+        terminal so a reconnect doesn't pop it back up.
+        """
+        try:
+            if self._connection_list_hint_handled:
+                return
+            self._connection_list_hint_handled = True
+            if not bool(self.config.get_setting('terminal.show_tips', True)):
+                return
+            self.connection_list_hint_revealer.set_reveal_child(True)
+        except Exception:
+            pass
+
+    def _on_connection_list_hint_next_tip(self, *args):
+        """Advance to the next tip, wrapping around at the end."""
+        try:
+            if not self._tips:
+                return
+            self._tip_index = (self._tip_index + 1) % len(self._tips)
+            self._tip_label.set_text(self._tips[self._tip_index])
+        except Exception:
+            pass
+
+    def _on_connection_list_hint_dismiss(self, *args):
+        """Hide the banner for this terminal only (it may show again next time)."""
+        try:
+            self.connection_list_hint_revealer.set_reveal_child(False)
+        except Exception:
+            pass
+
+    def _on_connection_list_hint_dont_show_again(self, *args):
+        """Hide the banner and never show tips again on any terminal."""
+        try:
+            self.connection_list_hint_revealer.set_reveal_child(False)
+            self.config.set_setting('terminal.show_tips', False)
+        except Exception:
+            pass
+
     def _connect_ssh(self):
         """Connect to SSH host"""
         if not self.connection:

@@ -1449,6 +1449,20 @@ class PreferencesWindow(Adw.Window):
             
             interface_page.add(sidebar_group)
 
+            # Tips group at the bottom of the Interface page. Lets users
+            # re-enable the terminal tips banner after dismissing it with
+            # "Don't show again".
+            tips_group = Adw.PreferencesGroup(title="Tips")
+            show_tips_switch = Adw.SwitchRow()
+            show_tips_switch.set_title("Show Terminal Tips")
+            show_tips_switch.set_subtitle("Show usage tips in a banner when a terminal opens")
+            show_tips_switch.set_active(
+                bool(self.config.get_setting('terminal.show_tips', True))
+            )
+            show_tips_switch.connect('notify::active', self.on_show_tips_toggled)
+            tips_group.add(show_tips_switch)
+            interface_page.add(tips_group)
+
             # Shortcuts page with inline editor
             shortcuts_page = Adw.PreferencesPage()
             shortcuts_page.set_title("Shortcuts")
@@ -3692,6 +3706,13 @@ class PreferencesWindow(Adw.Window):
                 self.parent_window.update_sidebar_display()
         except Exception as exc:
             logger.error("Failed to update sidebar show port forwarding preference: %s", exc)
+
+    def on_show_tips_toggled(self, switch, *args):
+        """Persist whether the terminal tips banner is shown."""
+        try:
+            self.config.set_setting('terminal.show_tips', bool(switch.get_active()))
+        except Exception as exc:
+            logger.error("Failed to update show terminal tips preference: %s", exc)
 
     def on_sidebar_show_connection_icon_changed(self, switch, *args):
         """Persist the preference for showing connection icon in sidebar."""
