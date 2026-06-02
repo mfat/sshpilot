@@ -514,6 +514,17 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
             label.set_width_chars(self._LABEL_WIDTH_CHARS)
             label.set_max_width_chars(self._LABEL_WIDTH_CHARS)
 
+        def _configure_path_label(label: Gtk.Label) -> None:
+            # Middle-ellipsis keeps both the head (drive/scheme/leading dir)
+            # and tail (filename) visible — best fit for paths.
+            label.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
+            label.set_halign(Gtk.Align.START)
+            label.set_xalign(0.0)
+            label.set_width_chars(self._LABEL_WIDTH_CHARS)
+            label.set_max_width_chars(self._LABEL_WIDTH_CHARS)
+            label.add_css_class("caption")
+            label.add_css_class("dim-label")
+
         # Current file label (primary info)
         self.file_label = Gtk.Label()
         self.file_label.set_text("—")
@@ -525,7 +536,20 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
         self.status_label.set_text("Preparing transfer…")
         _configure_progress_label(self.status_label)
         progress_box.append(self.status_label)
-        
+
+        # Source / destination paths. Hidden until set_paths() is called so
+        # we don't leave two empty "From:" / "To:" lines for callers that
+        # didn't supply them.
+        self.source_label = Gtk.Label()
+        _configure_path_label(self.source_label)
+        self.source_label.set_visible(False)
+        progress_box.append(self.source_label)
+
+        self.dest_label = Gtk.Label()
+        _configure_path_label(self.dest_label)
+        self.dest_label.set_visible(False)
+        progress_box.append(self.dest_label)
+
         # Main progress bar
         self.progress_bar = Gtk.ProgressBar()
         self.progress_bar.set_show_text(True)
@@ -587,10 +611,26 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
         if total_files > self.total_files:
             self.total_files = total_files
             self.counter_label.set_text(f"{self.files_completed} of {total_files} files")
-        
+
         if filename:
             self.current_file = filename
             self.file_label.set_text(filename)
+
+    def set_paths(self, source: Optional[str] = None,
+                  destination: Optional[str] = None) -> None:
+        """Display the source and destination paths.
+
+        Each label is middle-ellipsized so long paths stay readable; the
+        full untruncated path is exposed as a tooltip on hover.
+        """
+        if source:
+            self.source_label.set_text(f"From: {source}")
+            self.source_label.set_tooltip_text(source)
+            self.source_label.set_visible(True)
+        if destination:
+            self.dest_label.set_text(f"To: {destination}")
+            self.dest_label.set_tooltip_text(destination)
+            self.dest_label.set_visible(True)
     
     def _on_action_button_clicked(self, _button: Gtk.Button) -> None:
         """Single click handler for the Cancel/Done button.
@@ -5632,7 +5672,11 @@ class FilePane(Gtk.Box):
                         future = manager.upload(path_obj, dest_path)
 
                     # Show progress dialog for upload
-                    window._show_progress_dialog("upload", entry.name, future)
+                    window._show_progress_dialog(
+                        "upload", entry.name, future,
+                        source_path=str(path_obj),
+                        destination_path=dest_path,
+                    )
                     # Don't try to highlight the dropped file if it landed in
                     # a subfolder — it won't appear in the current listing.
                     window._attach_refresh(
@@ -5683,7 +5727,11 @@ class FilePane(Gtk.Box):
                         future = manager.download(source, target_path)
 
                     # Show progress dialog for download
-                    window._show_progress_dialog("download", entry.name, future)
+                    window._show_progress_dialog(
+                        "download", entry.name, future,
+                        source_path=source,
+                        destination_path=str(target_path),
+                    )
                     # Skip highlight when target was a subfolder.
                     window._attach_refresh(
                         future,
@@ -7855,7 +7903,12 @@ class FileManagerWindow(Adw.Window):
                             future = self._manager.upload(path_obj, destination)
 
                         # Show progress dialog for upload (pass total_files for multi-file support)
-                        self._show_progress_dialog("upload", path_obj.name, future, total_files=total_files)
+                        self._show_progress_dialog(
+                            "upload", path_obj.name, future,
+                            total_files=total_files,
+                            source_path=str(path_obj),
+                            destination_path=destination,
+                        )
                         self._attach_refresh(
                             future,
                             refresh_remote=target_pane,
@@ -7935,7 +7988,12 @@ class FileManagerWindow(Adw.Window):
                         else:
                             future = self._manager.download(source, target_path)
                         # Pass total_files so dialog can be reused for multiple files
-                        self._show_progress_dialog("download", entry_name, future, total_files=total_files)
+                        self._show_progress_dialog(
+                            "download", entry_name, future,
+                            total_files=total_files,
+                            source_path=source,
+                            destination_path=str(target_path),
+                        )
                         self._attach_refresh(
                             future,
                             refresh_local_path=str(destination_base),
@@ -8453,7 +8511,10 @@ class FileManagerWindow(Adw.Window):
             else:
                 self._copy_remote_file(sftp, child_source, child_destination)
 
-    def _show_progress_dialog(self, operation_type: str, filename: str, future: Future, total_files: int = 1) -> None:
+    def _show_progress_dialog(self, operation_type: str, filename: str, future: Future,
+                               total_files: int = 1,
+                               source_path: Optional[str] = None,
+                               destination_path: Optional[str] = None) -> None:
         """Show and manage the progress dialog for a file operation."""
         try:
             print(f"DEBUG: _show_progress_dialog called for {operation_type} {filename}")
@@ -8503,6 +8564,12 @@ class FileManagerWindow(Adw.Window):
             # need to pre-set total_bytes here.
             self._progress_dialog.set_operation_details(total_files=total_files, filename=filename)
             self._progress_dialog.set_future(future)
+
+            # Surface source and destination paths so the user can see where
+            # the file is going / coming from. Both labels stay hidden until
+            # one is provided.
+            if source_path or destination_path:
+                self._progress_dialog.set_paths(source_path, destination_path)
 
         except Exception as exc:
             logger.error("Error in _show_progress_dialog: %s", exc, exc_info=True)
