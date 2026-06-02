@@ -23,11 +23,45 @@ import json
 import logging
 from typing import Optional, Tuple
 
-# Set up logging
-logging.basicConfig(
-    level=logging.DEBUG if '--verbose' in sys.argv else logging.WARNING,
-    format='[sshpilot-agent] %(levelname)s: %(message)s'
-)
+
+def _agent_log_file() -> Optional[str]:
+    """Resolve the agent's log file path: ``$XDG_STATE_HOME/sshpilot/agent.log``.
+
+    Mirrors sshpilot's own state dir (see platform_utils.get_state_dir) so the
+    agent log sits next to ``sshpilot.log`` and is easy to find. Resolved with
+    the stdlib only because the agent runs standalone on the host (outside the
+    Flatpak sandbox) and cannot import the sshpilot package.
+    """
+    try:
+        state_home = os.environ.get('XDG_STATE_HOME') or os.path.join(
+            os.path.expanduser('~'), '.local', 'state'
+        )
+        log_dir = os.path.join(state_home, 'sshpilot')
+        os.makedirs(log_dir, exist_ok=True)
+        return os.path.join(log_dir, 'agent.log')
+    except Exception:
+        return None
+
+
+# Set up logging.
+#
+# The agent's stderr is the interactive VTE terminal in the local-terminal path,
+# so logging there pollutes the shell output. Worse, once io_loop() puts the tty
+# in raw mode (OPOST cleared) a log line's trailing "\n" is no longer translated
+# to "\r\n", leaving the cursor mid-line and staircasing the shell prompt. Log to
+# a file instead so logs never touch the terminal while staying available for
+# debugging; never fall back to stderr (it may be the terminal).
+_log_level = logging.DEBUG if '--verbose' in sys.argv else logging.WARNING
+_log_file = _agent_log_file()
+if _log_file:
+    logging.basicConfig(
+        level=_log_level,
+        format='[sshpilot-agent] %(asctime)s %(levelname)s: %(message)s',
+        filename=_log_file,
+        filemode='a',
+    )
+else:
+    logging.basicConfig(level=_log_level, handlers=[logging.NullHandler()])
 logger = logging.getLogger(__name__)
 
 
