@@ -266,7 +266,11 @@ class TerminalWidget(Gtk.Box):
         
         # Create scrolled window for terminal
         self.scrolled_window = Gtk.ScrolledWindow()
-        self.scrolled_window.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        # Horizontal policy NEVER so VTE always reflows its column count to the
+        # available width instead of showing a horizontal scrollbar at narrow
+        # sizes (matches gnome-terminal / ptyxis). Vertical stays AUTOMATIC for
+        # the scrollback buffer.
+        self.scrolled_window.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         self.scrolled_window.set_overlay_scrolling(True)
         
         # Create backend first before setup
@@ -2103,7 +2107,18 @@ class TerminalWidget(Gtk.Box):
                     self.vte.set_scrollback_lines(10000)
                 except Exception as e:
                     logger.warning(f"Could not set scrollback lines: {e}")
-                
+
+                # Scroll behavior: snap to the prompt when the user types, but
+                # don't yank the view to the bottom on background output while
+                # the user is scrolled up reading scrollback.
+                try:
+                    if hasattr(self.vte, 'set_scroll_on_keystroke'):
+                        self.vte.set_scroll_on_keystroke(True)
+                    if hasattr(self.vte, 'set_scroll_on_output'):
+                        self.vte.set_scroll_on_output(False)
+                except Exception as e:
+                    logger.warning(f"Could not set scroll behavior: {e}")
+
                 # Set word char exceptions (for double-click selection)
                 try:
                     # Try the newer API first (VTE 0.60+)

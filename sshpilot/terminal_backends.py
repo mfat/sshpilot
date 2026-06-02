@@ -137,7 +137,6 @@ class VTETerminalBackend:
         self.vte = Vte.Terminal()
         self.widget = self.vte
         self._termprops_handler: Optional[int] = None
-        self._populate_popup_handler: Optional[int] = None
 
     def initialize(self) -> None:
         self.vte.set_hexpand(True)
@@ -158,6 +157,14 @@ class VTETerminalBackend:
             self.vte.set_scrollback_lines(10000)
         except Exception:
             logger.debug("Failed to set scrollback lines", exc_info=True)
+
+        try:
+            if hasattr(self.vte, "set_scroll_on_keystroke"):
+                self.vte.set_scroll_on_keystroke(True)
+            if hasattr(self.vte, "set_scroll_on_output"):
+                self.vte.set_scroll_on_output(False)
+        except Exception:
+            logger.debug("Failed to set scroll behavior", exc_info=True)
 
         try:
             if hasattr(self.vte, "set_word_char_exceptions"):
@@ -206,29 +213,11 @@ class VTETerminalBackend:
             self.vte.show()
         except Exception:
             logger.debug("Failed to show VTE widget", exc_info=True)
-        
-        # Disable VTE's built-in context menu to prevent duplication with our custom menu
-        try:
-            if hasattr(self.vte, "connect"):
-                def _on_populate_popup(vte, menu):
-                    # Prevent VTE's default context menu from appearing
-                    # We use our own custom context menu instead
-                    menu.set_visible(False)
-                    return True
-                self._populate_popup_handler = self.vte.connect("populate-popup", _on_populate_popup)
-                logger.debug("Disabled VTE built-in context menu")
-        except Exception as e:
-            logger.debug(f"Failed to disable VTE context menu: {e}", exc_info=True)
 
     def destroy(self) -> None:
         try:
             if self._termprops_handler is not None:
                 self.vte.disconnect(self._termprops_handler)  # type: ignore[arg-type]
-        except Exception:
-            pass
-        try:
-            if self._populate_popup_handler is not None:
-                self.vte.disconnect(self._populate_popup_handler)  # type: ignore[arg-type]
         except Exception:
             pass
 
