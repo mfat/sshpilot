@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:5.1.3}
+Version:        %{?version}%{!?version:5.1.4}
 Release:        1%{?dist}
 Summary:        Manage your servers with ease
 
@@ -92,6 +92,14 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/io.github.mfat.sshpil
 %{_datadir}/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg
 
 %changelog
+* Tue Jun 02 2026 mFat <newmfat@gmail.com> - 5.1.4
+- Better look and feel for built-in file manager
+- Zoom control for file manager
+- New option to always show Commands sidebar
+- More reliable SFTP file transfers
+- Changed default connection list shortcut to Ctrl+Shift+L
+- Various bug fixes and UI improvements
+
 * Tue Jun 02 2026 mFat <newmfat@gmail.com> - 5.1.3
 - Better look and feel for built-in file manager
 
