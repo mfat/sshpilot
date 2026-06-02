@@ -60,6 +60,13 @@
 
 
 
+    <release version="5.1.5" date="2026-06-02">
+      <description>
+        <p>Added type-ahead search - open the app, start typing and press enter. The first matching host will be connected</p>
+        <p>Made it easier to switch between the terminal and connection list with Ctrl+Shift+L</p>
+        <p>Bug fixes</p>
+      </description>
+    </release>
     <release version="5.1.4" date="2026-06-02">
       <description>
         <p>Better look and feel for built-in file manager</p>
