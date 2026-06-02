@@ -1034,16 +1034,17 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             }
 
             .navigation-sidebar row.tinted:selected {
-              background-color: alpha(@accent_bg_color, 0.36);
-              box-shadow: inset 0 0 0 1px alpha(@accent_bg_color, 0.65);
+              background-color: @accent_bg_color;
+              color: @accent_fg_color;
+              box-shadow: inset 0 0 0 1px @accent_bg_color;
             }
 
             .navigation-sidebar row.tinted:selected:hover {
-              background-color: alpha(@accent_bg_color, 0.42);
+              background-color: shade(@accent_bg_color, 0.95);
             }
 
             .navigation-sidebar row.tinted:selected:active {
-              background-color: alpha(@accent_bg_color, 0.48);
+              background-color: shade(@accent_bg_color, 0.90);
             }
             
             /* Group drop target highlight */
