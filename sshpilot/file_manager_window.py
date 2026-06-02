@@ -486,16 +486,20 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
         )
         
     def _build_ui(self):
-        """Build the modern GNOME HIG-compliant UI"""
-        
-        # Add response buttons
-        self.add_response("cancel", "Cancel")
-        self.set_default_response("cancel")
-        self.set_close_response("cancel")
-        
-        # Connect response signal
-        self.connect("response", self._on_response)
-        
+        """Build the modern GNOME HIG-compliant UI.
+
+        We deliberately do NOT add an Adw response button for Cancel. Single
+        responses in Adw.AlertDialog / Adw.MessageDialog span the entire
+        footer width — too prominent for a progress dialog. Instead, Cancel
+        is a regular Gtk.Button placed at the bottom of the body content,
+        right-aligned. Esc-to-cancel is preserved via the ``closed`` signal
+        (Adw.Dialog fires that for any close path, including Esc).
+        """
+
+        # No add_response(); no set_default_response(); no set_close_response().
+        # We listen on ``closed`` to catch Esc / parent dismiss / etc.
+        self.connect("closed", self._on_dialog_closed)
+
         # Create progress content area
         progress_box = Gtk.Box(
             orientation=Gtk.Orientation.VERTICAL,
@@ -562,7 +566,18 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
         self.counter_label.set_halign(Gtk.Align.CENTER)
         self.counter_label.add_css_class("caption")
         details_box.append(self.counter_label)
-        
+
+        # Cancel / Done action button. Placed in the body (not as an Adw
+        # response) so it doesn't get the full-width single-response styling.
+        action_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        action_row.set_halign(Gtk.Align.END)
+        action_row.set_margin_top(6)
+        self.action_button = Gtk.Button(label="Cancel")
+        self.action_button.add_css_class("pill")
+        self.action_button.connect("clicked", self._on_action_button_clicked)
+        action_row.append(self.action_button)
+        progress_box.append(action_row)
+
         # Set the progress content as extra child
         self.set_extra_child(progress_box)
     
@@ -577,21 +592,48 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
             self.current_file = filename
             self.file_label.set_text(filename)
     
-    def _on_response(self, dialog, response):
-        """Handle dialog response"""
-        if response == "cancel":
-            self.is_cancelled = True
-            # Cancel all tracked futures
-            if self._current_future and hasattr(self._current_future, 'cancel'):
+    def _on_action_button_clicked(self, _button: Gtk.Button) -> None:
+        """Single click handler for the Cancel/Done button.
+
+        Behaviour depends on which state the dialog is in: before completion
+        the button cancels all tracked futures; after completion it just
+        closes the dialog.
+        """
+        if self._completion_shown:
+            # Already in "Done" mode — just close.
+            self._stop_render_timer()
+            self.close()
+            return
+        # Active-transfer mode — cancel everything.
+        self._cancel_active_transfers()
+        self._stop_render_timer()
+        self.close()
+
+    def _on_dialog_closed(self, _dialog) -> None:
+        """Esc / parent-dismiss / WM-close all funnel through here.
+
+        If the dialog is dismissed while a transfer is still running (no
+        completion shown yet), treat it as a cancel so we don't leave the
+        worker uploading bytes in the background.
+        """
+        if not self._completion_shown and not self.is_cancelled:
+            self._cancel_active_transfers()
+        self._stop_render_timer()
+
+    def _cancel_active_transfers(self) -> None:
+        """Flip the cancel flag and call .cancel() on every tracked future."""
+        self.is_cancelled = True
+        if self._current_future and hasattr(self._current_future, 'cancel'):
+            try:
                 self._current_future.cancel()
-            for future in self._futures:
-                if future and hasattr(future, 'cancel') and not future.done():
+            except Exception:
+                pass
+        for future in self._futures:
+            if future and hasattr(future, 'cancel') and not future.done():
+                try:
                     future.cancel()
-            self._stop_render_timer()
-            self.close()
-        elif response == "done":
-            self._stop_render_timer()
-            self.close()
+                except Exception:
+                    pass
 
     def _stop_render_timer(self) -> None:
         """Remove the render GLib.timeout source if it's still scheduled."""
@@ -779,21 +821,15 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
             else:
                 self.file_label.set_text("An error occurred during transfer")
         
-        # Switch to Done button (handle errors gracefully)
+        # Swap the body button's label from Cancel → Done. _on_action_button_clicked
+        # reads _completion_shown (set above) and takes the "just close" path.
         try:
-            self.remove_response("cancel")
+            self.action_button.set_label("Done")
+            self.action_button.add_css_class("suggested-action")
         except (AttributeError, RuntimeError, GLib.GError):
-            # Cancel button may already be removed, ignore
+            # Button may have been destroyed if the dialog is mid-close.
             pass
-        
-        try:
-            self.add_response("done", "Done")
-            self.set_default_response("done")
-            self.set_close_response("done")
-        except (AttributeError, RuntimeError, GLib.GError):
-            # Done button may already exist, ignore
-            pass
-        
+
         return False
 
 
@@ -2314,6 +2350,16 @@ class AsyncSFTPManager(GObject.GObject):
                     )
                 # Re-raise so the Future reflects the cancellation.
                 raise
+            except Exception as e:
+                # paramiko raises IOError / OSError for permission denied,
+                # connection drops, etc. Surface them via the toast layer
+                # instead of silently logging.
+                logger.error(f"Download failed for {source}: {e}", exc_info=True)
+                self.emit(
+                    "operation-error",
+                    f"Download failed: {os.path.basename(source)}: {e}",
+                )
+                raise
             finally:
                 # Clean up the cancellation flag
                 self._discard_cancellation_flag(operation_id)
@@ -2393,8 +2439,14 @@ class AsyncSFTPManager(GObject.GObject):
                 # a file that doesn't exist on the remote.
                 raise
             except Exception as e:
-                # Re-raise to ensure it's propagated to the future
+                # Re-raise so the future surfaces the exception, but also fire
+                # operation-error so the UI shows a toast — otherwise users
+                # only see the progress dialog vanish with no explanation.
                 logger.error(f"Upload failed for {destination}: {e}", exc_info=True)
+                self.emit(
+                    "operation-error",
+                    f"Upload failed: {os.path.basename(destination)}: {e}",
+                )
                 raise
             finally:
                 # Clean up the cancellation flag
@@ -2515,6 +2567,15 @@ class AsyncSFTPManager(GObject.GObject):
                             "Partial download cleanup failed for %s: %s",
                             partial, cleanup_exc,
                         )
+                raise
+            except Exception as e:
+                logger.error(
+                    f"Directory download failed for {source}: {e}", exc_info=True
+                )
+                self.emit(
+                    "operation-error",
+                    f"Directory download failed: {os.path.basename(source)}: {e}",
+                )
                 raise
             finally:
                 self._discard_cancellation_flag(operation_id)
@@ -2641,6 +2702,15 @@ class AsyncSFTPManager(GObject.GObject):
                     self._remove_remote_best_effort(
                         partial, context="cancelled directory upload"
                     )
+                raise
+            except Exception as e:
+                logger.error(
+                    f"Directory upload failed for {source}: {e}", exc_info=True
+                )
+                self.emit(
+                    "operation-error",
+                    f"Directory upload failed: {os.path.basename(str(source))}: {e}",
+                )
                 raise
             finally:
                 self._discard_cancellation_flag(operation_id)
