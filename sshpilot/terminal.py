@@ -584,6 +584,14 @@ class TerminalWidget(Gtk.Box):
         hint_box.add_css_class('connection-list-hint-banner')
         hint_box.set_hexpand(True)
 
+        # Light-bulb marker at the start of every tip. A color emoji is used
+        # instead of a themed icon because no light-bulb symbolic is reliably
+        # available across icon themes; it also keeps its color rather than
+        # being recolored by the banner's accent text-color CSS.
+        bulb_label = Gtk.Label(label="\N{ELECTRIC LIGHT BULB}")
+        bulb_label.set_valign(Gtk.Align.CENTER)
+        hint_box.append(bulb_label)
+
         self._tip_label = Gtk.Label()
         self._tip_label.set_text(self._tips[self._tip_index] if self._tips else '')
         self._tip_label.set_halign(Gtk.Align.START)
@@ -952,7 +960,7 @@ class TerminalWidget(Gtk.Box):
                 shortcut=f"{mod}+Shift+K"),
             _('Press F9 to toggle the sidebar'),
             _('Press {shortcut} to see all keyboard shortcuts').format(
-                shortcut=f"{mod}+Shift+/"),
+                shortcut=f"{mod}+?"),
         ]
 
     def _reveal_connection_list_hint(self, *args):

@@ -239,7 +239,11 @@ class SshPilotApplication(Adw.Application):
         
         self.create_action('about', self.on_about)
         self.create_action('help', self.on_help, ['F1'])
-        shortcuts_accel = ['<Meta><Shift>slash'] if mac else ['<primary><Shift>slash']
+        # Use the "question" keyval, not "<Shift>slash": holding Shift turns
+        # "/" into "?", so the shifted-slash accelerator never matches the
+        # actual key event. "<primary>question" is the standard binding that
+        # fires on Ctrl+Shift+/ (Cmd+Shift+/ on macOS).
+        shortcuts_accel = ['<Meta>question'] if mac else ['<primary>question']
         self.create_action('shortcuts', self.on_shortcuts, shortcuts_accel)
         # Tab navigation accelerators
         self.create_action('tab-next', self.on_tab_next, ['<Alt>Right'])

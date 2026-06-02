@@ -4657,7 +4657,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         group_general.add_shortcut(Gtk.ShortcutsShortcut(
             title=_('Documentation'), accelerator='F1'))
         group_general.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Keyboard Shortcuts'), accelerator=f"{primary}<Shift>slash"))
+            title=_('Keyboard Shortcuts'), accelerator=f"{primary}question"))
         group_general.add_shortcut(Gtk.ShortcutsShortcut(
             title=_('Quit'), accelerator=f"{primary}<Shift>q"))
         section.add_group(group_general)
