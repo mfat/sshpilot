@@ -30,6 +30,30 @@ def get_data_dir() -> str:
     return os.path.join(GLib.get_user_data_dir(), APP_NAME)
 
 
+def get_state_dir() -> str:
+    """Return the per-user state directory for sshPilot.
+
+    Per the XDG Base Directory specification, ``$XDG_STATE_HOME`` (default
+    ``~/.local/state``) is the right home for *state* that should survive
+    restarts but isn't important enough for ``$XDG_DATA_HOME`` — which the
+    spec explicitly lists as covering "actions history (logs, history,
+    recently used files, …)" and the current state of the application.
+
+    Prefers :func:`GLib.get_user_state_dir` when available (GLib ≥ 2.72)
+    so Flatpak and other portal-mediated environments stay consistent with
+    GLib's own resolution; otherwise resolves the spec by hand.
+    """
+    if hasattr(GLib, "get_user_state_dir"):
+        try:
+            return os.path.join(GLib.get_user_state_dir(), APP_NAME)
+        except Exception:
+            pass
+    state_home = os.environ.get("XDG_STATE_HOME") or os.path.join(
+        os.path.expanduser("~"), ".local", "state"
+    )
+    return os.path.join(state_home, APP_NAME)
+
+
 _sshpass_path_cache: str | None = None
 _sshpass_checked: bool = False
 

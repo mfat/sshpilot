@@ -101,7 +101,7 @@ from .icon_utils import patch_gtk_image
 patch_gtk_image()
 
 from .window import MainWindow
-from .platform_utils import is_macos, get_data_dir
+from .platform_utils import is_macos, get_data_dir, get_state_dir
 from .preferences import should_hide_file_manager_options
 from .startup_info import print_startup_info
 
@@ -351,10 +351,44 @@ class SshPilotApplication(Adw.Application):
         logger.info("Cleanup completed")
 
     def setup_logging(self):
-        """Set up logging configuration"""
-        # Create log directory if it doesn't exist
-        log_dir = get_data_dir()
+        """Set up logging configuration.
+
+        Logs live in ``$XDG_STATE_HOME/sshpilot/`` per the XDG Base Directory
+        spec (state data includes "actions history (logs, …)"). We previously
+        stored them in ``$XDG_DATA_HOME/sshpilot/``; existing log files there
+        are migrated on first launch so users don't lose history.
+        """
+        log_dir = get_state_dir()
         os.makedirs(log_dir, exist_ok=True)
+
+        # One-shot migration of any pre-existing log files from the old
+        # data-dir location. Runs only when the new dir has no main log yet
+        # — i.e. on the very first launch after the path change. Idempotent
+        # in practice because we move (not copy), so a subsequent launch
+        # finds the file already in place.
+        try:
+            old_dir = get_data_dir()
+            new_main = os.path.join(log_dir, 'sshpilot.log')
+            if old_dir != log_dir and not os.path.exists(new_main) and os.path.isdir(old_dir):
+                import glob, shutil as _sh
+                moved = 0
+                for old_path in glob.glob(os.path.join(old_dir, 'sshpilot.log*')):
+                    try:
+                        _sh.move(old_path, os.path.join(log_dir, os.path.basename(old_path)))
+                        moved += 1
+                    except Exception:
+                        # Silent — we'll just leave the old file in place.
+                        pass
+                if moved:
+                    # Defer to a print since logging isn't set up yet.
+                    print(
+                        f"sshpilot: migrated {moved} log file(s) "
+                        f"from {old_dir} to {log_dir}",
+                        flush=True,
+                    )
+        except Exception:
+            # Migration is best-effort; never block startup over it.
+            pass
 
         # Default log level is INFO for cleaner logs
         log_level = logging.INFO
