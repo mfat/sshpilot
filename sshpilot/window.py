@@ -69,6 +69,7 @@ from .file_manager_integration import (
     launch_remote_file_manager,
     create_internal_file_manager_tab,
     has_internal_file_manager,
+    has_native_gvfs_support,
 )
 from .sftp_utils import should_use_in_app_file_manager
 from .sshcopyid_window import SshCopyIdWindow
@@ -8414,7 +8415,175 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 logger.error(f"Error opening file manager: {e}")
 
     def _open_manage_files_for_connection(self, connection):
-        """Open files for the supplied connection using the best integration."""
+        """Open files for the supplied connection.
+
+        On the very first invocation (per user profile, per machine) where a
+        choice between built-in and system file managers actually exists,
+        prompt the user once and remember their pick. Subsequent calls go
+        straight to the open flow.
+        """
+        if self._should_prompt_file_manager_choice():
+            self._show_file_manager_first_run_dialog(
+                lambda choice: self._continue_open_manage_files_after_choice(connection, choice)
+            )
+            return
+        self._open_manage_files_now_for_connection(connection)
+
+    def _continue_open_manage_files_after_choice(
+        self, connection, choice: Optional[str]
+    ) -> None:
+        """Persist the first-run choice and then open the file manager.
+
+        *choice* is ``None`` when the user cancelled / dismissed the dialog;
+        in that case we do nothing — no preference saved, no file manager
+        opened, and the next Manage Files click re-prompts.
+        """
+        if choice is None:
+            logger.debug("File manager first-run dialog cancelled; deferring choice")
+            return
+        self._apply_file_manager_first_run_choice(choice)
+        self._open_manage_files_now_for_connection(connection)
+
+    def _should_prompt_file_manager_choice(self) -> bool:
+        """Return True if we should ask the user which file manager to use."""
+        try:
+            already_shown = bool(
+                self.config.get_setting('file_manager.first_run_prompt_shown', False)
+            )
+        except Exception:
+            already_shown = False
+        if already_shown:
+            return False
+        # If only the built-in is available (Flatpak, macOS, no GVFS) there's
+        # no real choice to make. Silently mark the prompt as shown so we
+        # never reach this branch again.
+        if not has_internal_file_manager() or not has_native_gvfs_support():
+            try:
+                self.config.set_setting('file_manager.first_run_prompt_shown', True)
+            except Exception as exc:
+                logger.debug("Could not mark first-run file manager prompt: %s", exc)
+            return False
+        return True
+
+    def _apply_file_manager_first_run_choice(self, choice: str) -> None:
+        """Persist the user's pick from the first-run dialog."""
+        try:
+            if choice == 'builtin':
+                self.config.set_setting('file_manager.force_internal', True)
+            elif choice == 'system':
+                self.config.set_setting('file_manager.force_internal', False)
+            # Any unknown response (e.g. future close-response) is treated
+            # the same as no preference change — but we still mark the
+            # prompt as shown so we never ask again.
+            self.config.set_setting('file_manager.first_run_prompt_shown', True)
+        except Exception as exc:
+            logger.error("Failed to persist file manager first-run choice: %s", exc)
+
+    def _show_file_manager_first_run_dialog(self, on_choice) -> None:
+        """Present the one-time built-in vs system chooser.
+
+        *on_choice* is called with ``'builtin'`` or ``'system'`` after the
+        user picks and confirms, or ``None`` if they cancel / dismiss the
+        dialog (no preference is saved in that case, so the next Manage
+        Files click re-prompts).
+
+        Layout follows the GNOME HIG choice-dialog pattern: heading, a brief
+        body, then an Adw.PreferencesGroup of Adw.ActionRow rows each with
+        a prefix radio button. The whole row is the radio's activatable
+        widget, so clicking anywhere on a row toggles the selection.
+        """
+        heading = _("Choose your file manager")
+        body = _("How should SSH Pilot manage files on remote ?")
+
+        use_alert = hasattr(Adw, 'AlertDialog')
+        if use_alert:
+            dialog = Adw.AlertDialog(heading=heading, body=body)
+        else:
+            dialog = Adw.MessageDialog(
+                transient_for=self, modal=True, heading=heading, body=body
+            )
+
+        # --- Choice list ---
+        content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18)
+        content_box.set_margin_top(12)
+        # Give the dialog room to breathe; AlertDialog will respect this
+        # as a minimum content width.
+        content_box.set_size_request(440, -1)
+
+        group = Adw.PreferencesGroup()
+
+        # Built-in option (recommended → pre-selected).
+        builtin_row = Adw.ActionRow()
+        builtin_row.set_title(_("Use the built-in, dual-pane File Manager"))
+        builtin_row.set_subtitle(
+            _("Recommended — opens in a tab inside the application")
+        )
+        builtin_radio = Gtk.CheckButton()
+        builtin_radio.set_valign(Gtk.Align.CENTER)
+        builtin_radio.set_active(True)
+        builtin_row.add_prefix(builtin_radio)
+        builtin_row.set_activatable_widget(builtin_radio)
+        group.add(builtin_row)
+
+        # System option.
+        system_row = Adw.ActionRow()
+        system_row.set_title(_("Use the system file manager"))
+        system_row.set_subtitle(
+            _("Opens your desktop file manager (e.g. GNOME Files, Dolphin)")
+        )
+        system_radio = Gtk.CheckButton()
+        system_radio.set_valign(Gtk.Align.CENTER)
+        # set_group makes this radio share state with the first one — picking
+        # one deselects the other.
+        system_radio.set_group(builtin_radio)
+        system_row.add_prefix(system_radio)
+        system_row.set_activatable_widget(system_radio)
+        group.add(system_row)
+
+        content_box.append(group)
+
+        # --- Footer hint ---
+        footer = Gtk.Label(
+            label=_("You can change this anytime in Preferences → File Management.")
+        )
+        footer.set_wrap(True)
+        footer.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        footer.set_xalign(0)
+        footer.set_halign(Gtk.Align.START)
+        footer.add_css_class("caption")
+        footer.add_css_class("dim-label")
+        content_box.append(footer)
+
+        dialog.set_extra_child(content_box)
+
+        # --- Response buttons (Cancel / Confirm) ---
+        dialog.add_response('cancel', _("Cancel"))
+        dialog.add_response('confirm', _("Confirm"))
+        dialog.set_default_response('confirm')
+        dialog.set_close_response('cancel')
+        try:
+            dialog.set_response_appearance(
+                'confirm', Adw.ResponseAppearance.SUGGESTED
+            )
+        except Exception:
+            pass
+
+        def _on_response(_d, response: str) -> None:
+            if response == 'confirm':
+                choice = 'builtin' if builtin_radio.get_active() else 'system'
+                on_choice(choice)
+            else:
+                on_choice(None)
+
+        dialog.connect('response', _on_response)
+
+        if use_alert:
+            dialog.present(self)
+        else:
+            dialog.present()
+
+    def _open_manage_files_now_for_connection(self, connection):
+        """Actually open the file manager (no prompts, no gating)."""
 
         nickname = getattr(connection, 'nickname', None) or getattr(connection, 'hostname', None) or getattr(connection, 'host', None) or getattr(connection, 'username', 'Remote Host')
         host_value = _get_connection_host(connection) or _get_connection_alias(connection)

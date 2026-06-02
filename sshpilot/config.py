@@ -211,6 +211,11 @@ class Config(GObject.Object):
                 # in [0, 4]; index into the per-view size tables in
                 # file_manager_window.py. Default 1 = list 24px / grid 72px.
                 'icon_size_level': 1,
+                # Set the first time the user is offered a choice between
+                # built-in and system file managers (or skipped because only
+                # built-in is available on the current platform). Prevents
+                # re-prompting on subsequent "Manage Files" clicks.
+                'first_run_prompt_shown': False,
             },
             'security': {
                 'store_passwords': True,
@@ -823,6 +828,7 @@ class Config(GObject.Object):
             'sftp_keepalive_count_max': _get_non_negative_int('sftp_keepalive_count_max'),
             'sftp_connect_timeout': _get_non_negative_int('sftp_connect_timeout'),
             'icon_size_level': _get_icon_size_level(),
+            'first_run_prompt_shown': _get_bool('first_run_prompt_shown'),
         }
 
     def get_security_config(self) -> Dict[str, Any]:
@@ -970,6 +976,17 @@ class Config(GObject.Object):
                 updated = True
             elif not isinstance(file_manager_cfg['open_externally'], bool):
                 file_manager_cfg['open_externally'] = bool(file_manager_cfg['open_externally'])
+                updated = True
+
+            if 'first_run_prompt_shown' not in file_manager_cfg:
+                file_manager_cfg['first_run_prompt_shown'] = bool(
+                    file_manager_defaults.get('first_run_prompt_shown', False)
+                )
+                updated = True
+            elif not isinstance(file_manager_cfg['first_run_prompt_shown'], bool):
+                file_manager_cfg['first_run_prompt_shown'] = bool(
+                    file_manager_cfg['first_run_prompt_shown']
+                )
                 updated = True
 
             def _ensure_non_negative_int(key: str) -> None:
