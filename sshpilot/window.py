@@ -1102,6 +1102,35 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
 
 
+    def _focus_is_in_connection_list(self) -> bool:
+        """Return True if keyboard focus is currently on/within the connection list."""
+        if not getattr(self, 'connection_list', None):
+            return False
+        try:
+            widget = self.get_focus()
+        except Exception:
+            return False
+        while widget is not None:
+            if widget is self.connection_list:
+                return True
+            widget = widget.get_parent()
+        return False
+
+    def _on_focus_visible_changed(self, *args) -> None:
+        """Keep the keyboard focus ring visible while navigating the connection list.
+
+        GTK hides the window's focus-visible state after a few seconds of
+        keyboard inactivity. While the user is navigating the connection list
+        that reads as the selection being lost, so re-assert it as long as
+        focus remains inside the list."""
+        try:
+            if self.get_focus_visible():
+                return
+            if self._focus_is_in_connection_list():
+                self.set_focus_visible(True)
+        except Exception:
+            pass
+
     def _select_only_row(self, row: Optional[Gtk.ListBoxRow]) -> None:
         """Select only the provided row, clearing any other selections."""
         if not row or not getattr(self, 'connection_list', None):
@@ -2014,6 +2043,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Connect signals
         self.connection_list.connect('row-selected', self.on_connection_selected)  # For button sensitivity
         self.connection_list.connect('row-activated', self.on_connection_activated)  # For Enter key/double-click
+
+        # GTK auto-hides the window's focus-visible state after a few seconds of
+        # keyboard inactivity, which makes a keyboard-selected connection row
+        # look deselected (the focus ring vanishes) even though it still holds
+        # focus and selection. Re-assert it while focus stays in the list.
+        self.connect('notify::focus-visible', self._on_focus_visible_changed)
         
         # Make sure the connection list is focusable and can receive key events
         self.connection_list.set_focusable(True)
