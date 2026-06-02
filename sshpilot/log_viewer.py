@@ -266,8 +266,9 @@ class LogViewerWindow(Adw.Window):
         header.set_title_widget(Gtk.Label(label=_("Application Log")))
         toolbar.add_top_bar(header)
 
-        # Category dropdown — sits at the start of the header so it reads
-        # as the primary view-switcher control.
+        # Category dropdown — constructed here, placed in the body filter
+        # row below. The header bar only carries action buttons; pairing
+        # two unlabeled DropDowns there made them look like duplicates.
         cat_model = Gtk.StringList()
         for _id, label, _path in self._categories:
             cat_model.append(label)
@@ -280,7 +281,6 @@ class LogViewerWindow(Adw.Window):
         self._category_dropdown.connect(
             "notify::selected", self._on_category_changed
         )
-        header.pack_start(self._category_dropdown)
 
         # Level filter dropdown — VIEWER-side, independent of the persistent
         # app log level. Tooltip explains the distinction so users don't
@@ -298,10 +298,9 @@ class LogViewerWindow(Adw.Window):
         self._level_dropdown.connect(
             "notify::selected", self._on_level_filter_changed
         )
-        header.pack_start(self._level_dropdown)
 
-        # Follow toggle — when active, newly written log lines are appended
-        # live and the view auto-scrolls to the end. Mirrors `tail -f`.
+        # Follow toggle — stays in the header because it's a single-icon
+        # action that pairs naturally with the Copy / ⋮ buttons.
         self._follow_toggle = Gtk.ToggleButton()
         self._follow_toggle.set_icon_name("go-bottom-symbolic")
         self._follow_toggle.set_active(self._follow_enabled)
@@ -383,6 +382,35 @@ class LogViewerWindow(Adw.Window):
         self._stats_label.add_css_class("dim-label")
         path_row.append(self._stats_label)
         body.append(path_row)
+
+        # Labeled filter strip. Each dropdown gets a small caption-labeled
+        # prefix so two unlabeled dropdowns side-by-side don't look like
+        # duplicates of each other.
+        filter_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        filter_row.set_margin_top(2)
+        filter_row.set_margin_start(12)
+        filter_row.set_margin_end(12)
+
+        cat_caption = Gtk.Label(label=_("Category:"))
+        cat_caption.add_css_class("caption")
+        cat_caption.add_css_class("dim-label")
+        cat_caption.set_valign(Gtk.Align.CENTER)
+        filter_row.append(cat_caption)
+        filter_row.append(self._category_dropdown)
+
+        # Visual spacer between the two filters so they don't blur together.
+        spacer = Gtk.Box()
+        spacer.set_size_request(16, -1)
+        filter_row.append(spacer)
+
+        lvl_caption = Gtk.Label(label=_("Level:"))
+        lvl_caption.add_css_class("caption")
+        lvl_caption.add_css_class("dim-label")
+        lvl_caption.set_valign(Gtk.Align.CENTER)
+        filter_row.append(lvl_caption)
+        filter_row.append(self._level_dropdown)
+
+        body.append(filter_row)
 
         # Always-visible search entry. Filters lines client-side by
         # substring (case-insensitive); combines with the level filter via

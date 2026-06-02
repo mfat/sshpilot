@@ -566,14 +566,18 @@ class SshPilotApplication(Adw.Application):
         console_handler.setLevel(effective_level)
         root_logger.setLevel(effective_level)
 
-        # Reapply third-party clamp — verbose lifts them one notch, otherwise
-        # they stay at WARNING.
+        # Reapply third-party clamp. At default level they stay at WARNING
+        # (so we don't drown the user in keyring/paramiko/PIL chatter). In
+        # verbose mode the user has opted into the firehose — paramiko goes
+        # to DEBUG so the SSH log file actually shows the protocol trace
+        # ([chan 0] listdir, SFTP packets, etc.); other 3rd-party libraries
+        # only get one notch up to INFO because their DEBUG levels are
+        # rarely useful for sshPilot bug reports.
         _clamp_thirdparty_loggers()
         if verbose:
-            for noisy in (
-                'keyring', 'paramiko', 'paramiko.transport', 'paramiko.transport.sftp',
-                'gi', 'PIL', 'urllib3', 'asyncio',
-            ):
+            for noisy in ('paramiko', 'paramiko.transport', 'paramiko.transport.sftp'):
+                logging.getLogger(noisy).setLevel(logging.DEBUG)
+            for noisy in ('keyring', 'gi', 'PIL', 'urllib3', 'asyncio'):
                 logging.getLogger(noisy).setLevel(logging.INFO)
 
         app_level = logging.DEBUG if verbose else logging.INFO
