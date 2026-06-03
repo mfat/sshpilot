@@ -16,7 +16,7 @@ import re
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple, Union, Set
 
-from .ssh_config_utils import resolve_ssh_config_files, get_effective_ssh_config
+from .ssh_config_utils import resolve_ssh_config_files, get_effective_ssh_config, expand_ssh_tokens
 from .platform_utils import is_macos, get_config_dir, get_ssh_dir
 from .key_utils import _is_private_key
 from .ssh_connection_builder import build_ssh_connection, ConnectionContext
@@ -101,6 +101,37 @@ def _ensure_event_loop() -> asyncio.AbstractEventLoop:
             logger.debug("Failed to register newly created asyncio loop", exc_info=True)
         return loop
 
+
+# Per ssh_config(5): "Configuration options may be separated by whitespace or
+# optional whitespace and exactly one '='". A keyword and its argument may be
+# separated by any run of whitespace (spaces or tabs) or by a single '=' with
+# optional surrounding whitespace.
+_CONFIG_OPTION_RE = re.compile(r'^(\S+?)(?:\s*=\s*|\s+)(.*)$')
+
+
+def _split_config_option(line: str) -> Tuple[Optional[str], Optional[str]]:
+    """Split a config line into (key, value) honouring whitespace and '=' separators.
+
+    Returns ``(None, None)`` for lines that carry no value (a bare keyword), which
+    the caller skips just as the old ``' ' in line`` guard did.
+    """
+    match = _CONFIG_OPTION_RE.match(line)
+    if not match:
+        return None, None
+    key, value = match.group(1), match.group(2).strip()
+    if not value:
+        return None, None
+    return key, value
+
+
+def _safe_int(value: Any, default: int) -> int:
+    """Best-effort int conversion that falls back to *default* instead of raising."""
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return default
+
+
 class Connection:
     """Represents an SSH connection"""
     
@@ -146,7 +177,12 @@ class Connection:
         self.port = data.get('port', 22)
         # previously: self.keyfile = data.get('keyfile', '')
         self.keyfile = data.get('keyfile') or data.get('private_key', '') or ''
+        # Full list of IdentityFile/CertificateFile entries (ssh_config(5) allows
+        # multiples; ``keyfile``/``certificate`` above are just the primary entry).
+        self.identity_files = list(data.get('identity_files') or ([self.keyfile] if self.keyfile else []))
+        self.identity_file_none = bool(data.get('identity_file_none', False))
         self.certificate = data.get('certificate') or ''
+        self.certificate_files = list(data.get('certificate_files') or ([self.certificate] if self.certificate else []))
         self.password = data.get('password', '')
         self.key_passphrase = data.get('key_passphrase', '')
         # Source file of this configuration block
@@ -561,9 +597,12 @@ class Connection:
         self.username = data.get('username', '')
         self.port = data.get('port', 22)
         self.keyfile = data.get('keyfile') or data.get('private_key', '') or ''
+        self.identity_files = list(data.get('identity_files') or ([self.keyfile] if self.keyfile else []))
+        self.identity_file_none = bool(data.get('identity_file_none', False))
 
 
         self.certificate = data.get('certificate') or ''
+        self.certificate_files = list(data.get('certificate_files') or ([self.certificate] if self.certificate else []))
         self.password = data.get('password', '')
         self.key_passphrase = data.get('key_passphrase', '')
         self.source = data.get('source', getattr(self, 'source', ''))
@@ -964,10 +1003,16 @@ class ConnectionManager(GObject.Object):
                         current_config = {}
                         i += 1
                         continue
-                    if ' ' in line:
-                        key, value = line.split(maxsplit=1)
+                    key, value = _split_config_option(line)
+                    if key is not None:
                         key = key.lower()
-                        if key in current_config and key in ['localforward', 'remoteforward', 'dynamicforward']:
+                        # Directives that accumulate per ssh_config(5): forwardings
+                        # and IdentityFile/CertificateFile ("Multiple ... directives
+                        # will add to the list").
+                        if key in current_config and key in (
+                            'localforward', 'remoteforward', 'dynamicforward',
+                            'identityfile', 'certificatefile',
+                        ):
                             if not isinstance(current_config[key], list):
                                 current_config[key] = [current_config[key]]
                             current_config[key].append(value)
@@ -1045,6 +1090,38 @@ class ConnectionManager(GObject.Object):
             hostname_value = config['hostname'] if has_explicit_hostname else None
             parsed_host = _unwrap(hostname_value) if has_explicit_hostname else ''
 
+            # IdentityFile/CertificateFile may appear multiple times; per
+            # ssh_config(5) they accumulate ("Multiple ... directives will add
+            # to the list"). Expand ~ and ${ENV} (but not the %-tokens, which are
+            # host/runtime specific and resolved via `ssh -G` when the real
+            # connection is built). An IdentityFile argument of ``none`` is a
+            # suppressor ("no identity files should be loaded"), not a path.
+            def _expand_path_value(val: Any) -> str:
+                # ~ + ${ENV} + the host-independent %-tokens (%d, %u, ...). Runtime
+                # tokens such as %h/%r are left intact for ssh / `ssh -G` to resolve.
+                return os.path.expanduser(os.path.expandvars(expand_ssh_tokens(_unwrap(val))))
+
+            def _as_list(raw: Any) -> List[Any]:
+                if raw is None:
+                    return []
+                return list(raw) if isinstance(raw, list) else [raw]
+
+            identity_files: List[str] = []
+            identity_suppressed = False
+            for entry in _as_list(config.get('identityfile')):
+                unwrapped = _unwrap(entry)
+                if isinstance(unwrapped, str) and unwrapped.strip().lower() == 'none':
+                    identity_suppressed = True
+                    continue
+                if unwrapped:
+                    identity_files.append(_expand_path_value(entry))
+
+            certificate_files: List[str] = [
+                _expand_path_value(entry)
+                for entry in _as_list(config.get('certificatefile'))
+                if _unwrap(entry)
+            ]
+
             # Extract relevant configuration
             parsed = {
                 'nickname': host,
@@ -1054,12 +1131,17 @@ class ConnectionManager(GObject.Object):
                 'hostname': parsed_host,
                 'host': host,
 
-                'port': int(_unwrap(config.get('port', 22))),
+                'port': _safe_int(_unwrap(config.get('port', 22)), 22),
                 'username': _unwrap(config.get('user', getpass.getuser())),
                 # previously: 'private_key': config.get('identityfile'),
 
-                'keyfile': os.path.expanduser(_unwrap(config.get('identityfile'))) if config.get('identityfile') else '',
-                'certificate': os.path.expanduser(_unwrap(config.get('certificatefile'))) if config.get('certificatefile') else '',
+                # ``keyfile``/``certificate`` remain the primary (first) entry for
+                # backward compatibility; the full lists live alongside them.
+                'keyfile': identity_files[0] if identity_files else '',
+                'identity_files': identity_files,
+                'identity_file_none': identity_suppressed,
+                'certificate': certificate_files[0] if certificate_files else '',
+                'certificate_files': certificate_files,
                 'forwarding_rules': []
             }
             if has_explicit_hostname:
@@ -1089,17 +1171,23 @@ class ConnectionManager(GObject.Object):
                 if not isinstance(forward_specs, list):
                     forward_specs = [forward_specs]
                     
+                def _parse_listen_spec(spec):
+                    """Return (bind_addr, port) for a "[bind_address:]port" token, or None."""
+                    if ':' in spec:
+                        bind_addr, port_str = spec.rsplit(':', 1)
+                        bind_addr = bind_addr.strip().strip('[]') or 'localhost'
+                    else:
+                        bind_addr, port_str = 'localhost', spec
+                    port = _safe_int(port_str, None)
+                    return None if port is None else (bind_addr, port)
+
                 for forward_spec in forward_specs:
                     if forward_type == 'dynamicforward':
                         # Format is usually "[bind_address:]port"
-                        if ':' in forward_spec:
-                            bind_addr, port_str = forward_spec.rsplit(':', 1)
-                            bind_addr = bind_addr.strip() or 'localhost'
-                            listen_port = int(port_str)
-                        else:
-                            bind_addr = 'localhost'  # Default bind address
-                            listen_port = int(forward_spec)
-                        
+                        listen = _parse_listen_spec(forward_spec.strip())
+                        if listen is None:
+                            continue
+                        bind_addr, listen_port = listen
                         parsed['forwarding_rules'].append({
                             'type': 'dynamic',
                             'listen_addr': bind_addr,
@@ -1107,49 +1195,61 @@ class ConnectionManager(GObject.Object):
                             'enabled': True
                         })
                     else:
-                        # Handle LocalForward and RemoteForward
-                        # Format is "[bind_address:]port host:hostport"
+                        # LocalForward / RemoteForward:
+                        #   "[bind_address:]port [host:hostport]"
+                        # RemoteForward may omit the destination, in which case it
+                        # acts as a SOCKS proxy (ssh_config(5)).
                         parts = forward_spec.split()
-                        if len(parts) == 2:
-                            listen_spec, dest_spec = parts
-                            
-                            # Parse listen address and port
-                            if ':' in listen_spec:
-                                bind_addr, port_str = listen_spec.rsplit(':', 1)
-                                bind_addr = bind_addr.strip() or 'localhost'
-                                listen_port = int(port_str)
-                            else:
-                                bind_addr = 'localhost'  # Default bind address
-                                listen_port = int(listen_spec)
-                            
-                            # Parse destination host and port
+                        if not parts:
+                            continue
+                        listen = _parse_listen_spec(parts[0])
+                        if listen is None:
+                            continue
+                        bind_addr, listen_port = listen
+                        dest_spec = parts[1] if len(parts) >= 2 else None
+
+                        if forward_type == 'localforward':
+                            # LocalForward requires a destination.
+                            if dest_spec is None:
+                                continue
                             if ':' in dest_spec:
-                                remote_host, remote_port = dest_spec.split(':')
-                                remote_port = int(remote_port)
+                                remote_host, remote_port_str = dest_spec.rsplit(':', 1)
+                                remote_port = _safe_int(remote_port_str, None)
                             else:
-                                remote_host = dest_spec
-                                remote_port = 22  # Default SSH port
-                            
-                            rule_type = 'local' if forward_type == 'localforward' else 'remote'
-                            if rule_type == 'local':
-                                parsed['forwarding_rules'].append({
-                                    'type': 'local',
-                                    'listen_addr': bind_addr,
-                                    'listen_port': listen_port,
-                                    'remote_host': remote_host,
-                                    'remote_port': remote_port,
-                                    'enabled': True
-                                })
+                                remote_host, remote_port = dest_spec, 22
+                            if remote_port is None:
+                                continue
+                            parsed['forwarding_rules'].append({
+                                'type': 'local',
+                                'listen_addr': bind_addr,
+                                'listen_port': listen_port,
+                                'remote_host': remote_host,
+                                'remote_port': remote_port,
+                                'enabled': True
+                            })
+                        else:
+                            # RemoteForward: remote host/port listens, destination
+                            # (if any) is the local host/port.
+                            rule = {
+                                'type': 'remote',
+                                'listen_addr': bind_addr,   # remote host
+                                'listen_port': listen_port, # remote port
+                                'enabled': True,
+                            }
+                            if dest_spec is None:
+                                # Single-argument form → SOCKS proxy.
+                                rule['socks'] = True
                             else:
-                                # RemoteForward: remote host/port listens, destination is local host/port
-                                parsed['forwarding_rules'].append({
-                                    'type': 'remote',
-                                    'listen_addr': bind_addr,   # remote host
-                                    'listen_port': listen_port, # remote port
-                                    'local_host': remote_host,  # destination host (local)
-                                    'local_port': remote_port,  # destination port (local)
-                                    'enabled': True
-                                })
+                                if ':' in dest_spec:
+                                    local_host, local_port_str = dest_spec.rsplit(':', 1)
+                                    local_port = _safe_int(local_port_str, None)
+                                else:
+                                    local_host, local_port = dest_spec, 22
+                                if local_port is None:
+                                    continue
+                                rule['local_host'] = local_host   # destination host (local)
+                                rule['local_port'] = local_port   # destination port (local)
+                            parsed['forwarding_rules'].append(rule)
             
             # Handle proxy settings if any
             if 'proxycommand' in config:
@@ -1161,8 +1261,19 @@ class ConnectionManager(GObject.Object):
                 else:
                     parsed['proxy_jump'] = [p.strip() for p in re.split(r'[\s,]+', pj)]
             if 'forwardagent' in config:
-                fa = str(config.get('forwardagent', '')).strip().lower()
-                parsed['forward_agent'] = fa in ('yes', 'true', '1', 'on')
+                fa_raw = str(_unwrap(config.get('forwardagent', ''))).strip()
+                fa = fa_raw.lower()
+                # ssh_config(5): the argument may be yes, no, an explicit path to
+                # an agent socket, or the name of an environment variable
+                # (beginning with '$'). Anything that is not an explicit "off"
+                # value enables agent forwarding.
+                if fa in ('no', 'false', '0', 'off', ''):
+                    parsed['forward_agent'] = False
+                else:
+                    parsed['forward_agent'] = True
+                    # Preserve a socket path / $ENV reference for callers that need it.
+                    if fa not in ('yes', 'true', '1', 'on'):
+                        parsed['forward_agent_target'] = fa_raw
             
             # Commands: LocalCommand requires PermitLocalCommand
             try:
@@ -1606,22 +1717,46 @@ class ConnectionManager(GObject.Object):
         auth_method = int(data.get('auth_method', 0) or 0)
         key_select_mode = int(data.get('key_select_mode', 0) or 0)
         dedicated_key = key_select_mode in (1, 2)
+
+        def _quote_if_spaced(value: str) -> str:
+            if ' ' in value and not (value.startswith('"') and value.endswith('"')):
+                return f'"{value}"'
+            return value
+
+        def _clean_list(values, placeholder_prefix):
+            cleaned = []
+            for value in values:
+                if not isinstance(value, str):
+                    continue
+                stripped = value.strip()
+                if not stripped or stripped.lower().startswith(placeholder_prefix):
+                    continue
+                if stripped not in cleaned:
+                    cleaned.append(stripped)
+            return cleaned
+
         if auth_method == 0:
+            # ssh_config(5) allows multiple IdentityFile/CertificateFile entries;
+            # write the full list when present, falling back to the primary key.
+            identity_files = _clean_list(
+                data.get('identity_files') or ([keyfile] if keyfile else []),
+                'select key file',
+            )
             # Only write IdentityFile when using a dedicated key mode
-            if dedicated_key and keyfile and keyfile.strip() and not keyfile.strip().lower().startswith('select key file'):
-                if ' ' in keyfile and not (keyfile.startswith('"') and keyfile.endswith('"')):
-                    keyfile = f'"{keyfile}"'
-                lines.append(f"    IdentityFile {keyfile}")
+            if dedicated_key and identity_files:
+                for kf in identity_files:
+                    lines.append(f"    IdentityFile {_quote_if_spaced(kf)}")
 
                 if key_select_mode == 1:
                     lines.append("    IdentitiesOnly yes")
 
-                # Add certificate if specified (exclude placeholder text)
-                certificate = data.get('certificate')
-                if certificate and certificate.strip() and not certificate.strip().lower().startswith('select certificate'):
-                    if ' ' in certificate and not (certificate.startswith('"') and certificate.endswith('"')):
-                        certificate = f'"{certificate}"'
-                    lines.append(f"    CertificateFile {certificate}")
+                # Add certificate(s) if specified (exclude placeholder text)
+                certificate_files = _clean_list(
+                    data.get('certificate_files') or ([data.get('certificate')] if data.get('certificate') else []),
+                    'select certificate',
+                )
+                for cert in certificate_files:
+                    lines.append(f"    CertificateFile {_quote_if_spaced(cert)}")
             # Include password-based fallback if a password is provided
             if data.get('password'):
                 lines.append(

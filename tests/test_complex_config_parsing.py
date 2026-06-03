@@ -7,13 +7,14 @@ This module builds a realistic ~/.ssh/config hierarchy with:
     edge-case syntax variations
 
 Then it exercises the full parsing pipeline and systematically probes every
-identified edge case, including ones that expose real bugs in the current
-implementation.
+identified edge case.
 
-Bug findings are verified against the ssh_config(5) man page for
-OpenSSH 9.6p1 (the version installed in this environment).
+These tests originally documented ten parser bugs (silent failures with no
+warning to the user). All ten have since been fixed in the parser; the tests
+below now assert the spec-correct behaviour and act as regression guards.
 
-Exact quotes from that man page used as the authority:
+Behaviour is verified against the ssh_config(5) man page for OpenSSH 10.2p1
+(the version installed in this environment). The relevant quotes:
 
   Separators: "Configuration options may be separated by whitespace or
   optional whitespace and exactly one ="
@@ -29,28 +30,33 @@ Exact quotes from that man page used as the authority:
   to an agent socket or the name of an environment variable (beginning with $)
   in which to find the path"
 
-  RemoteForward: "The remote port may either be forwarded to a specified host
-  and port from the local machine, or may act as a SOCKS 4/5 proxy that
-  allows a remote client to connect to arbitrary destinations from the local
-  machine" (i.e. single-argument form is valid)
+  RemoteForward: "if no destination argument is specified then the remote
+  forwarding will be established as a SOCKS proxy" (i.e. single-argument form
+  is valid)
 
-  ${VAR} expansion: "Arguments to some keywords can be expanded at runtime
-  from environment variables on the client by enclosing them in ${}"
+  Environment variables: "The keywords CertificateFile, ControlPath,
+  IdentityAgent, IdentityFile, Include, KnownHostsCommand, and
+  UserKnownHostsFile support environment variables."
 
-Ten confirmed parser bugs (all silent failures, no warning to user):
-  BUG 1  – Tab separator      block silently lost when all options use tabs
-  BUG 2a – `keyword=value`   block silently lost (no space → dropped)
-  BUG 2b – `keyword = value` parse_host_config crashes on `int('= N')`,
-            entire host silently discarded
-  BUG 3  – Multiple IdentityFile  only last survives
-  BUG 4  – Multiple CertificateFile  only last survives
-  BUG 5a – ForwardAgent socket path  treated as False
-  BUG 5b – ForwardAgent $ENV_VAR     treated as False
-  BUG 6  – RemoteForward single arg  silently dropped (should be SOCKS)
-  BUG 7  – ${VAR} in IdentityFile    not expanded (stored literally)
-  BUG 8  – %d/%r/etc. tokens in IdentityFile  not expanded (stored literally)
-  BUG 9  – IdentityFile none  stored as literal path, not treated as suppressor
-  BUG 10 – %d/%u tokens in Include paths  not expanded; included files lost
+  TOKENS: IdentityFile/CertificateFile/Include accept the tokens %%, %C, %d,
+  %h, %i, %j, %k, %L, %l, %n, %p, %r and %u.
+
+  IdentityFile none: "an argument of none may be used to indicate no identity
+  files should be loaded".
+
+Ten fixed parser issues, now covered as regression tests:
+  ISSUE 1  – Tab separator           now parsed (whitespace incl. tabs)
+  ISSUE 2a – `keyword=value`         now parsed
+  ISSUE 2b – `keyword = value`       now parsed (no int() crash)
+  ISSUE 3  – Multiple IdentityFile   all preserved (identity_files list)
+  ISSUE 4  – Multiple CertificateFile all preserved (certificate_files list)
+  ISSUE 5a – ForwardAgent socket path treated as truthy
+  ISSUE 5b – ForwardAgent $ENV_VAR    treated as truthy
+  ISSUE 6  – RemoteForward single arg  parsed as a SOCKS rule
+  ISSUE 7  – ${VAR} in IdentityFile    expanded
+  ISSUE 8  – %d token in IdentityFile  expanded (static tokens only)
+  ISSUE 9  – IdentityFile none         treated as suppressor, not a path
+  ISSUE 10 – %d/%u tokens in Include   expanded so included files load
 
 Not bugs:
   - Empty Host block – valid no-op; silently discarding it is correct UX
@@ -180,24 +186,24 @@ Host corp-server
     User admin
 """
 
-# 50-edge.conf (intentional edge cases) ------------------------------------
-# NOTE: Items here expose the three confirmed parser bugs (tab separator,
-# = separator, multiple IdentityFile) documented and verified against the
-# ssh_config(5) man page.
+# 50-edge.conf (edge cases) -------------------------------------------------
+# NOTE: Items here exercise spec-valid syntax variations (tab separator,
+# = separator, multiple IdentityFile) that the parser must handle, verified
+# against the ssh_config(5) man page.
 EDGE_CONFIG = """\
-# BUG 1: tab-separated key and value – valid per spec, broken in parser
+# Tab-separated key and value – valid per spec (whitespace includes tabs)
 Host tab-host
 \tHostName\ttab.example.com
 \tPort\t2222
 
-# BUG 2a: = separator, no spaces – valid per spec ("optional whitespace and
-# exactly one ="), broken in parser
+# `=` separator, no spaces – valid per spec ("optional whitespace and
+# exactly one =")
 Host eq-host
     Port=2222
     HostName=eq.example.com
 
-# BUG 3: multiple IdentityFile lines – spec says "all tried in sequence",
-# parser keeps only the last
+# Multiple IdentityFile lines – spec says "all tried in sequence";
+# all entries must be preserved
 Host multi-key
     HostName multi.example.com
     IdentityFile ~/.ssh/id_rsa
@@ -230,7 +236,7 @@ class TestComplexConfigLoading:
     def test_all_regular_hosts_loaded(self, complex_cm):
         cm, *_ = complex_cm
         names = {c.nickname for c in cm.connections}
-        # tab-host and eq-host are absent due to confirmed parser bugs.
+        # tab-host and eq-host now load (spec-valid separators are parsed).
         expected = {
             "bastion",
             "work-db", "work-app", "work-ci",
@@ -238,6 +244,7 @@ class TestComplexConfigLoading:
             "socks-proxy", "socks-proxy-bind", "reverse-tunnel",
             "corp-server",
             "multi-key", "no-trailing-newline",
+            "tab-host", "eq-host",
         }
         assert expected.issubset(names), f"Missing: {expected - names}"
 
@@ -259,9 +266,9 @@ class TestComplexConfigLoading:
     def test_total_connection_count(self, complex_cm):
         cm, *_ = complex_cm
         # 1 bastion + 2 work (work-db/work-app) + 1 work-ci + 2 personal +
-        # 3 tunnels + 1 corp + 2 edge (multi-key, no-trailing-newline) = 12
-        # tab-host and eq-host are absent due to confirmed parser bugs.
-        assert len(cm.connections) == 12
+        # 3 tunnels + 1 corp + 4 edge (multi-key, no-trailing-newline,
+        # tab-host, eq-host) = 14
+        assert len(cm.connections) == 14
 
 
 # ===========================================================================
@@ -533,32 +540,30 @@ class TestMatchBlock:
 
 
 # ===========================================================================
-# 11. Edge cases
+# 11. Edge cases (regression guards for ten fixed parser issues)
 #
-# Three confirmed bugs verified against ssh_config(5):
-#   BUG 1 – Tab separator      (spec: "whitespace" = space or tab)
-#   BUG 2 – `=` separator      (spec: "optional whitespace and exactly one =")
-#   BUG 3 – Multiple IdentityFile (spec: "all identities tried in sequence")
+# Verified against ssh_config(5):
+#   ISSUE 1  – Tab separator      (spec: "whitespace" = space or tab)
+#   ISSUE 2  – `=` separator      (spec: "optional whitespace and exactly one =")
+#   ISSUE 3  – Multiple IdentityFile (spec: "all identities tried in sequence")
+#   ISSUE 5  – ForwardAgent path / $VAR (spec: both are valid arguments)
+#   ISSUE 6  – RemoteForward single arg  (spec: SOCKS proxy form)
 #
-# The following were previously listed as bugs but are NOT bugs per the spec:
-#   - ForwardAgent path: spec says "must be yes or no" for this version
-#   - RemoteForward single arg: spec requires both arguments
+# Genuine non-bugs:
 #   - Empty Host block: valid no-op; silently discarding it is correct UX
 # ===========================================================================
 
 class TestEdgeCases:
 
     # -----------------------------------------------------------------------
-    # BUG 1 – Tab separator
+    # ISSUE 1 – Tab separator
     # -----------------------------------------------------------------------
 
-    def test_tab_separated_kv_bug_host_entirely_absent(self, tmp_path):
+    def test_tab_separated_kv_block_loaded(self, tmp_path):
         """
-        BUG 1 (severe): The spec says options may be separated by whitespace,
-        which includes tabs.  The parser checks `' ' in line` (ASCII space
-        only).  When every option in a block uses a tab separator, no option
-        populates current_config, so the entire Host block is silently
-        discarded rather than just losing individual values.
+        The spec says options may be separated by whitespace, which includes
+        tabs.  A block whose options all use a tab separator must load with
+        every option parsed.
         """
         main = tmp_path / "config"
         main.write_text(
@@ -570,42 +575,32 @@ class TestEdgeCases:
         cm.ssh_config_path = str(main)
         cm.load_ssh_config()
         c = conn_by_nickname(cm, "tab-only")
-        assert c is None, (
-            "BUG 1: tab-separated options cause the entire Host block to be "
-            "silently discarded (current_config stays empty, flush is skipped)"
-        )
+        assert c is not None, "tab-separated options must not discard the host"
+        assert c.hostname == "tab.example.com"
+        assert c.port == 2222
 
-    def test_tab_separated_kv_mixed_host_created_but_tab_options_lost(self, tmp_path):
-        """
-        BUG 1 (partial): When a block mixes tab and space options, the block
-        IS created (because at least one space-delimited option populates
-        current_config), but every tab-separated option is silently dropped.
-        """
+    def test_tab_separated_kv_mixed_all_options_kept(self, tmp_path):
+        """A block mixing tab and space separators must keep every option."""
         main = tmp_path / "config"
         main.write_text(
             "Host tab-mixed\n"
-            "\tHostName\ttabmixed.example.com\n"  # tab – dropped
-            "    Port 2222\n"                      # space – kept
+            "\tHostName\ttabmixed.example.com\n"  # tab
+            "    Port 2222\n"                      # space
         )
         cm = make_cm()
         cm.ssh_config_path = str(main)
         cm.load_ssh_config()
         c = conn_by_nickname(cm, "tab-mixed")
-        assert c is not None, "Host block with at least one space option should survive"
+        assert c is not None
         assert c.port == 2222
-        assert c.hostname == "", "BUG 1: tab-separated HostName is silently dropped"
+        assert c.hostname == "tabmixed.example.com"
 
     # -----------------------------------------------------------------------
-    # BUG 2 – `=` separator
+    # ISSUE 2 – `=` separator
     # -----------------------------------------------------------------------
 
-    def test_equals_no_spaces_host_entirely_absent(self, tmp_path):
-        """
-        BUG 2a (severe): The spec explicitly allows `keyword=value` (no
-        surrounding spaces).  When every option in a block uses this form,
-        `' ' in line` is False for each, current_config stays empty, and the
-        entire Host block is silently discarded.
-        """
+    def test_equals_no_spaces_block_loaded(self, tmp_path):
+        """`keyword=value` (no surrounding spaces) is spec-valid and must parse."""
         main = tmp_path / "config"
         main.write_text(
             "Host eq-only\n"
@@ -616,21 +611,17 @@ class TestEdgeCases:
         cm.ssh_config_path = str(main)
         cm.load_ssh_config()
         c = conn_by_nickname(cm, "eq-only")
-        assert c is None, (
-            "BUG 2a: `keyword=value` options cause the entire Host block to be "
-            "silently discarded"
-        )
+        assert c is not None, "`keyword=value` options must not discard the host"
+        assert c.hostname == "eq.example.com"
+        assert c.port == 2222
 
-    def test_equals_no_spaces_mixed_host_created_but_eq_options_lost(self, tmp_path):
-        """
-        BUG 2a (partial): Mixed block — space-separated options survive, the
-        `=`-separated ones are silently dropped.
-        """
+    def test_equals_no_spaces_mixed_all_options_kept(self, tmp_path):
+        """Mixed `=`/space block must keep every option."""
         main = tmp_path / "config"
         main.write_text(
             "Host eq-mixed\n"
-            "    HostName=eqmixed.example.com\n"  # no-space = – dropped
-            "    Port 2222\n"                       # space – kept
+            "    HostName=eqmixed.example.com\n"  # no-space =
+            "    Port 2222\n"                       # space
         )
         cm = make_cm()
         cm.ssh_config_path = str(main)
@@ -638,65 +629,59 @@ class TestEdgeCases:
         c = conn_by_nickname(cm, "eq-mixed")
         assert c is not None
         assert c.port == 2222
-        assert c.hostname == "", "BUG 2a: `keyword=value` HostName is silently dropped"
+        assert c.hostname == "eqmixed.example.com"
 
-    def test_equals_with_spaces_crashes_parse_and_discards_host(self, tmp_path):
+    def test_equals_with_spaces_parsed(self, tmp_path):
         """
-        BUG 2b (severe): The spec allows `keyword = value` (whitespace around
-        the `=`).  This form has a space so it clears the `' ' in line` check,
-        but `split(maxsplit=1)` gives `key='port'` and `value='= 2222'`.
-
-        The `=` ends up inside the value string.  When parse_host_config then
-        calls `int('= 2222')` it raises ValueError.  The outer except in
-        parse_host_config catches this and returns None — the entire host is
-        silently discarded, not just the port value.
+        `keyword = value` (whitespace around the `=`) is spec-valid.  The `=`
+        must be consumed as the separator (not folded into the value, which
+        previously crashed `int('= 2222')` and discarded the whole host).
         """
         main = tmp_path / "config"
         main.write_text(
             "Host spaced-eq\n"
             "    HostName spacedeq.example.com\n"
-            "    Port = 2222\n"  # spec-valid; crashes parser
+            "    Port = 2222\n"
         )
         cm = make_cm()
         cm.ssh_config_path = str(main)
         cm.load_ssh_config()
         c = conn_by_nickname(cm, "spaced-eq")
-        assert c is None, (
-            "BUG 2b: `Port = 2222` (spaced-equals form) is spec-valid but "
-            "int('= 2222') crashes parse_host_config, silently discarding the "
-            "whole host"
-        )
+        assert c is not None, "`Port = 2222` must parse, not discard the host"
+        assert c.hostname == "spacedeq.example.com"
+        assert c.port == 2222
 
     # -----------------------------------------------------------------------
-    # BUG 3 – Multiple IdentityFile
+    # ISSUE 3 – Multiple IdentityFile
     # -----------------------------------------------------------------------
 
-    def test_multiple_identityfile_only_last_survives(self, complex_cm):
+    def test_multiple_identityfile_all_preserved(self, complex_cm):
         """
-        BUG 3: The spec states "all these identities will be tried in
-        sequence".  The parser stores IdentityFile as a plain string (not a
-        list), so each new line overwrites the previous.  Only the last key is
-        kept; earlier ones are silently lost.
+        The spec states "all these identities will be tried in sequence".
+        Every IdentityFile entry must be preserved (in identity_files); keyfile
+        keeps the first as the primary entry.
         """
         cm, *_ = complex_cm
         c = conn_by_nickname(cm, "multi-key")
         assert c is not None
-        assert "id_ed25519" in c.keyfile, (
-            "BUG 3: last IdentityFile wins (id_ed25519); id_rsa is silently lost"
+        assert any("id_rsa" in f for f in c.identity_files), (
+            "first IdentityFile (id_rsa) must be preserved"
         )
-        assert "id_rsa" not in c.keyfile
+        assert any("id_ed25519" in f for f in c.identity_files), (
+            "second IdentityFile (id_ed25519) must be preserved"
+        )
+        # keyfile is the primary (first) entry.
+        assert "id_rsa" in c.keyfile
 
     # -----------------------------------------------------------------------
-    # BUG 4 – Multiple CertificateFile
+    # ISSUE 4 – Multiple CertificateFile
     # -----------------------------------------------------------------------
 
-    def test_multiple_certificatefile_only_last_survives(self, tmp_path):
+    def test_multiple_certificatefile_all_preserved(self, tmp_path):
         """
-        BUG 4: The 9.6p1 man page states "Multiple CertificateFile directives
-        will add to the list of certificates used for authentication."
-        The parser stores 'certificatefile' as a plain string (not in the
-        multi-value list), so each new directive overwrites the previous.
-        Only the last certificate is kept; earlier ones are silently lost.
+        The man page states "Multiple CertificateFile directives will add to
+        the list of certificates used for authentication."  All entries must
+        be preserved (in certificate_files); certificate keeps the first.
         """
         main = tmp_path / "config"
         main.write_text(
@@ -710,20 +695,53 @@ class TestEdgeCases:
         cm.load_ssh_config()
         c = conn_by_nickname(cm, "multi-cert")
         assert c is not None
-        assert "cert2" in c.certificate, (
-            "BUG 4: last CertificateFile wins (cert2); cert1 is silently lost"
-        )
-        assert "cert1" not in c.certificate
+        assert any("cert1" in f for f in c.certificate_files), "cert1 must be preserved"
+        assert any("cert2" in f for f in c.certificate_files), "cert2 must be preserved"
+        assert "cert1" in c.certificate  # primary
 
-    # -----------------------------------------------------------------------
-    # BUG 5 – ForwardAgent socket path and $ENV_VAR
-    # -----------------------------------------------------------------------
-
-    def test_forwardagent_socket_path_treated_as_false(self, tmp_path):
+    def test_multiple_identityfile_round_trip_preserved(self, tmp_path):
         """
-        BUG 5a: The 9.6p1 man page states ForwardAgent accepts "an explicit
-        path to an agent socket".  The parser only recognises yes/true/1/on;
-        a path string is not in that set so forward_agent is set to False.
+        Writing a connection back to config must preserve every IdentityFile /
+        CertificateFile entry (not collapse to the primary).
+        """
+        cm = make_cm()
+        data = {
+            'nickname': 'multi',
+            'hostname': 'multi.example.com',
+            'auth_method': 0,
+            'key_select_mode': 2,  # dedicated key mode
+            'keyfile': '/home/u/.ssh/id_rsa',
+            'identity_files': ['/home/u/.ssh/id_rsa', '/home/u/.ssh/id_ed25519'],
+            'certificate_files': ['/home/u/.ssh/a-cert.pub', '/home/u/.ssh/b-cert.pub'],
+        }
+        entry = cm.format_ssh_config_entry(data)
+        assert entry.count('IdentityFile') == 2, entry
+        assert '/home/u/.ssh/id_rsa' in entry
+        assert '/home/u/.ssh/id_ed25519' in entry
+        assert entry.count('CertificateFile') == 2, entry
+
+    def test_single_identityfile_write_unchanged(self, tmp_path):
+        """A single IdentityFile must still be written exactly once (no regression)."""
+        cm = make_cm()
+        data = {
+            'nickname': 'single',
+            'hostname': 'single.example.com',
+            'auth_method': 0,
+            'key_select_mode': 2,
+            'keyfile': '/home/u/.ssh/id_rsa',
+        }
+        entry = cm.format_ssh_config_entry(data)
+        assert entry.count('IdentityFile') == 1, entry
+        assert '/home/u/.ssh/id_rsa' in entry
+
+    # -----------------------------------------------------------------------
+    # ISSUE 5 – ForwardAgent socket path and $ENV_VAR
+    # -----------------------------------------------------------------------
+
+    def test_forwardagent_socket_path_truthy(self, tmp_path):
+        """
+        The man page states ForwardAgent accepts "an explicit path to an agent
+        socket".  Such a value enables agent forwarding (truthy).
         """
         main = tmp_path / "config"
         main.write_text(
@@ -736,17 +754,12 @@ class TestEdgeCases:
         cm.load_ssh_config()
         c = conn_by_nickname(cm, "fa-path")
         assert c is not None
-        assert c.forward_agent is False, (
-            "BUG 5a: ForwardAgent /path should be truthy (9.6p1 spec) "
-            "but the parser returns False"
-        )
+        assert c.forward_agent is True, "ForwardAgent /path must be truthy"
 
-    def test_forwardagent_env_var_treated_as_false(self, tmp_path):
+    def test_forwardagent_env_var_truthy(self, tmp_path):
         """
-        BUG 5b: The 9.6p1 man page states ForwardAgent accepts "the name of
-        an environment variable (beginning with $) in which to find the path".
-        A value like $SSH_AUTH_SOCK should be truthy.  The parser does not
-        recognise the $ prefix and returns False.
+        The man page states ForwardAgent accepts "the name of an environment
+        variable (beginning with $)".  Such a value is truthy.
         """
         main = tmp_path / "config"
         main.write_text(
@@ -759,22 +772,30 @@ class TestEdgeCases:
         cm.load_ssh_config()
         c = conn_by_nickname(cm, "fa-env")
         assert c is not None
-        assert c.forward_agent is False, (
-            "BUG 5b: ForwardAgent $SSH_AUTH_SOCK should be truthy (9.6p1 spec) "
-            "but the parser returns False"
+        assert c.forward_agent is True, "ForwardAgent $SSH_AUTH_SOCK must be truthy"
+
+    def test_forwardagent_no_is_false(self, tmp_path):
+        """ForwardAgent no must remain falsey."""
+        main = tmp_path / "config"
+        main.write_text(
+            "Host fa-no\n    HostName fa.example.com\n    ForwardAgent no\n"
         )
+        cm = make_cm()
+        cm.ssh_config_path = str(main)
+        cm.load_ssh_config()
+        c = conn_by_nickname(cm, "fa-no")
+        assert c is not None
+        assert c.forward_agent is False
 
     # -----------------------------------------------------------------------
-    # BUG 6 – RemoteForward single-argument (SOCKS proxy mode)
+    # ISSUE 6 – RemoteForward single-argument (SOCKS proxy mode)
     # -----------------------------------------------------------------------
 
-    def test_remoteforward_single_arg_silently_dropped(self, tmp_path):
+    def test_remoteforward_single_arg_parsed_as_socks(self, tmp_path):
         """
-        BUG 6: The 9.6p1 man page states RemoteForward may "act as a SOCKS
-        4/5 proxy" using a single-argument form (just [bind_address:]port,
-        no destination).  The parser requires exactly two whitespace-separated
-        parts; a single part produces len(parts)==1, the if-branch is not
-        taken, and the rule is silently dropped.
+        The man page states that with no destination argument the remote
+        forwarding "will be established as a SOCKS proxy".  The single-argument
+        form must produce a remote forwarding rule.
         """
         main = tmp_path / "config"
         main.write_text(
@@ -788,10 +809,11 @@ class TestEdgeCases:
         c = conn_by_nickname(cm, "socks-remote")
         assert c is not None
         remote = [r for r in c.forwarding_rules if r["type"] == "remote"]
-        assert remote == [], (
-            "BUG 6: RemoteForward 9999 (SOCKS mode, 9.6p1 spec) should produce "
-            "a forwarding rule but is silently dropped"
+        assert len(remote) == 1, (
+            "RemoteForward 9999 (SOCKS mode) should produce a forwarding rule"
         )
+        assert remote[0]["listen_port"] == 9999
+        assert remote[0].get("socks") is True
 
     def test_remoteforward_two_arg_form_works(self, tmp_path):
         """The standard two-argument RemoteForward form must continue to work."""
@@ -824,20 +846,13 @@ class TestEdgeCases:
         assert c.forward_agent is True
 
     # -----------------------------------------------------------------------
-    # BUG 7 – ${VAR} environment variable expansion in option values
+    # ISSUE 7 – ${VAR} environment variable expansion in option values
     # -----------------------------------------------------------------------
 
-    def test_identityfile_curly_brace_env_var_stored_unexpanded(self, tmp_path, monkeypatch):
+    def test_identityfile_curly_brace_env_var_expanded(self, tmp_path, monkeypatch):
         """
-        BUG 7: The 9.6p1 man page states "Arguments to some keywords can be
-        expanded at runtime from environment variables on the client by
-        enclosing them in ${}".  IdentityFile supports this, so
-        `${HOME}/.ssh/id_rsa` is a valid value.
-
-        The parser calls os.path.expanduser() (which handles ~) but not
-        os.path.expandvars() (which handles ${HOME}).  The literal string
-        `${HOME}/.ssh/id_rsa` is stored unchanged; the display in the app
-        shows the unexpanded path.
+        The man page lists IdentityFile among the keywords that "support
+        environment variables", so `${HOME}/.ssh/id_rsa` must be expanded.
         """
         monkeypatch.setenv("HOME", str(tmp_path))
         main = tmp_path / "config"
@@ -851,11 +866,8 @@ class TestEdgeCases:
         cm.load_ssh_config()
         c = conn_by_nickname(cm, "env-key")
         assert c is not None
-        # Document the current (buggy) behaviour: ${HOME} is NOT expanded
-        assert "${HOME}" in c.keyfile, (
-            "BUG 7: ${HOME}/.ssh/id_rsa is spec-valid but the parser stores "
-            "the literal '${HOME}' instead of expanding it"
-        )
+        assert "${HOME}" not in c.keyfile, "${HOME} must be expanded"
+        assert c.keyfile == os.path.join(str(tmp_path), ".ssh", "id_rsa")
 
     # -----------------------------------------------------------------------
     # Non-bugs confirmed against spec
@@ -1071,25 +1083,18 @@ class TestEdgeCases:
             pytest.fail(f"Parser raised {type(exc).__name__} on invalid Port value: {exc}")
 
     # -----------------------------------------------------------------------
-    # BUG 8 – %d / % token expansion in IdentityFile
+    # ISSUE 8 – %d / % token expansion in IdentityFile
     # -----------------------------------------------------------------------
 
-    def test_identityfile_percent_d_token_stored_unexpanded(self, tmp_path):
+    def test_identityfile_percent_d_token_expanded(self, tmp_path, monkeypatch):
         """
-        BUG 8: The OpenBSD ssh_config(5) TOKENS section specifies that
-        IdentityFile (and several other directives) accept percent-expansion
-        tokens: %d (local home directory), %h (remote hostname), %r (remote
-        username), %u (local username), %l (local hostname), %n (host alias),
-        %p (port), %i (local uid), %C (hash of several values).
-
-        Example: `IdentityFile %d/.ssh/id_%r` expands to
-        `/home/alice/.ssh/id_alice` for user alice connecting as alice.
-
-        The parser calls os.path.expanduser() (handles ~) but does NOT perform
-        % token expansion.  The raw token string is stored as-is.  Users who
-        write spec-valid percent-token paths see the literal unexpanded string
-        in the app rather than the real key path.
+        The ssh_config(5) TOKENS section lists IdentityFile among the
+        directives accepting percent tokens.  The host-independent %d (local
+        home directory) must be expanded at parse time.  (Runtime tokens such
+        as %h/%r have no value without a connection and are left intact for
+        ssh / `ssh -G` to resolve.)
         """
+        monkeypatch.setenv("HOME", str(tmp_path))
         main = tmp_path / "config"
         main.write_text(
             "Host pct-key\n"
@@ -1101,30 +1106,36 @@ class TestEdgeCases:
         cm.load_ssh_config()
         c = conn_by_nickname(cm, "pct-key")
         assert c is not None
-        # Document the current (buggy) behaviour: %d is NOT expanded
-        assert "%d" in c.keyfile, (
-            "BUG 8: IdentityFile %d/.ssh/id_rsa is spec-valid but the parser "
-            "stores the literal '%d' token instead of expanding it to the "
-            "local home directory"
-        )
+        assert "%d" not in c.keyfile, "%d must be expanded to the home directory"
+        assert c.keyfile == os.path.join(str(tmp_path), ".ssh", "id_rsa")
 
-    # -----------------------------------------------------------------------
-    # BUG 9 – `IdentityFile none` is not handled as "no identity files"
-    # -----------------------------------------------------------------------
-
-    def test_identityfile_none_stored_as_literal_path(self, tmp_path):
+    def test_identityfile_runtime_token_left_intact(self, tmp_path):
         """
-        BUG 9: The OpenBSD ssh_config(5) states: "Alternately an argument of
-        none may be used to indicate no identity files should be loaded
-        (neither by ssh-agent(1) nor any IdentityFile directive)."
+        Connection-dependent tokens (e.g. %h) cannot be resolved at parse time;
+        they must be preserved verbatim so ssh resolves them at connect time.
+        """
+        main = tmp_path / "config"
+        main.write_text(
+            "Host rt-key\n"
+            "    HostName rt.example.com\n"
+            "    IdentityFile ~/.ssh/id_%h\n"
+        )
+        cm = make_cm()
+        cm.ssh_config_path = str(main)
+        cm.load_ssh_config()
+        c = conn_by_nickname(cm, "rt-key")
+        assert c is not None
+        assert c.keyfile.endswith("/.ssh/id_%h")
 
-        This is a signal directive — `IdentityFile none` means "suppress all
-        key-based authentication from this point on", not "use a file named
-        'none'".  The parser applies os.path.expanduser('none') which returns
-        'none' unchanged and stores it as c.keyfile.  The value 'none' is then
-        treated as a regular (if non-existent) key path rather than a
-        suppression directive, so the app displays it as if the user has a key
-        file called 'none'.
+    # -----------------------------------------------------------------------
+    # ISSUE 9 – `IdentityFile none` handled as "no identity files"
+    # -----------------------------------------------------------------------
+
+    def test_identityfile_none_treated_as_suppressor(self, tmp_path):
+        """
+        ssh_config(5): "an argument of none may be used to indicate no identity
+        files should be loaded."  `IdentityFile none` must be treated as a
+        suppressor, not stored as a literal key path called 'none'.
         """
         main = tmp_path / "config"
         main.write_text(
@@ -1137,52 +1148,41 @@ class TestEdgeCases:
         cm.load_ssh_config()
         c = conn_by_nickname(cm, "no-key")
         assert c is not None
-        # Document the current (buggy) behaviour: 'none' is stored as a path
-        assert c.keyfile == "none", (
-            "BUG 9: IdentityFile none should suppress key auth (per spec) but "
-            "the parser stores the literal string 'none' as a key path"
+        assert c.keyfile != "none", "'none' must not be stored as a key path"
+        assert c.keyfile == ""
+        assert c.identity_files == []
+        assert c.identity_file_none is True
+
+    # -----------------------------------------------------------------------
+    # ISSUE 10 – % token expansion in Include paths
+    # -----------------------------------------------------------------------
+
+    def test_include_percent_token_expanded(self, tmp_path, monkeypatch):
+        """
+        ssh_config(5): Include accepts tokens (including %d, the local home
+        directory).  `Include %d/.ssh/included.conf` must expand %d so the
+        included file is found and its hosts load.
+        """
+        # Point %d (home) at tmp_path so the included file is discoverable.
+        monkeypatch.setenv("HOME", str(tmp_path))
+        ssh_dir = tmp_path / ".ssh"
+        ssh_dir.mkdir()
+        (ssh_dir / "included.conf").write_text(
+            "Host pct-host\n    HostName pct.example.com\n"
         )
 
-    # -----------------------------------------------------------------------
-    # BUG 10 – % token expansion in Include paths
-    # -----------------------------------------------------------------------
-
-    def test_include_percent_token_not_expanded(self, tmp_path, monkeypatch):
-        """
-        BUG 10: The OpenBSD ssh_config(5) states that Include accepts the %d
-        and %u tokens (local home directory and local username respectively).
-        Example: `Include %d/.ssh/conf.d/*.conf`.
-
-        resolve_ssh_config_files() calls os.path.expandvars() and
-        os.path.expanduser() on the Include path but does NOT perform %
-        token expansion.  A `%d` or `%u` in an Include path is passed
-        verbatim to glob.glob(), which finds no match; the Include is
-        silently ignored and any hosts defined in those files are lost.
-        """
-        import getpass
-
-        extra = tmp_path / "included.conf"
-        extra.write_text("Host pct-host\n    HostName pct.example.com\n")
-
-        # We cannot easily make %d expand to tmp_path in the resolver, so we
-        # test the observable behaviour: the host from the included file is
-        # absent because the % token prevents glob from resolving the path.
         main = tmp_path / "config"
         main.write_text(
-            f"Include %d/.ssh/included.conf\n"
-            f"Host anchor\n"
-            f"    HostName anchor.example.com\n"
+            "Include %d/.ssh/included.conf\n"
+            "Host anchor\n"
+            "    HostName anchor.example.com\n"
         )
         cm = make_cm()
         cm.ssh_config_path = str(main)
         cm.load_ssh_config()
 
-        # The anchor host (not under the failed Include) should load fine
         assert conn_by_nickname(cm, "anchor") is not None
-
-        # pct-host is absent because %d was not expanded so glob found nothing
-        assert conn_by_nickname(cm, "pct-host") is None, (
-            "BUG 10: Include %d/... should expand %d to the local home "
-            "directory (per spec) but the resolver passes the literal '%%d' "
-            "to glob, which matches nothing; the included hosts are silently lost"
+        assert conn_by_nickname(cm, "pct-host") is not None, (
+            "Include %d/... must expand %d to the home directory so the "
+            "included hosts load"
         )

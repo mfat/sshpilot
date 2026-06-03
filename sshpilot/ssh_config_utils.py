@@ -1,12 +1,54 @@
 import os
 import glob
 import shlex
+import getpass
+import socket
 import logging
+import re
 import subprocess
 from typing import Dict, List, Optional, Set, Union
 
 
 logger = logging.getLogger(__name__)
+
+
+_TOKEN_RE = re.compile(r'%(.)')
+
+
+def expand_ssh_tokens(value: str) -> str:
+    """Expand the ssh_config(5) percent tokens that are resolvable without a
+    connection context (used for Include paths, which only meaningfully support
+    %d and %u, plus the other host-independent tokens).
+
+    %% -> literal %, %d -> local home dir, %u -> local username,
+    %i -> local uid, %l/%L -> local hostname. Unknown tokens are left intact.
+    """
+    if not value or '%' not in value:
+        return value
+
+    home = os.path.expanduser('~')
+    try:
+        user = getpass.getuser()
+    except Exception:
+        user = ''
+    try:
+        hostname = socket.gethostname()
+    except Exception:
+        hostname = ''
+    mapping = {
+        '%': '%',
+        'd': home,
+        'u': user,
+        'i': str(os.getuid()) if hasattr(os, 'getuid') else '',
+        'l': hostname,
+        'L': hostname.split('.')[0],
+    }
+
+    def _repl(match: 're.Match') -> str:
+        token = match.group(1)
+        return mapping.get(token, match.group(0))
+
+    return _TOKEN_RE.sub(_repl, value)
 
 
 def resolve_ssh_config_files(main_path: str, *, max_depth: int = 32) -> List[str]:
@@ -47,7 +89,7 @@ def resolve_ssh_config_files(main_path: str, *, max_depth: int = 32) -> List[str
             if lowered.startswith('include '):
                 patterns = shlex.split(line[len('include '):])
                 for pattern in patterns:
-                    expanded = os.path.expanduser(os.path.expandvars(pattern))
+                    expanded = os.path.expanduser(os.path.expandvars(expand_ssh_tokens(pattern)))
                     if not os.path.isabs(expanded):
                         expanded = os.path.join(base_dir, expanded)
                     matches = glob.glob(expanded)
