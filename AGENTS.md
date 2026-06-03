@@ -56,6 +56,55 @@ askpass helper (`askpass_utils.py`) is the program ssh invokes; it looks the
 passphrase up in the keyring and, failing that, shows a GTK prompt. Keyring
 autofill + the askpass prompt are advertised features — keep them working.
 
+### Advanced SSH options (Preferences → command)
+Preferences ▸ SSH Settings persists each advanced option under the `ssh.*`
+namespace (`ssh.connection_timeout`, `ssh.connection_attempts`,
+`ssh.keepalive_interval`, `ssh.keepalive_count_max`,
+`ssh.strict_host_key_checking`, `ssh.batch_mode`, `ssh.compression`,
+`ssh.verbosity`, `ssh.debug_enabled`) **and** composes them into one flat list,
+`ssh.ssh_overrides`, in `preferences.py::save_advanced_ssh_settings` — e.g.
+`['-o','ConnectTimeout=10','-o','ServerAliveInterval=30','-C','-v','-o','LogLevel=VERBOSE']`.
+- The **native** builder appends `ssh.ssh_overrides` verbatim — this is how
+  global Preferences options reach interactive connections.
+- The **explicit** builder `_build_base_ssh_command` (SCP, etc.) instead reads
+  the individual `ssh.*` keys via `Config.get_ssh_config()` and emits the
+  equivalent `-o`/flags itself.
+- When adding an advanced option, keep both paths in sync: add the `ssh.*`
+  setting, include it in the `ssh_overrides` composition, and (if explicit
+  callers need it) in `_build_base_ssh_command`.
+
+### Effective config (`ssh -G`)
+`ssh_config_utils.get_effective_ssh_config(host, config_file=None)` runs
+`ssh -G <host>` (with `-F <config_file>` in isolated mode) and parses the
+fully-resolved per-host options into a dict (lowercased keys; repeated keys such
+as `identityfile` become lists). Use it when code needs to *know* what ssh will
+actually use — resolving IdentityFile candidates, the connection editor, SCP's
+explicit command. The interactive native command does **not** call this: it
+stays minimal and lets the spawned `ssh` resolve the config itself at run time.
+
+### askpass mechanics
+- `get_ssh_env_with_askpass(require)` (`askpass_utils.py`) returns an env with
+  `SSH_ASKPASS=<our helper>`, `SSH_ASKPASS_REQUIRE=<require>`, a `DISPLAY`
+  fallback, and the `GNOME_KEYRING_*` control vars cleared (so gnome-keyring
+  doesn't intercept) while keeping D-Bus available for libsecret.
+- `require` is OpenSSH's `SSH_ASKPASS_REQUIRE`: `prefer` (default — use askpass
+  even when a TTY exists, OpenSSH ≥ 8.4), `force`, or `never`.
+- ssh invokes our helper (CLI entry `handle_askpass_cli`), which calls
+  `lookup_passphrase(key_path)` → keyring; if nothing is stored it shows the
+  built-in GTK passphrase dialog (`_run_askpass_dialog`). Helper output is
+  streamed into the app log by the askpass log forwarder.
+- The `use-askpass` setting (master) and `use-builtin-passphrase-prompt`
+  (sub-option) gate this; with askpass off, ssh prompts natively on the TTY.
+
+### sshpass mechanics
+The password is fed to ssh via a **write-once FIFO**, never on the command line
+or in the environment: `_mk_priv_dir()` creates a 0700 temp dir,
+`_write_once_fifo()` (a daemon thread) writes the secret exactly once when ssh
+opens the FIFO, and the command is prefixed with `sshpass -f <fifo>`
+(`ssh_password_exec.py`; the terminal does the same inline in
+`_setup_ssh_terminal`). `SSH_ASKPASS_REQUIRE=never` is set so ssh cannot divert
+to askpass for a password.
+
 ### Who builds what
 - **Interactive terminal** (`terminal.py::_setup_ssh_terminal`): consumes the
   prepared `connection.ssh_connection_cmd` (command + env + auth flags) — it does

@@ -28,3 +28,13 @@ Architecture**. The essentials:
   the system/external terminal uses `build_native_command()` (plain, no in-app
   auth); the SFTP file manager uses paramiko in-process (separate — leave it
   alone unless the task is about it).
+- **Advanced SSH options** (Preferences ▸ SSH Settings) are saved as `ssh.*`
+  keys and composed into a flat `ssh.ssh_overrides` list
+  (`preferences.py::save_advanced_ssh_settings`); the native command appends
+  `ssh_overrides` verbatim, while `_build_base_ssh_command` (SCP) reads the
+  individual keys. **Effective config** is computed with `ssh -G` via
+  `get_effective_ssh_config()` when code needs the resolved per-host options.
+  **askpass** = `SSH_ASKPASS`/`SSH_ASKPASS_REQUIRE` + the helper in
+  `askpass_utils.py` (keyring lookup → GTK prompt); **sshpass** feeds the
+  password via a write-once FIFO (`ssh_password_exec.py`). Full detail in
+  `AGENTS.md`.
