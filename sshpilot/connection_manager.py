@@ -460,6 +460,9 @@ class Connection:
             if not hasattr(self, 'ssh_env') or self.ssh_env is None:
                 self.ssh_env = {}
             self.ssh_env.update(ssh_conn_cmd.env)
+            # Store the full builder result so the terminal can consume the
+            # command, environment, and auth flags without rebuilding anything.
+            self.ssh_connection_cmd = ssh_conn_cmd
             self.is_connected = True
             return True
                 
@@ -517,6 +520,10 @@ class Connection:
                 self.resolved_identity_files = []
 
             self.ssh_cmd = ssh_cmd
+            # Store the full builder result (command + env + auth flags) so the
+            # terminal can spawn it directly without re-deriving auth/env.
+            self.ssh_env = dict(ssh_conn_cmd.env)
+            self.ssh_connection_cmd = ssh_conn_cmd
             self.is_connected = True
             return True
         except Exception as exc:

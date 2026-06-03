@@ -408,7 +408,18 @@ def build_ssh_connection(
             use_askpass=False
         )
 
-    # Handle native mode - minimal SSH command, let SSH config handle everything
+    # Handle native mode - SSH config is the source of truth for per-host
+    # settings (IdentityFile, port forwarding, X11, RemoteCommand, ...), so the
+    # command stays minimal: `ssh -F <config> host`. This builder owns only the
+    # runtime concerns that do NOT live in ~/.ssh/config:
+    #   * app-level ssh_overrides (verbosity/timeouts/keepalive written by the app)
+    #   * batch mode preference
+    #   * the authentication environment: askpass + keyring autofill for key
+    #     passphrases (with an optional agent bypass), or sshpass for a stored
+    #     password.
+    # This makes build_ssh_connection(native) a complete, ready-to-spawn result
+    # that every caller (terminal, scp, ssh-copy-id) can use without rebuilding
+    # the command or re-deriving the auth env.
     if ctx.native_mode:
         base_cmd = ['ssh']
         config_override = None
@@ -416,20 +427,90 @@ def build_ssh_connection(
             try:
                 config_override = connection._resolve_config_override_path()
             except Exception:
-                pass
+                config_override = None
         if config_override:
             base_cmd.extend(['-F', config_override])
-        # Add any SSH overrides from app config
+
+        # App-level SSH settings. ssh_overrides carries the user's global SSH
+        # options (verbosity, ConnectTimeout, ServerAlive*, etc.); append verbatim.
+        app_ssh_config = {}
         if app_config:
             try:
                 app_ssh_config = app_config.get_ssh_config() if hasattr(app_config, 'get_ssh_config') else {}
-                overrides = app_ssh_config.get('ssh_overrides', [])
-                if isinstance(overrides, (list, tuple)):
-                    for entry in overrides:
-                        if entry:
-                            base_cmd.append(str(entry))
             except Exception:
-                pass
+                app_ssh_config = {}
+            overrides = app_ssh_config.get('ssh_overrides', [])
+            if isinstance(overrides, (list, tuple)):
+                for entry in overrides:
+                    if entry:
+                        base_cmd.append(str(entry))
+
+        # Authentication: password (sshpass) vs key-based (askpass).
+        auth_method = int(getattr(connection, 'auth_method', 0) or 0)
+        password_auth_selected = (auth_method == 1)
+        stored_password = _get_stored_password(connection, connection_manager)
+
+        # BatchMode preference (never for password auth, which needs to prompt).
+        if bool(app_ssh_config.get('batch_mode', False)) and not (password_auth_selected or stored_password):
+            if 'BatchMode=yes' not in base_cmd:
+                base_cmd.extend(['-o', 'BatchMode=yes'])
+
+        askpass_enabled = True
+        try:
+            if app_config is not None and hasattr(app_config, 'get_setting'):
+                askpass_enabled = bool(app_config.get_setting('use-askpass', True))
+        except Exception:
+            askpass_enabled = True
+
+        use_sshpass = False
+        password = None
+        use_askpass = False
+
+        if password_auth_selected or stored_password:
+            # Password authentication: the caller feeds the stored password via
+            # sshpass; never let ssh invoke askpass for it.
+            env = os.environ.copy()
+            env.pop('SSH_ASKPASS', None)
+            env['SSH_ASKPASS_REQUIRE'] = 'never'
+            if stored_password:
+                use_sshpass = True
+                password = stored_password
+                logger.debug(f"Native connection: using stored password for {host_label}")
+        elif not askpass_enabled:
+            # Askpass disabled in settings - let SSH prompt natively on the TTY.
+            env = os.environ.copy()
+            env.pop('SSH_ASKPASS', None)
+            env.pop('SSH_ASKPASS_REQUIRE', None)
+            logger.debug("Native connection: askpass disabled by setting")
+        else:
+            # Key-based auth: wire up askpass so ssh fetches the key passphrase
+            # from the keyring (built-in GUI prompt as fallback).
+            env = get_ssh_env_with_askpass(require="prefer")
+            use_askpass = True
+
+            # Optionally take the SSH agent out of the loop so ssh loads the key
+            # from disk and calls our askpass (-> keyring autofill). gnome-keyring
+            # otherwise advertises the key but refuses to sign it when locked
+            # ("agent refused operation"), and ssh won't fall back to the file.
+            # SSH_AUTH_SOCK alone isn't enough since ~/.ssh/config's IdentityAgent
+            # overrides the env, so we also pass `-o IdentityAgent=none` (highest
+            # precedence). Respect the user's agent choices: keep the agent when
+            # forwarding it, or when the host pins an explicit IdentityAgent.
+            forward_agent = bool(getattr(connection, 'forward_agent', False))
+            explicit_identity_agent = bool(
+                (getattr(connection, 'identity_agent_directive', '') or '').strip()
+            )
+            if not forward_agent and not explicit_identity_agent:
+                env.pop('SSH_AUTH_SOCK', None)
+                base_cmd.extend(['-o', 'IdentityAgent=none'])
+                logger.debug("Native key connection: askpass + agent bypassed (IdentityAgent=none)")
+            else:
+                logger.debug(
+                    "Native key connection: askpass applied, agent kept "
+                    "(forward_agent=%s, explicit IdentityAgent=%s)",
+                    forward_agent, explicit_identity_agent,
+                )
+
         native_target = host_label
         if hasattr(connection, 'resolve_host_identifier'):
             try:
@@ -439,16 +520,13 @@ def build_ssh_connection(
             except Exception:
                 pass
         base_cmd.append(native_target)
-        # Use default environment (no askpass, no sshpass)
-        env = os.environ.copy()
-        env.pop('SSH_ASKPASS', None)
-        env.pop('SSH_ASKPASS_REQUIRE', None)
+
         return SSHConnectionCommand(
             command=base_cmd,
             env=env,
-            use_sshpass=False,
-            password=None,
-            use_askpass=False
+            use_sshpass=use_sshpass,
+            password=password,
+            use_askpass=use_askpass,
         )
     
     # Get effective SSH config for the host identifier
