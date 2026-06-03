@@ -280,11 +280,12 @@ def stop_askpass_log_forwarder() -> None:
 atexit.register(stop_askpass_log_forwarder)
 
 
-def _builtin_passphrase_prompt_enabled() -> bool:
-    """Return whether the built-in passphrase prompt is enabled (default True).
+def _read_app_setting(key: str, default):
+    """Read a top-level setting from ``config.json`` (stdlib only).
 
-    Read directly from ``config.json`` (stdlib only) so the standalone askpass
-    process honors the Settings → Advanced toggle. Defaults to True on any error.
+    Lets standalone/helper code (the askpass process, agent key-prep) honor the
+    Settings → Advanced toggles without importing the app. Returns *default* on
+    any error.
     """
     import json
 
@@ -295,9 +296,20 @@ def _builtin_passphrase_prompt_enabled() -> bool:
         config_file = os.path.join(config_dir, "sshpilot", "config.json")
         with open(config_file, "r", encoding="utf-8") as handle:
             data = json.load(handle)
-        return bool(data.get("use-builtin-passphrase-prompt", True))
+        value = data.get(key, default)
+        return bool(value) if isinstance(default, bool) else value
     except Exception:
-        return True
+        return default
+
+
+def _askpass_enabled() -> bool:
+    """Whether sshPilot's askpass helper is enabled at all (default True)."""
+    return bool(_read_app_setting("use-askpass", True))
+
+
+def _builtin_passphrase_prompt_enabled() -> bool:
+    """Whether the built-in GUI passphrase prompt is enabled (default True)."""
+    return bool(_read_app_setting("use-builtin-passphrase-prompt", True))
 
 
 def _run_askpass_dialog(key_path: str, log_fn) -> "str | None":
@@ -814,7 +826,7 @@ def ensure_key_in_agent(key_path: str) -> bool:
     if not os.path.isfile(key_path):
         logger.error(f"Key file not found: {key_path}")
         return False
-    
+
     # Check if key is already in ssh-agent
     try:
         result = subprocess.run(
@@ -828,7 +840,13 @@ def ensure_key_in_agent(key_path: str) -> bool:
             return True
     except Exception:
         pass
-    
+
+    # Adding the key to the agent requires our askpass to supply the passphrase.
+    # If the askpass helper is disabled, don't try — let SSH prompt natively.
+    if not _askpass_enabled():
+        logger.debug("Askpass disabled; not adding key to agent: %s", key_path)
+        return False
+
     # Add key to ssh-agent using our askpass script
     env = get_ssh_env_with_askpass("force")
     
