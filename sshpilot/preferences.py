@@ -518,9 +518,6 @@ class PreferencesWindow(Adw.Window):
         self._encoding_codes = []
         self._suppress_encoding_config_handler = False
         self._user_initiated_encoding_change = False
-        self._updating_connection_switches = False
-        self.native_connect_row = None
-        self.legacy_connect_row = None
         self.force_internal_file_manager_row = None
         self.open_file_manager_externally_row = None
 
@@ -1630,6 +1627,33 @@ class PreferencesWindow(Adw.Window):
             self.confirm_disconnect_switch.connect('notify::active', self.on_confirm_disconnect_changed)
             behavior_group.add(self.confirm_disconnect_switch)
 
+            # SSH askpass helper (master switch for sshPilot's passphrase handling)
+            self.askpass_switch = Adw.SwitchRow()
+            self.askpass_switch.set_title("Use SSH askpass helper")
+            self.askpass_switch.set_subtitle(
+                "Lets sshPilot autofill key passphrases from the keyring. "
+                "When off, SSH handles passphrase prompts itself."
+            )
+            askpass_on = bool(self.config.get_setting('use-askpass', True))
+            self.askpass_switch.set_active(askpass_on)
+            self.askpass_switch.connect('notify::active', self.on_use_askpass_changed)
+            behavior_group.add(self.askpass_switch)
+
+            # Built-in passphrase prompt (only relevant when the askpass helper is on)
+            self.builtin_passphrase_prompt_switch = Adw.SwitchRow()
+            self.builtin_passphrase_prompt_switch.set_title("Use built-in passphrase prompt")
+            self.builtin_passphrase_prompt_switch.set_subtitle(
+                "When off, SSH and the system keyring handle key passphrase prompts"
+            )
+            self.builtin_passphrase_prompt_switch.set_active(
+                bool(self.config.get_setting('use-builtin-passphrase-prompt', True))
+            )
+            self.builtin_passphrase_prompt_switch.set_sensitive(askpass_on)
+            self.builtin_passphrase_prompt_switch.connect(
+                'notify::active', self.on_builtin_passphrase_prompt_changed
+            )
+            behavior_group.add(self.builtin_passphrase_prompt_switch)
+
             advanced_page.add(behavior_group)
 
             # Logging group ------------------------------------------------
@@ -1677,30 +1701,6 @@ class PreferencesWindow(Adw.Window):
             help_group.add(help_row)
 
             advanced_group = Adw.PreferencesGroup(title="SSH Settings")
-
-
-            native_connect_group = Adw.PreferencesGroup(title="Connection Method")
-
-            self.native_connect_row = Adw.SwitchRow()
-            self.native_connect_row.set_title("Use native SSH connection mode")
-            self.native_connect_row.set_subtitle("Default SSH connection method")
-            self.legacy_connect_row = Adw.SwitchRow()
-            self.legacy_connect_row.set_title("Use legacy SSH connection mode")
-            native_active = True
-            try:
-                app = self.parent_window.get_application() if self.parent_window else None
-                if app is not None and hasattr(app, 'native_connect_enabled'):
-                    native_active = bool(app.native_connect_enabled)
-                else:
-                    native_active = bool(self.config.get_setting('ssh.native_connect', True))
-            except Exception:
-                native_active = bool(self.config.get_setting('ssh.native_connect', True))
-            self._set_connection_mode_switches(native_active)
-            self.native_connect_row.connect('notify::active', self.on_native_connection_mode_toggled)
-            self.legacy_connect_row.connect('notify::active', self.on_legacy_connection_mode_toggled)
-            native_connect_group.add(self.native_connect_row)
-            native_connect_group.add(self.legacy_connect_row)
-
 
             # Connect timeout
             self.connect_timeout_row = Adw.SpinRow.new_with_range(0, 120, 1)
@@ -1814,7 +1814,6 @@ class PreferencesWindow(Adw.Window):
 
             ssh_settings_page.add(help_group)
             ssh_settings_page.add(advanced_group)
-            ssh_settings_page.add(native_connect_group)
 
             # Ensure shortcut overview controls reflect current state
             self._set_shortcut_controls_enabled(not self._pass_through_enabled)
@@ -2685,19 +2684,6 @@ class PreferencesWindow(Adw.Window):
             verbosity_value = 0
             debug_enabled = False
 
-            if getattr(self, 'native_connect_row', None) is not None:
-                native_value = bool(self.native_connect_row.get_active())
-                self.config.set_setting('ssh.native_connect', native_value)
-                try:
-                    app = self.parent_window.get_application() if self.parent_window else None
-                except Exception:
-                    app = None
-                if app is not None and hasattr(app, 'native_connect_enabled'):
-                    app.native_connect_enabled = native_value
-                    if hasattr(app, 'native_connect_override'):
-                        app.native_connect_override = None
-                if self.parent_window and hasattr(self.parent_window, 'connection_manager'):
-                    self.parent_window.connection_manager.native_connect_enabled = native_value
             if hasattr(self, 'connect_timeout_row'):
                 connect_timeout_value = int(self.connect_timeout_row.get_value())
                 if connect_timeout_value <= 0:
@@ -2811,36 +2797,6 @@ class PreferencesWindow(Adw.Window):
                 manager.invalidate_cached_commands()
         except Exception as e:
             logger.error(f"Failed to save advanced SSH settings: {e}")
-
-    def _set_connection_mode_switches(self, native_active: bool) -> None:
-        """Synchronize native/legacy connection switches without recursion."""
-
-        self._updating_connection_switches = True
-        try:
-            if getattr(self, 'native_connect_row', None) is not None:
-                self.native_connect_row.set_active(bool(native_active))
-            if getattr(self, 'legacy_connect_row', None) is not None:
-                self.legacy_connect_row.set_active(not bool(native_active))
-        finally:
-            self._updating_connection_switches = False
-
-    def on_native_connection_mode_toggled(self, switch, *args):
-        """Ensure native mode toggle keeps legacy switch in sync."""
-
-        if self._updating_connection_switches:
-            return
-
-        native_active = bool(switch.get_active())
-        self._set_connection_mode_switches(native_active)
-
-    def on_legacy_connection_mode_toggled(self, switch, *args):
-        """Ensure legacy mode toggle keeps native switch in sync."""
-
-        if self._updating_connection_switches:
-            return
-
-        legacy_active = bool(switch.get_active())
-        self._set_connection_mode_switches(not legacy_active)
 
     def _apply_default_advanced_settings(self):
         """Restore advanced SSH settings to defaults and update the UI."""
@@ -3738,6 +3694,21 @@ class PreferencesWindow(Adw.Window):
         confirm = switch.get_active()
         logger.info(f"Confirm before disconnect setting changed to: {confirm}")
         self.config.set_setting('confirm-disconnect', confirm)
+
+    def on_builtin_passphrase_prompt_changed(self, switch, *args):
+        """Handle built-in passphrase prompt setting change"""
+        enabled = switch.get_active()
+        logger.info(f"Use built-in passphrase prompt setting changed to: {enabled}")
+        self.config.set_setting('use-builtin-passphrase-prompt', enabled)
+
+    def on_use_askpass_changed(self, switch, *args):
+        """Handle 'use SSH askpass helper' setting change"""
+        enabled = switch.get_active()
+        logger.info(f"Use SSH askpass helper setting changed to: {enabled}")
+        self.config.set_setting('use-askpass', enabled)
+        # The built-in prompt is only meaningful when the askpass helper is on.
+        if hasattr(self, 'builtin_passphrase_prompt_switch'):
+            self.builtin_passphrase_prompt_switch.set_sensitive(enabled)
 
     def on_logging_level_changed(self, combo_row, _param):
         """Persist the chosen log level and apply it on the fly."""

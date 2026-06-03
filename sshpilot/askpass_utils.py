@@ -234,9 +234,14 @@ def forward_askpass_log_to_logger(log, include_existing: bool = False) -> None:
 
 
 def _askpass_log_forwarder_loop() -> None:
-    """Background loop that forwards askpass logs to the module logger."""
+    """Background loop that forwards askpass logs to the module logger.
 
-    forward_askpass_log_to_logger(logger, include_existing=True)
+    Only new lines are forwarded — the log file persists for the whole login
+    session, so replaying existing content would dump unrelated history from
+    earlier connections (and earlier app runs) into the console.
+    """
+
+    forward_askpass_log_to_logger(logger, include_existing=False)
 
     while not _ASKPASS_LOG_THREAD_STOP.wait(1.0):
         forward_askpass_log_to_logger(logger)
@@ -280,8 +285,42 @@ def stop_askpass_log_forwarder() -> None:
 atexit.register(stop_askpass_log_forwarder)
 
 
+def _read_app_setting(key: str, default):
+    """Read a top-level setting from ``config.json`` (stdlib only).
+
+    Lets standalone/helper code (the askpass process, agent key-prep) honor the
+    Settings → Advanced toggles without importing the app. Returns *default* on
+    any error.
+    """
+    import json
+
+    try:
+        config_dir = os.environ.get("XDG_CONFIG_HOME") or os.path.join(
+            os.path.expanduser("~"), ".config"
+        )
+        config_file = os.path.join(config_dir, "sshpilot", "config.json")
+        with open(config_file, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+        value = data.get(key, default)
+        return bool(value) if isinstance(default, bool) else value
+    except Exception:
+        return default
+
+
+def _askpass_enabled() -> bool:
+    """Whether sshPilot's askpass helper is enabled at all (default True)."""
+    return bool(_read_app_setting("use-askpass", True))
+
+
+def _builtin_passphrase_prompt_enabled() -> bool:
+    """Whether the built-in GUI passphrase prompt is enabled (default True)."""
+    return bool(_read_app_setting("use-builtin-passphrase-prompt", True))
+
+
 def _run_askpass_dialog(key_path: str, log_fn) -> "str | None":
-    """Show a GTK4/Adw passphrase dialog. Returns passphrase string or None on cancel."""
+    """Show a GTK4/Adwaita passphrase dialog. Returns the passphrase string, or
+    None on cancel. Built from non-deprecated Adwaita widgets (an Adw.Window with
+    a header bar and a boxed-list Adw.PasswordEntryRow)."""
     import json
 
     try:
@@ -328,73 +367,103 @@ def _run_askpass_dialog(key_path: str, log_fn) -> "str | None":
             pass
 
         key_name = os.path.basename(key_path) if key_path else "key"
-        window = Adw.ApplicationWindow()
-        window.set_application(app)
-        window.set_title("SSH Pilot")
 
-        dialog = Adw.MessageDialog(
-            transient_for=window,
-            modal=True,
-            heading="Passphrase Required",
-            body=f"Please enter the passphrase for key {key_name}:",
-        )
+        # Adwaita-styled prompt: a window whose header bar carries the
+        # Cancel/Unlock actions, with the passphrase in a boxed-list row.
+        window = Adw.ApplicationWindow(application=app)
+        window.set_title("Passphrase Required")
+        window.set_resizable(False)
+        window.set_default_size(400, -1)
 
-        content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        content_box.set_margin_top(12)
-        content_box.set_margin_bottom(12)
-        content_box.set_margin_start(12)
-        content_box.set_margin_end(12)
+        done = [False]
 
-        password_entry = Gtk.PasswordEntry()
-        password_entry.set_property("placeholder-text", "Passphrase")
-        content_box.append(password_entry)
+        # ── widgets ───────────────────────────────────────────────────────
+        password_row = Adw.PasswordEntryRow()
+        password_row.set_title("Passphrase")
 
-        store_checkbox = Gtk.CheckButton(label="Store passphrase")
-        store_checkbox.set_active(False)
-        content_box.append(store_checkbox)
+        store_row = Adw.SwitchRow()
+        store_row.set_title("Store passphrase")
+        store_row.set_active(False)
 
-        dialog.set_extra_child(content_box)
-        dialog.add_response("cancel", "Cancel")
-        dialog.add_response("ok", "OK")
-        dialog.set_default_response("ok")
-        dialog.set_close_response("cancel")
+        cancel_btn = Gtk.Button(label="Cancel")
+        ok_btn = Gtk.Button(label="Unlock")
+        ok_btn.add_css_class("suggested-action")
 
-        try:
-            password_entry.set_property("activates-default", True)
-        except (TypeError, AttributeError):
-            pass
-
-        try:
-            def on_entry_activate(_entry):
-                dialog.emit("response", "ok")
-            password_entry.connect("activate", on_entry_activate)
-        except (TypeError, AttributeError):
-            try:
-                key_controller = Gtk.EventControllerKey()
-                def on_key_pressed(_ctrl, keyval, _keycode, _state):
-                    if keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
-                        dialog.emit("response", "ok")
-                        return True
-                    return False
-                key_controller.connect("key-pressed", on_key_pressed)
-                password_entry.add_controller(key_controller)
-            except Exception:
-                pass
-
-        def on_response(dlg, response_id):
-            if response_id == "ok":
-                passphrase_result[0] = password_entry.get_text()
-                if store_checkbox.get_active() and key_path and passphrase_result[0]:
+        # ── behaviour ─────────────────────────────────────────────────────
+        def _record_and_quit(ok: bool):
+            if done[0]:
+                return
+            done[0] = True
+            if ok:
+                passphrase_result[0] = password_row.get_text()
+                if store_row.get_active() and key_path and passphrase_result[0]:
                     try:
                         store_passphrase(key_path, passphrase_result[0])
                     except Exception:
                         pass
-            window.close()
-            app.quit()
+            try:
+                app.quit()
+            except Exception:
+                pass
 
-        dialog.connect("response", on_response)
-        dialog.present()
-        password_entry.grab_focus()
+        cancel_btn.connect("clicked", lambda _b: _record_and_quit(False))
+        ok_btn.connect("clicked", lambda _b: _record_and_quit(True))
+        window.set_default_widget(ok_btn)
+
+        # ── layout ────────────────────────────────────────────────────────
+        header = Adw.HeaderBar()
+        header.set_show_start_title_buttons(False)
+        header.set_show_end_title_buttons(False)
+        header.pack_start(cancel_btn)
+        header.pack_end(ok_btn)
+
+        body_label = Gtk.Label(label=f"Enter the passphrase for key “{key_name}”.")
+        body_label.set_wrap(True)
+        body_label.set_xalign(0.0)
+        body_label.add_css_class("dim-label")
+
+        group = Adw.PreferencesGroup()
+        group.add(password_row)
+        group.add(store_row)
+
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18)
+        content.set_margin_top(18)
+        content.set_margin_bottom(24)
+        content.set_margin_start(18)
+        content.set_margin_end(18)
+        content.append(body_label)
+        content.append(group)
+
+        toolbar = Adw.ToolbarView()
+        toolbar.add_top_bar(header)
+        toolbar.set_content(content)
+        window.set_content(toolbar)
+
+        # ── dismissal: window close, Escape, Enter ────────────────────────
+        def _on_close_request(_w):
+            if not done[0]:
+                done[0] = True
+            return False
+
+        window.connect("close-request", _on_close_request)
+
+        key_controller = Gtk.EventControllerKey()
+        key_controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+
+        def _on_key(_ctrl, keyval, _keycode, _state):
+            if keyval == Gdk.KEY_Escape:
+                _record_and_quit(False)
+                return True
+            if keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
+                _record_and_quit(True)
+                return True
+            return False
+
+        key_controller.connect("key-pressed", _on_key)
+        window.add_controller(key_controller)
+
+        window.present()
+        password_row.grab_focus()
 
     app.connect("activate", on_activate)
     app.run(None)
@@ -466,7 +535,12 @@ def handle_askpass_cli(prompt: str) -> "str | None":
             return passphrase
         _log(f"ASKPASS: No passphrase found for {candidate}")
 
-    # Fall back to interactive GUI dialog
+    # Fall back to the built-in GUI dialog, unless the user has turned it off in
+    # settings — in that case defer to SSH / the system keyring prompt.
+    if not _builtin_passphrase_prompt_enabled():
+        _log("ASKPASS: built-in passphrase prompt disabled; deferring to system/SSH")
+        return None
+
     passphrase = _run_askpass_dialog(key_path, _log)
     if passphrase is not None:
         _log("ASKPASS: User entered passphrase in GUI dialog")
@@ -757,7 +831,7 @@ def ensure_key_in_agent(key_path: str) -> bool:
     if not os.path.isfile(key_path):
         logger.error(f"Key file not found: {key_path}")
         return False
-    
+
     # Check if key is already in ssh-agent
     try:
         result = subprocess.run(
@@ -771,7 +845,13 @@ def ensure_key_in_agent(key_path: str) -> bool:
             return True
     except Exception:
         pass
-    
+
+    # Adding the key to the agent requires our askpass to supply the passphrase.
+    # If the askpass helper is disabled, don't try — let SSH prompt natively.
+    if not _askpass_enabled():
+        logger.debug("Askpass disabled; not adding key to agent: %s", key_path)
+        return False
+
     # Add key to ssh-agent using our askpass script
     env = get_ssh_env_with_askpass("force")
     
@@ -811,64 +891,3 @@ def get_scp_ssh_options() -> list:
         "-o", "IdentitiesOnly=yes",
     ]
 
-def connect_ssh_with_key(host: str, username: str, key_path: str, command: str = None) -> subprocess.CompletedProcess:
-    """Connect via SSH with proper key handling using ssh_connection_builder"""
-    # Ensure key is loaded in ssh-agent
-    if not ensure_key_in_agent(key_path):
-        raise Exception(f"Failed to load key {key_path} into SSH agent")
-    
-    try:
-        from .ssh_connection_builder import build_ssh_connection, ConnectionContext
-        
-        # Create a minimal connection object
-        class SSHConnection:
-            def __init__(self, host, username, key_path):
-                self.hostname = host
-                self.host = host
-                self.nickname = host
-                self.username = username
-                self.port = 22
-                self.keyfile = key_path
-                self.key_select_mode = 1  # Use specific key
-                self.auth_method = 0  # Key-based
-                self.extra_ssh_config = None
-                self.identity_agent_disabled = False
-        
-        connection = SSHConnection(host, username, key_path)
-        
-        # Build SSH connection command using ssh_connection_builder
-        ctx = ConnectionContext(
-            connection=connection,
-            connection_manager=None,
-            config=None,
-            command_type='ssh',
-            extra_args=[],
-            port_forwarding_rules=None,
-            remote_command=command,
-            local_command=None,
-            extra_ssh_config=None,
-            known_hosts_path=None,
-            native_mode=False,
-            quick_connect_mode=False,
-            quick_connect_command=None,
-        )
-        
-        ssh_conn_cmd = build_ssh_connection(ctx)
-        ssh_cmd = ssh_conn_cmd.command
-        env = ssh_conn_cmd.env.copy()
-        
-        # Ensure askpass is set for passphrase handling
-        askpass_env = get_ssh_env_with_askpass("force")
-        env.update(askpass_env)
-        
-        return subprocess.run(ssh_cmd, env=env, capture_output=True, text=True)
-    except Exception as e:
-        # Fallback to original implementation
-        logger.warning(f"Failed to use ssh_connection_builder, falling back: {e}")
-        env = get_ssh_env_with_askpass("force")
-        ssh_cmd = ["ssh", "-o", "PreferredAuthentications=publickey", "-o", "PasswordAuthentication=no"]
-        if command:
-            ssh_cmd.extend([f"{username}@{host}", command])
-        else:
-            ssh_cmd.append(f"{username}@{host}")
-        return subprocess.run(ssh_cmd, env=env, capture_output=True, text=True)

@@ -33,6 +33,156 @@ class SSHConnectionCommand:
 
 
 @dataclass
+class NativeAuth:
+    """Resolved authentication for a native SSH-family connection.
+
+    This is the single source of truth for how sshPilot supplies credentials
+    to ssh/scp/ssh-copy-id: askpass + keyring autofill for key passphrases
+    (with an optional agent bypass), or sshpass for a stored password. Callers
+    apply ``env`` to the child process and add ``extra_opts`` to the command.
+    """
+    env: Dict[str, str]            # Environment to spawn the command with
+    extra_opts: List[str]          # Extra command options (e.g. -o IdentityAgent=none)
+    use_sshpass: bool = False      # Feed ``password`` via sshpass
+    password: Optional[str] = None # Stored password for sshpass
+    use_askpass: bool = False      # SSH_ASKPASS is wired up
+    password_mode: bool = False    # Password auth selected or a password is stored
+
+
+def resolve_native_auth(
+    connection: any,
+    connection_manager: Optional[any] = None,
+    app_config: Optional[any] = None,
+) -> NativeAuth:
+    """Resolve the authentication environment + options for a connection.
+
+    Shared by the native terminal builder, SCP, and ssh-copy-id so every part
+    of the app authenticates the same way. Behaviour:
+
+    * Password auth (or a stored password): clear askpass and signal sshpass.
+    * Askpass disabled in settings: let SSH prompt natively on the TTY.
+    * Key-based auth: enable askpass (keyring autofill, GUI prompt fallback)
+      and, unless the user forwards the agent or pins an explicit IdentityAgent,
+      bypass the agent (`-o IdentityAgent=none` + drop SSH_AUTH_SOCK) so SSH
+      loads the key from disk and calls askpass. gnome-keyring otherwise
+      advertises the key but refuses to sign it when locked, and SSH will not
+      fall back to the file.
+    """
+    auth_method = int(getattr(connection, 'auth_method', 0) or 0)
+    password_auth_selected = (auth_method == 1)
+    stored_password = _get_stored_password(connection, connection_manager)
+    password_mode = bool(password_auth_selected or stored_password)
+
+    askpass_enabled = True
+    try:
+        if app_config is not None and hasattr(app_config, 'get_setting'):
+            askpass_enabled = bool(app_config.get_setting('use-askpass', True))
+    except Exception:
+        askpass_enabled = True
+
+    if password_mode:
+        env = os.environ.copy()
+        env.pop('SSH_ASKPASS', None)
+        env['SSH_ASKPASS_REQUIRE'] = 'never'
+        if stored_password:
+            logger.debug("resolve_native_auth: stored password -> sshpass")
+        return NativeAuth(
+            env=env, extra_opts=[], use_sshpass=bool(stored_password),
+            password=stored_password or None, use_askpass=False, password_mode=True,
+        )
+
+    if not askpass_enabled:
+        env = os.environ.copy()
+        env.pop('SSH_ASKPASS', None)
+        env.pop('SSH_ASKPASS_REQUIRE', None)
+        logger.debug("resolve_native_auth: askpass disabled by setting")
+        return NativeAuth(env=env, extra_opts=[], use_askpass=False, password_mode=False)
+
+    # Key-based auth with askpass.
+    env = get_ssh_env_with_askpass(require="prefer")
+    extra_opts: List[str] = []
+    forward_agent = bool(getattr(connection, 'forward_agent', False))
+    explicit_identity_agent = bool(
+        (getattr(connection, 'identity_agent_directive', '') or '').strip()
+    )
+    if not forward_agent and not explicit_identity_agent:
+        env.pop('SSH_AUTH_SOCK', None)
+        extra_opts = ['-o', 'IdentityAgent=none']
+        logger.debug("resolve_native_auth: askpass + agent bypassed (IdentityAgent=none)")
+    else:
+        logger.debug(
+            "resolve_native_auth: askpass applied, agent kept "
+            "(forward_agent=%s, explicit IdentityAgent=%s)",
+            forward_agent, explicit_identity_agent,
+        )
+    return NativeAuth(
+        env=env, extra_opts=extra_opts, use_askpass=True, password_mode=False,
+    )
+
+
+def build_native_command(
+    connection: any,
+    app_config: Optional[any] = None,
+    command_type: str = 'ssh',
+    remote_command: Optional[str] = None,
+    extra_args: Optional[List[str]] = None,
+) -> List[str]:
+    """Build the plain native SSH-family command, with NO authentication applied.
+
+    Produces ``<binary> -F <config> [ssh_overrides] [extra_args] host [remote_command]``
+    and relies on ~/.ssh/config for per-host settings. Use this for callers that
+    hand the command to an external process (e.g. the system terminal), which
+    supplies its own TTY/agent and must not inherit sshPilot's in-app askpass or
+    agent bypass. In-app connections instead use build_ssh_connection (native),
+    which layers resolve_native_auth on top of this same shape.
+    """
+    binary = {'scp': 'scp', 'sftp': 'sftp', 'ssh-copy-id': 'ssh-copy-id'}.get(command_type, 'ssh')
+    cmd = [binary]
+
+    config_override = None
+    if hasattr(connection, '_resolve_config_override_path'):
+        try:
+            config_override = connection._resolve_config_override_path()
+        except Exception:
+            config_override = None
+    if config_override:
+        cmd.extend(['-F', config_override])
+
+    if app_config:
+        try:
+            app_ssh_config = app_config.get_ssh_config() if hasattr(app_config, 'get_ssh_config') else {}
+        except Exception:
+            app_ssh_config = {}
+        overrides = app_ssh_config.get('ssh_overrides', [])
+        if isinstance(overrides, (list, tuple)):
+            for entry in overrides:
+                if entry:
+                    cmd.append(str(entry))
+
+    if extra_args:
+        cmd.extend(extra_args)
+
+    target = (
+        getattr(connection, 'nickname', '')
+        or getattr(connection, 'host', '')
+        or getattr(connection, 'hostname', '')
+    )
+    if hasattr(connection, 'resolve_host_identifier'):
+        try:
+            resolved = connection.resolve_host_identifier()
+            if resolved:
+                target = resolved
+        except Exception:
+            pass
+    cmd.append(target)
+
+    if remote_command:
+        cmd.append(remote_command)
+
+    return cmd
+
+
+@dataclass
 class ConnectionContext:
     """Context for building SSH connections."""
     connection: any  # Connection object
@@ -408,7 +558,18 @@ def build_ssh_connection(
             use_askpass=False
         )
 
-    # Handle native mode - minimal SSH command, let SSH config handle everything
+    # Handle native mode - SSH config is the source of truth for per-host
+    # settings (IdentityFile, port forwarding, X11, RemoteCommand, ...), so the
+    # command stays minimal: `ssh -F <config> host`. This builder owns only the
+    # runtime concerns that do NOT live in ~/.ssh/config:
+    #   * app-level ssh_overrides (verbosity/timeouts/keepalive written by the app)
+    #   * batch mode preference
+    #   * the authentication environment: askpass + keyring autofill for key
+    #     passphrases (with an optional agent bypass), or sshpass for a stored
+    #     password.
+    # This makes build_ssh_connection(native) a complete, ready-to-spawn result
+    # that every caller (terminal, scp, ssh-copy-id) can use without rebuilding
+    # the command or re-deriving the auth env.
     if ctx.native_mode:
         base_cmd = ['ssh']
         config_override = None
@@ -416,20 +577,39 @@ def build_ssh_connection(
             try:
                 config_override = connection._resolve_config_override_path()
             except Exception:
-                pass
+                config_override = None
         if config_override:
             base_cmd.extend(['-F', config_override])
-        # Add any SSH overrides from app config
+
+        # App-level SSH settings. ssh_overrides carries the user's global SSH
+        # options (verbosity, ConnectTimeout, ServerAlive*, etc.); append verbatim.
+        app_ssh_config = {}
         if app_config:
             try:
                 app_ssh_config = app_config.get_ssh_config() if hasattr(app_config, 'get_ssh_config') else {}
-                overrides = app_ssh_config.get('ssh_overrides', [])
-                if isinstance(overrides, (list, tuple)):
-                    for entry in overrides:
-                        if entry:
-                            base_cmd.append(str(entry))
             except Exception:
-                pass
+                app_ssh_config = {}
+            overrides = app_ssh_config.get('ssh_overrides', [])
+            if isinstance(overrides, (list, tuple)):
+                for entry in overrides:
+                    if entry:
+                        base_cmd.append(str(entry))
+
+        # Authentication is resolved by the single shared helper so the terminal,
+        # SCP, and ssh-copy-id all authenticate identically.
+        auth = resolve_native_auth(connection, connection_manager, app_config)
+
+        # BatchMode preference (never for password auth, which needs to prompt).
+        if bool(app_ssh_config.get('batch_mode', False)) and not auth.password_mode:
+            if 'BatchMode=yes' not in base_cmd:
+                base_cmd.extend(['-o', 'BatchMode=yes'])
+
+        base_cmd.extend(auth.extra_opts)
+        # Extra CLI flags (rare; before the host).
+        if extra_args:
+            base_cmd.extend(extra_args)
+        env = auth.env
+
         native_target = host_label
         if hasattr(connection, 'resolve_host_identifier'):
             try:
@@ -439,460 +619,23 @@ def build_ssh_connection(
             except Exception:
                 pass
         base_cmd.append(native_target)
-        # Use default environment (no askpass, no sshpass)
-        env = os.environ.copy()
-        env.pop('SSH_ASKPASS', None)
-        env.pop('SSH_ASKPASS_REQUIRE', None)
+
+        # A raw one-shot remote command (e.g. reading the remote working dir for
+        # follow-mode) is appended after the host. Interactive saved connections
+        # don't use this — their remote command lives in ~/.ssh/config.
+        if ctx.remote_command:
+            base_cmd.append(ctx.remote_command)
+
         return SSHConnectionCommand(
             command=base_cmd,
             env=env,
-            use_sshpass=False,
-            password=None,
-            use_askpass=False
+            use_sshpass=auth.use_sshpass,
+            password=auth.password,
+            use_askpass=auth.use_askpass,
         )
-    
-    # Get effective SSH config for the host identifier
-    try:
-        if config_override:
-            effective_config = get_effective_ssh_config(host_label, config_file=config_override)
-            logger.debug(f"Using SSH config override: {config_override}")
-        else:
-            effective_config = get_effective_ssh_config(host_label)
-            logger.debug(f"Using default SSH config for host: {host_label}")
-    except Exception as e:
-        logger.warning(f"Failed to get effective SSH config for {host_label}: {e}")
-        effective_config = {}
 
-    # Merge connection-level SSH settings (from parsed config in the app DB)
-    effective_config = dict(effective_config) if effective_config else {}
-    conn_proxy = getattr(connection, 'proxy_command', '') or ''
-    if conn_proxy.strip():
-        effective_config['proxycommand'] = conn_proxy.strip()
-    conn_jump = getattr(connection, 'proxy_jump', None)
-    if conn_jump:
-        if isinstance(conn_jump, list):
-            effective_config['proxyjump'] = [j for j in conn_jump if j]
-        else:
-            effective_config['proxyjump'] = [str(conn_jump)]
-    if getattr(connection, 'forward_agent', False):
-        effective_config['forwardagent'] = 'yes'
-
-    # 2. Build base SSH command following `ssh Host` pattern
-    base_cmd = _build_base_ssh_command(connection, effective_config, app_config, command_type)
-    
-    # 3. Determine authentication method (password vs key-based)
-    auth_method = int(getattr(connection, 'auth_method', 0) or 0)
-    password_auth_selected = (auth_method == 1)
-    
-    # 4. Check for stored password (retrieved from libsecret/keyring/keychain)
-    stored_password = _get_stored_password(connection, connection_manager)
-    has_stored_password = bool(stored_password)
-    if has_stored_password:
-        logger.debug(f"Found stored password for {host_label}")
-    
-    # sshpass / forced password TTY only when the user chose password authentication
-    use_password_auth = password_auth_selected
-    
-    # Handle key-based authentication
-    use_askpass = False
-    has_saved_passphrase = False
-    key_path = None
-    
-    if not password_auth_selected:
-        # Get key file from connection (if explicitly set) or SSH config
-        key_file = getattr(connection, 'keyfile', '') or ''
-        key_select_mode = int(getattr(connection, 'key_select_mode', 0) or 0)
-        
-        # Determine if we need askpass based on IdentityAgent and key preparation
-        identity_agent_disabled = _is_identity_agent_disabled(effective_config)
-        key_prepared = False
-        
-        # If connection has explicit key file and key_select_mode is set, use it
-        if key_file and not key_file.startswith('Select key file') and key_select_mode in (1, 2):
-            # Connection explicitly specifies a key - add it to command if not already there
-            key_path = os.path.expanduser(key_file)
-            if os.path.isfile(key_path):
-                # Check if key is already in base_cmd from SSH config
-                identity_files = _get_ssh_config_list(effective_config, 'identityfile')
-                key_already_added = any(
-                    os.path.samefile(os.path.expanduser(f), key_path) 
-                    if os.path.exists(os.path.expanduser(f)) else False 
-                    for f in identity_files
-                )
-                
-                if not key_already_added:
-                    base_cmd.extend(['-i', key_path])
-                    if key_select_mode == 1:
-                        base_cmd.extend(['-o', 'IdentitiesOnly=yes'])
-                
-                # 5. Check for stored passphrase (retrieved from libsecret/keyring/keychain)
-                # First check connection object for in-memory passphrase
-                in_memory_passphrase = getattr(connection, 'key_passphrase', '') or ''
-                if in_memory_passphrase:
-                    has_saved_passphrase = True
-                    logger.info(f"Found in-memory passphrase for key: {key_path}")
-                else:
-                    # Then check storage
-                    logger.debug(f"Checking for stored passphrase for key: {key_path}, connection_manager: {connection_manager is not None}")
-                    stored_passphrase = _get_stored_passphrase(key_path, connection_manager)
-                    has_saved_passphrase = bool(stored_passphrase)
-                    if has_saved_passphrase:
-                        logger.info(f"Found stored passphrase for key: {key_path}")
-                    else:
-                        logger.debug(f"No stored passphrase found for key: {key_path}")
-                
-                # Prepare key (add to agent if AddKeysToAgent is set)
-                key_prepared = _prepare_key_for_connection(key_path, effective_config, connection_manager)
-        else:
-            # Use SSH config keys or default behavior
-            identity_files = _get_ssh_config_list(effective_config, 'identityfile')
-            if identity_files:
-                # Try to prepare first identity file
-                first_key = os.path.expanduser(identity_files[0])
-                if os.path.isfile(first_key):
-                    key_path = first_key
-                    # 5. Check for stored passphrase (retrieved from libsecret/keyring/keychain)
-                    # First check connection object for in-memory passphrase
-                    in_memory_passphrase = getattr(connection, 'key_passphrase', '') or ''
-                    if in_memory_passphrase:
-                        has_saved_passphrase = True
-                        logger.info(f"Found in-memory passphrase for key: {key_path}")
-                    else:
-                        # Then check storage
-                        logger.debug(f"Checking for stored passphrase for SSH config key: {key_path}, connection_manager: {connection_manager is not None}")
-                        stored_passphrase = _get_stored_passphrase(key_path, connection_manager)
-                        has_saved_passphrase = bool(stored_passphrase)
-                        if has_saved_passphrase:
-                            logger.info(f"Found stored passphrase for SSH config key: {key_path}")
-                        else:
-                            logger.debug(f"No stored passphrase found for SSH config key: {key_path}")
-                    key_prepared = _prepare_key_for_connection(first_key, effective_config, connection_manager)
-        
-        # 7. Set up askpass for automatic key-based authentication with passphrase-protected keys
-        # The askpass script will:
-        # - First try to retrieve passphrase from storage (libsecret/keyring/keychain)
-        # - If not found, show graphical prompt for passphrase
-        
-        # Check for passphrases in all possible keys (even if key_path isn't explicitly set)
-        # This handles cases where SSH config specifies keys or default keys are used
-        if not has_saved_passphrase and not password_auth_selected:
-            # Try to find passphrases for keys that might be used
-            identity_files = _get_ssh_config_list(effective_config, 'identityfile')
-            if identity_files:
-                for identity_file in identity_files:
-                    expanded_identity = os.path.expanduser(identity_file)
-                    if os.path.isfile(expanded_identity):
-                        logger.debug(f"Checking for stored passphrase for SSH config identity file: {expanded_identity}")
-                        stored_passphrase = _get_stored_passphrase(expanded_identity, connection_manager)
-                        if stored_passphrase:
-                            has_saved_passphrase = True
-                            logger.info(f"Found stored passphrase for SSH config key: {expanded_identity}")
-                            break
-            # Also check default key locations if no explicit keys found
-            if not has_saved_passphrase:
-                default_keys = [
-                    os.path.expanduser('~/.ssh/id_rsa'),
-                    os.path.expanduser('~/.ssh/id_ed25519'),
-                    os.path.expanduser('~/.ssh/id_ecdsa'),
-                    os.path.expanduser('~/.ssh/id_dsa'),
-                ]
-                for default_key in default_keys:
-                    if os.path.isfile(default_key):
-                        logger.debug(f"Checking for stored passphrase for default key: {default_key}")
-                        stored_passphrase = _get_stored_passphrase(default_key, connection_manager)
-                        if stored_passphrase:
-                            has_saved_passphrase = True
-                            logger.info(f"Found stored passphrase for default key: {default_key}")
-                            break
-        
-        if identity_agent_disabled:
-            # IdentityAgent disabled - must use askpass to supply passphrase
-            env = get_ssh_env_with_askpass(require="force")
-            use_askpass = True
-            logger.debug("IdentityAgent disabled - using forced askpass for passphrase")
-        elif key_path and os.path.isfile(key_path):
-            # Key exists - use askpass in prefer mode
-            # SSH will use agent if key is there, askpass if it needs the passphrase
-            # The askpass script will retrieve from storage or show GUI dialog
-            env = get_ssh_env_with_askpass(require="prefer")
-            use_askpass = True
-            logger.debug(f"Key-based auth with askpass support for key: {key_path}")
-        elif has_saved_passphrase:
-            # We have a saved passphrase but no explicit key - still set up askpass
-            # This handles cases where SSH config specifies keys
-            env = get_ssh_env_with_askpass(require="prefer")
-            use_askpass = True
-            logger.debug("Saved passphrase found - using askpass")
-        elif not password_auth_selected:
-            # Key-based auth but no explicit passphrase found - still use askpass
-            # The askpass script will show GUI dialog if needed
-            env = get_ssh_env_with_askpass(require="prefer")
-            use_askpass = True
-            logger.info("Key-based auth - using askpass for potential passphrase prompts")
-        else:
-            # Password authentication selected - use default SSH behavior
-            env = os.environ.copy()
-            env.pop('SSH_ASKPASS', None)
-            env.pop('SSH_ASKPASS_REQUIRE', None)
-            logger.debug("Password authentication selected - not using askpass")
-    else:
-        # Password authentication selected
-        env = os.environ.copy()
-        # Remove askpass so SSH can prompt for password if needed
-        env.pop('SSH_ASKPASS', None)
-        env.pop('SSH_ASKPASS_REQUIRE', None)
-    
-    # Resolve connection target (appended after all options; see end of builder)
-    username = getattr(connection, 'username', '')
-    hostname = getattr(connection, 'hostname', '') or getattr(connection, 'host', '')
-    resolved_user = _get_ssh_config_value(effective_config, 'user')
-    resolved_hostname = _get_ssh_config_value(effective_config, 'hostname')
-
-    final_remote_cmd = None
-    if ctx.remote_command:
-        final_remote_cmd = (
-            ctx.remote_command
-            if 'exec $SHELL' in ctx.remote_command
-            else f"{ctx.remote_command} ; exec $SHELL -l"
-        )
-        base_cmd.extend(['-t', '-t'])
-        logger.debug(f"Remote command (TTY): {final_remote_cmd}")
-
-    if use_password_auth and not has_stored_password:
-        if '-t' not in base_cmd and '-tt' not in base_cmd:
-            base_cmd.append('-t')
-            logger.debug("Forcing TTY for interactive password prompt")
-
-    if ctx.port_forwarding_rules:
-        def _format_forward_host(host: str) -> str:
-            host = (host or '').strip()
-            if not host:
-                return host
-            if ':' in host and not (host.startswith('[') and host.endswith(']')):
-                return f"[{host}]"
-            return host
-        
-        for rule in ctx.port_forwarding_rules:
-            if not rule.get('enabled', True):
-                continue
-            
-            rule_type = rule.get('type')
-            listen_addr = (rule.get('listen_addr') or 'localhost').strip()
-            listen_port = rule.get('listen_port')
-            listen_addr_cli = _format_forward_host(listen_addr) or listen_addr or 'localhost'
-            
-            if rule_type == 'dynamic' and listen_port:
-                base_cmd.extend(['-D', f"{listen_addr_cli}:{listen_port}"])
-                logger.debug(f"Added dynamic port forwarding: {listen_addr_cli}:{listen_port}")
-            elif rule_type == 'local' and listen_port and 'remote_host' in rule and 'remote_port' in rule:
-                remote_host = rule.get('remote_host', 'localhost')
-                remote_port = rule.get('remote_port')
-                remote_host_cli = _format_forward_host(remote_host) or remote_host or 'localhost'
-                base_cmd.extend(['-L', f"{listen_addr_cli}:{listen_port}:{remote_host_cli}:{remote_port}"])
-                logger.debug(f"Added local port forwarding: {listen_addr_cli}:{listen_port} -> {remote_host_cli}:{remote_port}")
-            elif rule_type == 'remote' and listen_port:
-                local_host = rule.get('local_host') or rule.get('remote_host', 'localhost')
-                local_port = rule.get('local_port') or rule.get('remote_port')
-                if local_port:
-                    local_host_cli = _format_forward_host(local_host) or local_host or 'localhost'
-                    base_cmd.extend(['-R', f"{listen_addr_cli}:{listen_port}:{local_host_cli}:{local_port}"])
-                    logger.debug(f"Added remote port forwarding: {listen_addr_cli}:{listen_port} -> {local_host_cli}:{local_port}")
-    
-    # Add X11 forwarding if enabled in connection
-    if getattr(connection, 'x11_forwarding', False):
-        base_cmd.append('-X')
-        logger.debug("X11 forwarding enabled")
-
-    # Add local command if specified
-    if ctx.local_command:
-        base_cmd.extend(['-o', 'PermitLocalCommand=yes'])
-        base_cmd.extend(['-o', f'LocalCommand={ctx.local_command}'])
-        logger.debug(f"Local command enabled: {ctx.local_command}")
-
-    certificate = getattr(connection, 'certificate', '') or ''
-    if certificate:
-        cert_path = os.path.expanduser(certificate)
-        if os.path.isfile(cert_path):
-            base_cmd.extend(['-o', f'CertificateFile={cert_path}'])
-            logger.debug(f"Using SSH certificate: {cert_path}")
-
-    # Add NumberOfPasswordPrompts
-    base_cmd.extend(['-o', 'NumberOfPasswordPrompts=1'])
-    
-    # Add PreferredAuthentications based on auth method
-    if password_auth_selected:
-        # Force password authentication when user chose password auth
-        base_cmd.extend(['-o', 'PreferredAuthentications=password'])
-        if getattr(connection, 'pubkey_auth_no', False):
-            base_cmd.extend(['-o', 'PubkeyAuthentication=no'])
-    elif has_stored_password:
-        # Allow all standard authentication methods if password exists
-        base_cmd.extend(['-o', 'PreferredAuthentications=gssapi-with-mic,hostbased,publickey,keyboard-interactive,password'])
-    
-    # Add ExitOnForwardFailure
-    base_cmd.extend(['-o', 'ExitOnForwardFailure=yes'])
-    
-    # 8. Support appending extra SSH options as required
-    if ctx.extra_ssh_config:
-        # Parse extra SSH config options (from advanced tab)
-        for line in ctx.extra_ssh_config.split('\n'):
-            line = line.strip()
-            if line and not line.startswith('#'):  # Skip empty lines and comments
-                # Split on first space to separate option and value
-                parts = line.split(' ', 1)
-                if len(parts) == 2:
-                    option, value = parts
-                    base_cmd.extend(['-o', f"{option}={value}"])
-                    logger.debug(f"Added extra SSH option: {option}={value}")
-                elif len(parts) == 1:
-                    # Option without value (e.g., "Compression yes" becomes "Compression=yes")
-                    option = parts[0]
-                    base_cmd.extend(['-o', f"{option}=yes"])
-                    logger.debug(f"Added extra SSH option: {option}=yes")
-    
-    # Add known hosts file if specified
-    if ctx.known_hosts_path and os.path.exists(ctx.known_hosts_path):
-        base_cmd.extend(['-o', f'UserKnownHostsFile={ctx.known_hosts_path}'])
-        logger.debug(f"Using custom known hosts file: {ctx.known_hosts_path}")
-    
-    # Extra CLI flags (e.g. -N -D for background forwarding) before the target host
-    if extra_args:
-        base_cmd.extend(extra_args)
-
-    # Append host and remote command last: ssh [options] host [command]
-    if command_type == 'scp':
-        pass
-    elif command_type == 'ssh-copy-id':
-        if username and hostname:
-            base_cmd.append(f"{username}@{hostname}")
-        else:
-            base_cmd.append(host_label)
-    else:
-        if resolved_user or resolved_hostname:
-            host_target = host_label
-        elif username and hostname:
-            host_target = f"{username}@{hostname}"
-        else:
-            host_target = host_label
-        base_cmd.append(host_target)
-        if final_remote_cmd:
-            base_cmd.append(final_remote_cmd)
-
-    use_sshpass = False
-    password_for_sshpass = None
-
-    if password_auth_selected and stored_password:
-        use_sshpass = True
-        password_for_sshpass = stored_password
-        logger.debug("Using sshpass for automatic password authentication")
-    
-    # Log final environment state
-    logger.info(f"build_ssh_connection returning: SSH_ASKPASS={env.get('SSH_ASKPASS', 'NOT_SET')}, SSH_ASKPASS_REQUIRE={env.get('SSH_ASKPASS_REQUIRE', 'NOT_SET')}, use_askpass={use_askpass}, has_saved_passphrase={has_saved_passphrase}")
-    
-    return SSHConnectionCommand(
-        command=base_cmd,
-        env=env,
-        use_sshpass=use_sshpass,
-        password=password_for_sshpass,
-        use_askpass=use_askpass
-    )
-
-
-def execute_ssh_connection(
-    cmd: SSHConnectionCommand,
-    **subprocess_kwargs
-) -> subprocess.CompletedProcess:
-    """
-    Execute an SSH connection command.
-
-    Handles sshpass wrapping and environment setup automatically.
-
-    .. deprecated::
-        Prefer spawning ``cmd.command`` with ``cmd.env`` directly (as the
-        terminal does) or ``run_ssh_with_password`` / ``run_scp_with_password``.
-        This helper re-parses ``cmd.command`` and is kept for API compatibility.
-    """
-    if cmd.use_sshpass and cmd.password:
-        # Use sshpass for password authentication
-        host = None
-        user = None
-        port = 22
-        
-        # Extract host, user, port from command
-        for i, arg in enumerate(cmd.command):
-            if '@' in arg and not arg.startswith('-'):
-                parts = arg.split('@')
-                if len(parts) == 2:
-                    user = parts[0]
-                    host_part = parts[1]
-                    if ':' in host_part:
-                        host, port_str = host_part.rsplit(':', 1)
-                        try:
-                            port = int(port_str)
-                        except ValueError:
-                            pass
-                    else:
-                        host = host_part
-                break
-        
-        if not host:
-            # Fallback: try to find host in command
-            for arg in cmd.command:
-                if not arg.startswith('-') and '@' not in arg and arg not in ['ssh', 'scp', 'sftp']:
-                    host = arg
-                    break
-        
-        if host:
-            # Extract SSH options
-            ssh_opts = []
-            i = 0
-            while i < len(cmd.command):
-                if cmd.command[i] == '-o' and i + 1 < len(cmd.command):
-                    ssh_opts.append('-o')
-                    ssh_opts.append(cmd.command[i + 1])
-                    i += 2
-                elif cmd.command[i].startswith('-'):
-                    ssh_opts.append(cmd.command[i])
-                    i += 1
-                else:
-                    i += 1
-            
-            # Get extra args (command to run, etc.)
-            extra_args = []
-            found_host = False
-            for arg in cmd.command:
-                if '@' in arg or (not arg.startswith('-') and arg not in ['ssh', 'scp', 'sftp'] and not found_host):
-                    found_host = True
-                    continue
-                if found_host:
-                    extra_args.append(arg)
-            
-            if cmd.command[0] == 'scp':
-                # Use SCP-specific password execution
-                sources = [a for a in extra_args if not a.endswith(':')]
-                destination = next((a for a in extra_args if a.endswith(':')), '')
-                return run_scp_with_password(
-                    host, user or '', cmd.password,
-                    sources, destination,
-                    port=port,
-                    extra_ssh_opts=ssh_opts,
-                    inherit_env=cmd.env
-                )
-            else:
-                # Use SSH password execution
-                return run_ssh_with_password(
-                    host, user or '', cmd.password,
-                    port=port,
-                    argv_tail=extra_args,
-                    extra_ssh_opts=ssh_opts,
-                    inherit_env=cmd.env,
-                    use_publickey=not getattr(cmd, 'force_password_only', False)
-                )
-    
-    # Default: execute command directly
-    return subprocess.run(
-        cmd.command,
-        env=cmd.env,
-        **subprocess_kwargs
-    )
-
+    # Native mode is the only supported connection mode. Any legacy caller
+    # that left native_mode unset is coerced to native rather than taking a
+    # (now removed) non-native path.
+    ctx.native_mode = True
+    return build_ssh_connection(ctx)

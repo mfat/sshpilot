@@ -8,6 +8,7 @@ import sys
 import logging
 import signal
 import time
+import random
 import json
 import re
 import gi
@@ -541,87 +542,12 @@ class TerminalWidget(Gtk.Box):
         # terminal natural height (which would otherwise resize split panes).
         self.overlay.add_overlay(self.disconnected_banner)
 
-        # Tips banner. Cycles through short usage tips (the first points at the
-        # connection-list shortcut) and is revealed once the terminal connects
-        # (see _reveal_connection_list_hint). Floated as an overlay like the
-        # search banner so revealing it never changes the terminal's allocated
-        # height (which would trigger a VTE SIGWINCH / column reflow).
+        # Terminal usage tips are shown in the main window's banner area (the
+        # same place the "update available" banner appears), NOT floated over
+        # the terminal, so they never mask terminal output. The update banner
+        # takes priority over tips. See MainWindow.show_terminal_tip.
         self._connection_list_hint_handled = False
         self._tips = self._build_terminal_tips()
-        self._tip_index = 0
-        self.connection_list_hint_revealer = Gtk.Revealer()
-        self.connection_list_hint_revealer.set_reveal_child(False)
-        self.connection_list_hint_revealer.set_transition_type(
-            Gtk.RevealerTransitionType.SLIDE_DOWN
-        )
-        self.connection_list_hint_revealer.set_halign(Gtk.Align.FILL)
-        self.connection_list_hint_revealer.set_valign(Gtk.Align.START)
-        self.connection_list_hint_revealer.set_hexpand(True)
-
-        # The stock ``.banner`` style class only paints a background on the
-        # real AdwBanner widget — on a plain box it renders transparent — so
-        # install our own accent-colored style once per display.
-        try:
-            display = Gdk.Display.get_default()
-            if display and not getattr(display, '_sshpilot_hint_banner_css_installed', False):
-                hint_css = Gtk.CssProvider()
-                hint_css.load_from_data(b"""
-                    .connection-list-hint-banner {
-                        background-color: @accent_bg_color;
-                        color: @accent_fg_color;
-                        padding: 6px 12px;
-                    }
-                    .connection-list-hint-banner label { color: @accent_fg_color; }
-                """)
-                Gtk.StyleContext.add_provider_for_display(
-                    display, hint_css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
-                )
-                setattr(display, '_sshpilot_hint_banner_css_installed', True)
-        except Exception:
-            pass
-
-        hint_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        hint_box.add_css_class('connection-list-hint-banner')
-        hint_box.set_hexpand(True)
-
-        # Light-bulb marker at the start of every tip. A color emoji is used
-        # instead of a themed icon because no light-bulb symbolic is reliably
-        # available across icon themes; it also keeps its color rather than
-        # being recolored by the banner's accent text-color CSS.
-        bulb_label = Gtk.Label(label="\N{ELECTRIC LIGHT BULB}")
-        bulb_label.set_valign(Gtk.Align.CENTER)
-        hint_box.append(bulb_label)
-
-        self._tip_label = Gtk.Label()
-        self._tip_label.set_text(self._tips[self._tip_index] if self._tips else '')
-        self._tip_label.set_halign(Gtk.Align.START)
-        self._tip_label.set_valign(Gtk.Align.CENTER)
-        self._tip_label.set_hexpand(True)
-        self._tip_label.set_wrap(True)
-        hint_box.append(self._tip_label)
-
-        # Only offer "Next tip" when there's more than one to cycle through.
-        if len(self._tips) > 1:
-            hint_next_button = Gtk.Button.new_with_label(_('Next tip'))
-            hint_next_button.set_valign(Gtk.Align.CENTER)
-            hint_next_button.add_css_class('flat')
-            hint_next_button.connect('clicked', self._on_connection_list_hint_next_tip)
-            hint_box.append(hint_next_button)
-
-        hint_dismiss_button = Gtk.Button.new_with_label(_('Dismiss'))
-        hint_dismiss_button.set_valign(Gtk.Align.CENTER)
-        hint_dismiss_button.add_css_class('flat')
-        hint_dismiss_button.connect('clicked', self._on_connection_list_hint_dismiss)
-        hint_box.append(hint_dismiss_button)
-
-        hint_dont_show_button = Gtk.Button.new_with_label(_("Don't show again"))
-        hint_dont_show_button.set_valign(Gtk.Align.CENTER)
-        hint_dont_show_button.add_css_class('flat')
-        hint_dont_show_button.connect('clicked', self._on_connection_list_hint_dont_show_again)
-        hint_box.append(hint_dont_show_button)
-
-        self.connection_list_hint_revealer.set_child(hint_box)
-        self.overlay.add_overlay(self.connection_list_hint_revealer)
         self.connect('connection-established', self._reveal_connection_list_hint)
 
         # Container for terminal stack only
@@ -885,22 +811,17 @@ class TerminalWidget(Gtk.Box):
         try:
             if hasattr(connection, 'ssh_cmd'):
                 connection.ssh_cmd = []
+            # Drop the cached builder result so reconnect re-derives the command,
+            # environment, and auth (a stale askpass/agent decision must not leak).
+            if hasattr(connection, 'ssh_connection_cmd'):
+                connection.ssh_connection_cmd = None
         except Exception as exc:
             logger.debug(f"Unable to reset cached ssh_cmd before reconnect: {exc}")
 
+        # Native-only connection (connect() delegates to native_connect()).
         connect_coro = None
-        use_native = False
         try:
-            use_native = bool(getattr(self.connection_manager, 'native_connect_enabled', False))
-            if not use_native:
-                app = Adw.Application.get_default()
-                if app is not None and hasattr(app, 'native_connect_enabled'):
-                    use_native = bool(app.native_connect_enabled)
-        except Exception:
-            use_native = False
-
-        try:
-            if use_native and hasattr(connection, 'native_connect'):
+            if hasattr(connection, 'native_connect'):
                 connect_coro = connection.native_connect()
             elif hasattr(connection, 'connect'):
                 connect_coro = connection.connect()
@@ -996,10 +917,11 @@ class TerminalWidget(Gtk.Box):
         ]
 
     def _reveal_connection_list_hint(self, *args):
-        """Show the tips banner once the terminal connects.
+        """Show a usage tip in the main window's banner area once connected.
 
-        Only reveals while the user hasn't opted out, and at most once per
-        terminal so a reconnect doesn't pop it back up.
+        Only shows while the user hasn't opted out, and at most once per
+        terminal so a reconnect doesn't pop it back up. The tip is rendered by
+        the main window (alongside the update banner), not over the terminal.
         """
         try:
             if self._connection_list_hint_handled:
@@ -1008,37 +930,14 @@ class TerminalWidget(Gtk.Box):
             if not bool(self.config.get_setting('terminal.show_tips', True)):
                 return
             # Rebuild so labels reflect any shortcut customizations made since
-            # this terminal was created.
+            # this terminal was created. The window picks a tip to show and the
+            # "Next tip" button cycles through the rest.
             self._tips = self._build_terminal_tips()
-            self._tip_index = 0
-            if self._tips:
-                self._tip_label.set_text(self._tips[self._tip_index])
-            self.connection_list_hint_revealer.set_reveal_child(True)
-        except Exception:
-            pass
-
-    def _on_connection_list_hint_next_tip(self, *args):
-        """Advance to the next tip, wrapping around at the end."""
-        try:
             if not self._tips:
                 return
-            self._tip_index = (self._tip_index + 1) % len(self._tips)
-            self._tip_label.set_text(self._tips[self._tip_index])
-        except Exception:
-            pass
-
-    def _on_connection_list_hint_dismiss(self, *args):
-        """Hide the banner for this terminal only (it may show again next time)."""
-        try:
-            self.connection_list_hint_revealer.set_reveal_child(False)
-        except Exception:
-            pass
-
-    def _on_connection_list_hint_dont_show_again(self, *args):
-        """Hide the banner and never show tips again on any terminal."""
-        try:
-            self.connection_list_hint_revealer.set_reveal_child(False)
-            self.config.set_setting('terminal.show_tips', False)
+            root = self.get_root() if hasattr(self, 'get_root') else None
+            if root is not None and hasattr(root, 'show_terminal_tip'):
+                root.show_terminal_tip(self._tips)
         except Exception:
             pass
 
@@ -1095,533 +994,75 @@ class TerminalWidget(Gtk.Box):
             logger.error(f"SSH connection failed: {e}")
             GLib.idle_add(self._on_connection_failed, str(e))
 
-    def _prepare_key_for_native_mode(self):
-        """Ensure explicit keys are unlocked when native SSH mode is active."""
-        connection = getattr(self, 'connection', None)
-        if not connection:
-            return
-
-        try:
-            auth_method = int(getattr(connection, 'auth_method', 0) or 0)
-        except Exception:
-            auth_method = 0
-        if auth_method == 1:
-            logger.debug("Password auth selected; skipping native key preload")
-            return
-
-        if bool(getattr(connection, 'pubkey_auth_no', False)):
-            logger.debug("Public key auth disabled; skipping native key preload")
-            return
-
-        if getattr(connection, 'identity_agent_disabled', False):
-            logger.debug("IdentityAgent disabled; skipping native key preload")
-            return
-
-        manager = getattr(self, 'connection_manager', None)
-        if not manager or not hasattr(manager, 'prepare_key_for_connection'):
-            return
-
-        try:
-            key_select_mode = int(getattr(connection, 'key_select_mode', 0) or 0)
-        except Exception:
-            key_select_mode = 0
-
-        if key_select_mode not in (1, 2):
-            candidate_keys = self._resolve_native_identity_candidates()
-            attempted = False
-
-            for candidate in candidate_keys:
-                expanded = os.path.expanduser(candidate)
-                if not os.path.isfile(expanded):
-                    logger.debug(
-                        "Identity candidate not found for native key preload: %s",
-                        candidate,
-                    )
-                    continue
-
-                attempted = True
-
-                try:
-                    prepared = manager.prepare_key_for_connection(expanded)
-                except Exception as exc:
-                    logger.warning(
-                        "Failed to prepare key for native SSH connection (%s): %s",
-                        expanded,
-                        exc,
-                    )
-                    continue
-
-                if prepared:
-                    logger.debug(
-                        "Prepared key for native SSH connection: %s",
-                        expanded,
-                    )
-                    return
-
-                logger.warning(
-                    "Key could not be prepared for native SSH connection: %s",
-                    expanded,
-                )
-
-            if not attempted:
-                logger.debug("No matching identity files found for native key preload")
-
-            return
-
-        keyfile = getattr(connection, 'keyfile', '') or ''
-        if not keyfile or keyfile.startswith('Select key file'):
-            return
-
-        expanded_keyfile = os.path.expanduser(keyfile)
-        key_path = expanded_keyfile if os.path.isfile(expanded_keyfile) else keyfile
-        if not os.path.isfile(key_path):
-            logger.debug("Explicit key not found on disk, skipping native preload: %s", keyfile)
-            return
-
-        try:
-            prepared = manager.prepare_key_for_connection(key_path)
-        except Exception as exc:
-            logger.warning("Failed to prepare key for native SSH connection: %s", exc)
-            return
-
-        if prepared:
-            logger.debug("Prepared key for native SSH connection: %s", key_path)
-        else:
-            logger.warning("Key could not be prepared for native SSH connection: %s", key_path)
-
-    def _resolve_native_identity_candidates(self) -> List[str]:
-        """Return identity file candidates for native SSH preload attempts."""
-
-        connection = getattr(self, 'connection', None)
-        if not connection:
-            return []
-
-        candidates: List[str] = []
-        try:
-            resolved = getattr(connection, 'resolved_identity_files', [])
-        except Exception:
-            resolved = []
-
-        if isinstance(resolved, (list, tuple)):
-            for value in resolved:
-                expanded = os.path.expanduser(str(value))
-                if os.path.isfile(expanded) and expanded not in candidates:
-                    candidates.append(expanded)
-
-        if candidates:
-            return candidates
-
-        if hasattr(connection, 'collect_identity_file_candidates'):
-            try:
-                fallback = connection.collect_identity_file_candidates()
-            except Exception:
-                fallback = []
-
-            for value in fallback:
-                expanded = os.path.expanduser(str(value))
-                if os.path.isfile(expanded) and expanded not in candidates:
-                    candidates.append(expanded)
-
-        return candidates
-
     def _setup_ssh_terminal(self):
         """Set up terminal with direct SSH command using ssh_connection_builder (called from main thread)"""
         try:
-            # Check for pre-built SSH command from connection (for compatibility)
-            ssh_conn_cmd = None
-            base_cmd = ['ssh']
-            using_prepared_cmd = False
-            if hasattr(self.connection, 'ssh_cmd'):
+            # The connection's SSH command, environment, and authentication were
+            # all prepared by the unified builder (build_ssh_connection), invoked
+            # from Connection.native_connect()/connect(). The terminal simply
+            # consumes that result and handles the runtime mechanics that cannot
+            # live in a pure command builder: the sshpass FIFO, askpass log
+            # forwarding, terminal env tweaks, and the PTY/spawn.
+            ssh_conn_cmd = getattr(self.connection, 'ssh_connection_cmd', None)
+            if ssh_conn_cmd is not None:
+                ssh_cmd = list(ssh_conn_cmd.command)
+                env = dict(ssh_conn_cmd.env)
+                use_askpass = bool(getattr(ssh_conn_cmd, 'use_askpass', False))
+                password_value = (
+                    ssh_conn_cmd.password
+                    if getattr(ssh_conn_cmd, 'use_sshpass', False)
+                    else None
+                )
+            else:
+                # Fallback: a bare prepared command list from an older path, or a
+                # minimal ssh invocation as a last resort.
                 prepared = getattr(self.connection, 'ssh_cmd', None)
                 if isinstance(prepared, (list, tuple)) and prepared:
-                    base_cmd = list(prepared)
-                    using_prepared_cmd = True
-
-            ssh_cmd = list(base_cmd)
-
-            def ensure_option(option: str):
-                if option not in ssh_cmd:
-                    ssh_cmd.extend(['-o', option])
-
-            def remove_option(option_name: str, keep_value: Optional[str] = None):
-                prefix = f'{option_name}='
-                idx = 0
-                found_keep = False
-                while idx < len(ssh_cmd):
-                    if ssh_cmd[idx] == '-o' and idx + 1 < len(ssh_cmd):
-                        opt_value = ssh_cmd[idx + 1]
-                        if opt_value.startswith(prefix):
-                            if (
-                                keep_value is not None
-                                and opt_value == f'{option_name}={keep_value}'
-                                and not found_keep
-                            ):
-                                found_keep = True
-                                idx += 2
-                                continue
-                            del ssh_cmd[idx:idx + 2]
-                            continue
-                    idx += 1
-
-            def sync_option(option_name: str, desired_value: Optional[str]):
-                if desired_value is None:
-                    remove_option(option_name)
+                    ssh_cmd = list(prepared)
                 else:
-                    remove_option(option_name, desired_value)
-                    ensure_option(f'{option_name}={desired_value}')
-
-            def ensure_flag(flag: str):
-                if flag not in ssh_cmd:
-                    ssh_cmd.append(flag)
-
-            def remove_flag(flag: str):
-                while flag in ssh_cmd:
-                    ssh_cmd.remove(flag)
-
-            ssh_cfg = {}
-            try:
-                cfg_obj = getattr(self, 'config', None)
-                if cfg_obj is not None and hasattr(cfg_obj, 'get_ssh_config'):
-                    ssh_cfg = cfg_obj.get_ssh_config()
-            except Exception:
-                ssh_cfg = {}
-            native_mode_enabled = bool(getattr(self.connection_manager, 'native_connect_enabled', False))
-            try:
-                app = Adw.Application.get_default()
-                if not native_mode_enabled and app is not None and hasattr(app, 'native_connect_enabled'):
-                    native_mode_enabled = bool(app.native_connect_enabled)
-            except Exception:
-                pass
-            quick_connect_mode = bool(getattr(self.connection, 'quick_connect_command', ''))
-            if native_mode_enabled:
-                quick_connect_mode = False
-                self._prepare_key_for_native_mode()
-            password_auth_selected = False
-            has_saved_password = False
-            password_value = None
-            auth_method = 0
-            resolved_for_connection = ''
-
-            def _resolve_host_for_connection() -> str:
-                if not hasattr(self, 'connection') or not self.connection:
-                    return ''
-                try:
-                    host_value = self.connection.get_effective_host()
-                except AttributeError:
-                    host_value = getattr(self.connection, 'hostname', '') or getattr(self.connection, 'host', '')
-                if not host_value:
-                    host_value = getattr(self.connection, 'nickname', '')
-                return host_value or ''
-
-            try:
-                resolved_for_connection = _resolve_host_for_connection()
-            except Exception:
-                resolved_for_connection = ''
-
-            try:
-                # In our UI: 0 = key-based, 1 = password
-                auth_method = getattr(self.connection, 'auth_method', 0)
-                password_auth_selected = (auth_method == 1)
-                # Try to fetch stored password regardless of auth method
-                password_value = getattr(self.connection, 'password', None)
-                if not password_value and hasattr(self, 'connection_manager') and self.connection_manager:
-                    lookup_host = resolved_for_connection or _resolve_host_for_connection()
-                    username_for_lookup = getattr(self.connection, 'username', None)
-                    password_value = self.connection_manager.get_password(
-                        lookup_host,
-                        username_for_lookup,
-                    )
-
-                has_saved_password = bool(password_value)
-            except Exception:
-                auth_method = 0
-                password_auth_selected = False
-                has_saved_password = False
-
-            using_password = password_auth_selected or has_saved_password
-
-            # Initialize env early to ensure it's available in all code paths
-            env = os.environ.copy()
-            ssh_conn_cmd = None
-
-            if not quick_connect_mode:
-                batch_mode_pref = bool(ssh_cfg.get('batch_mode', False))
-                desired_batch_mode = 'yes' if batch_mode_pref and not using_password else None
-                sync_option('BatchMode', desired_batch_mode)
-
-            if native_mode_enabled and not ssh_cmd:
-                host_label = ''
-
-                try:
-                    cfg_obj = getattr(self, 'config', None)
-                    if cfg_obj is not None and hasattr(cfg_obj, 'get_ssh_config'):
-                        ssh_cfg = cfg_obj.get_ssh_config()
-                except Exception:
-                    ssh_cfg = {}
-                
-                native_mode_enabled = bool(getattr(self.connection_manager, 'native_connect_enabled', False))
-                try:
-                    app = Adw.Application.get_default()
-                    if not native_mode_enabled and app is not None and hasattr(app, 'native_connect_enabled'):
-                        native_mode_enabled = bool(app.native_connect_enabled)
-                except Exception:
-                    pass
-
-
-                # Use custom known hosts file when available
-                try:
-                    if getattr(self, 'connection_manager', None):
-                        kh_path = getattr(self.connection_manager, 'known_hosts_path', '')
-                        if kh_path and os.path.exists(kh_path):
-                            ensure_option(f'UserKnownHostsFile={kh_path}')
-                except Exception:
-                    logger.debug('Failed to set UserKnownHostsFile option', exc_info=True)
-
-                # Ensure SSH exits immediately on failure rather than waiting in background
-                sync_option('ExitOnForwardFailure', 'yes')
-
-                # Only add verbose flag if explicitly enabled in config
-                try:
-                    verbosity = int(ssh_cfg.get('verbosity', 0))
-                    debug_enabled = bool(ssh_cfg.get('debug_enabled', False))
-                    v = max(0, min(3, verbosity))
-                    remove_flag('-v')
-                    for _ in range(v):
-                        ssh_cmd.append('-v')
-                    # Map verbosity to LogLevel to ensure messages are not suppressed by defaults
-                    remove_option('LogLevel')
-                    if v == 1:
-                        ensure_option('LogLevel=VERBOSE')
-                    elif v == 2:
-                        ensure_option('LogLevel=DEBUG2')
-                    elif v >= 3:
-                        ensure_option('LogLevel=DEBUG3')
-                    elif debug_enabled:
-                        ensure_option('LogLevel=DEBUG')
-                    if v > 0 or debug_enabled:
-                        logger.debug("SSH verbosity configured: -v x %d, LogLevel set", v)
-                except Exception as e:
-                    logger.warning(f"Could not check SSH verbosity/debug settings: {e}")
-                    # Default to non-verbose on error
-
-                # Add key file/options only for key-based auth
-                if not password_auth_selected:
-                    # Get key selection mode
-                    key_select_mode = 0
-                    try:
-                        key_select_mode = int(getattr(self.connection, 'key_select_mode', 0) or 0)
-                    except Exception:
-                        pass
-
-                    keyfile_value = getattr(self.connection, 'keyfile', '') or ''
-                    has_explicit_key = bool(
-                        keyfile_value
-                        and not str(keyfile_value).startswith('Select key file')
-                        and os.path.isfile(keyfile_value)
-                    )
-
-                    if has_explicit_key and hasattr(self, 'connection_manager') and self.connection_manager:
-                        if getattr(self.connection, 'identity_agent_disabled', False):
-                            logger.debug(
-                                "IdentityAgent disabled; skipping key preparation before connection"
-                            )
-                        else:
-                            try:
-                                if hasattr(self.connection_manager, 'prepare_key_for_connection'):
-                                    key_prepared = self.connection_manager.prepare_key_for_connection(keyfile_value)
-                                    if key_prepared:
-                                        logger.debug(f"Key prepared for connection: {keyfile_value}")
-                                    else:
-                                        logger.warning(f"Failed to prepare key for connection: {keyfile_value}")
-                            except Exception as e:
-                                logger.warning(f"Error preparing key for connection: {e}")
-
-                    # Only add specific key when a dedicated key mode is selected
-                    if has_explicit_key and key_select_mode in (1, 2):
-                        if keyfile_value not in ssh_cmd:
-                            ssh_cmd.extend(['-i', keyfile_value])
-                        logger.debug(f"Using SSH key: {keyfile_value}")
-                        if key_select_mode == 1:
-                            ensure_option('IdentitiesOnly=yes')
-
-                        # Add certificate if specified
-                        if hasattr(self.connection, 'certificate') and self.connection.certificate and \
-                           os.path.isfile(self.connection.certificate):
-                            ensure_option(f'CertificateFile={self.connection.certificate}')
-                            logger.debug(f"Using SSH certificate: {self.connection.certificate}")
-                    else:
-                        logger.debug("Using default SSH key selection (key_select_mode=0 or no valid key specified)")
-
-                    # If a password exists, allow all standard authentication methods
-                    if has_saved_password:
-                        ensure_option('PreferredAuthentications=gssapi-with-mic,hostbased,publickey,keyboard-interactive,password')
-                else:
-                    # Force password authentication when user chose password auth
-                    ensure_option('PreferredAuthentications=password')
-                    if getattr(self.connection, 'pubkey_auth_no', False):
-                        ensure_option('PubkeyAuthentication=no')
-
-                # Add X11 forwarding if enabled
-                if hasattr(self.connection, 'x11_forwarding') and self.connection.x11_forwarding:
-                    ensure_flag('-X')
-
-                # Prepare command-related options (must appear before host)
-
-                remote_cmd = ''
-                local_cmd = ''
-                try:
-                    if hasattr(self.connection, 'remote_command'):
-                        remote_cmd = (self.connection.remote_command or '').strip()
-                    if not remote_cmd and hasattr(self.connection, 'data'):
-                        remote_cmd = (self.connection.data.get('remote_command') or '').strip()
-                except Exception:
-                    remote_cmd = ''
-                try:
-                    if hasattr(self.connection, 'local_command'):
-                        local_cmd = (self.connection.local_command or '').strip()
-                    if not local_cmd and hasattr(self.connection, 'data'):
-                        local_cmd = (self.connection.data.get('local_command') or '').strip()
-                except Exception:
-                    local_cmd = ''
-                
-                # Get port forwarding rules with conflict checking
-                port_forwarding_rules = None
-                if hasattr(self.connection, 'forwarding_rules'):
-                    port_checker = get_port_checker()
-                    port_conflicts = []
-                    filtered_rules = []
-                    
-                    for rule in self.connection.forwarding_rules:
-                        if not rule.get('enabled', True):
-                            continue
-                        
-                        rule_type = rule.get('type')
-                        listen_addr = (rule.get('listen_addr') or 'localhost').strip()
-                        listen_port = rule.get('listen_port')
-                        
-                        # Check for local port conflicts (for local and dynamic forwarding)
-                        if rule_type in ['local', 'dynamic'] and listen_port:
-                            try:
-                                conflicts = port_checker.get_port_conflicts([listen_port], listen_addr)
-                                if conflicts:
-                                    port, port_info = conflicts[0]
-                                    conflict_msg = f"Port {port} is already in use"
-                                    if port_info.process_name:
-                                        conflict_msg += f" by {port_info.process_name} (PID: {port_info.pid})"
-                                    port_conflicts.append(conflict_msg)
-                                    continue  # Skip this rule
-                            except Exception as e:
-                                logger.debug(f"Could not check port conflict for {listen_port}: {e}")
-                        
-                        filtered_rules.append(rule)
-                    
-                    # Show port conflict warnings if any
-                    if port_conflicts:
-                        conflict_message = "Port forwarding conflicts detected:\n" + "\n".join([f"• {msg}" for msg in port_conflicts])
-                        logger.warning(conflict_message)
-                        GLib.idle_add(self._show_forwarding_error_dialog, conflict_message)
-                    
-                    port_forwarding_rules = filtered_rules if filtered_rules else None
-                
-                # Get known hosts path
-                known_hosts_path = None
-                try:
-                    if getattr(self, 'connection_manager', None):
-                        kh_path = getattr(self.connection_manager, 'known_hosts_path', '')
-                        if kh_path and os.path.exists(kh_path):
-                            known_hosts_path = kh_path
-                except Exception:
-                    pass
-                
-                # Get extra SSH config
-                extra_ssh_config = getattr(self.connection, 'extra_ssh_config', '').strip() or None
-                
-                # Build connection context
-                ctx = ConnectionContext(
-                    connection=self.connection,
-                    connection_manager=self.connection_manager,
-                    config=self.config,
-                    command_type='ssh',
-                    extra_args=[],
-                    port_forwarding_rules=port_forwarding_rules,
-                    remote_command=remote_cmd if remote_cmd else None,
-                    local_command=local_cmd if local_cmd else None,
-                    extra_ssh_config=extra_ssh_config,
-                    known_hosts_path=known_hosts_path,
-                    native_mode=native_mode_enabled,
-                    quick_connect_mode=quick_connect_mode,
-                    quick_connect_command=getattr(self.connection, 'quick_connect_command', None) or None,
-                )
-                
-                # Build SSH connection command
-                ssh_conn_cmd = build_ssh_connection(ctx)
-                ssh_cmd = ssh_conn_cmd.command
-                env.update(ssh_conn_cmd.env)
-                # dict.update() doesn't remove keys absent from the source; propagate
-                # deletions explicitly so that SSH_ASKPASS stripped for password auth
-                # (e.g. ksshaskpass from KDE host env) doesn't bleed into the SSH process.
-                if 'SSH_ASKPASS' not in ssh_conn_cmd.env:
-                    env.pop('SSH_ASKPASS', None)
-                if 'SSH_ASKPASS_REQUIRE' not in ssh_conn_cmd.env:
-                    env.pop('SSH_ASKPASS_REQUIRE', None)
-
-                # Get password for sshpass if needed
+                    ssh_cmd = ['ssh']
+                env = os.environ.copy()
+                use_askpass = False
                 password_value = None
-                if ssh_conn_cmd.use_sshpass and ssh_conn_cmd.password:
-                    password_value = ssh_conn_cmd.password
-                
-                logger.debug(f"Built SSH command using ssh_connection_builder: {' '.join(ssh_cmd)}")
 
-            # Handle password authentication with sshpass if available (terminal-specific FIFO handling)
-            logger.debug(f"Initial environment SSH_ASKPASS: {env.get('SSH_ASKPASS', 'NOT_SET')}, SSH_ASKPASS_REQUIRE: {env.get('SSH_ASKPASS_REQUIRE', 'NOT_SET')}")
+            logger.debug(f"SSH command from builder: {' '.join(ssh_cmd)}")
 
+            # Password authentication: feed the stored password to ssh via sshpass
+            # using a write-once FIFO (keeps it off the command line and the env).
             if password_value:
-                # Use sshpass for password authentication with FIFO (terminal-specific)
                 sshpass_path = get_sshpass_path()
                 if sshpass_path:
-                    logger.debug(f"Using sshpass at {sshpass_path}")
-                else:
-                    logger.debug("sshpass not found or not executable")
-                
-                if sshpass_path:
-                    # Use the same approach as ssh_password_exec.py for consistency
                     from .ssh_password_exec import _mk_priv_dir, _write_once_fifo
                     import threading
-                    
-                    # Create private temp directory and FIFO
+
                     tmpdir = _mk_priv_dir()
                     fifo = os.path.join(tmpdir, "pw.fifo")
                     os.mkfifo(fifo, 0o600)
-                    
-                    # Start writer thread that writes the password exactly once
-                    t = threading.Thread(target=_write_once_fifo, args=(fifo, password_value), daemon=True)
+                    t = threading.Thread(
+                        target=_write_once_fifo, args=(fifo, password_value), daemon=True
+                    )
                     t.start()
-                    
-                    # Use sshpass with FIFO
                     ssh_cmd = [sshpass_path, "-f", fifo] + ssh_cmd
-                    
-                    # Remove SSH_ASKPASS and force SSH_ASKPASS_REQUIRE=never so OpenSSH cannot
-                    # invoke askpass (including compiled-in defaults) even if a KDE/Wayland session
-                    # injects SSH_ASKPASS_REQUIRE=prefer into the environment via VTE or PAM.
+                    # Ensure ssh can never fall back to askpass for the password,
+                    # even if the session injects SSH_ASKPASS_REQUIRE=prefer.
                     env.pop("SSH_ASKPASS", None)
                     env["SSH_ASKPASS_REQUIRE"] = "never"
-
-                    logger.debug("Using sshpass with FIFO for password authentication")
-                    logger.debug(f"Environment for sshpass: SSH_ASKPASS={env.get('SSH_ASKPASS', 'NOT_SET')}, SSH_ASKPASS_REQUIRE={env.get('SSH_ASKPASS_REQUIRE')}")
-                    
-                    # Store tmpdir for cleanup
                     self._sshpass_tmpdir = tmpdir
+                    logger.debug("Using sshpass with FIFO for password authentication")
                 else:
-                    # sshpass not available – allow interactive password prompt via TTY
                     env.pop("SSH_ASKPASS", None)
                     env["SSH_ASKPASS_REQUIRE"] = "never"
-                    logger.warning("sshpass not available; falling back to interactive password prompt")
-            
-            # Enable askpass log forwarding if using askpass
-            if ssh_conn_cmd and ssh_conn_cmd.use_askpass:
-                self._enable_askpass_log_forwarding(include_existing=True)
-            
-            # Set TERM to a proper value only if missing or set to "dumb"
+                    logger.warning(
+                        "sshpass not available; falling back to interactive password prompt"
+                    )
+
+            # Forward askpass helper log lines into our logger while connecting so
+            # passphrase-prompt activity is visible. Only new lines are forwarded
+            # (the log file persists for the whole session).
+            if use_askpass:
+                self._enable_askpass_log_forwarding(include_existing=False)
+
+            # Terminal-specific environment tweaks.
             if 'TERM' not in env or env.get('TERM', '').lower() == 'dumb':
                 env['TERM'] = 'xterm-256color'
             env['SHELL'] = env.get('SHELL', '/bin/bash')
@@ -1631,7 +1072,7 @@ class TerminalWidget(Gtk.Box):
                 current_path = env.get('PATH', '')
                 if '/app/bin' not in current_path:
                     env['PATH'] = f"/app/bin:{current_path}"
-            
+
             # Convert environment dict to list format expected by VTE
             env_list = []
             for key, value in env.items():
@@ -3961,14 +3402,18 @@ class TerminalWidget(Gtk.Box):
     
     def disconnect(self):
         """Close the SSH connection and clean up resources"""
+        # Guard UI emissions when the root window is quitting. Computed up front
+        # so it is always bound: disconnect() can be called while is_connected is
+        # already False (e.g. pressing Reconnect after a failed connection), in
+        # which case the block below is skipped but the finally clause still
+        # references is_quitting.
+        root = self.get_root() if hasattr(self, 'get_root') else None
+        is_quitting = bool(getattr(root, '_is_quitting', False))
+
         was_connected = self.is_connected
         if self.is_connected:
             logger.debug(f"Disconnecting SSH session {self.session_id}...")
             self.is_connected = False
-
-            # Guard UI emissions when the root window is quitting
-            root = self.get_root() if hasattr(self, 'get_root') else None
-            is_quitting = bool(getattr(root, '_is_quitting', False))
 
             # Only update manager / UI if not quitting
             if hasattr(self, 'connection') and self.connection and not is_quitting:
@@ -4890,8 +4335,9 @@ class TerminalWidget(Gtk.Box):
             self._fullscreen_header_visible = None
             self._fullscreen_tab_bar_visible = None
             self._fullscreen_update_banner_visible = None
+            self._fullscreen_tips_banner_visible = None
             self._fullscreen_broadcast_banner_visible = None
-            
+
             # Store window state before going fullscreen
             try:
                 # Check if window is maximized
@@ -4984,7 +4430,16 @@ class TerminalWidget(Gtk.Box):
                     logger.debug("Update banner hidden for fullscreen")
                 except Exception as e:
                     logger.debug(f"Failed to hide update banner: {e}", exc_info=True)
-            
+
+            # Hide tips banner if it exists
+            if hasattr(root, 'tips_banner_container'):
+                try:
+                    self._fullscreen_tips_banner_visible = root.tips_banner_container.get_visible()
+                    root.tips_banner_container.set_visible(False)
+                    logger.debug("Tips banner hidden for fullscreen")
+                except Exception as e:
+                    logger.debug(f"Failed to hide tips banner: {e}", exc_info=True)
+
             # Hide broadcast banner if it exists
             if hasattr(root, 'broadcast_banner'):
                 try:
@@ -5200,7 +4655,14 @@ class TerminalWidget(Gtk.Box):
                     root.update_banner_container.set_visible(self._fullscreen_update_banner_visible)
                 except Exception as e:
                     logger.debug(f"Failed to restore update banner: {e}")
-            
+
+            # Restore tips banner
+            if hasattr(root, 'tips_banner_container') and self._fullscreen_tips_banner_visible is not None:
+                try:
+                    root.tips_banner_container.set_visible(self._fullscreen_tips_banner_visible)
+                except Exception as e:
+                    logger.debug(f"Failed to restore tips banner: {e}")
+
             # Restore broadcast banner
             if hasattr(root, 'broadcast_banner') and self._fullscreen_broadcast_banner_visible is not None:
                 try:
@@ -5560,13 +5022,13 @@ class TerminalWidget(Gtk.Box):
                         connection_manager=self.connection_manager,
                         config=self.config,
                         command_type='ssh',
-                        extra_args=[f"cat {temp_filename}"],  # Command to run
+                        extra_args=[],
                         port_forwarding_rules=None,
                         remote_command=f"cat {temp_filename}",
                         local_command=None,
                         extra_ssh_config=None,
                         known_hosts_path=None,
-                        native_mode=False,
+                        native_mode=True,
                         quick_connect_mode=False,
                         quick_connect_command=None,
                     )
@@ -5591,13 +5053,13 @@ class TerminalWidget(Gtk.Box):
                             connection_manager=self.connection_manager,
                             config=self.config,
                             command_type='ssh',
-                            extra_args=[f"rm -f {temp_filename}"],
+                            extra_args=[],
                             port_forwarding_rules=None,
                             remote_command=f"rm -f {temp_filename}",
                             local_command=None,
                             extra_ssh_config=None,
                             known_hosts_path=None,
-                            native_mode=False,
+                            native_mode=True,
                             quick_connect_mode=False,
                             quick_connect_command=None,
                         )

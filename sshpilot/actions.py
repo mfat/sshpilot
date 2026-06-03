@@ -1,6 +1,7 @@
 """Action handlers for MainWindow and registration helper."""
 
 import logging
+import random
 from typing import Optional
 from gi.repository import Gio, Gtk, Adw, GLib, Gdk
 from gettext import gettext as _
@@ -1377,11 +1378,15 @@ class WindowActions:
             self._on_update_banner_clicked
         )
         
+        # The update banner takes priority over the tips banner — hide tips so
+        # the two never stack in the same area.
+        self._hide_tips_banner()
+
         # Show the banner and its container
         self.update_banner.set_revealed(True)
         if hasattr(self, 'update_banner_container'):
             self.update_banner_container.set_visible(True)
-    
+
     def _on_update_banner_clicked(self, banner):
         """Handle update banner button click"""
         # Import here to avoid circular imports
@@ -1401,7 +1406,75 @@ class WindowActions:
         self.update_banner.set_revealed(False)
         if hasattr(self, 'update_banner_container'):
             self.update_banner_container.set_visible(False)
-    
+
+    # --- Terminal tips banner (shares the update banner's area) ---------------
+
+    def show_terminal_tip(self, tips):
+        """Show a terminal usage tip in the window banner area.
+
+        ``tips`` is the list of tip strings (a single string is also accepted).
+        A random tip is shown first; the "Next tip" button cycles through the
+        rest. The update banner takes priority: if it is currently shown, the
+        tip is suppressed so the two never stack.
+        """
+        if not getattr(self, 'tips_banner', None):
+            return
+        if getattr(self, 'update_banner', None) is not None and self.update_banner.get_revealed():
+            return
+        if isinstance(tips, str):
+            tips = [tips]
+        tips = [t for t in (tips or []) if t]
+        if not tips:
+            return
+        self._terminal_tips = tips
+        self._terminal_tip_index = random.randrange(len(tips))
+        self._display_current_terminal_tip()
+
+    def _display_current_terminal_tip(self):
+        """Render the current tip and toggle the Next button to match the list."""
+        try:
+            tip = self._terminal_tips[self._terminal_tip_index]
+            self.tips_banner.set_title(f"\N{ELECTRIC LIGHT BULB} {tip}")
+            self.tips_banner.set_revealed(True)
+            if getattr(self, 'tips_banner_container', None) is not None:
+                self.tips_banner_container.set_visible(True)
+            # The Next button is only useful when there's more than one tip.
+            if getattr(self, 'tips_next_button', None) is not None:
+                self.tips_next_button.set_visible(len(self._terminal_tips) > 1)
+        except Exception as exc:
+            logger.debug("Failed to show terminal tip: %s", exc)
+
+    def _on_tips_banner_next(self, *args):
+        """Advance to the next tip, wrapping around the list."""
+        tips = getattr(self, '_terminal_tips', None)
+        if not tips:
+            return
+        self._terminal_tip_index = (getattr(self, '_terminal_tip_index', 0) + 1) % len(tips)
+        self._display_current_terminal_tip()
+
+    def _hide_tips_banner(self):
+        """Hide the terminal tips banner (used on dismiss and update priority)."""
+        try:
+            if getattr(self, 'tips_banner', None) is not None:
+                self.tips_banner.set_revealed(False)
+            if getattr(self, 'tips_banner_container', None) is not None:
+                self.tips_banner_container.set_visible(False)
+        except Exception:
+            pass
+
+    def _on_tips_banner_dismiss(self, *args):
+        """Hide the tips banner for this session only."""
+        self._hide_tips_banner()
+
+    def _on_tips_banner_dont_show_again(self, *args):
+        """Hide the tips banner and never show tips again."""
+        self._hide_tips_banner()
+        try:
+            if getattr(self, 'config', None) is not None:
+                self.config.set_setting('terminal.show_tips', False)
+        except Exception as exc:
+            logger.error("Failed to update show terminal tips preference: %s", exc)
+
     def _apply_update_banner_css(self):
         """Apply CSS styling to update banner"""
         try:

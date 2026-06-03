@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:5.1.5}
+Version:        %{?version}%{!?version:5.1.7}
 Release:        1%{?dist}
 Summary:        Manage your servers with ease
 
@@ -92,6 +92,9 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/io.github.mfat.sshpil
 %{_datadir}/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg
 
 %changelog
+* Wed Jun 03 2026 mFat <newmfat@gmail.com> - 5.1.7
+- Bug fixes and improvements
+
 * Tue Jun 02 2026 mFat <newmfat@gmail.com> - 5.1.5
 - Added type-ahead search - open the app, start typing and press enter. The first matching host will be connected
 - Made it easier to switch between the terminal and connection list with Ctrl+Shift+L

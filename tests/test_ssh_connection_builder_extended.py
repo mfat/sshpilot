@@ -1,16 +1,29 @@
-"""Extended coverage for ssh_connection_builder and Connection.connect()."""
+"""Extended coverage for the NATIVE-ONLY ssh_connection_builder and connect().
+
+The builder no longer emits per-host SSH settings into the command (port
+forwarding, ProxyCommand/Jump, ForwardAgent flag, CertificateFile,
+IdentitiesOnly, PreferredAuthentications, extra_ssh_config, known_hosts,
+ExitOnForwardFailure, ...) — those now come from ~/.ssh/config. These tests
+exercise the native contract: command shape, host token, ssh_overrides, batch
+mode, and the auth env/options resolved by resolve_native_auth.
+"""
 
 from __future__ import annotations
 
 import asyncio
-import os
 import shlex
 from typing import List, Optional
 
 import pytest
 
 from sshpilot.connection_manager import Connection, ConnectionManager
-from sshpilot.ssh_connection_builder import ConnectionContext, build_ssh_connection
+from sshpilot.ssh_connection_builder import (
+    ConnectionContext,
+    NativeAuth,
+    build_ssh_connection,
+    build_native_command,
+    resolve_native_auth,
+)
 
 asyncio.set_event_loop(asyncio.new_event_loop())
 
@@ -68,139 +81,72 @@ def _build(
 
 
 class _ConfigStub:
-    def __init__(self, ssh_cfg: Optional[dict] = None):
+    def __init__(self, ssh_cfg: Optional[dict] = None, settings: Optional[dict] = None):
         self._ssh_cfg = ssh_cfg or {}
+        self._settings = settings or {}
 
     def get_ssh_config(self) -> dict:
         return dict(self._ssh_cfg)
 
-
-# --- argv ordering ---
-
-
-@pytest.mark.parametrize(
-    'rule,flag,spec_fragment',
-    [
-        (
-            {
-                'type': 'local',
-                'enabled': True,
-                'listen_addr': '127.0.0.1',
-                'listen_port': 8080,
-                'remote_host': 'internal',
-                'remote_port': 80,
-            },
-            '-L',
-            '127.0.0.1:8080:internal:80',
-        ),
-        (
-            {
-                'type': 'remote',
-                'enabled': True,
-                'listen_addr': '0.0.0.0',
-                'listen_port': 9000,
-                'local_host': 'db.local',
-                'local_port': 5432,
-            },
-            '-R',
-            '0.0.0.0:9000:db.local:5432',
-        ),
-        (
-            {
-                'type': 'dynamic',
-                'enabled': True,
-                'listen_addr': '127.0.0.1',
-                'listen_port': 1080,
-            },
-            '-D',
-            '127.0.0.1:1080',
-        ),
-    ],
-)
-def test_port_forwarding_flags_precede_host(rule, flag, spec_fragment):
-    conn_data = {'host': 'fw.example', 'hostname': 'fw.example', 'username': 'u'}
-    cmd, _ = _build(
-        conn_data,
-        port_forwarding_rules=[rule],
-    )
-    host_idx = _host_index(cmd)
-    flag_idx = _flag_index(cmd, flag)
-    assert host_idx >= 0
-    assert flag_idx >= 0
-    assert flag_idx < host_idx
-    assert any(spec_fragment in part for part in cmd)
+    def get_setting(self, key, default=None):
+        return self._settings.get(key, default)
 
 
-def test_port_forwarding_ipv6_listen_addr_is_bracketed():
-    rule = {
-        'type': 'dynamic',
-        'enabled': True,
-        'listen_addr': '::1',
-        'listen_port': 1081,
-    }
-    cmd, _ = _build(
-        {'host': 'v6.example', 'hostname': 'v6.example'},
-        port_forwarding_rules=[rule],
-    )
-    assert any('[::1]:1081' in part for part in cmd)
+# --- argv shape: per-host settings are NOT emitted (live in ~/.ssh/config) ---
 
 
-def test_disabled_port_forward_rule_is_skipped():
+def test_port_forwarding_rules_not_emitted_to_command():
+    # Port forwarding now lives in ~/.ssh/config; rules are vestigial.
     rules = [
-        {
-            'type': 'local',
-            'enabled': False,
-            'listen_addr': '127.0.0.1',
-            'listen_port': 9999,
-            'remote_host': 'x',
-            'remote_port': 1,
-        },
-        {
-            'type': 'dynamic',
-            'enabled': True,
-            'listen_addr': 'localhost',
-            'listen_port': 1082,
-        },
+        {'type': 'local', 'enabled': True, 'listen_addr': '127.0.0.1',
+         'listen_port': 8080, 'remote_host': 'internal', 'remote_port': 80},
+        {'type': 'remote', 'enabled': True, 'listen_addr': '0.0.0.0',
+         'listen_port': 9000, 'local_host': 'db.local', 'local_port': 5432},
+        {'type': 'dynamic', 'enabled': True, 'listen_addr': '127.0.0.1',
+         'listen_port': 1080},
     ]
     cmd, _ = _build(
-        {'host': 'mix.example', 'hostname': 'mix.example'},
+        {'host': 'fw.example', 'hostname': 'fw.example', 'username': 'u'},
         port_forwarding_rules=rules,
     )
     assert '-L' not in cmd
-    assert '-D' in cmd
+    assert '-R' not in cmd
+    assert '-D' not in cmd
 
 
-def test_local_command_options_precede_host():
+def test_local_command_not_emitted_to_command():
+    # LocalCommand/PermitLocalCommand now live in ~/.ssh/config.
     cmd, _ = _build(
         {'host': 'lc.example', 'hostname': 'lc.example'},
         local_command='echo local-ready',
     )
-    host_idx = _host_index(cmd)
-    permit_idx = _flag_index(cmd, '-o')
-    assert _has_o_option(cmd, 'PermitLocalCommand=yes')
-    assert _has_o_option(cmd, 'LocalCommand=echo local-ready')
-    assert permit_idx < host_idx
+    assert not _has_o_option(cmd, 'PermitLocalCommand=yes')
+    assert not _has_o_option(cmd, 'LocalCommand')
 
 
 # --- authentication ---
 
 
-def test_password_auth_forces_password_preferred_and_optional_pubkey_off():
+def test_password_auth_with_stored_password_uses_sshpass():
     cmd, result = _build(
         {
             'host': 'pw.example',
             'hostname': 'pw.example',
             'auth_method': 1,
-            'pubkey_auth_no': True,
             'password': 'secret',
         },
     )
     assert result.use_sshpass is True
-    assert _has_o_option(cmd, 'PreferredAuthentications=password')
-    assert _has_o_option(cmd, 'PubkeyAuthentication=no')
+    assert result.password == 'secret'
+    assert result.use_askpass is False
+    # PreferredAuthentications/PubkeyAuthentication now come from ~/.ssh/config.
+    assert not _has_o_option(cmd, 'PreferredAuthentications')
+    # No agent-bypass for password mode.
+    assert 'IdentityAgent=none' not in cmd
 
 
-def test_key_auth_with_stored_password_adds_fallback_auths_not_sshpass():
+def test_key_auth_with_stored_password_now_uses_sshpass():
+    # Behaviour change: a stored password triggers sshpass even for key auth.
     cmd, result = _build(
         {
             'host': 'combo.example',
@@ -209,14 +155,13 @@ def test_key_auth_with_stored_password_adds_fallback_auths_not_sshpass():
             'password': 'backup',
         },
     )
-    assert result.use_sshpass is False
-    assert _has_o_option(
-        cmd,
-        'PreferredAuthentications=gssapi-with-mic,hostbased,publickey,keyboard-interactive,password',
-    )
+    assert result.use_sshpass is True
+    assert result.password == 'backup'
+    assert result.use_askpass is False
+    assert not _has_o_option(cmd, 'PreferredAuthentications')
 
 
-def test_password_auth_without_stored_password_adds_interactive_tty():
+def test_password_auth_without_stored_password_not_sshpass():
     cmd, result = _build(
         {
             'host': 'tty.example',
@@ -224,9 +169,12 @@ def test_password_auth_without_stored_password_adds_interactive_tty():
             'auth_method': 1,
         },
     )
+    # auth_method=1 with no stored password => password_mode, but nothing to feed.
     assert result.use_sshpass is False
-    host_idx = _host_index(cmd)
-    assert '-t' in cmd[:host_idx]
+    assert result.password is None
+    assert result.use_askpass is False
+    # No -t injected by native builder.
+    assert '-t' not in cmd and '-tt' not in cmd
 
 
 def test_in_memory_password_used_when_password_auth_selected():
@@ -240,85 +188,71 @@ def test_in_memory_password_used_when_password_auth_selected():
     )
     assert result.use_sshpass is True
     assert result.password == 'inline-secret'
-    assert _has_o_option(cmd, 'PreferredAuthentications=password')
 
 
-# --- proxy / agent / certs ---
+# --- resolve_native_auth modes ---
 
 
-def test_connection_level_proxy_command_merged():
+def test_resolve_native_auth_password_mode():
+    conn = Connection({'host': 'h', 'hostname': 'h', 'auth_method': 1, 'password': 'p'})
+    auth = resolve_native_auth(conn)
+    assert isinstance(auth, NativeAuth)
+    assert auth.password_mode is True
+    assert auth.use_sshpass is True
+    assert auth.password == 'p'
+    assert auth.use_askpass is False
+    assert auth.extra_opts == []
+    assert 'SSH_ASKPASS' not in auth.env
+    assert auth.env.get('SSH_ASKPASS_REQUIRE') == 'never'
+
+
+def test_resolve_native_auth_askpass_disabled():
+    conn = Connection({'host': 'h', 'hostname': 'h', 'auth_method': 0})
+    auth = resolve_native_auth(conn, None, _ConfigStub(settings={'use-askpass': False}))
+    assert auth.use_askpass is False
+    assert auth.use_sshpass is False
+    assert auth.extra_opts == []
+    assert 'SSH_ASKPASS' not in auth.env
+    assert 'SSH_ASKPASS_REQUIRE' not in auth.env
+
+
+def test_resolve_native_auth_key_mode_bypasses_agent():
+    conn = Connection({'host': 'h', 'hostname': 'h', 'auth_method': 0})
+    auth = resolve_native_auth(conn)
+    assert auth.use_askpass is True
+    assert auth.use_sshpass is False
+    assert auth.extra_opts == ['-o', 'IdentityAgent=none']
+    assert 'SSH_AUTH_SOCK' not in auth.env
+    assert auth.env.get('SSH_ASKPASS')
+
+
+def test_resolve_native_auth_key_mode_keeps_agent_with_forward_agent():
+    conn = Connection({'host': 'h', 'hostname': 'h', 'auth_method': 0, 'forward_agent': True})
+    auth = resolve_native_auth(conn)
+    assert auth.use_askpass is True
+    assert auth.extra_opts == []
+
+
+# --- proxy / agent: now sourced from ~/.ssh/config, not the command ---
+
+
+def test_proxy_and_agent_settings_not_emitted_to_command():
+    # ProxyCommand/ProxyJump/ForwardAgent flags now live in ~/.ssh/config.
     cmd, _ = _build(
         {
             'host': 'jump.example',
             'hostname': 'jump.example',
             'proxy_command': 'ssh -W %h:%p bastion',
-        },
-    )
-    assert _has_o_option(cmd, 'ProxyCommand=ssh -W %h:%p bastion')
-
-
-def test_connection_level_proxy_jump_list_merged():
-    cmd, _ = _build(
-        {
-            'host': 'pj.example',
-            'hostname': 'pj.example',
             'proxy_jump': ['b1', 'b2'],
-        },
-    )
-    assert _has_o_option(cmd, 'ProxyJump=b1,b2')
-
-
-def test_forward_agent_adds_flag_and_option():
-    cmd, _ = _build(
-        {
-            'host': 'agent.example',
-            'hostname': 'agent.example',
             'forward_agent': True,
         },
     )
-    host_idx = _host_index(cmd)
-    assert '-A' in cmd[:host_idx]
-    assert _has_o_option(cmd, 'ForwardAgent=yes')
-
-
-def test_certificate_file_option_before_host(tmp_path):
-    key_path = tmp_path / 'id_ed25519'
-    cert_path = tmp_path / 'id_ed25519-cert.pub'
-    key_path.write_text('not-a-real-key')
-    cert_path.write_text('not-a-real-cert')
-
-    cmd, _ = _build(
-        {
-            'host': 'cert.example',
-            'hostname': 'cert.example',
-            'keyfile': str(key_path),
-            'certificate': str(cert_path),
-            'key_select_mode': 2,
-            'auth_method': 0,
-        },
-    )
-    host_idx = _host_index(cmd)
-    cert_idx = next(
-        i for i, part in enumerate(cmd) if part.startswith('CertificateFile=')
-    )
-    assert cert_idx < host_idx
-
-
-def test_explicit_key_with_identities_only_mode(tmp_path):
-    key_path = tmp_path / 'only'
-    key_path.write_text('fake-key')
-
-    cmd, _ = _build(
-        {
-            'host': 'key.example',
-            'hostname': 'key.example',
-            'keyfile': str(key_path),
-            'key_select_mode': 1,
-            'auth_method': 0,
-        },
-    )
-    assert str(key_path) in cmd
-    assert _has_o_option(cmd, 'IdentitiesOnly=yes')
+    assert not _has_o_option(cmd, 'ProxyCommand')
+    assert not _has_o_option(cmd, 'ProxyJump')
+    assert not _has_o_option(cmd, 'ForwardAgent')
+    assert '-A' not in cmd
+    # forward_agent still suppresses the agent bypass.
+    assert 'IdentityAgent=none' not in cmd
 
 
 # --- modes ---
@@ -339,7 +273,7 @@ def test_quick_connect_uses_verbatim_command_without_askpass():
     assert 'SSH_ASKPASS' not in result.env
 
 
-def test_native_mode_resolves_host_identifier():
+def test_native_mode_resolves_host_identifier_and_overrides():
     cmd, result = _build(
         {
             'host': 'real.host',
@@ -349,78 +283,96 @@ def test_native_mode_resolves_host_identifier():
         native_mode=True,
         config=_ConfigStub({'ssh_overrides': ['-o', 'ConnectTimeout=5']}),
     )
-    assert result.use_askpass is False
+    # Host token is resolved via resolve_host_identifier() => 'real.host'.
     assert cmd[-1] == 'real.host'
     assert 'ConnectTimeout=5' in cmd
+    # ssh_overrides precede the host.
+    assert cmd.index('ConnectTimeout=5') < _host_index(cmd)
 
 
-def test_scp_command_type_uses_scp_binary():
+def test_extra_args_precede_host():
     cmd, _ = _build(
-        {'host': 'scp.example', 'hostname': 'scp.example'},
-        command_type='scp',
+        {'host': 'ea.example', 'hostname': 'ea.example'},
+        extra_args=['-N', '-f'],
     )
-    assert cmd[0] == 'scp'
+    host_idx = _host_index(cmd)
+    assert '-N' in cmd and cmd.index('-N') < host_idx
+    assert '-f' in cmd and cmd.index('-f') < host_idx
 
 
-def test_ssh_copy_id_target_format():
+# --- build_native_command plain shape (no auth applied) ---
+
+
+def test_build_native_command_plain_ssh():
+    conn = Connection({'host': 'plain.example', 'hostname': 'plain.example', 'username': 'u'})
+    cmd = build_native_command(conn)
+    assert cmd == ['ssh', 'plain.example']
+    assert 'IdentityAgent=none' not in cmd
+
+
+def test_build_native_command_binary_selection():
+    conn = Connection({'host': 'b.example', 'hostname': 'b.example'})
+    assert build_native_command(conn, command_type='scp')[0] == 'scp'
+    assert build_native_command(conn, command_type='sftp')[0] == 'sftp'
+    assert build_native_command(conn, command_type='ssh-copy-id')[0] == 'ssh-copy-id'
+    assert build_native_command(conn, command_type='unknown')[0] == 'ssh'
+
+
+def test_build_native_command_overrides_and_remote_command():
+    conn = Connection({'host': 'o.example', 'hostname': 'o.example'})
+    cmd = build_native_command(
+        conn,
+        app_config=_ConfigStub({'ssh_overrides': ['-o', 'ConnectTimeout=7']}),
+        remote_command='uptime',
+        extra_args=['-N'],
+    )
+    assert cmd[0] == 'ssh'
+    assert 'ConnectTimeout=7' in cmd
+    assert '-N' in cmd
+    # remote command is the final raw token.
+    assert cmd[-1] == 'uptime'
+    host_idx = _host_index(cmd)
+    assert cmd.index('ConnectTimeout=7') < host_idx
+    assert cmd.index('-N') < host_idx
+
+
+# --- app config: batch mode + overrides ---
+
+
+def test_app_config_batch_mode_added_for_key_auth():
+    cfg = _ConfigStub({'batch_mode': True})
     cmd, _ = _build(
-        {
-            'host': 'copyid',
-            'hostname': 'copyid.example',
-            'username': 'alice',
-        },
-        command_type='ssh-copy-id',
-    )
-    assert cmd[0] == 'ssh-copy-id'
-    assert cmd[-1] == 'alice@copyid.example'
-
-
-# --- config injection ---
-
-
-def test_extra_ssh_config_lines_become_options():
-    extra = 'Compression yes\nServerAliveInterval 30'
-    cmd, _ = _build(
-        {'host': 'extra.example', 'hostname': 'extra.example'},
-        extra_ssh_config=extra,
-    )
-    assert _has_o_option(cmd, 'Compression=yes')
-    assert _has_o_option(cmd, 'ServerAliveInterval=30')
-
-
-def test_known_hosts_path_injected(tmp_path):
-    kh = tmp_path / 'known_hosts'
-    kh.write_text('')
-
-    cmd, _ = _build(
-        {'host': 'kh.example', 'hostname': 'kh.example'},
-        known_hosts_path=str(kh),
-    )
-    assert _has_o_option(cmd, f'UserKnownHostsFile={kh}')
-
-
-def test_app_config_batch_mode_and_keepalive(tmp_path, monkeypatch):
-    cfg = _ConfigStub(
-        {
-            'batch_mode': True,
-            'keepalive_interval': 33,
-            'keepalive_count_max': 4,
-            'connection_timeout': 12,
-        }
-    )
-    cmd, _ = _build(
-        {'host': 'appcfg.example', 'hostname': 'appcfg.example'},
+        {'host': 'appcfg.example', 'hostname': 'appcfg.example', 'auth_method': 0},
         config=cfg,
     )
     assert _has_o_option(cmd, 'BatchMode=yes')
-    assert _has_o_option(cmd, 'ServerAliveInterval=33')
-    assert _has_o_option(cmd, 'ServerAliveCountMax=4')
-    assert _has_o_option(cmd, 'ConnectTimeout=12')
 
 
-def test_exit_on_forward_failure_always_present():
-    cmd, _ = _build({'host': 'eof.example', 'hostname': 'eof.example'})
-    assert _has_o_option(cmd, 'ExitOnForwardFailure=yes')
+def test_app_config_batch_mode_skipped_for_password_mode():
+    cfg = _ConfigStub({'batch_mode': True})
+    cmd, _ = _build(
+        {
+            'host': 'pwbatch.example',
+            'hostname': 'pwbatch.example',
+            'auth_method': 1,
+            'password': 'p',
+        },
+        config=cfg,
+    )
+    # BatchMode must never be added for password mode (it needs to prompt).
+    assert not _has_o_option(cmd, 'BatchMode=yes')
+
+
+def test_keepalive_and_timeout_only_via_ssh_overrides():
+    # Native mode no longer derives ServerAlive*/ConnectTimeout from app config
+    # keys; they must be passed verbatim via ssh_overrides (written to config).
+    cfg = _ConfigStub({'keepalive_interval': 33, 'connection_timeout': 12})
+    cmd, _ = _build(
+        {'host': 'ka.example', 'hostname': 'ka.example'},
+        config=cfg,
+    )
+    assert not _has_o_option(cmd, 'ServerAliveInterval')
+    assert not _has_o_option(cmd, 'ConnectTimeout')
 
 
 # --- connect() integration ---
@@ -456,20 +408,21 @@ def test_connect_stores_ssh_cmd_and_env(monkeypatch):
     assert captured['manager'] is manager
 
 
-def test_connect_passes_known_hosts_from_manager(tmp_path, monkeypatch):
-    kh = tmp_path / 'known_hosts'
-    kh.write_text('')
-
+def test_connect_builds_native_command(tmp_path, monkeypatch):
+    # known_hosts is no longer injected into the command in native mode; it lives
+    # in ~/.ssh/config. connect() should still produce a minimal native command.
     monkeypatch.setattr('sshpilot.config.Config', lambda: _ConfigStub())
 
     manager = ConnectionManager.__new__(ConnectionManager)
-    manager.known_hosts_path = str(kh)
+    manager.known_hosts_path = ''
     manager.connections = []
 
-    conn = Connection({'host': 'khhost', 'hostname': 'khhost'})
+    conn = Connection({'host': 'khhost', 'hostname': 'khhost', 'auth_method': 0})
     manager._register_connection(conn)
 
     loop = asyncio.get_event_loop()
-    loop.run_until_complete(conn.connect())
-
-    assert any(f'UserKnownHostsFile={kh}' in part for part in conn.ssh_cmd)
+    assert loop.run_until_complete(conn.connect()) is True
+    assert conn.ssh_cmd[0] == 'ssh'
+    assert conn.ssh_cmd[-1] == 'khhost'
+    # No known_hosts injected into the command.
+    assert not any('UserKnownHostsFile' in part for part in conn.ssh_cmd)

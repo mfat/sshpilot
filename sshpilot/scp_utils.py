@@ -8,7 +8,11 @@ import subprocess
 from typing import Iterable, List, Tuple, Optional, Dict, Any
 import re
 
-from .ssh_connection_builder import build_ssh_connection, ConnectionContext
+from .ssh_connection_builder import (
+    _build_base_ssh_command,
+    resolve_native_auth,
+)
+from .ssh_config_utils import get_effective_ssh_config
 from .ssh_password_exec import run_scp_with_password, assemble_scp_transfer_args
 
 logger = logging.getLogger(__name__)
@@ -149,6 +153,77 @@ def _create_connection_for_scp(
     return SCPConnection()
 
 
+def _apply_native_auth_env(env: Dict[str, str], auth: Any) -> None:
+    """Merge the shared native auth env into ``env``, honoring deletions.
+
+    dict.update() cannot remove keys that are absent from the source, so we
+    explicitly drop askpass/agent vars that the auth resolver cleared (e.g.
+    SSH_AUTH_SOCK when the agent is bypassed for keyring autofill).
+    """
+    env.update(auth.env)
+    for key in ('SSH_ASKPASS', 'SSH_ASKPASS_REQUIRE', 'SSH_AUTH_SOCK'):
+        if key not in auth.env:
+            env.pop(key, None)
+
+
+def _build_scp_argv_prefix(
+    connection: Any,
+    config: Any,
+    recursive: bool,
+    known_hosts_path: Optional[str],
+    extra_ssh_opts: Optional[List[str]],
+    auth: Any,
+) -> List[str]:
+    """Build the scp argv up to (but not including) the transfer sources/dest.
+
+    SCP runs against explicit parameters (raw host, explicit keyfile/port), not
+    a saved ~/.ssh/config alias, so it builds an explicit command via the shared
+    option builder (_build_base_ssh_command) plus the explicit key and the shared
+    authentication options (resolve_native_auth) — the same auth the terminal and
+    ssh-copy-id use.
+    """
+    host_label = (
+        getattr(connection, 'nickname', '')
+        or getattr(connection, 'host', '')
+        or getattr(connection, 'hostname', '')
+    )
+    try:
+        effective_config = get_effective_ssh_config(host_label) if host_label else {}
+    except Exception:
+        effective_config = {}
+
+    argv = _build_base_ssh_command(connection, effective_config, config, 'scp')
+
+    if recursive and '-r' not in argv:
+        argv.insert(1, '-r')
+
+    if known_hosts_path:
+        argv.extend(['-o', f'UserKnownHostsFile={known_hosts_path}'])
+
+    # Explicit keyfile (SCP connections are not config aliases).
+    keyfile_value = getattr(connection, 'keyfile', '') or ''
+    key_select_mode = int(getattr(connection, 'key_select_mode', 0) or 0)
+    if (
+        keyfile_value
+        and not str(keyfile_value).startswith('Select key file')
+        and key_select_mode in (1, 2)
+        and os.path.isfile(os.path.expanduser(keyfile_value))
+    ):
+        expanded = os.path.expanduser(keyfile_value)
+        if expanded not in argv:
+            argv.extend(['-i', expanded])
+        if key_select_mode == 1 and 'IdentitiesOnly=yes' not in argv:
+            argv.extend(['-o', 'IdentitiesOnly=yes'])
+
+    # Shared authentication options (e.g. -o IdentityAgent=none for agent bypass).
+    argv.extend(auth.extra_opts)
+
+    if extra_ssh_opts:
+        argv.extend(extra_ssh_opts)
+
+    return argv
+
+
 def download_file(
     host: str,
     user: str,
@@ -203,35 +278,13 @@ def download_file(
     if password:
         connection.password = password
     
-    # Build SSH connection command using ssh_connection_builder
+    # Resolve shared authentication (askpass + keyring + agent bypass, or sshpass).
     try:
-        ctx = ConnectionContext(
-            connection=connection,
-            connection_manager=connection_manager,
-            config=config,
-            command_type='scp',
-            extra_args=[],
-            port_forwarding_rules=None,
-            remote_command=None,
-            local_command=None,
-            extra_ssh_config=None,  # Will be handled via extra_ssh_opts
-            known_hosts_path=known_hosts_path,
-            native_mode=False,
-            quick_connect_mode=False,
-            quick_connect_command=None,
-        )
-        
-        ssh_conn_cmd = build_ssh_connection(ctx)
-        base_cmd = ssh_conn_cmd.command
-        env.update(ssh_conn_cmd.env)
-        
-        # Get password for sshpass if needed
-        password_value = None
-        if ssh_conn_cmd.use_sshpass and ssh_conn_cmd.password:
-            password_value = ssh_conn_cmd.password
-        
+        auth = resolve_native_auth(connection, connection_manager, config)
+        _apply_native_auth_env(env, auth)
+        password_value = auth.password if auth.use_sshpass else None
     except Exception as e:
-        logger.error(f'SCP: Failed to build SSH connection: {e}')
+        logger.error(f'SCP: Failed to resolve authentication: {e}')
         return False
 
     # Handle password authentication with sshpass
@@ -290,57 +343,13 @@ def download_file(
             local_path,
             'download',
         )
-        
-        # Start with base command from ssh_connection_builder
-        # Replace 'ssh' with 'scp' and adjust arguments
-        argv = ['scp']
-        
-        # Add port (SCP uses -P, not -p)
-        if port != 22:
-            argv.extend(['-P', str(port)])
-        
-        # Add recursive flag if needed
-        if recursive:
-            argv.append('-r')
-        
-        # Add known hosts file
-        if known_hosts_path:
-            argv.extend(['-o', f'UserKnownHostsFile={known_hosts_path}'])
-        else:
-            argv.extend(['-o', 'StrictHostKeyChecking=accept-new'])
-        
-        # Add extra SSH options from base command (skip -i, -o options that are already handled)
-        # Extract -o options from base_cmd
-        base_opts = []
-        i = 0
-        while i < len(base_cmd):
-            if base_cmd[i] == '-o' and i + 1 < len(base_cmd):
-                base_opts.append(base_cmd[i])
-                base_opts.append(base_cmd[i + 1])
-                i += 2
-            elif base_cmd[i] == '-i' and i + 1 < len(base_cmd):
-                # Identity file - add it
-                base_opts.append(base_cmd[i])
-                base_opts.append(base_cmd[i + 1])
-                i += 2
-            elif base_cmd[i] in ['-v', '-C']:
-                # Verbosity and compression flags
-                base_opts.append(base_cmd[i])
-                i += 1
-            else:
-                i += 1
-        
-        # Add base options
-        argv.extend(base_opts)
-        
-        # Add extra SSH options from caller
-        if extra_ssh_opts:
-            argv.extend(extra_ssh_opts)
-        
-        # Add transfer sources and destination
+
+        argv = _build_scp_argv_prefix(
+            connection, config, recursive, known_hosts_path, extra_ssh_opts, auth
+        )
         argv.extend(transfer_sources)
         argv.append(transfer_destination)
-        
+
         completed = subprocess.run(
             argv,
             check=False,
@@ -428,35 +437,13 @@ def upload_file(
     if password:
         connection.password = password
     
-    # Build SSH connection command using ssh_connection_builder
+    # Resolve shared authentication (askpass + keyring + agent bypass, or sshpass).
     try:
-        ctx = ConnectionContext(
-            connection=connection,
-            connection_manager=connection_manager,
-            config=config,
-            command_type='scp',
-            extra_args=[],
-            port_forwarding_rules=None,
-            remote_command=None,
-            local_command=None,
-            extra_ssh_config=None,
-            known_hosts_path=known_hosts_path,
-            native_mode=False,
-            quick_connect_mode=False,
-            quick_connect_command=None,
-        )
-        
-        ssh_conn_cmd = build_ssh_connection(ctx)
-        base_cmd = ssh_conn_cmd.command
-        env.update(ssh_conn_cmd.env)
-        
-        # Get password for sshpass if needed
-        password_value = None
-        if ssh_conn_cmd.use_sshpass and ssh_conn_cmd.password:
-            password_value = ssh_conn_cmd.password
-        
+        auth = resolve_native_auth(connection, connection_manager, config)
+        _apply_native_auth_env(env, auth)
+        password_value = auth.password if auth.use_sshpass else None
     except Exception as e:
-        logger.error(f'SCP: Failed to build SSH connection: {e}')
+        logger.error(f'SCP: Failed to resolve authentication: {e}')
         return False
 
     # Handle password authentication with sshpass
@@ -490,56 +477,13 @@ def upload_file(
             remote_path,
             'upload',
         )
-        
-        # Start with base command from ssh_connection_builder
-        # Replace 'ssh' with 'scp' and adjust arguments
-        argv = ['scp']
-        
-        # Add port (SCP uses -P, not -p)
-        if port != 22:
-            argv.extend(['-P', str(port)])
-        
-        # Add recursive flag if needed
-        if recursive:
-            argv.append('-r')
-        
-        # Add known hosts file
-        if known_hosts_path:
-            argv.extend(['-o', f'UserKnownHostsFile={known_hosts_path}'])
-        else:
-            argv.extend(['-o', 'StrictHostKeyChecking=accept-new'])
-        
-        # Add extra SSH options from base command
-        base_opts = []
-        i = 0
-        while i < len(base_cmd):
-            if base_cmd[i] == '-o' and i + 1 < len(base_cmd):
-                base_opts.append(base_cmd[i])
-                base_opts.append(base_cmd[i + 1])
-                i += 2
-            elif base_cmd[i] == '-i' and i + 1 < len(base_cmd):
-                # Identity file - add it
-                base_opts.append(base_cmd[i])
-                base_opts.append(base_cmd[i + 1])
-                i += 2
-            elif base_cmd[i] in ['-v', '-C']:
-                # Verbosity and compression flags
-                base_opts.append(base_cmd[i])
-                i += 1
-            else:
-                i += 1
-        
-        # Add base options
-        argv.extend(base_opts)
-        
-        # Add extra SSH options from caller
-        if extra_ssh_opts:
-            argv.extend(extra_ssh_opts)
-        
-        # Add transfer sources and destination
+
+        argv = _build_scp_argv_prefix(
+            connection, config, recursive, known_hosts_path, extra_ssh_opts, auth
+        )
         argv.extend(transfer_sources)
         argv.append(transfer_destination)
-        
+
         completed = subprocess.run(
             argv,
             check=False,

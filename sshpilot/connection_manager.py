@@ -396,77 +396,14 @@ class Connection:
         return self.source
         
     async def connect(self):
-        """Prepare SSH command for later use using ssh_connection_builder."""
-        try:
-            self._update_identity_agent_state(None)
-            # Reset resolved identity cache on every connect preparation
-            self.resolved_identity_files = []
+        """Prepare an SSH connection.
 
-            # Get config for ssh_connection_builder
-            try:
-                from .config import Config  # avoid circular import at top level
-                cfg = Config()
-            except Exception:
-                cfg = None
-
-            connection_manager = getattr(self, '_connection_manager', None)
-
-            known_hosts_path = None
-            if connection_manager:
-                kh_path = getattr(connection_manager, 'known_hosts_path', '') or ''
-                if kh_path and os.path.exists(kh_path):
-                    known_hosts_path = kh_path
-
-            # Build connection context
-            ctx = ConnectionContext(
-                connection=self,
-                connection_manager=connection_manager,
-                config=cfg,
-                command_type='ssh',
-                extra_args=[],
-                port_forwarding_rules=getattr(self, 'forwarding_rules', None),
-                remote_command=None,
-                local_command=None,
-                extra_ssh_config=getattr(self, 'extra_ssh_config', '') or None,
-                known_hosts_path=known_hosts_path,
-                native_mode=False,
-                quick_connect_mode=bool(getattr(self, 'quick_connect_command', '')),
-                quick_connect_command=getattr(self, 'quick_connect_command', None) or None,
-            )
-
-            # Build SSH connection command using ssh_connection_builder
-            ssh_conn_cmd = build_ssh_connection(ctx)
-            ssh_cmd = ssh_conn_cmd.command
-
-            # Store resolved identity files if available
-            try:
-                # Try to extract identity files from command
-                identity_files = []
-                i = 0
-                while i < len(ssh_cmd):
-                    if ssh_cmd[i] == '-i' and i + 1 < len(ssh_cmd):
-                        identity_files.append(ssh_cmd[i + 1])
-                        i += 2
-                    else:
-                        i += 1
-                if identity_files:
-                    self.resolved_identity_files = identity_files
-            except Exception:
-                pass
-
-            # Store command and environment for later use
-            self.ssh_cmd = ssh_cmd
-            # Store environment so terminal can use it (especially SSH_ASKPASS)
-            if not hasattr(self, 'ssh_env') or self.ssh_env is None:
-                self.ssh_env = {}
-            self.ssh_env.update(ssh_conn_cmd.env)
-            self.is_connected = True
-            return True
-                
-        except Exception as e:
-            logger.error(f"Failed to connect to {self}: {e}")
-            self.is_connected = False
-            return False
+        sshPilot connects in native mode everywhere (~/.ssh/config is the source
+        of truth), so this legacy entry point now delegates to native_connect().
+        Kept so existing callers keep working; there is no separate non-native
+        connection path anymore.
+        """
+        return await self.native_connect()
 
     async def native_connect(self):
         """Prepare a minimal SSH command using ssh_connection_builder in native mode."""
@@ -517,6 +454,10 @@ class Connection:
                 self.resolved_identity_files = []
 
             self.ssh_cmd = ssh_cmd
+            # Store the full builder result (command + env + auth flags) so the
+            # terminal can spawn it directly without re-deriving auth/env.
+            self.ssh_env = dict(ssh_conn_cmd.env)
+            self.ssh_connection_cmd = ssh_conn_cmd
             self.is_connected = True
             return True
         except Exception as exc:
@@ -682,10 +623,6 @@ class ConnectionManager(GObject.Object):
         self._active_connection_keys: Dict[int, str] = {}
         self.ssh_config_path = ''
         self.known_hosts_path = ''
-        try:
-            self.native_connect_enabled = bool(self.config.get_setting('ssh.native_connect', True))
-        except Exception:
-            self.native_connect_enabled = True
 
         # Track credential storage state
         self.libsecret_available = False
@@ -2100,6 +2037,24 @@ class ConnectionManager(GObject.Object):
             # Update existing object IN-PLACE instead of creating new ones
             connection.update_data(new_data)
 
+            # The dialog's new_data carries the new nickname/hostname but not the
+            # parsed Host-line tokens. resolve_host_identifier() prefers the cached
+            # data['__host_tokens'] / data['host'], so without refreshing them the
+            # connection would keep using the *pre-edit* alias (e.g. a duplicate's
+            # "Name (Copy)") as the native ssh target — ssh then rejects it with
+            # "hostname contains invalid characters" until the next config reload.
+            # The Host line is rewritten as `Host <nickname>`, so re-derive the
+            # tokens from the (authoritative) new nickname + aliases. (issue #953)
+            try:
+                if '__host_tokens' not in new_data and isinstance(getattr(connection, 'data', None), dict):
+                    alias = (getattr(connection, 'nickname', '') or '').strip()
+                    if alias:
+                        connection.data['host'] = alias
+                        extra_aliases = [a for a in (getattr(connection, 'aliases', []) or []) if a]
+                        connection.data['__host_tokens'] = [alias] + extra_aliases
+            except Exception:
+                logger.debug("Failed to refresh host tokens after update", exc_info=True)
+
             # Update the SSH config file with original nickname for proper matching
             if split_from_group:
                 original_token = split_original_host or original_nickname
@@ -2226,9 +2181,8 @@ class ConnectionManager(GObject.Object):
         try:
             if hasattr(self, 'isolated_mode'):
                 connection.isolated_mode = bool(getattr(self, 'isolated_mode', False))
-            # Connect to the SSH server
-            use_native = bool(getattr(self, 'native_connect_enabled', False))
-            if use_native and hasattr(connection, 'native_connect'):
+            # Connect to the SSH server (native-only; connect() delegates to it).
+            if hasattr(connection, 'native_connect'):
                 connected = await connection.native_connect()
             else:
                 connected = await connection.connect()

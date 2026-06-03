@@ -196,7 +196,6 @@ class Config(GObject.Object):
                 'batch_mode': False,
                 'verbosity': 0,
                 'debug_enabled': False,
-                'native_connect': True,
                 'use_isolated_config': False,
                 'ssh_overrides': [],
                 'strict_host_key_checking': 'accept-new',
@@ -699,7 +698,6 @@ class Config(GObject.Object):
             'batch_mode': False,
             'compression': False,
             'debug_enabled': False,
-            'native_connect': True,
             'strict_host_key_checking': 'accept-new',
             'use_isolated_config': False,
             'verbosity': 0,
@@ -718,7 +716,6 @@ class Config(GObject.Object):
             'batch_mode',
             'compression',
             'debug_enabled',
-            'native_connect',
             'use_isolated_config',
         }
 

@@ -118,50 +118,8 @@ def _build_preferences(**values):
     return prefs
 
 
-def test_connection_mode_switches_are_mutually_exclusive():
-    prefs = _build_preferences(
-        native_connect_row=DummySwitchRow(True),
-        legacy_connect_row=DummySwitchRow(False),
-    )
-
-    prefs._set_connection_mode_switches(True)
-    assert prefs.native_connect_row.get_active() is True
-    assert prefs.legacy_connect_row.get_active() is False
-
-    prefs.native_connect_row.set_active(False)
-    prefs.on_native_connection_mode_toggled(prefs.native_connect_row, None)
-    assert prefs.native_connect_row.get_active() is False
-    assert prefs.legacy_connect_row.get_active() is True
-
-    prefs.native_connect_row.set_active(True)
-    prefs.on_native_connection_mode_toggled(prefs.native_connect_row, None)
-    assert prefs.native_connect_row.get_active() is True
-    assert prefs.legacy_connect_row.get_active() is False
-
-    prefs.legacy_connect_row.set_active(True)
-    prefs.on_legacy_connection_mode_toggled(prefs.legacy_connect_row, None)
-    assert prefs.native_connect_row.get_active() is False
-    assert prefs.legacy_connect_row.get_active() is True
-
-    prefs.legacy_connect_row.set_active(False)
-    prefs.on_legacy_connection_mode_toggled(prefs.legacy_connect_row, None)
-    assert prefs.native_connect_row.get_active() is True
-    assert prefs.legacy_connect_row.get_active() is False
-
-
-def test_save_advanced_settings_respects_legacy_toggle():
-    config = DummyConfig()
-    prefs = _build_preferences(
-        config=config,
-        native_connect_row=DummySwitchRow(True),
-        legacy_connect_row=DummySwitchRow(False),
-    )
-
-    prefs.legacy_connect_row.set_active(True)
-    prefs.on_legacy_connection_mode_toggled(prefs.legacy_connect_row, None)
-    prefs.save_advanced_ssh_settings()
-
-    assert config.settings['ssh.native_connect'] is False
+# The native/legacy connection-mode toggle was removed: sshPilot connects in
+# native mode only, so there is no longer a UI switch or a per-mode save path.
 
 
 def test_save_advanced_ssh_settings_persists_overrides():
@@ -216,23 +174,11 @@ def test_native_connect_appends_overrides_even_when_native_disabled(monkeypatch)
         asyncio.set_event_loop(None)
 
     assert result is True
-    assert connection.ssh_cmd == ['ssh', '-o', 'ConnectTimeout=10', '-C', 'example.com']
-
-
-def test_native_connect_enabled_by_default(tmp_path, monkeypatch):
-    from sshpilot.config import Config
-
-    monkeypatch.setattr('sshpilot.config.get_config_dir', lambda: str(tmp_path))
-
-    config = Config.__new__(Config)
-    config.use_gsettings = False
-    config.settings = None
-    config.config_file = str(tmp_path / 'config.json')
-    config.config_data = config.get_default_config()
-
-    ssh_config = config.get_ssh_config()
-
-    assert ssh_config['native_connect'] is True
+    # ssh_overrides are appended verbatim, and key-based auth adds the agent
+    # bypass (-o IdentityAgent=none) so the keyring/askpass passphrase flow works.
+    assert connection.ssh_cmd == [
+        'ssh', '-o', 'ConnectTimeout=10', '-C', '-o', 'IdentityAgent=none', 'example.com',
+    ]
 
 
 def test_dynamic_forwarding_uses_configured_keepalive(monkeypatch):

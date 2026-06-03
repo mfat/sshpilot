@@ -188,130 +188,6 @@ def _quote_remote_path_for_shell(path: str) -> str:
     return shlex.quote(normalized)
 
 
-def _resolve_ssh_copy_id_askpass_env(connection, ssh_key, connection_manager):
-    """Return askpass environment and force status for ssh-copy-id launches."""
-
-    from .askpass_utils import (
-        get_ssh_env_with_askpass,
-        get_ssh_env_with_forced_askpass,
-        lookup_passphrase,
-    )
-
-    agent_disabled = bool(getattr(connection, 'identity_agent_disabled', False))
-    manager_agent_disabled = bool(
-        getattr(connection_manager, 'identity_agent_disabled', False)
-    ) if connection_manager else False
-
-    requires_force = agent_disabled or manager_agent_disabled
-
-    askpass_env = (
-        get_ssh_env_with_forced_askpass()
-        if requires_force
-        else get_ssh_env_with_askpass()
-    )
-
-    if not requires_force:
-        return askpass_env, requires_force, askpass_env.get('SSH_ASKPASS_REQUIRE') == 'force'
-
-    key_passphrase = getattr(connection, 'key_passphrase', '') or ''
-    passphrase_available = bool(key_passphrase)
-    identity_candidates: List[str] = []
-
-    def _append_candidate(candidate: Any) -> None:
-        if not candidate:
-            return
-        expanded = os.path.expanduser(str(candidate))
-        if expanded not in identity_candidates:
-            identity_candidates.append(expanded)
-
-    if ssh_key:
-        _append_candidate(getattr(ssh_key, 'private_path', ''))
-
-    _append_candidate(getattr(connection, 'keyfile', ''))
-
-    try:
-        resolved = getattr(connection, 'resolved_identity_files', [])
-    except Exception:
-        resolved = []
-
-    if isinstance(resolved, (list, tuple, set)):
-        for candidate in resolved:
-            _append_candidate(candidate)
-
-    if (
-        key_passphrase
-        and identity_candidates
-        and connection_manager
-        and hasattr(connection_manager, 'store_key_passphrase')
-    ):
-        for candidate in identity_candidates:
-            try:
-                connection_manager.store_key_passphrase(candidate, key_passphrase)
-                logger.debug(
-                    'IdentityAgent disabled: refreshed stored passphrase for %s',
-                    candidate,
-                )
-            except Exception as exc:
-                logger.debug(
-                    'IdentityAgent disabled: failed to refresh stored passphrase for %s: %s',
-                    candidate,
-                    exc,
-                )
-
-    if not passphrase_available:
-        for candidate in identity_candidates:
-            looked_up = ''
-            try:
-                looked_up = lookup_passphrase(candidate)
-            except Exception as exc:
-                logger.debug(
-                    'Passphrase lookup via askpass_utils failed for %s: %s',
-                    candidate,
-                    exc,
-                )
-
-            if looked_up:
-                logger.debug(
-                    'IdentityAgent disabled: located stored passphrase for %s',
-                    candidate,
-                )
-                passphrase_available = True
-                break
-
-            if (
-                connection_manager
-                and hasattr(connection_manager, 'get_key_passphrase')
-            ):
-                try:
-                    stored = connection_manager.get_key_passphrase(candidate)
-                except Exception as exc:
-                    logger.debug(
-                        'Connection manager passphrase lookup failed for %s: %s',
-                        candidate,
-                        exc,
-                    )
-                    stored = None
-                if stored:
-                    logger.debug(
-                        'IdentityAgent disabled: connection manager supplied passphrase for %s',
-                        candidate,
-                    )
-                    passphrase_available = True
-                    break
-
-    if not passphrase_available:
-        askpass_env.pop('SSH_ASKPASS_REQUIRE', None)
-        logger.info(
-            'SSH askpass helper could not supply a key passphrase; allowing interactive prompt instead',
-        )
-    else:
-        logger.debug(
-            'IdentityAgent disabled: keeping forced askpass to deliver stored passphrase',
-        )
-
-    return askpass_env, requires_force, askpass_env.get('SSH_ASKPASS_REQUIRE') == 'force'
-
-
 def list_remote_files(
     host: str,
     user: str,
@@ -709,17 +585,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         effective_isolated = isolated or bool(self.config.get_setting('ssh.use_isolated_config', False))
         key_dir = Path(get_config_dir()) if effective_isolated else None
         self.connection_manager = ConnectionManager(self.config, isolated_mode=effective_isolated)
-        # Ensure native connect preference is propagated to the connection manager
-        try:
-            native_cfg = bool(self.config.get_setting('ssh.native_connect', True))
-        except Exception:
-            native_cfg = True
-        app_native = None
-        if app is not None and hasattr(app, 'native_connect_enabled'):
-            app_native = bool(app.native_connect_enabled)
-        self.connection_manager.native_connect_enabled = app_native if app_native is not None else native_cfg
-        if app is not None and app_native is None:
-            app.native_connect_enabled = native_cfg
         self.key_manager = KeyManager(key_dir)
         self.group_manager = GroupManager(self.config)
         self.session_manager = SessionManager(self.config)
@@ -800,35 +665,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             except (ValueError, TypeError) as e:
                 logger.error(f"Invalid max-sidebar-width value: {e}")
             return
-
-        if key != 'ssh.native_connect':
-            return
-
-        bool_value = bool(value)
-        app = self.get_application()
-        override = None
-        if app is not None and hasattr(app, 'native_connect_override'):
-            override = app.native_connect_override
-
-        effective = bool_value if override is None else bool(override)
-
-        if app is not None and hasattr(app, 'native_connect_enabled'):
-            if override is None:
-                app.native_connect_enabled = bool_value
-            else:
-                app.native_connect_enabled = effective
-
-        if hasattr(self.connection_manager, 'native_connect_enabled'):
-            self.connection_manager.native_connect_enabled = effective
-
-        # Install sidebar CSS
-        try:
-            self._install_sidebar_css()
-        except Exception as e:
-            logger.error(f"Failed to install sidebar CSS: {e}")
-
-        # Ensure startup behaviors run at least once
-        self._schedule_startup_tasks()
 
     def _schedule_startup_tasks(self):
         """Schedule one-time startup behaviors such as focus and welcome state."""
@@ -1100,7 +936,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             widget.add_css_class(name)
         else:
             widget.remove_css_class(name)
-
 
 
     def _first_connection_row(self) -> Optional[Gtk.ListBoxRow]:
@@ -1409,10 +1244,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         dialog.present()
 
 
-
-
-
-
     def _on_connection_list_key_pressed(self, controller, keyval, keycode, state):
         """Handle key presses in the connection list"""
 
@@ -1506,7 +1337,34 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.update_banner_dismiss_button = dismiss_button
         # Note: Update banner will be added to content area in setup_content_area()
         # to ensure it appears below the header bar
-        
+
+        # Create terminal tips banner (hidden by default). Shown in the same
+        # area as the update banner — below the header bar, above the content —
+        # instead of floating over the terminal where it would mask output.
+        # The update banner takes priority over tips (see show_terminal_tip and
+        # _show_update_banner).
+        tips_overlay = Gtk.Overlay()
+        tips_overlay.set_visible(False)
+        self.tips_banner = Adw.Banner()
+        self.tips_banner.set_revealed(False)
+        self.tips_banner.set_button_label(_('Don\'t show again'))
+        self.tips_banner.connect('button-clicked', self._on_tips_banner_dont_show_again)
+        tips_overlay.set_child(self.tips_banner)
+        # Leading-edge button cluster: "Next tip" (cycles) + "Dismiss". The
+        # banner's own trailing button is "Don't show again".
+        tips_buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        tips_buttons.set_halign(Gtk.Align.START)
+        tips_buttons.set_valign(Gtk.Align.CENTER)
+        tips_buttons.set_margin_start(12)
+        self.tips_next_button = Gtk.Button(label=_('Next tip'))
+        self.tips_next_button.connect('clicked', self._on_tips_banner_next)
+        tips_dismiss_button = Gtk.Button(label=_('Dismiss'))
+        tips_dismiss_button.connect('clicked', self._on_tips_banner_dismiss)
+        tips_buttons.append(self.tips_next_button)
+        tips_buttons.append(tips_dismiss_button)
+        tips_overlay.add_overlay(tips_buttons)
+        self.tips_banner_container = tips_overlay
+
         # Create header bar
         self.header_bar = Gtk.HeaderBar()
         self.header_bar.set_title_widget(Gtk.Label(label="SSH Pilot"))
@@ -1741,19 +1599,31 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             base = _('Connection')
 
         copy_label = _('Copy')
-        pattern = re.compile(r"\s+\(" + re.escape(copy_label) + r"(?:\s+(\d+))?\)\s*$", re.IGNORECASE)
+        # The nickname is used verbatim as the ssh Host alias, and the app's own
+        # validator rejects whitespace (and parens make an invalid host token —
+        # see #953). So the suffix must be whitespace/paren-free: use a hyphen
+        # separator and a whitespace-free copy token, e.g. "Name-Copy",
+        # "Name-Copy-2".
+        copy_token = re.sub(r"\s+", "-", copy_label.strip()) or "Copy"
+        # Strip an existing copy suffix in either the legacy " (Copy[ N])" form
+        # or the new "-Copy[-N]" form so re-duplicating doesn't stack suffixes.
+        pattern = re.compile(
+            r"(?:\s*\(\s*" + re.escape(copy_label) + r"(?:\s+\d+)?\s*\)"
+            r"|[-_]+" + re.escape(copy_token) + r"(?:[-_]+\d+)?)\s*$",
+            re.IGNORECASE,
+        )
         base_clean = pattern.sub('', base).strip() or base
 
         def is_unique(name: str) -> bool:
             return name.lower() not in existing_lower
 
-        candidate = f"{base_clean} ({copy_label})"
+        candidate = f"{base_clean}-{copy_token}"
         if is_unique(candidate):
             return candidate
 
         index = 2
         while True:
-            candidate = f"{base_clean} ({copy_label} {index})"
+            candidate = f"{base_clean}-{copy_token}-{index}"
             if is_unique(candidate):
                 return candidate
             index += 1
@@ -3033,6 +2903,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             # Create content wrapper with banner below header bar
             content_wrapper = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
             content_wrapper.append(self.update_banner_container)
+            content_wrapper.append(self.tips_banner_container)
             content_wrapper.append(self.broadcast_banner)
             content_wrapper.append(self.content_stack)
             # Wrap only the content area (below the header bar) so the command
@@ -3051,6 +2922,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             # Create content wrapper with banner below header bar
             content_wrapper = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
             content_wrapper.append(self.update_banner_container)
+            content_wrapper.append(self.tips_banner_container)
             content_wrapper.append(self.broadcast_banner)
             content_wrapper.append(self.content_stack)
             # Same: scope the sidebar to the content pane only.
@@ -3066,6 +2938,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             # For non-split views, create a vertical box to contain banners and content
             main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
             main_box.append(self.update_banner_container)
+            main_box.append(self.tips_banner_container)
             main_box.append(self.broadcast_banner)
             main_box.append(self.content_stack)
             self._set_content_widget(main_box)
@@ -3441,7 +3314,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.config.connect('setting-changed', self.on_setting_changed)
 
 
-
     def show_welcome_view(self):
         """Show the welcome/help view when no connections are active"""
         # Remove terminal background styling so welcome uses app theme colors
@@ -3741,7 +3613,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         )
         dialog.connect('connection-saved', self.on_connection_saved)
         dialog.present()
-
 
 
     def _prompt_group_edit_options(self, connection: Connection, block_info: Dict[str, Any]):
@@ -4113,7 +3984,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             pass2.set_property("placeholder-text", _("Confirm passphrase"))
             pass_box.append(pass1); pass_box.append(pass2)
             pass_box.set_visible(False)
-
 
 
             def on_pass_toggle(*_):
@@ -5434,7 +5304,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             logger.error(f"Failed to toggle sidebar visibility: {e}")
 
 
-
     def on_scp_button_clicked(self, button):
         """Prompt the user to choose between uploading or downloading with scp."""
         try:
@@ -6617,27 +6486,31 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 # Don't set any askpass environment variables
                 logger.debug("Main window: Password auth selected but no saved password - using interactive prompt")
             else:
-                # Use askpass for passphrase prompts (key-based auth)
-                logger.debug("Main window: Using askpass for key-based authentication")
-                askpass_env, requires_force, force_active = _resolve_ssh_copy_id_askpass_env(
+                # Key-based auth: use the shared native auth resolver so
+                # ssh-copy-id authenticates exactly like the terminal and SCP -
+                # askpass + keyring autofill, plus the agent bypass that prevents
+                # gnome-keyring's "agent refused operation" from blocking a locked
+                # key. ssh-copy-id requires its -o options before the target.
+                logger.debug("Main window: Using shared native auth for key-based ssh-copy-id")
+                from .ssh_connection_builder import resolve_native_auth
+
+                auth = resolve_native_auth(
                     connection,
-                    ssh_key,
                     getattr(self, 'connection_manager', None),
+                    getattr(self, 'config', None),
                 )
+                env.update(auth.env)
+                # dict.update() can't remove keys; honor the resolver's deletions
+                # (e.g. SSH_AUTH_SOCK dropped when the agent is bypassed).
+                for _k in ('SSH_ASKPASS', 'SSH_ASKPASS_REQUIRE', 'SSH_AUTH_SOCK'):
+                    if _k not in auth.env:
+                        env.pop(_k, None)
+                if auth.extra_opts:
+                    argv[-1:-1] = auth.extra_opts
                 logger.debug(
-                    "Main window: Askpass environment variables: %s",
-                    list(askpass_env.keys()),
+                    "Main window: ssh-copy-id native auth (askpass=%s, agent_bypass=%s)",
+                    auth.use_askpass, bool(auth.extra_opts),
                 )
-                env.update(askpass_env)
-                if requires_force:
-                    if force_active:
-                        logger.debug(
-                            "IdentityAgent disabled for this host; forcing SSH askpass usage",
-                        )
-                    else:
-                        logger.debug(
-                            "IdentityAgent disabled but no stored passphrase was located; allowing interactive prompt",
-                        )
 
             ensure_writable_ssh_home(env)
 
@@ -8542,7 +8415,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             dialog.close()
 
 
-
     def on_open_new_connection_action(self, action, param=None):
         """Open a new tab for the selected connection via context menu."""
         try:
@@ -9903,28 +9775,15 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     def open_in_system_terminal(self, connection):
         """Open the connection in the system's default terminal using ssh_connection_builder"""
         try:
-            from .ssh_connection_builder import build_ssh_connection, ConnectionContext
-            
-            # Build SSH connection command using ssh_connection_builder
-            ctx = ConnectionContext(
-                connection=connection,
-                connection_manager=self.connection_manager if hasattr(self, 'connection_manager') else None,
-                config=self.config if hasattr(self, 'config') else None,
-                command_type='ssh',
-                extra_args=[],
-                port_forwarding_rules=None,
-                remote_command=None,
-                local_command=None,
-                extra_ssh_config=None,
-                known_hosts_path=None,
-                native_mode=False,
-                quick_connect_mode=False,
-                quick_connect_command=None,
+            from .ssh_connection_builder import build_native_command
+
+            # Build a plain native command (ssh -F <config> host). The external
+            # terminal provides its own TTY/agent, so we deliberately do NOT apply
+            # sshPilot's in-app askpass or agent bypass here.
+            ssh_cmd_parts = build_native_command(
+                connection,
+                self.config if hasattr(self, 'config') else None,
             )
-            
-            ssh_conn_cmd = build_ssh_connection(ctx)
-            # Convert command list to string for terminal
-            ssh_cmd_parts = ssh_conn_cmd.command
             # Skip 'ssh' and join the rest, handling options properly
             ssh_command_parts = []
             i = 0
@@ -10104,14 +9963,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     def _open_connection_in_external_terminal(self, connection):
         """Open the connection in the user's preferred external terminal"""
         try:
-            cm = getattr(self, 'connection_manager', None)
-            use_native = bool(getattr(cm, 'native_connect_enabled', False))
-            app = self.get_application() if hasattr(self, 'get_application') else None
-            if not use_native and app is not None and hasattr(app, 'native_connect_enabled'):
-                use_native = bool(app.native_connect_enabled)
-
+            # Native-only: connect by the ~/.ssh/config host identifier and let
+            # the external terminal's ssh read per-host settings from the config.
             host_value = ''
-            if use_native and hasattr(connection, 'resolve_host_identifier'):
+            if hasattr(connection, 'resolve_host_identifier'):
                 try:
                     host_value = connection.resolve_host_identifier()
                 except Exception:
@@ -10119,15 +9974,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             if not host_value:
                 host_value = _get_connection_host(connection) or _get_connection_alias(connection)
 
-            if use_native:
-                ssh_command = f"ssh {host_value}" if host_value else "ssh"
-            else:
-                port_text = f" -p {connection.port}" if hasattr(connection, 'port') and connection.port != 22 else ""
-                ssh_command = (
-                    f"ssh{port_text} {connection.username}@{host_value}"
-                    if getattr(connection, 'username', '')
-                    else f"ssh{port_text} {host_value}"
-                )
+            ssh_command = f"ssh {host_value}" if host_value else "ssh"
 
             terminal = self._get_user_preferred_terminal()
             if not terminal:
@@ -10276,7 +10123,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception as e:
             logger.error(f"Failed to get user preferred terminal: {e}")
             return None
-
 
 
     def _show_terminal_error_dialog(self):
@@ -10855,13 +10701,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             # options resolved via ssh -G are honored for the reconnect.
             try:
                 loop = asyncio.get_event_loop()
-                cm = getattr(self, 'connection_manager', None)
-                app = self.get_application() if hasattr(self, 'get_application') else None
-                use_native = bool(getattr(cm, 'native_connect_enabled', False))
-                if not use_native and app is not None and hasattr(app, 'native_connect_enabled'):
-                    use_native = bool(app.native_connect_enabled)
-
-                if use_native and hasattr(connection, 'native_connect'):
+                # Native-only (connect() delegates to native_connect()).
+                if hasattr(connection, 'native_connect'):
                     connect_coro = connection.native_connect()
                 else:
                     connect_coro = connection.connect()

@@ -60,6 +60,11 @@
 
 
 
+    <release version="5.1.7" date="2026-06-03">
+      <description>
+        <p>Bug fixes and improvements</p>
+      </description>
+    </release>
     <release version="5.1.5" date="2026-06-02">
       <description>
         <p>Added type-ahead search - open the app, start typing and press enter. The first matching host will be connected</p>

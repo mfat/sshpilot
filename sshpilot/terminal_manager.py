@@ -162,24 +162,21 @@ class TerminalManager:
                         app = Adw.Application.get_default()
                     except Exception:
                         app = None
-                connection_manager = getattr(window, 'connection_manager', None)
-                use_native = bool(getattr(connection_manager, 'native_connect_enabled', False))
-                if not use_native and app is not None and hasattr(app, 'native_connect_enabled'):
-                    use_native = bool(app.native_connect_enabled)
+                # sshPilot connects in native mode only; connect() delegates to
+                # native_connect(), so either entry point prepares a native command.
                 if not getattr(connection, 'ssh_cmd', None):
+                    prepare = (
+                        connection.native_connect()
+                        if hasattr(connection, 'native_connect')
+                        else connection.connect()
+                    )
                     try:
                         loop = asyncio.get_event_loop()
                         if loop.is_running():
-                            fut = asyncio.run_coroutine_threadsafe(
-                                connection.native_connect() if use_native and hasattr(connection, 'native_connect') else connection.connect(),
-                                loop,
-                            )
+                            fut = asyncio.run_coroutine_threadsafe(prepare, loop)
                             fut.result()
                         else:
-                            if use_native and hasattr(connection, 'native_connect'):
-                                loop.run_until_complete(connection.native_connect())
-                            else:
-                                loop.run_until_complete(connection.connect())
+                            loop.run_until_complete(prepare)
                     except Exception as prep_err:
                         logger.error(f"Failed to prepare SSH command: {prep_err}")
 
@@ -244,25 +241,20 @@ class TerminalManager:
                         app = _Adw.Application.get_default()
                     except Exception:
                         app = None
-                connection_manager = getattr(window, 'connection_manager', None)
-                use_native = bool(getattr(connection_manager, 'native_connect_enabled', False))
-                if not use_native and app is not None and hasattr(app, 'native_connect_enabled'):
-                    use_native = bool(app.native_connect_enabled)
+                # Native-only connection (connect() delegates to native_connect()).
                 if not getattr(connection, 'ssh_cmd', None):
+                    prepare = (
+                        connection.native_connect()
+                        if hasattr(connection, 'native_connect')
+                        else connection.connect()
+                    )
                     try:
                         loop = asyncio.get_event_loop()
                         if loop.is_running():
-                            fut = asyncio.run_coroutine_threadsafe(
-                                connection.native_connect() if use_native and hasattr(connection, 'native_connect')
-                                else connection.connect(),
-                                loop,
-                            )
+                            fut = asyncio.run_coroutine_threadsafe(prepare, loop)
                             fut.result()
                         else:
-                            if use_native and hasattr(connection, 'native_connect'):
-                                loop.run_until_complete(connection.native_connect())
-                            else:
-                                loop.run_until_complete(connection.connect())
+                            loop.run_until_complete(prepare)
                     except Exception as prep_err:
                         logger.error(f"Failed to prepare SSH command for pane: {prep_err}")
 

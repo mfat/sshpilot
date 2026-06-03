@@ -739,6 +739,46 @@ class SplitViewTab(Gtk.Box):
         except Exception:
             pass
 
+    def fill_panes_to_viewport(self) -> None:
+        """Reset rows to auto-fill the scroll viewport (no leftover empty space).
+
+        Re-enables fill mode and clears manual overrides so the rows are sized
+        to exactly fill the viewport — for a single row (e.g. two side-by-side
+        panes) that means the full height rather than the 50% default. Also
+        resets any horizontal pane-width splits back to 50/50."""
+        viewport = self._get_scroll_viewport_height()
+        if viewport <= 0:
+            GLib.idle_add(lambda: self.fill_panes_to_viewport() or False)
+            return
+        self._manual_row_indices.clear()
+        self._row_height_ratios.clear()
+        self._fill_viewport = True
+        for row_box in self._row_boxes:
+            child = row_box.get_first_child()
+            if (child is not None
+                    and isinstance(child, Gtk.Paned)
+                    and child.get_orientation() == Gtk.Orientation.HORIZONTAL
+                    and hasattr(child, '_split_ratio')):
+                child._split_ratio = 0.5
+                total = child.get_allocated_width()
+                if total > 0:
+                    child._in_ratio_update = True
+                    child.set_position(total // 2)
+                    child._in_ratio_update = False
+        self._sync_row_heights_to_viewport()
+        self.scroll_panes_to_top()
+
+    def _on_default_clicked(self) -> None:
+        """Handle the "Default" button.
+
+        With two panes (a single side-by-side row, or two stacked rows) reset to
+        fill the viewport so no empty space is left below. With more than two
+        panes keep the previous behaviour (50% rows that scroll)."""
+        if len(self._panes) <= 2:
+            self.fill_panes_to_viewport()
+        else:
+            self.reset_all_row_heights(0.5)
+
     def reset_all_row_heights(self, ratio: float) -> None:
         """Reset every row to `ratio` × viewport height, clearing all manual overrides.
         Also resets any horizontal pane-width splits back to 50/50."""
@@ -809,7 +849,7 @@ class SplitViewTab(Gtk.Box):
         large_btn = Gtk.Button(label=_("Default"))
         large_btn.add_css_class("pill")
         large_btn.set_tooltip_text(_("Reset panes to their default size"))
-        large_btn.connect("clicked", lambda _b: self.reset_all_row_heights(0.5))
+        large_btn.connect("clicked", lambda _b: self._on_default_clicked())
         strip.append(large_btn)
 
         compact_btn = Gtk.Button(label=_("Compact"))
