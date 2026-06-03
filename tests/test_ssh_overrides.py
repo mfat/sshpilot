@@ -216,7 +216,11 @@ def test_native_connect_appends_overrides_even_when_native_disabled(monkeypatch)
         asyncio.set_event_loop(None)
 
     assert result is True
-    assert connection.ssh_cmd == ['ssh', '-o', 'ConnectTimeout=10', '-C', 'example.com']
+    # ssh_overrides are appended verbatim, and key-based auth adds the agent
+    # bypass (-o IdentityAgent=none) so the keyring/askpass passphrase flow works.
+    assert connection.ssh_cmd == [
+        'ssh', '-o', 'ConnectTimeout=10', '-C', '-o', 'IdentityAgent=none', 'example.com',
+    ]
 
 
 def test_native_connect_enabled_by_default(tmp_path, monkeypatch):
