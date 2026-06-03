@@ -396,80 +396,14 @@ class Connection:
         return self.source
         
     async def connect(self):
-        """Prepare SSH command for later use using ssh_connection_builder."""
-        try:
-            self._update_identity_agent_state(None)
-            # Reset resolved identity cache on every connect preparation
-            self.resolved_identity_files = []
+        """Prepare an SSH connection.
 
-            # Get config for ssh_connection_builder
-            try:
-                from .config import Config  # avoid circular import at top level
-                cfg = Config()
-            except Exception:
-                cfg = None
-
-            connection_manager = getattr(self, '_connection_manager', None)
-
-            known_hosts_path = None
-            if connection_manager:
-                kh_path = getattr(connection_manager, 'known_hosts_path', '') or ''
-                if kh_path and os.path.exists(kh_path):
-                    known_hosts_path = kh_path
-
-            # Build connection context
-            ctx = ConnectionContext(
-                connection=self,
-                connection_manager=connection_manager,
-                config=cfg,
-                command_type='ssh',
-                extra_args=[],
-                port_forwarding_rules=getattr(self, 'forwarding_rules', None),
-                remote_command=None,
-                local_command=None,
-                extra_ssh_config=getattr(self, 'extra_ssh_config', '') or None,
-                known_hosts_path=known_hosts_path,
-                native_mode=False,
-                quick_connect_mode=bool(getattr(self, 'quick_connect_command', '')),
-                quick_connect_command=getattr(self, 'quick_connect_command', None) or None,
-            )
-
-            # Build SSH connection command using ssh_connection_builder
-            ssh_conn_cmd = build_ssh_connection(ctx)
-            ssh_cmd = ssh_conn_cmd.command
-
-            # Store resolved identity files if available
-            try:
-                # Try to extract identity files from command
-                identity_files = []
-                i = 0
-                while i < len(ssh_cmd):
-                    if ssh_cmd[i] == '-i' and i + 1 < len(ssh_cmd):
-                        identity_files.append(ssh_cmd[i + 1])
-                        i += 2
-                    else:
-                        i += 1
-                if identity_files:
-                    self.resolved_identity_files = identity_files
-            except Exception:
-                pass
-
-            # Store command and environment for later use
-            self.ssh_cmd = ssh_cmd
-            # Store environment so terminal can use it (especially SSH_ASKPASS)
-            if not hasattr(self, 'ssh_env') or self.ssh_env is None:
-                self.ssh_env = {}
-            self.ssh_env.update(ssh_conn_cmd.env)
-            # Store the full builder result so the terminal can consume the
-            # command, environment, and auth flags without rebuilding anything.
-            self.ssh_connection_cmd = ssh_conn_cmd
-            self.is_connected = True
-            return True
-                
-        except Exception as e:
-            logger.error(f"Failed to connect to {self}: {e}")
-            self.is_connected = False
-            return False
+        sshPilot connects in native mode everywhere (~/.ssh/config is the source
+        of truth), so this legacy entry point now delegates to native_connect().
+        Kept so existing callers keep working; there is no separate non-native
+        connection path anymore.
+        """
+        return await self.native_connect()
 
     async def native_connect(self):
         """Prepare a minimal SSH command using ssh_connection_builder in native mode."""

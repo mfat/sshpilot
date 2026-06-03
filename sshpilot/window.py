@@ -9773,28 +9773,15 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     def open_in_system_terminal(self, connection):
         """Open the connection in the system's default terminal using ssh_connection_builder"""
         try:
-            from .ssh_connection_builder import build_ssh_connection, ConnectionContext
-            
-            # Build SSH connection command using ssh_connection_builder
-            ctx = ConnectionContext(
-                connection=connection,
-                connection_manager=self.connection_manager if hasattr(self, 'connection_manager') else None,
-                config=self.config if hasattr(self, 'config') else None,
-                command_type='ssh',
-                extra_args=[],
-                port_forwarding_rules=None,
-                remote_command=None,
-                local_command=None,
-                extra_ssh_config=None,
-                known_hosts_path=None,
-                native_mode=False,
-                quick_connect_mode=False,
-                quick_connect_command=None,
+            from .ssh_connection_builder import build_native_command
+
+            # Build a plain native command (ssh -F <config> host). The external
+            # terminal provides its own TTY/agent, so we deliberately do NOT apply
+            # sshPilot's in-app askpass or agent bypass here.
+            ssh_cmd_parts = build_native_command(
+                connection,
+                self.config if hasattr(self, 'config') else None,
             )
-            
-            ssh_conn_cmd = build_ssh_connection(ctx)
-            # Convert command list to string for terminal
-            ssh_cmd_parts = ssh_conn_cmd.command
             # Skip 'ssh' and join the rest, handling options properly
             ssh_command_parts = []
             i = 0
