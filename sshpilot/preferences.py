@@ -1630,6 +1630,20 @@ class PreferencesWindow(Adw.Window):
             self.confirm_disconnect_switch.connect('notify::active', self.on_confirm_disconnect_changed)
             behavior_group.add(self.confirm_disconnect_switch)
 
+            # Built-in passphrase prompt
+            self.builtin_passphrase_prompt_switch = Adw.SwitchRow()
+            self.builtin_passphrase_prompt_switch.set_title("Use built-in passphrase prompt")
+            self.builtin_passphrase_prompt_switch.set_subtitle(
+                "When off, SSH and the system keyring handle key passphrase prompts"
+            )
+            self.builtin_passphrase_prompt_switch.set_active(
+                bool(self.config.get_setting('use-builtin-passphrase-prompt', True))
+            )
+            self.builtin_passphrase_prompt_switch.connect(
+                'notify::active', self.on_builtin_passphrase_prompt_changed
+            )
+            behavior_group.add(self.builtin_passphrase_prompt_switch)
+
             advanced_page.add(behavior_group)
 
             # Logging group ------------------------------------------------
@@ -3738,6 +3752,12 @@ class PreferencesWindow(Adw.Window):
         confirm = switch.get_active()
         logger.info(f"Confirm before disconnect setting changed to: {confirm}")
         self.config.set_setting('confirm-disconnect', confirm)
+
+    def on_builtin_passphrase_prompt_changed(self, switch, *args):
+        """Handle built-in passphrase prompt setting change"""
+        enabled = switch.get_active()
+        logger.info(f"Use built-in passphrase prompt setting changed to: {enabled}")
+        self.config.set_setting('use-builtin-passphrase-prompt', enabled)
 
     def on_logging_level_changed(self, combo_row, _param):
         """Persist the chosen log level and apply it on the fly."""

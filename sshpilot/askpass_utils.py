@@ -280,6 +280,26 @@ def stop_askpass_log_forwarder() -> None:
 atexit.register(stop_askpass_log_forwarder)
 
 
+def _builtin_passphrase_prompt_enabled() -> bool:
+    """Return whether the built-in passphrase prompt is enabled (default True).
+
+    Read directly from ``config.json`` (stdlib only) so the standalone askpass
+    process honors the Settings → Advanced toggle. Defaults to True on any error.
+    """
+    import json
+
+    try:
+        config_dir = os.environ.get("XDG_CONFIG_HOME") or os.path.join(
+            os.path.expanduser("~"), ".config"
+        )
+        config_file = os.path.join(config_dir, "sshpilot", "config.json")
+        with open(config_file, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+        return bool(data.get("use-builtin-passphrase-prompt", True))
+    except Exception:
+        return True
+
+
 def _run_askpass_dialog(key_path: str, log_fn) -> "str | None":
     """Show a GTK4/Adwaita passphrase dialog. Returns the passphrase string, or
     None on cancel. Built from non-deprecated Adwaita widgets (an Adw.Window with
@@ -498,7 +518,12 @@ def handle_askpass_cli(prompt: str) -> "str | None":
             return passphrase
         _log(f"ASKPASS: No passphrase found for {candidate}")
 
-    # Fall back to interactive GUI dialog
+    # Fall back to the built-in GUI dialog, unless the user has turned it off in
+    # settings — in that case defer to SSH / the system keyring prompt.
+    if not _builtin_passphrase_prompt_enabled():
+        _log("ASKPASS: built-in passphrase prompt disabled; deferring to system/SSH")
+        return None
+
     passphrase = _run_askpass_dialog(key_path, _log)
     if passphrase is not None:
         _log("ASKPASS: User entered passphrase in GUI dialog")
