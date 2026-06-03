@@ -605,7 +605,22 @@ def build_ssh_connection(
                             logger.info(f"Found stored passphrase for default key: {default_key}")
                             break
         
-        if identity_agent_disabled:
+        askpass_enabled = True
+        try:
+            if app_config is not None and hasattr(app_config, 'get_setting'):
+                askpass_enabled = bool(app_config.get_setting('use-askpass', True))
+        except Exception:
+            askpass_enabled = True
+
+        if not askpass_enabled:
+            # Askpass fully disabled in settings - don't set SSH_ASKPASS at all,
+            # so SSH prompts natively (e.g. on the terminal TTY).
+            env = os.environ.copy()
+            env.pop('SSH_ASKPASS', None)
+            env.pop('SSH_ASKPASS_REQUIRE', None)
+            use_askpass = False
+            logger.debug("Askpass disabled by setting - SSH will prompt natively")
+        elif identity_agent_disabled:
             # IdentityAgent disabled - must use askpass to supply passphrase
             env = get_ssh_env_with_askpass(require="force")
             use_askpass = True

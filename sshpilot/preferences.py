@@ -1630,7 +1630,19 @@ class PreferencesWindow(Adw.Window):
             self.confirm_disconnect_switch.connect('notify::active', self.on_confirm_disconnect_changed)
             behavior_group.add(self.confirm_disconnect_switch)
 
-            # Built-in passphrase prompt
+            # SSH askpass helper (master switch for sshPilot's passphrase handling)
+            self.askpass_switch = Adw.SwitchRow()
+            self.askpass_switch.set_title("Use SSH askpass helper")
+            self.askpass_switch.set_subtitle(
+                "Lets sshPilot autofill key passphrases from the keyring. "
+                "When off, SSH handles passphrase prompts itself."
+            )
+            askpass_on = bool(self.config.get_setting('use-askpass', True))
+            self.askpass_switch.set_active(askpass_on)
+            self.askpass_switch.connect('notify::active', self.on_use_askpass_changed)
+            behavior_group.add(self.askpass_switch)
+
+            # Built-in passphrase prompt (only relevant when the askpass helper is on)
             self.builtin_passphrase_prompt_switch = Adw.SwitchRow()
             self.builtin_passphrase_prompt_switch.set_title("Use built-in passphrase prompt")
             self.builtin_passphrase_prompt_switch.set_subtitle(
@@ -1639,6 +1651,7 @@ class PreferencesWindow(Adw.Window):
             self.builtin_passphrase_prompt_switch.set_active(
                 bool(self.config.get_setting('use-builtin-passphrase-prompt', True))
             )
+            self.builtin_passphrase_prompt_switch.set_sensitive(askpass_on)
             self.builtin_passphrase_prompt_switch.connect(
                 'notify::active', self.on_builtin_passphrase_prompt_changed
             )
@@ -3758,6 +3771,15 @@ class PreferencesWindow(Adw.Window):
         enabled = switch.get_active()
         logger.info(f"Use built-in passphrase prompt setting changed to: {enabled}")
         self.config.set_setting('use-builtin-passphrase-prompt', enabled)
+
+    def on_use_askpass_changed(self, switch, *args):
+        """Handle 'use SSH askpass helper' setting change"""
+        enabled = switch.get_active()
+        logger.info(f"Use SSH askpass helper setting changed to: {enabled}")
+        self.config.set_setting('use-askpass', enabled)
+        # The built-in prompt is only meaningful when the askpass helper is on.
+        if hasattr(self, 'builtin_passphrase_prompt_switch'):
+            self.builtin_passphrase_prompt_switch.set_sensitive(enabled)
 
     def on_logging_level_changed(self, combo_row, _param):
         """Persist the chosen log level and apply it on the fly."""
