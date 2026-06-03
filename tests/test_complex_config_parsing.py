@@ -10,25 +10,47 @@ Then it exercises the full parsing pipeline and systematically probes every
 identified edge case, including ones that expose real bugs in the current
 implementation.
 
-Bug findings are verified against the ssh_config(5) man page.  The format
-section states explicitly:
+Bug findings are verified against the ssh_config(5) man page for
+OpenSSH 9.6p1 (the version installed in this environment).
 
-    "Configuration options may be separated by whitespace or optional
-    whitespace and exactly one '='"
+Exact quotes from that man page used as the authority:
 
-    "It is possible to have multiple identity files specified in
-    configuration files; all these identities will be tried in sequence."
+  Separators: "Configuration options may be separated by whitespace or
+  optional whitespace and exactly one ="
 
-Three confirmed real bugs (all silent discards with no warning):
-  1. Tab separator  – `HostName\\tvalue` is dropped; entire block may vanish
-  2. `=` separator  – `Port=22` and `Port = 22` are both spec-valid but broken
-  3. Multiple IdentityFile – only the last key is kept; earlier ones are lost
+  IdentityFile: "Multiple IdentityFile directives will add to the list of
+  identities tried (this behaviour differs from that of other configuration
+  directives)"
 
-Not bugs per this spec version (linux.die.net / OpenSSH 5.x era):
-  - ForwardAgent path  – spec says "must be yes or no" (socket-path support
-    was added in OpenSSH 8.4, not covered by this man page)
-  - RemoteForward single arg – spec requires two arguments
-  - Empty Host block  – valid no-op; silently discarding it is correct UX
+  CertificateFile: "Multiple CertificateFile directives will add to the list
+  of certificates used for authentication"
+
+  ForwardAgent: "The argument may be yes, no (the default), an explicit path
+  to an agent socket or the name of an environment variable (beginning with $)
+  in which to find the path"
+
+  RemoteForward: "The remote port may either be forwarded to a specified host
+  and port from the local machine, or may act as a SOCKS 4/5 proxy that
+  allows a remote client to connect to arbitrary destinations from the local
+  machine" (i.e. single-argument form is valid)
+
+  ${VAR} expansion: "Arguments to some keywords can be expanded at runtime
+  from environment variables on the client by enclosing them in ${}"
+
+Seven confirmed parser bugs (all silent failures, no warning to user):
+  BUG 1 – Tab separator      block silently lost when all options use tabs
+  BUG 2a – `keyword=value`   block silently lost (no space → dropped)
+  BUG 2b – `keyword = value` parse_host_config crashes on `int('= N')`,
+            entire host silently discarded
+  BUG 3  – Multiple IdentityFile  only last survives
+  BUG 4  – Multiple CertificateFile  only last survives
+  BUG 5a – ForwardAgent socket path  treated as False
+  BUG 5b – ForwardAgent $ENV_VAR     treated as False
+  BUG 6  – RemoteForward single arg  silently dropped (should be SOCKS)
+  BUG 7  – ${VAR} in IdentityFile    not expanded (stored literally)
+
+Not bugs:
+  - Empty Host block – valid no-op; silently discarding it is correct UX
 """
 
 import asyncio
@@ -662,15 +684,131 @@ class TestEdgeCases:
         assert "id_rsa" not in c.keyfile
 
     # -----------------------------------------------------------------------
-    # Non-bugs confirmed against spec
+    # BUG 4 – Multiple CertificateFile
     # -----------------------------------------------------------------------
 
-    def test_forwardagent_yes_no_only_per_spec(self, tmp_path):
+    def test_multiple_certificatefile_only_last_survives(self, tmp_path):
         """
-        The ssh_config(5) man page states ForwardAgent "must be yes or no".
-        The parser correctly accepts yes/no.  Socket-path support (OpenSSH 8.4+)
-        is outside this spec version, so no bug is raised here.
+        BUG 4: The 9.6p1 man page states "Multiple CertificateFile directives
+        will add to the list of certificates used for authentication."
+        The parser stores 'certificatefile' as a plain string (not in the
+        multi-value list), so each new directive overwrites the previous.
+        Only the last certificate is kept; earlier ones are silently lost.
         """
+        main = tmp_path / "config"
+        main.write_text(
+            "Host multi-cert\n"
+            "    HostName multi.example.com\n"
+            "    CertificateFile ~/.ssh/cert1-cert.pub\n"
+            "    CertificateFile ~/.ssh/cert2-cert.pub\n"
+        )
+        cm = make_cm()
+        cm.ssh_config_path = str(main)
+        cm.load_ssh_config()
+        c = conn_by_nickname(cm, "multi-cert")
+        assert c is not None
+        assert "cert2" in c.certificate, (
+            "BUG 4: last CertificateFile wins (cert2); cert1 is silently lost"
+        )
+        assert "cert1" not in c.certificate
+
+    # -----------------------------------------------------------------------
+    # BUG 5 – ForwardAgent socket path and $ENV_VAR
+    # -----------------------------------------------------------------------
+
+    def test_forwardagent_socket_path_treated_as_false(self, tmp_path):
+        """
+        BUG 5a: The 9.6p1 man page states ForwardAgent accepts "an explicit
+        path to an agent socket".  The parser only recognises yes/true/1/on;
+        a path string is not in that set so forward_agent is set to False.
+        """
+        main = tmp_path / "config"
+        main.write_text(
+            "Host fa-path\n"
+            "    HostName fa.example.com\n"
+            "    ForwardAgent /tmp/ssh-agent.sock\n"
+        )
+        cm = make_cm()
+        cm.ssh_config_path = str(main)
+        cm.load_ssh_config()
+        c = conn_by_nickname(cm, "fa-path")
+        assert c is not None
+        assert c.forward_agent is False, (
+            "BUG 5a: ForwardAgent /path should be truthy (9.6p1 spec) "
+            "but the parser returns False"
+        )
+
+    def test_forwardagent_env_var_treated_as_false(self, tmp_path):
+        """
+        BUG 5b: The 9.6p1 man page states ForwardAgent accepts "the name of
+        an environment variable (beginning with $) in which to find the path".
+        A value like $SSH_AUTH_SOCK should be truthy.  The parser does not
+        recognise the $ prefix and returns False.
+        """
+        main = tmp_path / "config"
+        main.write_text(
+            "Host fa-env\n"
+            "    HostName fa.example.com\n"
+            "    ForwardAgent $SSH_AUTH_SOCK\n"
+        )
+        cm = make_cm()
+        cm.ssh_config_path = str(main)
+        cm.load_ssh_config()
+        c = conn_by_nickname(cm, "fa-env")
+        assert c is not None
+        assert c.forward_agent is False, (
+            "BUG 5b: ForwardAgent $SSH_AUTH_SOCK should be truthy (9.6p1 spec) "
+            "but the parser returns False"
+        )
+
+    # -----------------------------------------------------------------------
+    # BUG 6 – RemoteForward single-argument (SOCKS proxy mode)
+    # -----------------------------------------------------------------------
+
+    def test_remoteforward_single_arg_silently_dropped(self, tmp_path):
+        """
+        BUG 6: The 9.6p1 man page states RemoteForward may "act as a SOCKS
+        4/5 proxy" using a single-argument form (just [bind_address:]port,
+        no destination).  The parser requires exactly two whitespace-separated
+        parts; a single part produces len(parts)==1, the if-branch is not
+        taken, and the rule is silently dropped.
+        """
+        main = tmp_path / "config"
+        main.write_text(
+            "Host socks-remote\n"
+            "    HostName socks.example.com\n"
+            "    RemoteForward 9999\n"
+        )
+        cm = make_cm()
+        cm.ssh_config_path = str(main)
+        cm.load_ssh_config()
+        c = conn_by_nickname(cm, "socks-remote")
+        assert c is not None
+        remote = [r for r in c.forwarding_rules if r["type"] == "remote"]
+        assert remote == [], (
+            "BUG 6: RemoteForward 9999 (SOCKS mode, 9.6p1 spec) should produce "
+            "a forwarding rule but is silently dropped"
+        )
+
+    def test_remoteforward_two_arg_form_works(self, tmp_path):
+        """The standard two-argument RemoteForward form must continue to work."""
+        main = tmp_path / "config"
+        main.write_text(
+            "Host rfwd\n"
+            "    HostName rfwd.example.com\n"
+            "    RemoteForward 2222 localhost:22\n"
+        )
+        cm = make_cm()
+        cm.ssh_config_path = str(main)
+        cm.load_ssh_config()
+        c = conn_by_nickname(cm, "rfwd")
+        assert c is not None
+        remote = [r for r in c.forwarding_rules if r["type"] == "remote"]
+        assert len(remote) == 1
+        assert remote[0]["listen_port"] == 2222
+
+    def test_forwardagent_yes_still_works(self, tmp_path):
+        """ForwardAgent yes must continue to work correctly."""
         main = tmp_path / "config"
         main.write_text(
             "Host fa-yes\n    HostName fa.example.com\n    ForwardAgent yes\n"
@@ -682,26 +820,43 @@ class TestEdgeCases:
         assert c is not None
         assert c.forward_agent is True
 
-    def test_remoteforward_requires_two_args_per_spec(self, tmp_path):
+    # -----------------------------------------------------------------------
+    # BUG 7 – ${VAR} environment variable expansion in option values
+    # -----------------------------------------------------------------------
+
+    def test_identityfile_curly_brace_env_var_stored_unexpanded(self, tmp_path, monkeypatch):
         """
-        The spec says RemoteForward requires both [bind_address:]port AND
-        host:hostport.  A single-argument form is not defined in this spec
-        version, so the parser silently skipping it is correct behaviour.
+        BUG 7: The 9.6p1 man page states "Arguments to some keywords can be
+        expanded at runtime from environment variables on the client by
+        enclosing them in ${}".  IdentityFile supports this, so
+        `${HOME}/.ssh/id_rsa` is a valid value.
+
+        The parser calls os.path.expanduser() (which handles ~) but not
+        os.path.expandvars() (which handles ${HOME}).  The literal string
+        `${HOME}/.ssh/id_rsa` is stored unchanged; the display in the app
+        shows the unexpanded path.
         """
+        monkeypatch.setenv("HOME", str(tmp_path))
         main = tmp_path / "config"
         main.write_text(
-            "Host rfwd\n"
-            "    HostName rfwd.example.com\n"
-            "    RemoteForward 2222 localhost:22\n"  # two-arg form – must work
+            "Host env-key\n"
+            "    HostName env.example.com\n"
+            "    IdentityFile ${HOME}/.ssh/id_rsa\n"
         )
         cm = make_cm()
         cm.ssh_config_path = str(main)
         cm.load_ssh_config()
-        c = conn_by_nickname(cm, "rfwd")
+        c = conn_by_nickname(cm, "env-key")
         assert c is not None
-        remote = [r for r in c.forwarding_rules if r["type"] == "remote"]
-        assert len(remote) == 1
-        assert remote[0]["listen_port"] == 2222
+        # Document the current (buggy) behaviour: ${HOME} is NOT expanded
+        assert "${HOME}" in c.keyfile, (
+            "BUG 7: ${HOME}/.ssh/id_rsa is spec-valid but the parser stores "
+            "the literal '${HOME}' instead of expanding it"
+        )
+
+    # -----------------------------------------------------------------------
+    # Non-bugs confirmed against spec
+    # -----------------------------------------------------------------------
 
     def test_empty_host_block_is_silent_noop(self, tmp_path):
         """
