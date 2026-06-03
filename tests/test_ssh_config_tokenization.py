@@ -166,7 +166,10 @@ def test_connect_with_blank_hostname_uses_alias(monkeypatch):
         asyncio.set_event_loop(asyncio.new_event_loop())
 
     assert connected
-    assert connection.ssh_cmd[-1] == "mahdi@myalias"
+    # Native mode connects via the config alias (ssh -F <config> myalias); the
+    # username is supplied by the `User` directive in the config, not on the
+    # command line, so the final token is the bare alias.
+    assert connection.ssh_cmd[-1] == "myalias"
     assert connection.host == "myalias"
     assert connection.hostname == ""
 

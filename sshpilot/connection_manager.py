@@ -2037,6 +2037,24 @@ class ConnectionManager(GObject.Object):
             # Update existing object IN-PLACE instead of creating new ones
             connection.update_data(new_data)
 
+            # The dialog's new_data carries the new nickname/hostname but not the
+            # parsed Host-line tokens. resolve_host_identifier() prefers the cached
+            # data['__host_tokens'] / data['host'], so without refreshing them the
+            # connection would keep using the *pre-edit* alias (e.g. a duplicate's
+            # "Name (Copy)") as the native ssh target — ssh then rejects it with
+            # "hostname contains invalid characters" until the next config reload.
+            # The Host line is rewritten as `Host <nickname>`, so re-derive the
+            # tokens from the (authoritative) new nickname + aliases. (issue #953)
+            try:
+                if '__host_tokens' not in new_data and isinstance(getattr(connection, 'data', None), dict):
+                    alias = (getattr(connection, 'nickname', '') or '').strip()
+                    if alias:
+                        connection.data['host'] = alias
+                        extra_aliases = [a for a in (getattr(connection, 'aliases', []) or []) if a]
+                        connection.data['__host_tokens'] = [alias] + extra_aliases
+            except Exception:
+                logger.debug("Failed to refresh host tokens after update", exc_info=True)
+
             # Update the SSH config file with original nickname for proper matching
             if split_from_group:
                 original_token = split_original_host or original_nickname
