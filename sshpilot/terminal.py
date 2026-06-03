@@ -3402,14 +3402,18 @@ class TerminalWidget(Gtk.Box):
     
     def disconnect(self):
         """Close the SSH connection and clean up resources"""
+        # Guard UI emissions when the root window is quitting. Computed up front
+        # so it is always bound: disconnect() can be called while is_connected is
+        # already False (e.g. pressing Reconnect after a failed connection), in
+        # which case the block below is skipped but the finally clause still
+        # references is_quitting.
+        root = self.get_root() if hasattr(self, 'get_root') else None
+        is_quitting = bool(getattr(root, '_is_quitting', False))
+
         was_connected = self.is_connected
         if self.is_connected:
             logger.debug(f"Disconnecting SSH session {self.session_id}...")
             self.is_connected = False
-
-            # Guard UI emissions when the root window is quitting
-            root = self.get_root() if hasattr(self, 'get_root') else None
-            is_quitting = bool(getattr(root, '_is_quitting', False))
 
             # Only update manager / UI if not quitting
             if hasattr(self, 'connection') and self.connection and not is_quitting:
