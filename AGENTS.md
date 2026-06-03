@@ -13,6 +13,37 @@ This is the single most important subsystem to understand before changing how
 the app connects. **There is one connection method and one auth path — do not
 reintroduce alternatives.**
 
+### MUST: reuse the single connection/auth path — do not add new methods
+When any part of the app needs to make an SSH connection, run a remote command,
+copy a key, or transfer a file, **reuse the existing entry points. Do NOT write
+a new function that assembles its own `ssh`/`scp`/`ssh-copy-id` command line or
+its own auth environment.** This unification was deliberate; parallel
+command/auth builders are exactly what was removed.
+
+Reuse these (and only these):
+- **Open/prepare a connection:** `Connection.native_connect()` →
+  `build_ssh_connection(ctx)`. (`Connection.connect()` is just an alias.)
+- **Decide authentication (askpass/keyring/agent-bypass or sshpass):**
+  `resolve_native_auth(connection, connection_manager, app_config)` — the ONLY
+  place auth is decided. Every command-based caller must get its env + extra
+  options from here.
+- **Build a plain command for an external process** (e.g. system terminal):
+  `build_native_command(...)`.
+- **Build an explicit command's option list** (raw host/keyfile/port callers
+  like SCP): `_build_base_ssh_command(...)`, then layer `resolve_native_auth`.
+
+Rules:
+- If an existing function *almost* fits, **extend it** (add a parameter / handle
+  the case) rather than cloning a variant. One builder, one auth resolver.
+- Never hand-roll `SSH_ASKPASS`, `IdentityAgent`, `sshpass`, or the agent bypass
+  in a new place — call `resolve_native_auth`.
+- Never append per-host SSH settings to a command line — persist them to
+  `~/.ssh/config` (see below) and let the native command pick them up.
+- The only exception is the **paramiko** SFTP file manager, which is in-process
+  and does not use the ssh command path at all.
+- If you genuinely believe a new connection path is needed, stop and confirm
+  with the user first — don't add one silently.
+
 ### Native mode is the only mode — `~/.ssh/config` is the source of truth
 - Every in-app SSH connection goes through `Connection.native_connect()`
   (`connection_manager.py`), which calls `build_ssh_connection(ctx)`

@@ -6,6 +6,18 @@
 The full reference is in `AGENTS.md` → **SSH Connection & Authentication
 Architecture**. The essentials:
 
+- **MUST reuse the single connection/auth path — do not add new methods.** Any
+  feature that connects, runs a remote command, copies a key, or transfers a
+  file uses the existing entry points: `Connection.native_connect()` →
+  `build_ssh_connection()` to connect, and `resolve_native_auth()` for auth
+  (askpass/keyring/agent-bypass or sshpass). For external-process commands use
+  `build_native_command()`; for explicit raw-host commands (SCP) use
+  `_build_base_ssh_command()` + `resolve_native_auth()`. Do **not** hand-roll a
+  new `ssh`/`scp` command builder or a new auth env anywhere. If an existing
+  function almost fits, extend it; if you think a new path is truly needed,
+  confirm with the user first. (The paramiko SFTP file manager is the only
+  exception — it doesn't use the ssh command path.)
+
 - **One connection method, native-only.** Every in-app SSH connection goes
   through `Connection.native_connect()` → `build_ssh_connection(ctx)`
   (`ssh_connection_builder.py`). `Connection.connect()` just delegates to
