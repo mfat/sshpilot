@@ -8,6 +8,7 @@ import sys
 import logging
 import signal
 import time
+import random
 import json
 import re
 import gi
@@ -541,23 +542,35 @@ class TerminalWidget(Gtk.Box):
         # terminal natural height (which would otherwise resize split panes).
         self.overlay.add_overlay(self.disconnected_banner)
 
-        # Tips banner. Cycles through short usage tips and is revealed once the
-        # terminal connects (see _reveal_connection_list_hint). Floated as an
-        # overlay so revealing it never changes the terminal's allocated height
-        # (which would trigger a VTE SIGWINCH / column reflow).
+        # Tips banner. Shows a random usage tip once per connection. Floated as
+        # an overlay so revealing it never changes the terminal's allocated
+        # height (which would trigger a VTE SIGWINCH / column reflow).
+        # Pattern mirrors the update banner: Adw.Banner inside a Gtk.Overlay
+        # so that a second "Dismiss" button can be overlaid at the start while
+        # the banner's own built-in button provides "Don't show again".
         self._connection_list_hint_handled = False
         self._tips = self._build_terminal_tips()
-        self._tip_index = 0
 
         self._tips_banner = Adw.Banner()
         self._tips_banner.set_revealed(False)
-        self._tips_banner.set_halign(Gtk.Align.FILL)
-        self._tips_banner.set_valign(Gtk.Align.START)
         self._tips_banner.set_hexpand(True)
-        self._update_tips_banner()
-        self._tips_banner.connect('button-clicked', self._on_tips_banner_button_clicked)
+        self._tips_banner.set_button_label(_("Don't show again"))
+        self._tips_banner.connect('button-clicked', self._on_connection_list_hint_dont_show_again)
 
-        self.overlay.add_overlay(self._tips_banner)
+        tips_dismiss_button = Gtk.Button(label=_('Dismiss'))
+        tips_dismiss_button.set_halign(Gtk.Align.START)
+        tips_dismiss_button.set_valign(Gtk.Align.CENTER)
+        tips_dismiss_button.set_margin_start(12)
+        tips_dismiss_button.connect('clicked', self._on_connection_list_hint_dismiss)
+
+        tips_banner_overlay = Gtk.Overlay()
+        tips_banner_overlay.set_halign(Gtk.Align.FILL)
+        tips_banner_overlay.set_valign(Gtk.Align.START)
+        tips_banner_overlay.set_hexpand(True)
+        tips_banner_overlay.set_child(self._tips_banner)
+        tips_banner_overlay.add_overlay(tips_dismiss_button)
+
+        self.overlay.add_overlay(tips_banner_overlay)
         self.connect('connection-established', self._reveal_connection_list_hint)
 
         # Container for terminal stack only
@@ -926,21 +939,6 @@ class TerminalWidget(Gtk.Box):
                 shortcut=self._shortcut_label('shortcuts', f"{mod}+?")),
         ]
 
-    def _update_tips_banner(self):
-        """Sync the Adw.Banner title and button label with the current tip."""
-        try:
-            if not self._tips:
-                return
-            tip = self._tips[self._tip_index]
-            self._tips_banner.set_title(f"\N{ELECTRIC LIGHT BULB} {tip}")
-            is_last = self._tip_index >= len(self._tips) - 1
-            if len(self._tips) > 1 and not is_last:
-                self._tips_banner.set_button_label(_('Next tip'))
-            else:
-                self._tips_banner.set_button_label(_('Dismiss'))
-        except Exception:
-            pass
-
     def _reveal_connection_list_hint(self, *args):
         """Show the tips banner once the terminal connects.
 
@@ -954,39 +952,25 @@ class TerminalWidget(Gtk.Box):
             if not bool(self.config.get_setting('terminal.show_tips', True)):
                 return
             # Rebuild so labels reflect any shortcut customizations made since
-            # this terminal was created.
+            # this terminal was created, then pick a random tip.
             self._tips = self._build_terminal_tips()
-            self._tip_index = 0
-            self._update_tips_banner()
+            if not self._tips:
+                return
+            tip = random.choice(self._tips)
+            self._tips_banner.set_title(f"\N{ELECTRIC LIGHT BULB} {tip}")
             self._tips_banner.set_revealed(True)
         except Exception:
             pass
 
-    def _on_tips_banner_button_clicked(self, banner):
-        """Advance to the next tip, or dismiss on the last tip."""
-        try:
-            if not self._tips:
-                return
-            is_last = self._tip_index >= len(self._tips) - 1
-            if len(self._tips) > 1 and not is_last:
-                self._tip_index += 1
-                self._update_tips_banner()
-            else:
-                self._tips_banner.set_revealed(False)
-        except Exception:
-            pass
-
-    # Keep old names as aliases so external callers (tests) don't break.
-    def _on_connection_list_hint_next_tip(self, *args):
-        self._on_tips_banner_button_clicked(None)
-
     def _on_connection_list_hint_dismiss(self, *args):
+        """Hide the banner for this session only."""
         try:
             self._tips_banner.set_revealed(False)
         except Exception:
             pass
 
     def _on_connection_list_hint_dont_show_again(self, *args):
+        """Hide the banner and never show tips again on any terminal."""
         try:
             self._tips_banner.set_revealed(False)
             self.config.set_setting('terminal.show_tips', False)
