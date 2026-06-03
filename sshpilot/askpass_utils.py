@@ -281,7 +281,9 @@ atexit.register(stop_askpass_log_forwarder)
 
 
 def _run_askpass_dialog(key_path: str, log_fn) -> "str | None":
-    """Show a GTK4/Adw passphrase dialog. Returns passphrase string or None on cancel."""
+    """Show a GTK4/Adwaita passphrase dialog. Returns the passphrase string, or
+    None on cancel. Built from non-deprecated Adwaita widgets (an Adw.Window with
+    a header bar and a boxed-list Adw.PasswordEntryRow)."""
     import json
 
     try:
@@ -328,73 +330,103 @@ def _run_askpass_dialog(key_path: str, log_fn) -> "str | None":
             pass
 
         key_name = os.path.basename(key_path) if key_path else "key"
-        window = Adw.ApplicationWindow()
-        window.set_application(app)
-        window.set_title("SSH Pilot")
 
-        dialog = Adw.MessageDialog(
-            transient_for=window,
-            modal=True,
-            heading="Passphrase Required",
-            body=f"Please enter the passphrase for key {key_name}:",
-        )
+        # Adwaita-styled prompt: a window whose header bar carries the
+        # Cancel/Unlock actions, with the passphrase in a boxed-list row.
+        window = Adw.ApplicationWindow(application=app)
+        window.set_title("Passphrase Required")
+        window.set_resizable(False)
+        window.set_default_size(400, -1)
 
-        content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        content_box.set_margin_top(12)
-        content_box.set_margin_bottom(12)
-        content_box.set_margin_start(12)
-        content_box.set_margin_end(12)
+        done = [False]
 
-        password_entry = Gtk.PasswordEntry()
-        password_entry.set_property("placeholder-text", "Passphrase")
-        content_box.append(password_entry)
+        # ── widgets ───────────────────────────────────────────────────────
+        password_row = Adw.PasswordEntryRow()
+        password_row.set_title("Passphrase")
 
-        store_checkbox = Gtk.CheckButton(label="Store passphrase")
-        store_checkbox.set_active(False)
-        content_box.append(store_checkbox)
+        store_row = Adw.SwitchRow()
+        store_row.set_title("Store passphrase")
+        store_row.set_active(False)
 
-        dialog.set_extra_child(content_box)
-        dialog.add_response("cancel", "Cancel")
-        dialog.add_response("ok", "OK")
-        dialog.set_default_response("ok")
-        dialog.set_close_response("cancel")
+        cancel_btn = Gtk.Button(label="Cancel")
+        ok_btn = Gtk.Button(label="Unlock")
+        ok_btn.add_css_class("suggested-action")
 
-        try:
-            password_entry.set_property("activates-default", True)
-        except (TypeError, AttributeError):
-            pass
-
-        try:
-            def on_entry_activate(_entry):
-                dialog.emit("response", "ok")
-            password_entry.connect("activate", on_entry_activate)
-        except (TypeError, AttributeError):
-            try:
-                key_controller = Gtk.EventControllerKey()
-                def on_key_pressed(_ctrl, keyval, _keycode, _state):
-                    if keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
-                        dialog.emit("response", "ok")
-                        return True
-                    return False
-                key_controller.connect("key-pressed", on_key_pressed)
-                password_entry.add_controller(key_controller)
-            except Exception:
-                pass
-
-        def on_response(dlg, response_id):
-            if response_id == "ok":
-                passphrase_result[0] = password_entry.get_text()
-                if store_checkbox.get_active() and key_path and passphrase_result[0]:
+        # ── behaviour ─────────────────────────────────────────────────────
+        def _record_and_quit(ok: bool):
+            if done[0]:
+                return
+            done[0] = True
+            if ok:
+                passphrase_result[0] = password_row.get_text()
+                if store_row.get_active() and key_path and passphrase_result[0]:
                     try:
                         store_passphrase(key_path, passphrase_result[0])
                     except Exception:
                         pass
-            window.close()
-            app.quit()
+            try:
+                app.quit()
+            except Exception:
+                pass
 
-        dialog.connect("response", on_response)
-        dialog.present()
-        password_entry.grab_focus()
+        cancel_btn.connect("clicked", lambda _b: _record_and_quit(False))
+        ok_btn.connect("clicked", lambda _b: _record_and_quit(True))
+        window.set_default_widget(ok_btn)
+
+        # ── layout ────────────────────────────────────────────────────────
+        header = Adw.HeaderBar()
+        header.set_show_start_title_buttons(False)
+        header.set_show_end_title_buttons(False)
+        header.pack_start(cancel_btn)
+        header.pack_end(ok_btn)
+
+        body_label = Gtk.Label(label=f"Enter the passphrase for key “{key_name}”.")
+        body_label.set_wrap(True)
+        body_label.set_xalign(0.0)
+        body_label.add_css_class("dim-label")
+
+        group = Adw.PreferencesGroup()
+        group.add(password_row)
+        group.add(store_row)
+
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18)
+        content.set_margin_top(18)
+        content.set_margin_bottom(24)
+        content.set_margin_start(18)
+        content.set_margin_end(18)
+        content.append(body_label)
+        content.append(group)
+
+        toolbar = Adw.ToolbarView()
+        toolbar.add_top_bar(header)
+        toolbar.set_content(content)
+        window.set_content(toolbar)
+
+        # ── dismissal: window close, Escape, Enter ────────────────────────
+        def _on_close_request(_w):
+            if not done[0]:
+                done[0] = True
+            return False
+
+        window.connect("close-request", _on_close_request)
+
+        key_controller = Gtk.EventControllerKey()
+        key_controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+
+        def _on_key(_ctrl, keyval, _keycode, _state):
+            if keyval == Gdk.KEY_Escape:
+                _record_and_quit(False)
+                return True
+            if keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
+                _record_and_quit(True)
+                return True
+            return False
+
+        key_controller.connect("key-pressed", _on_key)
+        window.add_controller(key_controller)
+
+        window.present()
+        password_row.grab_focus()
 
     app.connect("activate", on_activate)
     app.run(None)
