@@ -7,6 +7,85 @@ sshPilot is a user-friendly, modern SSH connection manager with an integrated te
 ### Documentation Resources
 - A full catalog of package functions and methods is available in `documentation/function-reference.md`. Update this document with `python3 scripts/generate_function_reference.py` when APIs change.
 
+## SSH Connection & Authentication Architecture
+
+This is the single most important subsystem to understand before changing how
+the app connects. **There is one connection method and one auth path — do not
+reintroduce alternatives.**
+
+### Native mode is the only mode — `~/.ssh/config` is the source of truth
+- Every in-app SSH connection goes through `Connection.native_connect()`
+  (`connection_manager.py`), which calls `build_ssh_connection(ctx)`
+  (`ssh_connection_builder.py`). `Connection.connect()` is a thin alias that
+  delegates to `native_connect()`. There is **no** non-native/legacy command
+  path and no native-mode toggle.
+- The command is intentionally minimal:
+  `ssh -F <config> [ssh_overrides…] [-o IdentityAgent=none] <host> [remote-cmd]`.
+- Per-host settings are **not** placed on the command line. sshPilot writes
+  `IdentityFile`, `Port`, `LocalForward`/`RemoteForward`/`DynamicForward`,
+  `ProxyJump`, `ProxyCommand`, `ForwardX11`, `CertificateFile`, `RemoteCommand`,
+  etc. into `~/.ssh/config` (see the config writer in `connection_manager.py`),
+  and `ssh -F <config> <host>` reads them. If you add a per-connection SSH
+  setting, persist it to the config — do **not** append it to the command.
+- App-global options (e.g. `ConnectTimeout`, `ServerAliveInterval`) come from
+  the app config as `ssh_overrides` and are appended verbatim.
+- Isolated mode: `connection._resolve_config_override_path()` returns the
+  isolated config file, which becomes the `-F <file>` argument.
+
+### Authentication is resolved in exactly one place
+`resolve_native_auth(connection, connection_manager, app_config)` →
+`NativeAuth(env, extra_opts, use_sshpass, password, use_askpass, password_mode)`.
+The terminal builder, SCP, and ssh-copy-id all call it so they authenticate
+identically. Modes:
+- **Password** (`auth_method == 1`, or a stored password exists): use `sshpass`
+  with a write-once FIFO to feed the password; clear `SSH_ASKPASS` and set
+  `SSH_ASKPASS_REQUIRE=never` so ssh never falls back to askpass.
+- **Key-based** (default, askpass enabled): set `SSH_ASKPASS` (REQUIRE=prefer)
+  so ssh asks our askpass helper for the key passphrase. Also apply the **agent
+  bypass** — add `-o IdentityAgent=none` and drop `SSH_AUTH_SOCK` — *unless* the
+  connection forwards the agent (`ForwardAgent`) or pins an explicit
+  `IdentityAgent`. The bypass exists because gnome-keyring advertises a locked
+  key but refuses to sign it ("agent refused operation"), and ssh will not fall
+  back to the on-disk key, so askpass would never fire.
+- **Askpass disabled** (the `use-askpass` setting is off): set no `SSH_ASKPASS`;
+  ssh prompts natively on the TTY.
+
+Credentials are stored/retrieved via libsecret/keyring
+(`connection_manager.get_password` / `askpass_utils.lookup_passphrase`). The
+askpass helper (`askpass_utils.py`) is the program ssh invokes; it looks the
+passphrase up in the keyring and, failing that, shows a GTK prompt. Keyring
+autofill + the askpass prompt are advertised features — keep them working.
+
+### Who builds what
+- **Interactive terminal** (`terminal.py::_setup_ssh_terminal`): consumes the
+  prepared `connection.ssh_connection_cmd` (command + env + auth flags) — it does
+  **not** build commands or derive auth. It only does runtime mechanics: the
+  sshpass FIFO, askpass log forwarding, `TERM`/`PATH`, and the PTY/spawn.
+- **SCP** (`scp_utils.py`): SCP runs against explicit params (raw host, explicit
+  keyfile/port — not a config alias), so it builds an explicit `scp` command via
+  `_build_base_ssh_command` + the shared `resolve_native_auth`.
+- **ssh-copy-id** (`window.py`): builds its own `ssh-copy-id` argv and applies
+  `resolve_native_auth` (its `-o` options must precede the target).
+- **System / external terminal**: uses `build_native_command()` — a *plain*
+  `ssh -F <config> <host>` with **no** in-app auth (`IdentityAgent`/askpass),
+  because the external terminal supplies its own TTY and agent.
+- **SFTP file manager** (`file_manager_window.py`): uses **paramiko in-process**,
+  not the ssh command path. It is a separate subsystem — leave it alone unless
+  the task is explicitly about it.
+
+### Key functions/files
+- `ssh_connection_builder.py`: `build_ssh_connection` (native-only),
+  `resolve_native_auth` (the auth chokepoint), `build_native_command` (plain
+  command for external processes), `_build_base_ssh_command` (shared option
+  builder used by explicit-command callers like SCP).
+- `connection_manager.py`: `Connection.native_connect()`/`connect()`,
+  persistence of connections to `~/.ssh/config`, credential storage.
+- `askpass_utils.py`: the askpass helper, keyring lookup, and GTK prompt.
+
+When changing this subsystem: keep a **single** connection method and a
+**single** auth resolver; prefer writing per-host settings to `~/.ssh/config`
+over adding command-line flags.
+
 ## Setup Commands
 
 - Install dependencies: `pip install -r requirements.txt`
@@ -87,7 +166,10 @@ sudo dnf install python3-gobject gtk4 libadwaita vte291-gtk4 gtksourceview5 libs
 ## Common Patterns
 
 ### SSH Configuration
-- The project uses 2 operation modes: default (loads and saves ~/.ssh/config) abd Isolated Mode which stores config in ~/.config/sshpilot
+- The project uses 2 operation modes: default (loads and saves ~/.ssh/config) and Isolated Mode which stores config in ~/.config/sshpilot
+- Connections are native-only and `~/.ssh/config` is the source of truth. See
+  **SSH Connection & Authentication Architecture** above for how connecting and
+  auth work (one connection method, one auth resolver).
 
 ### Terminal Management
 - Use VTE for terminal display (default backend)
