@@ -234,9 +234,14 @@ def forward_askpass_log_to_logger(log, include_existing: bool = False) -> None:
 
 
 def _askpass_log_forwarder_loop() -> None:
-    """Background loop that forwards askpass logs to the module logger."""
+    """Background loop that forwards askpass logs to the module logger.
 
-    forward_askpass_log_to_logger(logger, include_existing=True)
+    Only new lines are forwarded — the log file persists for the whole login
+    session, so replaying existing content would dump unrelated history from
+    earlier connections (and earlier app runs) into the console.
+    """
+
+    forward_askpass_log_to_logger(logger, include_existing=False)
 
     while not _ASKPASS_LOG_THREAD_STOP.wait(1.0):
         forward_askpass_log_to_logger(logger)

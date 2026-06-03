@@ -1095,135 +1095,6 @@ class TerminalWidget(Gtk.Box):
             logger.error(f"SSH connection failed: {e}")
             GLib.idle_add(self._on_connection_failed, str(e))
 
-    def _prepare_key_for_native_mode(self):
-        """Ensure explicit keys are unlocked when native SSH mode is active."""
-        connection = getattr(self, 'connection', None)
-        if not connection:
-            return
-
-        try:
-            auth_method = int(getattr(connection, 'auth_method', 0) or 0)
-        except Exception:
-            auth_method = 0
-        if auth_method == 1:
-            logger.debug("Password auth selected; skipping native key preload")
-            return
-
-        if bool(getattr(connection, 'pubkey_auth_no', False)):
-            logger.debug("Public key auth disabled; skipping native key preload")
-            return
-
-        if getattr(connection, 'identity_agent_disabled', False):
-            logger.debug("IdentityAgent disabled; skipping native key preload")
-            return
-
-        manager = getattr(self, 'connection_manager', None)
-        if not manager or not hasattr(manager, 'prepare_key_for_connection'):
-            return
-
-        try:
-            key_select_mode = int(getattr(connection, 'key_select_mode', 0) or 0)
-        except Exception:
-            key_select_mode = 0
-
-        if key_select_mode not in (1, 2):
-            candidate_keys = self._resolve_native_identity_candidates()
-            attempted = False
-
-            for candidate in candidate_keys:
-                expanded = os.path.expanduser(candidate)
-                if not os.path.isfile(expanded):
-                    logger.debug(
-                        "Identity candidate not found for native key preload: %s",
-                        candidate,
-                    )
-                    continue
-
-                attempted = True
-
-                try:
-                    prepared = manager.prepare_key_for_connection(expanded)
-                except Exception as exc:
-                    logger.warning(
-                        "Failed to prepare key for native SSH connection (%s): %s",
-                        expanded,
-                        exc,
-                    )
-                    continue
-
-                if prepared:
-                    logger.debug(
-                        "Prepared key for native SSH connection: %s",
-                        expanded,
-                    )
-                    return
-
-                logger.warning(
-                    "Key could not be prepared for native SSH connection: %s",
-                    expanded,
-                )
-
-            if not attempted:
-                logger.debug("No matching identity files found for native key preload")
-
-            return
-
-        keyfile = getattr(connection, 'keyfile', '') or ''
-        if not keyfile or keyfile.startswith('Select key file'):
-            return
-
-        expanded_keyfile = os.path.expanduser(keyfile)
-        key_path = expanded_keyfile if os.path.isfile(expanded_keyfile) else keyfile
-        if not os.path.isfile(key_path):
-            logger.debug("Explicit key not found on disk, skipping native preload: %s", keyfile)
-            return
-
-        try:
-            prepared = manager.prepare_key_for_connection(key_path)
-        except Exception as exc:
-            logger.warning("Failed to prepare key for native SSH connection: %s", exc)
-            return
-
-        if prepared:
-            logger.debug("Prepared key for native SSH connection: %s", key_path)
-        else:
-            logger.warning("Key could not be prepared for native SSH connection: %s", key_path)
-
-    def _resolve_native_identity_candidates(self) -> List[str]:
-        """Return identity file candidates for native SSH preload attempts."""
-
-        connection = getattr(self, 'connection', None)
-        if not connection:
-            return []
-
-        candidates: List[str] = []
-        try:
-            resolved = getattr(connection, 'resolved_identity_files', [])
-        except Exception:
-            resolved = []
-
-        if isinstance(resolved, (list, tuple)):
-            for value in resolved:
-                expanded = os.path.expanduser(str(value))
-                if os.path.isfile(expanded) and expanded not in candidates:
-                    candidates.append(expanded)
-
-        if candidates:
-            return candidates
-
-        if hasattr(connection, 'collect_identity_file_candidates'):
-            try:
-                fallback = connection.collect_identity_file_candidates()
-            except Exception:
-                fallback = []
-
-            for value in fallback:
-                expanded = os.path.expanduser(str(value))
-                if os.path.isfile(expanded) and expanded not in candidates:
-                    candidates.append(expanded)
-
-        return candidates
-
     def _setup_ssh_terminal(self):
         """Set up terminal with direct SSH command using ssh_connection_builder (called from main thread)"""
         try:
@@ -1295,7 +1166,6 @@ class TerminalWidget(Gtk.Box):
             quick_connect_mode = bool(getattr(self.connection, 'quick_connect_command', ''))
             if native_mode_enabled:
                 quick_connect_mode = False
-                self._prepare_key_for_native_mode()
             password_auth_selected = False
             has_saved_password = False
             password_value = None
@@ -1617,9 +1487,11 @@ class TerminalWidget(Gtk.Box):
                     env["SSH_ASKPASS_REQUIRE"] = "never"
                     logger.warning("sshpass not available; falling back to interactive password prompt")
             
-            # Enable askpass log forwarding if using askpass
+            # Enable askpass log forwarding if using askpass. Only forward new
+            # lines — the log persists for the session, so replaying existing
+            # content would dump unrelated history into the console.
             if ssh_conn_cmd and ssh_conn_cmd.use_askpass:
-                self._enable_askpass_log_forwarding(include_existing=True)
+                self._enable_askpass_log_forwarding(include_existing=False)
             
             # Set TERM to a proper value only if missing or set to "dumb"
             if 'TERM' not in env or env.get('TERM', '').lower() == 'dumb':
@@ -1632,6 +1504,60 @@ class TerminalWidget(Gtk.Box):
                 if '/app/bin' not in current_path:
                     env['PATH'] = f"/app/bin:{current_path}"
             
+            # Native mode runs a pre-built `ssh host` and does NOT go through
+            # build_ssh_connection's env, so it never gets SSH_ASKPASS. For
+            # key-based auth, wire up askpass directly (same pattern as SCP /
+            # ssh-copy-id): SSH then calls the askpass helper for the key
+            # passphrase → keyring autofill (built-in prompt as fallback).
+            # Skipped for password auth, quick-connect, or when disabled.
+            if (
+                native_mode_enabled
+                and not password_auth_selected
+                and not quick_connect_mode
+                and not password_value
+            ):
+                try:
+                    use_askpass_setting = bool(self.config.get_setting('use-askpass', True))
+                except Exception:
+                    use_askpass_setting = True
+                if use_askpass_setting:
+                    try:
+                        from .askpass_utils import get_ssh_env_with_askpass
+                        env.update(get_ssh_env_with_askpass("prefer"))
+                        self._enable_askpass_log_forwarding(include_existing=False)
+
+                        # Optionally take the SSH agent out of the loop so ssh loads
+                        # the key from disk and calls our askpass (→ keyring autofill).
+                        # gnome-keyring otherwise advertises the key but refuses to
+                        # sign it when locked ("agent refused operation"), and ssh
+                        # won't fall back to the file → auth fails.
+                        #
+                        # Only do this when the user isn't relying on the agent:
+                        #   - skip if the connection forwards the agent (ForwardAgent);
+                        #   - skip if the host has an explicit IdentityAgent directive
+                        #     (respect the user's chosen agent — incl. their own
+                        #     'none', which already disables it via config).
+                        # SSH_AUTH_SOCK alone isn't enough since ~/.ssh/config's
+                        # IdentityAgent overrides the env, so we also pass
+                        # `-o IdentityAgent=none` (highest precedence) when bypassing.
+                        forward_agent = bool(getattr(self.connection, 'forward_agent', False))
+                        explicit_identity_agent = bool(
+                            (getattr(self.connection, 'identity_agent_directive', '') or '').strip()
+                        )
+                        if not forward_agent and not explicit_identity_agent:
+                            env.pop('SSH_AUTH_SOCK', None)
+                            if 'IdentityAgent=none' not in ssh_cmd:
+                                ssh_cmd[1:1] = ['-o', 'IdentityAgent=none']
+                            logger.debug("Native key connection: askpass + agent bypassed (IdentityAgent=none)")
+                        else:
+                            logger.debug(
+                                "Native key connection: askpass applied, agent kept "
+                                "(forward_agent=%s, explicit IdentityAgent=%s)",
+                                forward_agent, explicit_identity_agent,
+                            )
+                    except Exception as exc:
+                        logger.debug("Failed to apply askpass env for native connection: %s", exc)
+
             # Convert environment dict to list format expected by VTE
             env_list = []
             for key, value in env.items():
