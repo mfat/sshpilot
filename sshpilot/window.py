@@ -188,130 +188,6 @@ def _quote_remote_path_for_shell(path: str) -> str:
     return shlex.quote(normalized)
 
 
-def _resolve_ssh_copy_id_askpass_env(connection, ssh_key, connection_manager):
-    """Return askpass environment and force status for ssh-copy-id launches."""
-
-    from .askpass_utils import (
-        get_ssh_env_with_askpass,
-        get_ssh_env_with_forced_askpass,
-        lookup_passphrase,
-    )
-
-    agent_disabled = bool(getattr(connection, 'identity_agent_disabled', False))
-    manager_agent_disabled = bool(
-        getattr(connection_manager, 'identity_agent_disabled', False)
-    ) if connection_manager else False
-
-    requires_force = agent_disabled or manager_agent_disabled
-
-    askpass_env = (
-        get_ssh_env_with_forced_askpass()
-        if requires_force
-        else get_ssh_env_with_askpass()
-    )
-
-    if not requires_force:
-        return askpass_env, requires_force, askpass_env.get('SSH_ASKPASS_REQUIRE') == 'force'
-
-    key_passphrase = getattr(connection, 'key_passphrase', '') or ''
-    passphrase_available = bool(key_passphrase)
-    identity_candidates: List[str] = []
-
-    def _append_candidate(candidate: Any) -> None:
-        if not candidate:
-            return
-        expanded = os.path.expanduser(str(candidate))
-        if expanded not in identity_candidates:
-            identity_candidates.append(expanded)
-
-    if ssh_key:
-        _append_candidate(getattr(ssh_key, 'private_path', ''))
-
-    _append_candidate(getattr(connection, 'keyfile', ''))
-
-    try:
-        resolved = getattr(connection, 'resolved_identity_files', [])
-    except Exception:
-        resolved = []
-
-    if isinstance(resolved, (list, tuple, set)):
-        for candidate in resolved:
-            _append_candidate(candidate)
-
-    if (
-        key_passphrase
-        and identity_candidates
-        and connection_manager
-        and hasattr(connection_manager, 'store_key_passphrase')
-    ):
-        for candidate in identity_candidates:
-            try:
-                connection_manager.store_key_passphrase(candidate, key_passphrase)
-                logger.debug(
-                    'IdentityAgent disabled: refreshed stored passphrase for %s',
-                    candidate,
-                )
-            except Exception as exc:
-                logger.debug(
-                    'IdentityAgent disabled: failed to refresh stored passphrase for %s: %s',
-                    candidate,
-                    exc,
-                )
-
-    if not passphrase_available:
-        for candidate in identity_candidates:
-            looked_up = ''
-            try:
-                looked_up = lookup_passphrase(candidate)
-            except Exception as exc:
-                logger.debug(
-                    'Passphrase lookup via askpass_utils failed for %s: %s',
-                    candidate,
-                    exc,
-                )
-
-            if looked_up:
-                logger.debug(
-                    'IdentityAgent disabled: located stored passphrase for %s',
-                    candidate,
-                )
-                passphrase_available = True
-                break
-
-            if (
-                connection_manager
-                and hasattr(connection_manager, 'get_key_passphrase')
-            ):
-                try:
-                    stored = connection_manager.get_key_passphrase(candidate)
-                except Exception as exc:
-                    logger.debug(
-                        'Connection manager passphrase lookup failed for %s: %s',
-                        candidate,
-                        exc,
-                    )
-                    stored = None
-                if stored:
-                    logger.debug(
-                        'IdentityAgent disabled: connection manager supplied passphrase for %s',
-                        candidate,
-                    )
-                    passphrase_available = True
-                    break
-
-    if not passphrase_available:
-        askpass_env.pop('SSH_ASKPASS_REQUIRE', None)
-        logger.info(
-            'SSH askpass helper could not supply a key passphrase; allowing interactive prompt instead',
-        )
-    else:
-        logger.debug(
-            'IdentityAgent disabled: keeping forced askpass to deliver stored passphrase',
-        )
-
-    return askpass_env, requires_force, askpass_env.get('SSH_ASKPASS_REQUIRE') == 'force'
-
-
 def list_remote_files(
     host: str,
     user: str,
@@ -1102,7 +978,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             widget.remove_css_class(name)
 
 
-
     def _first_connection_row(self) -> Optional[Gtk.ListBoxRow]:
         """Return the first row in the connection list that is a connection.
 
@@ -1407,10 +1282,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         }
         dialog.connect('response', self.on_delete_connection_response, payload)
         dialog.present()
-
-
-
-
 
 
     def _on_connection_list_key_pressed(self, controller, keyval, keycode, state):
@@ -3441,7 +3312,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.config.connect('setting-changed', self.on_setting_changed)
 
 
-
     def show_welcome_view(self):
         """Show the welcome/help view when no connections are active"""
         # Remove terminal background styling so welcome uses app theme colors
@@ -3741,7 +3611,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         )
         dialog.connect('connection-saved', self.on_connection_saved)
         dialog.present()
-
 
 
     def _prompt_group_edit_options(self, connection: Connection, block_info: Dict[str, Any]):
@@ -4113,7 +3982,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             pass2.set_property("placeholder-text", _("Confirm passphrase"))
             pass_box.append(pass1); pass_box.append(pass2)
             pass_box.set_visible(False)
-
 
 
             def on_pass_toggle(*_):
@@ -5434,7 +5302,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             logger.error(f"Failed to toggle sidebar visibility: {e}")
 
 
-
     def on_scp_button_clicked(self, button):
         """Prompt the user to choose between uploading or downloading with scp."""
         try:
@@ -6617,27 +6484,31 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 # Don't set any askpass environment variables
                 logger.debug("Main window: Password auth selected but no saved password - using interactive prompt")
             else:
-                # Use askpass for passphrase prompts (key-based auth)
-                logger.debug("Main window: Using askpass for key-based authentication")
-                askpass_env, requires_force, force_active = _resolve_ssh_copy_id_askpass_env(
+                # Key-based auth: use the shared native auth resolver so
+                # ssh-copy-id authenticates exactly like the terminal and SCP -
+                # askpass + keyring autofill, plus the agent bypass that prevents
+                # gnome-keyring's "agent refused operation" from blocking a locked
+                # key. ssh-copy-id requires its -o options before the target.
+                logger.debug("Main window: Using shared native auth for key-based ssh-copy-id")
+                from .ssh_connection_builder import resolve_native_auth
+
+                auth = resolve_native_auth(
                     connection,
-                    ssh_key,
                     getattr(self, 'connection_manager', None),
+                    getattr(self, 'config', None),
                 )
+                env.update(auth.env)
+                # dict.update() can't remove keys; honor the resolver's deletions
+                # (e.g. SSH_AUTH_SOCK dropped when the agent is bypassed).
+                for _k in ('SSH_ASKPASS', 'SSH_ASKPASS_REQUIRE', 'SSH_AUTH_SOCK'):
+                    if _k not in auth.env:
+                        env.pop(_k, None)
+                if auth.extra_opts:
+                    argv[-1:-1] = auth.extra_opts
                 logger.debug(
-                    "Main window: Askpass environment variables: %s",
-                    list(askpass_env.keys()),
+                    "Main window: ssh-copy-id native auth (askpass=%s, agent_bypass=%s)",
+                    auth.use_askpass, bool(auth.extra_opts),
                 )
-                env.update(askpass_env)
-                if requires_force:
-                    if force_active:
-                        logger.debug(
-                            "IdentityAgent disabled for this host; forcing SSH askpass usage",
-                        )
-                    else:
-                        logger.debug(
-                            "IdentityAgent disabled but no stored passphrase was located; allowing interactive prompt",
-                        )
 
             ensure_writable_ssh_home(env)
 
@@ -8542,7 +8413,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             dialog.close()
 
 
-
     def on_open_new_connection_action(self, action, param=None):
         """Open a new tab for the selected connection via context menu."""
         try:
@@ -10276,7 +10146,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception as e:
             logger.error(f"Failed to get user preferred terminal: {e}")
             return None
-
 
 
     def _show_terminal_error_dialog(self):
