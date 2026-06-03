@@ -585,17 +585,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         effective_isolated = isolated or bool(self.config.get_setting('ssh.use_isolated_config', False))
         key_dir = Path(get_config_dir()) if effective_isolated else None
         self.connection_manager = ConnectionManager(self.config, isolated_mode=effective_isolated)
-        # Ensure native connect preference is propagated to the connection manager
-        try:
-            native_cfg = bool(self.config.get_setting('ssh.native_connect', True))
-        except Exception:
-            native_cfg = True
-        app_native = None
-        if app is not None and hasattr(app, 'native_connect_enabled'):
-            app_native = bool(app.native_connect_enabled)
-        self.connection_manager.native_connect_enabled = app_native if app_native is not None else native_cfg
-        if app is not None and app_native is None:
-            app.native_connect_enabled = native_cfg
         self.key_manager = KeyManager(key_dir)
         self.group_manager = GroupManager(self.config)
         self.session_manager = SessionManager(self.config)
@@ -676,35 +665,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             except (ValueError, TypeError) as e:
                 logger.error(f"Invalid max-sidebar-width value: {e}")
             return
-
-        if key != 'ssh.native_connect':
-            return
-
-        bool_value = bool(value)
-        app = self.get_application()
-        override = None
-        if app is not None and hasattr(app, 'native_connect_override'):
-            override = app.native_connect_override
-
-        effective = bool_value if override is None else bool(override)
-
-        if app is not None and hasattr(app, 'native_connect_enabled'):
-            if override is None:
-                app.native_connect_enabled = bool_value
-            else:
-                app.native_connect_enabled = effective
-
-        if hasattr(self.connection_manager, 'native_connect_enabled'):
-            self.connection_manager.native_connect_enabled = effective
-
-        # Install sidebar CSS
-        try:
-            self._install_sidebar_css()
-        except Exception as e:
-            logger.error(f"Failed to install sidebar CSS: {e}")
-
-        # Ensure startup behaviors run at least once
-        self._schedule_startup_tasks()
 
     def _schedule_startup_tasks(self):
         """Schedule one-time startup behaviors such as focus and welcome state."""

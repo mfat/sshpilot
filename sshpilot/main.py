@@ -109,7 +109,7 @@ class SshPilotApplication(Adw.Application):
     """Main application class for sshPilot"""
 
     def __init__(self, verbose: bool = False, quiet: bool = False,
-                 isolated: bool = False, native_connect: bool = False):
+                 isolated: bool = False):
         super().__init__(
             application_id='io.github.mfat.sshpilot',
             flags=Gio.ApplicationFlags.FLAGS_NONE
@@ -120,10 +120,6 @@ class SshPilotApplication(Adw.Application):
         self.verbose_override = verbose and not quiet
         self.quiet_override = quiet and not verbose
         self.isolated_mode = isolated
-
-        # Track whether native connect mode should be used for this run
-        self.native_connect_override = True if native_connect else None
-        self.native_connect_enabled = bool(native_connect)
 
         # Set up logging
         self.setup_logging()
@@ -167,24 +163,8 @@ class SshPilotApplication(Adw.Application):
 
             configured_isolated = bool(cfg.get_setting('ssh.use_isolated_config', False))
             self.isolated_mode = bool(isolated or configured_isolated)
-
-            # Update native connect state from configuration when not overridden
-            try:
-                native_cfg = bool(cfg.get_setting('ssh.native_connect', True))
-            except Exception:
-                native_cfg = True
-            if self.native_connect_override is None:
-                self.native_connect_enabled = native_cfg
-            elif self.native_connect_enabled is False and native_cfg:
-                # If config enables it and override is False-equivalent, honor override
-                self.native_connect_enabled = bool(self.native_connect_override)
-            else:
-                # Override already active, ensure attribute is boolean
-                self.native_connect_enabled = bool(self.native_connect_enabled or native_cfg)
         except Exception:
             self.isolated_mode = bool(isolated)
-            if self.native_connect_override is None:
-                self.native_connect_enabled = bool(native_connect)
 
         # Create actions with keyboard shortcuts
         # Use platform-specific shortcuts for better macOS compatibility
@@ -989,17 +969,11 @@ def main():
         help="Only show warnings and errors (overrides config)",
     )
     parser.add_argument("--isolated", action="store_true", help="Use isolated SSH configuration")
-    parser.add_argument(
-        "--native-connect",
-        action="store_true",
-        help="Use experimental native SSH command execution (ssh Host)",
-    )
     args = parser.parse_args()
     app = SshPilotApplication(
         verbose=args.verbose,
         quiet=args.quiet,
         isolated=args.isolated,
-        native_connect=args.native_connect,
     )
     return app.run(None)  # Pass None to use default command line arguments
 

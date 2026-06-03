@@ -623,10 +623,6 @@ class ConnectionManager(GObject.Object):
         self._active_connection_keys: Dict[int, str] = {}
         self.ssh_config_path = ''
         self.known_hosts_path = ''
-        try:
-            self.native_connect_enabled = bool(self.config.get_setting('ssh.native_connect', True))
-        except Exception:
-            self.native_connect_enabled = True
 
         # Track credential storage state
         self.libsecret_available = False

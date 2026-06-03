@@ -181,22 +181,6 @@ def test_native_connect_appends_overrides_even_when_native_disabled(monkeypatch)
     ]
 
 
-def test_native_connect_enabled_by_default(tmp_path, monkeypatch):
-    from sshpilot.config import Config
-
-    monkeypatch.setattr('sshpilot.config.get_config_dir', lambda: str(tmp_path))
-
-    config = Config.__new__(Config)
-    config.use_gsettings = False
-    config.settings = None
-    config.config_file = str(tmp_path / 'config.json')
-    config.config_data = config.get_default_config()
-
-    ssh_config = config.get_ssh_config()
-
-    assert ssh_config['native_connect'] is True
-
-
 def test_dynamic_forwarding_uses_configured_keepalive(monkeypatch):
     executed_commands = []
 
