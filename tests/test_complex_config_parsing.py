@@ -8,8 +8,27 @@ This module builds a realistic ~/.ssh/config hierarchy with:
 
 Then it exercises the full parsing pipeline and systematically probes every
 identified edge case, including ones that expose real bugs in the current
-implementation.  Each failing test is marked with the bug description so it
-can be tracked separately.
+implementation.
+
+Bug findings are verified against the ssh_config(5) man page.  The format
+section states explicitly:
+
+    "Configuration options may be separated by whitespace or optional
+    whitespace and exactly one '='"
+
+    "It is possible to have multiple identity files specified in
+    configuration files; all these identities will be tried in sequence."
+
+Three confirmed real bugs (all silent discards with no warning):
+  1. Tab separator  – `HostName\\tvalue` is dropped; entire block may vanish
+  2. `=` separator  – `Port=22` and `Port = 22` are both spec-valid but broken
+  3. Multiple IdentityFile – only the last key is kept; earlier ones are lost
+
+Not bugs per this spec version (linux.die.net / OpenSSH 5.x era):
+  - ForwardAgent path  – spec says "must be yes or no" (socket-path support
+    was added in OpenSSH 8.4, not covered by this man page)
+  - RemoteForward single arg – spec requires two arguments
+  - Empty Host block  – valid no-op; silently discarding it is correct UX
 """
 
 import asyncio
@@ -137,38 +156,29 @@ Host corp-server
 """
 
 # 50-edge.conf (intentional edge cases) ------------------------------------
-# NOTE: Several items here expose parser bugs documented in the tests below.
+# NOTE: Items here expose the three confirmed parser bugs (tab separator,
+# = separator, multiple IdentityFile) documented and verified against the
+# ssh_config(5) man page.
 EDGE_CONFIG = """\
-# Edge case: tab-separated key and value (valid in OpenSSH, bug in parser)
+# BUG 1: tab-separated key and value – valid per spec, broken in parser
 Host tab-host
 \tHostName\ttab.example.com
 \tPort\t2222
 
-# Edge case: = as key/value separator (valid in OpenSSH, bug in parser)
+# BUG 2a: = separator, no spaces – valid per spec ("optional whitespace and
+# exactly one ="), broken in parser
 Host eq-host
     Port=2222
     HostName=eq.example.com
 
-# Edge case: multiple IdentityFile lines (only last survives in parser)
+# BUG 3: multiple IdentityFile lines – spec says "all tried in sequence",
+# parser keeps only the last
 Host multi-key
     HostName multi.example.com
     IdentityFile ~/.ssh/id_rsa
     IdentityFile ~/.ssh/id_ed25519
 
-# Edge case: ForwardAgent with socket path (treated as falsy by parser)
-Host agent-path
-    HostName agent.example.com
-    ForwardAgent /tmp/ssh-agent.sock
-
-# Edge case: RemoteForward with only a port (no destination – silently dropped)
-Host tunnel-no-dest
-    HostName nodest.example.com
-    RemoteForward 9999
-
-# Edge case: empty Host block (no options at all)
-Host empty-block
-
-# Edge case: Host block at end of file without trailing newline
+# Host block at end of file without trailing newline (must not be lost)
 Host no-trailing-newline
     HostName ntnl.example.com"""
 
@@ -195,16 +205,14 @@ class TestComplexConfigLoading:
     def test_all_regular_hosts_loaded(self, complex_cm):
         cm, *_ = complex_cm
         names = {c.nickname for c in cm.connections}
-        # Note: tab-host, eq-host, and empty-block are NOT loaded due to parser
-        # limitations documented in TestEdgeCases below.
+        # tab-host and eq-host are absent due to confirmed parser bugs.
         expected = {
             "bastion",
             "work-db", "work-app", "work-ci",
             "personal-dev", "quoted host",
             "socks-proxy", "socks-proxy-bind", "reverse-tunnel",
             "corp-server",
-            "multi-key", "agent-path",
-            "tunnel-no-dest", "no-trailing-newline",
+            "multi-key", "no-trailing-newline",
         }
         assert expected.issubset(names), f"Missing: {expected - names}"
 
@@ -226,10 +234,9 @@ class TestComplexConfigLoading:
     def test_total_connection_count(self, complex_cm):
         cm, *_ = complex_cm
         # 1 bastion + 2 work (work-db/work-app) + 1 work-ci + 2 personal +
-        # 3 tunnels + 1 corp + 4 edge (multi-key, agent-path, tunnel-no-dest,
-        # no-trailing-newline) = 14
-        # tab-host, eq-host, and empty-block are excluded due to parser bugs.
-        assert len(cm.connections) == 14
+        # 3 tunnels + 1 corp + 2 edge (multi-key, no-trailing-newline) = 12
+        # tab-host and eq-host are absent due to confirmed parser bugs.
+        assert len(cm.connections) == 12
 
 
 # ===========================================================================
@@ -501,25 +508,34 @@ class TestMatchBlock:
 
 
 # ===========================================================================
-# 11. Edge cases – documented parser bugs
+# 11. Edge cases
+#
+# Three confirmed bugs verified against ssh_config(5):
+#   BUG 1 – Tab separator      (spec: "whitespace" = space or tab)
+#   BUG 2 – `=` separator      (spec: "optional whitespace and exactly one =")
+#   BUG 3 – Multiple IdentityFile (spec: "all identities tried in sequence")
+#
+# The following were previously listed as bugs but are NOT bugs per the spec:
+#   - ForwardAgent path: spec says "must be yes or no" for this version
+#   - RemoteForward single arg: spec requires both arguments
+#   - Empty Host block: valid no-op; silently discarding it is correct UX
 # ===========================================================================
 
 class TestEdgeCases:
 
-    # BUG: Tab as key/value separator is valid in OpenSSH config but not
-    # recognised by the parser (checks `' ' in line` which misses tabs).
+    # -----------------------------------------------------------------------
+    # BUG 1 – Tab separator
+    # -----------------------------------------------------------------------
+
     def test_tab_separated_kv_bug_host_entirely_absent(self, tmp_path):
         """
-        KNOWN BUG (severe): When ALL options in a Host block are tab-separated
-        (e.g. `HostName\\texample.com`), the parser finds no space-delimited
-        key/value pairs. Because `load_ssh_config` only flushes a Host block
-        when `current_config` is non-empty, the entire host is silently
-        discarded — not just the individual option values.
-
-        The parser condition is `if ' ' in line:` — tabs are not spaces.
+        BUG 1 (severe): The spec says options may be separated by whitespace,
+        which includes tabs.  The parser checks `' ' in line` (ASCII space
+        only).  When every option in a block uses a tab separator, no option
+        populates current_config, so the entire Host block is silently
+        discarded rather than just losing individual values.
         """
         main = tmp_path / "config"
-        # Use actual tab characters in the option lines
         main.write_text(
             "Host tab-only\n"
             "\tHostName\ttab.example.com\n"
@@ -529,17 +545,16 @@ class TestEdgeCases:
         cm.ssh_config_path = str(main)
         cm.load_ssh_config()
         c = conn_by_nickname(cm, "tab-only")
-        # Document the current (buggy) behaviour: host is NOT created at all
         assert c is None, (
-            "BUG: tab-separated options cause the entire Host block to be "
+            "BUG 1: tab-separated options cause the entire Host block to be "
             "silently discarded (current_config stays empty, flush is skipped)"
         )
 
-    def test_tab_separated_kv_mixed_still_parses_space_options(self, tmp_path):
+    def test_tab_separated_kv_mixed_host_created_but_tab_options_lost(self, tmp_path):
         """
-        When a Host block mixes tab-separated and space-separated options,
-        only the space-separated ones survive.  The Host block IS created
-        because at least one option populates current_config.
+        BUG 1 (partial): When a block mixes tab and space options, the block
+        IS created (because at least one space-delimited option populates
+        current_config), but every tab-separated option is silently dropped.
         """
         main = tmp_path / "config"
         main.write_text(
@@ -551,19 +566,20 @@ class TestEdgeCases:
         cm.ssh_config_path = str(main)
         cm.load_ssh_config()
         c = conn_by_nickname(cm, "tab-mixed")
-        assert c is not None, "Host block with at least one space option should be created"
+        assert c is not None, "Host block with at least one space option should survive"
         assert c.port == 2222
-        # HostName was tab-separated and dropped
-        assert c.hostname == "", "BUG: tab-separated HostName is silently dropped"
+        assert c.hostname == "", "BUG 1: tab-separated HostName is silently dropped"
 
-    # BUG: `=` as key/value separator (e.g. `Port=2222`) is valid in OpenSSH
-    # but the parser requires a space character.
-    def test_equals_separator_kv_bug_host_entirely_absent(self, tmp_path):
+    # -----------------------------------------------------------------------
+    # BUG 2 – `=` separator
+    # -----------------------------------------------------------------------
+
+    def test_equals_no_spaces_host_entirely_absent(self, tmp_path):
         """
-        KNOWN BUG (severe): When ALL options in a Host block use `=` as the
-        separator (e.g. `Port=2222`), `' ' in line` is False for every option
-        line.  current_config stays empty and the entire Host block is
-        silently discarded.
+        BUG 2a (severe): The spec explicitly allows `keyword=value` (no
+        surrounding spaces).  When every option in a block uses this form,
+        `' ' in line` is False for each, current_config stays empty, and the
+        entire Host block is silently discarded.
         """
         main = tmp_path / "config"
         main.write_text(
@@ -576,19 +592,19 @@ class TestEdgeCases:
         cm.load_ssh_config()
         c = conn_by_nickname(cm, "eq-only")
         assert c is None, (
-            "BUG: `=`-separated options cause the entire Host block to be "
+            "BUG 2a: `keyword=value` options cause the entire Host block to be "
             "silently discarded"
         )
 
-    def test_equals_separator_mixed_still_parses_space_options(self, tmp_path):
+    def test_equals_no_spaces_mixed_host_created_but_eq_options_lost(self, tmp_path):
         """
-        When a Host block mixes `=`-separated and space-separated options,
-        only the space-separated ones survive.
+        BUG 2a (partial): Mixed block — space-separated options survive, the
+        `=`-separated ones are silently dropped.
         """
         main = tmp_path / "config"
         main.write_text(
             "Host eq-mixed\n"
-            "    HostName=eqmixed.example.com\n"  # = separator – dropped
+            "    HostName=eqmixed.example.com\n"  # no-space = – dropped
             "    Port 2222\n"                       # space – kept
         )
         cm = make_cm()
@@ -597,63 +613,101 @@ class TestEdgeCases:
         c = conn_by_nickname(cm, "eq-mixed")
         assert c is not None
         assert c.port == 2222
-        assert c.hostname == "", "BUG: =-separated HostName is silently dropped"
+        assert c.hostname == "", "BUG 2a: `keyword=value` HostName is silently dropped"
+
+    def test_equals_with_spaces_crashes_parse_and_discards_host(self, tmp_path):
+        """
+        BUG 2b (severe): The spec allows `keyword = value` (whitespace around
+        the `=`).  This form has a space so it clears the `' ' in line` check,
+        but `split(maxsplit=1)` gives `key='port'` and `value='= 2222'`.
+
+        The `=` ends up inside the value string.  When parse_host_config then
+        calls `int('= 2222')` it raises ValueError.  The outer except in
+        parse_host_config catches this and returns None — the entire host is
+        silently discarded, not just the port value.
+        """
+        main = tmp_path / "config"
+        main.write_text(
+            "Host spaced-eq\n"
+            "    HostName spacedeq.example.com\n"
+            "    Port = 2222\n"  # spec-valid; crashes parser
+        )
+        cm = make_cm()
+        cm.ssh_config_path = str(main)
+        cm.load_ssh_config()
+        c = conn_by_nickname(cm, "spaced-eq")
+        assert c is None, (
+            "BUG 2b: `Port = 2222` (spaced-equals form) is spec-valid but "
+            "int('= 2222') crashes parse_host_config, silently discarding the "
+            "whole host"
+        )
+
+    # -----------------------------------------------------------------------
+    # BUG 3 – Multiple IdentityFile
+    # -----------------------------------------------------------------------
 
     def test_multiple_identityfile_only_last_survives(self, complex_cm):
         """
-        KNOWN LIMITATION: SSH config allows multiple IdentityFile lines and
-        OpenSSH tries each in order.  The parser stores only the last value
-        because it treats IdentityFile as a single-value option.
+        BUG 3: The spec states "all these identities will be tried in
+        sequence".  The parser stores IdentityFile as a plain string (not a
+        list), so each new line overwrites the previous.  Only the last key is
+        kept; earlier ones are silently lost.
         """
         cm, *_ = complex_cm
         c = conn_by_nickname(cm, "multi-key")
         assert c is not None
-        # Only the last IdentityFile survives
         assert "id_ed25519" in c.keyfile, (
-            "LIMITATION: last IdentityFile wins (id_ed25519); "
-            "id_rsa is silently discarded"
+            "BUG 3: last IdentityFile wins (id_ed25519); id_rsa is silently lost"
         )
-        assert "id_rsa" not in c.keyfile or "id_ed25519" in c.keyfile
+        assert "id_rsa" not in c.keyfile
 
-    def test_forwardagent_socket_path_treated_as_false(self, complex_cm):
+    # -----------------------------------------------------------------------
+    # Non-bugs confirmed against spec
+    # -----------------------------------------------------------------------
+
+    def test_forwardagent_yes_no_only_per_spec(self, tmp_path):
         """
-        KNOWN BUG: When ForwardAgent is set to a socket path
-        (`ForwardAgent /tmp/ssh-agent.sock`), OpenSSH treats it as agent
-        forwarding enabled with that specific socket.  The parser only
-        recognises yes/true/1/on and a path value is therefore treated as
-        falsy (forward_agent = False).
+        The ssh_config(5) man page states ForwardAgent "must be yes or no".
+        The parser correctly accepts yes/no.  Socket-path support (OpenSSH 8.4+)
+        is outside this spec version, so no bug is raised here.
         """
-        cm, *_ = complex_cm
-        c = conn_by_nickname(cm, "agent-path")
+        main = tmp_path / "config"
+        main.write_text(
+            "Host fa-yes\n    HostName fa.example.com\n    ForwardAgent yes\n"
+        )
+        cm = make_cm()
+        cm.ssh_config_path = str(main)
+        cm.load_ssh_config()
+        c = conn_by_nickname(cm, "fa-yes")
         assert c is not None
-        # Current (buggy) behaviour: forward_agent is False for a path
-        assert c.forward_agent is False, (
-            "BUG: ForwardAgent /tmp/ssh-agent.sock should be truthy "
-            "but the parser returns False"
-        )
+        assert c.forward_agent is True
 
-    def test_remoteforward_single_port_only_silently_dropped(self, complex_cm):
+    def test_remoteforward_requires_two_args_per_spec(self, tmp_path):
         """
-        KNOWN BUG: `RemoteForward 9999` (no destination side) is a valid
-        OpenSSH directive for a remote-only tunnel.  The parser expects two
-        whitespace-separated parts; a single part is silently ignored.
+        The spec says RemoteForward requires both [bind_address:]port AND
+        host:hostport.  A single-argument form is not defined in this spec
+        version, so the parser silently skipping it is correct behaviour.
         """
-        cm, *_ = complex_cm
-        c = conn_by_nickname(cm, "tunnel-no-dest")
+        main = tmp_path / "config"
+        main.write_text(
+            "Host rfwd\n"
+            "    HostName rfwd.example.com\n"
+            "    RemoteForward 2222 localhost:22\n"  # two-arg form – must work
+        )
+        cm = make_cm()
+        cm.ssh_config_path = str(main)
+        cm.load_ssh_config()
+        c = conn_by_nickname(cm, "rfwd")
         assert c is not None
-        remote_rules = [r for r in c.forwarding_rules if r["type"] == "remote"]
-        assert remote_rules == [], (
-            "BUG: RemoteForward 9999 (single-part) should produce a remote "
-            "rule but is silently dropped"
-        )
+        remote = [r for r in c.forwarding_rules if r["type"] == "remote"]
+        assert len(remote) == 1
+        assert remote[0]["listen_port"] == 2222
 
-    def test_empty_host_block_silently_discarded(self, tmp_path):
+    def test_empty_host_block_is_silent_noop(self, tmp_path):
         """
-        KNOWN BUG: A Host block with no options is silently discarded.
-
-        `load_ssh_config` flushes the previous block only when both
-        `current_hosts` AND `current_config` are truthy.  An empty dict is
-        falsy, so a host with zero options is never registered.
+        An empty Host block has no options to display; the app discarding it
+        is correct UX behaviour (nothing to put in the connection list).
+        The subsequent host with options must not be affected.
         """
         main = tmp_path / "config"
         main.write_text(
@@ -665,10 +719,12 @@ class TestEdgeCases:
         cm = make_cm()
         cm.ssh_config_path = str(main)
         cm.load_ssh_config()
-        ghost = conn_by_nickname(cm, "ghost")
-        real = conn_by_nickname(cm, "real")
-        assert ghost is None, "BUG: empty Host block should create a connection but is silently discarded"
-        assert real is not None, "Host block with options should still be created"
+        assert conn_by_nickname(cm, "ghost") is None
+        assert conn_by_nickname(cm, "real") is not None
+
+    # -----------------------------------------------------------------------
+    # Other syntax edge cases
+    # -----------------------------------------------------------------------
 
     def test_host_block_without_trailing_newline_parsed(self, complex_cm):
         """
