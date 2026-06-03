@@ -541,87 +541,23 @@ class TerminalWidget(Gtk.Box):
         # terminal natural height (which would otherwise resize split panes).
         self.overlay.add_overlay(self.disconnected_banner)
 
-        # Tips banner. Cycles through short usage tips (the first points at the
-        # connection-list shortcut) and is revealed once the terminal connects
-        # (see _reveal_connection_list_hint). Floated as an overlay like the
-        # search banner so revealing it never changes the terminal's allocated
-        # height (which would trigger a VTE SIGWINCH / column reflow).
+        # Tips banner. Cycles through short usage tips and is revealed once the
+        # terminal connects (see _reveal_connection_list_hint). Floated as an
+        # overlay so revealing it never changes the terminal's allocated height
+        # (which would trigger a VTE SIGWINCH / column reflow).
         self._connection_list_hint_handled = False
         self._tips = self._build_terminal_tips()
         self._tip_index = 0
-        self.connection_list_hint_revealer = Gtk.Revealer()
-        self.connection_list_hint_revealer.set_reveal_child(False)
-        self.connection_list_hint_revealer.set_transition_type(
-            Gtk.RevealerTransitionType.SLIDE_DOWN
-        )
-        self.connection_list_hint_revealer.set_halign(Gtk.Align.FILL)
-        self.connection_list_hint_revealer.set_valign(Gtk.Align.START)
-        self.connection_list_hint_revealer.set_hexpand(True)
 
-        # The stock ``.banner`` style class only paints a background on the
-        # real AdwBanner widget — on a plain box it renders transparent — so
-        # install our own accent-colored style once per display.
-        try:
-            display = Gdk.Display.get_default()
-            if display and not getattr(display, '_sshpilot_hint_banner_css_installed', False):
-                hint_css = Gtk.CssProvider()
-                hint_css.load_from_data(b"""
-                    .connection-list-hint-banner {
-                        background-color: @accent_bg_color;
-                        color: @accent_fg_color;
-                        padding: 6px 12px;
-                    }
-                    .connection-list-hint-banner label { color: @accent_fg_color; }
-                """)
-                Gtk.StyleContext.add_provider_for_display(
-                    display, hint_css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
-                )
-                setattr(display, '_sshpilot_hint_banner_css_installed', True)
-        except Exception:
-            pass
+        self._tips_banner = Adw.Banner()
+        self._tips_banner.set_revealed(False)
+        self._tips_banner.set_halign(Gtk.Align.FILL)
+        self._tips_banner.set_valign(Gtk.Align.START)
+        self._tips_banner.set_hexpand(True)
+        self._update_tips_banner()
+        self._tips_banner.connect('button-clicked', self._on_tips_banner_button_clicked)
 
-        hint_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        hint_box.add_css_class('connection-list-hint-banner')
-        hint_box.set_hexpand(True)
-
-        # Light-bulb marker at the start of every tip. A color emoji is used
-        # instead of a themed icon because no light-bulb symbolic is reliably
-        # available across icon themes; it also keeps its color rather than
-        # being recolored by the banner's accent text-color CSS.
-        bulb_label = Gtk.Label(label="\N{ELECTRIC LIGHT BULB}")
-        bulb_label.set_valign(Gtk.Align.CENTER)
-        hint_box.append(bulb_label)
-
-        self._tip_label = Gtk.Label()
-        self._tip_label.set_text(self._tips[self._tip_index] if self._tips else '')
-        self._tip_label.set_halign(Gtk.Align.START)
-        self._tip_label.set_valign(Gtk.Align.CENTER)
-        self._tip_label.set_hexpand(True)
-        self._tip_label.set_wrap(True)
-        hint_box.append(self._tip_label)
-
-        # Only offer "Next tip" when there's more than one to cycle through.
-        if len(self._tips) > 1:
-            hint_next_button = Gtk.Button.new_with_label(_('Next tip'))
-            hint_next_button.set_valign(Gtk.Align.CENTER)
-            hint_next_button.add_css_class('flat')
-            hint_next_button.connect('clicked', self._on_connection_list_hint_next_tip)
-            hint_box.append(hint_next_button)
-
-        hint_dismiss_button = Gtk.Button.new_with_label(_('Dismiss'))
-        hint_dismiss_button.set_valign(Gtk.Align.CENTER)
-        hint_dismiss_button.add_css_class('flat')
-        hint_dismiss_button.connect('clicked', self._on_connection_list_hint_dismiss)
-        hint_box.append(hint_dismiss_button)
-
-        hint_dont_show_button = Gtk.Button.new_with_label(_("Don't show again"))
-        hint_dont_show_button.set_valign(Gtk.Align.CENTER)
-        hint_dont_show_button.add_css_class('flat')
-        hint_dont_show_button.connect('clicked', self._on_connection_list_hint_dont_show_again)
-        hint_box.append(hint_dont_show_button)
-
-        self.connection_list_hint_revealer.set_child(hint_box)
-        self.overlay.add_overlay(self.connection_list_hint_revealer)
+        self.overlay.add_overlay(self._tips_banner)
         self.connect('connection-established', self._reveal_connection_list_hint)
 
         # Container for terminal stack only
@@ -990,6 +926,21 @@ class TerminalWidget(Gtk.Box):
                 shortcut=self._shortcut_label('shortcuts', f"{mod}+?")),
         ]
 
+    def _update_tips_banner(self):
+        """Sync the Adw.Banner title and button label with the current tip."""
+        try:
+            if not self._tips:
+                return
+            tip = self._tips[self._tip_index]
+            self._tips_banner.set_title(f"\N{ELECTRIC LIGHT BULB} {tip}")
+            is_last = self._tip_index >= len(self._tips) - 1
+            if len(self._tips) > 1 and not is_last:
+                self._tips_banner.set_button_label(_('Next tip'))
+            else:
+                self._tips_banner.set_button_label(_('Dismiss'))
+        except Exception:
+            pass
+
     def _reveal_connection_list_hint(self, *args):
         """Show the tips banner once the terminal connects.
 
@@ -1006,33 +957,38 @@ class TerminalWidget(Gtk.Box):
             # this terminal was created.
             self._tips = self._build_terminal_tips()
             self._tip_index = 0
-            if self._tips:
-                self._tip_label.set_text(self._tips[self._tip_index])
-            self.connection_list_hint_revealer.set_reveal_child(True)
+            self._update_tips_banner()
+            self._tips_banner.set_revealed(True)
         except Exception:
             pass
 
-    def _on_connection_list_hint_next_tip(self, *args):
-        """Advance to the next tip, wrapping around at the end."""
+    def _on_tips_banner_button_clicked(self, banner):
+        """Advance to the next tip, or dismiss on the last tip."""
         try:
             if not self._tips:
                 return
-            self._tip_index = (self._tip_index + 1) % len(self._tips)
-            self._tip_label.set_text(self._tips[self._tip_index])
+            is_last = self._tip_index >= len(self._tips) - 1
+            if len(self._tips) > 1 and not is_last:
+                self._tip_index += 1
+                self._update_tips_banner()
+            else:
+                self._tips_banner.set_revealed(False)
         except Exception:
             pass
 
+    # Keep old names as aliases so external callers (tests) don't break.
+    def _on_connection_list_hint_next_tip(self, *args):
+        self._on_tips_banner_button_clicked(None)
+
     def _on_connection_list_hint_dismiss(self, *args):
-        """Hide the banner for this terminal only (it may show again next time)."""
         try:
-            self.connection_list_hint_revealer.set_reveal_child(False)
+            self._tips_banner.set_revealed(False)
         except Exception:
             pass
 
     def _on_connection_list_hint_dont_show_again(self, *args):
-        """Hide the banner and never show tips again on any terminal."""
         try:
-            self.connection_list_hint_revealer.set_reveal_child(False)
+            self._tips_banner.set_revealed(False)
             self.config.set_setting('terminal.show_tips', False)
         except Exception:
             pass
