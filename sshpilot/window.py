@@ -9961,14 +9961,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     def _open_connection_in_external_terminal(self, connection):
         """Open the connection in the user's preferred external terminal"""
         try:
-            cm = getattr(self, 'connection_manager', None)
-            use_native = bool(getattr(cm, 'native_connect_enabled', False))
-            app = self.get_application() if hasattr(self, 'get_application') else None
-            if not use_native and app is not None and hasattr(app, 'native_connect_enabled'):
-                use_native = bool(app.native_connect_enabled)
-
+            # Native-only: connect by the ~/.ssh/config host identifier and let
+            # the external terminal's ssh read per-host settings from the config.
             host_value = ''
-            if use_native and hasattr(connection, 'resolve_host_identifier'):
+            if hasattr(connection, 'resolve_host_identifier'):
                 try:
                     host_value = connection.resolve_host_identifier()
                 except Exception:
@@ -9976,15 +9972,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             if not host_value:
                 host_value = _get_connection_host(connection) or _get_connection_alias(connection)
 
-            if use_native:
-                ssh_command = f"ssh {host_value}" if host_value else "ssh"
-            else:
-                port_text = f" -p {connection.port}" if hasattr(connection, 'port') and connection.port != 22 else ""
-                ssh_command = (
-                    f"ssh{port_text} {connection.username}@{host_value}"
-                    if getattr(connection, 'username', '')
-                    else f"ssh{port_text} {host_value}"
-                )
+            ssh_command = f"ssh {host_value}" if host_value else "ssh"
 
             terminal = self._get_user_preferred_terminal()
             if not terminal:
@@ -10711,13 +10699,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             # options resolved via ssh -G are honored for the reconnect.
             try:
                 loop = asyncio.get_event_loop()
-                cm = getattr(self, 'connection_manager', None)
-                app = self.get_application() if hasattr(self, 'get_application') else None
-                use_native = bool(getattr(cm, 'native_connect_enabled', False))
-                if not use_native and app is not None and hasattr(app, 'native_connect_enabled'):
-                    use_native = bool(app.native_connect_enabled)
-
-                if use_native and hasattr(connection, 'native_connect'):
+                # Native-only (connect() delegates to native_connect()).
+                if hasattr(connection, 'native_connect'):
                     connect_coro = connection.native_connect()
                 else:
                     connect_coro = connection.connect()

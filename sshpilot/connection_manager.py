@@ -2167,9 +2167,8 @@ class ConnectionManager(GObject.Object):
         try:
             if hasattr(self, 'isolated_mode'):
                 connection.isolated_mode = bool(getattr(self, 'isolated_mode', False))
-            # Connect to the SSH server
-            use_native = bool(getattr(self, 'native_connect_enabled', False))
-            if use_native and hasattr(connection, 'native_connect'):
+            # Connect to the SSH server (native-only; connect() delegates to it).
+            if hasattr(connection, 'native_connect'):
                 connected = await connection.native_connect()
             else:
                 connected = await connection.connect()

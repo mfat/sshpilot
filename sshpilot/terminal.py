@@ -892,19 +892,10 @@ class TerminalWidget(Gtk.Box):
         except Exception as exc:
             logger.debug(f"Unable to reset cached ssh_cmd before reconnect: {exc}")
 
+        # Native-only connection (connect() delegates to native_connect()).
         connect_coro = None
-        use_native = False
         try:
-            use_native = bool(getattr(self.connection_manager, 'native_connect_enabled', False))
-            if not use_native:
-                app = Adw.Application.get_default()
-                if app is not None and hasattr(app, 'native_connect_enabled'):
-                    use_native = bool(app.native_connect_enabled)
-        except Exception:
-            use_native = False
-
-        try:
-            if use_native and hasattr(connection, 'native_connect'):
+            if hasattr(connection, 'native_connect'):
                 connect_coro = connection.native_connect()
             elif hasattr(connection, 'connect'):
                 connect_coro = connection.connect()

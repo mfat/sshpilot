@@ -118,50 +118,8 @@ def _build_preferences(**values):
     return prefs
 
 
-def test_connection_mode_switches_are_mutually_exclusive():
-    prefs = _build_preferences(
-        native_connect_row=DummySwitchRow(True),
-        legacy_connect_row=DummySwitchRow(False),
-    )
-
-    prefs._set_connection_mode_switches(True)
-    assert prefs.native_connect_row.get_active() is True
-    assert prefs.legacy_connect_row.get_active() is False
-
-    prefs.native_connect_row.set_active(False)
-    prefs.on_native_connection_mode_toggled(prefs.native_connect_row, None)
-    assert prefs.native_connect_row.get_active() is False
-    assert prefs.legacy_connect_row.get_active() is True
-
-    prefs.native_connect_row.set_active(True)
-    prefs.on_native_connection_mode_toggled(prefs.native_connect_row, None)
-    assert prefs.native_connect_row.get_active() is True
-    assert prefs.legacy_connect_row.get_active() is False
-
-    prefs.legacy_connect_row.set_active(True)
-    prefs.on_legacy_connection_mode_toggled(prefs.legacy_connect_row, None)
-    assert prefs.native_connect_row.get_active() is False
-    assert prefs.legacy_connect_row.get_active() is True
-
-    prefs.legacy_connect_row.set_active(False)
-    prefs.on_legacy_connection_mode_toggled(prefs.legacy_connect_row, None)
-    assert prefs.native_connect_row.get_active() is True
-    assert prefs.legacy_connect_row.get_active() is False
-
-
-def test_save_advanced_settings_respects_legacy_toggle():
-    config = DummyConfig()
-    prefs = _build_preferences(
-        config=config,
-        native_connect_row=DummySwitchRow(True),
-        legacy_connect_row=DummySwitchRow(False),
-    )
-
-    prefs.legacy_connect_row.set_active(True)
-    prefs.on_legacy_connection_mode_toggled(prefs.legacy_connect_row, None)
-    prefs.save_advanced_ssh_settings()
-
-    assert config.settings['ssh.native_connect'] is False
+# The native/legacy connection-mode toggle was removed: sshPilot connects in
+# native mode only, so there is no longer a UI switch or a per-mode save path.
 
 
 def test_save_advanced_ssh_settings_persists_overrides():

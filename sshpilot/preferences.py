@@ -518,9 +518,6 @@ class PreferencesWindow(Adw.Window):
         self._encoding_codes = []
         self._suppress_encoding_config_handler = False
         self._user_initiated_encoding_change = False
-        self._updating_connection_switches = False
-        self.native_connect_row = None
-        self.legacy_connect_row = None
         self.force_internal_file_manager_row = None
         self.open_file_manager_externally_row = None
 
@@ -1705,30 +1702,6 @@ class PreferencesWindow(Adw.Window):
 
             advanced_group = Adw.PreferencesGroup(title="SSH Settings")
 
-
-            native_connect_group = Adw.PreferencesGroup(title="Connection Method")
-
-            self.native_connect_row = Adw.SwitchRow()
-            self.native_connect_row.set_title("Use native SSH connection mode")
-            self.native_connect_row.set_subtitle("Default SSH connection method")
-            self.legacy_connect_row = Adw.SwitchRow()
-            self.legacy_connect_row.set_title("Use legacy SSH connection mode")
-            native_active = True
-            try:
-                app = self.parent_window.get_application() if self.parent_window else None
-                if app is not None and hasattr(app, 'native_connect_enabled'):
-                    native_active = bool(app.native_connect_enabled)
-                else:
-                    native_active = bool(self.config.get_setting('ssh.native_connect', True))
-            except Exception:
-                native_active = bool(self.config.get_setting('ssh.native_connect', True))
-            self._set_connection_mode_switches(native_active)
-            self.native_connect_row.connect('notify::active', self.on_native_connection_mode_toggled)
-            self.legacy_connect_row.connect('notify::active', self.on_legacy_connection_mode_toggled)
-            native_connect_group.add(self.native_connect_row)
-            native_connect_group.add(self.legacy_connect_row)
-
-
             # Connect timeout
             self.connect_timeout_row = Adw.SpinRow.new_with_range(0, 120, 1)
             self.connect_timeout_row.set_title("Connect Timeout (s)")
@@ -1841,7 +1814,6 @@ class PreferencesWindow(Adw.Window):
 
             ssh_settings_page.add(help_group)
             ssh_settings_page.add(advanced_group)
-            ssh_settings_page.add(native_connect_group)
 
             # Ensure shortcut overview controls reflect current state
             self._set_shortcut_controls_enabled(not self._pass_through_enabled)
@@ -2712,19 +2684,6 @@ class PreferencesWindow(Adw.Window):
             verbosity_value = 0
             debug_enabled = False
 
-            if getattr(self, 'native_connect_row', None) is not None:
-                native_value = bool(self.native_connect_row.get_active())
-                self.config.set_setting('ssh.native_connect', native_value)
-                try:
-                    app = self.parent_window.get_application() if self.parent_window else None
-                except Exception:
-                    app = None
-                if app is not None and hasattr(app, 'native_connect_enabled'):
-                    app.native_connect_enabled = native_value
-                    if hasattr(app, 'native_connect_override'):
-                        app.native_connect_override = None
-                if self.parent_window and hasattr(self.parent_window, 'connection_manager'):
-                    self.parent_window.connection_manager.native_connect_enabled = native_value
             if hasattr(self, 'connect_timeout_row'):
                 connect_timeout_value = int(self.connect_timeout_row.get_value())
                 if connect_timeout_value <= 0:
@@ -2838,36 +2797,6 @@ class PreferencesWindow(Adw.Window):
                 manager.invalidate_cached_commands()
         except Exception as e:
             logger.error(f"Failed to save advanced SSH settings: {e}")
-
-    def _set_connection_mode_switches(self, native_active: bool) -> None:
-        """Synchronize native/legacy connection switches without recursion."""
-
-        self._updating_connection_switches = True
-        try:
-            if getattr(self, 'native_connect_row', None) is not None:
-                self.native_connect_row.set_active(bool(native_active))
-            if getattr(self, 'legacy_connect_row', None) is not None:
-                self.legacy_connect_row.set_active(not bool(native_active))
-        finally:
-            self._updating_connection_switches = False
-
-    def on_native_connection_mode_toggled(self, switch, *args):
-        """Ensure native mode toggle keeps legacy switch in sync."""
-
-        if self._updating_connection_switches:
-            return
-
-        native_active = bool(switch.get_active())
-        self._set_connection_mode_switches(native_active)
-
-    def on_legacy_connection_mode_toggled(self, switch, *args):
-        """Ensure legacy mode toggle keeps native switch in sync."""
-
-        if self._updating_connection_switches:
-            return
-
-        legacy_active = bool(switch.get_active())
-        self._set_connection_mode_switches(not legacy_active)
 
     def _apply_default_advanced_settings(self):
         """Restore advanced SSH settings to defaults and update the UI."""
