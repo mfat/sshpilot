@@ -1599,19 +1599,31 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             base = _('Connection')
 
         copy_label = _('Copy')
-        pattern = re.compile(r"\s+\(" + re.escape(copy_label) + r"(?:\s+(\d+))?\)\s*$", re.IGNORECASE)
+        # The nickname is used verbatim as the ssh Host alias, and the app's own
+        # validator rejects whitespace (and parens make an invalid host token —
+        # see #953). So the suffix must be whitespace/paren-free: use a hyphen
+        # separator and a whitespace-free copy token, e.g. "Name-Copy",
+        # "Name-Copy-2".
+        copy_token = re.sub(r"\s+", "-", copy_label.strip()) or "Copy"
+        # Strip an existing copy suffix in either the legacy " (Copy[ N])" form
+        # or the new "-Copy[-N]" form so re-duplicating doesn't stack suffixes.
+        pattern = re.compile(
+            r"(?:\s*\(\s*" + re.escape(copy_label) + r"(?:\s+\d+)?\s*\)"
+            r"|[-_]+" + re.escape(copy_token) + r"(?:[-_]+\d+)?)\s*$",
+            re.IGNORECASE,
+        )
         base_clean = pattern.sub('', base).strip() or base
 
         def is_unique(name: str) -> bool:
             return name.lower() not in existing_lower
 
-        candidate = f"{base_clean} ({copy_label})"
+        candidate = f"{base_clean}-{copy_token}"
         if is_unique(candidate):
             return candidate
 
         index = 2
         while True:
-            candidate = f"{base_clean} ({copy_label} {index})"
+            candidate = f"{base_clean}-{copy_token}-{index}"
             if is_unique(candidate):
                 return candidate
             index += 1
