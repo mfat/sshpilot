@@ -1350,12 +1350,19 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.tips_banner.set_button_label(_('Don\'t show again'))
         self.tips_banner.connect('button-clicked', self._on_tips_banner_dont_show_again)
         tips_overlay.set_child(self.tips_banner)
+        # Leading-edge button cluster: "Next tip" (cycles) + "Dismiss". The
+        # banner's own trailing button is "Don't show again".
+        tips_buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        tips_buttons.set_halign(Gtk.Align.START)
+        tips_buttons.set_valign(Gtk.Align.CENTER)
+        tips_buttons.set_margin_start(12)
+        self.tips_next_button = Gtk.Button(label=_('Next tip'))
+        self.tips_next_button.connect('clicked', self._on_tips_banner_next)
         tips_dismiss_button = Gtk.Button(label=_('Dismiss'))
-        tips_dismiss_button.set_halign(Gtk.Align.START)
-        tips_dismiss_button.set_valign(Gtk.Align.CENTER)
-        tips_dismiss_button.set_margin_start(12)
         tips_dismiss_button.connect('clicked', self._on_tips_banner_dismiss)
-        tips_overlay.add_overlay(tips_dismiss_button)
+        tips_buttons.append(self.tips_next_button)
+        tips_buttons.append(tips_dismiss_button)
+        tips_overlay.add_overlay(tips_buttons)
         self.tips_banner_container = tips_overlay
 
         # Create header bar

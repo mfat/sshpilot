@@ -930,14 +930,14 @@ class TerminalWidget(Gtk.Box):
             if not bool(self.config.get_setting('terminal.show_tips', True)):
                 return
             # Rebuild so labels reflect any shortcut customizations made since
-            # this terminal was created, then pick a random tip.
+            # this terminal was created. The window picks a tip to show and the
+            # "Next tip" button cycles through the rest.
             self._tips = self._build_terminal_tips()
             if not self._tips:
                 return
-            tip = random.choice(self._tips)
             root = self.get_root() if hasattr(self, 'get_root') else None
             if root is not None and hasattr(root, 'show_terminal_tip'):
-                root.show_terminal_tip(f"\N{ELECTRIC LIGHT BULB} {tip}")
+                root.show_terminal_tip(self._tips)
         except Exception:
             pass
 

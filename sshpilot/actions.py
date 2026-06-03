@@ -1,6 +1,7 @@
 """Action handlers for MainWindow and registration helper."""
 
 import logging
+import random
 from typing import Optional
 from gi.repository import Gio, Gtk, Adw, GLib, Gdk
 from gettext import gettext as _
@@ -1408,23 +1409,48 @@ class WindowActions:
 
     # --- Terminal tips banner (shares the update banner's area) ---------------
 
-    def show_terminal_tip(self, text):
+    def show_terminal_tip(self, tips):
         """Show a terminal usage tip in the window banner area.
 
-        The update banner takes priority: if it is currently shown, the tip is
-        suppressed so the two never stack.
+        ``tips`` is the list of tip strings (a single string is also accepted).
+        A random tip is shown first; the "Next tip" button cycles through the
+        rest. The update banner takes priority: if it is currently shown, the
+        tip is suppressed so the two never stack.
         """
         if not getattr(self, 'tips_banner', None):
             return
         if getattr(self, 'update_banner', None) is not None and self.update_banner.get_revealed():
             return
+        if isinstance(tips, str):
+            tips = [tips]
+        tips = [t for t in (tips or []) if t]
+        if not tips:
+            return
+        self._terminal_tips = tips
+        self._terminal_tip_index = random.randrange(len(tips))
+        self._display_current_terminal_tip()
+
+    def _display_current_terminal_tip(self):
+        """Render the current tip and toggle the Next button to match the list."""
         try:
-            self.tips_banner.set_title(text)
+            tip = self._terminal_tips[self._terminal_tip_index]
+            self.tips_banner.set_title(f"\N{ELECTRIC LIGHT BULB} {tip}")
             self.tips_banner.set_revealed(True)
             if getattr(self, 'tips_banner_container', None) is not None:
                 self.tips_banner_container.set_visible(True)
+            # The Next button is only useful when there's more than one tip.
+            if getattr(self, 'tips_next_button', None) is not None:
+                self.tips_next_button.set_visible(len(self._terminal_tips) > 1)
         except Exception as exc:
             logger.debug("Failed to show terminal tip: %s", exc)
+
+    def _on_tips_banner_next(self, *args):
+        """Advance to the next tip, wrapping around the list."""
+        tips = getattr(self, '_terminal_tips', None)
+        if not tips:
+            return
+        self._terminal_tip_index = (getattr(self, '_terminal_tip_index', 0) + 1) % len(tips)
+        self._display_current_terminal_tip()
 
     def _hide_tips_banner(self):
         """Hide the terminal tips banner (used on dismiss and update priority)."""
