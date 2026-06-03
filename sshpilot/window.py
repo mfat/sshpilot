@@ -1337,7 +1337,27 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.update_banner_dismiss_button = dismiss_button
         # Note: Update banner will be added to content area in setup_content_area()
         # to ensure it appears below the header bar
-        
+
+        # Create terminal tips banner (hidden by default). Shown in the same
+        # area as the update banner — below the header bar, above the content —
+        # instead of floating over the terminal where it would mask output.
+        # The update banner takes priority over tips (see show_terminal_tip and
+        # _show_update_banner).
+        tips_overlay = Gtk.Overlay()
+        tips_overlay.set_visible(False)
+        self.tips_banner = Adw.Banner()
+        self.tips_banner.set_revealed(False)
+        self.tips_banner.set_button_label(_('Don\'t show again'))
+        self.tips_banner.connect('button-clicked', self._on_tips_banner_dont_show_again)
+        tips_overlay.set_child(self.tips_banner)
+        tips_dismiss_button = Gtk.Button(label=_('Dismiss'))
+        tips_dismiss_button.set_halign(Gtk.Align.START)
+        tips_dismiss_button.set_valign(Gtk.Align.CENTER)
+        tips_dismiss_button.set_margin_start(12)
+        tips_dismiss_button.connect('clicked', self._on_tips_banner_dismiss)
+        tips_overlay.add_overlay(tips_dismiss_button)
+        self.tips_banner_container = tips_overlay
+
         # Create header bar
         self.header_bar = Gtk.HeaderBar()
         self.header_bar.set_title_widget(Gtk.Label(label="SSH Pilot"))
@@ -2864,6 +2884,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             # Create content wrapper with banner below header bar
             content_wrapper = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
             content_wrapper.append(self.update_banner_container)
+            content_wrapper.append(self.tips_banner_container)
             content_wrapper.append(self.broadcast_banner)
             content_wrapper.append(self.content_stack)
             # Wrap only the content area (below the header bar) so the command
@@ -2882,6 +2903,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             # Create content wrapper with banner below header bar
             content_wrapper = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
             content_wrapper.append(self.update_banner_container)
+            content_wrapper.append(self.tips_banner_container)
             content_wrapper.append(self.broadcast_banner)
             content_wrapper.append(self.content_stack)
             # Same: scope the sidebar to the content pane only.
@@ -2897,6 +2919,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             # For non-split views, create a vertical box to contain banners and content
             main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
             main_box.append(self.update_banner_container)
+            main_box.append(self.tips_banner_container)
             main_box.append(self.broadcast_banner)
             main_box.append(self.content_stack)
             self._set_content_widget(main_box)

@@ -1377,11 +1377,15 @@ class WindowActions:
             self._on_update_banner_clicked
         )
         
+        # The update banner takes priority over the tips banner — hide tips so
+        # the two never stack in the same area.
+        self._hide_tips_banner()
+
         # Show the banner and its container
         self.update_banner.set_revealed(True)
         if hasattr(self, 'update_banner_container'):
             self.update_banner_container.set_visible(True)
-    
+
     def _on_update_banner_clicked(self, banner):
         """Handle update banner button click"""
         # Import here to avoid circular imports
@@ -1401,7 +1405,50 @@ class WindowActions:
         self.update_banner.set_revealed(False)
         if hasattr(self, 'update_banner_container'):
             self.update_banner_container.set_visible(False)
-    
+
+    # --- Terminal tips banner (shares the update banner's area) ---------------
+
+    def show_terminal_tip(self, text):
+        """Show a terminal usage tip in the window banner area.
+
+        The update banner takes priority: if it is currently shown, the tip is
+        suppressed so the two never stack.
+        """
+        if not getattr(self, 'tips_banner', None):
+            return
+        if getattr(self, 'update_banner', None) is not None and self.update_banner.get_revealed():
+            return
+        try:
+            self.tips_banner.set_title(text)
+            self.tips_banner.set_revealed(True)
+            if getattr(self, 'tips_banner_container', None) is not None:
+                self.tips_banner_container.set_visible(True)
+        except Exception as exc:
+            logger.debug("Failed to show terminal tip: %s", exc)
+
+    def _hide_tips_banner(self):
+        """Hide the terminal tips banner (used on dismiss and update priority)."""
+        try:
+            if getattr(self, 'tips_banner', None) is not None:
+                self.tips_banner.set_revealed(False)
+            if getattr(self, 'tips_banner_container', None) is not None:
+                self.tips_banner_container.set_visible(False)
+        except Exception:
+            pass
+
+    def _on_tips_banner_dismiss(self, *args):
+        """Hide the tips banner for this session only."""
+        self._hide_tips_banner()
+
+    def _on_tips_banner_dont_show_again(self, *args):
+        """Hide the tips banner and never show tips again."""
+        self._hide_tips_banner()
+        try:
+            if getattr(self, 'config', None) is not None:
+                self.config.set_setting('terminal.show_tips', False)
+        except Exception as exc:
+            logger.error("Failed to update show terminal tips preference: %s", exc)
+
     def _apply_update_banner_css(self):
         """Apply CSS styling to update banner"""
         try:

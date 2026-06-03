@@ -542,35 +542,12 @@ class TerminalWidget(Gtk.Box):
         # terminal natural height (which would otherwise resize split panes).
         self.overlay.add_overlay(self.disconnected_banner)
 
-        # Tips banner. Shows a random usage tip once per connection. Floated as
-        # an overlay so revealing it never changes the terminal's allocated
-        # height (which would trigger a VTE SIGWINCH / column reflow).
-        # Pattern mirrors the update banner: Adw.Banner inside a Gtk.Overlay
-        # so that a second "Dismiss" button can be overlaid at the start while
-        # the banner's own built-in button provides "Don't show again".
+        # Terminal usage tips are shown in the main window's banner area (the
+        # same place the "update available" banner appears), NOT floated over
+        # the terminal, so they never mask terminal output. The update banner
+        # takes priority over tips. See MainWindow.show_terminal_tip.
         self._connection_list_hint_handled = False
         self._tips = self._build_terminal_tips()
-
-        self._tips_banner = Adw.Banner()
-        self._tips_banner.set_revealed(False)
-        self._tips_banner.set_hexpand(True)
-        self._tips_banner.set_button_label(_("Don't show again"))
-        self._tips_banner.connect('button-clicked', self._on_connection_list_hint_dont_show_again)
-
-        tips_dismiss_button = Gtk.Button(label=_('Dismiss'))
-        tips_dismiss_button.set_halign(Gtk.Align.START)
-        tips_dismiss_button.set_valign(Gtk.Align.CENTER)
-        tips_dismiss_button.set_margin_start(12)
-        tips_dismiss_button.connect('clicked', self._on_connection_list_hint_dismiss)
-
-        tips_banner_overlay = Gtk.Overlay()
-        tips_banner_overlay.set_halign(Gtk.Align.FILL)
-        tips_banner_overlay.set_valign(Gtk.Align.START)
-        tips_banner_overlay.set_hexpand(True)
-        tips_banner_overlay.set_child(self._tips_banner)
-        tips_banner_overlay.add_overlay(tips_dismiss_button)
-
-        self.overlay.add_overlay(tips_banner_overlay)
         self.connect('connection-established', self._reveal_connection_list_hint)
 
         # Container for terminal stack only
@@ -940,10 +917,11 @@ class TerminalWidget(Gtk.Box):
         ]
 
     def _reveal_connection_list_hint(self, *args):
-        """Show the tips banner once the terminal connects.
+        """Show a usage tip in the main window's banner area once connected.
 
-        Only reveals while the user hasn't opted out, and at most once per
-        terminal so a reconnect doesn't pop it back up.
+        Only shows while the user hasn't opted out, and at most once per
+        terminal so a reconnect doesn't pop it back up. The tip is rendered by
+        the main window (alongside the update banner), not over the terminal.
         """
         try:
             if self._connection_list_hint_handled:
@@ -957,23 +935,9 @@ class TerminalWidget(Gtk.Box):
             if not self._tips:
                 return
             tip = random.choice(self._tips)
-            self._tips_banner.set_title(f"\N{ELECTRIC LIGHT BULB} {tip}")
-            self._tips_banner.set_revealed(True)
-        except Exception:
-            pass
-
-    def _on_connection_list_hint_dismiss(self, *args):
-        """Hide the banner for this session only."""
-        try:
-            self._tips_banner.set_revealed(False)
-        except Exception:
-            pass
-
-    def _on_connection_list_hint_dont_show_again(self, *args):
-        """Hide the banner and never show tips again on any terminal."""
-        try:
-            self._tips_banner.set_revealed(False)
-            self.config.set_setting('terminal.show_tips', False)
+            root = self.get_root() if hasattr(self, 'get_root') else None
+            if root is not None and hasattr(root, 'show_terminal_tip'):
+                root.show_terminal_tip(f"\N{ELECTRIC LIGHT BULB} {tip}")
         except Exception:
             pass
 
@@ -4367,8 +4331,9 @@ class TerminalWidget(Gtk.Box):
             self._fullscreen_header_visible = None
             self._fullscreen_tab_bar_visible = None
             self._fullscreen_update_banner_visible = None
+            self._fullscreen_tips_banner_visible = None
             self._fullscreen_broadcast_banner_visible = None
-            
+
             # Store window state before going fullscreen
             try:
                 # Check if window is maximized
@@ -4461,7 +4426,16 @@ class TerminalWidget(Gtk.Box):
                     logger.debug("Update banner hidden for fullscreen")
                 except Exception as e:
                     logger.debug(f"Failed to hide update banner: {e}", exc_info=True)
-            
+
+            # Hide tips banner if it exists
+            if hasattr(root, 'tips_banner_container'):
+                try:
+                    self._fullscreen_tips_banner_visible = root.tips_banner_container.get_visible()
+                    root.tips_banner_container.set_visible(False)
+                    logger.debug("Tips banner hidden for fullscreen")
+                except Exception as e:
+                    logger.debug(f"Failed to hide tips banner: {e}", exc_info=True)
+
             # Hide broadcast banner if it exists
             if hasattr(root, 'broadcast_banner'):
                 try:
@@ -4677,7 +4651,14 @@ class TerminalWidget(Gtk.Box):
                     root.update_banner_container.set_visible(self._fullscreen_update_banner_visible)
                 except Exception as e:
                     logger.debug(f"Failed to restore update banner: {e}")
-            
+
+            # Restore tips banner
+            if hasattr(root, 'tips_banner_container') and self._fullscreen_tips_banner_visible is not None:
+                try:
+                    root.tips_banner_container.set_visible(self._fullscreen_tips_banner_visible)
+                except Exception as e:
+                    logger.debug(f"Failed to restore tips banner: {e}")
+
             # Restore broadcast banner
             if hasattr(root, 'broadcast_banner') and self._fullscreen_broadcast_banner_visible is not None:
                 try:
