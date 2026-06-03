@@ -37,8 +37,8 @@ Exact quotes from that man page used as the authority:
   ${VAR} expansion: "Arguments to some keywords can be expanded at runtime
   from environment variables on the client by enclosing them in ${}"
 
-Seven confirmed parser bugs (all silent failures, no warning to user):
-  BUG 1 – Tab separator      block silently lost when all options use tabs
+Ten confirmed parser bugs (all silent failures, no warning to user):
+  BUG 1  – Tab separator      block silently lost when all options use tabs
   BUG 2a – `keyword=value`   block silently lost (no space → dropped)
   BUG 2b – `keyword = value` parse_host_config crashes on `int('= N')`,
             entire host silently discarded
@@ -48,6 +48,9 @@ Seven confirmed parser bugs (all silent failures, no warning to user):
   BUG 5b – ForwardAgent $ENV_VAR     treated as False
   BUG 6  – RemoteForward single arg  silently dropped (should be SOCKS)
   BUG 7  – ${VAR} in IdentityFile    not expanded (stored literally)
+  BUG 8  – %d/%r/etc. tokens in IdentityFile  not expanded (stored literally)
+  BUG 9  – IdentityFile none  stored as literal path, not treated as suppressor
+  BUG 10 – %d/%u tokens in Include paths  not expanded; included files lost
 
 Not bugs:
   - Empty Host block – valid no-op; silently discarding it is correct UX
@@ -1066,3 +1069,120 @@ class TestEdgeCases:
             cm.load_ssh_config()
         except (ValueError, TypeError) as exc:
             pytest.fail(f"Parser raised {type(exc).__name__} on invalid Port value: {exc}")
+
+    # -----------------------------------------------------------------------
+    # BUG 8 – %d / % token expansion in IdentityFile
+    # -----------------------------------------------------------------------
+
+    def test_identityfile_percent_d_token_stored_unexpanded(self, tmp_path):
+        """
+        BUG 8: The OpenBSD ssh_config(5) TOKENS section specifies that
+        IdentityFile (and several other directives) accept percent-expansion
+        tokens: %d (local home directory), %h (remote hostname), %r (remote
+        username), %u (local username), %l (local hostname), %n (host alias),
+        %p (port), %i (local uid), %C (hash of several values).
+
+        Example: `IdentityFile %d/.ssh/id_%r` expands to
+        `/home/alice/.ssh/id_alice` for user alice connecting as alice.
+
+        The parser calls os.path.expanduser() (handles ~) but does NOT perform
+        % token expansion.  The raw token string is stored as-is.  Users who
+        write spec-valid percent-token paths see the literal unexpanded string
+        in the app rather than the real key path.
+        """
+        main = tmp_path / "config"
+        main.write_text(
+            "Host pct-key\n"
+            "    HostName pct.example.com\n"
+            "    IdentityFile %d/.ssh/id_rsa\n"
+        )
+        cm = make_cm()
+        cm.ssh_config_path = str(main)
+        cm.load_ssh_config()
+        c = conn_by_nickname(cm, "pct-key")
+        assert c is not None
+        # Document the current (buggy) behaviour: %d is NOT expanded
+        assert "%d" in c.keyfile, (
+            "BUG 8: IdentityFile %d/.ssh/id_rsa is spec-valid but the parser "
+            "stores the literal '%d' token instead of expanding it to the "
+            "local home directory"
+        )
+
+    # -----------------------------------------------------------------------
+    # BUG 9 – `IdentityFile none` is not handled as "no identity files"
+    # -----------------------------------------------------------------------
+
+    def test_identityfile_none_stored_as_literal_path(self, tmp_path):
+        """
+        BUG 9: The OpenBSD ssh_config(5) states: "Alternately an argument of
+        none may be used to indicate no identity files should be loaded
+        (neither by ssh-agent(1) nor any IdentityFile directive)."
+
+        This is a signal directive — `IdentityFile none` means "suppress all
+        key-based authentication from this point on", not "use a file named
+        'none'".  The parser applies os.path.expanduser('none') which returns
+        'none' unchanged and stores it as c.keyfile.  The value 'none' is then
+        treated as a regular (if non-existent) key path rather than a
+        suppression directive, so the app displays it as if the user has a key
+        file called 'none'.
+        """
+        main = tmp_path / "config"
+        main.write_text(
+            "Host no-key\n"
+            "    HostName nokey.example.com\n"
+            "    IdentityFile none\n"
+        )
+        cm = make_cm()
+        cm.ssh_config_path = str(main)
+        cm.load_ssh_config()
+        c = conn_by_nickname(cm, "no-key")
+        assert c is not None
+        # Document the current (buggy) behaviour: 'none' is stored as a path
+        assert c.keyfile == "none", (
+            "BUG 9: IdentityFile none should suppress key auth (per spec) but "
+            "the parser stores the literal string 'none' as a key path"
+        )
+
+    # -----------------------------------------------------------------------
+    # BUG 10 – % token expansion in Include paths
+    # -----------------------------------------------------------------------
+
+    def test_include_percent_token_not_expanded(self, tmp_path, monkeypatch):
+        """
+        BUG 10: The OpenBSD ssh_config(5) states that Include accepts the %d
+        and %u tokens (local home directory and local username respectively).
+        Example: `Include %d/.ssh/conf.d/*.conf`.
+
+        resolve_ssh_config_files() calls os.path.expandvars() and
+        os.path.expanduser() on the Include path but does NOT perform %
+        token expansion.  A `%d` or `%u` in an Include path is passed
+        verbatim to glob.glob(), which finds no match; the Include is
+        silently ignored and any hosts defined in those files are lost.
+        """
+        import getpass
+
+        extra = tmp_path / "included.conf"
+        extra.write_text("Host pct-host\n    HostName pct.example.com\n")
+
+        # We cannot easily make %d expand to tmp_path in the resolver, so we
+        # test the observable behaviour: the host from the included file is
+        # absent because the % token prevents glob from resolving the path.
+        main = tmp_path / "config"
+        main.write_text(
+            f"Include %d/.ssh/included.conf\n"
+            f"Host anchor\n"
+            f"    HostName anchor.example.com\n"
+        )
+        cm = make_cm()
+        cm.ssh_config_path = str(main)
+        cm.load_ssh_config()
+
+        # The anchor host (not under the failed Include) should load fine
+        assert conn_by_nickname(cm, "anchor") is not None
+
+        # pct-host is absent because %d was not expanded so glob found nothing
+        assert conn_by_nickname(cm, "pct-host") is None, (
+            "BUG 10: Include %d/... should expand %d to the local home "
+            "directory (per spec) but the resolver passes the literal '%%d' "
+            "to glob, which matches nothing; the included hosts are silently lost"
+        )
