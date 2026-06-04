@@ -2015,6 +2015,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             # Use a simple gesture but avoid all coordinate-based operations
             context_click = Gtk.GestureClick()
             context_click.set_button(Gdk.BUTTON_SECONDARY)  # Only handle right-click
+            # Capture phase so the gesture fires before child widgets consume the
+            # event — without this, right-clicking an unselected row is silently
+            # swallowed by the ListBox's own selection logic on the first press.
+            context_click.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
             
             def _on_right_click(gesture, n_press, x, y):
                 try:
@@ -2058,6 +2062,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         logger.debug("No row available for context menu")
                         return
                     
+                    # Select/highlight the right-clicked row so the UI reflects
+                    # which connection the context menu applies to.
+                    self.connection_list.select_row(row)
+
                     # Set context menu data
                     self._context_menu_row = row
                     self._context_menu_connection = getattr(row, 'connection', None)
