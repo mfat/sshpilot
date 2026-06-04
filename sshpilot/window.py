@@ -92,6 +92,44 @@ from .ssh_password_exec import run_ssh_with_password, run_scp_with_password
 logger = logging.getLogger(__name__)
 
 
+_tips_banner_css_installed = False
+
+
+def _ensure_tips_banner_css() -> None:
+    """Install the accent (Adwaita blue) styling for the terminal tips banner.
+
+    AdwBanner draws its background on the inner gizmo (``> revealer > widget``);
+    @accent_bg_color / @accent_fg_color follow the user's accent + light/dark
+    theme. Installed once per display, mirroring split_view's CSS helper.
+    """
+    global _tips_banner_css_installed
+    if _tips_banner_css_installed:
+        return
+    display = Gdk.Display.get_default()
+    if display is None:
+        return
+    provider = Gtk.CssProvider()
+    provider.load_from_data(b"""
+banner.tips-banner-accent > revealer > widget {
+    background-color: @accent_bg_color;
+    background-image: none;
+    color: @accent_fg_color;
+}
+/* The "Next tip"/"Dismiss" buttons sit in the overlay (siblings of the
+   banner), so they don't inherit the banner's accent foreground. Match them
+   to the banner's own "Don't show again" button. */
+box.tips-banner-accent-buttons button {
+    color: @accent_fg_color;
+}
+""")
+    Gtk.StyleContext.add_provider_for_display(
+        display,
+        provider,
+        Gtk.STYLE_PROVIDER_PRIORITY_USER,
+    )
+    _tips_banner_css_installed = True
+
+
 def _format_ssh_target(host: str, user: str) -> str:
     host_component = host or ''
     if host_component and ':' in host_component and not (
@@ -1348,12 +1386,17 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         tips_overlay.set_visible(False)
         self.tips_banner = Adw.Banner()
         self.tips_banner.set_revealed(False)
+        # Paint the tips banner with the Adwaita accent (blue) so it stands out
+        # from the neutral update banner and the surrounding chrome.
+        _ensure_tips_banner_css()
+        self.tips_banner.add_css_class('tips-banner-accent')
         self.tips_banner.set_button_label(_('Don\'t show again'))
         self.tips_banner.connect('button-clicked', self._on_tips_banner_dont_show_again)
         tips_overlay.set_child(self.tips_banner)
         # Leading-edge button cluster: "Next tip" (cycles) + "Dismiss". The
         # banner's own trailing button is "Don't show again".
         tips_buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        tips_buttons.add_css_class('tips-banner-accent-buttons')
         tips_buttons.set_halign(Gtk.Align.START)
         tips_buttons.set_valign(Gtk.Align.CENTER)
         tips_buttons.set_margin_start(12)
