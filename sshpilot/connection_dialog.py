@@ -893,7 +893,11 @@ class FileListEditor(Adw.PreferencesGroup):
                 item.get_child().set_halign(Gtk.Align.START)
             except Exception:
                 pass
-            item.connect('clicked', lambda _x, v=value, pop=popover: (self._add_value(v), pop.popdown()))
+            # Close the popover first, then add on the next idle tick: adding a
+            # row reparents the add-button rows to keep them last, which would
+            # crash if done while a popover is still anchored to one of them.
+            item.connect('clicked', lambda _x, v=value, pop=popover: (
+                pop.popdown(), GLib.idle_add(self._add_value, v)))
             box.append(item)
             rendered_any = True
 
