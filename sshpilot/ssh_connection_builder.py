@@ -59,10 +59,12 @@ def resolve_native_auth(
     Shared by the native terminal builder, SCP, and ssh-copy-id so every part
     of the app authenticates the same way. Behaviour:
 
-    * Password auth (or a stored password): clear askpass and signal sshpass.
+    * Password auth selected: clear askpass and signal sshpass (with the stored
+      password when one exists).
     * Askpass disabled in settings: let SSH prompt natively on the TTY.
-    * Key-based auth: enable askpass (keyring autofill, GUI prompt fallback)
-      and, unless the user forwards the agent or pins an explicit IdentityAgent,
+    * Key-based auth: the password is irrelevant — SSH authenticates with the
+      key, so we enable askpass (keyring autofill, GUI prompt fallback) and,
+      unless the user forwards the agent or pins an explicit IdentityAgent,
       bypass the agent (`-o IdentityAgent=none` + drop SSH_AUTH_SOCK) so SSH
       loads the key from disk and calls askpass. gnome-keyring otherwise
       advertises the key but refuses to sign it when locked, and SSH will not
@@ -70,8 +72,16 @@ def resolve_native_auth(
     """
     auth_method = int(getattr(connection, 'auth_method', 0) or 0)
     password_auth_selected = (auth_method == 1)
-    stored_password = _get_stored_password(connection, connection_manager)
-    password_mode = bool(password_auth_selected or stored_password)
+    # Key-based auth is authoritative: when it is selected the password is
+    # irrelevant (a stored/leftover password must not divert key auth into
+    # sshpass and suppress the key-passphrase askpass). Only consult the stored
+    # password when password auth is the selected method.
+    stored_password = (
+        _get_stored_password(connection, connection_manager)
+        if password_auth_selected
+        else None
+    )
+    password_mode = password_auth_selected
 
     askpass_enabled = True
     try:

@@ -10544,7 +10544,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 old_connection.keyfile = connection_data['keyfile']
                 old_connection.certificate = connection_data.get('certificate', '')
                 old_connection.password = connection_data['password']
-                old_connection.key_passphrase = connection_data['key_passphrase']
+                old_connection.key_passphrase = connection_data.get('key_passphrase', getattr(old_connection, 'key_passphrase', '')) or ''
                 old_connection.auth_method = connection_data['auth_method']
                 # Persist key selection mode in-memory so the dialog reflects it without restart
                 try:

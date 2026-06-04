@@ -145,8 +145,9 @@ def test_password_auth_with_stored_password_uses_sshpass():
     assert 'IdentityAgent=none' not in cmd
 
 
-def test_key_auth_with_stored_password_now_uses_sshpass():
-    # Behaviour change: a stored password triggers sshpass even for key auth.
+def test_key_auth_ignores_stored_password_and_uses_askpass():
+    # Key-based auth is authoritative: a stored/leftover password is irrelevant
+    # and must not divert key auth into sshpass (which would suppress askpass).
     cmd, result = _build(
         {
             'host': 'combo.example',
@@ -155,9 +156,9 @@ def test_key_auth_with_stored_password_now_uses_sshpass():
             'password': 'backup',
         },
     )
-    assert result.use_sshpass is True
-    assert result.password == 'backup'
-    assert result.use_askpass is False
+    assert result.use_sshpass is False
+    assert result.password is None
+    assert result.use_askpass is True
     assert not _has_o_option(cmd, 'PreferredAuthentications')
 
 
