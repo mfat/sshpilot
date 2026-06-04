@@ -2016,6 +2016,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             # Use a simple gesture but avoid all coordinate-based operations
             context_click = Gtk.GestureClick()
             context_click.set_button(Gdk.BUTTON_SECONDARY)  # Only handle right-click
+            # Capture phase so this gesture intercepts the right-click before an
+            # already-open context popover swallows it for its own autohide
+            # dismissal. Without this, the first right-click on a new row only
+            # closes the previous popover (a "dead click") and the menu does not
+            # appear until a second click.
+            context_click.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
 
             def _build_and_show_menu(row):
                 # Build a Gtk.PopoverMenu from the shared sidebar context menu helper.
@@ -2135,7 +2141,31 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     if not row:
                         logger.debug("No row available for context menu")
                         return
-                    
+
+                    # Claim the event sequence so the right-click stops here and
+                    # is not also processed by the ListBox's own handling.
+                    try:
+                        gesture.set_state(Gtk.EventSequenceState.CLAIMED)
+                    except Exception:
+                        pass
+
+                    # Dismiss and detach any context menu still open from a
+                    # previous right-click. Because this gesture runs in the
+                    # capture phase, we close the old popover ourselves (releasing
+                    # its grab) before showing the new one in the same click.
+                    prev_popover = getattr(self, '_context_menu_popover', None)
+                    if prev_popover is not None:
+                        self._context_menu_popover = None
+                        try:
+                            prev_popover.popdown()
+                        except Exception:
+                            pass
+                        try:
+                            if prev_popover.get_parent() is not None:
+                                prev_popover.unparent()
+                        except Exception:
+                            pass
+
                     # Highlight the right-clicked row so the UI reflects which
                     # connection the context menu applies to. Mirror standard
                     # file-manager behavior: right-clicking a row that isn't part
@@ -2152,25 +2182,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     self._context_menu_row = row
                     self._context_menu_connection = getattr(row, 'connection', None)
                     self._context_menu_group_row = row if hasattr(row, 'group_id') else None
-
-                    # If a context menu from a previous right-click is still open,
-                    # wait for it to finish closing (and release its input grab)
-                    # before popping up the new one. Showing the new popover while
-                    # the old grab is active makes GTK silently suppress it, so the
-                    # menu would otherwise only appear on a second right-click.
-                    prev_popover = getattr(self, '_context_menu_popover', None)
-                    if prev_popover is not None:
-                        self._context_menu_popover = None
-                        prev_popover.connect(
-                            'closed',
-                            lambda *_: GLib.idle_add(lambda: (_build_and_show_menu(row), False)[1]),
-                        )
-                        try:
-                            prev_popover.popdown()
-                        except Exception:
-                            # Fall back to showing immediately if popdown failed.
-                            _build_and_show_menu(row)
-                        return
 
                     _build_and_show_menu(row)
 
