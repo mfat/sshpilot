@@ -2203,6 +2203,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     if not already_selected:
                         self._select_only_row(row)
 
+                    # Move the keyboard focus (focus ring) to the right-clicked row
+                    # too, otherwise it stays on a previously keyboard-focused row.
+                    try:
+                        row.grab_focus()
+                    except Exception:
+                        pass
+
                     # Set context menu data
                     self._context_menu_row = row
                     self._context_menu_connection = getattr(row, 'connection', None)
