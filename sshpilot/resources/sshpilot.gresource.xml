@@ -36,6 +36,7 @@
     <file alias="help-browser-symbolic.svg">icons/scalable/actions/help-browser-symbolic.svg</file>
     <file alias="input-keyboard-symbolic.svg">icons/scalable/actions/input-keyboard-symbolic.svg</file>
     <file alias="list-add-symbolic.svg">icons/scalable/actions/list-add-symbolic.svg</file>
+    <file alias="password-symbolic.svg">icons/scalable/actions/password-symbolic.svg</file>
     <file alias="network-idle-symbolic.svg">icons/scalable/actions/network-idle-symbolic.svg</file>
     <file alias="network-offline-symbolic.svg">icons/scalable/actions/network-offline-symbolic.svg</file>
     <file alias="network-server-symbolic.svg">icons/scalable/actions/network-server-symbolic.svg</file>

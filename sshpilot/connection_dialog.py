@@ -753,6 +753,35 @@ class SSHConfigAdvancedTab(Gtk.Box):
         self._update_parent_connection()
 
 
+_KEY_BADGE_CSS_REGISTERED = False
+
+
+def _ensure_key_badge_css():
+    """Register the circular order-badge style once for the whole display."""
+    global _KEY_BADGE_CSS_REGISTERED
+    if _KEY_BADGE_CSS_REGISTERED:
+        return
+    display = Gdk.Display.get_default()
+    if display is None:
+        return
+    provider = Gtk.CssProvider()
+    provider.load_from_data(b"""
+    .key-order-badge {
+        min-width: 24px;
+        min-height: 24px;
+        border-radius: 999px;
+        background-color: @accent_bg_color;
+        color: @accent_fg_color;
+        font-weight: bold;
+        padding: 0;
+    }
+    """)
+    Gtk.StyleContext.add_provider_for_display(
+        display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+    )
+    _KEY_BADGE_CSS_REGISTERED = True
+
+
 class FileListEditor(Adw.PreferencesGroup):
     """An editable list of file paths shown as an Adwaita preferences group.
 
@@ -852,15 +881,48 @@ class FileListEditor(Adw.PreferencesGroup):
         self._rows.append(row)
         for btn in self._add_rows:
             self.add(btn)
+        self._renumber_rows()
+
+    def _renumber_rows(self):
+        """Keep the circular order badges in sync with each key's position."""
+        n = 0
+        for row in self._rows:
+            badge = getattr(row, '_order_badge', None)
+            if badge is None:
+                continue
+            n += 1
+            badge.set_label(str(n))
 
     def _make_key_expander_row(self, path):
         """A key row that expands to reveal its own inline passphrase field."""
+        _ensure_key_badge_css()
         norm = os.path.realpath(os.path.expanduser(path))
         row = Adw.ExpanderRow(title=os.path.basename(path) or path, subtitle=path)
         try:
             row.set_subtitle_lines(1)
         except Exception:
             pass
+
+        # Order badge (number in a circle) reflecting the offer order.
+        badge = Gtk.Label(label="")
+        badge.add_css_class('key-order-badge')
+        badge.set_valign(Gtk.Align.CENTER)
+        badge.set_halign(Gtk.Align.CENTER)
+        row.add_prefix(badge)
+        row._order_badge = badge
+
+        # Static key icon (after the number) to signal this row is an SSH key.
+        key_icon = Gtk.Image.new_from_icon_name('dialog-password-symbolic')
+        key_icon.set_valign(Gtk.Align.CENTER)
+        row.add_prefix(key_icon)
+
+        # Password button (right side) that expands/collapses the row.
+        key_btn = Gtk.Button(icon_name='password-symbolic')
+        key_btn.add_css_class('flat')
+        key_btn.set_valign(Gtk.Align.CENTER)
+        key_btn.set_tooltip_text(_("Show key passphrase"))
+        key_btn.connect('clicked', lambda _b, r=row: r.set_expanded(not r.get_expanded()))
+        row.add_suffix(key_btn)
 
         remove_btn = Gtk.Button(icon_name='user-trash-symbolic')
         remove_btn.add_css_class('flat')
@@ -912,6 +974,7 @@ class FileListEditor(Adw.PreferencesGroup):
             pass
         if row in self._rows:
             self._rows.remove(row)
+        self._renumber_rows()
         self._emit_changed()
 
     def _on_add_clicked(self, row, action):

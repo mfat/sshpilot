@@ -64,6 +64,7 @@ _ICON_RESOURCE_MAP = {
     'window-close-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/window-close-symbolic.svg',
     'utilities-terminal-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/utilities-terminal-symbolic.svg',
     'dialog-password-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/dialog-password-symbolic.svg',
+    'password-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/password-symbolic.svg',
     'document-send-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/document-send-symbolic.svg',
     'vertical-arrows-long-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/vertical-arrows-long-symbolic.svg',
     'view-sort-ascending-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/view-sort-ascending-symbolic.svg',
