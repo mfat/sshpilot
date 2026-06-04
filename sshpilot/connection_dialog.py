@@ -834,28 +834,75 @@ class FileListEditor(Adw.PreferencesGroup):
         for btn in self._add_rows:
             if btn.get_parent() is not None:
                 self.remove(btn)
-        row = Adw.ActionRow(title=os.path.basename(path) or path, subtitle=path)
+        if self._with_passphrase:
+            row = self._make_key_expander_row(path)
+        else:
+            row = Adw.ActionRow(title=os.path.basename(path) or path, subtitle=path)
+            try:
+                row.set_subtitle_lines(1)
+            except Exception:
+                pass
+            remove_btn = Gtk.Button(icon_name='user-trash-symbolic')
+            remove_btn.add_css_class('flat')
+            remove_btn.set_valign(Gtk.Align.CENTER)
+            remove_btn.set_tooltip_text(_("Remove"))
+            remove_btn.connect('clicked', lambda _b, p=path, r=row: self._remove_row(p, r))
+            row.add_suffix(remove_btn)
+        self.add(row)
+        self._rows.append(row)
+        for btn in self._add_rows:
+            self.add(btn)
+
+    def _make_key_expander_row(self, path):
+        """A key row that expands to reveal its own inline passphrase field."""
+        norm = os.path.realpath(os.path.expanduser(path))
+        row = Adw.ExpanderRow(title=os.path.basename(path) or path, subtitle=path)
         try:
             row.set_subtitle_lines(1)
         except Exception:
             pass
-        if self._with_passphrase:
-            pass_btn = Gtk.Button(icon_name='dialog-password-symbolic')
-            pass_btn.add_css_class('flat')
-            pass_btn.set_valign(Gtk.Align.CENTER)
-            pass_btn.set_tooltip_text(_("Set key passphrase"))
-            pass_btn.connect('clicked', lambda _b, p=path: self._edit_passphrase(_b, p))
-            row.add_suffix(pass_btn)
+
         remove_btn = Gtk.Button(icon_name='user-trash-symbolic')
         remove_btn.add_css_class('flat')
         remove_btn.set_valign(Gtk.Align.CENTER)
         remove_btn.set_tooltip_text(_("Remove"))
         remove_btn.connect('clicked', lambda _b, p=path, r=row: self._remove_row(p, r))
         row.add_suffix(remove_btn)
-        self.add(row)
-        self._rows.append(row)
-        for btn in self._add_rows:
-            self.add(btn)
+
+        pass_row = Adw.PasswordEntryRow(title=_("Key passphrase"))
+        pass_row.set_show_apply_button(True)
+        if self._connection_manager is not None:
+            try:
+                existing = self._connection_manager.get_key_passphrase(norm) or ''
+                if existing:
+                    pass_row.set_text(existing)
+            except Exception:
+                pass
+        # Clear the error state as soon as the user edits the value again.
+        pass_row.connect('changed', lambda r: r.remove_css_class('error'))
+        pass_row.connect('apply', self._on_inline_passphrase_apply, path, norm)
+        row.add_row(pass_row)
+        return row
+
+    def _on_inline_passphrase_apply(self, pass_row, path, norm):
+        text = pass_row.get_text()
+        if text and callable(self._verify):
+            try:
+                ok = bool(self._verify(path, text))
+            except Exception:
+                ok = False
+            if not ok:
+                pass_row.add_css_class('error')
+                return
+        pass_row.remove_css_class('error')
+        if self._connection_manager is not None:
+            try:
+                if text:
+                    self._connection_manager.store_key_passphrase(norm, text)
+                elif hasattr(self._connection_manager, 'delete_key_passphrase'):
+                    self._connection_manager.delete_key_passphrase(norm)
+            except Exception:
+                logger.debug("Failed to store/delete passphrase for %s", norm, exc_info=True)
 
     def _remove_row(self, path, row):
         self._model.remove(path)
@@ -936,60 +983,6 @@ class FileListEditor(Adw.PreferencesGroup):
                 browse(self.add_path)
             except Exception:
                 logger.debug("FileListEditor browse() failed", exc_info=True)
-
-    def _edit_passphrase(self, button, path):
-        norm = os.path.realpath(os.path.expanduser(path))
-        popover = Gtk.Popover()
-        popover.set_parent(button)
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        for m in ('top', 'bottom', 'start', 'end'):
-            getattr(box, f'set_margin_{m}')(6)
-        box.append(Gtk.Label(label=_("Key passphrase"), xalign=0))
-        entry = Gtk.PasswordEntry()
-        entry.set_show_peek_icon(True)
-        entry.set_hexpand(True)
-        if self._connection_manager is not None:
-            try:
-                existing = self._connection_manager.get_key_passphrase(norm) or ''
-                entry.set_text(existing)
-            except Exception:
-                pass
-        box.append(entry)
-        error_label = Gtk.Label(xalign=0)
-        error_label.add_css_class('error')
-        error_label.add_css_class('caption')
-        error_label.set_wrap(True)
-        error_label.set_visible(False)
-        box.append(error_label)
-        save = Gtk.Button(label=_("Save"))
-        save.add_css_class('suggested-action')
-
-        def _on_save(_b):
-            text = entry.get_text()
-            if text and callable(self._verify):
-                try:
-                    ok = bool(self._verify(path, text))
-                except Exception:
-                    ok = False
-                if not ok:
-                    error_label.set_text(_("Passphrase doesn't match this key."))
-                    error_label.set_visible(True)
-                    return
-            if self._connection_manager is not None:
-                try:
-                    if text:
-                        self._connection_manager.store_key_passphrase(norm, text)
-                    elif hasattr(self._connection_manager, 'delete_key_passphrase'):
-                        self._connection_manager.delete_key_passphrase(norm)
-                except Exception:
-                    logger.debug("Failed to store/delete passphrase for %s", norm, exc_info=True)
-            popover.popdown()
-
-        save.connect('clicked', _on_save)
-        box.append(save)
-        popover.set_child(box)
-        popover.popup()
-
 
 class ConnectionDialog(Adw.Window):
     """Dialog for adding/editing SSH connections using custom layout with pinned buttons"""
