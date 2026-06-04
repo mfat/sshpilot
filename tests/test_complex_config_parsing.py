@@ -654,6 +654,72 @@ class TestEdgeCases:
         assert c.username == "firstuser", "first User must win"
         assert c.port == 22, "first Port must win"
 
+    def test_repeated_host_block_merges_first_wins(self, tmp_path):
+        """
+        Repeated ``Host <name>`` stanzas describe ONE host. Per ssh_config(5)
+        they merge with first-value-wins for scalars: the result is a single
+        connection, and a directive only authored in the later block fills a
+        field the earlier block left unset (verified against `ssh -G`).
+        """
+        main = tmp_path / "config"
+        main.write_text(
+            "Host repeated\n"
+            "    HostName first.example.com\n"
+            "    Port 2001\n"
+            "Host repeated\n"
+            "    User seconduser\n"
+            "    Port 2002\n"
+        )
+        cm = make_cm()
+        cm.ssh_config_path = str(main)
+        cm.load_ssh_config()
+        reps = [c for c in cm.connections if c.nickname == "repeated"]
+        assert len(reps) == 1, "repeated Host blocks must merge into one connection"
+        c = reps[0]
+        assert c.hostname == "first.example.com"   # only block 1 set it
+        assert c.port == 2001                        # first Port wins
+        assert c.username == "seconduser"            # only block 2 authored User
+
+    def test_repeated_host_block_accumulates_identityfiles(self, tmp_path):
+        """IdentityFile entries from repeated blocks accumulate (not first-wins)."""
+        main = tmp_path / "config"
+        main.write_text(
+            "Host acc\n"
+            "    HostName acc.example.com\n"
+            "    IdentityFile ~/.ssh/key_a\n"
+            "Host acc\n"
+            "    IdentityFile ~/.ssh/key_b\n"
+        )
+        cm = make_cm()
+        cm.ssh_config_path = str(main)
+        cm.load_ssh_config()
+        reps = [c for c in cm.connections if c.nickname == "acc"]
+        assert len(reps) == 1
+        ids = reps[0].identity_files
+        assert any("key_a" in f for f in ids), "first block's key must survive"
+        assert any("key_b" in f for f in ids), "second block's key must accumulate"
+
+    def test_repeated_host_block_across_included_files_merges(self, tmp_path):
+        """A nickname defined in two included files is still one merged host."""
+        conf_d = tmp_path / "conf.d"
+        conf_d.mkdir()
+        (conf_d / "10-a.conf").write_text(
+            "Host shared\n    HostName shared.example.com\n    Port 2200\n"
+        )
+        (conf_d / "20-b.conf").write_text(
+            "Host shared\n    User mergeduser\n"
+        )
+        main = tmp_path / "config"
+        main.write_text("Include conf.d/*.conf\n")
+        cm = make_cm()
+        cm.ssh_config_path = str(main)
+        cm.load_ssh_config()
+        reps = [c for c in cm.connections if c.nickname == "shared"]
+        assert len(reps) == 1, "same nickname across includes must merge"
+        assert reps[0].hostname == "shared.example.com"
+        assert reps[0].port == 2200
+        assert reps[0].username == "mergeduser"
+
     def test_equals_form_host_header_recognised(self, tmp_path):
         """
         `Host=name` (equals-form block header, no space) is spec-valid and

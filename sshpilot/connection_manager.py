@@ -5,6 +5,8 @@ Handles SSH connections, configuration, and secure password storage
 
 import os
 import stat
+import shutil
+import tempfile
 import asyncio
 import logging
 import configparser
@@ -197,6 +199,11 @@ class Connection:
         self.identity_file_none = bool(data.get('identity_file_none', False))
         self.certificate = data.get('certificate') or ''
         self.certificate_files = list(data.get('certificate_files') or ([self.certificate] if self.certificate else []))
+        # Agent / hardware key sources (verbatim ssh_config values)
+        self.identity_agent = data.get('identity_agent', '') or ''
+        self.add_keys_to_agent = data.get('add_keys_to_agent', '') or ''
+        self.pkcs11_provider = data.get('pkcs11_provider', '') or ''
+        self.security_key_provider = data.get('security_key_provider', '') or ''
         self.password = data.get('password', '')
         self.key_passphrase = data.get('key_passphrase', '')
         # Source file of this configuration block
@@ -617,6 +624,11 @@ class Connection:
 
         self.certificate = data.get('certificate') or ''
         self.certificate_files = list(data.get('certificate_files') or ([self.certificate] if self.certificate else []))
+        # Agent / hardware key sources (verbatim ssh_config values)
+        self.identity_agent = data.get('identity_agent', '') or ''
+        self.add_keys_to_agent = data.get('add_keys_to_agent', '') or ''
+        self.pkcs11_provider = data.get('pkcs11_provider', '') or ''
+        self.security_key_provider = data.get('security_key_provider', '') or ''
         self.password = data.get('password', '')
         self.key_passphrase = data.get('key_passphrase', '')
         self.source = data.get('source', getattr(self, 'source', ''))
@@ -776,6 +788,40 @@ class ConnectionManager(GObject.Object):
         except Exception as exc:
             logger.debug("Unable to set permissions on %s: %s", path, exc)
 
+    def _safe_write_config(self, path: str, text: str) -> None:
+        """Atomically write *text* to *path*, keeping a ``.bak`` of the prior file.
+
+        SSH config is precious user data, so writes must never leave a truncated
+        file if the process dies mid-write. We back up the current contents to
+        ``<path>.bak``, write the new contents to a temp file in the same
+        directory, fsync it, then ``os.replace`` (atomic on the same filesystem)
+        so readers only ever see the old or the complete new file.
+        """
+        directory = os.path.dirname(path) or '.'
+
+        # One-shot backup of the previous good contents.
+        if os.path.exists(path):
+            try:
+                shutil.copy2(path, f"{path}.bak")
+                self._ensure_secure_permissions(f"{path}.bak", 0o600)
+            except Exception as exc:
+                logger.warning("Could not back up %s before writing: %s", path, exc)
+
+        fd, tmp_path = tempfile.mkstemp(dir=directory, prefix='.sshpilot-', suffix='.tmp')
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                f.write(text)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, path)
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
+        self._ensure_secure_permissions(path, 0o600)
+
     def _normalize_path(self, path: str) -> str:
         """Expand user/env vars and return absolute, non-empty paths."""
         if not path or not str(path).strip():
@@ -881,41 +927,98 @@ class ConnectionManager(GObject.Object):
             else:
                 self._ensure_secure_permissions(self.ssh_config_path, 0o600)
             config_files = resolve_ssh_config_files(self.ssh_config_path)
+
+            # Directives that accumulate per ssh_config(5) ("Multiple ...
+            # directives will add to the list") rather than first-value-wins.
+            ACCUMULATE_KEYS = {
+                'localforward', 'remoteforward', 'dynamicforward',
+                'identityfile', 'certificatefile',
+            }
+
+            # nickname -> {'raw': merged authored config, 'tokens': [...],
+            #              'conn': Connection, 'source': cfg_file}
+            # Tracks concrete hosts already materialised in THIS load so repeated
+            # ``Host <name>`` stanzas (same file or across includes) merge into a
+            # single connection with ssh_config(5) semantics — first-value-wins for
+            # scalars, accumulation for IdentityFile/CertificateFile/forwards —
+            # mirroring how ``ssh`` itself resolves duplicate Host blocks.
+            loaded_this_load: Dict[str, Dict[str, Any]] = {}
+
+            def _merge_raw(into: Dict[str, Any], new: Dict[str, Any]) -> None:
+                """Merge authored directives (first-value-wins; lists accumulate)."""
+                for k, v in new.items():
+                    if k in ('host', '__host_tokens'):
+                        continue
+                    if k in into:
+                        if k in ACCUMULATE_KEYS:
+                            base = into[k] if isinstance(into[k], list) else [into[k]]
+                            extra = v if isinstance(v, list) else [v]
+                            into[k] = base + extra
+                        # else: first-value-wins — keep the existing value.
+                    else:
+                        into[k] = v
+
+            def _materialise(token: str, raw_cfg: Dict[str, Any], tokens: List[str], cfg_file: str):
+                """Parse one concrete host, merging into a prior same-name block."""
+                prior = loaded_this_load.get(token)
+                if prior is not None:
+                    _merge_raw(prior['raw'], raw_cfg)
+                    host_cfg = dict(prior['raw'])
+                    host_cfg['host'] = token
+                    host_cfg['__host_tokens'] = [token]
+                    connection_data = self.parse_host_config(host_cfg, source=prior['source'])
+                    if connection_data:
+                        connection_data['source'] = prior['source']
+                        prior['conn'].update_data(connection_data)
+                        prior['conn']._connection_manager = self
+                    return
+
+                raw_copy = dict(raw_cfg)
+                host_cfg = dict(raw_copy)
+                host_cfg['host'] = token
+                host_cfg['__host_tokens'] = list(tokens)
+                connection_data = self.parse_host_config(host_cfg, source=cfg_file)
+                if not connection_data:
+                    return
+                connection_data['source'] = cfg_file
+                nickname = connection_data.get('nickname', '')
+                existing = existing_by_nickname.get(nickname)
+                if existing:
+                    existing.update_data(connection_data)
+                    existing._connection_manager = self
+                    self.connections.append(existing)
+                    conn = existing
+                else:
+                    conn = Connection(connection_data)
+                    if getattr(self, 'isolated_mode', False):
+                        conn.isolated_config = True
+                        conn.config_root = self.ssh_config_path
+                        conn.data['isolated_mode'] = True
+                        conn.data['config_root'] = self.ssh_config_path
+                    self._register_connection(conn)
+                loaded_this_load[token] = {
+                    'raw': raw_copy, 'tokens': list(tokens),
+                    'conn': conn, 'source': cfg_file,
+                }
+
+            def flush_block(tokens: List[str], config: Dict[str, Any], cfg_file: str):
+                """Flush a completed Host block: wildcard/negation -> rule, else
+                materialise (and merge) each concrete host token."""
+                cleaned = [t.strip() for t in tokens if t and t.strip()]
+                if not cleaned:
+                    return
+                if any('*' in t or '?' in t or t.startswith('!') for t in cleaned):
+                    host_cfg = dict(config)
+                    host_cfg['host'] = cleaned[0]
+                    host_cfg['__host_tokens'] = list(cleaned)
+                    self.parse_host_config(host_cfg, source=cfg_file)
+                    return
+                for token in cleaned:
+                    _materialise(token, config, cleaned, cfg_file)
+
             for cfg_file in config_files:
                 current_hosts: List[str] = []
                 current_config: Dict[str, Any] = {}
-
-                def process_host_block(hosts: List[str], config: Dict[str, Any]):
-                    cleaned_hosts = [token.strip() for token in hosts if token and token.strip()]
-                    if not cleaned_hosts:
-                        return
-
-                    if any('*' in token or '?' in token or token.startswith('!') for token in cleaned_hosts):
-                        host_cfg = dict(config)
-                        host_cfg['host'] = cleaned_hosts[0]
-                        self.parse_host_config(host_cfg, source=cfg_file)
-                        return
-
-                    for token in cleaned_hosts:
-                        host_cfg = dict(config)
-                        host_cfg['host'] = token
-                        connection_data = self.parse_host_config(host_cfg, source=cfg_file)
-                        if connection_data:
-                            connection_data['source'] = cfg_file
-                            nickname = connection_data.get('nickname', '')
-                            existing = existing_by_nickname.get(nickname)
-                            if existing:
-                                existing.update_data(connection_data)
-                                existing._connection_manager = self
-                                self.connections.append(existing)
-                            else:
-                                new_conn = Connection(connection_data)
-                                if getattr(self, 'isolated_mode', False):
-                                    new_conn.isolated_config = True
-                                    new_conn.config_root = self.ssh_config_path
-                                    new_conn.data['isolated_mode'] = True
-                                    new_conn.data['config_root'] = self.ssh_config_path
-                                self._register_connection(new_conn)
                 try:
                     with open(cfg_file, 'r') as f:
                         lines = f.readlines()
@@ -943,34 +1046,7 @@ class ConnectionManager(GObject.Object):
                         continue
                     if keyword == 'match':
                         if current_hosts and current_config:
-                            tokens = current_hosts
-                            if any('*' in t or '?' in t or t.startswith('!') for t in tokens):
-                                host_cfg = dict(current_config)
-                                host_cfg['host'] = tokens[0]
-                                host_cfg['__host_tokens'] = list(tokens)
-                                self.parse_host_config(host_cfg, source=cfg_file)
-                            else:
-                                for token in tokens:
-                                    host_cfg = dict(current_config)
-                                    host_cfg['host'] = token
-                                    host_cfg['__host_tokens'] = list(tokens)
-                                    connection_data = self.parse_host_config(host_cfg, source=cfg_file)
-                                    if connection_data:
-                                        connection_data['source'] = cfg_file
-                                        nickname = connection_data.get('nickname', '')
-                                        existing = existing_by_nickname.get(nickname)
-                                        if existing:
-                                            existing.update_data(connection_data)
-                                            existing._connection_manager = self
-                                            self.connections.append(existing)
-                                        else:
-                                            new_conn = Connection(connection_data)
-                                            if getattr(self, 'isolated_mode', False):
-                                                new_conn.isolated_config = True
-                                                new_conn.config_root = self.ssh_config_path
-                                                new_conn.data['isolated_mode'] = True
-                                                new_conn.data['config_root'] = self.ssh_config_path
-                                            self._register_connection(new_conn)
+                            flush_block(current_hosts, current_config, cfg_file)
                         current_hosts = []
                         current_config = {}
                         block_lines = [raw_line.rstrip('\n')]
@@ -988,34 +1064,7 @@ class ConnectionManager(GObject.Object):
                             i += 1
                             continue
                         if current_hosts and current_config:
-                            prev_tokens = current_hosts
-                            if any('*' in t or '?' in t or t.startswith('!') for t in prev_tokens):
-                                host_cfg = dict(current_config)
-                                host_cfg['host'] = prev_tokens[0]
-                                host_cfg['__host_tokens'] = list(prev_tokens)
-                                self.parse_host_config(host_cfg, source=cfg_file)
-                            else:
-                                for token in prev_tokens:
-                                    host_cfg = dict(current_config)
-                                    host_cfg['host'] = token
-                                    host_cfg['__host_tokens'] = list(prev_tokens)
-                                    connection_data = self.parse_host_config(host_cfg, source=cfg_file)
-                                    if connection_data:
-                                        connection_data['source'] = cfg_file
-                                        nickname = connection_data.get('nickname', '')
-                                        existing = existing_by_nickname.get(nickname)
-                                        if existing:
-                                            existing.update_data(connection_data)
-                                            existing._connection_manager = self
-                                            self.connections.append(existing)
-                                        else:
-                                            new_conn = Connection(connection_data)
-                                            if getattr(self, 'isolated_mode', False):
-                                                new_conn.isolated_config = True
-                                                new_conn.config_root = self.ssh_config_path
-                                                new_conn.data['isolated_mode'] = True
-                                                new_conn.data['config_root'] = self.ssh_config_path
-                                            self._register_connection(new_conn)
+                            flush_block(current_hosts, current_config, cfg_file)
                         current_hosts = tokens
                         current_config = {}
                         i += 1
@@ -1041,34 +1090,7 @@ class ConnectionManager(GObject.Object):
                             current_config[key] = value
                     i += 1
                 if current_hosts and current_config:
-                    tokens = current_hosts
-                    if any('*' in t or '?' in t or t.startswith('!') for t in tokens):
-                        host_cfg = dict(current_config)
-                        host_cfg['host'] = tokens[0]
-                        host_cfg['__host_tokens'] = list(tokens)
-                        self.parse_host_config(host_cfg, source=cfg_file)
-                    else:
-                        for token in tokens:
-                            host_cfg = dict(current_config)
-                            host_cfg['host'] = token
-                            host_cfg['__host_tokens'] = list(tokens)
-                            connection_data = self.parse_host_config(host_cfg, source=cfg_file)
-                            if connection_data:
-                                connection_data['source'] = cfg_file
-                                nickname = connection_data.get('nickname', '')
-                                existing = existing_by_nickname.get(nickname)
-                                if existing:
-                                    existing.update_data(connection_data)
-                                    existing._connection_manager = self
-                                    self.connections.append(existing)
-                                else:
-                                    new_conn = Connection(connection_data)
-                                    if getattr(self, 'isolated_mode', False):
-                                        new_conn.isolated_config = True
-                                        new_conn.config_root = self.ssh_config_path
-                                        new_conn.data['isolated_mode'] = True
-                                        new_conn.data['config_root'] = self.ssh_config_path
-                                    self._register_connection(new_conn)
+                    flush_block(current_hosts, current_config, cfg_file)
             logger.info(f"Loaded {len(self.connections)} connections from SSH config")
         except Exception as e:
             logger.error(f"Failed to load SSH config: {e}", exc_info=True)
@@ -1281,6 +1303,19 @@ class ConnectionManager(GObject.Object):
                     parsed['proxy_jump'] = [p.strip() for p in pj]
                 else:
                     parsed['proxy_jump'] = [p.strip() for p in re.split(r'[\s,]+', pj)]
+            # Agent / hardware key sources (kept verbatim — IdentityAgent may be
+            # a path, "none", or a $ENV reference; providers are library paths).
+            for direct_key, parsed_key in (
+                ('identityagent', 'identity_agent'),
+                ('addkeystoagent', 'add_keys_to_agent'),
+                ('pkcs11provider', 'pkcs11_provider'),
+                ('securitykeyprovider', 'security_key_provider'),
+            ):
+                if direct_key in config:
+                    val = _unwrap(config.get(direct_key))
+                    if val is not None and str(val).strip():
+                        parsed[parsed_key] = str(val).strip()
+
             if 'forwardagent' in config:
                 fa_raw = str(_unwrap(config.get('forwardagent', ''))).strip()
                 fa = fa_raw.lower()
@@ -1380,7 +1415,8 @@ class ConnectionManager(GObject.Object):
                 'forwardx11', 'localforward', 'remoteforward', 'dynamicforward',
                 'proxycommand', 'proxyjump', 'forwardagent', 'localcommand', 'remotecommand', 'requesttty',
                 'identitiesonly', 'permitlocalcommand',
-                'preferredauthentications', 'pubkeyauthentication'
+                'preferredauthentications', 'pubkeyauthentication',
+                'identityagent', 'addkeystoagent', 'pkcs11provider', 'securitykeyprovider',
             }
             
             for key, value in config.items():
@@ -1778,6 +1814,22 @@ class ConnectionManager(GObject.Object):
                 )
                 for cert in certificate_files:
                     lines.append(f"    CertificateFile {_quote_if_spaced(cert)}")
+
+            # Agent / hardware key sources — valid in both automatic and
+            # specific-key modes (the key may come from an agent socket, a
+            # PKCS#11 smartcard, or a FIDO security key rather than a file).
+            ident_agent = (data.get('identity_agent') or '').strip()
+            if ident_agent:
+                lines.append(f"    IdentityAgent {_quote_if_spaced(ident_agent)}")
+            add_keys = (data.get('add_keys_to_agent') or '').strip()
+            if add_keys:
+                lines.append(f"    AddKeysToAgent {add_keys}")
+            pkcs11 = (data.get('pkcs11_provider') or '').strip()
+            if pkcs11:
+                lines.append(f"    PKCS11Provider {_quote_if_spaced(pkcs11)}")
+            sk_provider = (data.get('security_key_provider') or '').strip()
+            if sk_provider:
+                lines.append(f"    SecurityKeyProvider {_quote_if_spaced(sk_provider)}")
             # Include password-based fallback if a password is provided
             if data.get('password'):
                 lines.append(
@@ -1826,10 +1878,14 @@ class ConnectionManager(GObject.Object):
                 dest_spec = f"{_format_forward_host(dest_host) or dest_host}:{rule.get('remote_port', '')}"
                 lines.append(f"    LocalForward {listen_spec} {dest_spec}")
             elif rule.get('type') == 'remote':
-                # For RemoteForward we forward remote listen -> local destination
-                dest_host = rule.get('local_host') or rule.get('remote_host', '')
-                dest_spec = f"{_format_forward_host(dest_host) or dest_host}:{rule.get('local_port') or rule.get('remote_port', '')}"
-                lines.append(f"    RemoteForward {listen_spec} {dest_spec}")
+                # Single-argument (SOCKS) form has no destination.
+                if rule.get('socks') or not (rule.get('local_host') or rule.get('remote_host')):
+                    lines.append(f"    RemoteForward {listen_spec}")
+                else:
+                    # For RemoteForward we forward remote listen -> local destination
+                    dest_host = rule.get('local_host') or rule.get('remote_host', '')
+                    dest_spec = f"{_format_forward_host(dest_host) or dest_host}:{rule.get('local_port') or rule.get('remote_port', '')}"
+                    lines.append(f"    RemoteForward {listen_spec} {dest_spec}")
             elif rule.get('type') == 'dynamic':
                 lines.append(f"    DynamicForward {listen_spec}")
         
@@ -1884,10 +1940,9 @@ class ConnectionManager(GObject.Object):
             while i < len(lines):
                 raw_line = lines[i]
                 lstripped = raw_line.lstrip()
-                lowered = lstripped.lower()
-                if lowered.startswith('host '):
-                    parts = lstripped.split(None, 1)
-                    full_value = parts[1].strip() if len(parts) > 1 else ''
+                # Detect the Host header honouring all separators (Host=x, tabs).
+                kw, full_value = _split_keyword(lstripped)
+                if kw == 'host':
                     try:
                         host_names = shlex.split(full_value)
                     except ValueError:
@@ -1896,7 +1951,7 @@ class ConnectionManager(GObject.Object):
                     if host_identifier in host_names:
                         start_index = i
                         i += 1
-                        while i < len(lines) and not lines[i].lstrip().lower().startswith(('host ', 'match ')):
+                        while i < len(lines) and _split_keyword(lines[i].strip())[0] not in ('host', 'match', 'include'):
                             i += 1
                         end_index = i
                         block_lines = [lines[j].rstrip('\n') for j in range(start_index, end_index)]
@@ -1931,10 +1986,9 @@ class ConnectionManager(GObject.Object):
             while i < len(lines):
                 raw_line = lines[i]
                 lstripped = raw_line.lstrip()
-                lowered = lstripped.lower()
-                if lowered.startswith('host '):
-                    parts = lstripped.split(None, 1)
-                    full_value = parts[1].strip() if len(parts) > 1 else ''
+                # Detect the Host header honouring all separators (Host=x, tabs).
+                kw, full_value = _split_keyword(lstripped)
+                if kw == 'host':
                     try:
                         host_names = shlex.split(full_value)
                     except ValueError:
@@ -1948,12 +2002,12 @@ class ConnectionManager(GObject.Object):
                         if remaining_hosts:
                             updated_lines.append(f"{indent}Host {' '.join(remaining_hosts)}\n")
                             i += 1
-                            while i < len(lines) and not lines[i].lstrip().lower().startswith(('host ', 'match ')):
+                            while i < len(lines) and _split_keyword(lines[i].strip())[0] not in ('host', 'match', 'include'):
                                 updated_lines.append(lines[i])
                                 i += 1
                         else:
                             i += 1
-                            while i < len(lines) and not lines[i].lstrip().lower().startswith(('host ', 'match ')):
+                            while i < len(lines) and _split_keyword(lines[i].strip())[0] not in ('host', 'match', 'include'):
                                 i += 1
                         continue
                 updated_lines.append(raw_line)
@@ -1968,8 +2022,7 @@ class ConnectionManager(GObject.Object):
 
             updated_lines.append(formatted_block + '\n')
 
-            with open(target_path, 'w') as f:
-                f.writelines(updated_lines)
+            self._safe_write_config(target_path, ''.join(updated_lines))
 
             logger.info(
                 "Split host block for '%s' (found=%s) and appended dedicated entry to %s",
@@ -1988,11 +2041,11 @@ class ConnectionManager(GObject.Object):
             target_path = new_data.get('source') or getattr(connection, 'source', None) or self.ssh_config_path
             target_path = self._ensure_config_parent_dir(target_path)
             if not os.path.exists(target_path):
-                with open(target_path, 'w', encoding='utf-8') as f:
-                    f.write("# SSH configuration file\n\n")
-                    updated_config = self.format_ssh_config_entry(new_data)
-                    f.write(updated_config.rstrip('\n') + '\n')
-                self._ensure_secure_permissions(target_path, 0o600)
+                updated_config = self.format_ssh_config_entry(new_data)
+                self._safe_write_config(
+                    target_path,
+                    "# SSH configuration file\n\n" + updated_config.rstrip('\n') + '\n',
+                )
                 return
 
             try:
@@ -2023,15 +2076,17 @@ class ConnectionManager(GObject.Object):
             while i < len(lines):
                 raw_line = lines[i]
                 lstripped = raw_line.lstrip()
-                lowered = lstripped.lower()
+                # Detect the Host header honouring every ssh_config(5) separator
+                # (``Host x``, ``Host=x``, ``Host = x``, tabs) — the same logic the
+                # loader uses — so an equals/tab-form block is found and replaced
+                # rather than leaving a stale block and appending a duplicate.
+                kw, remainder = _split_keyword(lstripped)
 
-                if lowered.startswith('host '):
-                    parts = lstripped.split(None, 1)
-                    full_value = parts[1].strip() if len(parts) > 1 else ''
-                    host_names = shlex.split(full_value)
+                if kw == 'host':
+                    host_names = shlex.split(remainder) if remainder else []
 
                     logger.debug(
-                        f"Found Host line: '{lstripped.strip()}' -> full_value='{full_value}' -> host_names={host_names}"
+                        f"Found Host line: '{lstripped.strip()}' -> host_names={host_names}"
                     )
 
                     if any(host_name in candidate_names for host_name in host_names):
@@ -2043,9 +2098,11 @@ class ConnectionManager(GObject.Object):
                             updated_config = self.format_ssh_config_entry(new_data)
                             updated_lines.append(updated_config + '\n')
                             replaced_once = True
-                        # Skip this Host line and all subsequent lines until next Host/Match block
+                        # Skip this Host line and the block's lines until the next
+                        # Host/Match/Include header (Include stops the skip so an
+                        # Include directive is never swallowed).
                         i += 1
-                        while i < len(lines) and not lines[i].lstrip().lower().startswith(('host ', 'match ')):
+                        while i < len(lines) and _split_keyword(lines[i].strip())[0] not in ('host', 'match', 'include'):
                             i += 1
                         continue
                     else:
@@ -2063,9 +2120,7 @@ class ConnectionManager(GObject.Object):
                 updated_lines.append('\n' + updated_config + '\n')
             
             try:
-                with open(target_path, 'w') as f:
-                    f.writelines(updated_lines)
-                self._ensure_secure_permissions(target_path, 0o600)
+                self._safe_write_config(target_path, ''.join(updated_lines))
                 logger.info(
                     "Wrote SSH config for host %s (found=%s, rules=%d) to %s",
                     new_name,
@@ -2103,11 +2158,10 @@ class ConnectionManager(GObject.Object):
             while i < len(lines):
                 raw_line = lines[i]
                 lstripped = raw_line.lstrip()
-                lowered = lstripped.lower()
-                
-                if lowered.startswith('host '):
-                    parts = lstripped.split(None, 1)
-                    full_value = parts[1].strip() if len(parts) > 1 else ''
+                # Match the Host header honouring all separators (Host=x, tabs).
+                kw, full_value = _split_keyword(lstripped)
+
+                if kw == 'host':
                     try:
                         current_names = shlex.split(full_value) if full_value else []
                     except ValueError:
@@ -2138,7 +2192,7 @@ class ConnectionManager(GObject.Object):
                             
                             # Keep the rest of the block
                             i += 1
-                            while i < len(lines) and not lines[i].lstrip().lower().startswith(('host ', 'match ')):
+                            while i < len(lines) and _split_keyword(lines[i].strip())[0] not in ('host', 'match', 'include'):
                                 updated_lines.append(lines[i])
                                 i += 1
                         else:
@@ -2146,7 +2200,7 @@ class ConnectionManager(GObject.Object):
                             logger.info(f"Deleting entire Host block for '{host_nickname}' (was the only host)")
                             i += 1
                             # Skip the entire block
-                            while i < len(lines) and not lines[i].lstrip().lower().startswith(('host ', 'match ')):
+                            while i < len(lines) and _split_keyword(lines[i].strip())[0] not in ('host', 'match', 'include'):
                                 i += 1
                         continue
                 
@@ -2156,8 +2210,7 @@ class ConnectionManager(GObject.Object):
 
             if modified:
                 try:
-                    with open(target_path, 'w') as f:
-                        f.writelines(updated_lines)
+                    self._safe_write_config(target_path, ''.join(updated_lines))
                     logger.info(f"SSH config updated: {'removed' if host_nickname else 'modified'} entry for '{host_nickname}'")
                 except IOError as e:
                     logger.error(f"Failed to write SSH config after delete: {e}")
@@ -2166,6 +2219,31 @@ class ConnectionManager(GObject.Object):
         except Exception as e:
             logger.error(f"Error removing SSH config entry: {e}", exc_info=True)
             return False
+
+    def _preserve_multivalue_on_update(self, connection: 'Connection', new_data: Dict[str, Any]) -> None:
+        """Carry forward extra IdentityFile/CertificateFile entries on edit.
+
+        The connection dialog edits a single primary key, but a host may carry
+        several IdentityFile/CertificateFile directives. When the save payload
+        omits the full list, fold the existing extras back in so they are not
+        dropped from ~/.ssh/config: the edited primary
+        (``new_data['keyfile']``/``['certificate']``) replaces the old first
+        entry and the remaining entries are kept, in order, de-duplicated.
+        """
+        def _reconcile(list_key: str, primary_key: str):
+            if list_key in new_data:
+                return  # caller already supplied the full list
+            existing = list(getattr(connection, list_key, []) or [])
+            if len(existing) <= 1:
+                return  # nothing extra to preserve
+            new_primary = str(new_data.get(primary_key, '') or '').strip()
+            merged = ([new_primary] if new_primary else []) + list(existing[1:])
+            deduped = list(dict.fromkeys(m for m in merged if m))
+            if deduped:
+                new_data[list_key] = deduped
+
+        _reconcile('identity_files', 'keyfile')
+        _reconcile('certificate_files', 'certificate')
 
     def update_connection(self, connection: Connection, new_data: Dict[str, Any]) -> bool:
         """Update an existing connection"""
@@ -2189,6 +2267,11 @@ class ConnectionManager(GObject.Object):
             )
             prev_user = getattr(connection, 'username', '')
             original_nickname = getattr(connection, 'nickname', '')
+
+            # Preserve multiple IdentityFile/CertificateFile entries the single-key
+            # dialog doesn't surface, so "open → change a field → save" never drops
+            # keys from ~/.ssh/config.
+            self._preserve_multivalue_on_update(connection, new_data)
 
             # Update existing object IN-PLACE instead of creating new ones
             connection.update_data(new_data)

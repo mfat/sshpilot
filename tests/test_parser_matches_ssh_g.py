@@ -250,6 +250,24 @@ class TestParserMatchesSshG:
         ssh = {_norm(f) for f in _as_list(eff.get("identityfile"))}
         assert our == ssh, "explicit IdentityFile set should match ssh -G exactly"
 
+    def test_repeated_host_block_merge_matches_ssh_g(self, tmp_path):
+        """Repeated same-name Host blocks must merge to exactly what ssh -G resolves."""
+        main = tmp_path / "config"
+        main.write_text(
+            "Host repeated\n"
+            "    HostName first.example.com\n"
+            "    Port 2001\n"
+            "Host repeated\n"
+            "    User seconduser\n"
+            "    Port 2002\n"
+        )
+        cm = make_cm()
+        cm.ssh_config_path = str(main)
+        cm.load_ssh_config()
+        reps = [c for c in cm.connections if c.nickname == "repeated"]
+        assert len(reps) == 1
+        assert_connection_matches_ssh_g(reps[0], main)
+
     def test_forwardagent_path_agrees_with_ssh_g(self, tmp_path):
         main = tmp_path / "config"
         main.write_text(
