@@ -631,6 +631,59 @@ class TestEdgeCases:
         assert c.port == 2222
         assert c.hostname == "eqmixed.example.com"
 
+    def test_duplicate_option_first_value_wins(self, tmp_path):
+        """
+        ssh_config(5): "for each parameter the first obtained value will be
+        used."  A repeated non-accumulating option within a block keeps the
+        FIRST value (verified against `ssh -G`), not the last.
+        """
+        main = tmp_path / "config"
+        main.write_text(
+            "Host dup\n"
+            "    HostName dup.example.com\n"
+            "    User firstuser\n"
+            "    User seconduser\n"
+            "    Port 22\n"
+            "    Port 2222\n"
+        )
+        cm = make_cm()
+        cm.ssh_config_path = str(main)
+        cm.load_ssh_config()
+        c = conn_by_nickname(cm, "dup")
+        assert c is not None
+        assert c.username == "firstuser", "first User must win"
+        assert c.port == 22, "first Port must win"
+
+    def test_equals_form_host_header_recognised(self, tmp_path):
+        """
+        `Host=name` (equals-form block header, no space) is spec-valid and
+        accepted by `ssh -G`.  It must start a NEW host block, not be merged as
+        an option into the preceding host (which silently corrupted that host
+        and dropped the equals host).
+        """
+        main = tmp_path / "config"
+        main.write_text(
+            "Host first\n"
+            "    HostName first.example.com\n"
+            "    Port 2222\n"
+            "Host=second\n"
+            "    Port=2233\n"
+            "    User =bob\n"
+        )
+        cm = make_cm()
+        cm.ssh_config_path = str(main)
+        cm.load_ssh_config()
+        first = conn_by_nickname(cm, "first")
+        second = conn_by_nickname(cm, "second")
+        # The preceding host keeps its own values (not polluted by 'second').
+        assert first is not None
+        assert first.port == 2222
+        assert first.hostname == "first.example.com"
+        # The equals-form host exists with its own values.
+        assert second is not None, "Host=second must be parsed as its own block"
+        assert second.port == 2233
+        assert second.username == "bob"
+
     def test_equals_with_spaces_parsed(self, tmp_path):
         """
         `keyword = value` (whitespace around the `=`) is spec-valid.  The `=`

@@ -124,6 +124,20 @@ def _split_config_option(line: str) -> Tuple[Optional[str], Optional[str]]:
     return key, value
 
 
+def _split_keyword(line: str) -> Tuple[str, str]:
+    """Return ``(lowercased keyword, remainder)`` for a config line.
+
+    Honours every ssh_config(5) separator, so ``Host x``, ``Host=x``,
+    ``Host = x`` and tab-separated forms all yield ``('host', 'x')``. A bare
+    keyword with no argument yields ``('host', '')``. Used to dispatch the
+    Host/Match/Include block keywords regardless of separator.
+    """
+    match = _CONFIG_OPTION_RE.match(line)
+    if match:
+        return match.group(1).lower(), match.group(2).strip()
+    return line.strip().lower(), ''
+
+
 def _safe_int(value: Any, default: int) -> int:
     """Best-effort int conversion that falls back to *default* instead of raising."""
     try:
@@ -920,11 +934,14 @@ class ConnectionManager(GObject.Object):
                             current_config['__pre_command'] = line[len('# sshpilot:PreCommand '):].strip()
                         i += 1
                         continue
-                    lowered = line.lower()
-                    if lowered.startswith('include '):
+                    # Identify the leading keyword honouring all separators
+                    # (``Host x``, ``Host=x``, ``Host = x``, tabs) so equals-form
+                    # block headers are recognised, not merged into the prior host.
+                    keyword, remainder = _split_keyword(line)
+                    if keyword == 'include':
                         i += 1
                         continue
-                    if lowered.startswith('match '):
+                    if keyword == 'match':
                         if current_hosts and current_config:
                             tokens = current_hosts
                             if any('*' in t or '?' in t or t.startswith('!') for t in tokens):
@@ -958,15 +975,15 @@ class ConnectionManager(GObject.Object):
                         current_config = {}
                         block_lines = [raw_line.rstrip('\n')]
                         i += 1
-                        while i < len(lines) and not lines[i].lstrip().lower().startswith(('host ', 'match ', 'include ')):
+                        while i < len(lines) and _split_keyword(lines[i].strip())[0] not in ('host', 'match', 'include'):
                             block_lines.append(lines[i].rstrip('\n'))
                             i += 1
                         while block_lines and block_lines[-1].strip() == '':
                             block_lines.pop()
                         self.rules.append({'raw': '\n'.join(block_lines), 'source': cfg_file})
                         continue
-                    if lowered.startswith('host '):
-                        tokens = shlex.split(line[len('host '):])
+                    if keyword == 'host':
+                        tokens = shlex.split(remainder) if remainder else []
                         if not tokens:
                             i += 1
                             continue
@@ -1009,13 +1026,17 @@ class ConnectionManager(GObject.Object):
                         # Directives that accumulate per ssh_config(5): forwardings
                         # and IdentityFile/CertificateFile ("Multiple ... directives
                         # will add to the list").
-                        if key in current_config and key in (
+                        accumulates = key in (
                             'localforward', 'remoteforward', 'dynamicforward',
                             'identityfile', 'certificatefile',
-                        ):
-                            if not isinstance(current_config[key], list):
-                                current_config[key] = [current_config[key]]
-                            current_config[key].append(value)
+                        )
+                        if key in current_config:
+                            if accumulates:
+                                if not isinstance(current_config[key], list):
+                                    current_config[key] = [current_config[key]]
+                                current_config[key].append(value)
+                            # Otherwise ssh_config(5) is first-value-wins: a
+                            # repeated non-accumulating option is ignored.
                         else:
                             current_config[key] = value
                     i += 1
