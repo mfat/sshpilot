@@ -2017,21 +2017,87 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             context_click = Gtk.GestureClick()
             context_click.set_button(Gdk.BUTTON_SECONDARY)  # Only handle right-click
 
+            def _build_and_show_menu(row):
+                # Build a Gtk.PopoverMenu from the shared sidebar context menu helper.
+                menu = IconContextMenu()
+
+                def _on_popover_closed(popover, *_):
+                    # Only clear context state if this is still the active
+                    # popover — a newer right-click may have already replaced
+                    # it. Always unparent so popovers don't accumulate.
+                    if getattr(self, '_context_menu_popover', None) is popover:
+                        self._context_menu_popover = None
+                        self._context_menu_row = None
+                        self._context_menu_connection = None
+                    try:
+                        popover.unparent()
+                    except Exception:
+                        pass
+
+                if hasattr(row, 'group_id'):
+                    menu.add_section(
+                        menu.add_item('document-edit-symbolic', _('Edit Group'), lambda: self.on_edit_group_action(None, None)),
+                        menu.add_item('view-grid-symbolic', _('Open in Split View'), lambda: self.on_open_group_in_split_view_action(None, None)),
+                        menu.add_item('utilities-terminal-symbolic', _('Run Command…'), lambda: self.on_run_command_action()),
+                        menu.add_item('user-trash-symbolic', _('Delete Group'), lambda: self.on_delete_group_action(None, None)),
+                    )
+                else:
+                    conn = getattr(row, 'connection', None)
+
+                    menu.add_section(
+                        menu.add_item('list-add-symbolic', _('Open New Connection'), lambda: self.on_open_new_connection_action(None, None)),
+                        menu.add_item('view-grid-symbolic', _('Open in Split View'), lambda: self.on_open_in_split_view_action(None, None)),
+                        menu.add_item('utilities-terminal-symbolic', _('Run Command…'), lambda: self.on_run_command_action()),
+                        menu.add_item('document-edit-symbolic', _('Edit Connection'), lambda: self.on_edit_connection_action(None, None)),
+                        menu.add_item('edit-copy-symbolic', _('Duplicate Connection'), lambda: self.on_duplicate_connection_action(None, None)),
+                        menu.add_item('edit-copy-symbolic', _('Copy Address'), lambda: self._copy_connection_address()),
+                    )
+
+                    wol_item = None
+                    try:
+                        conn_meta = self.config.get_connection_meta(conn.nickname) if conn else {}
+                        if (conn_meta or {}).get('wol_mac', '').strip():
+                            wol_item = menu.add_item('network-wireless-symbolic', _('Wake on LAN'), lambda: self.on_wake_on_lan_action(None, None))
+                    except Exception:
+                        pass
+                    menu.add_section(
+                        menu.add_item('folder-symbolic', _('Manage Files'), lambda: self.on_manage_files_action(None, None)) if not should_hide_file_manager_options() else None,
+                        menu.add_item('dialog-password-symbolic', _('Copy Key to Server'), lambda: self.on_copy_key_to_server_action(None, None)),
+                        wol_item,
+                        menu.add_item('utilities-terminal-symbolic', _('Open in System Terminal'), lambda: self.on_open_in_system_terminal_action(None, None)) if not should_hide_external_terminal_options() else None,
+                    )
+
+                    current_groups = self.group_manager.get_connection_groups(conn.nickname) if conn else []
+                    row_group_id = getattr(row, '_group_id', None)
+                    ungroup_label = _('Remove from Group') if (row_group_id and len(current_groups) > 1) else _('Ungroup')
+                    menu.add_section(
+                        menu.add_item('folder-symbolic', _('Move to Group'), lambda: self.on_move_to_group_action(None, None)),
+                        menu.add_item('list-add-symbolic', _('Copy to Group'), lambda: self.on_copy_to_group_action(None, None)),
+                        menu.add_item('edit-undo-symbolic', ungroup_label, lambda: self.on_move_to_ungrouped_action(None, None)) if current_groups else None,
+                    )
+
+                    try:
+                        is_pinned = self.config.is_pinned(conn.nickname) if conn else False
+                        if is_pinned:
+                            menu.add_section(
+                                menu.add_item('starred-symbolic', _('Unpin from Start Page'), lambda: self._toggle_pin_connection(conn)),
+                            )
+                        else:
+                            menu.add_section(
+                                menu.add_item('non-starred-symbolic', _('Pin to Start Page'), lambda: self._toggle_pin_connection(conn)),
+                            )
+                    except Exception:
+                        pass
+
+                    menu.add_section(
+                        menu.add_item('user-trash-symbolic', _('Delete'), lambda: self.on_delete_connection_action(None, None)),
+                    )
+
+                self._context_menu_popover = menu.show(row, on_closed=_on_popover_closed)
+
             def _on_right_click(gesture, n_press, x, y):
                 try:
                     logger.debug("Simple right-click detected - showing context menu for selected row")
-
-                    # Dismiss any context menu still open from a previous
-                    # right-click so a fresh menu can be shown on this row in a
-                    # single click. The popover's 'closed' handler clears the
-                    # context state and unparents it.
-                    prev_popover = getattr(self, '_context_menu_popover', None)
-                    if prev_popover is not None:
-                        try:
-                            prev_popover.popdown()
-                        except Exception:
-                            pass
-
 
                     # Try to detect the clicked row, but fall back to selected row if detection fails
                     row = None
@@ -2087,82 +2153,26 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     self._context_menu_connection = getattr(row, 'connection', None)
                     self._context_menu_group_row = row if hasattr(row, 'group_id') else None
 
-                    # Build a Gtk.PopoverMenu from the shared sidebar context menu helper.
-                    menu = IconContextMenu()
-
-                    def _on_popover_closed(popover, *_):
-                        # Only clear context state if this is still the active
-                        # popover — a newer right-click may have already replaced
-                        # it. Always unparent so popovers don't accumulate.
-                        if getattr(self, '_context_menu_popover', None) is popover:
-                            self._context_menu_popover = None
-                            self._context_menu_row = None
-                            self._context_menu_connection = None
+                    # If a context menu from a previous right-click is still open,
+                    # wait for it to finish closing (and release its input grab)
+                    # before popping up the new one. Showing the new popover while
+                    # the old grab is active makes GTK silently suppress it, so the
+                    # menu would otherwise only appear on a second right-click.
+                    prev_popover = getattr(self, '_context_menu_popover', None)
+                    if prev_popover is not None:
+                        self._context_menu_popover = None
+                        prev_popover.connect(
+                            'closed',
+                            lambda *_: GLib.idle_add(lambda: (_build_and_show_menu(row), False)[1]),
+                        )
                         try:
-                            popover.unparent()
+                            prev_popover.popdown()
                         except Exception:
-                            pass
+                            # Fall back to showing immediately if popdown failed.
+                            _build_and_show_menu(row)
+                        return
 
-                    if hasattr(row, 'group_id'):
-                        menu.add_section(
-                            menu.add_item('document-edit-symbolic', _('Edit Group'), lambda: self.on_edit_group_action(None, None)),
-                            menu.add_item('view-grid-symbolic', _('Open in Split View'), lambda: self.on_open_group_in_split_view_action(None, None)),
-                            menu.add_item('utilities-terminal-symbolic', _('Run Command…'), lambda: self.on_run_command_action()),
-                            menu.add_item('user-trash-symbolic', _('Delete Group'), lambda: self.on_delete_group_action(None, None)),
-                        )
-                    else:
-                        conn = getattr(row, 'connection', None)
-
-                        menu.add_section(
-                            menu.add_item('list-add-symbolic', _('Open New Connection'), lambda: self.on_open_new_connection_action(None, None)),
-                            menu.add_item('view-grid-symbolic', _('Open in Split View'), lambda: self.on_open_in_split_view_action(None, None)),
-                            menu.add_item('utilities-terminal-symbolic', _('Run Command…'), lambda: self.on_run_command_action()),
-                            menu.add_item('document-edit-symbolic', _('Edit Connection'), lambda: self.on_edit_connection_action(None, None)),
-                            menu.add_item('edit-copy-symbolic', _('Duplicate Connection'), lambda: self.on_duplicate_connection_action(None, None)),
-                            menu.add_item('edit-copy-symbolic', _('Copy Address'), lambda: self._copy_connection_address()),
-                        )
-
-                        wol_item = None
-                        try:
-                            conn_meta = self.config.get_connection_meta(conn.nickname) if conn else {}
-                            if (conn_meta or {}).get('wol_mac', '').strip():
-                                wol_item = menu.add_item('network-wireless-symbolic', _('Wake on LAN'), lambda: self.on_wake_on_lan_action(None, None))
-                        except Exception:
-                            pass
-                        menu.add_section(
-                            menu.add_item('folder-symbolic', _('Manage Files'), lambda: self.on_manage_files_action(None, None)) if not should_hide_file_manager_options() else None,
-                            menu.add_item('dialog-password-symbolic', _('Copy Key to Server'), lambda: self.on_copy_key_to_server_action(None, None)),
-                            wol_item,
-                            menu.add_item('utilities-terminal-symbolic', _('Open in System Terminal'), lambda: self.on_open_in_system_terminal_action(None, None)) if not should_hide_external_terminal_options() else None,
-                        )
-
-                        current_groups = self.group_manager.get_connection_groups(conn.nickname) if conn else []
-                        row_group_id = getattr(row, '_group_id', None)
-                        ungroup_label = _('Remove from Group') if (row_group_id and len(current_groups) > 1) else _('Ungroup')
-                        menu.add_section(
-                            menu.add_item('folder-symbolic', _('Move to Group'), lambda: self.on_move_to_group_action(None, None)),
-                            menu.add_item('list-add-symbolic', _('Copy to Group'), lambda: self.on_copy_to_group_action(None, None)),
-                            menu.add_item('edit-undo-symbolic', ungroup_label, lambda: self.on_move_to_ungrouped_action(None, None)) if current_groups else None,
-                        )
-
-                        try:
-                            is_pinned = self.config.is_pinned(conn.nickname) if conn else False
-                            if is_pinned:
-                                menu.add_section(
-                                    menu.add_item('starred-symbolic', _('Unpin from Start Page'), lambda: self._toggle_pin_connection(conn)),
-                                )
-                            else:
-                                menu.add_section(
-                                    menu.add_item('non-starred-symbolic', _('Pin to Start Page'), lambda: self._toggle_pin_connection(conn)),
-                                )
-                        except Exception:
-                            pass
-
-                        menu.add_section(
-                            menu.add_item('user-trash-symbolic', _('Delete'), lambda: self.on_delete_connection_action(None, None)),
-                        )
-
-                    self._context_menu_popover = menu.show(row, on_closed=_on_popover_closed)
+                    _build_and_show_menu(row)
 
                 except Exception as e:
                     logger.error(f"Failed to create context menu: {e}")
