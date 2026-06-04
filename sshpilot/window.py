@@ -595,6 +595,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.terminal_to_connection: Dict[TerminalWidget, Connection] = {}
         self.connection_rows = {}   # connection -> [row_widget, ...] (a connection may appear in several groups)
         self._context_menu_row = None
+        self._context_menu_popover = None
         # Hide hosts toggle state
         try:
             self._hide_hosts = bool(self.config.get_setting('ui.hide_hosts', False))
@@ -2015,16 +2016,23 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             # Use a simple gesture but avoid all coordinate-based operations
             context_click = Gtk.GestureClick()
             context_click.set_button(Gdk.BUTTON_SECONDARY)  # Only handle right-click
-            # Capture phase so the gesture fires before child widgets consume the
-            # event — without this, right-clicking an unselected row is silently
-            # swallowed by the ListBox's own selection logic on the first press.
-            context_click.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
-            
+
             def _on_right_click(gesture, n_press, x, y):
                 try:
                     logger.debug("Simple right-click detected - showing context menu for selected row")
-                    
-                    
+
+                    # Dismiss any context menu still open from a previous
+                    # right-click so a fresh menu can be shown on this row in a
+                    # single click. The popover's 'closed' handler clears the
+                    # context state and unparents it.
+                    prev_popover = getattr(self, '_context_menu_popover', None)
+                    if prev_popover is not None:
+                        try:
+                            prev_popover.popdown()
+                        except Exception:
+                            pass
+
+
                     # Try to detect the clicked row, but fall back to selected row if detection fails
                     row = None
                     try:
@@ -2062,9 +2070,17 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         logger.debug("No row available for context menu")
                         return
                     
-                    # Select/highlight the right-clicked row so the UI reflects
-                    # which connection the context menu applies to.
-                    self.connection_list.select_row(row)
+                    # Highlight the right-clicked row so the UI reflects which
+                    # connection the context menu applies to. Mirror standard
+                    # file-manager behavior: right-clicking a row that isn't part
+                    # of the current selection selects just that row; right-
+                    # clicking within an existing multi-selection preserves it.
+                    try:
+                        already_selected = row in self.connection_list.get_selected_rows()
+                    except Exception:
+                        already_selected = False
+                    if not already_selected:
+                        self._select_only_row(row)
 
                     # Set context menu data
                     self._context_menu_row = row
@@ -2074,9 +2090,18 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     # Build a Gtk.PopoverMenu from the shared sidebar context menu helper.
                     menu = IconContextMenu()
 
-                    def _on_popover_closed(*_):
-                        self._context_menu_row = None
-                        self._context_menu_connection = None
+                    def _on_popover_closed(popover, *_):
+                        # Only clear context state if this is still the active
+                        # popover — a newer right-click may have already replaced
+                        # it. Always unparent so popovers don't accumulate.
+                        if getattr(self, '_context_menu_popover', None) is popover:
+                            self._context_menu_popover = None
+                            self._context_menu_row = None
+                            self._context_menu_connection = None
+                        try:
+                            popover.unparent()
+                        except Exception:
+                            pass
 
                     if hasattr(row, 'group_id'):
                         menu.add_section(
@@ -2137,8 +2162,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                             menu.add_item('user-trash-symbolic', _('Delete'), lambda: self.on_delete_connection_action(None, None)),
                         )
 
-                    menu.show(row, on_closed=_on_popover_closed)
-                    
+                    self._context_menu_popover = menu.show(row, on_closed=_on_popover_closed)
+
                 except Exception as e:
                     logger.error(f"Failed to create context menu: {e}")
             
