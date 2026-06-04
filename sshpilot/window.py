@@ -2016,11 +2016,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             # Use a simple gesture but avoid all coordinate-based operations
             context_click = Gtk.GestureClick()
             context_click.set_button(Gdk.BUTTON_SECONDARY)  # Only handle right-click
-            # Capture phase so this gesture intercepts the right-click before an
-            # already-open context popover swallows it for its own autohide
-            # dismissal. Without this, the first right-click on a new row only
-            # closes the previous popover (a "dead click") and the menu does not
-            # appear until a second click.
+            # Capture phase so this gesture handles the right-click before the
+            # ListBox's own row handling.
             context_click.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
 
             def _build_and_show_menu(row):
@@ -2099,7 +2096,34 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         menu.add_item('user-trash-symbolic', _('Delete'), lambda: self.on_delete_connection_action(None, None)),
                     )
 
-                self._context_menu_popover = menu.show(row, on_closed=_on_popover_closed)
+                popover = menu.show(row, on_closed=_on_popover_closed)
+                self._context_menu_popover = popover
+
+                # Disable the autohide modal grab. An autohide popover grabs all
+                # input while open, so the next right-click on another row is
+                # swallowed to dismiss this popover and never reaches our gesture
+                # (a "dead click"). Without the grab, every right-click reaches the
+                # handler, which closes this menu and opens the next one in a
+                # single click. We handle dismissal ourselves (see below).
+                try:
+                    popover.set_autohide(False)
+                except Exception:
+                    pass
+
+                # Escape closes the menu (autohide normally provides this).
+                try:
+                    key_ctrl = Gtk.EventControllerKey()
+
+                    def _on_menu_key(_c, keyval, _code, _state):
+                        if keyval == Gdk.KEY_Escape:
+                            popover.popdown()
+                            return True
+                        return False
+
+                    key_ctrl.connect('key-pressed', _on_menu_key)
+                    popover.add_controller(key_ctrl)
+                except Exception:
+                    pass
 
             def _on_right_click(gesture, n_press, x, y):
                 try:
@@ -2150,9 +2174,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         pass
 
                     # Dismiss and detach any context menu still open from a
-                    # previous right-click. Because this gesture runs in the
-                    # capture phase, we close the old popover ourselves (releasing
-                    # its grab) before showing the new one in the same click.
+                    # previous right-click before showing the new one. The menu is
+                    # non-autohide, so this right-click reaches us instead of being
+                    # swallowed to close the old popover, letting us replace it in a
+                    # single click.
                     prev_popover = getattr(self, '_context_menu_popover', None)
                     if prev_popover is not None:
                         self._context_menu_popover = None
@@ -2190,6 +2215,45 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             
             context_click.connect('pressed', _on_right_click)
             self.connection_list.add_controller(context_click)
+
+            # Because the context menu is non-autohide (see _build_and_show_menu),
+            # it no longer dismisses itself when the user clicks away. Close it on
+            # any primary/middle press elsewhere in the window so it behaves like a
+            # normal context menu. Presses on the popover's own menu items land on
+            # a separate surface and do not reach this controller, so selecting an
+            # item still works. Runs in the capture phase but never claims the
+            # event, so normal click handling proceeds.
+            def _dismiss_context_menu_on_press(gesture, n_press, x, y):
+                pop = getattr(self, '_context_menu_popover', None)
+                if pop is None:
+                    return
+                self._context_menu_popover = None
+                try:
+                    pop.popdown()
+                except Exception:
+                    pass
+                try:
+                    if pop.get_parent() is not None:
+                        pop.unparent()
+                except Exception:
+                    pass
+
+            dismiss_click = Gtk.GestureClick()
+            dismiss_click.set_button(0)  # any button
+            dismiss_click.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+
+            def _on_dismiss_press(gesture, n_press, x, y):
+                # The right-click handler manages replacing the menu itself; only
+                # dismiss here for non-secondary buttons.
+                try:
+                    if gesture.get_current_button() == Gdk.BUTTON_SECONDARY:
+                        return
+                except Exception:
+                    pass
+                _dismiss_context_menu_on_press(gesture, n_press, x, y)
+
+            dismiss_click.connect('pressed', _on_dismiss_press)
+            self.add_controller(dismiss_click)
 
             middle_click = Gtk.GestureClick()
             middle_click.set_button(Gdk.BUTTON_MIDDLE)
