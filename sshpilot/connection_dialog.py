@@ -775,11 +775,264 @@ def _ensure_key_badge_css():
         font-weight: bold;
         padding: 0;
     }
+    .key-type-pill {
+        background-color: alpha(@accent_color, 0.15);
+        color: @accent_color;
+        border-radius: 6px;
+        padding: 1px 7px;
+        font-size: 0.8em;
+        font-weight: bold;
+        min-width: 72px;
+    }
     """)
     Gtk.StyleContext.add_provider_for_display(
         display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
     )
     _KEY_BADGE_CSS_REGISTERED = True
+
+
+# --- SSH key fingerprint helpers (type · SHA256 · comment) -------------------
+_FINGERPRINT_CACHE: Dict[str, tuple] = {}
+
+
+def _parse_keygen_line(line: str) -> tuple:
+    """Parse an ``ssh-keygen -l`` line into (type_label, "SHA256:…", comment).
+
+    Example line: ``256 SHA256:abc… user@host (ED25519)``.
+    """
+    parts = (line or "").strip().split()
+    if len(parts) < 2:
+        return ("", "", "")
+    fingerprint = parts[1]
+    key_type = parts[-1].strip("()") if parts[-1].startswith("(") else ""
+    comment = " ".join(parts[2:-1]) if len(parts) > 3 else (parts[2] if len(parts) > 2 else "")
+    return (key_type, fingerprint, comment)
+
+
+def _fingerprint_for_path(path: str) -> tuple:
+    """(type_label, fingerprint, comment) for a key file, via ``ssh-keygen -lf``."""
+    expanded = os.path.expanduser(path or "")
+    if expanded in _FINGERPRINT_CACHE:
+        return _FINGERPRINT_CACHE[expanded]
+    result = ("", "", "")
+    try:
+        proc = subprocess.run(["ssh-keygen", "-lf", expanded],
+                              capture_output=True, text=True, timeout=5)
+        if proc.returncode == 0:
+            result = _parse_keygen_line(proc.stdout)
+    except Exception:
+        logger.debug("ssh-keygen fingerprint failed for %s", path, exc_info=True)
+    _FINGERPRINT_CACHE[expanded] = result
+    return result
+
+
+def _fingerprint_for_pub_line(pub_line: str) -> tuple:
+    """(type_label, fingerprint, comment) for a public-key line (e.g. ssh-add -L)."""
+    try:
+        proc = subprocess.run(["ssh-keygen", "-lf", "-"],
+                              input=(pub_line or "") + "\n",
+                              capture_output=True, text=True, timeout=5)
+        if proc.returncode == 0:
+            return _parse_keygen_line(proc.stdout)
+    except Exception:
+        logger.debug("ssh-keygen fingerprint (stdin) failed", exc_info=True)
+    return ("", "", "")
+
+
+def _accent_hex():
+    """Current libadwaita accent colour as #RRGGBB (theme-aware)."""
+    try:
+        sm = Adw.StyleManager.get_default()
+        rgba = sm.get_accent_color().to_standalone_rgba(sm.get_dark())
+        return "#%02x%02x%02x" % (
+            int(rgba.red * 255), int(rgba.green * 255), int(rgba.blue * 255))
+    except Exception:
+        return "#3584e4"  # GNOME blue fallback
+
+
+def _type_tag_markup(ktype):
+    """Pango markup for a key-type tag (e.g. ED25519) tinted with the accent
+    colour — used inside an Adw.ActionRow subtitle, which is text-only."""
+    if not ktype:
+        return ""
+    accent = _accent_hex()
+    return (f"<span background='{accent}' bgalpha='12%' foreground='{accent}' "
+            f"weight='bold'> {GLib.markup_escape_text(ktype)} </span>")
+
+
+class KeyChooserDialog(Adw.Window):
+    """Modal chooser listing keys on disk and in the agent across two tabs.
+
+    Each tab is a boxed list of selectable rows showing type · fingerprint ·
+    comment/path. Checked rows are committed via ``on_add(path)`` when the user
+    presses Add. Agent keys are materialised to a real path at add time.
+    """
+
+    __gtype_name__ = 'SshPilotKeyChooserDialog'
+
+    def __init__(self, parent, *, disk_keys, agent_keys, existing_paths,
+                 on_add, on_browse=None):
+        super().__init__()
+        self.set_title(_("Add a Key"))
+        self.set_modal(True)
+        if parent is not None:
+            self.set_transient_for(parent)
+        self.set_default_size(540, 580)
+
+        self._on_add = on_add
+        self._on_browse = on_browse
+        self._checks = []  # (payload, check_button); payload is path or callable
+        self._existing = {
+            os.path.realpath(os.path.expanduser(p))
+            for p in (existing_paths or []) if p
+        }
+
+        toolbar = Adw.ToolbarView()
+        header = Adw.HeaderBar()
+
+        cancel_btn = Gtk.Button(label=_("Cancel"))
+        cancel_btn.connect("clicked", lambda *_a: self.close())
+        header.pack_start(cancel_btn)
+
+        self.add_btn = Gtk.Button(label=_("Add"))
+        self.add_btn.add_css_class("suggested-action")
+        self.add_btn.set_sensitive(False)
+        self.add_btn.connect("clicked", self._on_add_clicked)
+        header.pack_end(self.add_btn)
+
+        stack = Adw.ViewStack()
+        switcher = Adw.ViewSwitcher(stack=stack)
+        try:
+            switcher.set_policy(Adw.ViewSwitcherPolicy.WIDE)
+        except Exception:
+            pass
+        header.set_title_widget(switcher)
+
+        stack.add_titled_with_icon(
+            self._build_disk_page(disk_keys), "disk", _("On disk"),
+            "computer-symbolic")
+        stack.add_titled_with_icon(
+            self._build_agent_page(agent_keys), "agent", _("In agent"),
+            "dialog-password-symbolic")
+
+        toolbar.add_top_bar(header)
+        toolbar.set_content(stack)
+        self.set_content(toolbar)
+
+    # ---- page builders --------------------------------------------------
+    def _wrap_group(self, group):
+        scrolled = Gtk.ScrolledWindow()
+        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scrolled.set_vexpand(True)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        box.set_margin_top(12); box.set_margin_bottom(12)
+        box.set_margin_start(12); box.set_margin_end(12)
+        box.append(group)
+        scrolled.set_child(box)
+        return scrolled
+
+    def _build_disk_page(self, disk_keys):
+        group = Adw.PreferencesGroup()
+        for item in disk_keys:
+            group.add(self._make_choice_row(
+                title=item.get("name") or item.get("path"),
+                ktype=item.get("ktype"),
+                meta=item.get("meta"),
+                path=item.get("path"),
+                payload=item.get("path"),
+                dedup_path=item.get("path"),
+            ))
+        if not disk_keys:
+            group.add(self._placeholder_row(_("No private keys found in ~/.ssh")))
+        if callable(self._on_browse):
+            browse = Adw.ButtonRow(title=_("Browse…"), start_icon_name="folder-symbolic")
+            browse.connect("activated", self._on_browse_clicked)
+            group.add(browse)
+        return self._wrap_group(group)
+
+    def _build_agent_page(self, agent_keys):
+        group = Adw.PreferencesGroup()
+        for item in agent_keys:
+            group.add(self._make_choice_row(
+                title=item.get("title"),
+                ktype=item.get("ktype"),
+                meta=item.get("meta"),
+                path=None,
+                payload=item.get("materializer"),
+                dedup_path=None,
+            ))
+        if not agent_keys:
+            group.add(self._placeholder_row(_("No keys loaded in ssh-agent")))
+        return self._wrap_group(group)
+
+    def _placeholder_row(self, text):
+        row = Adw.ActionRow(title=text)
+        row.set_sensitive(False)
+        return row
+
+    def _make_choice_row(self, *, title, ktype=None, meta=None, path=None,
+                         payload, dedup_path):
+        row = Adw.ActionRow(title=title or _("key"))
+        check = Gtk.CheckButton()
+        check.set_valign(Gtk.Align.CENTER)
+        already = bool(dedup_path) and (
+            os.path.realpath(os.path.expanduser(dedup_path)) in self._existing)
+        meta_text = meta or ""
+        if already:
+            meta_text = (meta_text + " · " if meta_text else "") + _("Added")
+
+        # Subtitle: type tag + fingerprint on top, the path dimmed below.
+        tag = _type_tag_markup(ktype)
+        first = "  ".join(p for p in (tag, GLib.markup_escape_text(meta_text) if meta_text else "") if p)
+        lines = []
+        if first:
+            lines.append(first)
+        if path:
+            lines.append(f"<span alpha='55%'>{GLib.markup_escape_text(path)}</span>")
+        if lines:
+            row.set_subtitle("\n".join(lines))
+            try:
+                row.set_subtitle_lines(len(lines))
+            except Exception:
+                pass
+
+        row.add_prefix(check)
+        if already:
+            check.set_active(True)
+            check.set_sensitive(False)
+            row.set_sensitive(False)
+        else:
+            check.connect("toggled", lambda *_a: self._update_add_sensitivity())
+            row.set_activatable_widget(check)
+            self._checks.append((payload, check))
+        return row
+
+    # ---- actions --------------------------------------------------------
+    def _update_add_sensitivity(self):
+        self.add_btn.set_sensitive(any(c.get_active() for _p, c in self._checks))
+
+    def _on_add_clicked(self, *_a):
+        for payload, check in self._checks:
+            if not check.get_active():
+                continue
+            try:
+                path = payload() if callable(payload) else payload
+            except Exception:
+                logger.debug("Key chooser: failed to resolve a selection", exc_info=True)
+                path = None
+            if path:
+                self._on_add(path)
+        self.close()
+
+    def _on_browse_clicked(self, *_a):
+        def _chosen(path):
+            if path:
+                self._on_add(path)
+            self.close()
+        try:
+            self._on_browse(_chosen)
+        except Exception:
+            logger.debug("Key chooser browse failed", exc_info=True)
 
 
 class FileListEditor(Adw.PreferencesGroup):
@@ -820,7 +1073,7 @@ class FileListEditor(Adw.PreferencesGroup):
                 title=action.get('label', _("Add\u2026")),
                 start_icon_name=action.get('icon', 'list-add-symbolic'),
             )
-            btn.add_css_class('success')
+            btn.add_css_class('suggested-action')
             btn.connect('activated', self._on_add_clicked, action)
             self.add(btn)
             self._add_rows.append(btn)
@@ -898,7 +1151,12 @@ class FileListEditor(Adw.PreferencesGroup):
         """A key row with its passphrase entry shown beside it (two columns)."""
         _ensure_key_badge_css()
         norm = os.path.realpath(os.path.expanduser(path))
-        row = Adw.ActionRow(title=os.path.basename(path) or path, subtitle=path)
+        ktype, _fp, _comment = _fingerprint_for_path(path)
+        # Key list shows name as title; the type tag + path live in the subtitle.
+        # The fingerprint is only shown in the key selector dialog.
+        row = Adw.ActionRow(title=os.path.basename(path) or path)
+        tag = _type_tag_markup(ktype)
+        row.set_subtitle("  ".join(p for p in (tag, GLib.markup_escape_text(path)) if p))
         try:
             row.set_subtitle_lines(1)
         except Exception:
@@ -982,6 +1240,12 @@ class FileListEditor(Adw.PreferencesGroup):
         self._emit_changed()
 
     def _on_add_clicked(self, row, action):
+        # A 'chooser' action opens a custom dialog instead of the inline popover.
+        chooser = action.get('chooser')
+        if callable(chooser):
+            chooser(self)
+            return
+
         popover = Gtk.Popover()
         popover.set_parent(row)
         popover.set_position(Gtk.PositionType.TOP)
@@ -1492,6 +1756,37 @@ class ConnectionDialog(Adw.Window):
             dialog.open(parent, None, _done)
         except Exception:
             logger.debug("Failed to open file chooser", exc_info=True)
+
+    def _open_key_chooser(self, editor):
+        """Open the disk/agent key chooser and add selected keys to *editor*."""
+        disk_keys = []
+        for name, path in self._discover_disk_keys():
+            ktype, fp, _comment = _fingerprint_for_path(path)
+            disk_keys.append({'name': name, 'path': path, 'ktype': ktype, 'meta': fp})
+
+        agent_keys = []
+        for raw_line, blob, ktype_raw, comment in self._agent_keys():
+            ktype, fp, _c = _fingerprint_for_pub_line(raw_line)
+            title = comment or _("agent key")
+            agent_keys.append({
+                'title': title,
+                'ktype': ktype,
+                'meta': fp,
+                'materializer': self._make_agent_materializer(raw_line),
+            })
+
+        parent = self.get_root() if hasattr(self, 'get_root') else None
+        if not isinstance(parent, Gtk.Window):
+            parent = None
+        dialog = KeyChooserDialog(
+            parent,
+            disk_keys=disk_keys,
+            agent_keys=agent_keys,
+            existing_paths=editor.get_paths(),
+            on_add=editor.add_path,
+            on_browse=self._browse_key,
+        )
+        dialog.present()
 
     def _browse_key(self, on_chosen):
         self._browse_file(_("Select SSH Key File"), on_chosen)
@@ -2505,10 +2800,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         self.key_editor = FileListEditor(
             title=_("Identity files (private keys)"),
             add_actions=[
-                {'label': _("Add key from disk"), 'icon': 'list-add-symbolic',
-                 'discover': self._discover_disk_keys, 'browse': self._browse_key},
-                {'label': _("Add key from agent"), 'icon': 'list-add-symbolic',
-                 'discover': self._discover_agent_keys},
+                {'label': _("Add a key…"), 'icon': 'list-add-symbolic',
+                 'chooser': self._open_key_chooser},
             ],
             with_passphrase=True,
             connection_manager=cm,
