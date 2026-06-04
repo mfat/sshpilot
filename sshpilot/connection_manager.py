@@ -158,12 +158,6 @@ class Connection:
         self.forwarders: List[asyncio.Task] = []
         self.listeners: List[asyncio.Server] = []
 
-        raw_quick = data.get('quick_connect_command', '') if isinstance(data, dict) else ''
-        if isinstance(raw_quick, str):
-            self.quick_connect_command = raw_quick.strip()
-        else:
-            self.quick_connect_command = ''
-
         unparsed = data.get('unparsed_args', []) if isinstance(data, dict) else []
         if isinstance(unparsed, (list, tuple)):
             self.unparsed_args = list(unparsed)
@@ -496,8 +490,6 @@ class Connection:
                 extra_ssh_config=None,
                 known_hosts_path=known_hosts_path,
                 native_mode=True,  # Use native mode
-                quick_connect_mode=bool(getattr(self, 'quick_connect_command', '')),
-                quick_connect_command=getattr(self, 'quick_connect_command', None) or None,
             )
 
             # Build SSH connection command using ssh_connection_builder

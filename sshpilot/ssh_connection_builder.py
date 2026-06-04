@@ -207,8 +207,6 @@ class ConnectionContext:
     extra_ssh_config: Optional[str] = None  # Extra SSH config options (from advanced tab)
     known_hosts_path: Optional[str] = None  # Custom known hosts file
     native_mode: bool = False  # Use native SSH mode (minimal command)
-    quick_connect_mode: bool = False  # Use quick connect command
-    quick_connect_command: Optional[str] = None  # Quick connect command string
 
 
 def _get_ssh_config_value(
@@ -522,7 +520,7 @@ def build_ssh_connection(
     command_type = ctx.command_type
     extra_args = ctx.extra_args or []
     
-    logger.debug(f"build_ssh_connection called: native_mode={ctx.native_mode}, quick_connect={ctx.quick_connect_mode}, connection_manager={'present' if connection_manager else 'None'}")
+    logger.debug(f"build_ssh_connection called: native_mode={ctx.native_mode}, connection_manager={'present' if connection_manager else 'None'}")
     
     # 1. Get effective SSH config from the right SSH config file
     # Try to get host identifier from connection
@@ -548,26 +546,6 @@ def build_ssh_connection(
         except Exception:
             pass
     
-    # Handle quick connect mode first — an explicit user-typed SSH command takes
-    # priority over native mode so flags like -p, -i, -X etc. are not dropped.
-    if ctx.quick_connect_mode and ctx.quick_connect_command:
-        import shlex
-        try:
-            base_cmd = shlex.split(ctx.quick_connect_command)
-        except ValueError:
-            base_cmd = ctx.quick_connect_command.split()
-        # Use default environment
-        env = os.environ.copy()
-        env.pop('SSH_ASKPASS', None)
-        env.pop('SSH_ASKPASS_REQUIRE', None)
-        return SSHConnectionCommand(
-            command=base_cmd,
-            env=env,
-            use_sshpass=False,
-            password=None,
-            use_askpass=False
-        )
-
     # Handle native mode - SSH config is the source of truth for per-host
     # settings (IdentityFile, port forwarding, X11, RemoteCommand, ...), so the
     # command stays minimal: `ssh -F <config> host`. This builder owns only the

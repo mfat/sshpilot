@@ -4737,7 +4737,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             ('new-connection', _('New Connection')),
             ('search', _('Search Connections')),
             ('toggle-list', _('Focus Connection List')),
-            ('quick-connect', _('Quick Connect')),
             ('open-new-connection-tab', _('Open New Tab')),
             ('new-key', _('Copy Key to Server')),
             ('manage-files', _('Manage Files')),
@@ -4873,8 +4872,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             title=_('Search Connections'), accelerator=f"{primary}f"))
         group_connections.add_shortcut(Gtk.ShortcutsShortcut(
             title=_('Focus Connection List'), accelerator=f"{primary}<Shift>l"))
-        group_connections.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Quick Connect'), accelerator=f"{primary}<Alt>c"))
         group_connections.add_shortcut(Gtk.ShortcutsShortcut(
             title=_('Manage Files'), accelerator=f"{primary}<Shift>o"))
         section.add_group(group_connections)

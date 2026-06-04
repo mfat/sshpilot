@@ -63,7 +63,6 @@ ACTION_LABELS: Dict[str, str] = {
     'tab-next': _('Next Tab'),
     'tab-prev': _('Previous Tab'),
     'tab-overview': _('Tab Overview'),
-    'quick-connect': _('Quick Connect'),
     'new-split-view-tab': _('New Split View Tab'),
     'toggle-command-blocks': _('Command Blocks Sidebar'),
 }
@@ -267,7 +266,6 @@ class ShortcutsPreferencesPage(PreferencesPageBase):
             'new-key',
             'manage-files',
             'edit-ssh-config',
-            'quick-connect',
         ]
         terminal_actions = ['local-terminal', 'terminal-search', 'broadcast-command', 'toggle-command-blocks']
         tab_actions = ['tab-next', 'tab-prev', 'tab-close', 'tab-overview', 'new-split-view-tab']

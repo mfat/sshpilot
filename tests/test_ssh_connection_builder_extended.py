@@ -11,7 +11,6 @@ mode, and the auth env/options resolved by resolve_native_auth.
 from __future__ import annotations
 
 import asyncio
-import shlex
 from typing import List, Optional
 
 import pytest
@@ -257,21 +256,6 @@ def test_proxy_and_agent_settings_not_emitted_to_command():
 
 
 # --- modes ---
-
-
-def test_quick_connect_uses_verbatim_command_without_askpass():
-    command = 'ssh -p 2222 -J bastion user@target'
-    cmd, result = _build(
-        {
-            'host': 'target',
-            'quick_connect_command': command,
-        },
-        quick_connect_mode=True,
-        quick_connect_command=command,
-    )
-    assert cmd == shlex.split(command)
-    assert result.use_askpass is False
-    assert 'SSH_ASKPASS' not in result.env
 
 
 def test_native_mode_resolves_host_identifier_and_overrides():

@@ -5029,10 +5029,8 @@ class TerminalWidget(Gtk.Box):
                         extra_ssh_config=None,
                         known_hosts_path=None,
                         native_mode=True,
-                        quick_connect_mode=False,
-                        quick_connect_command=None,
                     )
-                    
+
                     ssh_conn_cmd = build_ssh_connection(ctx)
                     ssh_cmd = ssh_conn_cmd.command
                     env = ssh_conn_cmd.env.copy()
@@ -5060,8 +5058,6 @@ class TerminalWidget(Gtk.Box):
                             extra_ssh_config=None,
                             known_hosts_path=None,
                             native_mode=True,
-                            quick_connect_mode=False,
-                            quick_connect_command=None,
                         )
                         cleanup_cmd_obj = build_ssh_connection(cleanup_ctx)
                         cleanup_cmd = cleanup_cmd_obj.command

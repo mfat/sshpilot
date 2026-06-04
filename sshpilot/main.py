@@ -235,12 +235,6 @@ class SshPilotApplication(Adw.Application):
         else:
             self.create_action('tab-overview', self.on_tab_overview, ['<primary><shift>Tab'])
         
-        # Quick connect accelerator
-        if mac:
-            self.create_action('quick-connect', self.on_quick_connect, ['<Meta><Alt>c'])
-        else:
-            self.create_action('quick-connect', self.on_quick_connect, ['<primary><Alt>c'])
-        
         # Connect to signals
         self.connect('shutdown', self.on_shutdown)
         self.connect('activate', self.on_activate)
@@ -846,19 +840,6 @@ class SshPilotApplication(Adw.Application):
             win.tab_overview.set_open(not is_open)
         except Exception as e:
             logger.error(f"Failed to toggle tab overview: {e}")
-
-    def on_quick_connect(self, action, param):
-        """Open quick connect dialog"""
-        win = self.props.active_window
-        if not win:
-            return
-        try:
-            # Import here to avoid circular imports
-            from .welcome_page import QuickConnectDialog
-            dialog = QuickConnectDialog(win)
-            dialog.present()
-        except Exception as e:
-            logger.error(f"Failed to open quick connect dialog: {e}")
 
     def on_broadcast_command(self, action, param):
         """Handle broadcast command action (Ctrl/⌘+Shift+B)"""

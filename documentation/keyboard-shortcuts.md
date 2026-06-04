@@ -28,7 +28,6 @@ SSH Pilot is designed for efficient keyboard navigation. This guide covers all a
 | **New Connection** | `Ctrl+N` | `Cmd+N` | Create a new SSH connection |
 | **Search Connections** | `Ctrl+F` | `Cmd+F` | Search/filter connection list |
 | **Focus Connection List** | `Ctrl+L` | `Cmd+L` | Focus the sidebar connection list |
-| **Quick Connect** | `Ctrl+Alt+C` | `Cmd+Alt+C` | Open the Quick Connect dialog |
 | **Open New Tab** | `Ctrl+Alt+N` | `Cmd+Alt+N` | Open the highlighted connection in a new tab |
 | **Open in New Tab** | `Ctrl+Enter` | `Cmd+Enter` | Force the selected connection to open in a new tab |
 | **Open or Focus Selected Connection** | `Enter` | `Enter` | Focus an existing tab for the selected connection or open a new one |
@@ -144,7 +143,6 @@ When editing connection settings:
 - **Keyboard-only workflow**: You can navigate the entire application without touching the mouse
 - **Search shortcuts**: In search mode, use `Enter` to connect to the first filtered result
 - **Context menus**: Right-click (or menu key) on connections for additional options
-- **Quick access**: Memorize `Ctrl/Cmd+Alt+C` for the quick connect dialog when you need to connect to an ad-hoc server
 
 ---
 
