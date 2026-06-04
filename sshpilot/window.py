@@ -815,10 +815,17 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 logger.debug("Checking for updates on startup")
                 
                 def on_update_check_complete(latest_version):
-                    """Callback when startup update check completes"""
-                    if latest_version:
-                        GLib.idle_add(self._handle_update_check_result, latest_version)
-                
+                    """Callback when startup update check completes.
+
+                    Always route through the result handler (even when there is
+                    no update) so the tips banner is surfaced once the update
+                    banner's area is known to be free. ``from_startup=True``
+                    keeps the silent check from raising a toast.
+                    """
+                    GLib.idle_add(
+                        self._handle_update_check_result, latest_version, True
+                    )
+
                 check_for_updates_async(on_update_check_complete)
         except Exception as e:
             logger.debug(f"Failed to check for updates on startup: {e}")

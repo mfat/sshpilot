@@ -17,6 +17,9 @@ from . import wol
 HAS_NAV_SPLIT = hasattr(Adw, 'NavigationSplitView')
 HAS_OVERLAY_SPLIT = hasattr(Adw, 'OverlaySplitView')
 
+# Grace delay before the usage-tips banner eases into the update banner's area.
+TIPS_BANNER_DELAY_SECONDS = 4
+
 logger = logging.getLogger(__name__)
 
 
@@ -1340,17 +1343,26 @@ class WindowActions:
         # Check for updates in background
         check_for_updates_async(on_update_check_complete)
     
-    def _handle_update_check_result(self, latest_version):
-        """Handle the result of an update check (runs on main thread)"""
+    def _handle_update_check_result(self, latest_version, from_startup=False):
+        """Handle the result of an update check (runs on main thread).
+
+        ``from_startup`` is True for the automatic check run at startup; it
+        suppresses the "you're running the latest version" toast (which would be
+        noise on every launch) while still surfacing the tips banner.
+        """
         if latest_version:
             self._latest_version = latest_version
             self._show_update_banner(latest_version)
         else:
-            # No update available - show a toast
-            toast = Adw.Toast.new("You're running the latest version")
-            toast.set_timeout(3)
-            if hasattr(self, 'toast_overlay'):
-                self.toast_overlay.add_toast(toast)
+            # No update available - tell the user (unless this was the silent
+            # startup check) ...
+            if not from_startup:
+                toast = Adw.Toast.new("You're running the latest version")
+                toast.set_timeout(3)
+                if hasattr(self, 'toast_overlay'):
+                    self.toast_overlay.add_toast(toast)
+            # ... and free up the banner area for a usage tip.
+            self._maybe_show_tips_banner()
     
     def _show_update_banner(self, version):
         """Show the update notification banner"""
@@ -1406,8 +1418,109 @@ class WindowActions:
         self.update_banner.set_revealed(False)
         if hasattr(self, 'update_banner_container'):
             self.update_banner_container.set_visible(False)
+        # Now that the update banner is gone, surface a usage tip in its place.
+        self._maybe_show_tips_banner()
 
     # --- Terminal tips banner (shares the update banner's area) ---------------
+
+    def _window_shortcut_label(self, action_name: str, fallback: str) -> str:
+        """Human-readable label for an action's current accelerator.
+
+        Honors user customizations: prefers a configured override, else the
+        app's registered default. Falls back to *fallback* when the shortcut
+        can't be resolved (or the user disabled it).
+        """
+        try:
+            accels = None
+            override = None
+            try:
+                override = self.config.get_shortcut_override(action_name)
+            except Exception:
+                override = None
+            if override is not None:
+                accels = override
+            else:
+                app = Gio.Application.get_default()
+                if app is not None and hasattr(app, 'get_registered_shortcut_defaults'):
+                    accels = app.get_registered_shortcut_defaults().get(action_name)
+            if not accels:
+                return fallback
+            ok, keyval, mods = Gtk.accelerator_parse(accels[0])
+            if ok and keyval:
+                label = Gtk.accelerator_get_label(keyval, mods)
+                if label:
+                    return label
+        except Exception:
+            pass
+        return fallback
+
+    def _build_window_tips(self):
+        """Return the list of short usage tips shown in the banner area.
+
+        Each shortcut label reflects the action's current (possibly customized)
+        accelerator and is platform-aware.
+        """
+        mod = get_primary_modifier_label()
+        return [
+            _('Press {shortcut} to switch between the terminal and the connection list').format(
+                shortcut=self._window_shortcut_label('toggle-list', f"{mod}+Shift+L")),
+            _('Press {shortcut} to search your connections').format(
+                shortcut=self._window_shortcut_label('search', f"{mod}+F")),
+            _('Press {shortcut} to open a new connection').format(
+                shortcut=self._window_shortcut_label('new-connection', f"{mod}+N")),
+            _('Press {shortcut} to search inside the terminal').format(
+                shortcut=self._window_shortcut_label('terminal-search', f"{mod}+Shift+F")),
+            _('Press {shortcut} to copy your SSH key to a server').format(
+                shortcut=self._window_shortcut_label('new-key', f"{mod}+Shift+K")),
+            _('Press F9 to toggle the sidebar'),
+            _('Press {shortcut} to see all keyboard shortcuts').format(
+                shortcut=self._window_shortcut_label('shortcuts', f"{mod}+?")),
+            _('Middle-click a connection to open it in a new tab!'),
+            _('Middle-click a tab to close it!'),
+            _('Hover your mouse pointer over the right side of a connection to access the file manager'),
+            _('You can use your favorite terminal from Settings'),
+            _('When the app starts, type a host name and press enter to connect!'),
+        ]
+
+    def _maybe_show_tips_banner(self):
+        """Show a usage tip in the banner area, if the user hasn't opted out.
+
+        Called once the update banner's area is free — either there was no
+        update available, or the user dismissed the update banner. The tip is
+        revealed after a short delay so it eases in gracefully rather than
+        snapping into place the instant the window settles or the update banner
+        disappears. ``show_terminal_tip`` itself suppresses the tip while the
+        update banner is still revealed, so the two never stack.
+        """
+        try:
+            if not getattr(self, 'tips_banner', None):
+                return
+            if not bool(self.config.get_setting('terminal.show_tips', True)):
+                return
+            # Cancel any pending reveal so repeated triggers don't stack.
+            if getattr(self, '_tips_banner_timeout_id', 0):
+                GLib.source_remove(self._tips_banner_timeout_id)
+            self._tips_banner_timeout_id = GLib.timeout_add_seconds(
+                TIPS_BANNER_DELAY_SECONDS, self._reveal_delayed_tips
+            )
+        except Exception as exc:
+            logger.debug("Failed to schedule tips banner: %s", exc)
+
+    def _reveal_delayed_tips(self):
+        """Reveal a tip once the grace delay has elapsed (one-shot timeout)."""
+        self._tips_banner_timeout_id = 0
+        try:
+            if not getattr(self, 'tips_banner', None):
+                return False
+            # Re-check the opt-out in case the user disabled tips during the wait.
+            if not bool(self.config.get_setting('terminal.show_tips', True)):
+                return False
+            tips = self._build_window_tips()
+            if tips:
+                self.show_terminal_tip(tips)
+        except Exception as exc:
+            logger.debug("Failed to show tips banner: %s", exc)
+        return False  # one-shot
 
     def show_terminal_tip(self, tips):
         """Show a terminal usage tip in the window banner area.

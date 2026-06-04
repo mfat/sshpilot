@@ -25,7 +25,6 @@ from .port_utils import get_port_checker
 from .platform_utils import is_flatpak, is_macos, get_sshpass_path
 from .terminal_backends import BaseTerminalBackend, VTETerminalBackend, PyXtermTerminalBackend
 from .ssh_connection_builder import build_ssh_connection, ConnectionContext
-from .shortcut_utils import get_primary_modifier_label
 
 gi.require_version('Gtk', '4.0')
 gi.require_version('Vte', '3.91')
@@ -542,14 +541,6 @@ class TerminalWidget(Gtk.Box):
         # terminal natural height (which would otherwise resize split panes).
         self.overlay.add_overlay(self.disconnected_banner)
 
-        # Terminal usage tips are shown in the main window's banner area (the
-        # same place the "update available" banner appears), NOT floated over
-        # the terminal, so they never mask terminal output. The update banner
-        # takes priority over tips. See MainWindow.show_terminal_tip.
-        self._connection_list_hint_handled = False
-        self._tips = self._build_terminal_tips()
-        self.connect('connection-established', self._reveal_connection_list_hint)
-
         # Container for terminal stack only
         self.container_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self.container_box.set_hexpand(True)
@@ -857,87 +848,6 @@ class TerminalWidget(Gtk.Box):
                 self.connecting_bg.set_visible(visible)
             if hasattr(self.connecting_box, 'set_visible'):
                 self.connecting_box.set_visible(visible)
-        except Exception:
-            pass
-
-    def _shortcut_label(self, action_name: str, fallback: str) -> str:
-        """Human-readable label for an action's current accelerator.
-
-        Honors user customizations: prefers a configured override, else the
-        app's registered default. Falls back to *fallback* when the shortcut
-        can't be resolved (or the user disabled it).
-        """
-        try:
-            accels = None
-            override = None
-            try:
-                override = self.config.get_shortcut_override(action_name)
-            except Exception:
-                override = None
-            if override is not None:
-                accels = override
-            else:
-                app = Gio.Application.get_default()
-                if app is not None and hasattr(app, 'get_registered_shortcut_defaults'):
-                    accels = app.get_registered_shortcut_defaults().get(action_name)
-            if not accels:
-                return fallback
-            ok, keyval, mods = Gtk.accelerator_parse(accels[0])
-            if ok and keyval:
-                label = Gtk.accelerator_get_label(keyval, mods)
-                if label:
-                    return label
-        except Exception:
-            pass
-        return fallback
-
-    def _build_terminal_tips(self):
-        """Return the list of short usage tips shown in the terminal banner.
-
-        The connection-list shortcut comes first since that's the original
-        prompt; the rest surface other handy shortcuts. Each shortcut label
-        reflects the action's current (possibly customized) accelerator and is
-        platform-aware.
-        """
-        mod = get_primary_modifier_label()
-        return [
-            _('Press {shortcut} to switch to the connection list').format(
-                shortcut=self._shortcut_label('toggle-list', f"{mod}+Shift+L")),
-            _('Press {shortcut} to search your connections').format(
-                shortcut=self._shortcut_label('search', f"{mod}+F")),
-            _('Press {shortcut} to open a new connection').format(
-                shortcut=self._shortcut_label('new-connection', f"{mod}+N")),
-            _('Press {shortcut} to search inside the terminal').format(
-                shortcut=self._shortcut_label('terminal-search', f"{mod}+Shift+F")),
-            _('Press {shortcut} to copy your SSH key to a server').format(
-                shortcut=self._shortcut_label('new-key', f"{mod}+Shift+K")),
-            _('Press F9 to toggle the sidebar'),
-            _('Press {shortcut} to see all keyboard shortcuts').format(
-                shortcut=self._shortcut_label('shortcuts', f"{mod}+?")),
-        ]
-
-    def _reveal_connection_list_hint(self, *args):
-        """Show a usage tip in the main window's banner area once connected.
-
-        Only shows while the user hasn't opted out, and at most once per
-        terminal so a reconnect doesn't pop it back up. The tip is rendered by
-        the main window (alongside the update banner), not over the terminal.
-        """
-        try:
-            if self._connection_list_hint_handled:
-                return
-            self._connection_list_hint_handled = True
-            if not bool(self.config.get_setting('terminal.show_tips', True)):
-                return
-            # Rebuild so labels reflect any shortcut customizations made since
-            # this terminal was created. The window picks a tip to show and the
-            # "Next tip" button cycles through the rest.
-            self._tips = self._build_terminal_tips()
-            if not self._tips:
-                return
-            root = self.get_root() if hasattr(self, 'get_root') else None
-            if root is not None and hasattr(root, 'show_terminal_tip'):
-                root.show_terminal_tip(self._tips)
         except Exception:
             pass
 
