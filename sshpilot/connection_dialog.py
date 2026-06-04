@@ -820,6 +820,7 @@ class FileListEditor(Adw.PreferencesGroup):
                 title=action.get('label', _("Add\u2026")),
                 start_icon_name=action.get('icon', 'list-add-symbolic'),
             )
+            btn.add_css_class('success')
             btn.connect('activated', self._on_add_clicked, action)
             self.add(btn)
             self._add_rows.append(btn)
@@ -894,10 +895,10 @@ class FileListEditor(Adw.PreferencesGroup):
             badge.set_label(str(n))
 
     def _make_key_expander_row(self, path):
-        """A key row that expands to reveal its own inline passphrase field."""
+        """A key row with its passphrase entry shown beside it (two columns)."""
         _ensure_key_badge_css()
         norm = os.path.realpath(os.path.expanduser(path))
-        row = Adw.ExpanderRow(title=os.path.basename(path) or path, subtitle=path)
+        row = Adw.ActionRow(title=os.path.basename(path) or path, subtitle=path)
         try:
             row.set_subtitle_lines(1)
         except Exception:
@@ -916,13 +917,30 @@ class FileListEditor(Adw.PreferencesGroup):
         key_icon.set_valign(Gtk.Align.CENTER)
         row.add_prefix(key_icon)
 
-        # Password button (right side) that expands/collapses the row.
-        key_btn = Gtk.Button(icon_name='password-symbolic')
-        key_btn.add_css_class('flat')
-        key_btn.set_valign(Gtk.Align.CENTER)
-        key_btn.set_tooltip_text(_("Show key passphrase"))
-        key_btn.connect('clicked', lambda _b, r=row: r.set_expanded(not r.get_expanded()))
-        row.add_suffix(key_btn)
+        # Second column: per-key passphrase entry, always visible next to the key.
+        pass_entry = Gtk.PasswordEntry()
+        pass_entry.set_show_peek_icon(True)
+        pass_entry.set_valign(Gtk.Align.CENTER)
+        pass_entry.set_width_chars(18)
+        try:
+            pass_entry.set_property('placeholder-text', _("Key passphrase"))
+        except Exception:
+            pass
+        if self._connection_manager is not None:
+            try:
+                existing = self._connection_manager.get_key_passphrase(norm) or ''
+                if existing:
+                    pass_entry.set_text(existing)
+            except Exception:
+                pass
+        # Clear the error state as soon as the user edits the value again.
+        pass_entry.connect('changed', lambda e: e.remove_css_class('error'))
+        # Commit on Enter and when focus leaves the entry.
+        pass_entry.connect('activate', self._commit_passphrase, path, norm)
+        focus = Gtk.EventControllerFocus()
+        focus.connect('leave', lambda _c, e=pass_entry, p=path, n=norm: self._commit_passphrase(e, p, n))
+        pass_entry.add_controller(focus)
+        row.add_suffix(pass_entry)
 
         remove_btn = Gtk.Button(icon_name='user-trash-symbolic')
         remove_btn.add_css_class('flat')
@@ -930,33 +948,19 @@ class FileListEditor(Adw.PreferencesGroup):
         remove_btn.set_tooltip_text(_("Remove"))
         remove_btn.connect('clicked', lambda _b, p=path, r=row: self._remove_row(p, r))
         row.add_suffix(remove_btn)
-
-        pass_row = Adw.PasswordEntryRow(title=_("Key passphrase"))
-        pass_row.set_show_apply_button(True)
-        if self._connection_manager is not None:
-            try:
-                existing = self._connection_manager.get_key_passphrase(norm) or ''
-                if existing:
-                    pass_row.set_text(existing)
-            except Exception:
-                pass
-        # Clear the error state as soon as the user edits the value again.
-        pass_row.connect('changed', lambda r: r.remove_css_class('error'))
-        pass_row.connect('apply', self._on_inline_passphrase_apply, path, norm)
-        row.add_row(pass_row)
         return row
 
-    def _on_inline_passphrase_apply(self, pass_row, path, norm):
-        text = pass_row.get_text()
+    def _commit_passphrase(self, pass_entry, path, norm):
+        text = pass_entry.get_text()
         if text and callable(self._verify):
             try:
                 ok = bool(self._verify(path, text))
             except Exception:
                 ok = False
             if not ok:
-                pass_row.add_css_class('error')
+                pass_entry.add_css_class('error')
                 return
-        pass_row.remove_css_class('error')
+        pass_entry.remove_css_class('error')
         if self._connection_manager is not None:
             try:
                 if text:
