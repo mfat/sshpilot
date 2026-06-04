@@ -1263,6 +1263,10 @@ class ConnectionDialog(Adw.Window):
             self.password_row.set_visible(True)  # optional for keys, primary for password
         if hasattr(self, 'pubkey_auth_row'):
             self.pubkey_auth_row.set_visible(not is_key_based)
+        # Agent/hardware key sources apply to BOTH Automatic and specific-key
+        # modes (that's what Automatic relies on); hide only for password auth.
+        if hasattr(self, 'hw_group'):
+            self.hw_group.set_visible(is_key_based)
         # Update key/cert editor visibility for the current selection mode.
         self.on_key_select_changed()
 
@@ -2489,7 +2493,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         # PKCS#11 smartcard, or a FIDO security key rather than an on-disk file.
         # These compose with the identity files above; ssh resolves which key
         # (and cert) authenticates. Leave blank to use defaults.
-        hw_group = Adw.PreferencesGroup(
+        self.hw_group = hw_group = Adw.PreferencesGroup(
             title=_("Agent and hardware keys"),
             description=_("Optional. Use keys from an agent, smartcard (PKCS#11), "
                           "or FIDO security key. Leave blank for defaults."),
