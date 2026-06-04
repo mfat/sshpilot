@@ -1440,7 +1440,17 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.sidebar_toggle_button.set_active(False)
         self.sidebar_toggle_button.connect('toggled', self.on_sidebar_toggle)
         self.header_bar.pack_start(self.sidebar_toggle_button)
-        
+
+        # Add local terminal button right after the sidebar toggle
+        self.local_terminal_button = Gtk.Button()
+        icon_utils.set_button_icon(self.local_terminal_button, 'utilities-terminal-symbolic')
+        self.local_terminal_button.set_tooltip_text(
+            f'Open Local Terminal ({get_primary_modifier_label()}+Shift+T)'
+        )
+        self.local_terminal_button.add_css_class('flat')
+        self.local_terminal_button.set_action_name('app.local-terminal')
+        self.header_bar.pack_start(self.local_terminal_button)
+
         # Add view toggle button to switch between welcome and tabs
         self.view_toggle_button = Gtk.Button()
         from sshpilot import icon_utils
