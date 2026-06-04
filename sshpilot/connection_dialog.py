@@ -1067,16 +1067,26 @@ class FileListEditor(Adw.PreferencesGroup):
         # verify(path, passphrase) -> bool before storing (None disables it).
         self._verify = verify
 
+        # Add actions are compact pill buttons in the group header (not
+        # full-width list rows). _add_rows stays empty so the row-reordering
+        # helpers below are no-ops.
         self._add_rows = []
+        self._add_buttons = []
+        add_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        add_box.set_valign(Gtk.Align.CENTER)
         for action in (add_actions or []):
-            btn = Adw.ButtonRow(
-                title=action.get('label', _("Add\u2026")),
-                start_icon_name=action.get('icon', 'list-add-symbolic'),
-            )
+            btn = Gtk.Button()
+            btn.set_child(Adw.ButtonContent(
+                icon_name=action.get('icon', 'list-add-symbolic'),
+                label=action.get('label', _("Add\u2026")),
+            ))
+            btn.add_css_class('pill')
             btn.add_css_class('suggested-action')
-            btn.connect('activated', self._on_add_clicked, action)
-            self.add(btn)
-            self._add_rows.append(btn)
+            btn.connect('clicked', self._on_add_clicked, action)
+            add_box.append(btn)
+            self._add_buttons.append(btn)
+        if self._add_buttons:
+            self.set_header_suffix(add_box)
 
     # ---- public API -----------------------------------------------------
     def get_paths(self):
@@ -1162,6 +1172,12 @@ class FileListEditor(Adw.PreferencesGroup):
         except Exception:
             pass
 
+        # Prefixes render as number, then icon (add_prefix prepends, so the
+        # icon is added first and the badge last to get this order).
+        key_icon = Gtk.Image.new_from_icon_name('dialog-password-symbolic')
+        key_icon.set_valign(Gtk.Align.CENTER)
+        row.add_prefix(key_icon)
+
         # Order badge (number in a circle) reflecting the offer order.
         badge = Gtk.Label(label="")
         badge.add_css_class('key-order-badge')
@@ -1169,11 +1185,6 @@ class FileListEditor(Adw.PreferencesGroup):
         badge.set_halign(Gtk.Align.CENTER)
         row.add_prefix(badge)
         row._order_badge = badge
-
-        # Static key icon (after the number) to signal this row is an SSH key.
-        key_icon = Gtk.Image.new_from_icon_name('dialog-password-symbolic')
-        key_icon.set_valign(Gtk.Align.CENTER)
-        row.add_prefix(key_icon)
 
         # Second column: per-key passphrase entry, always visible next to the key.
         pass_entry = Gtk.PasswordEntry()
@@ -2809,6 +2820,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 os.path.expanduser(path), passphrase
             ),
         )
+        self.key_editor.set_description(_("Add private keys to be tried by SSH"))
 
         # IdentitiesOnly — its own group, clearly separated from the keys above.
         self.idonly_group = Adw.PreferencesGroup()
