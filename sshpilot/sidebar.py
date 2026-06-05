@@ -1163,6 +1163,27 @@ class ConnectionRow(Gtk.ListBoxRow):
         except Exception:
             pass
 
+    @staticmethod
+    def _install_status_css():
+        """Custom color for the failed/disconnected status icon. Uses an explicit
+        red (#DC2626) instead of libadwaita's .error so it stays the same red in
+        dark mode (where .error becomes a coral/orange-ish tone)."""
+        try:
+            display = Gdk.Display.get_default()
+            if not display:
+                return
+            if getattr(display, "_status_css_installed", False):
+                return
+            provider = Gtk.CssProvider()
+            css = "image.conn-status-down { color: #DC2626; }"
+            provider.load_from_data(css.encode("utf-8"))
+            Gtk.StyleContext.add_provider_for_display(
+                display, provider, Gtk.STYLE_PROVIDER_PRIORITY_USER
+            )
+            setattr(display, "_status_css_installed", True)
+        except Exception:
+            pass
+
     def _update_forwarding_indicators(self):
         self._install_pf_css()
         try:
@@ -1243,7 +1264,8 @@ class ConnectionRow(Gtk.ListBoxRow):
             host_value = _get_connection_host(self.connection) or _get_connection_alias(self.connection)
 
             # Clear any previously-applied semantic color classes before re-styling.
-            for _cls in ("success", "warning", "error", "dim-label"):
+            self._install_status_css()
+            for _cls in ("success", "warning", "error", "dim-label", "conn-status-down"):
                 self.status_icon.remove_css_class(_cls)
 
             # Idle / never connected this session: show no indicator at all.
@@ -1271,7 +1293,7 @@ class ConnectionRow(Gtk.ListBoxRow):
                 self.status_icon.set_tooltip_text(f"Connecting to {host_value}…")
             elif state == ConnectionState.FAILED:
                 icon_utils.set_icon_from_name(self.status_icon, "wired-lock-none-symbolic")
-                self.status_icon.add_css_class("error")
+                self.status_icon.add_css_class("conn-status-down")
                 reason = ''
                 try:
                     reason = self.connection.get_status_reason() or ''
@@ -1282,7 +1304,7 @@ class ConnectionRow(Gtk.ListBoxRow):
                 )
             else:  # DISCONNECTED — a previously-live session that went down.
                 icon_utils.set_icon_from_name(self.status_icon, "wired-lock-none-symbolic")
-                self.status_icon.add_css_class("error")
+                self.status_icon.add_css_class("conn-status-down")
                 self.status_icon.set_tooltip_text("Disconnected")
 
             self.status_icon.queue_draw()
