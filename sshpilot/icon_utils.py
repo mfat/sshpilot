@@ -88,6 +88,10 @@ _ICON_RESOURCE_MAP = {
     'zoom-in-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/zoom-in-symbolic.svg',
     'network-transmit-receive-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/network-transmit-receive-symbolic.svg',
     'network-shield-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/network-shield-symbolic.svg',
+    # Full-color port-forwarding badges (local/remote/dynamic).
+    'L': '/io/github/mfat/sshpilot/icons/scalable/actions/L.svg',
+    'R': '/io/github/mfat/sshpilot/icons/scalable/actions/R.svg',
+    'D': '/io/github/mfat/sshpilot/icons/scalable/actions/D.svg',
     'network-shield-dots-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/network-shield-dots-symbolic.svg',
     'network-shield-crossed-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/network-shield-crossed-symbolic.svg',
     'text-editor-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/text-editor-symbolic.svg',

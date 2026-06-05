@@ -1182,18 +1182,12 @@ class ConnectionRow(Gtk.ListBoxRow):
         has_dynamic = any(r.get("enabled", True) and r.get("type") == "dynamic" for r in rules)
 
         def make_badge(letter: str, cls: str):
-            circled_map = {"L": "\u24C1", "R": "\u24C7", "D": "\u24B9"}
-            glyph = circled_map.get(letter, letter)
-            lbl = Gtk.Label(label=glyph)
-            lbl.add_css_class(cls)
-            lbl.set_halign(Gtk.Align.CENTER)
-            lbl.set_valign(Gtk.Align.CENTER)
-            try:
-                lbl.set_xalign(0.5)
-                lbl.set_yalign(0.5)
-            except Exception:
-                pass
-            return lbl
+            from sshpilot import icon_utils
+            img = icon_utils.new_image_from_icon_name(letter)  # 'L' / 'R' / 'D'
+            img.set_pixel_size(16)
+            img.set_halign(Gtk.Align.CENTER)
+            img.set_valign(Gtk.Align.CENTER)
+            return img
 
         if has_local:
             self.indicator_box.append(make_badge("L", "pf-local"))
