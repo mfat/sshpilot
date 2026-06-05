@@ -8722,6 +8722,24 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             )
         except Exception:
             already_shown = False
+
+        if not already_shown:
+            # Migrate the old key name used before the rename.
+            try:
+                old_val = self.config.get_setting('ssh.config_mode_prompt_shown', None)
+                if old_val is not None:
+                    already_shown = bool(old_val)
+                    # Write under new key and purge the old one.
+                    self.config.set_setting('ssh.operation_mode_prompt_shown', already_shown)
+                    try:
+                        ssh_section = self.config.config_data.get('ssh', {})
+                        ssh_section.pop('config_mode_prompt_shown', None)
+                        self.config.save_json_config()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
         if already_shown:
             return False
         if getattr(self, 'isolated_mode', False):

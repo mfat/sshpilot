@@ -2922,7 +2922,7 @@ class PreferencesWindow(Adw.Window):
 
                 rdialog.connect('response', _on_restart_response)
                 if use_alert:
-                    rdialog.present(parent_window)
+                    rdialog.present(self)
                 else:
                     rdialog.present()
 
@@ -2930,13 +2930,9 @@ class PreferencesWindow(Adw.Window):
             logger.error(f"Failed to toggle isolated SSH mode: {e}")
 
     def _update_operation_mode_styles(self):
-        """Visually de-emphasize the inactive operation mode"""
-        if self.isolated_mode_radio.get_active():
-            self.default_mode_row.add_css_class('dim-label')
-            self.isolated_mode_row.remove_css_class('dim-label')
-        else:
-            self.isolated_mode_row.add_css_class('dim-label')
-            self.default_mode_row.remove_css_class('dim-label')
+        """Ensure neither operation mode row appears disabled."""
+        for row in (self.default_mode_row, self.isolated_mode_row):
+            row.remove_css_class('dim-label')
 
     def get_theme_name_mapping(self):
         """Get mapping between display names and config keys"""
