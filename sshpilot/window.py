@@ -830,13 +830,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception as e:
             logger.debug(f"Failed to check for updates on startup: {e}")
 
-        # One-time SSH config mode chooser
+        # One-time operation mode chooser
         try:
-            if self._should_prompt_ssh_config_mode():
+            if self._should_prompt_operation_mode():
                 backup_path = self._backup_default_ssh_config()
-                GLib.idle_add(self._show_ssh_config_mode_dialog, backup_path)
+                GLib.idle_add(self._show_operation_mode_dialog, backup_path)
         except Exception as e:
-            logger.debug(f"Failed to schedule SSH config mode prompt: {e}")
+            logger.debug(f"Failed to schedule operation mode prompt: {e}")
 
         return False  # Don't repeat
     
@@ -8712,13 +8712,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception as exc:
             logger.error("Failed to persist file manager first-run choice: %s", exc)
 
-    # --- SSH config mode first-run dialog ---
+    # --- Operation mode first-run dialog ---
 
-    def _should_prompt_ssh_config_mode(self) -> bool:
-        """Return True if the SSH config mode dialog should be shown."""
+    def _should_prompt_operation_mode(self) -> bool:
+        """Return True if the operation mode dialog should be shown."""
         try:
             already_shown = bool(
-                self.config.get_setting('ssh.config_mode_prompt_shown', False)
+                self.config.get_setting('ssh.operation_mode_prompt_shown', False)
             )
         except Exception:
             already_shown = False
@@ -8726,7 +8726,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             return False
         if getattr(self, 'isolated_mode', False):
             try:
-                self.config.set_setting('ssh.config_mode_prompt_shown', True)
+                self.config.set_setting('ssh.operation_mode_prompt_shown', True)
             except Exception:
                 pass
             return False
@@ -8753,10 +8753,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             logger.warning("Could not back up SSH config: %s", exc)
             return None
 
-    def _apply_ssh_config_mode_choice(
+    def _apply_operation_mode_choice(
         self, choice: Optional[str], copy: bool = False
     ) -> None:
-        """Persist the SSH config mode choice and optionally seed the isolated config.
+        """Persist the operation mode choice and optionally seed the isolated config.
 
         When the user picks Isolated the app must restart for the new config
         path to take full effect (ConnectionManager and KeyManager are already
@@ -8766,7 +8766,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         try:
             if choice == 'isolated':
                 self.config.set_setting('ssh.use_isolated_config', True)
-                self.config.set_setting('ssh.config_mode_prompt_shown', True)
+                self.config.set_setting('ssh.operation_mode_prompt_shown', True)
                 if copy:
                     src = Path(get_ssh_dir()) / 'config'
                     dst = Path(get_config_dir()) / 'ssh_config'
@@ -8783,22 +8783,22 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 restart_app()
             elif choice == 'default':
                 self.config.set_setting('ssh.use_isolated_config', False)
-                self.config.set_setting('ssh.config_mode_prompt_shown', True)
+                self.config.set_setting('ssh.operation_mode_prompt_shown', True)
             else:
                 # Skip — mark shown so the dialog never reappears.
-                self.config.set_setting('ssh.config_mode_prompt_shown', True)
+                self.config.set_setting('ssh.operation_mode_prompt_shown', True)
         except Exception as exc:
-            logger.error("Failed to persist SSH config mode choice: %s", exc)
+            logger.error("Failed to persist operation mode choice: %s", exc)
 
-    def _show_ssh_config_mode_dialog(self, backup_path: Optional[str]) -> None:
-        """One-time dialog asking the user which SSH config mode to use.
+    def _show_operation_mode_dialog(self, backup_path: Optional[str]) -> None:
+        """One-time dialog asking the user which operation mode to use.
 
         Follows the GNOME HIG choice-dialog pattern used by
         _show_file_manager_first_run_dialog.  When the user picks Isolated,
-        _apply_ssh_config_mode_choice calls restart_app() so the new config
+        _apply_operation_mode_choice calls restart_app() so the new config
         path is honoured from the very next launch.
         """
-        heading = _("Choose SSH Configuration Mode")
+        heading = _("Choose Operation Mode")
         body = _(
             "SSH Pilot can share your existing SSH configuration with other "
             "clients, or keep its own private copy that won't affect "
@@ -8916,13 +8916,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         def _on_response(_d, response: str) -> None:
             if response == 'confirm':
                 if isolated_radio.get_active():
-                    self._apply_ssh_config_mode_choice(
+                    self._apply_operation_mode_choice(
                         'isolated', copy=copy_check.get_active() and src_exists
                     )
                 else:
-                    self._apply_ssh_config_mode_choice('default')
+                    self._apply_operation_mode_choice('default')
             else:
-                self._apply_ssh_config_mode_choice(None)
+                self._apply_operation_mode_choice(None)
 
         dialog.connect('response', _on_response)
 
