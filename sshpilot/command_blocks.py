@@ -896,11 +896,11 @@ class CommandBlocksPanel(Gtk.Box):
         header.set_margin_top(8)
         header.set_margin_bottom(4)
 
-        title = Gtk.Label(label=_('Commands'))
-        title.set_hexpand(True)
-        title.set_xalign(0)
-        title.add_css_class('title-4')
-        header.append(title)
+        # The panel title is redundant now that the header-bar toggle button is
+        # labelled "Commands"; a hexpanding spacer keeps the add buttons right-aligned.
+        spacer = Gtk.Box()
+        spacer.set_hexpand(True)
+        header.append(spacer)
 
         add_cmd_btn = Gtk.Button()
         add_cmd_btn.set_icon_name('list-add-symbolic')
