@@ -62,7 +62,10 @@ def restart_app() -> None:
     immediately with no further cleanup.
     """
     import sys
-    os.execv(sys.executable, sys.argv)
+    # argv[0] of os.execv is the program-name slot (Python ignores it as a
+    # script path), so the script must be passed as argv[1].  Prepending
+    # sys.executable gives: [interpreter, script, ...user-flags...].
+    os.execv(sys.executable, [sys.executable] + sys.argv)
 
 
 _sshpass_path_cache: str | None = None
