@@ -714,11 +714,11 @@ class ConnectionRow(Gtk.ListBoxRow):
         self._setup_file_manager_button_hover()
 
         from sshpilot import icon_utils
-        self.status_icon = icon_utils.new_image_from_icon_name("network-offline-symbolic")
+        self.status_icon = icon_utils.new_image_from_icon_name("network-shield-crossed-symbolic")
         self.status_icon.set_pixel_size(16)
-        # Set initial visibility based on preference
-        show_status = self.config.get_setting('ui.sidebar_show_connection_status', True)
-        self.status_icon.set_visible(show_status)
+        # A fresh row is UNKNOWN (idle), which shows no indicator; update_status()
+        # reveals and styles it once the connection has a real state.
+        self.status_icon.set_visible(False)
         content.append(self.status_icon)
         
         # Now add the content to main_box
@@ -1234,23 +1234,46 @@ class ConnectionRow(Gtk.ListBoxRow):
             try:
                 state = self.connection.get_status()
             except Exception:
-                # Older/foreign connection objects without the status API.
+                # Older/foreign connection objects without the status API: if we
+                # can't tell, stay neutral (UNKNOWN) rather than alarming in red.
                 state = (
                     ConnectionState.CONNECTED
                     if getattr(self.connection, "is_connected", False)
-                    else ConnectionState.DISCONNECTED
+                    else ConnectionState.UNKNOWN
                 )
 
             host_value = _get_connection_host(self.connection) or _get_connection_alias(self.connection)
 
+            # Clear any previously-applied semantic color classes before re-styling.
+            for _cls in ("success", "warning", "error", "dim-label"):
+                self.status_icon.remove_css_class(_cls)
+
+            # Idle / never connected this session: show no indicator at all.
+            if state == ConnectionState.UNKNOWN:
+                self.status_icon.set_visible(False)
+                self.status_icon.set_tooltip_text("")
+                self.status_icon.queue_draw()
+                self._apply_group_color_style()
+                return
+
+            # Other states render an icon, subject to the global visibility pref.
+            try:
+                show_status = bool(self.config.get_setting('ui.sidebar_show_connection_status', True))
+            except Exception:
+                show_status = True
+            self.status_icon.set_visible(show_status)
+
             if state == ConnectionState.CONNECTED:
-                icon_utils.set_icon_from_name(self.status_icon, "network-idle-symbolic")
+                icon_utils.set_icon_from_name(self.status_icon, "network-shield-symbolic")
+                self.status_icon.add_css_class("success")
                 self.status_icon.set_tooltip_text(f"Connected to {host_value}")
             elif state == ConnectionState.CONNECTING:
-                icon_utils.set_icon_from_name(self.status_icon, "content-loading-symbolic")
+                icon_utils.set_icon_from_name(self.status_icon, "network-shield-dots-symbolic")
+                self.status_icon.add_css_class("warning")
                 self.status_icon.set_tooltip_text(f"Connecting to {host_value}…")
             elif state == ConnectionState.FAILED:
-                icon_utils.set_icon_from_name(self.status_icon, "network-error-symbolic")
+                icon_utils.set_icon_from_name(self.status_icon, "network-shield-crossed-symbolic")
+                self.status_icon.add_css_class("warning")
                 reason = ''
                 try:
                     reason = self.connection.get_status_reason() or ''
@@ -1259,8 +1282,9 @@ class ConnectionRow(Gtk.ListBoxRow):
                 self.status_icon.set_tooltip_text(
                     f"Connection failed: {reason}" if reason else "Connection failed"
                 )
-            else:  # DISCONNECTED / UNKNOWN
-                icon_utils.set_icon_from_name(self.status_icon, "network-offline-symbolic")
+            else:  # DISCONNECTED — a previously-live session that went down.
+                icon_utils.set_icon_from_name(self.status_icon, "network-shield-crossed-symbolic")
+                self.status_icon.add_css_class("error")
                 self.status_icon.set_tooltip_text("Disconnected")
 
             self.status_icon.queue_draw()

@@ -1626,7 +1626,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             if hasattr(row, 'host_label'):
                 row.host_label.set_visible(show_user_hostname)
             if hasattr(row, 'status_icon'):
-                row.status_icon.set_visible(show_status)
+                # update_status() applies both the icon and visibility, honoring
+                # the show_status pref AND keeping idle (UNKNOWN) rows iconless.
+                if hasattr(row, 'update_status'):
+                    row.update_status()
+                else:
+                    row.status_icon.set_visible(show_status)
             if hasattr(row, '_update_forwarding_indicators'):
                 row._update_forwarding_indicators()
             
