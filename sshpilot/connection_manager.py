@@ -2586,8 +2586,17 @@ class ConnectionManager(GObject.Object):
         ``connection-status-changed`` boolean so old and new listeners both work.
         """
         try:
-            connection.set_status(state, reason)
             is_connected = (state == ConnectionState.CONNECTED)
+            # Lightweight connection stand-ins (e.g. LocalConnection for local
+            # terminals) don't implement the status API; fall back to the plain
+            # boolean so they don't crash the state update.
+            if hasattr(connection, 'set_status'):
+                connection.set_status(state, reason)
+            else:
+                try:
+                    connection.is_connected = is_connected
+                except Exception:
+                    pass
 
             # Emit both signals on the main loop so UI handlers run on the GTK thread.
             GLib.idle_add(self.emit, 'connection-state-changed', connection, state, reason or '')

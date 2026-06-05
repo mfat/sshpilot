@@ -8506,6 +8506,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         goes down. A richer "down" state already set on the connection (FAILED)
         is preserved rather than being flattened to DISCONNECTED.
         """
+        # Local terminals use a lightweight LocalConnection without the status
+        # API and have no sidebar row — nothing to aggregate.
+        if not hasattr(connection, 'get_status'):
+            return
         try:
             terminals = []
             if hasattr(self, 'connection_to_terminals'):
