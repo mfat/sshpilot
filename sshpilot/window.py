@@ -2981,7 +2981,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
         # Command blocks toggle button (right sidebar)
         self._cmd_blocks_toggle_btn = Gtk.ToggleButton()
-        self._cmd_blocks_toggle_btn.set_icon_name('star-large-symbolic')
+        self._cmd_blocks_toggle_btn.set_icon_name('play-large-symbolic')
         self._cmd_blocks_toggle_btn.add_css_class('flat')
         self._cmd_blocks_toggle_btn.set_tooltip_text(_('Toggle Command Blocks (Ctrl+Alt+S)'))
         self._updating_cmd_toggle = False

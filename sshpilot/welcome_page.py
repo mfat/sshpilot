@@ -182,7 +182,7 @@ class WelcomePage(Gtk.Overlay):
         command_blocks_row.set_title(_('Browse Command Snippets'))
         command_blocks_row.set_activatable(True)
         command_blocks_row.set_can_focus(False)
-        prefix_img = icon_utils.new_image_from_icon_name('star-large-symbolic')
+        prefix_img = icon_utils.new_image_from_icon_name('play-large-symbolic')
         prefix_img.set_can_focus(False)
         command_blocks_row.add_prefix(prefix_img)
         shortcut_label = Gtk.Label(label=cmd_blocks_accel)
