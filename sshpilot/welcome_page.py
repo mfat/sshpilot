@@ -244,9 +244,9 @@ class WelcomePage(Gtk.Overlay):
         return clamp
 
     def _open_command_blocks_sidebar(self) -> None:
-        """Show the command blocks right sidebar from the start page."""
+        """Toggle the command blocks right sidebar from the start page."""
         if hasattr(self.window, '_toggle_command_blocks_panel'):
-            self.window._toggle_command_blocks_panel(True)
+            self.window._toggle_command_blocks_panel()
     
     # --- Pinned connections ---
 
