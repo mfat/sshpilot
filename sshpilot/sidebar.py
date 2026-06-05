@@ -1026,8 +1026,12 @@ class ConnectionRow(Gtk.ListBoxRow):
             except Exception:
                 selected_rows = []
 
-            if not selected_rows or self not in selected_rows:
-                selected_rows.append(self)
+            # Only a deliberate multi-selection that includes the dragged row
+            # carries the whole set. A single/incidental selection (e.g. the
+            # active connection's still-highlighted row) must not tag along — so
+            # dragging one row drags exactly that row.
+            if not (len(selected_rows) > 1 and self in selected_rows):
+                selected_rows = [self]
 
             seen_nicknames = set()
             for row in selected_rows:
