@@ -8118,8 +8118,20 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 finally:
                     self._suppress_close_confirmation = False
                     self._moving_tab_to_pane = False
-                # Defer reparent so tab_view fully completes its close sequence
-                GLib.idle_add(svt._panes[0].add_terminal, terminal, title)
+                # Defer reparent so tab_view fully completes its close sequence.
+                # Pane 1 is filled synchronously below, so the proportional
+                # paned settles before pane 0 gets its (deferred) terminal — that
+                # leaves the divider at the empty placeholder's natural size, not
+                # 50/50. Re-equalize once the terminal is embedded so the panes
+                # match every other split scenario.
+                def _embed_terminal_in_pane0():
+                    svt._panes[0].add_terminal(terminal, title)
+                    # _on_default_clicked resets horizontal splits to 50/50 and
+                    # applies the default sizing for the pane count (fill for ≤2,
+                    # 50% rows for more) — same as a freshly-opened split.
+                    GLib.idle_add(lambda: (svt._on_default_clicked(), False)[1])
+                    return False
+                GLib.idle_add(_embed_terminal_in_pane0)
 
                 # Add each dropped connection to pane 1 (and extra panes beyond)
                 for i, conn in enumerate(connections):
