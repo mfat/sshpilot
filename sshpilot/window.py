@@ -82,7 +82,7 @@ from .actions import WindowActions, register_window_actions
 from . import shutdown
 from .search_utils import connection_matches
 from .shortcut_utils import get_primary_modifier_label
-from .platform_utils import is_macos, get_config_dir
+from .platform_utils import is_macos, get_config_dir, get_ssh_dir
 from .command_blocks import CommandBlocksPanel, CommandBlockStore
 from .context_menu import IconContextMenu
 from .ssh_utils import ensure_writable_ssh_home
@@ -829,7 +829,15 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 check_for_updates_async(on_update_check_complete)
         except Exception as e:
             logger.debug(f"Failed to check for updates on startup: {e}")
-        
+
+        # One-time SSH config mode chooser
+        try:
+            if self._should_prompt_ssh_config_mode():
+                backup_path = self._backup_default_ssh_config()
+                GLib.idle_add(self._show_ssh_config_mode_dialog, backup_path)
+        except Exception as e:
+            logger.debug(f"Failed to schedule SSH config mode prompt: {e}")
+
         return False  # Don't repeat
     
     def _queue_focus_operation(self, focus_func):
@@ -8703,6 +8711,225 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             self.config.set_setting('file_manager.first_run_prompt_shown', True)
         except Exception as exc:
             logger.error("Failed to persist file manager first-run choice: %s", exc)
+
+    # --- SSH config mode first-run dialog ---
+
+    def _should_prompt_ssh_config_mode(self) -> bool:
+        """Return True if the SSH config mode dialog should be shown."""
+        try:
+            already_shown = bool(
+                self.config.get_setting('ssh.config_mode_prompt_shown', False)
+            )
+        except Exception:
+            already_shown = False
+        if already_shown:
+            return False
+        # Don't ask if the user launched with --isolated; the choice is made.
+        if getattr(self, 'isolated_mode', False):
+            try:
+                self.config.set_setting('ssh.config_mode_prompt_shown', True)
+            except Exception:
+                pass
+            return False
+        return True
+
+    def _backup_default_ssh_config(self) -> Optional[str]:
+        """Copy ~/.ssh/config to the sshpilot backups directory.
+
+        Returns the destination path on success, or None if the source file
+        does not exist, is empty, or the copy fails.
+        """
+        src = Path(get_ssh_dir()) / 'config'
+        if not src.exists() or src.stat().st_size == 0:
+            return None
+        try:
+            backup_dir = Path(get_config_dir()) / 'backups'
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            dst = backup_dir / f'ssh_config_backup_{timestamp}.bak'
+            shutil.copy2(str(src), str(dst))
+            logger.info("SSH config backed up to %s", dst)
+            return str(dst)
+        except Exception as exc:
+            logger.warning("Could not back up SSH config: %s", exc)
+            return None
+
+    def _apply_ssh_config_mode_choice(
+        self, choice: Optional[str], copy: bool = False
+    ) -> None:
+        """Persist the SSH config mode choice and optionally seed the isolated config."""
+        try:
+            if choice == 'isolated':
+                self.config.set_setting('ssh.use_isolated_config', True)
+                if hasattr(self, 'connection_manager'):
+                    self.connection_manager.set_isolated_mode(True)
+                if copy:
+                    src = Path(get_ssh_dir()) / 'config'
+                    dst = Path(get_config_dir()) / 'ssh_config'
+                    if src.exists() and not dst.exists():
+                        try:
+                            dst.parent.mkdir(parents=True, exist_ok=True)
+                            shutil.copy2(str(src), str(dst))
+                            logger.info("Seeded isolated SSH config from %s", src)
+                        except Exception as exc:
+                            logger.warning(
+                                "Could not copy SSH config to isolated path: %s", exc
+                            )
+            elif choice == 'default':
+                self.config.set_setting('ssh.use_isolated_config', False)
+                if hasattr(self, 'connection_manager'):
+                    self.connection_manager.set_isolated_mode(False)
+            # Always mark shown — even on Skip — so the dialog never re-appears.
+            self.config.set_setting('ssh.config_mode_prompt_shown', True)
+        except Exception as exc:
+            logger.error("Failed to persist SSH config mode choice: %s", exc)
+
+    def _show_ssh_config_mode_dialog(self, backup_path: Optional[str]) -> None:
+        """One-time dialog asking the user which SSH config mode to use.
+
+        Follows the GNOME HIG choice-dialog pattern used by
+        _show_file_manager_first_run_dialog: Adw.AlertDialog with an
+        Adw.PreferencesGroup of Adw.ActionRow rows, each with a prefix radio
+        button.  The entire row is the radio's activatable widget.
+        """
+        heading = _("Choose SSH Configuration Mode")
+        body = _(
+            "SSH Pilot can share your existing SSH configuration with other "
+            "clients, or keep its own private copy that won’t affect "
+            "the rest of your system."
+        )
+
+        use_alert = hasattr(Adw, 'AlertDialog')
+        if use_alert:
+            dialog = Adw.AlertDialog(heading=heading, body=body)
+        else:
+            dialog = Adw.MessageDialog(
+                transient_for=self, modal=True, heading=heading, body=body
+            )
+
+        content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        content_box.set_margin_top(12)
+        content_box.set_size_request(460, -1)
+
+        # Symbolic icon
+        icon = Gtk.Image.new_from_icon_name('preferences-system-network-symbolic')
+        icon.set_pixel_size(64)
+        icon.set_halign(Gtk.Align.CENTER)
+        icon.set_margin_bottom(4)
+        content_box.append(icon)
+
+        # Mode choice group
+        mode_group = Adw.PreferencesGroup()
+
+        default_row = Adw.ActionRow()
+        default_row.set_title(_("Default — use ~/.ssh/config"))
+        default_row.set_subtitle(_("Recommended · shares config with the system SSH client"))
+        default_radio = Gtk.CheckButton()
+        default_radio.set_valign(Gtk.Align.CENTER)
+        default_radio.set_active(True)
+        default_row.add_prefix(default_radio)
+        default_row.set_activatable_widget(default_radio)
+        mode_group.add(default_row)
+
+        isolated_row = Adw.ActionRow()
+        isolated_row.set_title(_("Isolated — use a private SSH config"))
+        isolated_row.set_subtitle(
+            _("Changes stay inside SSH Pilot and won’t affect other tools")
+        )
+        isolated_radio = Gtk.CheckButton()
+        isolated_radio.set_valign(Gtk.Align.CENTER)
+        isolated_radio.set_group(default_radio)
+        isolated_row.add_prefix(isolated_radio)
+        isolated_row.set_activatable_widget(isolated_radio)
+        mode_group.add(isolated_row)
+
+        content_box.append(mode_group)
+
+        # Optional "copy existing config" row — only shown when isolated is
+        # selected and ~/.ssh/config actually exists.
+        src_exists = (Path(get_ssh_dir()) / 'config').exists()
+        copy_group = Adw.PreferencesGroup()
+        copy_row = Adw.ActionRow()
+        copy_row.set_title(_("Copy existing config into the isolated profile"))
+        copy_row.set_subtitle(_("Your hosts and keys will be available immediately"))
+        copy_check = Gtk.CheckButton()
+        copy_check.set_valign(Gtk.Align.CENTER)
+        copy_check.set_active(True)
+        copy_row.add_prefix(copy_check)
+        copy_row.set_activatable_widget(copy_check)
+        copy_group.add(copy_row)
+        copy_group.set_visible(False)  # hidden until isolated is chosen
+        content_box.append(copy_group)
+
+        def _on_isolated_toggled(radio):
+            if src_exists:
+                copy_group.set_visible(radio.get_active())
+
+        isolated_radio.connect('toggled', _on_isolated_toggled)
+
+        # Backup banner / label
+        if backup_path:
+            if hasattr(Adw, 'Banner'):
+                banner = Adw.Banner()
+                banner.set_title(
+                    _("Backup saved to: {path}").format(path=backup_path)
+                )
+                banner.set_revealed(True)
+                content_box.append(banner)
+            else:
+                backup_label = Gtk.Label(
+                    label=_("Backup saved to: {path}").format(path=backup_path)
+                )
+                backup_label.set_wrap(True)
+                backup_label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+                backup_label.set_xalign(0)
+                backup_label.set_halign(Gtk.Align.START)
+                backup_label.add_css_class('caption')
+                backup_label.add_css_class('dim-label')
+                content_box.append(backup_label)
+
+        # Footer hint
+        footer = Gtk.Label(
+            label=_("You can change this anytime in Preferences › SSH Settings.")
+        )
+        footer.set_wrap(True)
+        footer.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        footer.set_xalign(0)
+        footer.set_halign(Gtk.Align.START)
+        footer.add_css_class('caption')
+        footer.add_css_class('dim-label')
+        content_box.append(footer)
+
+        dialog.set_extra_child(content_box)
+
+        dialog.add_response('skip', _("Skip"))
+        dialog.add_response('confirm', _("Confirm"))
+        dialog.set_default_response('confirm')
+        dialog.set_close_response('skip')
+        try:
+            dialog.set_response_appearance(
+                'confirm', Adw.ResponseAppearance.SUGGESTED
+            )
+        except Exception:
+            pass
+
+        def _on_response(_d, response: str) -> None:
+            if response == 'confirm':
+                if isolated_radio.get_active():
+                    self._apply_ssh_config_mode_choice(
+                        'isolated', copy=copy_check.get_active() and src_exists
+                    )
+                else:
+                    self._apply_ssh_config_mode_choice('default')
+            else:
+                self._apply_ssh_config_mode_choice(None)
+
+        dialog.connect('response', _on_response)
+
+        if use_alert:
+            dialog.present(self)
+        else:
+            dialog.present()
 
     def _show_file_manager_first_run_dialog(self, on_choice) -> None:
         """Present the one-time built-in vs system chooser.
