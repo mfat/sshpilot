@@ -1175,7 +1175,10 @@ class ConnectionRow(Gtk.ListBoxRow):
             if getattr(display, "_status_css_installed", False):
                 return
             provider = Gtk.CssProvider()
-            css = "image.conn-status-down { color: #DC2626; }"
+            css = (
+                "image.conn-status-up { color: #16A34A; }"
+                "image.conn-status-down { color: #DC2626; }"
+            )
             provider.load_from_data(css.encode("utf-8"))
             Gtk.StyleContext.add_provider_for_display(
                 display, provider, Gtk.STYLE_PROVIDER_PRIORITY_USER
@@ -1265,7 +1268,8 @@ class ConnectionRow(Gtk.ListBoxRow):
 
             # Clear any previously-applied semantic color classes before re-styling.
             self._install_status_css()
-            for _cls in ("success", "warning", "error", "dim-label", "conn-status-down"):
+            for _cls in ("success", "warning", "error", "dim-label",
+                         "conn-status-up", "conn-status-down"):
                 self.status_icon.remove_css_class(_cls)
 
             # Idle / never connected this session: show no indicator at all.
@@ -1285,7 +1289,7 @@ class ConnectionRow(Gtk.ListBoxRow):
 
             if state == ConnectionState.CONNECTED:
                 icon_utils.set_icon_from_name(self.status_icon, "wired-lock-closed-symbolic")
-                self.status_icon.add_css_class("success")
+                self.status_icon.add_css_class("conn-status-up")
                 self.status_icon.set_tooltip_text(f"Connected to {host_value}")
             elif state == ConnectionState.CONNECTING:
                 icon_utils.set_icon_from_name(self.status_icon, "wired-lock-dots-symbolic")
