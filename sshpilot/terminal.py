@@ -283,6 +283,7 @@ class TerminalWidget(Gtk.Box):
         self.session_id = str(id(self))  # Unique ID for this session
         self._is_quitting = False  # Flag to suppress signal handlers during quit
         self.last_error_message = None  # Store last SSH error for reporting
+        self._last_error_detail = None  # Structured context for the Details dialog
         self._fallback_timer_id = None  # GLib timeout ID for spawn fallback
 
         # Job detection state
@@ -563,6 +564,15 @@ class TerminalWidget(Gtk.Box):
         self.reconnect_button.connect('clicked', self._on_reconnect_clicked)
         self.disconnected_banner.append(self.reconnect_button)
 
+        # Details button — opens a dialog with the full error report (and Copy).
+        self.error_details_button = Gtk.Button.new_with_label(_('Details'))
+        try:
+            self.error_details_button.add_css_class('reconnect-button')
+        except Exception:
+            pass
+        self.error_details_button.connect('clicked', lambda *_: self._show_error_details_dialog())
+        self.disconnected_banner.append(self.error_details_button)
+
         # Dismiss button to hide the banner manually
         self.dismiss_button = Gtk.Button.new_with_label(_('Dismiss'))
         try:
@@ -572,7 +582,6 @@ class TerminalWidget(Gtk.Box):
             pass
         self.dismiss_button.connect('clicked', lambda *_: self._set_disconnected_banner_visible(False))
         self.disconnected_banner.append(self.dismiss_button)
-        self.disconnected_banner.set_visible(False)
 
         # Allow window to force an exact height match to the sidebar toolbar using per-widget CSS min-height
         self._banner_css_provider = None
@@ -592,9 +601,21 @@ class TerminalWidget(Gtk.Box):
                 pass
         self.set_banner_height = _apply_external_height
 
-        # Put disconnected banner in overlay so revealing it does not change
-        # terminal natural height (which would otherwise resize split panes).
-        self.overlay.add_overlay(self.disconnected_banner)
+        # Wrap the banner in a Revealer (hidden by default; an error reveals it
+        # with a slide-up animation). The revealer — not the banner — goes in the
+        # overlay so revealing it does not change the terminal's natural height
+        # (which would otherwise resize split panes). The per-instance min-height
+        # CSS stays on the inner banner box, so the revealer animates 0 → that
+        # height and the sidebar-toolbar height sync keeps working.
+        self.disconnected_revealer = Gtk.Revealer()
+        self.disconnected_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_UP)
+        self.disconnected_revealer.set_transition_duration(200)
+        self.disconnected_revealer.set_halign(Gtk.Align.FILL)
+        self.disconnected_revealer.set_valign(Gtk.Align.END)
+        self.disconnected_revealer.set_hexpand(True)
+        self.disconnected_revealer.set_reveal_child(False)
+        self.disconnected_revealer.set_child(self.disconnected_banner)
+        self.overlay.add_overlay(self.disconnected_revealer)
 
         # Container for terminal stack only
         self.container_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -810,10 +831,104 @@ class TerminalWidget(Gtk.Box):
                 return
             if message:
                 self.disconnected_banner_label.set_text(message)
-            if hasattr(self.disconnected_banner, 'set_visible'):
+            # The Revealer owns visibility now (animated slide up/down).
+            if getattr(self, 'disconnected_revealer', None) is not None:
+                self.disconnected_revealer.set_reveal_child(visible)
+            elif hasattr(self.disconnected_banner, 'set_visible'):
                 self.disconnected_banner.set_visible(visible)
         except Exception:
             pass
+
+    # --- Error detail (banner Details dialog) -------------------------------
+    _ANSI_RE = re.compile(r'\x1b\[[0-9;?]*[ -/]*[@-~]')
+
+    def _record_error_detail(self, reason: str, exit_code=None) -> None:
+        """Snapshot everything we know about the current failure for the Details
+        dialog. Reads only data already available (no extra ssh calls)."""
+        try:
+            conn = getattr(self, 'connection', None)
+            tail = self._ANSI_RE.sub('', self._scrape_recent_terminal_text(4000) or '').strip()
+            self._last_error_detail = {
+                'nickname': getattr(conn, 'nickname', '') or '',
+                'host': getattr(conn, 'hostname', '') or getattr(conn, 'host', '') or '',
+                'username': getattr(conn, 'username', '') or '',
+                'reason': reason or '',
+                'exit_code': exit_code,
+                'raw': self.last_error_message or '',
+                'hint': getattr(self, '_connect_failure_hint', '') or '',
+                'stderr_tail': tail,
+            }
+        except Exception:
+            logger.debug("Failed to record error detail", exc_info=True)
+
+    def _format_error_detail(self, detail=None) -> str:
+        """Build the paste-ready report. Leads with reason + raw ssh output; the
+        numeric exit code is a small trailing line (255 is just a catch-all)."""
+        detail = detail or self._last_error_detail or {}
+        nick = detail.get('nickname') or _('Connection')
+        user = detail.get('username') or ''
+        host = detail.get('host') or ''
+        target = f"{user}@{host}" if user and host else (host or user)
+        lines = []
+        lines.append(f"{_('Connection')}: {nick}" + (f" ({target})" if target else ""))
+        if detail.get('reason'):
+            lines.append(f"{_('Reason')}: {detail['reason']}")
+        # Prefer the explicit error/hint line if present and not already the reason.
+        err = detail.get('raw') or detail.get('hint') or ''
+        if err and err.strip() and err.strip() != (detail.get('reason') or '').strip():
+            lines.append(f"{_('Error')}: {err.strip()}")
+        tail = detail.get('stderr_tail') or ''
+        if tail:
+            lines.append("")
+            lines.append(_('--- SSH output ---'))
+            lines.append(tail)
+        code = detail.get('exit_code')
+        if code is not None:
+            lines.append("")
+            lines.append(f"ssh exit: {code}")
+        return "\n".join(lines).strip() or _('No additional details available.')
+
+    def _show_error_details_dialog(self) -> None:
+        """Popup with the full, selectable error report plus a Copy button."""
+        try:
+            text = self._format_error_detail()
+            root = self.get_root() if hasattr(self, 'get_root') else None
+
+            body = Gtk.Label(label=text)
+            body.set_selectable(True)
+            body.set_wrap(True)
+            body.set_xalign(0)
+            body.set_yalign(0)
+            body.add_css_class('monospace')
+            scroller = Gtk.ScrolledWindow()
+            scroller.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+            scroller.set_min_content_width(480)
+            scroller.set_min_content_height(260)
+            scroller.set_child(body)
+
+            dialog = Adw.MessageDialog(
+                transient_for=root if isinstance(root, Gtk.Window) else None,
+                modal=True,
+                heading=_('Connection Error Details'),
+            )
+            dialog.set_extra_child(scroller)
+            dialog.add_response('copy', _('Copy'))
+            dialog.add_response('close', _('Close'))
+            dialog.set_default_response('close')
+            dialog.set_close_response('close')
+
+            def _on_response(dlg, response):
+                if response == 'copy':
+                    try:
+                        clipboard = self.get_clipboard()
+                        clipboard.set(self._format_error_detail())
+                    except Exception:
+                        logger.debug("Failed to copy error detail", exc_info=True)
+                dlg.close()
+            dialog.connect('response', _on_response)
+            dialog.present()
+        except Exception:
+            logger.debug("Failed to show error details dialog", exc_info=True)
 
     def _on_reconnect_clicked(self, *args):
         """User clicked reconnect on the banner"""
@@ -832,18 +947,21 @@ class TerminalWidget(Gtk.Box):
 
                 if not prepared:
                     self._set_connecting_overlay_visible(False)
+                    self._record_error_detail(_('Reconnect failed to start'))
                     self._set_disconnected_banner_visible(True, _('Reconnect failed to start'))
                     return False
 
                 if not self._connect_ssh():
                     # Show banner again if failed to start reconnect
                     self._set_connecting_overlay_visible(False)
+                    self._record_error_detail(_('Reconnect failed to start'))
                     self._set_disconnected_banner_visible(True, _('Reconnect failed to start'))
                 return False
 
             GLib.idle_add(_prepare_and_connect)
         except Exception:
             self._set_connecting_overlay_visible(False)
+            self._record_error_detail(_('Reconnect failed'))
             self._set_disconnected_banner_visible(True, _('Reconnect failed'))
 
     def _refresh_connection_command(self) -> bool:
@@ -3319,8 +3437,9 @@ class TerminalWidget(Gtk.Box):
             # Show reconnect UI
             self._set_connecting_overlay_visible(False)
             banner_text = message or self.last_error_message or _('Connection lost.')
+            self._record_error_detail(banner_text)
             self._set_disconnected_banner_visible(True, banner_text)
-    
+
     def _on_terminal_input(self, widget, text, size):
         """Handle input from the terminal (handled automatically by VTE)"""
         pass
@@ -3705,6 +3824,7 @@ class TerminalWidget(Gtk.Box):
 
             # Show reconnect banner with the raw SSH error
             self._set_connecting_overlay_visible(False)
+            self._record_error_detail(error_message)
             self._set_disconnected_banner_visible(True, error_message)
 
         except Exception as e:
@@ -3859,6 +3979,7 @@ class TerminalWidget(Gtk.Box):
                         banner_text = _('SSH exited with status {code}').format(code=exit_code)
                     else:
                         banner_text = _('Session ended.')
+                self._record_error_detail(exit_reason or banner_text, exit_code=exit_code)
                 self._set_disconnected_banner_visible(True, banner_text)
 
                 logger.debug("Exit cleanup completed successfully")
