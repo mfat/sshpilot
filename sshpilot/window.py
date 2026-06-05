@@ -8089,6 +8089,18 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         if conn is not None:
                             connections.append(conn)
 
+                # The existing terminal already becomes pane 0, so drop its own
+                # connection from the payload — otherwise a multi-select drag that
+                # carries the (selected) active connection would add a duplicate
+                # pane (terminal + its connection + the dropped one = 3 panes).
+                existing_conn = getattr(terminal, 'connection', None)
+                existing_nick = getattr(existing_conn, 'nickname', None)
+                if existing_nick:
+                    connections = [
+                        c for c in connections
+                        if getattr(c, 'nickname', None) != existing_nick
+                    ]
+
                 if not connections:
                     return False
 
