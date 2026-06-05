@@ -44,6 +44,9 @@
     <file alias="network-shield-symbolic.svg">icons/scalable/actions/network-shield-symbolic.svg</file>
     <file alias="network-shield-dots-symbolic.svg">icons/scalable/actions/network-shield-dots-symbolic.svg</file>
     <file alias="network-shield-crossed-symbolic.svg">icons/scalable/actions/network-shield-crossed-symbolic.svg</file>
+    <file alias="wired-lock-closed-symbolic.svg">icons/scalable/actions/wired-lock-closed-symbolic.svg</file>
+    <file alias="wired-lock-dots-symbolic.svg">icons/scalable/actions/wired-lock-dots-symbolic.svg</file>
+    <file alias="wired-lock-none-symbolic.svg">icons/scalable/actions/wired-lock-none-symbolic.svg</file>
     <file alias="open-menu-symbolic.svg">icons/scalable/actions/open-menu-symbolic.svg</file>
     <file alias="pan-down-symbolic.svg">icons/scalable/actions/pan-down-symbolic.svg</file>
     <file alias="pan-end-symbolic.svg">icons/scalable/actions/pan-end-symbolic.svg</file>
