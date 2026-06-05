@@ -2885,18 +2885,46 @@ class PreferencesWindow(Adw.Window):
             if parent_window and hasattr(parent_window, 'connection_manager'):
                 parent_window.connection_manager.set_isolated_mode(bool(use_isolated))
 
-            # Inform user that restart is required for changes
+            # Offer an immediate restart to apply the mode change
             if parent_window:
-                dialog = Adw.MessageDialog.new(
-                    parent_window,
-                    "Operation Mode Changed",
-                    "Restart sshPilot to apply the new operation mode"
-                )
-                dialog.add_response("ok", "OK")
-                dialog.set_response_appearance("ok", Adw.ResponseAppearance.SUGGESTED)
-                dialog.set_modal(True)
-                dialog.set_transient_for(parent_window)
-                dialog.present()
+                use_alert = hasattr(Adw, 'AlertDialog')
+                if use_alert:
+                    rdialog = Adw.AlertDialog(
+                        heading=_("Restart Required"),
+                        body=_(
+                            "Restart SSH Pilot to fully apply the new operation mode."
+                        ),
+                    )
+                else:
+                    rdialog = Adw.MessageDialog(
+                        transient_for=parent_window,
+                        modal=True,
+                        heading=_("Restart Required"),
+                        body=_(
+                            "Restart SSH Pilot to fully apply the new operation mode."
+                        ),
+                    )
+                rdialog.add_response('later', _("Later"))
+                rdialog.add_response('restart', _("Restart Now"))
+                rdialog.set_default_response('restart')
+                rdialog.set_close_response('later')
+                try:
+                    rdialog.set_response_appearance(
+                        'restart', Adw.ResponseAppearance.SUGGESTED
+                    )
+                except Exception:
+                    pass
+
+                def _on_restart_response(_d, response):
+                    if response == 'restart':
+                        from .platform_utils import restart_app
+                        restart_app()
+
+                rdialog.connect('response', _on_restart_response)
+                if use_alert:
+                    rdialog.present(parent_window)
+                else:
+                    rdialog.present()
 
         except Exception as e:
             logger.error(f"Failed to toggle isolated SSH mode: {e}")
