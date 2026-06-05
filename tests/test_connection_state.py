@@ -118,7 +118,54 @@ def test_classify_exit(msg, code, was_connected, exp_state, exp_reason):
 
     class _T:
         last_error_message = msg
+        _connect_failure_hint = ''
 
     state, reason = terminal_mod.TerminalWidget._classify_exit(_T(), code, was_connected)
     assert state == exp_state
     assert reason == exp_reason
+
+
+# --- Connect-evidence gating (fixes false "Connected" on a stalled connect) ---
+
+_TIMEOUT_V_LOG = """debug1: OpenSSH_10.2p1 Ubuntu-2ubuntu3.2, OpenSSL 3.5.5 27 Jan 2026
+debug1: Reading configuration data /home/mahdi/.ssh/config
+debug1: /home/mahdi/.ssh/config line 39: Applying options for arvan
+debug1: Connecting to 188.121.117.208 [188.121.117.208] port 22.
+debug1: connect to address 188.121.117.208 port 22: Connection timed out
+ssh: connect to host 188.121.117.208 port 22: Connection timed out"""
+
+
+@pytest.mark.parametrize('text, expected', [
+    # The reported bug: a -v connect that times out must stay 'failed', never
+    # produce evidence of being connected.
+    (_TIMEOUT_V_LOG, 'failed'),
+    # Mid-connect with verbosity on: only debug chatter, no failure yet → pending
+    # (so the indicator stays CONNECTING instead of flashing green).
+    ('debug1: OpenSSH_10.2\ndebug1: Connecting to host port 22.', 'pending'),
+    ('user@host: Permission denied (publickey,password).', 'failed'),
+    ('ssh: connect to host x port 22: Connection refused', 'failed'),
+    ('Last login: Mon Jun  5 17:00:00 2026 from 1.2.3.4', 'connected'),
+    ('debug1: Authenticated to host ([1.2.3.4]:22) using "publickey".', 'connected'),
+    ('mahdi@server:~$ ', 'connected'),
+    ('', 'pending'),
+])
+def test_scan_connect_evidence(text, expected):
+    try:
+        from sshpilot import terminal as terminal_mod
+    except Exception as exc:  # pragma: no cover - environment-dependent
+        pytest.skip(f"sshpilot.terminal unavailable: {exc}")
+
+    class _FakeBackend:
+        def get_content(self, n):
+            return text[-n:]
+
+    class _T:
+        backend = _FakeBackend()
+        _connect_failure_hint = ''
+        _scrape_recent_terminal_text = terminal_mod.TerminalWidget._scrape_recent_terminal_text
+
+    t = _T()
+    assert terminal_mod.TerminalWidget._scan_connect_evidence(t) == expected
+    if expected == 'failed':
+        # A failure reason line is captured for the exit classifier.
+        assert t._connect_failure_hint

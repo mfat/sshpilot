@@ -194,6 +194,51 @@ class SSHProcessManager:
 # Global process manager instance
 process_manager = SSHProcessManager()
 
+
+# Substrings (lowercased) in terminal output that mean an ssh attempt is failing.
+# Used to gate CONNECTING→CONNECTED promotion (never promote while one is present)
+# and to recover a precise failure reason at exit time.
+_SSH_FAILURE_MARKERS = (
+    'permission denied',
+    'connection refused',
+    'no route to host',
+    'network is unreachable',
+    'could not resolve',
+    'name or service not known',
+    'nodename nor servname',
+    'host key verification failed',
+    'connection timed out',
+    'operation timed out',
+    'too many authentication failures',
+    'connection reset',
+    'connection closed',
+    'broken pipe',
+)
+
+# Positive login evidence — appears in ssh -v output or login banners once the
+# session is actually established.
+_SSH_SUCCESS_MARKERS = (
+    'authenticated to',
+    'entering interactive session',
+    'last login:',
+    'pseudo-terminal will',
+)
+
+# Line-start prefixes that are ssh's own chatter (not remote shell output). A
+# line that doesn't start with one of these is treated as real remote output.
+_SSH_NOISE_PREFIXES = (
+    'debug',
+    'ssh:',
+    'warning:',
+    'openssh',
+    'kex',
+    'channel ',
+    'authenticated',
+    'connecting to',
+    'pledge',
+)
+
+
 class TerminalWidget(Gtk.Box):
     """A terminal widget that uses VTE for display and system SSH client for connections"""
     __gtype_name__ = 'TerminalWidget'
@@ -230,7 +275,9 @@ class TerminalWidget(Gtk.Box):
         from .connection_manager import ConnectionState
         self.connection_state = ConnectionState.UNKNOWN
         self.connection_state_reason = ''
-        self._connect_grace_timer_id = None  # promotes CONNECTING→CONNECTED if alive
+        self._connect_grace_timer_id = None  # evidence poller: promotes CONNECTING→CONNECTED
+        self._connect_poll_count = 0
+        self._connect_failure_hint = ''  # failure line scraped while connecting
         self.watch_id = 0
         self.ssh_client = None
         self.session_id = str(id(self))  # Unique ID for this session
@@ -1260,8 +1307,8 @@ class TerminalWidget(Gtk.Box):
     
     def _fallback_hide_spinner(self):
         """Fallback for the Flatpak case where the spawn-complete callback never
-        fires. Promotes an alive, error-free session to CONNECTED via the normal
-        promotion path (no longer force-sets state directly)."""
+        fires. Promotes only on real evidence — never merely because the process
+        is alive (a still-connecting socket is alive but not connected)."""
         # Clear stored timer ID
         self._fallback_timer_id = None
 
@@ -1278,21 +1325,73 @@ class TerminalWidget(Gtk.Box):
             return False
 
         from .connection_manager import ConnectionState
-        if self.connection_state != ConnectionState.CONNECTED:
-            logger.warning("Spawn completion callback didn't fire; promoting alive session (fallback)")
+        if self.connection_state == ConnectionState.CONNECTED:
+            return False
+
+        verdict = self._scan_connect_evidence()
+        if verdict == 'connected':
+            logger.debug("Spawn-complete didn't fire; promoting on evidence (fallback)")
             self._mark_connected()
+        elif verdict == 'pending':
+            # Keep evaluating instead of force-promoting an unconfirmed session.
+            if self.connection_state != ConnectionState.CONNECTING:
+                self.connection_state = ConnectionState.CONNECTING
+            self._start_connect_grace()
+        # 'failed' → leave it; the child-exit handler will classify FAILED.
         return False  # Don't repeat the timer
 
     # --- Connection lifecycle helpers (Phase 3 gating) ----------------------
+    def _scan_connect_evidence(self):
+        """Inspect recent terminal output and decide whether the CONNECTING
+        session has real evidence of being connected, failing, or still pending.
+
+        Returns one of 'connected', 'failed', 'pending'. This is what replaces
+        the old "process is alive" heuristic — a socket stuck in the TCP connect
+        phase is alive but produces no remote output, so it stays 'pending'.
+        """
+        text = (self._scrape_recent_terminal_text(4000) or '').lower()
+        if not text:
+            return 'pending'
+
+        # A visible ssh failure means the attempt is dying — never promote.
+        for marker in _SSH_FAILURE_MARKERS:
+            if marker in text:
+                # Remember the matching line so the exit reason is precise even
+                # if the final bytes aren't in the buffer when ssh exits.
+                for line in text.splitlines():
+                    if marker in line:
+                        self._connect_failure_hint = line.strip()
+                        break
+                return 'failed'
+
+        # Explicit positive evidence (ssh -v progress / login banner).
+        if any(marker in text for marker in _SSH_SUCCESS_MARKERS):
+            return 'connected'
+
+        # Any line that isn't ssh's own chatter is remote output (a shell prompt
+        # or MOTD) — strong evidence the session is live.
+        for line in text.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if stripped.startswith(_SSH_NOISE_PREFIXES):
+                continue
+            return 'connected'
+
+        return 'pending'
+
     def _start_connect_grace(self):
-        """Start the alive-after-grace timer that promotes CONNECTING→CONNECTED
-        if the ssh process is still alive (and error-free) after a few seconds.
-        This is the fallback for servers whose shell never emits termprops."""
+        """Start the evidence poller that promotes CONNECTING→CONNECTED once the
+        terminal shows real remote output (prompt/title/banner). It never
+        promotes on liveness alone, so a connecting-but-not-connected socket
+        stays CONNECTING until it either produces output or the attempt exits."""
         self._cancel_connect_grace()
-        # 3s comfortably outlasts a fast failure (which exits first and is
-        # classified FAILED) without leaving the indicator pending for long.
-        self._connect_grace_timer_id = GLib.timeout_add_seconds(
-            3, self._on_connect_grace_elapsed
+        self._connect_poll_count = 0
+        self._connect_failure_hint = ''
+        # Poll once a second; termprops usually promotes title-setting shells
+        # instantly, so this is the backup path for quieter servers.
+        self._connect_grace_timer_id = GLib.timeout_add(
+            1000, self._on_connect_grace_elapsed
         )
 
     def _cancel_connect_grace(self):
@@ -1304,19 +1403,34 @@ class TerminalWidget(Gtk.Box):
             self._connect_grace_timer_id = None
 
     def _on_connect_grace_elapsed(self):
-        self._connect_grace_timer_id = None
+        # Repeating timer: return True to keep polling, False to stop.
         from .connection_manager import ConnectionState
-        if getattr(self, '_is_quitting', False):
+        if getattr(self, '_is_quitting', False) or self.connection_state != ConnectionState.CONNECTING:
+            self._connect_grace_timer_id = None
             return False
-        # Only promote a still-pending, error-free session.
-        if self.connection_state == ConnectionState.CONNECTING and not self.last_error_message:
-            logger.debug(f"Terminal {self.session_id}: alive after grace, marking connected")
+
+        verdict = self._scan_connect_evidence()
+        if verdict == 'connected':
+            logger.debug(f"Terminal {self.session_id}: remote output observed, marking connected")
+            self._connect_grace_timer_id = None
             self._mark_connected()
-        return False
+            return False
+        if verdict == 'failed':
+            # Stop polling; the child-exit handler classifies it as FAILED.
+            self._connect_grace_timer_id = None
+            return False
+
+        # 'pending' — keep waiting, but don't poll forever.
+        self._connect_poll_count += 1
+        if self._connect_poll_count >= 60:  # ≈60s, well past typical ConnectTimeout
+            logger.debug(f"Terminal {self.session_id}: no connect evidence after grace window; staying pending")
+            self._connect_grace_timer_id = None
+            return False
+        return True
 
     def _mark_connected(self):
-        """Promote a CONNECTING session to CONNECTED (idempotent). Called on real
-        login evidence (termprops) or the alive-after-grace fallback."""
+        """Promote a CONNECTING session to CONNECTED (idempotent). Called only on
+        real evidence: termprops, or remote output seen by the evidence poller."""
         from .connection_manager import ConnectionState
         if self.connection_state == ConnectionState.CONNECTED:
             return
@@ -1365,7 +1479,14 @@ class TerminalWidget(Gtk.Box):
         the captured error text. Distinguishes auth/unreachable failures from a
         clean disconnect or a dropped-after-connected session."""
         from .connection_manager import ConnectionState
-        msg = f"{self.last_error_message or ''}\n{extra_text or ''}".lower()
+        # Include any failure line the connect-evidence poller captured, so the
+        # precise reason survives even if ssh's final output isn't in the buffer
+        # by the time the child-exit handler scrapes it.
+        msg = (
+            f"{self.last_error_message or ''}\n"
+            f"{extra_text or ''}\n"
+            f"{getattr(self, '_connect_failure_hint', '') or ''}"
+        ).lower()
 
         if 'permission denied' in msg or 'authentication failed' in msg \
                 or 'too many authentication failures' in msg:
