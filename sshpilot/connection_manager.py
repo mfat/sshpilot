@@ -8,6 +8,7 @@ import stat
 import shutil
 import tempfile
 import asyncio
+import enum
 import logging
 import configparser
 import getpass
@@ -148,12 +149,31 @@ def _safe_int(value: Any, default: int) -> int:
         return default
 
 
+class ConnectionState(enum.Enum):
+    """Authoritative lifecycle state of a saved connection.
+
+    This is the single source of truth consumed by the sidebar indicator and
+    (in future) any health/dashboard feature. The legacy boolean
+    ``Connection.is_connected`` is derived from this (CONNECTED ⇔ True) and kept
+    for backward compatibility with existing call sites.
+    """
+
+    UNKNOWN = 'unknown'        # never connected this session
+    CONNECTING = 'connecting'  # ssh process started, login not yet confirmed
+    CONNECTED = 'connected'    # session is live
+    DISCONNECTED = 'disconnected'  # cleanly down / no active terminal
+    FAILED = 'failed'          # last attempt failed (auth, unreachable, lost)
+
+
 class Connection:
     """Represents an SSH connection"""
-    
+
     def __init__(self, data: Dict[str, Any]):
         self.data = data
-        self.is_connected = False
+        # Authoritative status. ``is_connected`` (below) is a derived compat
+        # property; set state via set_status()/the is_connected setter.
+        self._status = ConnectionState.UNKNOWN
+        self._status_reason = ''
         self.connection = None
         self.forwarders: List[asyncio.Task] = []
         self.listeners: List[asyncio.Server] = []
@@ -658,6 +678,42 @@ class Connection:
         # Port forwarding rules
         self.forwarding_rules = data.get('forwarding_rules', [])
 
+    # --- Status (authoritative state + legacy compat) --------------------
+    def get_status(self) -> 'ConnectionState':
+        """Return the authoritative :class:`ConnectionState`."""
+        return self._status
+
+    def get_status_reason(self) -> str:
+        """Return the human-readable reason for the current status (may be '')."""
+        return self._status_reason
+
+    def set_status(self, state: 'ConnectionState', reason: str = '') -> None:
+        """Set the authoritative status. Does not emit; the ConnectionManager
+        owns signal emission so the UI updates through a single path."""
+        self._status = state
+        self._status_reason = reason or ''
+
+    @property
+    def is_connected(self) -> bool:
+        """Legacy boolean view of status (True only when CONNECTED).
+
+        Kept so the many existing ``connection.is_connected`` readers/writers
+        keep working. Writing maps the bool onto CONNECTED/DISCONNECTED; richer
+        states (CONNECTING/FAILED) are set explicitly via :meth:`set_status`.
+        """
+        return self._status == ConnectionState.CONNECTED
+
+    @is_connected.setter
+    def is_connected(self, value: bool) -> None:
+        if value:
+            self._status = ConnectionState.CONNECTED
+            self._status_reason = ''
+        else:
+            # Don't clobber a richer "down" reason (FAILED) with a plain bool.
+            if self._status not in (ConnectionState.FAILED,):
+                self._status = ConnectionState.DISCONNECTED
+
+
 class ConnectionManager(GObject.Object):
     """Manages SSH connections and configuration"""
 
@@ -665,7 +721,11 @@ class ConnectionManager(GObject.Object):
         'connection-added': (GObject.SignalFlags.RUN_FIRST, None, (object,)),
         'connection-removed': (GObject.SignalFlags.RUN_FIRST, None, (object,)),
         'connection-updated': (GObject.SignalFlags.RUN_FIRST, None, (object,)),
+        # Legacy boolean status signal (connection, is_connected). Retained for
+        # backward compatibility; emitted alongside the richer signal below.
         'connection-status-changed': (GObject.SignalFlags.RUN_FIRST, None, (object, bool)),
+        # Authoritative status signal (connection, ConnectionState, reason).
+        'connection-state-changed': (GObject.SignalFlags.RUN_FIRST, None, (object, object, str)),
     }
 
     def __init__(self, config, isolated_mode: bool = False):
@@ -2504,21 +2564,40 @@ class ConnectionManager(GObject.Object):
             raise
 
     def update_connection_status(self, connection: Connection, is_connected: bool):
-        """Update connection status in the manager
-        
+        """Update connection status in the manager (legacy boolean entry point).
+
         This method is called by terminals to update the connection manager's
-        tracking of connection status, especially after reconnections.
+        tracking of connection status, especially after reconnections. It maps
+        the boolean onto the authoritative state and delegates to
+        :meth:`update_connection_state`.
+        """
+        state = ConnectionState.CONNECTED if is_connected else ConnectionState.DISCONNECTED
+        self.update_connection_state(connection, state)
+
+    def update_connection_state(
+        self,
+        connection: Connection,
+        state: 'ConnectionState',
+        reason: str = '',
+    ):
+        """Set the authoritative connection state and notify the UI.
+
+        Emits both the richer ``connection-state-changed`` signal and the legacy
+        ``connection-status-changed`` boolean so old and new listeners both work.
         """
         try:
-            # Update the connection's status
-            connection.is_connected = is_connected
-            
-            # For terminal-based connections (not async), we don't use active_connections
-            # but we still need to emit the status change signal
+            connection.set_status(state, reason)
+            is_connected = (state == ConnectionState.CONNECTED)
+
+            # Emit both signals on the main loop so UI handlers run on the GTK thread.
+            GLib.idle_add(self.emit, 'connection-state-changed', connection, state, reason or '')
             GLib.idle_add(self.emit, 'connection-status-changed', connection, is_connected)
-            
-            logger.debug(f"Connection manager updated status for {connection.nickname}: {'Connected' if is_connected else 'Disconnected'}")
-            
+
+            logger.debug(
+                f"Connection manager updated state for {connection.nickname}: "
+                f"{state.value}{f' ({reason})' if reason else ''}"
+            )
+
         except Exception as e:
             logger.error(f"Failed to update connection status: {e}")
 

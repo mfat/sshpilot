@@ -223,6 +223,14 @@ class TerminalWidget(Gtk.Box):
         self.process_pid = None
         self.process_pgid = None
         self.is_connected = False
+        # Per-terminal authoritative lifecycle state. The connection-level state
+        # is aggregated from all its terminals by
+        # ``window._recompute_connection_state``. ``is_connected`` stays as the
+        # boolean compat view (True only when CONNECTED).
+        from .connection_manager import ConnectionState
+        self.connection_state = ConnectionState.UNKNOWN
+        self.connection_state_reason = ''
+        self._connect_grace_timer_id = None  # promotes CONNECTING→CONNECTED if alive
         self.watch_id = 0
         self.ssh_client = None
         self.session_id = str(id(self))  # Unique ID for this session
@@ -1209,35 +1217,51 @@ class TerminalWidget(Gtk.Box):
                 self.backend.grab_focus()
             self.apply_theme()
 
-            # Spawn succeeded; mark as connected and hide overlay
-            self.is_connected = True
-            
-            # Update connection status in the connection manager (only for SSH connections)
-            if hasattr(self, 'connection') and self.connection and hasattr(self.connection, 'hostname') and self.connection.hostname != 'localhost':
-                if hasattr(self, 'connection_manager') and self.connection_manager:
-                    self.connection_manager.update_connection_status(self.connection, True)
-                    logger.debug(f"Terminal {self.session_id} updated connection status to connected")
-                else:
-                    logger.warning(f"Terminal {self.session_id} has no connection manager")
-            elif hasattr(self, 'connection') and self.connection and hasattr(self.connection, 'hostname') and self.connection.hostname == 'localhost':
-                logger.debug(f"Local terminal {self.session_id} spawned successfully")
+            # The ssh process spawned — but that only means the subprocess
+            # started, NOT that it authenticated or reached the host. Enter
+            # CONNECTING and promote to CONNECTED only on real login evidence
+            # (remote termprops via _on_termprops_changed) or, failing that, if
+            # the process is still alive after a short grace period. A fast
+            # failure (auth/refused/unreachable) exits first and is classified
+            # as FAILED, so the indicator never flashes green on a dead link.
+            from .connection_manager import ConnectionState
+            is_remote = (
+                hasattr(self, 'connection') and self.connection
+                and getattr(self.connection, 'hostname', None) != 'localhost'
+            )
+            if is_remote and hasattr(self, 'connection_manager') and self.connection_manager:
+                self.connection_state = ConnectionState.CONNECTING
+                self.connection_state_reason = ''
+                self.is_connected = False
+                # Don't downgrade a connection that already has a live terminal.
+                if self.connection.get_status() != ConnectionState.CONNECTED:
+                    self.connection_manager.update_connection_state(
+                        self.connection, ConnectionState.CONNECTING
+                    )
+                self._start_connect_grace()
+                logger.debug(f"Terminal {self.session_id} entered CONNECTING")
             else:
-                logger.warning(f"Terminal {self.session_id} has no connection object to update")
-            
-            self.emit('connection-established')
+                # Local terminal (or no manager): a shell with no auth step, so
+                # a successful spawn is a successful connection.
+                self.connection_state = ConnectionState.CONNECTED
+                self.is_connected = True
+                self.emit('connection-established')
+
             self._set_connecting_overlay_visible(False)
             # Ensure any reconnect/disconnected banner is hidden upon successful spawn
             try:
                 self._set_disconnected_banner_visible(False)
             except Exception:
                 pass
-            
+
         except Exception as e:
             logger.error(f"Error in spawn complete: {e}")
             self._on_connection_failed(str(e))
     
     def _fallback_hide_spinner(self):
-        """Fallback method to hide spinner if spawn completion doesn't fire"""
+        """Fallback for the Flatpak case where the spawn-complete callback never
+        fires. Promotes an alive, error-free session to CONNECTED via the normal
+        promotion path (no longer force-sets state directly)."""
         # Clear stored timer ID
         self._fallback_timer_id = None
 
@@ -1253,30 +1277,125 @@ class TerminalWidget(Gtk.Box):
             logger.debug("Fallback timer triggered after connection failure; ignoring")
             return False
 
-        if not self.is_connected:
-            logger.warning("Flatpak: Spawn completion callback didn't fire, forcing connection state")
-            self.is_connected = True
-            
-            # Update connection status in the connection manager (only for SSH connections)
-            if hasattr(self, 'connection') and self.connection and hasattr(self.connection, 'hostname') and self.connection.hostname != 'localhost':
-                if hasattr(self, 'connection_manager') and self.connection_manager:
-                    self.connection_manager.update_connection_status(self.connection, True)
-                    logger.debug(f"Terminal {self.session_id} updated connection status to connected (fallback)")
-                else:
-                    logger.warning(f"Terminal {self.session_id} has no connection manager (fallback)")
-            elif hasattr(self, 'connection') and self.connection and hasattr(self.connection, 'hostname') and self.connection.hostname == 'localhost':
-                logger.debug(f"Local terminal {self.session_id} spawned successfully (fallback)")
-            else:
-                logger.warning(f"Terminal {self.session_id} has no connection object to update (fallback)")
-            
-            self.emit('connection-established')
-            self._set_connecting_overlay_visible(False)
+        from .connection_manager import ConnectionState
+        if self.connection_state != ConnectionState.CONNECTED:
+            logger.warning("Spawn completion callback didn't fire; promoting alive session (fallback)")
+            self._mark_connected()
+        return False  # Don't repeat the timer
+
+    # --- Connection lifecycle helpers (Phase 3 gating) ----------------------
+    def _start_connect_grace(self):
+        """Start the alive-after-grace timer that promotes CONNECTING→CONNECTED
+        if the ssh process is still alive (and error-free) after a few seconds.
+        This is the fallback for servers whose shell never emits termprops."""
+        self._cancel_connect_grace()
+        # 3s comfortably outlasts a fast failure (which exits first and is
+        # classified FAILED) without leaving the indicator pending for long.
+        self._connect_grace_timer_id = GLib.timeout_add_seconds(
+            3, self._on_connect_grace_elapsed
+        )
+
+    def _cancel_connect_grace(self):
+        if getattr(self, '_connect_grace_timer_id', None):
             try:
-                self._set_disconnected_banner_visible(False)
+                GLib.source_remove(self._connect_grace_timer_id)
             except Exception:
                 pass
-        return False  # Don't repeat the timer
-        
+            self._connect_grace_timer_id = None
+
+    def _on_connect_grace_elapsed(self):
+        self._connect_grace_timer_id = None
+        from .connection_manager import ConnectionState
+        if getattr(self, '_is_quitting', False):
+            return False
+        # Only promote a still-pending, error-free session.
+        if self.connection_state == ConnectionState.CONNECTING and not self.last_error_message:
+            logger.debug(f"Terminal {self.session_id}: alive after grace, marking connected")
+            self._mark_connected()
+        return False
+
+    def _mark_connected(self):
+        """Promote a CONNECTING session to CONNECTED (idempotent). Called on real
+        login evidence (termprops) or the alive-after-grace fallback."""
+        from .connection_manager import ConnectionState
+        if self.connection_state == ConnectionState.CONNECTED:
+            return
+        self._cancel_connect_grace()
+        if getattr(self, '_fallback_timer_id', None):
+            try:
+                GLib.source_remove(self._fallback_timer_id)
+            except Exception:
+                pass
+            self._fallback_timer_id = None
+
+        self.connection_state = ConnectionState.CONNECTED
+        self.connection_state_reason = ''
+        self.is_connected = True
+        self.last_error_message = None
+
+        if (
+            hasattr(self, 'connection') and self.connection
+            and getattr(self.connection, 'hostname', None) != 'localhost'
+            and hasattr(self, 'connection_manager') and self.connection_manager
+        ):
+            self.connection_manager.update_connection_state(
+                self.connection, ConnectionState.CONNECTED
+            )
+            logger.debug(f"Terminal {self.session_id} promoted to CONNECTED")
+
+        self.emit('connection-established')
+        self._set_connecting_overlay_visible(False)
+        try:
+            self._set_disconnected_banner_visible(False)
+        except Exception:
+            pass
+
+    def _scrape_recent_terminal_text(self, max_chars=2000):
+        """Best-effort read of the terminal tail, used only to classify a failure
+        reason when ssh wrote its error to the PTY (not to last_error_message)."""
+        try:
+            if getattr(self, 'backend', None) is not None and hasattr(self.backend, 'get_content'):
+                return self.backend.get_content(max_chars) or ''
+        except Exception:
+            pass
+        return ''
+
+    def _classify_exit(self, exit_code, was_connected, extra_text=''):
+        """Map an ssh exit into (ConnectionState, reason) from the exit code and
+        the captured error text. Distinguishes auth/unreachable failures from a
+        clean disconnect or a dropped-after-connected session."""
+        from .connection_manager import ConnectionState
+        msg = f"{self.last_error_message or ''}\n{extra_text or ''}".lower()
+
+        if 'permission denied' in msg or 'authentication failed' in msg \
+                or 'too many authentication failures' in msg:
+            return ConnectionState.FAILED, 'Authentication failed'
+        if 'connection refused' in msg:
+            return ConnectionState.FAILED, 'Connection refused'
+        if 'no route to host' in msg or 'network is unreachable' in msg:
+            return ConnectionState.FAILED, 'Host unreachable'
+        if 'could not resolve' in msg or 'name or service not known' in msg \
+                or 'nodename nor servname' in msg:
+            return ConnectionState.FAILED, 'Host not found'
+        if 'host key verification failed' in msg:
+            return ConnectionState.FAILED, 'Host key verification failed'
+        if 'connection timed out' in msg or 'operation timed out' in msg:
+            return ConnectionState.FAILED, 'Connection timed out'
+        if 'timeout, server' in msg or 'timed out waiting' in msg:
+            # ServerAlive keepalive gave up on a previously-live session.
+            if was_connected:
+                return ConnectionState.DISCONNECTED, 'Connection lost'
+            return ConnectionState.FAILED, 'Connection timed out'
+
+        # ssh's own fatal errors exit with 255.
+        if exit_code == 255:
+            if was_connected:
+                return ConnectionState.DISCONNECTED, 'Connection lost'
+            return ConnectionState.FAILED, (self.last_error_message or 'Connection failed')
+
+        # Other non-zero: a remote shell/command exited after a real session.
+        return ConnectionState.DISCONNECTED, ''
+
 
     def _show_forwarding_error_dialog(self, message):
         try:
@@ -3421,13 +3540,14 @@ class TerminalWidget(Gtk.Box):
         """Handle connection failure (called from main thread)"""
         logger.error(f"Connection failed: {error_message}")
 
-        # Cancel any pending fallback timer so we don't mark connection as successful
+        # Cancel any pending promotion so we never mark this as successful.
         if getattr(self, '_fallback_timer_id', None):
             try:
                 GLib.source_remove(self._fallback_timer_id)
             except Exception:
                 pass
             self._fallback_timer_id = None
+        self._cancel_connect_grace()
 
         try:
             # Show raw error in terminal
@@ -3446,6 +3566,18 @@ class TerminalWidget(Gtk.Box):
 
             # Remember last error for later reporting
             self.last_error_message = error_message
+
+            # Mark the connection FAILED so the sidebar reflects it (classify the
+            # message into a concise reason where we can).
+            from .connection_manager import ConnectionState
+            _state, _reason = self._classify_exit(255, False)
+            self.connection_state = ConnectionState.FAILED
+            self.connection_state_reason = _reason or error_message
+            if hasattr(self, 'connection_manager') and self.connection_manager and self.connection \
+                    and getattr(self.connection, 'hostname', None) != 'localhost':
+                self.connection_manager.update_connection_state(
+                    self.connection, ConnectionState.FAILED, self.connection_state_reason
+                )
 
             # Notify UI
             self.emit('connection-failed', error_message)
@@ -3506,6 +3638,13 @@ class TerminalWidget(Gtk.Box):
         except Exception as e:
             logger.error(f"Error cleaning up exited process tracking: {e}")
 
+        # Capture whether the session was ever confirmed connected (before we
+        # reset state below) and stop any pending promotion — the process is
+        # gone, so it must never be promoted to CONNECTED after this.
+        from .connection_manager import ConnectionState
+        was_connected = (self.connection_state == ConnectionState.CONNECTED)
+        self._cancel_connect_grace()
+
         # Normalize exit status: GLib may pass waitpid-style status
         exit_code = None
         try:
@@ -3525,13 +3664,15 @@ class TerminalWidget(Gtk.Box):
             if exit_code == 0 and hasattr(self, 'get_root'):
                 # Update connection status BEFORE closing the tab
                 logger.debug("Clean exit detected, updating connection status before closing tab")
-                if self.connection:
-                    self.connection.is_connected = False
+                self.connection_state = ConnectionState.DISCONNECTED
                 self.is_connected = False
-                
+
                 # Emit connection status change signal
                 if hasattr(self, 'connection_manager') and self.connection_manager and self.connection:
-                    GLib.idle_add(self.connection_manager.emit, 'connection-status-changed', self.connection, False)
+                    GLib.idle_add(
+                        self.connection_manager.update_connection_state,
+                        self.connection, ConnectionState.DISCONNECTED, '',
+                    )
                 
                 root = self.get_root()
                 if root and hasattr(root, 'tab_view'):
@@ -3559,30 +3700,39 @@ class TerminalWidget(Gtk.Box):
         except Exception:
             pass
         
-        # Non-zero or unknown exit: treat as connection lost and show banner
+        # Non-zero or unknown exit: classify into FAILED (auth/unreachable/…) vs
+        # DISCONNECTED (a previously-live session that dropped or ended).
         logger.debug("Updating connection status after process exit")
-        if self.connection:
-            self.connection.is_connected = False
+        # When ssh wrote its error to the PTY rather than to last_error_message
+        # (the common case for auth/unreachable failures), scrape the tail so we
+        # can still classify the reason.
+        scraped = '' if self.last_error_message else self._scrape_recent_terminal_text()
+        exit_state, exit_reason = self._classify_exit(exit_code, was_connected, scraped)
+        self.connection_state = exit_state
+        self.connection_state_reason = exit_reason
 
         # Don't call disconnect() here since the process has already exited
         # Just update the connection status and emit signals
         self.is_connected = False
-        
-        # Update connection manager status
-        logger.debug("Scheduling connection manager status update")
+
+        # Update connection manager status with the classified state + reason.
+        logger.debug(f"Scheduling connection state update: {exit_state.value} ({exit_reason})")
         if hasattr(self, 'connection_manager') and self.connection_manager and self.connection:
-            GLib.idle_add(self.connection_manager.emit, 'connection-status-changed', self.connection, False)
-        
+            GLib.idle_add(
+                self.connection_manager.update_connection_state,
+                self.connection, exit_state, exit_reason or '',
+            )
+
         # Defer all signal emissions and UI updates to prevent deadlocks
         def _finalize_exit_cleanup():
             try:
                 logger.debug("Emitting connection-lost signal")
                 self.emit('connection-lost')
 
-                # Show reconnect UI with detailed error if available
+                # Show reconnect UI with a reason-aware message.
                 logger.debug("Updating UI elements")
                 self._set_connecting_overlay_visible(False)
-                banner_text = self.last_error_message
+                banner_text = self.last_error_message or exit_reason
                 if not banner_text:
                     if exit_code and exit_code != 0:
                         banner_text = _('SSH exited with status {code}').format(code=exit_code)
@@ -4047,7 +4197,19 @@ class TerminalWidget(Gtk.Box):
                 
             # Convert ids to a set for efficient lookup if it's not already
             changed_props = set(ids) if hasattr(ids, '__iter__') else {ids}
-            
+
+            # Login evidence: a remote terminal emitting termprops (title/cwd via
+            # the remote shell's OSC sequences) means the session reached the
+            # shell. Promote a pending CONNECTING session to CONNECTED here so we
+            # confirm on real activity rather than just the process spawning.
+            try:
+                from .connection_manager import ConnectionState
+                if self.connection_state == ConnectionState.CONNECTING \
+                        and not self._is_local_terminal():
+                    self._mark_connected()
+            except Exception:
+                pass
+
             # Check for window title changes (TERMPROP_XTERM_TITLE) - works for both local and remote terminals
             # This replaces the deprecated get_window_title() method (VTE 0.78+)
             # TERMPROP_XTERM_TITLE is a Vte.PropertyType.STRING termprop that stores the xterm window title

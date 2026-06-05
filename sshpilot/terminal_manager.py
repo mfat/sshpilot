@@ -750,7 +750,10 @@ class TerminalManager:
 
     # Terminal signal handlers
     def on_terminal_connected(self, terminal):
-        terminal.connection.is_connected = True
+        # Aggregate across all terminals of this connection (OR-logic) and set
+        # the authoritative state in the reporting layer instead of writing the
+        # boolean here.
+        self.window._recompute_connection_state(terminal.connection)
         for row in self.window._rows_for_connection(terminal.connection):
             row.update_status()
             row.queue_draw()
@@ -769,7 +772,10 @@ class TerminalManager:
                 f"Terminal reconnected after settings update: {terminal.connection.nickname}")
 
     def on_terminal_disconnected(self, terminal):
-        terminal.connection.is_connected = False
+        # The just-disconnected terminal has already flipped its own
+        # is_connected flag; recompute the connection's aggregate state so a
+        # connection with other live terminals stays CONNECTED.
+        self.window._recompute_connection_state(terminal.connection)
         for row in self.window._rows_for_connection(terminal.connection):
             row.update_status()
             row.queue_draw()

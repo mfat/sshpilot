@@ -199,6 +199,13 @@ class Config(GObject.Object):
                 'use_isolated_config': False,
                 'ssh_overrides': [],
                 'strict_host_key_checking': 'accept-new',
+                # When the user hasn't configured keepalive (here or in
+                # ~/.ssh/config), apply a sane default ServerAlive* so a dead
+                # link is detected (~interval*count seconds) instead of the
+                # indicator staying green forever. User/per-host values win.
+                'apply_default_keepalive': True,
+                'default_keepalive_interval': 15,
+                'default_keepalive_count': 3,
             },
             'file_manager': {
                 'force_internal': False,
@@ -702,6 +709,9 @@ class Config(GObject.Object):
             'use_isolated_config': False,
             'verbosity': 0,
             'ssh_overrides': [],
+            'apply_default_keepalive': True,
+            'default_keepalive_interval': 15,
+            'default_keepalive_count': 3,
         }
 
         optional_int_keys = {
@@ -711,12 +721,20 @@ class Config(GObject.Object):
             'keepalive_interval',
         }
 
+        # Internal keepalive defaults applied when the user hasn't set their own
+        # keepalive. Always present (non-optional) so the builder can rely on them.
+        positive_int_keys = {
+            'default_keepalive_interval',
+            'default_keepalive_count',
+        }
+
         bool_keys = {
             'auto_add_host_keys',
             'batch_mode',
             'compression',
             'debug_enabled',
             'use_isolated_config',
+            'apply_default_keepalive',
         }
 
         config: Dict[str, Any] = {}
@@ -735,6 +753,12 @@ class Config(GObject.Object):
             elif key in optional_int_keys:
                 # handled separately after defaults loop
                 pass
+            elif key in positive_int_keys:
+                try:
+                    coerced_int = int(value)
+                except (TypeError, ValueError):
+                    coerced_int = int(default_value)
+                value = coerced_int if coerced_int > 0 else int(default_value)
             elif key == 'strict_host_key_checking':
                 if value is None:
                     value = default_value

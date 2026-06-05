@@ -1220,30 +1220,46 @@ class ConnectionRow(Gtk.ListBoxRow):
         self._apply_host_label_text()
 
     def update_status(self):
+        """Render the status icon from the connection's authoritative state.
+
+        This is render-only: it never computes or writes back connection state.
+        Aggregation across multiple terminals lives in the reporting layer
+        (``window._recompute_connection_state``) which sets the state via
+        ``ConnectionManager.update_connection_state``.
+        """
         try:
-            window = self.get_root()
-            has_active_terminal = False
-
-            if hasattr(window, "connection_to_terminals") and self.connection in getattr(window, "connection_to_terminals", {}):
-                for t in window.connection_to_terminals.get(self.connection, []) or []:
-                    if getattr(t, "is_connected", False):
-                        has_active_terminal = True
-                        break
-            elif hasattr(window, "active_terminals") and self.connection in window.active_terminals:
-                terminal = window.active_terminals[self.connection]
-                if terminal and hasattr(terminal, "is_connected"):
-                    has_active_terminal = terminal.is_connected
-
-            self.connection.is_connected = has_active_terminal
-
             from sshpilot import icon_utils
-            if has_active_terminal:
-                icon_utils.set_icon_from_name(self.status_icon, "network-idle-symbolic")
-                host_value = _get_connection_host(self.connection) or _get_connection_alias(self.connection)
-                self.status_icon.set_tooltip_text(
-                    f"Connected to {host_value}"
+            from .connection_manager import ConnectionState
+
+            try:
+                state = self.connection.get_status()
+            except Exception:
+                # Older/foreign connection objects without the status API.
+                state = (
+                    ConnectionState.CONNECTED
+                    if getattr(self.connection, "is_connected", False)
+                    else ConnectionState.DISCONNECTED
                 )
-            else:
+
+            host_value = _get_connection_host(self.connection) or _get_connection_alias(self.connection)
+
+            if state == ConnectionState.CONNECTED:
+                icon_utils.set_icon_from_name(self.status_icon, "network-idle-symbolic")
+                self.status_icon.set_tooltip_text(f"Connected to {host_value}")
+            elif state == ConnectionState.CONNECTING:
+                icon_utils.set_icon_from_name(self.status_icon, "content-loading-symbolic")
+                self.status_icon.set_tooltip_text(f"Connecting to {host_value}…")
+            elif state == ConnectionState.FAILED:
+                icon_utils.set_icon_from_name(self.status_icon, "network-error-symbolic")
+                reason = ''
+                try:
+                    reason = self.connection.get_status_reason() or ''
+                except Exception:
+                    reason = ''
+                self.status_icon.set_tooltip_text(
+                    f"Connection failed: {reason}" if reason else "Connection failed"
+                )
+            else:  # DISCONNECTED / UNKNOWN
                 icon_utils.set_icon_from_name(self.status_icon, "network-offline-symbolic")
                 self.status_icon.set_tooltip_text("Disconnected")
 

@@ -485,6 +485,46 @@ def _build_base_ssh_command(
     return cmd
 
 
+def _maybe_append_default_keepalive(cmd, overrides, app_ssh_config):
+    """Append default ServerAlive* options to *cmd* unless keepalive is already set.
+
+    Keepalive is left untouched when the user already configured it — either via
+    Preferences (the explicit value lands in ``ssh_overrides`` and/or the
+    ``keepalive_interval`` app key) — so user values always win. The global
+    opt-out (``ssh.apply_default_keepalive`` = False) disables injection
+    entirely; that is also the escape hatch for anyone who set their own
+    ServerAliveInterval only in ~/.ssh/config (we intentionally don't run an
+    extra ``ssh -G`` here — that would add a second probe to every connect — and
+    overriding with a default keepalive is harmless, just a probe cadence).
+    """
+    try:
+        if not bool(app_ssh_config.get('apply_default_keepalive', True)):
+            return
+
+        # Already set by the user via Preferences. The explicit value is composed
+        # into ssh_overrides; the raw key is also honored directly so we never
+        # double-apply or override an explicit choice.
+        try:
+            explicit = app_ssh_config.get('keepalive_interval')
+            if explicit not in (None, '') and int(explicit) > 0:
+                return
+        except (TypeError, ValueError):
+            pass
+        if isinstance(overrides, (list, tuple)):
+            for entry in overrides:
+                if entry and 'ServerAliveInterval' in str(entry):
+                    return
+
+        interval = int(app_ssh_config.get('default_keepalive_interval', 15) or 15)
+        count = int(app_ssh_config.get('default_keepalive_count', 3) or 3)
+        if interval > 0:
+            cmd.extend(['-o', f'ServerAliveInterval={interval}'])
+            if count > 0:
+                cmd.extend(['-o', f'ServerAliveCountMax={count}'])
+    except Exception as exc:  # never let keepalive injection break connecting
+        logger.debug("Default keepalive injection skipped: %s", exc)
+
+
 def build_ssh_connection(
     ctx: ConnectionContext
 ) -> SSHConnectionCommand:
@@ -582,6 +622,15 @@ def build_ssh_connection(
                 for entry in overrides:
                     if entry:
                         base_cmd.append(str(entry))
+
+            # Default keepalive: when neither the user's app settings nor their
+            # ~/.ssh/config define ServerAliveInterval for this host, inject a
+            # sane default so a dead link (laptop sleep, VPN drop, cable pull)
+            # is detected instead of the connection lingering "green" forever.
+            # Honors CLAUDE.md: this is a runtime option that doesn't live in
+            # ~/.ssh/config, applied via -o like the rest of ssh_overrides, and
+            # any explicit user/per-host value wins.
+            _maybe_append_default_keepalive(base_cmd, overrides, app_ssh_config)
 
         # Authentication is resolved by the single shared helper so the terminal,
         # SCP, and ssh-copy-id all authenticate identically.

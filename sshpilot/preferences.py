@@ -1728,6 +1728,20 @@ class PreferencesWindow(Adw.Window):
             self.connection_attempts_row.set_value(connection_attempts_value)
             advanced_group.add(self.connection_attempts_row)
 
+            # Default keepalive opt-out. When on (default) and the user hasn't
+            # set an explicit ServerAlive interval below or in ~/.ssh/config,
+            # SSH Pilot applies a sane default so dropped links are detected.
+            self.apply_default_keepalive_row = Adw.SwitchRow()
+            self.apply_default_keepalive_row.set_title("Apply default keepalive")
+            self.apply_default_keepalive_row.set_subtitle(
+                "Detect dropped connections automatically when no ServerAlive "
+                "value is set here or in ~/.ssh/config. Explicit values always win."
+            )
+            self.apply_default_keepalive_row.set_active(
+                bool(self.config.get_setting('ssh.apply_default_keepalive', True))
+            )
+            advanced_group.add(self.apply_default_keepalive_row)
+
             # Keepalive interval
             self.keepalive_interval_row = Adw.SpinRow.new_with_range(0, 300, 5)
             self.keepalive_interval_row.set_title("ServerAlive Interval (s)")
@@ -2698,6 +2712,11 @@ class PreferencesWindow(Adw.Window):
                 else:
                     connection_attempts = connection_attempts_value
                 self.config.set_setting('ssh.connection_attempts', connection_attempts)
+            if hasattr(self, 'apply_default_keepalive_row'):
+                self.config.set_setting(
+                    'ssh.apply_default_keepalive',
+                    bool(self.apply_default_keepalive_row.get_active()),
+                )
             if hasattr(self, 'keepalive_interval_row'):
                 keepalive_interval_value = int(self.keepalive_interval_row.get_value())
                 if keepalive_interval_value <= 0:
@@ -2809,6 +2828,10 @@ class PreferencesWindow(Adw.Window):
             if hasattr(self, 'connection_attempts_row'):
                 self.config.set_setting('ssh.connection_attempts', None)
                 self.connection_attempts_row.set_value(0)
+            if hasattr(self, 'apply_default_keepalive_row'):
+                default_apply = bool(defaults.get('apply_default_keepalive', True))
+                self.config.set_setting('ssh.apply_default_keepalive', default_apply)
+                self.apply_default_keepalive_row.set_active(default_apply)
             if hasattr(self, 'keepalive_interval_row'):
                 self.config.set_setting('ssh.keepalive_interval', None)
                 self.keepalive_interval_row.set_value(0)

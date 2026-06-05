@@ -42,7 +42,7 @@ HAS_TIMED_ANIMATION = hasattr(Adw, 'TimedAnimation')
 
 from gettext import gettext as _
 
-from .connection_manager import ConnectionManager, Connection
+from .connection_manager import ConnectionManager, Connection, ConnectionState
 from .terminal import TerminalWidget
 from .terminal_manager import TerminalManager
 from .config import Config
@@ -8384,15 +8384,70 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Use idle_add to restore scroll position after UI updates complete
         GLib.idle_add(_restore_scroll_only)
 
+    def _recompute_connection_state(self, connection):
+        """Aggregate per-terminal state into the connection's authoritative state.
+
+        This is the single place the OR-across-terminals rule lives (moved out of
+        the sidebar renderer): a connection is CONNECTED while any of its
+        terminals is connected, and only drops to DISCONNECTED when the last one
+        goes down. A richer "down" state already set on the connection (FAILED)
+        is preserved rather than being flattened to DISCONNECTED.
+        """
+        try:
+            terminals = []
+            if hasattr(self, 'connection_to_terminals'):
+                terminals = list(self.connection_to_terminals.get(connection, []) or [])
+            # Fall back to the most-recent terminal map for edge cases where the
+            # comprehensive map hasn't been populated yet (mirrors prior renderer).
+            if not terminals and hasattr(self, 'active_terminals'):
+                recent = self.active_terminals.get(connection)
+                if recent is not None:
+                    terminals = [recent]
+
+            def _term_state(t):
+                s = getattr(t, 'connection_state', None)
+                if isinstance(s, ConnectionState):
+                    return s
+                return (
+                    ConnectionState.CONNECTED
+                    if getattr(t, 'is_connected', False)
+                    else ConnectionState.DISCONNECTED
+                )
+
+            states = [_term_state(t) for t in terminals]
+
+            # Priority across a connection's terminals: any live tab wins, then a
+            # tab still connecting, then a failed attempt (keep its reason), else
+            # disconnected.
+            if any(s == ConnectionState.CONNECTED for s in states):
+                self.connection_manager.update_connection_state(connection, ConnectionState.CONNECTED)
+            elif any(s == ConnectionState.CONNECTING for s in states):
+                self.connection_manager.update_connection_state(connection, ConnectionState.CONNECTING)
+            elif any(s == ConnectionState.FAILED for s in states):
+                reason = ''
+                for t in terminals:
+                    if _term_state(t) == ConnectionState.FAILED:
+                        reason = getattr(t, 'connection_state_reason', '') or ''
+                        break
+                self.connection_manager.update_connection_state(
+                    connection, ConnectionState.FAILED, reason
+                )
+            elif terminals:
+                self.connection_manager.update_connection_state(connection, ConnectionState.DISCONNECTED)
+            elif connection.get_status() != ConnectionState.FAILED:
+                # No terminals at all: drop to DISCONNECTED unless a standalone
+                # FAILED was set (e.g. a failure recorded before teardown).
+                self.connection_manager.update_connection_state(connection, ConnectionState.DISCONNECTED)
+        except Exception as e:
+            logger.error(f"Failed to recompute connection state: {e}")
+
     def on_connection_status_changed(self, manager, connection, is_connected):
-        """Handle connection status change"""
+        """Handle connection status change (render-only — state is authoritative)."""
         logger.debug(f"Connection status changed: {connection.nickname} - {'Connected' if is_connected else 'Disconnected'}")
         rows = self._rows_for_connection(connection)
         if rows:
-            # Force update the connection's is_connected state
-            connection.is_connected = is_connected
             for row in rows:
-                # Update each row's status and force a redraw
+                # Render each row from the connection's authoritative state.
                 row.update_status()
                 row.queue_draw()
 
