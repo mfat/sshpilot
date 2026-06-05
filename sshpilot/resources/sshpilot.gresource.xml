@@ -47,6 +47,7 @@
     <file alias="preferences-desktop-keyboard-symbolic.svg">icons/scalable/actions/preferences-desktop-keyboard-symbolic.svg</file>
     <file alias="preferences-system-symbolic.svg">icons/scalable/actions/preferences-system-symbolic.svg</file>
     <file alias="settings-symbolic.svg">icons/scalable/actions/settings-symbolic.svg</file>
+    <file alias="shield-full-symbolic.svg">icons/scalable/actions/shield-full-symbolic.svg</file>
     <file alias="sidebar-show-symbolic.svg">icons/scalable/actions/sidebar-show-symbolic.svg</file>
     <file alias="terminal-split-horizontal-symbolic.svg">icons/scalable/actions/terminal-split-horizontal.svg</file>
     <file alias="terminal-split-vertical-symbolic.svg">icons/scalable/actions/terminal-split-vertical.svg</file>

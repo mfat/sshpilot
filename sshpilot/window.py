@@ -833,8 +833,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # One-time operation mode chooser
         try:
             if self._should_prompt_operation_mode():
-                backup_path = self._backup_default_ssh_config()
-                GLib.idle_add(self._show_operation_mode_dialog, backup_path)
+                GLib.idle_add(self._show_operation_mode_dialog)
         except Exception as e:
             logger.debug(f"Failed to schedule operation mode prompt: {e}")
 
@@ -8750,26 +8749,74 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             return False
         return True
 
-    def _backup_default_ssh_config(self) -> Optional[str]:
-        """Copy ~/.ssh/config to the sshpilot backups directory.
+    def _prompt_backup_ssh_config(self) -> None:
+        """Let the user back up ~/.ssh/config to a location they choose.
 
-        Returns the destination path on success, or None if the source file
-        does not exist, is empty, or the copy fails.
+        Uses Gtk.FileDialog (portal-backed, so it works inside the Flatpak
+        sandbox) to pick the destination, copies the config there, then shows
+        an alert confirming the saved path.  Does nothing — and never raises —
+        if there is no config to back up.
         """
         src = Path(get_ssh_dir()) / 'config'
         if not src.exists() or src.stat().st_size == 0:
-            return None
+            logger.debug("No SSH config to back up; skipping backup prompt")
+            return
+
+        dialog = Gtk.FileDialog.new()
+        dialog.set_title(_("Back Up SSH Config"))
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        dialog.set_initial_name(f"ssh_config_backup_{timestamp}.bak")
+
+        def _on_done(dlg, result):
+            try:
+                gfile = dlg.save_finish(result)
+            except GLib.Error:
+                return  # user cancelled or portal denied
+            if gfile is None:
+                return
+            dst = gfile.get_path()
+            if not dst:
+                logger.warning("Backup destination has no local path")
+                return
+            try:
+                shutil.copy2(str(src), dst)
+                logger.info("SSH config backed up to %s", dst)
+            except Exception as exc:
+                logger.error("Could not back up SSH config: %s", exc)
+                self._show_backup_result_alert(False, dst)
+                return
+            self._show_backup_result_alert(True, dst)
+
         try:
-            backup_dir = Path(get_config_dir()) / 'backups'
-            backup_dir.mkdir(parents=True, exist_ok=True)
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            dst = backup_dir / f'ssh_config_backup_{timestamp}.bak'
-            shutil.copy2(str(src), str(dst))
-            logger.info("SSH config backed up to %s", dst)
-            return str(dst)
+            dialog.save(self, None, _on_done)
         except Exception as exc:
-            logger.warning("Could not back up SSH config: %s", exc)
-            return None
+            logger.error("Could not open backup save dialog: %s", exc, exc_info=True)
+
+    def _show_backup_result_alert(self, success: bool, path: str) -> None:
+        """Tell the user where the SSH config backup was (or wasn't) saved."""
+        if success:
+            heading = _("Backup Saved")
+            body = _("Your SSH config was backed up to:\n{path}").format(path=path)
+        else:
+            heading = _("Backup Failed")
+            body = _(
+                "SSH Pilot could not save the backup to:\n{path}"
+            ).format(path=path)
+
+        if hasattr(Adw, 'AlertDialog'):
+            alert = Adw.AlertDialog(heading=heading, body=body)
+            alert.add_response('ok', _("OK"))
+            alert.set_default_response('ok')
+            alert.set_close_response('ok')
+            alert.present(self)
+        else:
+            alert = Adw.MessageDialog(
+                transient_for=self, modal=True, heading=heading, body=body
+            )
+            alert.add_response('ok', _("OK"))
+            alert.set_default_response('ok')
+            alert.set_close_response('ok')
+            alert.present()
 
     def _apply_operation_mode_choice(
         self, choice: Optional[str], copy: bool = False
@@ -8808,7 +8855,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception as exc:
             logger.error("Failed to persist operation mode choice: %s", exc)
 
-    def _show_operation_mode_dialog(self, backup_path: Optional[str]) -> None:
+    def _show_operation_mode_dialog(self) -> None:
         """One-time dialog asking the user which operation mode to use.
 
         Follows the GNOME HIG choice-dialog pattern used by
@@ -8818,9 +8865,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         """
         heading = _("Choose Operation Mode")
         body = _(
-            "SSH Pilot can share your existing SSH configuration with other "
-            "clients, or keep its own private copy that won't affect "
-            "the rest of your system."
+            "SSH Pilot can use your .ssh/config "
+            "or use its own configuration file. "
+            
         )
 
         use_alert = hasattr(Adw, 'AlertDialog')
@@ -8835,7 +8882,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         content_box.set_margin_top(12)
         content_box.set_size_request(460, -1)
 
-        icon = Gtk.Image.new_from_icon_name('preferences-system-network-symbolic')
+        icon = Gtk.Image.new_from_icon_name('shield-full-symbolic')
         icon.set_pixel_size(64)
         icon.set_halign(Gtk.Align.CENTER)
         icon.set_margin_bottom(4)
@@ -8845,7 +8892,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
         default_row = Adw.ActionRow()
         default_row.set_title(_("Default — use ~/.ssh/config"))
-        default_row.set_subtitle(_("Recommended · shares config with the system SSH client"))
+        default_row.set_subtitle(_("SSH Pilot shares config with the system SSH client"))
         default_radio = Gtk.CheckButton()
         default_radio.set_valign(Gtk.Align.CENTER)
         default_radio.set_active(True)
@@ -8856,7 +8903,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         isolated_row = Adw.ActionRow()
         isolated_row.set_title(_("Isolated — use a private SSH config"))
         isolated_row.set_subtitle(
-            _("Changes stay inside SSH Pilot and won't affect other tools")
+            _("SSH Pilot stores its own ssh config file in its directory")
         )
         isolated_radio = Gtk.CheckButton()
         isolated_radio.set_valign(Gtk.Align.CENTER)
@@ -8870,7 +8917,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         src_exists = (Path(get_ssh_dir()) / 'config').exists()
         copy_group = Adw.PreferencesGroup()
         copy_row = Adw.ActionRow()
-        copy_row.set_title(_("Copy existing config into the isolated profile"))
+        copy_row.set_title(_("Copy existing ssh config into the isolated profile"))
         copy_row.set_subtitle(_("Your hosts and keys will be available immediately"))
         copy_check = Gtk.CheckButton()
         copy_check.set_valign(Gtk.Align.CENTER)
@@ -8881,31 +8928,32 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         copy_group.set_visible(False)
         content_box.append(copy_group)
 
-        def _on_isolated_toggled(radio):
-            if src_exists:
-                copy_group.set_visible(radio.get_active())
+        # Default mode: offer an explicit, opt-in backup of the existing config.
+        # Shown only when there is a config to back up; the actual destination
+        # is chosen later via a portal-aware save dialog.
+        backup_group = Adw.PreferencesGroup()
+        backup_row = Adw.ActionRow()
+        backup_row.set_title(_("Back up my existing SSH config first"))
+        backup_row.set_subtitle(
+            _("You'll choose where to save a copy of ~/.ssh/config")
+        )
+        backup_check = Gtk.CheckButton()
+        backup_check.set_valign(Gtk.Align.CENTER)
+        backup_check.set_active(True)
+        backup_row.add_prefix(backup_check)
+        backup_row.set_activatable_widget(backup_check)
+        backup_group.add(backup_row)
+        backup_group.set_visible(src_exists)
+        content_box.append(backup_group)
 
-        isolated_radio.connect('toggled', _on_isolated_toggled)
+        def _sync_option_visibility(*_args):
+            isolated = isolated_radio.get_active()
+            copy_group.set_visible(isolated and src_exists)
+            backup_group.set_visible(not isolated and src_exists)
 
-        if backup_path:
-            if hasattr(Adw, 'Banner'):
-                banner = Adw.Banner()
-                banner.set_title(
-                    _("Backup saved to: {path}").format(path=backup_path)
-                )
-                banner.set_revealed(True)
-                content_box.append(banner)
-            else:
-                backup_label = Gtk.Label(
-                    label=_("Backup saved to: {path}").format(path=backup_path)
-                )
-                backup_label.set_wrap(True)
-                backup_label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
-                backup_label.set_xalign(0)
-                backup_label.set_halign(Gtk.Align.START)
-                backup_label.add_css_class('caption')
-                backup_label.add_css_class('dim-label')
-                content_box.append(backup_label)
+        default_radio.connect('toggled', _sync_option_visibility)
+        isolated_radio.connect('toggled', _sync_option_visibility)
+        _sync_option_visibility()
 
         footer = Gtk.Label(
             label=_("You can change this anytime in Preferences › SSH Settings.")
@@ -8939,6 +8987,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     )
                 else:
                     self._apply_operation_mode_choice('default')
+                    if backup_check.get_active() and src_exists:
+                        self._prompt_backup_ssh_config()
             else:
                 self._apply_operation_mode_choice(None)
 
