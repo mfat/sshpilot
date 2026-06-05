@@ -9,8 +9,10 @@ from gettext import gettext as _
 
 logger = logging.getLogger(__name__)
 
-# Installed once per process; scoped to box.add-pane-strip so it only
-# affects the strip widget and nothing else in the app.
+# Installed once per process; scoped to the .add-pane-strip / scroll-spacer
+# style classes so it only affects those widgets and nothing else in the app.
+# Class-only selectors so the rule applies whether the strip is a Gtk.Box or a
+# Gtk.ActionBar (the ActionBar provides its own border/padding).
 _drop_zone_css_installed = False
 
 def _ensure_drop_zone_css() -> None:
@@ -18,18 +20,13 @@ def _ensure_drop_zone_css() -> None:
     if _drop_zone_css_installed:
         return
     provider = Gtk.CssProvider()
-    # Targets plain box.add-pane-strip so there are no Adwaita sub-node
-    # overrides to fight.  Two background-color declarations: the rgba()
-    # fallback fires on systems where @accent_bg_color is unavailable.
+    # Only the drag-over highlight is styled here; the strip's frame/padding now
+    # comes from Gtk.ActionBar's native styling.
     provider.load_from_data(b"""
-box.toolbar.add-pane-strip {
-    border-top: 2px solid alpha(@window_fg_color, 0.25);
-    padding: 8px 12px;
-}
-box.add-pane-strip.drag-over {
+.add-pane-strip.drag-over {
     background-color: rgba(42, 161, 152, 0.25);
 }
-box.add-pane-scroll-spacer.drag-over {
+.add-pane-scroll-spacer.drag-over {
     background-color: rgba(42, 161, 152, 0.25);
 }
 """)
@@ -663,18 +660,21 @@ class SplitViewTab(Gtk.Box):
         for widget in (self, self._scroll_overlay, self._pane_scroll):
             widget.connect('notify::height', self._schedule_viewport_sync)
         self.connect('map', self._schedule_viewport_sync)
+        # Reveal the action bar ~1s after the tab is first shown, then leave it.
+        self.connect('map', self._on_first_map_reveal_strip)
         try:
             window.connect('notify::default-height', self._schedule_viewport_sync)
             window.connect('notify::height', self._schedule_viewport_sync)
         except Exception:
             pass
 
-        # Toolbar strip below the panes
+        # Action bar strip below the panes (revealed shortly after the tab opens)
         self._add_pane_btn: Optional[Gtk.Button] = None
-        self._add_pane_strip: Optional[Gtk.Box] = None
+        self._add_pane_strip: Optional[Gtk.ActionBar] = None
         self._layout_h_btn: Optional[Gtk.ToggleButton] = None
         self._layout_v_btn: Optional[Gtk.ToggleButton] = None
         self._layout_toggle_updating: list = [False]
+        self._add_strip_reveal_scheduled = False
         self._add_strip = self._build_add_pane_strip()
         self.append(self._add_strip)
 
@@ -815,10 +815,13 @@ class SplitViewTab(Gtk.Box):
     def _build_add_pane_strip(self) -> Gtk.Widget:
         _ensure_drop_zone_css()
 
-        strip = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        strip.add_css_class("toolbar")
+        # Gtk.ActionBar gives native bottom-bar styling and a built-in revealer
+        # (set_revealed) animation. It starts hidden and is revealed shortly
+        # after the tab is shown (see _on_first_map_reveal_strip).
+        strip = Gtk.ActionBar()
         strip.add_css_class("add-pane-strip")
         strip.set_hexpand(True)
+        strip.set_revealed(False)
 
         self._layout_h_btn, self._layout_v_btn, self._layout_toggle_updating = (
             create_layout_toggle_buttons(
@@ -827,8 +830,8 @@ class SplitViewTab(Gtk.Box):
                 as_pill=True,
             )
         )
-        strip.append(self._layout_h_btn)
-        strip.append(self._layout_v_btn)
+        strip.pack_start(self._layout_h_btn)
+        strip.pack_start(self._layout_v_btn)
 
         from sshpilot import icon_utils  # noqa: PLC0415
 
@@ -837,34 +840,33 @@ class SplitViewTab(Gtk.Box):
         scroll_top_btn.set_tooltip_text(_("Scroll to top"))
         scroll_top_btn.add_css_class("pill")
         scroll_top_btn.connect("clicked", lambda _b: self.scroll_panes_to_top())
-        strip.append(scroll_top_btn)
+        strip.pack_start(scroll_top_btn)
 
         scroll_bottom_btn = Gtk.Button()
         icon_utils.set_button_icon(scroll_bottom_btn, 'bottom-large-symbolic')
         scroll_bottom_btn.set_tooltip_text(_("Scroll to bottom"))
         scroll_bottom_btn.add_css_class("pill")
         scroll_bottom_btn.connect("clicked", lambda _b: self.scroll_panes_to_bottom())
-        strip.append(scroll_bottom_btn)
+        strip.pack_start(scroll_bottom_btn)
 
         large_btn = Gtk.Button(label=_("Default"))
         large_btn.add_css_class("pill")
         large_btn.set_tooltip_text(_("Reset panes to their default size"))
         large_btn.connect("clicked", lambda _b: self._on_default_clicked())
-        strip.append(large_btn)
+        strip.pack_start(large_btn)
 
         compact_btn = Gtk.Button(label=_("Compact"))
         compact_btn.add_css_class("pill")
         compact_btn.set_tooltip_text(_("Reset panes to a smaller size"))
         compact_btn.connect("clicked", lambda _b: self.reset_all_row_heights(0.3))
-        strip.append(compact_btn)
+        strip.pack_start(compact_btn)
 
         add_btn = Gtk.Button(label=_("Add Terminal"))
         add_btn.add_css_class("suggested-action")
         add_btn.add_css_class("pill")
-        add_btn.set_halign(Gtk.Align.END)
-        add_btn.set_hexpand(True)
         add_btn.connect("clicked", lambda _b: self.add_pane())
-        strip.append(add_btn)
+        # pack_end places it at the trailing edge — no manual halign/hexpand hack.
+        strip.pack_end(add_btn)
 
         self._add_pane_btn = add_btn
         self._add_pane_strip = strip
@@ -876,6 +878,22 @@ class SplitViewTab(Gtk.Box):
         strip.add_controller(dt)
 
         return strip
+
+    def _on_first_map_reveal_strip(self, *_args) -> None:
+        """On the tab's first map, schedule the action bar's animated reveal a
+        second later. Guarded so repeated map/unmap cycles don't re-trigger it."""
+        if self._add_strip_reveal_scheduled:
+            return
+        self._add_strip_reveal_scheduled = True
+        GLib.timeout_add(1000, self._reveal_add_strip)
+
+    def _reveal_add_strip(self) -> bool:
+        if self._add_pane_strip is not None:
+            try:
+                self._add_pane_strip.set_revealed(True)
+            except Exception:
+                pass
+        return False  # one-shot
 
     # ── drag-over strip state ─────────────────────────────────────────────────
 
