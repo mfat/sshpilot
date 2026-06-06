@@ -2373,16 +2373,13 @@ class TerminalWidget(Gtk.Box):
 
         return False
 
-    def _notify_invalid_encoding(self, requested, fallback):
-        message = _(f"Encoding '{requested}' is not supported. Using {fallback} instead.")
-        logger.warning(message)
+    def _show_toast(self, message, timeout=3):
+        """Show a transient toast in the main window's toast overlay."""
         root = self.get_root()
         try:
             toast = Adw.Toast.new(message)
+            toast.set_timeout(timeout)
         except Exception:
-            toast = None
-
-        if toast is None:
             return
 
         try:
@@ -2392,6 +2389,30 @@ class TerminalWidget(Gtk.Box):
                 root.add_toast(toast)
         except Exception:
             pass
+
+    def _has_terminal_selection(self) -> bool:
+        """Whether the terminal currently has a text selection.
+
+        Used to decide if a copy actually put something on the clipboard. The
+        backend reports it when it can (VTE); a backend that can't answer
+        synchronously (PyXterm) is treated optimistically as having a selection.
+        """
+        try:
+            if self.backend is not None:
+                getter = getattr(self.backend, 'get_has_selection', None)
+                if getter is not None:
+                    return bool(getter())
+                return True
+            if self.vte is not None:
+                return bool(self.vte.get_has_selection())
+        except Exception:
+            pass
+        return False
+
+    def _notify_invalid_encoding(self, requested, fallback):
+        message = _(f"Encoding '{requested}' is not supported. Using {fallback} instead.")
+        logger.warning(message)
+        self._show_toast(message)
 
     def setup_local_shell(self):
         """Set up the terminal for local shell (not SSH)"""
@@ -3097,11 +3118,17 @@ class TerminalWidget(Gtk.Box):
 
                 def _cb_copy(widget, *args):
                     if self.backend:
-                        return _schedule_vte_action(self.backend.copy_clipboard)
+                        had_selection = self._has_terminal_selection()
+                        result = _schedule_vte_action(self.backend.copy_clipboard)
+                        if had_selection:
+                            self._show_toast(_("Copied to clipboard"))
+                        return result
                     elif self.vte is not None:
                         if not self.vte.get_has_selection():
                             return False
-                        return _schedule_vte_action(self.vte.copy_clipboard_format, Vte.Format.TEXT)
+                        result = _schedule_vte_action(self.vte.copy_clipboard_format, Vte.Format.TEXT)
+                        self._show_toast(_("Copied to clipboard"))
+                        return result
                     return False
 
                 def _cb_paste(widget, *args):
@@ -4095,10 +4122,14 @@ class TerminalWidget(Gtk.Box):
     def copy_text(self):
         """Copy selected text to clipboard"""
         if self.backend:
+            had_selection = self._has_terminal_selection()
             self.backend.copy_clipboard()
+            if had_selection:
+                self._show_toast(_("Copied to clipboard"))
         elif self.vte is not None:
             if self.vte.get_has_selection():
                 self.vte.copy_clipboard_format(Vte.Format.TEXT)
+                self._show_toast(_("Copied to clipboard"))
 
     def paste_text(self):
         """Paste text from clipboard"""
