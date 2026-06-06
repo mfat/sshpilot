@@ -33,7 +33,7 @@ class WelcomePage(Gtk.Overlay):
         self._pinned_rows_box = None
 
         self.connection_manager.connect_after('connection-removed', self._on_connection_removed)
-        
+
         # Create a scrolled window to hold all content
         scrolled = Gtk.ScrolledWindow()
         scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
@@ -45,39 +45,23 @@ class WelcomePage(Gtk.Overlay):
         content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         content_box.set_margin_top(12)
         content_box.set_margin_bottom(24)
-        content_box.set_valign(Gtk.Align.START)
+        # Center vertically; falls back to scrolling when content is taller
+        # than the viewport.
+        content_box.set_valign(Gtk.Align.CENTER)
         content_box.set_can_focus(False)
-        
+
         # Clamp for proper width
         clamp = Adw.Clamp()
         clamp.set_maximum_size(1200)
         clamp.set_tightening_threshold(400)
         clamp.set_child(content_box)
-        clamp.set_vexpand(False)
+        clamp.set_vexpand(True)
         clamp.set_can_focus(False)
         scrolled.set_child(clamp)
         self.set_child(scrolled)
         
         # Get current shortcuts for tooltips
         current_shortcuts = self._get_safe_current_shortcuts()
-        
-        # Welcome header - custom layout for better control
-        header_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        header_box.set_halign(Gtk.Align.CENTER)
-        header_box.set_valign(Gtk.Align.START)
-        header_box.set_margin_top(24)
-        header_box.set_margin_bottom(24)
-        header_box.set_vexpand(False)
-        header_box.set_can_focus(False)
-        
-        # App icon
-        from sshpilot import icon_utils
-        icon = icon_utils.new_image_from_icon_name('io.github.mfat.sshpilot')
-        icon.set_pixel_size(64)
-        icon.set_can_focus(False)
-        header_box.append(icon)
-        
-        content_box.append(header_box)
 
         content_box.append(self._build_action_rows_layout(current_shortcuts))
 
@@ -99,6 +83,7 @@ class WelcomePage(Gtk.Overlay):
 
         # Getting Started section
         getting_started_group = Adw.PreferencesGroup()
+        getting_started_group.set_title(_('Quick Actions'))
         getting_started_group.set_margin_start(12)
         getting_started_group.set_margin_end(12)
         getting_started_group.set_margin_top(12)
@@ -196,6 +181,7 @@ class WelcomePage(Gtk.Overlay):
         
         # Help & Resources section
         help_group = Adw.PreferencesGroup()
+        help_group.set_title(_('Help'))
         help_group.set_margin_start(12)
         help_group.set_margin_end(12)
         help_group.set_margin_top(24)
