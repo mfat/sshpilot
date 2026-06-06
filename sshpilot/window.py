@@ -117,10 +117,6 @@ def _ensure_tips_banner_css() -> None:
     color: @accent_fg_color;
     padding: 6px 12px;
 }
-/* Inline buttons are children of the banner box; match the banner foreground. */
-.tips-banner button {
-    color: @accent_fg_color;
-}
 """)
     Gtk.StyleContext.add_provider_for_display(
         display,
@@ -1449,18 +1445,17 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.tips_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
         self.tips_revealer.set_reveal_child(False)
 
+        # No outer margins: the accent background must span the full width like
+        # the previous Adw.Banner. Horizontal padding comes from the .tips-banner
+        # CSS instead, so there are no gaps on the sides.
         tips_body = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         tips_body.add_css_class('tips-banner')
-        tips_body.set_margin_start(12)
-        tips_body.set_margin_end(12)
 
         # Leading-edge button cluster: "Next tip" (cycles) + "Dismiss".
         self.tips_next_button = Gtk.Button(label=_('Next tip'))
-        self.tips_next_button.add_css_class('flat')
         self.tips_next_button.set_valign(Gtk.Align.CENTER)
         self.tips_next_button.connect('clicked', self._on_tips_banner_next)
         tips_dismiss_button = Gtk.Button(label=_('Dismiss'))
-        tips_dismiss_button.add_css_class('flat')
         tips_dismiss_button.set_valign(Gtk.Align.CENTER)
         tips_dismiss_button.connect('clicked', self._on_tips_banner_dismiss)
         tips_body.append(self.tips_next_button)
@@ -1476,7 +1471,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
         # Trailing button: "Don't show again".
         tips_dont_show_button = Gtk.Button(label=_('Don\'t show again'))
-        tips_dont_show_button.add_css_class('flat')
         tips_dont_show_button.set_valign(Gtk.Align.CENTER)
         tips_dont_show_button.connect('clicked', self._on_tips_banner_dont_show_again)
         tips_body.append(tips_dont_show_button)
