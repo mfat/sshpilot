@@ -9,6 +9,12 @@ from gettext import gettext as _
 
 logger = logging.getLogger(__name__)
 
+# Alt+1..9 → zero-based pane index (number row + numeric keypad).
+_ALT_NUM_KEYS = {}
+for _i in range(1, 10):
+    _ALT_NUM_KEYS[getattr(Gdk, f'KEY_{_i}')] = _i - 1
+    _ALT_NUM_KEYS[getattr(Gdk, f'KEY_KP_{_i}')] = _i - 1
+
 # Installed once per process; scoped to the .add-pane-strip / scroll-spacer
 # style classes so it only affects those widgets and nothing else in the app.
 # Class-only selectors so the rule applies whether the strip is a Gtk.Box or a
@@ -1609,14 +1615,18 @@ class SplitViewTab(Gtk.Box):
         if keyval in (Gdk.KEY_minus, Gdk.KEY_underscore) and mods == CTRL_SH:
             self.set_layout_mode(self.VERTICAL)
             return True
-        if keyval in (Gdk.KEY_W, Gdk.KEY_w) and mods == CTRL_SH:
-            pane = self._get_focused_pane()
-            if pane:
-                pane.close_pane()
-            return True
         # Ctrl+Shift+N — add pane (Ctrl+Shift+T is taken by local-terminal action)
         if keyval in (Gdk.KEY_N, Gdk.KEY_n) and mods == CTRL_SH:
             self.add_pane()
+            return True
+
+        # Alt+1..9 — focus the Nth pane. (Ctrl+Shift+W "close focused pane" is
+        # now handled by the global, context-aware tab-close action so it works
+        # both inside and outside split views without a precedence clash.)
+        if mods == Gdk.ModifierType.ALT_MASK and keyval in _ALT_NUM_KEYS:
+            idx = _ALT_NUM_KEYS[keyval]
+            if 0 <= idx < len(self._panes):
+                self._focus_pane(self._panes[idx])
             return True
 
         return False
@@ -1630,6 +1640,16 @@ class SplitViewTab(Gtk.Box):
                 return widget
             widget = widget.get_parent()
         return None
+
+    def close_focused_pane(self) -> None:
+        """Close the focused pane (used by the context-aware Close Tab action).
+        Falls back to the last-active / first pane. Closing the last pane closes
+        the whole split-view tab via remove_pane()."""
+        pane = (self._get_focused_pane()
+                or self._last_active_pane
+                or (self._panes[0] if self._panes else None))
+        if pane is not None:
+            pane.close_pane()
 
     def _pane_grid_pos(self, idx: int) -> tuple:
         if self._layout_mode == self.VERTICAL:

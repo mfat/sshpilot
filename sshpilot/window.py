@@ -2919,6 +2919,19 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.tab_view.set_hexpand(True)
         self.tab_view.set_vexpand(True)
 
+        # Disable Adw.TabView's built-in Alt+1..9 / Alt+0 tab-selection shortcuts.
+        # They otherwise shadow split-view "Alt+N focus pane" whenever more than
+        # one tab is open (the tab_view is an ancestor of the split-view tab, so
+        # its handler runs first). Tab switching is via Ctrl+PageUp/Down.
+        try:
+            self.tab_view.set_shortcuts(
+                self.tab_view.get_shortcuts()
+                & ~Adw.TabViewShortcuts.ALT_DIGITS
+                & ~Adw.TabViewShortcuts.ALT_ZERO
+            )
+        except Exception:
+            logger.debug("Could not adjust Adw.TabView shortcuts", exc_info=True)
+
         # Provide widget-scoped Alt+Arrow navigation helpers for tab-specific focus
         try:
             tab_nav = Gtk.ShortcutController()
@@ -4892,6 +4905,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         tab_actions = [
             ('tab-next', _('Next Tab')),
             ('tab-prev', _('Previous Tab')),
+            ('tab-move-left', _('Move Tab Left')),
+            ('tab-move-right', _('Move Tab Right')),
             ('tab-close', _('Close Tab')),
             ('tab-overview', _('Tab Overview')),
             ('new-split-view-tab', _('New Split View Tab')),
@@ -4931,7 +4946,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         group_split.add_shortcut(Gtk.ShortcutsShortcut(
             title=_('Add pane'), accelerator='<Ctrl><Shift>n'))
         group_split.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Close pane'), accelerator='<Ctrl><Shift>w'))
+            title=_('Close focused pane'), accelerator='<Ctrl><Shift>w'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Focus pane 1–4'), accelerator='<Alt>1'))
         section.add_group(group_split)
 
     def _get_safe_current_shortcuts(self):
@@ -5010,11 +5027,15 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         group_tabs.add_shortcut(Gtk.ShortcutsShortcut(
             title=_('Open New Tab'), accelerator=f"{primary}<Alt>n"))
         group_tabs.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Next Tab'), accelerator='<Alt>Right'))
+            title=_('Next Tab'), accelerator=f"{primary}Page_Down"))
         group_tabs.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Previous Tab'), accelerator='<Alt>Left'))
+            title=_('Previous Tab'), accelerator=f"{primary}Page_Up"))
         group_tabs.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Close Tab'), accelerator=f"{primary}F4"))
+            title=_('Move Tab Left'), accelerator=f"{primary}<Shift>Page_Up"))
+        group_tabs.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Move Tab Right'), accelerator=f"{primary}<Shift>Page_Down"))
+        group_tabs.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Close Tab'), accelerator=f"{primary}<Shift>w"))
         group_tabs.add_shortcut(Gtk.ShortcutsShortcut(
             title=_('Tab Overview'), accelerator=f"{primary}<Shift>Tab"))
         section.add_group(group_tabs)
@@ -5044,7 +5065,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         group_split.add_shortcut(Gtk.ShortcutsShortcut(
             title=_('Add pane'), accelerator='<Ctrl><Shift>n'))
         group_split.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Close pane'), accelerator='<Ctrl><Shift>w'))
+            title=_('Close focused pane'), accelerator='<Ctrl><Shift>w'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Focus pane 1–4'), accelerator='<Alt>1'))
         section.add_group(group_split)
 
     def toggle_list_focus(self):
@@ -5087,6 +5110,35 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             page = self.tab_view.get_nth_page(new_index)
             if page:
                 self.tab_view.set_selected_page(page)
+        except Exception:
+            pass
+
+    def _move_tab_relative(self, delta: int):
+        """Reorder the selected tab one position left (-1) or right (+1)."""
+        try:
+            page = self.tab_view.get_selected_page()
+            if page is None:
+                return
+            if delta < 0:
+                self.tab_view.reorder_backward(page)
+            elif delta > 0:
+                self.tab_view.reorder_forward(page)
+        except Exception:
+            pass
+
+    def _close_active_tab_or_pane(self):
+        """Close the current tab — but in a split-view tab, close the focused
+        pane instead (Ctrl+Shift+W is context-dependent)."""
+        try:
+            page = self.tab_view.get_selected_page()
+            if page is None:
+                return
+            child = page.get_child()
+            from .split_view import SplitViewTab
+            if isinstance(child, SplitViewTab) and hasattr(child, 'close_focused_pane'):
+                child.close_focused_pane()
+                return
+            self.tab_view.close_page(page)
         except Exception:
             pass
 
