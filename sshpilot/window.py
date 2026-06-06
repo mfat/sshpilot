@@ -8248,6 +8248,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         dt.connect("drop", _on_drop)
         dt.connect("enter", lambda _t, _x, _y: Gdk.DragAction.MOVE)
         terminal.add_controller(dt)
+        # Remember it so SplitPane.add_terminal can detach it when this terminal
+        # is embedded into a pane (otherwise it keeps intercepting connection
+        # drops over the terminal area, so only the tab bar would accept them).
+        terminal._convert_to_split_dt = dt
 
     # ── layout toggle state / apply ───────────────────────────────────────────
 

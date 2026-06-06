@@ -335,6 +335,19 @@ class SplitPane(Gtk.Box):
 
     def add_terminal(self, terminal, title: Optional[str] = None) -> None:
         """Embed a TerminalWidget as a sub-tab in this pane."""
+        # If this terminal came from the main tab view it carries the window's
+        # convert-to-split DropTarget. Inside a pane that target just swallows
+        # connection drops over the terminal area (its handler finds no main-tab
+        # page), so only the tab bar would accept drops. Detach it so the pane's
+        # own drop target handles drops anywhere in the pane.
+        _convert_dt = getattr(terminal, '_convert_to_split_dt', None)
+        if _convert_dt is not None:
+            try:
+                terminal.remove_controller(_convert_dt)
+            except Exception:
+                pass
+            terminal._convert_to_split_dt = None
+
         # Ensure the terminal is detached from any existing parent first so
         # GTK4 allows reparenting into the inner TabView.
         try:
