@@ -1,6 +1,7 @@
 """Action handlers for MainWindow and registration helper."""
 
 import logging
+import os
 import random
 from typing import Optional
 from gi.repository import Gio, Gtk, Adw, GLib, Gdk
@@ -1427,64 +1428,34 @@ class WindowActions:
 
     # --- Terminal tips banner (shares the update banner's area) ---------------
 
-    def _window_shortcut_label(self, action_name: str, fallback: str) -> str:
-        """Human-readable label for an action's current accelerator.
-
-        Honors user customizations: prefers a configured override, else the
-        app's registered default. Falls back to *fallback* when the shortcut
-        can't be resolved (or the user disabled it).
-        """
-        try:
-            accels = None
-            override = None
-            try:
-                override = self.config.get_shortcut_override(action_name)
-            except Exception:
-                override = None
-            if override is not None:
-                accels = override
-            else:
-                app = Gio.Application.get_default()
-                if app is not None and hasattr(app, 'get_registered_shortcut_defaults'):
-                    accels = app.get_registered_shortcut_defaults().get(action_name)
-            if not accels:
-                return fallback
-            ok, keyval, mods = Gtk.accelerator_parse(accels[0])
-            if ok and keyval:
-                label = Gtk.accelerator_get_label(keyval, mods)
-                if label:
-                    return label
-        except Exception:
-            pass
-        return fallback
-
     def _build_window_tips(self):
-        """Return the list of short usage tips shown in the banner area.
+        """Return the usage tips shown in the banner area.
 
-        Each shortcut label reflects the action's current (possibly customized)
-        accelerator and is platform-aware.
+        Tips are read from ``sshpilot/resources/tips.md`` — one tip per line — so
+        they can be added or edited without touching the source. That file lives
+        in the bundled ``resources`` directory, which the packaging copies into
+        every install, so it ships everywhere. Blank lines and lines starting
+        with ``#`` are ignored. Returns an empty list when the file is missing or
+        unreadable, in which case no tips are shown.
         """
-        mod = get_primary_modifier_label()
-        return [
-            _('Press {shortcut} to switch between the terminal and the connection list').format(
-                shortcut=self._window_shortcut_label('toggle-list', f"{mod}+Shift+L")),
-            _('Press {shortcut} to search your connections').format(
-                shortcut=self._window_shortcut_label('search', f"{mod}+F")),
-            _('Press {shortcut} to open a new connection').format(
-                shortcut=self._window_shortcut_label('new-connection', f"{mod}+N")),
-            _('Press {shortcut} to search inside the terminal').format(
-                shortcut=self._window_shortcut_label('terminal-search', f"{mod}+Shift+F")),
-            _('Press {shortcut} to copy your SSH key to a server').format(
-                shortcut=self._window_shortcut_label('new-key', f"{mod}+Shift+K")),
-            _('Press F9 to toggle the sidebar'),
-            _('Press {shortcut} to see all keyboard shortcuts').format(
-                shortcut=self._window_shortcut_label('shortcuts', f"{mod}+?")),
-            _('Middle-click a connection to open it in a new tab!'),
-            _('Middle-click a tab to close it!'),
-            _('Hover your mouse pointer over the right side of a connection to access the file manager'),
-            _('You can use your favorite terminal from Settings'),
-            _('When the app starts, type a host name and press enter to connect!'),
-        ]
+        here = os.path.dirname(os.path.abspath(__file__))
+        candidates = (
+            os.path.join(here, 'resources', 'tips.md'),
+        )
+        for path in candidates:
+            try:
+                with open(path, 'r', encoding='utf-8') as fh:
+                    raw_lines = fh.readlines()
+            except OSError:
+                continue
+            tips = []
+            for line in raw_lines:
+                text = line.strip()
+                if not text or text.startswith('#'):
+                    continue
+                tips.append(text)
+            return tips
+        return []
 
     def _maybe_show_tips_banner(self):
         """Show a usage tip in the banner area, if the user hasn't opted out.
@@ -1497,7 +1468,7 @@ class WindowActions:
         update banner is still revealed, so the two never stack.
         """
         try:
-            if not getattr(self, 'tips_banner', None):
+            if not getattr(self, 'tips_revealer', None):
                 return
             if not bool(self.config.get_setting('terminal.show_tips', True)):
                 return
@@ -1514,7 +1485,7 @@ class WindowActions:
         """Reveal a tip once the grace delay has elapsed (one-shot timeout)."""
         self._tips_banner_timeout_id = 0
         try:
-            if not getattr(self, 'tips_banner', None):
+            if not getattr(self, 'tips_revealer', None):
                 return False
             # Re-check the opt-out in case the user disabled tips during the wait.
             if not bool(self.config.get_setting('terminal.show_tips', True)):
@@ -1534,7 +1505,7 @@ class WindowActions:
         rest. The update banner takes priority: if it is currently shown, the
         tip is suppressed so the two never stack.
         """
-        if not getattr(self, 'tips_banner', None):
+        if not getattr(self, 'tips_revealer', None):
             return
         if getattr(self, 'update_banner', None) is not None and self.update_banner.get_revealed():
             return
@@ -1551,10 +1522,12 @@ class WindowActions:
         """Render the current tip and toggle the Next button to match the list."""
         try:
             tip = self._terminal_tips[self._terminal_tip_index]
-            self.tips_banner.set_title(f"\N{ELECTRIC LIGHT BULB} {tip}")
-            self.tips_banner.set_revealed(True)
+            self.tips_label.set_label(f"\N{ELECTRIC LIGHT BULB} {tip}")
+            # Make sure the container is visible before revealing so the
+            # slide-in animation actually runs.
             if getattr(self, 'tips_banner_container', None) is not None:
                 self.tips_banner_container.set_visible(True)
+            self.tips_revealer.set_reveal_child(True)
             # The Next button is only useful when there's more than one tip.
             if getattr(self, 'tips_next_button', None) is not None:
                 self.tips_next_button.set_visible(len(self._terminal_tips) > 1)
@@ -1572,8 +1545,8 @@ class WindowActions:
     def _hide_tips_banner(self):
         """Hide the terminal tips banner (used on dismiss and update priority)."""
         try:
-            if getattr(self, 'tips_banner', None) is not None:
-                self.tips_banner.set_revealed(False)
+            if getattr(self, 'tips_revealer', None) is not None:
+                self.tips_revealer.set_reveal_child(False)
             if getattr(self, 'tips_banner_container', None) is not None:
                 self.tips_banner_container.set_visible(False)
         except Exception:

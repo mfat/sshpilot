@@ -98,9 +98,10 @@ _tips_banner_css_installed = False
 def _ensure_tips_banner_css() -> None:
     """Install the accent (Adwaita blue) styling for the terminal tips banner.
 
-    AdwBanner draws its background on the inner gizmo (``> revealer > widget``);
-    @accent_bg_color / @accent_fg_color follow the user's accent + light/dark
-    theme. Installed once per display, mirroring split_view's CSS helper.
+    The banner is a plain Gtk.Box (``.tips-banner``) inside a Gtk.Revealer, so we
+    paint the box and recolor its inline buttons. @accent_bg_color /
+    @accent_fg_color follow the user's accent + light/dark theme. Installed once
+    per display, mirroring split_view's CSS helper.
     """
     global _tips_banner_css_installed
     if _tips_banner_css_installed:
@@ -110,15 +111,14 @@ def _ensure_tips_banner_css() -> None:
         return
     provider = Gtk.CssProvider()
     provider.load_from_data(b"""
-banner.tips-banner-accent > revealer > widget {
+.tips-banner {
     background-color: @accent_bg_color;
     background-image: none;
     color: @accent_fg_color;
+    padding: 6px 12px;
 }
-/* The "Next tip"/"Dismiss" buttons sit in the overlay (siblings of the
-   banner), so they don't inherit the banner's accent foreground. Match them
-   to the banner's own "Don't show again" button. */
-box.tips-banner-accent-buttons button {
+/* Inline buttons are children of the banner box; match the banner foreground. */
+.tips-banner button {
     color: @accent_fg_color;
 }
 """)
@@ -1440,32 +1440,49 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # instead of floating over the terminal where it would mask output.
         # The update banner takes priority over tips (see show_terminal_tip and
         # _show_update_banner).
-        tips_overlay = Gtk.Overlay()
-        tips_overlay.set_visible(False)
-        self.tips_banner = Adw.Banner()
-        self.tips_banner.set_revealed(False)
-        # Paint the tips banner with the Adwaita accent (blue) so it stands out
-        # from the neutral update banner and the surrounding chrome.
+        # A Gtk.Revealer holding a single inline row: the extra buttons are real
+        # children of the banner body, so no Gtk.Overlay hack is needed to show
+        # them (Adw.Banner only exposes one action button). The revealer gives us
+        # the same slide-in/out animation Adw.Banner.set_revealed() provided.
         _ensure_tips_banner_css()
-        self.tips_banner.add_css_class('tips-banner-accent')
-        self.tips_banner.set_button_label(_('Don\'t show again'))
-        self.tips_banner.connect('button-clicked', self._on_tips_banner_dont_show_again)
-        tips_overlay.set_child(self.tips_banner)
-        # Leading-edge button cluster: "Next tip" (cycles) + "Dismiss". The
-        # banner's own trailing button is "Don't show again".
-        tips_buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        tips_buttons.add_css_class('tips-banner-accent-buttons')
-        tips_buttons.set_halign(Gtk.Align.START)
-        tips_buttons.set_valign(Gtk.Align.CENTER)
-        tips_buttons.set_margin_start(12)
+        self.tips_revealer = Gtk.Revealer()
+        self.tips_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
+        self.tips_revealer.set_reveal_child(False)
+
+        tips_body = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        tips_body.add_css_class('tips-banner')
+        tips_body.set_margin_start(12)
+        tips_body.set_margin_end(12)
+
+        # Leading-edge button cluster: "Next tip" (cycles) + "Dismiss".
         self.tips_next_button = Gtk.Button(label=_('Next tip'))
+        self.tips_next_button.add_css_class('flat')
+        self.tips_next_button.set_valign(Gtk.Align.CENTER)
         self.tips_next_button.connect('clicked', self._on_tips_banner_next)
         tips_dismiss_button = Gtk.Button(label=_('Dismiss'))
+        tips_dismiss_button.add_css_class('flat')
+        tips_dismiss_button.set_valign(Gtk.Align.CENTER)
         tips_dismiss_button.connect('clicked', self._on_tips_banner_dismiss)
-        tips_buttons.append(self.tips_next_button)
-        tips_buttons.append(tips_dismiss_button)
-        tips_overlay.add_overlay(tips_buttons)
-        self.tips_banner_container = tips_overlay
+        tips_body.append(self.tips_next_button)
+        tips_body.append(tips_dismiss_button)
+
+        # Tip text fills the middle.
+        self.tips_label = Gtk.Label()
+        self.tips_label.set_hexpand(True)
+        self.tips_label.set_halign(Gtk.Align.CENTER)
+        self.tips_label.set_wrap(True)
+        self.tips_label.set_justify(Gtk.Justification.CENTER)
+        tips_body.append(self.tips_label)
+
+        # Trailing button: "Don't show again".
+        tips_dont_show_button = Gtk.Button(label=_('Don\'t show again'))
+        tips_dont_show_button.add_css_class('flat')
+        tips_dont_show_button.set_valign(Gtk.Align.CENTER)
+        tips_dont_show_button.connect('clicked', self._on_tips_banner_dont_show_again)
+        tips_body.append(tips_dont_show_button)
+
+        self.tips_revealer.set_child(tips_body)
+        self.tips_banner_container = self.tips_revealer
 
         # Create header bar
         self.header_bar = Gtk.HeaderBar()
