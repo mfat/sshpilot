@@ -287,8 +287,14 @@ class SplitPane(Gtk.Box):
         sub.add_css_class("dim-label")
         inner.append(sub)
 
+        select_host_btn = Gtk.Button(label=_("Select host"))
+        select_host_btn.add_css_class("suggested-action")
+        select_host_btn.add_css_class("pill")
+        select_host_btn.set_halign(Gtk.Align.CENTER)
+        select_host_btn.connect("clicked", self._on_select_host_clicked)
+        inner.append(select_host_btn)
+
         pick_btn = Gtk.Button(label=_("Pick existing tab"))
-        pick_btn.add_css_class("suggested-action")
         pick_btn.add_css_class("pill")
         pick_btn.set_halign(Gtk.Align.CENTER)
         pick_btn.connect("clicked", self._on_pick_existing_tab_clicked)
@@ -514,6 +520,16 @@ class SplitPane(Gtk.Box):
         popover.connect("closed", on_closed)
         popover.popup()
         GLib.idle_add(lambda: (entry.grab_focus(), entry.select_region(0, -1), False)[-1])
+
+    # ── "Select host" button (reuses the command-snippets host picker) ─────────
+
+    def _on_select_host_clicked(self, button: Gtk.Button) -> None:
+        from .host_picker import show_host_picker  # noqa: PLC0415
+        show_host_picker(
+            self._window,
+            button,
+            lambda conn: self.add_connection(conn),
+        )
 
     # ── "Pick existing tab" button ────────────────────────────────────────────
 

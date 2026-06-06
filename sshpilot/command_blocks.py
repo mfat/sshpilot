@@ -1577,100 +1577,13 @@ class CommandBlocksPanel(Gtk.Box):
     # ------------------------------------------------------------------
 
     def _show_run_on_host_picker(self, cmd: dict, anchor: Gtk.Widget) -> None:
-        cm = getattr(self.window, 'connection_manager', None)
-        if cm is None:
-            return
-        connections = getattr(cm, 'connections', [])
-        if not connections:
-            self._show_toast(_('No connections in inventory'))
-            return
-
-        active_terminals = getattr(self.window, 'active_terminals', {})
-
-        popover = Gtk.Popover()
-        popover.set_parent(anchor)
-        popover.set_has_arrow(True)
-
-        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        outer.set_margin_top(8)
-        outer.set_margin_bottom(8)
-        outer.set_margin_start(8)
-        outer.set_margin_end(8)
-        outer.set_size_request(280, -1)
-
-        search_entry = Gtk.SearchEntry()
-        search_entry.set_placeholder_text(_('Filter hosts…'))
-        outer.append(search_entry)
-
-        scrolled = Gtk.ScrolledWindow()
-        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scrolled.set_size_request(-1, min(300, len(connections) * 56 + 8))
-
-        list_box = Gtk.ListBox()
-        list_box.set_selection_mode(Gtk.SelectionMode.SINGLE)
-        list_box.add_css_class('boxed-list')
-
-        for conn in connections:
-            is_open = conn in active_terminals
-            list_row = Gtk.ListBoxRow()
-            row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-            row_box.set_margin_top(6)
-            row_box.set_margin_bottom(6)
-            row_box.set_margin_start(8)
-            row_box.set_margin_end(8)
-
-            info = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-            info.set_hexpand(True)
-            lbl = Gtk.Label(label=conn.nickname)
-            lbl.set_halign(Gtk.Align.START)
-            lbl.add_css_class('heading')
-            info.append(lbl)
-            host = getattr(conn, 'hostname', '') or getattr(conn, 'host', '')
-            user = getattr(conn, 'username', '')
-            subtitle = f"{user}@{host}" if user and host else host
-            if subtitle:
-                lbl2 = Gtk.Label(label=subtitle)
-                lbl2.set_halign(Gtk.Align.START)
-                lbl2.add_css_class('caption')
-                lbl2.add_css_class('dim-label')
-                info.append(lbl2)
-            row_box.append(info)
-
-            if is_open:
-                dot = Gtk.Image.new_from_icon_name('media-record-symbolic')
-                dot.set_pixel_size(10)
-                dot.set_valign(Gtk.Align.CENTER)
-                dot.add_css_class('success')
-                row_box.append(dot)
-
-            list_row.set_child(row_box)
-            list_row._connection = conn
-            list_box.append(list_row)
-
-        def _filter(list_row):
-            q = search_entry.get_text().lower().strip()
-            if not q:
-                return True
-            conn = getattr(list_row, '_connection', None)
-            if conn is None:
-                return False
-            host = getattr(conn, 'hostname', '') or getattr(conn, 'host', '')
-            return q in conn.nickname.lower() or q in host.lower()
-
-        list_box.set_filter_func(_filter)
-        search_entry.connect('search-changed', lambda _e: list_box.invalidate_filter())
-
-        def _on_activated(_lb, list_row):
-            conn = getattr(list_row, '_connection', None)
-            if conn:
-                popover.popdown()
-                self._run_command_on_connection(cmd, conn)
-
-        list_box.connect('row-activated', _on_activated)
-        scrolled.set_child(list_box)
-        outer.append(scrolled)
-        popover.set_child(outer)
-        GLib.idle_add(popover.popup)
+        from .host_picker import show_host_picker  # noqa: PLC0415
+        show_host_picker(
+            self.window,
+            anchor,
+            lambda conn: self._run_command_on_connection(cmd, conn),
+            toast=self._show_toast,
+        )
 
     def _run_command_on_connection(self, cmd: dict, connection) -> None:
         if cmd.get('has_placeholders'):
