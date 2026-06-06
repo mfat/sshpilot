@@ -54,6 +54,24 @@ def get_state_dir() -> str:
     return os.path.join(state_home, APP_NAME)
 
 
+def _build_restart_command(executable, argv, main_spec):
+    """Build the argv list to re-exec the app, preserving how it was launched.
+
+    ``main_spec`` is ``__main__.__spec__`` (or ``None``). When the app was
+    started with ``python -m <module>`` (Flatpak uses ``-m sshpilot.main``),
+    ``__spec__`` is set and ``argv[0]`` is just the module's file path — running
+    that path directly would execute it as a top-level script with no package
+    context, breaking the module-level relative imports. In that case re-exec via
+    ``-m <spec.name>`` so the package context is preserved. Otherwise (a plain
+    script like ``run.py`` or a console entry point, where ``__spec__`` is None)
+    re-exec the original argv unchanged.
+    """
+    name = getattr(main_spec, 'name', None) if main_spec is not None else None
+    if name:
+        return [executable, '-m', name] + list(argv[1:])
+    return [executable] + list(argv)
+
+
 def restart_app() -> None:
     """Replace the current process with a fresh instance of the same app.
 
@@ -62,10 +80,12 @@ def restart_app() -> None:
     immediately with no further cleanup.
     """
     import sys
-    # argv[0] of os.execv is the program-name slot (Python ignores it as a
-    # script path), so the script must be passed as argv[1].  Prepending
-    # sys.executable gives: [interpreter, script, ...user-flags...].
-    os.execv(sys.executable, [sys.executable] + sys.argv)
+    import __main__
+    # os.execv keeps the current environment (e.g. SSHPILOT_FLATPAK).
+    args = _build_restart_command(
+        sys.executable, sys.argv, getattr(__main__, '__spec__', None)
+    )
+    os.execv(sys.executable, args)
 
 
 _sshpass_path_cache: str | None = None
