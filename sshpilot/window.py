@@ -717,6 +717,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception as e:
             logger.error(f"Failed to install sidebar CSS: {e}")
 
+        # Apply header-bar button visibility preferences now that the buttons
+        # exist (split view, commands, local terminal).
+        try:
+            self.update_headerbar_buttons()
+        except Exception as e:
+            logger.error(f"Failed to apply header-bar button visibility: {e}")
+
         # Check startup behavior setting and show appropriate view
         try:
             startup_behavior = self.config.get_setting('app-startup-behavior', 'welcome')
@@ -1494,6 +1501,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.local_terminal_button.add_css_class('flat')
         self.local_terminal_button.set_action_name('app.local-terminal')
         self.header_bar.pack_start(self.local_terminal_button)
+        # Keep a stable reference: self.local_terminal_button is reassigned later
+        # to the tab-bar button. This one is the header-bar local-terminal button,
+        # toggled by Preferences ▸ Interface ▸ Header Bar.
+        self._headerbar_local_terminal_button = self.local_terminal_button
 
         # Add view toggle button to switch between welcome and tabs
         self.view_toggle_button = Gtk.Button()
@@ -1656,6 +1667,23 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception:
             pass
         return 0
+
+    def update_headerbar_buttons(self):
+        """Show/hide the toggleable header-bar buttons per preferences
+        (Settings ▸ Interface ▸ Header Bar)."""
+        mapping = (
+            ('split_view_button', 'ui.headerbar_show_split_view'),
+            ('_cmd_blocks_toggle_btn', 'ui.headerbar_show_commands'),
+            ('_headerbar_local_terminal_button', 'ui.headerbar_show_local_terminal'),
+        )
+        for attr, key in mapping:
+            btn = getattr(self, attr, None)
+            if btn is None:
+                continue
+            try:
+                btn.set_visible(bool(self.config.get_setting(key, True)))
+            except Exception:
+                logger.debug("Failed to apply header-bar button visibility for %s", attr, exc_info=True)
 
     def update_sidebar_display(self):
         """Update sidebar display based on current preferences."""

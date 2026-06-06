@@ -187,6 +187,10 @@ class Config(GObject.Object):
                 'sidebar_hide_on_startup': False,
                 'sidebar_hide_on_terminal_open': False,  # incl. local terminals
                 'sidebar_show_when_no_tabs': False,
+                # Header-bar button visibility (Settings ▸ Interface ▸ Header Bar)
+                'headerbar_show_split_view': True,
+                'headerbar_show_commands': True,
+                'headerbar_show_local_terminal': True,
             },
             'welcome': {
                 'background_color': None,  # None for default, or CSS string for custom

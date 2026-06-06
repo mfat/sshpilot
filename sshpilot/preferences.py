@@ -1487,6 +1487,41 @@ class PreferencesWindow(Adw.Window):
 
             interface_page.add(sidebar_behavior_group)
 
+            # Header bar button visibility
+            headerbar_group = Adw.PreferencesGroup(title="Header Bar")
+
+            def _add_headerbar_switch(title, subtitle, key):
+                row = Adw.SwitchRow()
+                row.set_title(title)
+                row.set_subtitle(subtitle)
+                row.set_active(bool(self.config.get_setting(key, True)))
+
+                def _on_toggled(r, _p, _k=key):
+                    self.config.set_setting(_k, bool(r.get_active()))
+                    if self.parent_window and hasattr(self.parent_window, 'update_headerbar_buttons'):
+                        self.parent_window.update_headerbar_buttons()
+
+                row.connect('notify::active', _on_toggled)
+                headerbar_group.add(row)
+
+            _add_headerbar_switch(
+                "Split View Button",
+                "Show the split-view button (the grid icon that starts a split view)",
+                'ui.headerbar_show_split_view',
+            )
+            _add_headerbar_switch(
+                "Commands Button",
+                "Show the command snippets toggle button",
+                'ui.headerbar_show_commands',
+            )
+            _add_headerbar_switch(
+                "Local Terminal Button",
+                "Show the button that opens a local terminal",
+                'ui.headerbar_show_local_terminal',
+            )
+
+            interface_page.add(headerbar_group)
+
             # Tips group at the bottom of the Interface page. Lets users
             # re-enable the terminal tips banner after dismissing it with
             # "Don't show again".
