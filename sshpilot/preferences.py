@@ -1488,7 +1488,7 @@ class PreferencesWindow(Adw.Window):
             interface_page.add(sidebar_behavior_group)
 
             # Header bar button visibility
-            headerbar_group = Adw.PreferencesGroup(title="Header Bar")
+            headerbar_group = Adw.PreferencesGroup(title="Header Bar Buttons")
 
             def _add_headerbar_switch(title, subtitle, key):
                 row = Adw.SwitchRow()
