@@ -2345,31 +2345,14 @@ class PreferencesWindow(Adw.Window):
 
         auto_hide_row = Adw.SwitchRow()
         auto_hide_row.set_title(_("Auto-hide Sidebar After Sending"))
-        auto_hide_row.set_subtitle(_("Automatically hide the command panel after a command is sent"))
-        auto_hide_enabled = bool(self.config.get_setting('command_blocks.auto_hide_sidebar', False))
-        auto_hide_row.set_active(auto_hide_enabled)
+        auto_hide_row.set_subtitle(_("Hide the command panel as soon as a command is sent"))
+        auto_hide_row.set_active(bool(self.config.get_setting('command_blocks.auto_hide_sidebar', False)))
         self._cb_auto_hide_row = auto_hide_row
+        auto_hide_row.connect(
+            'notify::active',
+            lambda r, _p: self.config.set_setting('command_blocks.auto_hide_sidebar', r.get_active()),
+        )
         group.add(auto_hide_row)
-
-        timeout_row = Adw.SpinRow.new_with_range(1, 30, 1)
-        timeout_row.set_title(_("Hide Delay (seconds)"))
-        timeout_row.set_subtitle(_("Seconds to wait before hiding the panel"))
-        try:
-            timeout_val = max(1, min(30, int(self.config.get_setting('command_blocks.auto_hide_timeout', 3))))
-        except (TypeError, ValueError):
-            timeout_val = 3
-        timeout_row.set_value(timeout_val)
-        timeout_row.set_sensitive(auto_hide_enabled)
-        timeout_row.connect('notify::value', lambda r, _: self.config.set_setting('command_blocks.auto_hide_timeout', int(r.get_value())))
-        self._cb_timeout_row = timeout_row
-        group.add(timeout_row)
-
-        def _on_auto_hide_toggled(row, _param):
-            active = row.get_active()
-            self.config.set_setting('command_blocks.auto_hide_sidebar', active)
-            self._cb_timeout_row.set_sensitive(active)
-
-        auto_hide_row.connect('notify::active', _on_auto_hide_toggled)
 
         page.add(group)
         return page

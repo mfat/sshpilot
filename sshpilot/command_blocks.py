@@ -1225,9 +1225,14 @@ class CommandBlocksPanel(Gtk.Box):
         selected = active_list.get_selected_row()
         cmd = getattr(selected, '_cmd_data', None) if selected else None
 
-        if keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter) and mods == 0 and cmd:
-            self._send_command_to_terminal(cmd, anchor=selected)
-            return True
+        if keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter) and mods == 0:
+            if cmd:
+                self._send_command_to_terminal(cmd, anchor=selected)
+                return True
+            # Folder / section header row → expand or collapse it on Enter.
+            if selected is not None and hasattr(selected, '_toggle_expand'):
+                selected._toggle_expand()
+                return True
         if keyval == Gdk.KEY_Delete and mods == 0 and cmd:
             self._delete_command(cmd)
             return True
@@ -1370,7 +1375,9 @@ class CommandBlocksPanel(Gtk.Box):
                 except Exception:
                     pass
                 self._auto_hide_timer_id = None
-            timeout = max(1, min(30, int(self.store._config.get_setting('command_blocks.auto_hide_timeout', 3))))
+            # Hide right away (on the next loop iteration so we don't reenter the
+            # send handler). The panel's own reveal animation keeps it smooth —
+            # no multi-second wait.
             def _do_hide():
                 try:
                     self.window._toggle_command_blocks_panel(False)
@@ -1378,7 +1385,7 @@ class CommandBlocksPanel(Gtk.Box):
                     pass
                 self._auto_hide_timer_id = None
                 return GLib.SOURCE_REMOVE
-            self._auto_hide_timer_id = GLib.timeout_add_seconds(timeout, _do_hide)
+            self._auto_hide_timer_id = GLib.idle_add(_do_hide)
 
     # ------------------------------------------------------------------
     # Run command picker (called from sidebar context menu)
