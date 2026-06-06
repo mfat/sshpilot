@@ -1446,8 +1446,8 @@ class PreferencesWindow(Adw.Window):
             
             interface_page.add(sidebar_group)
 
-            # Sidebar auto-hide behavior
-            sidebar_behavior_group = Adw.PreferencesGroup(title="Behavior")
+            # Sidebar behavior
+            sidebar_behavior_group = Adw.PreferencesGroup(title="Sidebar behavior")
 
             hide_on_startup_switch = Adw.SwitchRow()
             hide_on_startup_switch.set_title("Hide Sidebar on Startup")
@@ -1460,34 +1460,6 @@ class PreferencesWindow(Adw.Window):
                 lambda r, _p: self.config.set_setting('ui.sidebar_hide_on_startup', bool(r.get_active())),
             )
             sidebar_behavior_group.add(hide_on_startup_switch)
-
-            auto_hide_switch = Adw.SwitchRow()
-            auto_hide_switch.set_title("Auto-hide After a Delay")
-            auto_hide_switch.set_subtitle("Collapse the sidebar a few seconds after it is shown")
-            sidebar_auto_hide_enabled = bool(self.config.get_setting('ui.sidebar_auto_hide', False))
-            auto_hide_switch.set_active(sidebar_auto_hide_enabled)
-            sidebar_behavior_group.add(auto_hide_switch)
-
-            auto_hide_delay_row = Adw.SpinRow.new_with_range(1, 120, 1)
-            auto_hide_delay_row.set_title("Hide Delay (seconds)")
-            auto_hide_delay_row.set_subtitle("Seconds to wait before hiding the sidebar")
-            try:
-                _delay_val = max(1, min(120, int(self.config.get_setting('ui.sidebar_auto_hide_timeout', 5))))
-            except (TypeError, ValueError):
-                _delay_val = 5
-            auto_hide_delay_row.set_value(_delay_val)
-            auto_hide_delay_row.set_sensitive(sidebar_auto_hide_enabled)
-            auto_hide_delay_row.connect(
-                'notify::value',
-                lambda r, _p: self.config.set_setting('ui.sidebar_auto_hide_timeout', int(r.get_value())),
-            )
-            sidebar_behavior_group.add(auto_hide_delay_row)
-
-            def _on_sidebar_auto_hide_toggled(row, _param):
-                active = bool(row.get_active())
-                self.config.set_setting('ui.sidebar_auto_hide', active)
-                auto_hide_delay_row.set_sensitive(active)
-            auto_hide_switch.connect('notify::active', _on_sidebar_auto_hide_toggled)
 
             hide_on_terminal_switch = Adw.SwitchRow()
             hide_on_terminal_switch.set_title("Hide When a Terminal Opens")

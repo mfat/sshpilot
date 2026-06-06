@@ -183,10 +183,8 @@ class Config(GObject.Object):
                 'sidebar_show_connection_status': True,
                 'sidebar_show_port_forwarding': False,
                 'sidebar_show_connection_icon': True,
-                # Sidebar auto-hide behavior (Settings ▸ Sidebar ▸ Behavior)
+                # Sidebar behavior (Settings ▸ Sidebar ▸ Sidebar behavior)
                 'sidebar_hide_on_startup': False,
-                'sidebar_auto_hide': False,           # hide N seconds after shown
-                'sidebar_auto_hide_timeout': 5,
                 'sidebar_hide_on_terminal_open': False,  # incl. local terminals
                 'sidebar_show_when_no_tabs': False,
             },

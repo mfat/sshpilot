@@ -771,17 +771,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
         # Mark startup as complete after a short delay to allow all initialization to finish
         GLib.timeout_add(500, self._on_startup_complete)
-
-        # Sidebar behavior: optionally start collapsed. Deferred so it wins over
-        # the initial welcome / show-when-no-tabs state set during setup.
-        try:
-            if self.config.get_setting('ui.sidebar_hide_on_startup', False):
-                GLib.timeout_add(
-                    300,
-                    lambda: (self._apply_sidebar_visible(False), GLib.SOURCE_REMOVE)[1],
-                )
-        except Exception:
-            logger.debug("sidebar hide-on-startup failed", exc_info=True)
+        # Note: "hide sidebar on startup" is applied at split-view creation
+        # (before the window is presented) so it never flashes visible.
 
     def _restore_startup_session(self, startup_behavior):
         """Restore a session on startup based on the configured behavior."""
@@ -1539,20 +1530,34 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             self._split_variant = 'paned'
             logger.debug("Using Gtk.Paned fallback")
         
-        # Sidebar always starts visible
-        sidebar_visible = True
+        # Initial sidebar visibility. Apply "hide on startup" HERE — before the
+        # window is presented — so it never flashes visible then collapses.
+        try:
+            start_hidden = bool(self.config.get_setting('ui.sidebar_hide_on_startup', False))
+        except Exception:
+            start_hidden = False
+        sidebar_visible = not start_hidden
         # Track sidebar visibility state for NavigationSplitView (which doesn't have get_show_sidebar)
-        self._sidebar_visible = True
-        
-        # For OverlaySplitView, we need to explicitly show the sidebar
+        self._sidebar_visible = sidebar_visible
+        # Keep the header toggle button in sync (active == hidden).
+        if hasattr(self, 'sidebar_toggle_button'):
+            try:
+                self.sidebar_toggle_button.set_active(start_hidden)
+            except Exception:
+                pass
+
+        # For OverlaySplitView, we need to explicitly set the sidebar state
         if HAS_OVERLAY_SPLIT:
             try:
-                self.split_view.set_show_sidebar(True)
-                logger.debug("Set OverlaySplitView sidebar to visible")
+                self.split_view.set_show_sidebar(sidebar_visible)
+                logger.debug(f"Set OverlaySplitView sidebar visible={sidebar_visible}")
             except Exception as e:
-                logger.error(f"Failed to show OverlaySplitView sidebar: {e}")
-        elif HAS_NAV_SPLIT:
-            logger.debug("NavigationSplitView sidebar will be shown when content is set")
+                logger.error(f"Failed to set OverlaySplitView sidebar: {e}")
+        elif HAS_NAV_SPLIT and start_hidden:
+            try:
+                self._toggle_sidebar_visibility(False)
+            except Exception:
+                pass
         
         # Create sidebar
         self.setup_sidebar()
@@ -5456,8 +5461,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             should_hide = button.get_active()
             is_visible = not should_hide
             self._toggle_sidebar_visibility(is_visible)
-            # Re-arm/cancel the auto-hide timer to match the new visibility.
-            self._refresh_sidebar_auto_hide(is_visible)
+            # A manual toggle cancels any pending "hide on terminal open" delay.
+            self._cancel_pending_sidebar_hide()
 
             # Update button icon and tooltip based on current sidebar state
             from sshpilot import icon_utils
@@ -5477,18 +5482,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception as e:
             logger.error(f"Failed to toggle sidebar: {e}")
 
-    # --- Sidebar auto-hide behavior (Settings ▸ Sidebar ▸ Behavior) ----------
-    def _is_sidebar_visible(self) -> bool:
-        try:
-            if hasattr(self, 'split_view') and hasattr(self.split_view, 'get_show_sidebar'):
-                return bool(self.split_view.get_show_sidebar())
-            return bool(getattr(self, '_sidebar_visible', True))
-        except Exception:
-            return True
-
+    # --- Sidebar behavior (Settings ▸ Sidebar ▸ Sidebar behavior) ------------
     def _apply_sidebar_visible(self, visible: bool) -> None:
         """Programmatically show/hide the sidebar and keep the toggle button in
-        sync (used by the auto-hide behaviors)."""
+        sync (used by the behavior hooks)."""
         try:
             self._toggle_sidebar_visibility(visible)
             if hasattr(self, 'sidebar_toggle_button'):
@@ -5496,46 +5493,24 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 self.sidebar_toggle_button.set_active(not visible)
         except Exception:
             logger.debug("apply_sidebar_visible failed", exc_info=True)
-        self._refresh_sidebar_auto_hide(visible)
 
-    def _cancel_sidebar_auto_hide(self) -> None:
-        tid = getattr(self, '_sidebar_auto_hide_timer_id', None)
+    def _cancel_pending_sidebar_hide(self) -> None:
+        tid = getattr(self, '_sidebar_hide_timer_id', None)
         if tid:
             try:
                 GLib.source_remove(tid)
             except Exception:
                 pass
-        self._sidebar_auto_hide_timer_id = None
+        self._sidebar_hide_timer_id = None
 
-    def _refresh_sidebar_auto_hide(self, visible: bool) -> None:
-        """Re-arm or cancel the auto-hide timer for the current state. Only arms
-        when the sidebar is visible, the option is on, and at least one tab is
-        open (so it never fights the welcome view / show-when-no-tabs)."""
-        self._cancel_sidebar_auto_hide()
-        try:
-            if not visible:
-                return
-            if not self.config.get_setting('ui.sidebar_auto_hide', False):
-                return
-            if hasattr(self, 'tab_view') and self.tab_view.get_n_pages() == 0:
-                return
-            try:
-                secs = int(self.config.get_setting('ui.sidebar_auto_hide_timeout', 5))
-            except (TypeError, ValueError):
-                secs = 5
-            secs = max(1, min(120, secs))
-            self._sidebar_auto_hide_timer_id = GLib.timeout_add_seconds(
-                secs, self._on_sidebar_auto_hide_elapsed
-            )
-        except Exception:
-            logger.debug("refresh_sidebar_auto_hide failed", exc_info=True)
-
-    def _on_sidebar_auto_hide_elapsed(self) -> bool:
-        self._sidebar_auto_hide_timer_id = None
+    def _hide_sidebar_after_terminal(self) -> bool:
+        """Deferred hide so a freshly-opened terminal settles before the sidebar
+        slides away (smoother than hiding instantly)."""
+        self._sidebar_hide_timer_id = None
         try:
             self._apply_sidebar_visible(False)
         except Exception:
-            logger.debug("sidebar auto-hide elapsed failed", exc_info=True)
+            logger.debug("hide_sidebar_after_terminal failed", exc_info=True)
         return GLib.SOURCE_REMOVE
 
     def on_view_toggle_clicked(self, button):
@@ -8115,14 +8090,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             logger.debug("Could not register convert-to-split drop: %s", exc)
         self._update_layout_toggle_state()
 
-        # Sidebar behavior: a session (SSH or local) just opened.
+        # Sidebar behavior: a session (SSH or local) just opened. Hide after a
+        # short delay so the terminal settles, then the sidebar slides away.
         try:
             if self.config.get_setting('ui.sidebar_hide_on_terminal_open', False):
-                self._apply_sidebar_visible(False)
-            else:
-                # A tab now exists; (re)evaluate the auto-hide timer if the
-                # sidebar is currently visible.
-                self._refresh_sidebar_auto_hide(self._is_sidebar_visible())
+                self._cancel_pending_sidebar_hide()
+                self._sidebar_hide_timer_id = GLib.timeout_add(
+                    350, self._hide_sidebar_after_terminal
+                )
         except Exception:
             logger.debug("sidebar hide-on-terminal-open failed", exc_info=True)
 

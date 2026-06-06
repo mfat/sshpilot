@@ -69,9 +69,9 @@ class WindowActions:
                 # Update sidebar visibility
                 self._toggle_sidebar_visibility(new_visible)
 
-                # Re-arm/cancel the auto-hide timer to match the new visibility.
-                if hasattr(self, '_refresh_sidebar_auto_hide'):
-                    self._refresh_sidebar_auto_hide(new_visible)
+                # A manual toggle cancels any pending "hide on terminal open" delay.
+                if hasattr(self, '_cancel_pending_sidebar_hide'):
+                    self._cancel_pending_sidebar_hide()
 
                 # Update button state if it exists (inverted logic: active = should hide)
                 if hasattr(self, 'sidebar_toggle_button'):
