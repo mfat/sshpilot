@@ -1201,24 +1201,54 @@ class ConnectionRow(Gtk.ListBoxRow):
             return
 
         rules = getattr(self.connection, "forwarding_rules", []) or []
-        has_local = any(r.get("enabled", True) and r.get("type") == "local" for r in rules)
-        has_remote = any(r.get("enabled", True) and r.get("type") == "remote" for r in rules)
-        has_dynamic = any(r.get("enabled", True) and r.get("type") == "dynamic" for r in rules)
+        enabled = [r for r in rules if r.get("enabled", True)]
+        local_rules = [r for r in enabled if r.get("type") == "local"]
+        remote_rules = [r for r in enabled if r.get("type") == "remote"]
+        dynamic_rules = [r for r in enabled if r.get("type") == "dynamic"]
 
-        def make_badge(letter: str, cls: str):
+        def _format_pf_rule(rule):
+            rule_type = rule.get("type")
+            if rule_type == "local":
+                return _("Local {lp} → {rh}:{rp}").format(
+                    lp=rule.get("listen_port", ""),
+                    rh=rule.get("remote_host", ""),
+                    rp=rule.get("remote_port", ""),
+                )
+            if rule_type == "remote":
+                return _("Remote {la}:{lp} → {dh}:{dp}").format(
+                    la=rule.get("listen_addr", "localhost"),
+                    lp=rule.get("listen_port", ""),
+                    dh=rule.get("local_host") or rule.get("remote_host", ""),
+                    dp=rule.get("local_port") or rule.get("remote_port", ""),
+                )
+            if rule_type == "dynamic":
+                return _("SOCKS proxy on port {p}").format(
+                    p=rule.get("listen_port", ""),
+                )
+            return ""
+
+        def make_badge(letter: str, cls: str, type_rules):
             from sshpilot import icon_utils
             img = icon_utils.new_image_from_icon_name(letter)  # 'L' / 'R' / 'D'
             img.set_pixel_size(16)
             img.set_halign(Gtk.Align.CENTER)
             img.set_valign(Gtk.Align.CENTER)
+            lines = [line for line in (_format_pf_rule(r) for r in type_rules) if line]
+            max_lines = 8
+            if len(lines) > max_lines:
+                hidden = len(lines) - max_lines
+                lines = lines[:max_lines] + [_("… +{n} more").format(n=hidden)]
+            tooltip = "\n".join(lines)
+            if tooltip:
+                img.set_tooltip_text(tooltip)
             return img
 
-        if has_local:
-            self.indicator_box.append(make_badge("L", "pf-local"))
-        if has_remote:
-            self.indicator_box.append(make_badge("R", "pf-remote"))
-        if has_dynamic:
-            self.indicator_box.append(make_badge("D", "pf-dynamic"))
+        if local_rules:
+            self.indicator_box.append(make_badge("L", "pf-local", local_rules))
+        if remote_rules:
+            self.indicator_box.append(make_badge("R", "pf-remote", remote_rules))
+        if dynamic_rules:
+            self.indicator_box.append(make_badge("D", "pf-dynamic", dynamic_rules))
 
     def _apply_host_label_text(self, include_port: bool | None = None):
         try:
