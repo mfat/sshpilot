@@ -1357,6 +1357,12 @@ class SplitViewTab(Gtk.Box):
 
         if exceeds:
             self._fill_viewport = False
+        elif not self._manual_row_indices:
+            # Content fits and nothing is manually sized → restore auto-fill so a
+            # layout that can fill the viewport (e.g. two side-by-side panes after
+            # a VERTICAL→HORIZONTAL switch) does so by default. Without this the
+            # flag is sticky-off after any over-tall (exceeding) layout.
+            self._fill_viewport = True
 
         auto_fill_h: Optional[int] = None
         if self._fill_viewport and not exceeds:
