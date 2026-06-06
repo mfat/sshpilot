@@ -6,9 +6,10 @@ Provides port information and availability checking functionality
 import socket
 import subprocess
 import logging
-from typing import List, Dict, Optional, Tuple, Any
+from typing import Dict, Iterable, Iterator, List, Optional, Tuple, Any
 import json
 import re
+from gettext import gettext as _
 
 # Try to import psutil, fallback to subprocess methods if not available
 try:
@@ -19,6 +20,139 @@ except ImportError:
     HAS_PSUTIL = False
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# SSH port-forwarding rule model & formatting
+# ---------------------------------------------------------------------------
+#
+# A connection's forwarding rules live on ``Connection.forwarding_rules``
+# (``connection_manager.py``) as a list of plain dicts. They are parsed from
+# ``~/.ssh/config`` LocalForward / RemoteForward / DynamicForward directives in
+# ``connection_manager.py`` (see the ``forwarding_rules.append(...)`` blocks
+# around lines 1286–1347) and edited via the Port Forwarding page of
+# ``connection_dialog.py``.
+#
+# Every rule is a dict with a ``type`` and an ``enabled`` flag. The remaining
+# keys depend on the type:
+#
+#   local   – forward a local listening port to a host reachable from the server
+#     {'type': 'local',   'enabled': bool,
+#      'listen_addr': str,   # local bind address (e.g. 'localhost')
+#      'listen_port': int,   # local port we listen on
+#      'remote_host': str,   # destination host (resolved on the server)
+#      'remote_port': int}   # destination port
+#
+#   remote  – forward a port listening on the server back to a local destination
+#     {'type': 'remote',  'enabled': bool,
+#      'listen_addr': str,   # bind address on the server (e.g. 'localhost')
+#      'listen_port': int,   # port the server listens on
+#      # destination, on the local side. Newer rules use local_*, but some
+#      # older/imported rules carry remote_* — read with a fallback.
+#      'local_host': str,    'local_port': int,
+#      'socks': bool}        # single-argument RemoteForward → acts as SOCKS
+#
+#   dynamic – SOCKS proxy (DynamicForward)
+#     {'type': 'dynamic',  'enabled': bool,
+#      'listen_addr': str,   # local bind address
+#      'listen_port': int}   # local SOCKS port
+#
+# The helpers below are UI-agnostic (no GTK import) so they can back the sidebar
+# indicators, a future port-mapping viewer, tooltips, exports, etc. Strings are
+# translatable via gettext.
+
+#: Forwarding ``type`` → the single-letter badge used by the sidebar indicators.
+FORWARDING_TYPE_BADGES: Dict[str, str] = {
+    "local": "L",
+    "remote": "R",
+    "dynamic": "D",
+}
+
+
+def iter_enabled_forwarding_rules(rules: Optional[Iterable[Dict[str, Any]]]) -> Iterator[Dict[str, Any]]:
+    """Yield the enabled rules from a ``forwarding_rules`` list.
+
+    A rule is considered enabled unless it carries ``'enabled': False`` (the key
+    is optional and defaults to enabled). Accepts ``None`` for convenience.
+    """
+    for rule in rules or []:
+        if rule.get("enabled", True):
+            yield rule
+
+
+def group_forwarding_rules(
+    rules: Optional[Iterable[Dict[str, Any]]],
+) -> Dict[str, List[Dict[str, Any]]]:
+    """Group enabled rules by type.
+
+    Returns a dict with ``'local'``, ``'remote'`` and ``'dynamic'`` keys, each
+    mapping to a list of rule dicts (empty if none). Unknown types are ignored.
+    Handy for anything that renders rules per-type (sidebar badges, a viewer's
+    sections, etc.).
+    """
+    grouped: Dict[str, List[Dict[str, Any]]] = {"local": [], "remote": [], "dynamic": []}
+    for rule in iter_enabled_forwarding_rules(rules):
+        bucket = grouped.get(rule.get("type"))
+        if bucket is not None:
+            bucket.append(rule)
+    return grouped
+
+
+def format_forwarding_rule(rule: Dict[str, Any]) -> str:
+    """Format a single forwarding rule as a human-readable one-line string.
+
+    Examples::
+
+        Local 8080 → localhost:80
+        Remote localhost:2222 → 10.0.0.5:22
+        Remote localhost:1080 → SOCKS
+        SOCKS proxy on port 1080
+
+    Mirrors the descriptions shown on the Port Forwarding page of
+    ``connection_dialog.py`` so the wording stays consistent across the app.
+    Returns an empty string for an unrecognised ``type``. The output is a
+    display label, not a command-line spec — do not feed it to ssh.
+    """
+    rule_type = rule.get("type")
+    if rule_type == "local":
+        return _("Local {lp} → {rh}:{rp}").format(
+            lp=rule.get("listen_port", ""),
+            rh=rule.get("remote_host", ""),
+            rp=rule.get("remote_port", ""),
+        )
+    if rule_type == "remote":
+        listen_addr = rule.get("listen_addr") or "localhost"
+        listen_port = rule.get("listen_port", "")
+        if rule.get("socks"):
+            return _("Remote {la}:{lp} → SOCKS").format(la=listen_addr, lp=listen_port)
+        return _("Remote {la}:{lp} → {dh}:{dp}").format(
+            la=listen_addr,
+            lp=listen_port,
+            dh=rule.get("local_host") or rule.get("remote_host", ""),
+            dp=rule.get("local_port") or rule.get("remote_port", ""),
+        )
+    if rule_type == "dynamic":
+        return _("SOCKS proxy on port {p}").format(p=rule.get("listen_port", ""))
+    return ""
+
+
+def format_forwarding_rules(
+    rules: Optional[Iterable[Dict[str, Any]]],
+    *,
+    max_lines: Optional[int] = None,
+) -> List[str]:
+    """Format every enabled rule, skipping blanks (unknown types).
+
+    With ``max_lines`` set, the list is truncated and a final ``… +N more`` line
+    is appended when there are more rules than the limit — useful for tooltips
+    that must stay compact.
+    """
+    lines = [line for line in (format_forwarding_rule(r) for r in iter_enabled_forwarding_rules(rules)) if line]
+    if max_lines is not None and len(lines) > max_lines:
+        hidden = len(lines) - max_lines
+        lines = lines[:max_lines] + [_("… +{n} more").format(n=hidden)]
+    return lines
+
 
 class PortInfo:
     """Information about a port and its usage"""

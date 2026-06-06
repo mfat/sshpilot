@@ -1200,32 +1200,13 @@ class ConnectionRow(Gtk.ListBoxRow):
         if not show_port_forwarding:
             return
 
-        rules = getattr(self.connection, "forwarding_rules", []) or []
-        enabled = [r for r in rules if r.get("enabled", True)]
-        local_rules = [r for r in enabled if r.get("type") == "local"]
-        remote_rules = [r for r in enabled if r.get("type") == "remote"]
-        dynamic_rules = [r for r in enabled if r.get("type") == "dynamic"]
-
-        def _format_pf_rule(rule):
-            rule_type = rule.get("type")
-            if rule_type == "local":
-                return _("Local {lp} → {rh}:{rp}").format(
-                    lp=rule.get("listen_port", ""),
-                    rh=rule.get("remote_host", ""),
-                    rp=rule.get("remote_port", ""),
-                )
-            if rule_type == "remote":
-                return _("Remote {la}:{lp} → {dh}:{dp}").format(
-                    la=rule.get("listen_addr", "localhost"),
-                    lp=rule.get("listen_port", ""),
-                    dh=rule.get("local_host") or rule.get("remote_host", ""),
-                    dp=rule.get("local_port") or rule.get("remote_port", ""),
-                )
-            if rule_type == "dynamic":
-                return _("SOCKS proxy on port {p}").format(
-                    p=rule.get("listen_port", ""),
-                )
-            return ""
+        # Group the connection's forwarding rules by type. The rule schema and
+        # the formatting/grouping helpers live in port_utils so they can be
+        # reused (e.g. a future port-mapping viewer) without pulling in GTK.
+        from sshpilot import port_utils
+        grouped = port_utils.group_forwarding_rules(
+            getattr(self.connection, "forwarding_rules", None)
+        )
 
         def make_badge(letter: str, cls: str, type_rules):
             from sshpilot import icon_utils
@@ -1233,22 +1214,19 @@ class ConnectionRow(Gtk.ListBoxRow):
             img.set_pixel_size(16)
             img.set_halign(Gtk.Align.CENTER)
             img.set_valign(Gtk.Align.CENTER)
-            lines = [line for line in (_format_pf_rule(r) for r in type_rules) if line]
-            max_lines = 8
-            if len(lines) > max_lines:
-                hidden = len(lines) - max_lines
-                lines = lines[:max_lines] + [_("… +{n} more").format(n=hidden)]
-            tooltip = "\n".join(lines)
+            # Tooltip lists each mapping of this type, capped so a connection
+            # with many rules doesn't produce an unreadably tall tooltip.
+            tooltip = "\n".join(port_utils.format_forwarding_rules(type_rules, max_lines=8))
             if tooltip:
                 img.set_tooltip_text(tooltip)
             return img
 
-        if local_rules:
-            self.indicator_box.append(make_badge("L", "pf-local", local_rules))
-        if remote_rules:
-            self.indicator_box.append(make_badge("R", "pf-remote", remote_rules))
-        if dynamic_rules:
-            self.indicator_box.append(make_badge("D", "pf-dynamic", dynamic_rules))
+        if grouped["local"]:
+            self.indicator_box.append(make_badge("L", "pf-local", grouped["local"]))
+        if grouped["remote"]:
+            self.indicator_box.append(make_badge("R", "pf-remote", grouped["remote"]))
+        if grouped["dynamic"]:
+            self.indicator_box.append(make_badge("D", "pf-dynamic", grouped["dynamic"]))
 
     def _apply_host_label_text(self, include_port: bool | None = None):
         try:
