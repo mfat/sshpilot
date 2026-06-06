@@ -5087,12 +5087,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # focusing, a child *row* holds focus, so has_focus() on the ListBox
         # itself is False and the toggle would never return to the terminal.
         if self._focus_is_in_connection_list():
-            # Focus current terminal
-            current_page = self.tab_view.get_selected_page()
-            if current_page:
-                child = current_page.get_child()
-                if hasattr(child, 'vte'):
-                    self._focus_terminal_widget(child)
+            # Focus the active terminal. Use the split-view-aware lookup so this
+            # also returns focus to the active pane of a SplitViewTab (a
+            # SplitViewTab child has no .vte attribute of its own).
+            terminal = self._get_active_terminal_widget()
+            if terminal is not None:
+                self._focus_terminal_widget(terminal)
         else:
             # Focus connection list with toast notification
             self.focus_connection_list()
