@@ -881,7 +881,7 @@ class SplitViewTab(Gtk.Box):
         compact_btn.connect("clicked", lambda _b: self.reset_all_row_heights(0.3))
         strip.pack_start(compact_btn)
 
-        add_btn = Gtk.Button(label=_("Add Terminal"))
+        add_btn = Gtk.Button(label=_("+ Add Terminal"))
         add_btn.add_css_class("suggested-action")
         add_btn.add_css_class("pill")
         add_btn.connect("clicked", lambda _b: self.add_pane())

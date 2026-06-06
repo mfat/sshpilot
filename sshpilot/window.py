@@ -736,9 +736,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             except Exception:
                 pass
         elif startup_behavior == 'terminal':
-            # Show terminal when explicitly requested
+            # Show terminal when explicitly requested. Create it SYNCHRONOUSLY
+            # here (this runs during __init__, before the window is presented) so
+            # the tab view is shown from the first frame — deferring it via
+            # idle_add briefly flashed the welcome/start page first.
             try:
-                GLib.idle_add(self.terminal_manager.show_local_terminal)
+                self.terminal_manager.show_local_terminal()
             except Exception as e:
                 logger.error(f"Failed to show local terminal on startup: {e}")
 
