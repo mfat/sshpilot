@@ -1543,12 +1543,16 @@ class WindowActions:
         self._display_current_terminal_tip()
 
     def _hide_tips_banner(self):
-        """Hide the terminal tips banner (used on dismiss and update priority)."""
+        """Hide the terminal tips banner (used on dismiss and update priority).
+
+        Only toggle the revealer's reveal-child so the slide-out transition
+        actually plays; the revealer collapses to zero height on its own once the
+        animation finishes. (Setting the container invisible here would skip the
+        animation — the container stays visible; only fullscreen toggles it.)
+        """
         try:
             if getattr(self, 'tips_revealer', None) is not None:
                 self.tips_revealer.set_reveal_child(False)
-            if getattr(self, 'tips_banner_container', None) is not None:
-                self.tips_banner_container.set_visible(False)
         except Exception:
             pass
 

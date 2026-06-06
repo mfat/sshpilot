@@ -1442,7 +1442,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # the same slide-in/out animation Adw.Banner.set_revealed() provided.
         _ensure_tips_banner_css()
         self.tips_revealer = Gtk.Revealer()
+        # SLIDE_DOWN slides the banner in from the top edge and collapses it back
+        # up on dismiss (matching Adw.Banner's feel).
         self.tips_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
+        self.tips_revealer.set_transition_duration(250)
         self.tips_revealer.set_reveal_child(False)
 
         # No outer margins: the accent background must span the full width like
