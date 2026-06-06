@@ -3,27 +3,14 @@
 
 
 
-<img width="1322" height="922" alt="Screenshot From 2025-10-07 10-57-55" src="https://github.com/user-attachments/assets/af8ce903-2704-4740-8e39-547765ddd490" />
 
 
 <table>
   <tr>
     <td align="center" valign="top">
-      <img src="screenshots/start-page.png" width="560" alt="Start Page"><br><strong>Start Page</strong>
+      <img width="1409" height="1092" alt="Start Page" src="https://github.com/user-attachments/assets/99670247-8456-45dd-bff8-af80592324f5" />
     </td>
-    <td align="center" valign="top">
-      <img src="screenshots/main-window-with-tabs.png" width="560" alt="Main Window with Tabs"><br><strong>Main Window with Tabs</strong>
-    </td>
-    <td align="center" valign="top">
-      <img src="screenshots/tab-overview.png" width="560" alt="Tab Overview"><br><strong>Tab Overview</strong>
-    </td>
-  </tr>
-  <tr>
-    <td></td> <!-- empty cell left -->
-    <td align="center" valign="top">
-      <img src="screenshots/ssh-copy-id.png" width="560" alt="SSH Copy ID"><br><strong>SSH Copy ID</strong>
-    </td>
-    <td></td> <!-- empty cell right -->
+    
   </tr>
 </table>
 
