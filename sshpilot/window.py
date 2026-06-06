@@ -915,6 +915,20 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
               transform: scale(0.98);
             }
 
+            /* Selected sidebar row: always use the accent so selection is
+               visible in dark mode by default. libadwaita's default
+               navigation-sidebar selection is a neutral shade that is nearly
+               invisible against the dark card background; this rule (which the
+               accent-override path already emits, but only when an override is
+               set) makes selection clear unconditionally.
+               @accent_bg_color / @accent_fg_color follow the system accent and
+               any user override. The more specific .tinted:selected rule below
+               keeps the identical color for grouped rows. */
+            .navigation-sidebar row:selected {
+              background-color: @accent_bg_color;
+              color: @accent_fg_color;
+            }
+
             .navigation-sidebar row.tinted {
               margin: 4px 8px;
               border-radius: 10px;
