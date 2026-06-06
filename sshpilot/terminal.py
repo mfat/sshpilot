@@ -25,7 +25,6 @@ from .port_utils import get_port_checker
 from .platform_utils import is_flatpak, is_macos, get_sshpass_path
 from .terminal_backends import BaseTerminalBackend, VTETerminalBackend, PyXtermTerminalBackend
 from .ssh_connection_builder import build_ssh_connection, ConnectionContext
-from .shortcut_utils import get_primary_modifier_label
 
 gi.require_version('Gtk', '4.0')
 gi.require_version('Vte', '3.91')
@@ -195,6 +194,51 @@ class SSHProcessManager:
 # Global process manager instance
 process_manager = SSHProcessManager()
 
+
+# Substrings (lowercased) in terminal output that mean an ssh attempt is failing.
+# Used to gate CONNECTING→CONNECTED promotion (never promote while one is present)
+# and to recover a precise failure reason at exit time.
+_SSH_FAILURE_MARKERS = (
+    'permission denied',
+    'connection refused',
+    'no route to host',
+    'network is unreachable',
+    'could not resolve',
+    'name or service not known',
+    'nodename nor servname',
+    'host key verification failed',
+    'connection timed out',
+    'operation timed out',
+    'too many authentication failures',
+    'connection reset',
+    'connection closed',
+    'broken pipe',
+)
+
+# Positive login evidence — appears in ssh -v output or login banners once the
+# session is actually established.
+_SSH_SUCCESS_MARKERS = (
+    'authenticated to',
+    'entering interactive session',
+    'last login:',
+    'pseudo-terminal will',
+)
+
+# Line-start prefixes that are ssh's own chatter (not remote shell output). A
+# line that doesn't start with one of these is treated as real remote output.
+_SSH_NOISE_PREFIXES = (
+    'debug',
+    'ssh:',
+    'warning:',
+    'openssh',
+    'kex',
+    'channel ',
+    'authenticated',
+    'connecting to',
+    'pledge',
+)
+
+
 class TerminalWidget(Gtk.Box):
     """A terminal widget that uses VTE for display and system SSH client for connections"""
     __gtype_name__ = 'TerminalWidget'
@@ -224,11 +268,22 @@ class TerminalWidget(Gtk.Box):
         self.process_pid = None
         self.process_pgid = None
         self.is_connected = False
+        # Per-terminal authoritative lifecycle state. The connection-level state
+        # is aggregated from all its terminals by
+        # ``window._recompute_connection_state``. ``is_connected`` stays as the
+        # boolean compat view (True only when CONNECTED).
+        from .connection_manager import ConnectionState
+        self.connection_state = ConnectionState.UNKNOWN
+        self.connection_state_reason = ''
+        self._connect_grace_timer_id = None  # evidence poller: promotes CONNECTING→CONNECTED
+        self._connect_poll_count = 0
+        self._connect_failure_hint = ''  # failure line scraped while connecting
         self.watch_id = 0
         self.ssh_client = None
         self.session_id = str(id(self))  # Unique ID for this session
         self._is_quitting = False  # Flag to suppress signal handlers during quit
         self.last_error_message = None  # Store last SSH error for reporting
+        self._last_error_detail = None  # Structured context for the Details dialog
         self._fallback_timer_id = None  # GLib timeout ID for spawn fallback
 
         # Job detection state
@@ -509,6 +564,15 @@ class TerminalWidget(Gtk.Box):
         self.reconnect_button.connect('clicked', self._on_reconnect_clicked)
         self.disconnected_banner.append(self.reconnect_button)
 
+        # Details button — opens a dialog with the full error report (and Copy).
+        self.error_details_button = Gtk.Button.new_with_label(_('Details'))
+        try:
+            self.error_details_button.add_css_class('reconnect-button')
+        except Exception:
+            pass
+        self.error_details_button.connect('clicked', lambda *_: self._show_error_details_dialog())
+        self.disconnected_banner.append(self.error_details_button)
+
         # Dismiss button to hide the banner manually
         self.dismiss_button = Gtk.Button.new_with_label(_('Dismiss'))
         try:
@@ -518,7 +582,6 @@ class TerminalWidget(Gtk.Box):
             pass
         self.dismiss_button.connect('clicked', lambda *_: self._set_disconnected_banner_visible(False))
         self.disconnected_banner.append(self.dismiss_button)
-        self.disconnected_banner.set_visible(False)
 
         # Allow window to force an exact height match to the sidebar toolbar using per-widget CSS min-height
         self._banner_css_provider = None
@@ -538,17 +601,21 @@ class TerminalWidget(Gtk.Box):
                 pass
         self.set_banner_height = _apply_external_height
 
-        # Put disconnected banner in overlay so revealing it does not change
-        # terminal natural height (which would otherwise resize split panes).
-        self.overlay.add_overlay(self.disconnected_banner)
-
-        # Terminal usage tips are shown in the main window's banner area (the
-        # same place the "update available" banner appears), NOT floated over
-        # the terminal, so they never mask terminal output. The update banner
-        # takes priority over tips. See MainWindow.show_terminal_tip.
-        self._connection_list_hint_handled = False
-        self._tips = self._build_terminal_tips()
-        self.connect('connection-established', self._reveal_connection_list_hint)
+        # Wrap the banner in a Revealer (hidden by default; an error reveals it
+        # with a slide-up animation). The revealer — not the banner — goes in the
+        # overlay so revealing it does not change the terminal's natural height
+        # (which would otherwise resize split panes). The per-instance min-height
+        # CSS stays on the inner banner box, so the revealer animates 0 → that
+        # height and the sidebar-toolbar height sync keeps working.
+        self.disconnected_revealer = Gtk.Revealer()
+        self.disconnected_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_UP)
+        self.disconnected_revealer.set_transition_duration(200)
+        self.disconnected_revealer.set_halign(Gtk.Align.FILL)
+        self.disconnected_revealer.set_valign(Gtk.Align.END)
+        self.disconnected_revealer.set_hexpand(True)
+        self.disconnected_revealer.set_reveal_child(False)
+        self.disconnected_revealer.set_child(self.disconnected_banner)
+        self.overlay.add_overlay(self.disconnected_revealer)
 
         # Container for terminal stack only
         self.container_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -764,10 +831,104 @@ class TerminalWidget(Gtk.Box):
                 return
             if message:
                 self.disconnected_banner_label.set_text(message)
-            if hasattr(self.disconnected_banner, 'set_visible'):
+            # The Revealer owns visibility now (animated slide up/down).
+            if getattr(self, 'disconnected_revealer', None) is not None:
+                self.disconnected_revealer.set_reveal_child(visible)
+            elif hasattr(self.disconnected_banner, 'set_visible'):
                 self.disconnected_banner.set_visible(visible)
         except Exception:
             pass
+
+    # --- Error detail (banner Details dialog) -------------------------------
+    _ANSI_RE = re.compile(r'\x1b\[[0-9;?]*[ -/]*[@-~]')
+
+    def _record_error_detail(self, reason: str, exit_code=None) -> None:
+        """Snapshot everything we know about the current failure for the Details
+        dialog. Reads only data already available (no extra ssh calls)."""
+        try:
+            conn = getattr(self, 'connection', None)
+            tail = self._ANSI_RE.sub('', self._scrape_recent_terminal_text(4000) or '').strip()
+            self._last_error_detail = {
+                'nickname': getattr(conn, 'nickname', '') or '',
+                'host': getattr(conn, 'hostname', '') or getattr(conn, 'host', '') or '',
+                'username': getattr(conn, 'username', '') or '',
+                'reason': reason or '',
+                'exit_code': exit_code,
+                'raw': self.last_error_message or '',
+                'hint': getattr(self, '_connect_failure_hint', '') or '',
+                'stderr_tail': tail,
+            }
+        except Exception:
+            logger.debug("Failed to record error detail", exc_info=True)
+
+    def _format_error_detail(self, detail=None) -> str:
+        """Build the paste-ready report. Leads with reason + raw ssh output; the
+        numeric exit code is a small trailing line (255 is just a catch-all)."""
+        detail = detail or self._last_error_detail or {}
+        nick = detail.get('nickname') or _('Connection')
+        user = detail.get('username') or ''
+        host = detail.get('host') or ''
+        target = f"{user}@{host}" if user and host else (host or user)
+        lines = []
+        lines.append(f"{_('Connection')}: {nick}" + (f" ({target})" if target else ""))
+        if detail.get('reason'):
+            lines.append(f"{_('Reason')}: {detail['reason']}")
+        # Prefer the explicit error/hint line if present and not already the reason.
+        err = detail.get('raw') or detail.get('hint') or ''
+        if err and err.strip() and err.strip() != (detail.get('reason') or '').strip():
+            lines.append(f"{_('Error')}: {err.strip()}")
+        tail = detail.get('stderr_tail') or ''
+        if tail:
+            lines.append("")
+            lines.append(_('--- SSH output ---'))
+            lines.append(tail)
+        code = detail.get('exit_code')
+        if code is not None:
+            lines.append("")
+            lines.append(f"ssh exit: {code}")
+        return "\n".join(lines).strip() or _('No additional details available.')
+
+    def _show_error_details_dialog(self) -> None:
+        """Popup with the full, selectable error report plus a Copy button."""
+        try:
+            text = self._format_error_detail()
+            root = self.get_root() if hasattr(self, 'get_root') else None
+
+            body = Gtk.Label(label=text)
+            body.set_selectable(True)
+            body.set_wrap(True)
+            body.set_xalign(0)
+            body.set_yalign(0)
+            body.add_css_class('monospace')
+            scroller = Gtk.ScrolledWindow()
+            scroller.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+            scroller.set_min_content_width(480)
+            scroller.set_min_content_height(260)
+            scroller.set_child(body)
+
+            dialog = Adw.MessageDialog(
+                transient_for=root if isinstance(root, Gtk.Window) else None,
+                modal=True,
+                heading=_('Connection Error Details'),
+            )
+            dialog.set_extra_child(scroller)
+            dialog.add_response('copy', _('Copy'))
+            dialog.add_response('close', _('Close'))
+            dialog.set_default_response('close')
+            dialog.set_close_response('close')
+
+            def _on_response(dlg, response):
+                if response == 'copy':
+                    try:
+                        clipboard = self.get_clipboard()
+                        clipboard.set(self._format_error_detail())
+                    except Exception:
+                        logger.debug("Failed to copy error detail", exc_info=True)
+                dlg.close()
+            dialog.connect('response', _on_response)
+            dialog.present()
+        except Exception:
+            logger.debug("Failed to show error details dialog", exc_info=True)
 
     def _on_reconnect_clicked(self, *args):
         """User clicked reconnect on the banner"""
@@ -786,18 +947,21 @@ class TerminalWidget(Gtk.Box):
 
                 if not prepared:
                     self._set_connecting_overlay_visible(False)
+                    self._record_error_detail(_('Reconnect failed to start'))
                     self._set_disconnected_banner_visible(True, _('Reconnect failed to start'))
                     return False
 
                 if not self._connect_ssh():
                     # Show banner again if failed to start reconnect
                     self._set_connecting_overlay_visible(False)
+                    self._record_error_detail(_('Reconnect failed to start'))
                     self._set_disconnected_banner_visible(True, _('Reconnect failed to start'))
                 return False
 
             GLib.idle_add(_prepare_and_connect)
         except Exception:
             self._set_connecting_overlay_visible(False)
+            self._record_error_detail(_('Reconnect failed'))
             self._set_disconnected_banner_visible(True, _('Reconnect failed'))
 
     def _refresh_connection_command(self) -> bool:
@@ -857,87 +1021,6 @@ class TerminalWidget(Gtk.Box):
                 self.connecting_bg.set_visible(visible)
             if hasattr(self.connecting_box, 'set_visible'):
                 self.connecting_box.set_visible(visible)
-        except Exception:
-            pass
-
-    def _shortcut_label(self, action_name: str, fallback: str) -> str:
-        """Human-readable label for an action's current accelerator.
-
-        Honors user customizations: prefers a configured override, else the
-        app's registered default. Falls back to *fallback* when the shortcut
-        can't be resolved (or the user disabled it).
-        """
-        try:
-            accels = None
-            override = None
-            try:
-                override = self.config.get_shortcut_override(action_name)
-            except Exception:
-                override = None
-            if override is not None:
-                accels = override
-            else:
-                app = Gio.Application.get_default()
-                if app is not None and hasattr(app, 'get_registered_shortcut_defaults'):
-                    accels = app.get_registered_shortcut_defaults().get(action_name)
-            if not accels:
-                return fallback
-            ok, keyval, mods = Gtk.accelerator_parse(accels[0])
-            if ok and keyval:
-                label = Gtk.accelerator_get_label(keyval, mods)
-                if label:
-                    return label
-        except Exception:
-            pass
-        return fallback
-
-    def _build_terminal_tips(self):
-        """Return the list of short usage tips shown in the terminal banner.
-
-        The connection-list shortcut comes first since that's the original
-        prompt; the rest surface other handy shortcuts. Each shortcut label
-        reflects the action's current (possibly customized) accelerator and is
-        platform-aware.
-        """
-        mod = get_primary_modifier_label()
-        return [
-            _('Press {shortcut} to switch to the connection list').format(
-                shortcut=self._shortcut_label('toggle-list', f"{mod}+Shift+L")),
-            _('Press {shortcut} to search your connections').format(
-                shortcut=self._shortcut_label('search', f"{mod}+F")),
-            _('Press {shortcut} to open a new connection').format(
-                shortcut=self._shortcut_label('new-connection', f"{mod}+N")),
-            _('Press {shortcut} to search inside the terminal').format(
-                shortcut=self._shortcut_label('terminal-search', f"{mod}+Shift+F")),
-            _('Press {shortcut} to copy your SSH key to a server').format(
-                shortcut=self._shortcut_label('new-key', f"{mod}+Shift+K")),
-            _('Press F9 to toggle the sidebar'),
-            _('Press {shortcut} to see all keyboard shortcuts').format(
-                shortcut=self._shortcut_label('shortcuts', f"{mod}+?")),
-        ]
-
-    def _reveal_connection_list_hint(self, *args):
-        """Show a usage tip in the main window's banner area once connected.
-
-        Only shows while the user hasn't opted out, and at most once per
-        terminal so a reconnect doesn't pop it back up. The tip is rendered by
-        the main window (alongside the update banner), not over the terminal.
-        """
-        try:
-            if self._connection_list_hint_handled:
-                return
-            self._connection_list_hint_handled = True
-            if not bool(self.config.get_setting('terminal.show_tips', True)):
-                return
-            # Rebuild so labels reflect any shortcut customizations made since
-            # this terminal was created. The window picks a tip to show and the
-            # "Next tip" button cycles through the rest.
-            self._tips = self._build_terminal_tips()
-            if not self._tips:
-                return
-            root = self.get_root() if hasattr(self, 'get_root') else None
-            if root is not None and hasattr(root, 'show_terminal_tip'):
-                root.show_terminal_tip(self._tips)
         except Exception:
             pass
 
@@ -1299,35 +1382,51 @@ class TerminalWidget(Gtk.Box):
                 self.backend.grab_focus()
             self.apply_theme()
 
-            # Spawn succeeded; mark as connected and hide overlay
-            self.is_connected = True
-            
-            # Update connection status in the connection manager (only for SSH connections)
-            if hasattr(self, 'connection') and self.connection and hasattr(self.connection, 'hostname') and self.connection.hostname != 'localhost':
-                if hasattr(self, 'connection_manager') and self.connection_manager:
-                    self.connection_manager.update_connection_status(self.connection, True)
-                    logger.debug(f"Terminal {self.session_id} updated connection status to connected")
-                else:
-                    logger.warning(f"Terminal {self.session_id} has no connection manager")
-            elif hasattr(self, 'connection') and self.connection and hasattr(self.connection, 'hostname') and self.connection.hostname == 'localhost':
-                logger.debug(f"Local terminal {self.session_id} spawned successfully")
+            # The ssh process spawned — but that only means the subprocess
+            # started, NOT that it authenticated or reached the host. Enter
+            # CONNECTING and promote to CONNECTED only on real login evidence
+            # (remote termprops via _on_termprops_changed) or, failing that, if
+            # the process is still alive after a short grace period. A fast
+            # failure (auth/refused/unreachable) exits first and is classified
+            # as FAILED, so the indicator never flashes green on a dead link.
+            from .connection_manager import ConnectionState
+            is_remote = (
+                hasattr(self, 'connection') and self.connection
+                and getattr(self.connection, 'hostname', None) != 'localhost'
+            )
+            if is_remote and hasattr(self, 'connection_manager') and self.connection_manager:
+                self.connection_state = ConnectionState.CONNECTING
+                self.connection_state_reason = ''
+                self.is_connected = False
+                # Don't downgrade a connection that already has a live terminal.
+                if self.connection.get_status() != ConnectionState.CONNECTED:
+                    self.connection_manager.update_connection_state(
+                        self.connection, ConnectionState.CONNECTING
+                    )
+                self._start_connect_grace()
+                logger.debug(f"Terminal {self.session_id} entered CONNECTING")
             else:
-                logger.warning(f"Terminal {self.session_id} has no connection object to update")
-            
-            self.emit('connection-established')
+                # Local terminal (or no manager): a shell with no auth step, so
+                # a successful spawn is a successful connection.
+                self.connection_state = ConnectionState.CONNECTED
+                self.is_connected = True
+                self.emit('connection-established')
+
             self._set_connecting_overlay_visible(False)
             # Ensure any reconnect/disconnected banner is hidden upon successful spawn
             try:
                 self._set_disconnected_banner_visible(False)
             except Exception:
                 pass
-            
+
         except Exception as e:
             logger.error(f"Error in spawn complete: {e}")
             self._on_connection_failed(str(e))
     
     def _fallback_hide_spinner(self):
-        """Fallback method to hide spinner if spawn completion doesn't fire"""
+        """Fallback for the Flatpak case where the spawn-complete callback never
+        fires. Promotes only on real evidence — never merely because the process
+        is alive (a still-connecting socket is alive but not connected)."""
         # Clear stored timer ID
         self._fallback_timer_id = None
 
@@ -1343,30 +1442,199 @@ class TerminalWidget(Gtk.Box):
             logger.debug("Fallback timer triggered after connection failure; ignoring")
             return False
 
-        if not self.is_connected:
-            logger.warning("Flatpak: Spawn completion callback didn't fire, forcing connection state")
-            self.is_connected = True
-            
-            # Update connection status in the connection manager (only for SSH connections)
-            if hasattr(self, 'connection') and self.connection and hasattr(self.connection, 'hostname') and self.connection.hostname != 'localhost':
-                if hasattr(self, 'connection_manager') and self.connection_manager:
-                    self.connection_manager.update_connection_status(self.connection, True)
-                    logger.debug(f"Terminal {self.session_id} updated connection status to connected (fallback)")
-                else:
-                    logger.warning(f"Terminal {self.session_id} has no connection manager (fallback)")
-            elif hasattr(self, 'connection') and self.connection and hasattr(self.connection, 'hostname') and self.connection.hostname == 'localhost':
-                logger.debug(f"Local terminal {self.session_id} spawned successfully (fallback)")
-            else:
-                logger.warning(f"Terminal {self.session_id} has no connection object to update (fallback)")
-            
-            self.emit('connection-established')
-            self._set_connecting_overlay_visible(False)
+        from .connection_manager import ConnectionState
+        if self.connection_state == ConnectionState.CONNECTED:
+            return False
+
+        verdict = self._scan_connect_evidence()
+        if verdict == 'connected':
+            logger.debug("Spawn-complete didn't fire; promoting on evidence (fallback)")
+            self._mark_connected()
+        elif verdict == 'pending':
+            # Keep evaluating instead of force-promoting an unconfirmed session.
+            if self.connection_state != ConnectionState.CONNECTING:
+                self.connection_state = ConnectionState.CONNECTING
+            self._start_connect_grace()
+        # 'failed' → leave it; the child-exit handler will classify FAILED.
+        return False  # Don't repeat the timer
+
+    # --- Connection lifecycle helpers (Phase 3 gating) ----------------------
+    def _scan_connect_evidence(self):
+        """Inspect recent terminal output and decide whether the CONNECTING
+        session has real evidence of being connected, failing, or still pending.
+
+        Returns one of 'connected', 'failed', 'pending'. This is what replaces
+        the old "process is alive" heuristic — a socket stuck in the TCP connect
+        phase is alive but produces no remote output, so it stays 'pending'.
+        """
+        text = (self._scrape_recent_terminal_text(4000) or '').lower()
+        if not text:
+            return 'pending'
+
+        # A visible ssh failure means the attempt is dying — never promote.
+        for marker in _SSH_FAILURE_MARKERS:
+            if marker in text:
+                # Remember the matching line so the exit reason is precise even
+                # if the final bytes aren't in the buffer when ssh exits.
+                for line in text.splitlines():
+                    if marker in line:
+                        self._connect_failure_hint = line.strip()
+                        break
+                return 'failed'
+
+        # Explicit positive evidence (ssh -v progress / login banner).
+        if any(marker in text for marker in _SSH_SUCCESS_MARKERS):
+            return 'connected'
+
+        # Any line that isn't ssh's own chatter is remote output (a shell prompt
+        # or MOTD) — strong evidence the session is live.
+        for line in text.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if stripped.startswith(_SSH_NOISE_PREFIXES):
+                continue
+            return 'connected'
+
+        return 'pending'
+
+    def _start_connect_grace(self):
+        """Start the evidence poller that promotes CONNECTING→CONNECTED once the
+        terminal shows real remote output (prompt/title/banner). It never
+        promotes on liveness alone, so a connecting-but-not-connected socket
+        stays CONNECTING until it either produces output or the attempt exits."""
+        self._cancel_connect_grace()
+        self._connect_poll_count = 0
+        self._connect_failure_hint = ''
+        # Poll once a second; termprops usually promotes title-setting shells
+        # instantly, so this is the backup path for quieter servers.
+        self._connect_grace_timer_id = GLib.timeout_add(
+            1000, self._on_connect_grace_elapsed
+        )
+
+    def _cancel_connect_grace(self):
+        if getattr(self, '_connect_grace_timer_id', None):
             try:
-                self._set_disconnected_banner_visible(False)
+                GLib.source_remove(self._connect_grace_timer_id)
             except Exception:
                 pass
-        return False  # Don't repeat the timer
-        
+            self._connect_grace_timer_id = None
+
+    def _on_connect_grace_elapsed(self):
+        # Repeating timer: return True to keep polling, False to stop.
+        from .connection_manager import ConnectionState
+        if getattr(self, '_is_quitting', False) or self.connection_state != ConnectionState.CONNECTING:
+            self._connect_grace_timer_id = None
+            return False
+
+        verdict = self._scan_connect_evidence()
+        if verdict == 'connected':
+            logger.debug(f"Terminal {self.session_id}: remote output observed, marking connected")
+            self._connect_grace_timer_id = None
+            self._mark_connected()
+            return False
+        if verdict == 'failed':
+            # Stop polling; the child-exit handler classifies it as FAILED.
+            self._connect_grace_timer_id = None
+            return False
+
+        # 'pending' — keep waiting, but don't poll forever.
+        self._connect_poll_count += 1
+        if self._connect_poll_count >= 60:  # ≈60s, well past typical ConnectTimeout
+            logger.debug(f"Terminal {self.session_id}: no connect evidence after grace window; staying pending")
+            self._connect_grace_timer_id = None
+            return False
+        return True
+
+    def _mark_connected(self):
+        """Promote a CONNECTING session to CONNECTED (idempotent). Called only on
+        real evidence: termprops, or remote output seen by the evidence poller."""
+        from .connection_manager import ConnectionState
+        if self.connection_state == ConnectionState.CONNECTED:
+            return
+        self._cancel_connect_grace()
+        if getattr(self, '_fallback_timer_id', None):
+            try:
+                GLib.source_remove(self._fallback_timer_id)
+            except Exception:
+                pass
+            self._fallback_timer_id = None
+
+        self.connection_state = ConnectionState.CONNECTED
+        self.connection_state_reason = ''
+        self.is_connected = True
+        self.last_error_message = None
+
+        if (
+            hasattr(self, 'connection') and self.connection
+            and getattr(self.connection, 'hostname', None) != 'localhost'
+            and hasattr(self, 'connection_manager') and self.connection_manager
+        ):
+            self.connection_manager.update_connection_state(
+                self.connection, ConnectionState.CONNECTED
+            )
+            logger.debug(f"Terminal {self.session_id} promoted to CONNECTED")
+
+        self.emit('connection-established')
+        self._set_connecting_overlay_visible(False)
+        try:
+            self._set_disconnected_banner_visible(False)
+        except Exception:
+            pass
+
+    def _scrape_recent_terminal_text(self, max_chars=2000):
+        """Best-effort read of the terminal tail, used only to classify a failure
+        reason when ssh wrote its error to the PTY (not to last_error_message)."""
+        try:
+            if getattr(self, 'backend', None) is not None and hasattr(self.backend, 'get_content'):
+                return self.backend.get_content(max_chars) or ''
+        except Exception:
+            pass
+        return ''
+
+    def _classify_exit(self, exit_code, was_connected, extra_text=''):
+        """Map an ssh exit into (ConnectionState, reason) from the exit code and
+        the captured error text. Distinguishes auth/unreachable failures from a
+        clean disconnect or a dropped-after-connected session."""
+        from .connection_manager import ConnectionState
+        # Include any failure line the connect-evidence poller captured, so the
+        # precise reason survives even if ssh's final output isn't in the buffer
+        # by the time the child-exit handler scrapes it.
+        msg = (
+            f"{self.last_error_message or ''}\n"
+            f"{extra_text or ''}\n"
+            f"{getattr(self, '_connect_failure_hint', '') or ''}"
+        ).lower()
+
+        if 'permission denied' in msg or 'authentication failed' in msg \
+                or 'too many authentication failures' in msg:
+            return ConnectionState.FAILED, 'Authentication failed'
+        if 'connection refused' in msg:
+            return ConnectionState.FAILED, 'Connection refused'
+        if 'no route to host' in msg or 'network is unreachable' in msg:
+            return ConnectionState.FAILED, 'Host unreachable'
+        if 'could not resolve' in msg or 'name or service not known' in msg \
+                or 'nodename nor servname' in msg:
+            return ConnectionState.FAILED, 'Host not found'
+        if 'host key verification failed' in msg:
+            return ConnectionState.FAILED, 'Host key verification failed'
+        if 'connection timed out' in msg or 'operation timed out' in msg:
+            return ConnectionState.FAILED, 'Connection timed out'
+        if 'timeout, server' in msg or 'timed out waiting' in msg:
+            # ServerAlive keepalive gave up on a previously-live session.
+            if was_connected:
+                return ConnectionState.DISCONNECTED, 'Connection lost'
+            return ConnectionState.FAILED, 'Connection timed out'
+
+        # ssh's own fatal errors exit with 255.
+        if exit_code == 255:
+            if was_connected:
+                return ConnectionState.DISCONNECTED, 'Connection lost'
+            return ConnectionState.FAILED, (self.last_error_message or 'Connection failed')
+
+        # Other non-zero: a remote shell/command exited after a real session.
+        return ConnectionState.DISCONNECTED, ''
+
 
     def _show_forwarding_error_dialog(self, message):
         try:
@@ -2105,16 +2373,13 @@ class TerminalWidget(Gtk.Box):
 
         return False
 
-    def _notify_invalid_encoding(self, requested, fallback):
-        message = _(f"Encoding '{requested}' is not supported. Using {fallback} instead.")
-        logger.warning(message)
+    def _show_toast(self, message, timeout=3):
+        """Show a transient toast in the main window's toast overlay."""
         root = self.get_root()
         try:
             toast = Adw.Toast.new(message)
+            toast.set_timeout(timeout)
         except Exception:
-            toast = None
-
-        if toast is None:
             return
 
         try:
@@ -2124,6 +2389,30 @@ class TerminalWidget(Gtk.Box):
                 root.add_toast(toast)
         except Exception:
             pass
+
+    def _has_terminal_selection(self) -> bool:
+        """Whether the terminal currently has a text selection.
+
+        Used to decide if a copy actually put something on the clipboard. The
+        backend reports it when it can (VTE); a backend that can't answer
+        synchronously (PyXterm) is treated optimistically as having a selection.
+        """
+        try:
+            if self.backend is not None:
+                getter = getattr(self.backend, 'get_has_selection', None)
+                if getter is not None:
+                    return bool(getter())
+                return True
+            if self.vte is not None:
+                return bool(self.vte.get_has_selection())
+        except Exception:
+            pass
+        return False
+
+    def _notify_invalid_encoding(self, requested, fallback):
+        message = _(f"Encoding '{requested}' is not supported. Using {fallback} instead.")
+        logger.warning(message)
+        self._show_toast(message)
 
     def setup_local_shell(self):
         """Set up the terminal for local shell (not SSH)"""
@@ -2829,11 +3118,17 @@ class TerminalWidget(Gtk.Box):
 
                 def _cb_copy(widget, *args):
                     if self.backend:
-                        return _schedule_vte_action(self.backend.copy_clipboard)
+                        had_selection = self._has_terminal_selection()
+                        result = _schedule_vte_action(self.backend.copy_clipboard)
+                        if had_selection:
+                            self._show_toast(_("Copied to clipboard"))
+                        return result
                     elif self.vte is not None:
                         if not self.vte.get_has_selection():
                             return False
-                        return _schedule_vte_action(self.vte.copy_clipboard_format, Vte.Format.TEXT)
+                        result = _schedule_vte_action(self.vte.copy_clipboard_format, Vte.Format.TEXT)
+                        self._show_toast(_("Copied to clipboard"))
+                        return result
                     return False
 
                 def _cb_paste(widget, *args):
@@ -3169,8 +3464,9 @@ class TerminalWidget(Gtk.Box):
             # Show reconnect UI
             self._set_connecting_overlay_visible(False)
             banner_text = message or self.last_error_message or _('Connection lost.')
+            self._record_error_detail(banner_text)
             self._set_disconnected_banner_visible(True, banner_text)
-    
+
     def _on_terminal_input(self, widget, text, size):
         """Handle input from the terminal (handled automatically by VTE)"""
         pass
@@ -3511,13 +3807,14 @@ class TerminalWidget(Gtk.Box):
         """Handle connection failure (called from main thread)"""
         logger.error(f"Connection failed: {error_message}")
 
-        # Cancel any pending fallback timer so we don't mark connection as successful
+        # Cancel any pending promotion so we never mark this as successful.
         if getattr(self, '_fallback_timer_id', None):
             try:
                 GLib.source_remove(self._fallback_timer_id)
             except Exception:
                 pass
             self._fallback_timer_id = None
+        self._cancel_connect_grace()
 
         try:
             # Show raw error in terminal
@@ -3537,11 +3834,24 @@ class TerminalWidget(Gtk.Box):
             # Remember last error for later reporting
             self.last_error_message = error_message
 
+            # Mark the connection FAILED so the sidebar reflects it (classify the
+            # message into a concise reason where we can).
+            from .connection_manager import ConnectionState
+            _state, _reason = self._classify_exit(255, False)
+            self.connection_state = ConnectionState.FAILED
+            self.connection_state_reason = _reason or error_message
+            if hasattr(self, 'connection_manager') and self.connection_manager and self.connection \
+                    and getattr(self.connection, 'hostname', None) != 'localhost':
+                self.connection_manager.update_connection_state(
+                    self.connection, ConnectionState.FAILED, self.connection_state_reason
+                )
+
             # Notify UI
             self.emit('connection-failed', error_message)
 
             # Show reconnect banner with the raw SSH error
             self._set_connecting_overlay_visible(False)
+            self._record_error_detail(error_message)
             self._set_disconnected_banner_visible(True, error_message)
 
         except Exception as e:
@@ -3596,6 +3906,13 @@ class TerminalWidget(Gtk.Box):
         except Exception as e:
             logger.error(f"Error cleaning up exited process tracking: {e}")
 
+        # Capture whether the session was ever confirmed connected (before we
+        # reset state below) and stop any pending promotion — the process is
+        # gone, so it must never be promoted to CONNECTED after this.
+        from .connection_manager import ConnectionState
+        was_connected = (self.connection_state == ConnectionState.CONNECTED)
+        self._cancel_connect_grace()
+
         # Normalize exit status: GLib may pass waitpid-style status
         exit_code = None
         try:
@@ -3615,17 +3932,25 @@ class TerminalWidget(Gtk.Box):
             if exit_code == 0 and hasattr(self, 'get_root'):
                 # Update connection status BEFORE closing the tab
                 logger.debug("Clean exit detected, updating connection status before closing tab")
-                if self.connection:
-                    self.connection.is_connected = False
+                self.connection_state = ConnectionState.DISCONNECTED
                 self.is_connected = False
-                
+
                 # Emit connection status change signal
                 if hasattr(self, 'connection_manager') and self.connection_manager and self.connection:
-                    GLib.idle_add(self.connection_manager.emit, 'connection-status-changed', self.connection, False)
+                    GLib.idle_add(
+                        self.connection_manager.update_connection_state,
+                        self.connection, ConnectionState.DISCONNECTED, '',
+                    )
                 
                 root = self.get_root()
                 if root and hasattr(root, 'tab_view'):
-                    page = root.tab_view.get_page(self)
+                    # Safe lookup: this terminal may be embedded in a split-view
+                    # pane (not in the main tab_view), which would otherwise trip
+                    # the get_page CRITICAL assertion.
+                    if hasattr(root, '_page_for_child'):
+                        page = root._page_for_child(self)
+                    else:
+                        page = root.tab_view.get_page(self)
                     if page:
                         try:
                             setattr(root, '_suppress_close_confirmation', True)
@@ -3649,35 +3974,45 @@ class TerminalWidget(Gtk.Box):
         except Exception:
             pass
         
-        # Non-zero or unknown exit: treat as connection lost and show banner
+        # Non-zero or unknown exit: classify into FAILED (auth/unreachable/…) vs
+        # DISCONNECTED (a previously-live session that dropped or ended).
         logger.debug("Updating connection status after process exit")
-        if self.connection:
-            self.connection.is_connected = False
+        # When ssh wrote its error to the PTY rather than to last_error_message
+        # (the common case for auth/unreachable failures), scrape the tail so we
+        # can still classify the reason.
+        scraped = '' if self.last_error_message else self._scrape_recent_terminal_text()
+        exit_state, exit_reason = self._classify_exit(exit_code, was_connected, scraped)
+        self.connection_state = exit_state
+        self.connection_state_reason = exit_reason
 
         # Don't call disconnect() here since the process has already exited
         # Just update the connection status and emit signals
         self.is_connected = False
-        
-        # Update connection manager status
-        logger.debug("Scheduling connection manager status update")
+
+        # Update connection manager status with the classified state + reason.
+        logger.debug(f"Scheduling connection state update: {exit_state.value} ({exit_reason})")
         if hasattr(self, 'connection_manager') and self.connection_manager and self.connection:
-            GLib.idle_add(self.connection_manager.emit, 'connection-status-changed', self.connection, False)
-        
+            GLib.idle_add(
+                self.connection_manager.update_connection_state,
+                self.connection, exit_state, exit_reason or '',
+            )
+
         # Defer all signal emissions and UI updates to prevent deadlocks
         def _finalize_exit_cleanup():
             try:
                 logger.debug("Emitting connection-lost signal")
                 self.emit('connection-lost')
 
-                # Show reconnect UI with detailed error if available
+                # Show reconnect UI with a reason-aware message.
                 logger.debug("Updating UI elements")
                 self._set_connecting_overlay_visible(False)
-                banner_text = self.last_error_message
+                banner_text = self.last_error_message or exit_reason
                 if not banner_text:
                     if exit_code and exit_code != 0:
                         banner_text = _('SSH exited with status {code}').format(code=exit_code)
                     else:
                         banner_text = _('Session ended.')
+                self._record_error_detail(exit_reason or banner_text, exit_code=exit_code)
                 self._set_disconnected_banner_visible(True, banner_text)
 
                 logger.debug("Exit cleanup completed successfully")
@@ -3787,10 +4122,14 @@ class TerminalWidget(Gtk.Box):
     def copy_text(self):
         """Copy selected text to clipboard"""
         if self.backend:
+            had_selection = self._has_terminal_selection()
             self.backend.copy_clipboard()
+            if had_selection:
+                self._show_toast(_("Copied to clipboard"))
         elif self.vte is not None:
             if self.vte.get_has_selection():
                 self.vte.copy_clipboard_format(Vte.Format.TEXT)
+                self._show_toast(_("Copied to clipboard"))
 
     def paste_text(self):
         """Paste text from clipboard"""
@@ -4137,7 +4476,19 @@ class TerminalWidget(Gtk.Box):
                 
             # Convert ids to a set for efficient lookup if it's not already
             changed_props = set(ids) if hasattr(ids, '__iter__') else {ids}
-            
+
+            # Login evidence: a remote terminal emitting termprops (title/cwd via
+            # the remote shell's OSC sequences) means the session reached the
+            # shell. Promote a pending CONNECTING session to CONNECTED here so we
+            # confirm on real activity rather than just the process spawning.
+            try:
+                from .connection_manager import ConnectionState
+                if self.connection_state == ConnectionState.CONNECTING \
+                        and not self._is_local_terminal():
+                    self._mark_connected()
+            except Exception:
+                pass
+
             # Check for window title changes (TERMPROP_XTERM_TITLE) - works for both local and remote terminals
             # This replaces the deprecated get_window_title() method (VTE 0.78+)
             # TERMPROP_XTERM_TITLE is a Vte.PropertyType.STRING termprop that stores the xterm window title
@@ -5029,10 +5380,8 @@ class TerminalWidget(Gtk.Box):
                         extra_ssh_config=None,
                         known_hosts_path=None,
                         native_mode=True,
-                        quick_connect_mode=False,
-                        quick_connect_command=None,
                     )
-                    
+
                     ssh_conn_cmd = build_ssh_connection(ctx)
                     ssh_cmd = ssh_conn_cmd.command
                     env = ssh_conn_cmd.env.copy()
@@ -5060,8 +5409,6 @@ class TerminalWidget(Gtk.Box):
                             extra_ssh_config=None,
                             known_hosts_path=None,
                             native_mode=True,
-                            quick_connect_mode=False,
-                            quick_connect_command=None,
                         )
                         cleanup_cmd_obj = build_ssh_connection(cleanup_ctx)
                         cleanup_cmd = cleanup_cmd_obj.command

@@ -54,6 +54,20 @@ def get_state_dir() -> str:
     return os.path.join(state_home, APP_NAME)
 
 
+def restart_app() -> None:
+    """Replace the current process with a fresh instance of the same app.
+
+    Works on Linux (including Flatpak) and macOS.  The setting must be
+    persisted before this is called — os.execv replaces the process
+    immediately with no further cleanup.
+    """
+    import sys
+    # argv[0] of os.execv is the program-name slot (Python ignores it as a
+    # script path), so the script must be passed as argv[1].  Prepending
+    # sys.executable gives: [interpreter, script, ...user-flags...].
+    os.execv(sys.executable, [sys.executable] + sys.argv)
+
+
 _sshpass_path_cache: str | None = None
 _sshpass_checked: bool = False
 

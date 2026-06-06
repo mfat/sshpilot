@@ -59,10 +59,12 @@ def resolve_native_auth(
     Shared by the native terminal builder, SCP, and ssh-copy-id so every part
     of the app authenticates the same way. Behaviour:
 
-    * Password auth (or a stored password): clear askpass and signal sshpass.
+    * Password auth selected: clear askpass and signal sshpass (with the stored
+      password when one exists).
     * Askpass disabled in settings: let SSH prompt natively on the TTY.
-    * Key-based auth: enable askpass (keyring autofill, GUI prompt fallback)
-      and, unless the user forwards the agent or pins an explicit IdentityAgent,
+    * Key-based auth: the password is irrelevant — SSH authenticates with the
+      key, so we enable askpass (keyring autofill, GUI prompt fallback) and,
+      unless the user forwards the agent or pins an explicit IdentityAgent,
       bypass the agent (`-o IdentityAgent=none` + drop SSH_AUTH_SOCK) so SSH
       loads the key from disk and calls askpass. gnome-keyring otherwise
       advertises the key but refuses to sign it when locked, and SSH will not
@@ -70,8 +72,16 @@ def resolve_native_auth(
     """
     auth_method = int(getattr(connection, 'auth_method', 0) or 0)
     password_auth_selected = (auth_method == 1)
-    stored_password = _get_stored_password(connection, connection_manager)
-    password_mode = bool(password_auth_selected or stored_password)
+    # Key-based auth is authoritative: when it is selected the password is
+    # irrelevant (a stored/leftover password must not divert key auth into
+    # sshpass and suppress the key-passphrase askpass). Only consult the stored
+    # password when password auth is the selected method.
+    stored_password = (
+        _get_stored_password(connection, connection_manager)
+        if password_auth_selected
+        else None
+    )
+    password_mode = password_auth_selected
 
     askpass_enabled = True
     try:
@@ -197,8 +207,6 @@ class ConnectionContext:
     extra_ssh_config: Optional[str] = None  # Extra SSH config options (from advanced tab)
     known_hosts_path: Optional[str] = None  # Custom known hosts file
     native_mode: bool = False  # Use native SSH mode (minimal command)
-    quick_connect_mode: bool = False  # Use quick connect command
-    quick_connect_command: Optional[str] = None  # Quick connect command string
 
 
 def _get_ssh_config_value(
@@ -477,6 +485,46 @@ def _build_base_ssh_command(
     return cmd
 
 
+def _maybe_append_default_keepalive(cmd, overrides, app_ssh_config):
+    """Append default ServerAlive* options to *cmd* unless keepalive is already set.
+
+    Keepalive is left untouched when the user already configured it — either via
+    Preferences (the explicit value lands in ``ssh_overrides`` and/or the
+    ``keepalive_interval`` app key) — so user values always win. The global
+    opt-out (``ssh.apply_default_keepalive`` = False) disables injection
+    entirely; that is also the escape hatch for anyone who set their own
+    ServerAliveInterval only in ~/.ssh/config (we intentionally don't run an
+    extra ``ssh -G`` here — that would add a second probe to every connect — and
+    overriding with a default keepalive is harmless, just a probe cadence).
+    """
+    try:
+        if not bool(app_ssh_config.get('apply_default_keepalive', True)):
+            return
+
+        # Already set by the user via Preferences. The explicit value is composed
+        # into ssh_overrides; the raw key is also honored directly so we never
+        # double-apply or override an explicit choice.
+        try:
+            explicit = app_ssh_config.get('keepalive_interval')
+            if explicit not in (None, '') and int(explicit) > 0:
+                return
+        except (TypeError, ValueError):
+            pass
+        if isinstance(overrides, (list, tuple)):
+            for entry in overrides:
+                if entry and 'ServerAliveInterval' in str(entry):
+                    return
+
+        interval = int(app_ssh_config.get('default_keepalive_interval', 15) or 15)
+        count = int(app_ssh_config.get('default_keepalive_count', 3) or 3)
+        if interval > 0:
+            cmd.extend(['-o', f'ServerAliveInterval={interval}'])
+            if count > 0:
+                cmd.extend(['-o', f'ServerAliveCountMax={count}'])
+    except Exception as exc:  # never let keepalive injection break connecting
+        logger.debug("Default keepalive injection skipped: %s", exc)
+
+
 def build_ssh_connection(
     ctx: ConnectionContext
 ) -> SSHConnectionCommand:
@@ -512,7 +560,7 @@ def build_ssh_connection(
     command_type = ctx.command_type
     extra_args = ctx.extra_args or []
     
-    logger.debug(f"build_ssh_connection called: native_mode={ctx.native_mode}, quick_connect={ctx.quick_connect_mode}, connection_manager={'present' if connection_manager else 'None'}")
+    logger.debug(f"build_ssh_connection called: native_mode={ctx.native_mode}, connection_manager={'present' if connection_manager else 'None'}")
     
     # 1. Get effective SSH config from the right SSH config file
     # Try to get host identifier from connection
@@ -538,26 +586,6 @@ def build_ssh_connection(
         except Exception:
             pass
     
-    # Handle quick connect mode first — an explicit user-typed SSH command takes
-    # priority over native mode so flags like -p, -i, -X etc. are not dropped.
-    if ctx.quick_connect_mode and ctx.quick_connect_command:
-        import shlex
-        try:
-            base_cmd = shlex.split(ctx.quick_connect_command)
-        except ValueError:
-            base_cmd = ctx.quick_connect_command.split()
-        # Use default environment
-        env = os.environ.copy()
-        env.pop('SSH_ASKPASS', None)
-        env.pop('SSH_ASKPASS_REQUIRE', None)
-        return SSHConnectionCommand(
-            command=base_cmd,
-            env=env,
-            use_sshpass=False,
-            password=None,
-            use_askpass=False
-        )
-
     # Handle native mode - SSH config is the source of truth for per-host
     # settings (IdentityFile, port forwarding, X11, RemoteCommand, ...), so the
     # command stays minimal: `ssh -F <config> host`. This builder owns only the
@@ -594,6 +622,15 @@ def build_ssh_connection(
                 for entry in overrides:
                     if entry:
                         base_cmd.append(str(entry))
+
+            # Default keepalive: when neither the user's app settings nor their
+            # ~/.ssh/config define ServerAliveInterval for this host, inject a
+            # sane default so a dead link (laptop sleep, VPN drop, cable pull)
+            # is detected instead of the connection lingering "green" forever.
+            # Honors CLAUDE.md: this is a runtime option that doesn't live in
+            # ~/.ssh/config, applied via -o like the rest of ssh_overrides, and
+            # any explicit user/per-host value wins.
+            _maybe_append_default_keepalive(base_cmd, overrides, app_ssh_config)
 
         # Authentication is resolved by the single shared helper so the terminal,
         # SCP, and ssh-copy-id all authenticate identically.

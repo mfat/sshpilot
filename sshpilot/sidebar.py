@@ -714,11 +714,11 @@ class ConnectionRow(Gtk.ListBoxRow):
         self._setup_file_manager_button_hover()
 
         from sshpilot import icon_utils
-        self.status_icon = icon_utils.new_image_from_icon_name("network-offline-symbolic")
+        self.status_icon = icon_utils.new_image_from_icon_name("wired-lock-none-symbolic")
         self.status_icon.set_pixel_size(16)
-        # Set initial visibility based on preference
-        show_status = self.config.get_setting('ui.sidebar_show_connection_status', True)
-        self.status_icon.set_visible(show_status)
+        # A fresh row is UNKNOWN (idle), which shows no indicator; update_status()
+        # reveals and styles it once the connection has a real state.
+        self.status_icon.set_visible(False)
         content.append(self.status_icon)
         
         # Now add the content to main_box
@@ -1026,8 +1026,12 @@ class ConnectionRow(Gtk.ListBoxRow):
             except Exception:
                 selected_rows = []
 
-            if not selected_rows or self not in selected_rows:
-                selected_rows.append(self)
+            # Only a deliberate multi-selection that includes the dragged row
+            # carries the whole set. A single/incidental selection (e.g. the
+            # active connection's still-highlighted row) must not tag along — so
+            # dragging one row drags exactly that row.
+            if not (len(selected_rows) > 1 and self in selected_rows):
+                selected_rows = [self]
 
             seen_nicknames = set()
             for row in selected_rows:
@@ -1159,6 +1163,30 @@ class ConnectionRow(Gtk.ListBoxRow):
         except Exception:
             pass
 
+    @staticmethod
+    def _install_status_css():
+        """Custom color for the failed/disconnected status icon. Uses an explicit
+        red (#DC2626) instead of libadwaita's .error so it stays the same red in
+        dark mode (where .error becomes a coral/orange-ish tone)."""
+        try:
+            display = Gdk.Display.get_default()
+            if not display:
+                return
+            if getattr(display, "_status_css_installed", False):
+                return
+            provider = Gtk.CssProvider()
+            css = (
+                "image.conn-status-up { color: #16A34A; }"
+                "image.conn-status-down { color: #DC2626; }"
+            )
+            provider.load_from_data(css.encode("utf-8"))
+            Gtk.StyleContext.add_provider_for_display(
+                display, provider, Gtk.STYLE_PROVIDER_PRIORITY_USER
+            )
+            setattr(display, "_status_css_installed", True)
+        except Exception:
+            pass
+
     def _update_forwarding_indicators(self):
         self._install_pf_css()
         try:
@@ -1172,31 +1200,33 @@ class ConnectionRow(Gtk.ListBoxRow):
         if not show_port_forwarding:
             return
 
-        rules = getattr(self.connection, "forwarding_rules", []) or []
-        has_local = any(r.get("enabled", True) and r.get("type") == "local" for r in rules)
-        has_remote = any(r.get("enabled", True) and r.get("type") == "remote" for r in rules)
-        has_dynamic = any(r.get("enabled", True) and r.get("type") == "dynamic" for r in rules)
+        # Group the connection's forwarding rules by type. The rule schema and
+        # the formatting/grouping helpers live in port_utils so they can be
+        # reused (e.g. a future port-mapping viewer) without pulling in GTK.
+        from sshpilot import port_utils
+        grouped = port_utils.group_forwarding_rules(
+            getattr(self.connection, "forwarding_rules", None)
+        )
 
-        def make_badge(letter: str, cls: str):
-            circled_map = {"L": "\u24C1", "R": "\u24C7", "D": "\u24B9"}
-            glyph = circled_map.get(letter, letter)
-            lbl = Gtk.Label(label=glyph)
-            lbl.add_css_class(cls)
-            lbl.set_halign(Gtk.Align.CENTER)
-            lbl.set_valign(Gtk.Align.CENTER)
-            try:
-                lbl.set_xalign(0.5)
-                lbl.set_yalign(0.5)
-            except Exception:
-                pass
-            return lbl
+        def make_badge(letter: str, cls: str, type_rules):
+            from sshpilot import icon_utils
+            img = icon_utils.new_image_from_icon_name(letter)  # 'L' / 'R' / 'D'
+            img.set_pixel_size(16)
+            img.set_halign(Gtk.Align.CENTER)
+            img.set_valign(Gtk.Align.CENTER)
+            # Tooltip lists each mapping of this type, capped so a connection
+            # with many rules doesn't produce an unreadably tall tooltip.
+            tooltip = "\n".join(port_utils.format_forwarding_rules(type_rules, max_lines=8))
+            if tooltip:
+                img.set_tooltip_text(tooltip)
+            return img
 
-        if has_local:
-            self.indicator_box.append(make_badge("L", "pf-local"))
-        if has_remote:
-            self.indicator_box.append(make_badge("R", "pf-remote"))
-        if has_dynamic:
-            self.indicator_box.append(make_badge("D", "pf-dynamic"))
+        if grouped["local"]:
+            self.indicator_box.append(make_badge("L", "pf-local", grouped["local"]))
+        if grouped["remote"]:
+            self.indicator_box.append(make_badge("R", "pf-remote", grouped["remote"]))
+        if grouped["dynamic"]:
+            self.indicator_box.append(make_badge("D", "pf-dynamic", grouped["dynamic"]))
 
     def _apply_host_label_text(self, include_port: bool | None = None):
         try:
@@ -1220,31 +1250,73 @@ class ConnectionRow(Gtk.ListBoxRow):
         self._apply_host_label_text()
 
     def update_status(self):
+        """Render the status icon from the connection's authoritative state.
+
+        This is render-only: it never computes or writes back connection state.
+        Aggregation across multiple terminals lives in the reporting layer
+        (``window._recompute_connection_state``) which sets the state via
+        ``ConnectionManager.update_connection_state``.
+        """
         try:
-            window = self.get_root()
-            has_active_terminal = False
-
-            if hasattr(window, "connection_to_terminals") and self.connection in getattr(window, "connection_to_terminals", {}):
-                for t in window.connection_to_terminals.get(self.connection, []) or []:
-                    if getattr(t, "is_connected", False):
-                        has_active_terminal = True
-                        break
-            elif hasattr(window, "active_terminals") and self.connection in window.active_terminals:
-                terminal = window.active_terminals[self.connection]
-                if terminal and hasattr(terminal, "is_connected"):
-                    has_active_terminal = terminal.is_connected
-
-            self.connection.is_connected = has_active_terminal
-
             from sshpilot import icon_utils
-            if has_active_terminal:
-                icon_utils.set_icon_from_name(self.status_icon, "network-idle-symbolic")
-                host_value = _get_connection_host(self.connection) or _get_connection_alias(self.connection)
-                self.status_icon.set_tooltip_text(
-                    f"Connected to {host_value}"
+            from .connection_manager import ConnectionState
+
+            try:
+                state = self.connection.get_status()
+            except Exception:
+                # Older/foreign connection objects without the status API: if we
+                # can't tell, stay neutral (UNKNOWN) rather than alarming in red.
+                state = (
+                    ConnectionState.CONNECTED
+                    if getattr(self.connection, "is_connected", False)
+                    else ConnectionState.UNKNOWN
                 )
-            else:
-                icon_utils.set_icon_from_name(self.status_icon, "network-offline-symbolic")
+
+            host_value = _get_connection_host(self.connection) or _get_connection_alias(self.connection)
+
+            # Clear any previously-applied semantic color classes before re-styling.
+            self._install_status_css()
+            for _cls in ("success", "warning", "error", "dim-label",
+                         "conn-status-up", "conn-status-down"):
+                self.status_icon.remove_css_class(_cls)
+
+            # Idle / never connected this session: show no indicator at all.
+            if state == ConnectionState.UNKNOWN:
+                self.status_icon.set_visible(False)
+                self.status_icon.set_tooltip_text("")
+                self.status_icon.queue_draw()
+                self._apply_group_color_style()
+                return
+
+            # Other states render an icon, subject to the global visibility pref.
+            try:
+                show_status = bool(self.config.get_setting('ui.sidebar_show_connection_status', True))
+            except Exception:
+                show_status = True
+            self.status_icon.set_visible(show_status)
+
+            if state == ConnectionState.CONNECTED:
+                icon_utils.set_icon_from_name(self.status_icon, "wired-lock-closed-symbolic")
+                self.status_icon.add_css_class("conn-status-up")
+                self.status_icon.set_tooltip_text(f"Connected to {host_value}")
+            elif state == ConnectionState.CONNECTING:
+                icon_utils.set_icon_from_name(self.status_icon, "wired-lock-dots-symbolic")
+                self.status_icon.add_css_class("warning")
+                self.status_icon.set_tooltip_text(f"Connecting to {host_value}…")
+            elif state == ConnectionState.FAILED:
+                icon_utils.set_icon_from_name(self.status_icon, "wired-lock-none-symbolic")
+                self.status_icon.add_css_class("conn-status-down")
+                reason = ''
+                try:
+                    reason = self.connection.get_status_reason() or ''
+                except Exception:
+                    reason = ''
+                self.status_icon.set_tooltip_text(
+                    f"Connection failed: {reason}" if reason else "Connection failed"
+                )
+            else:  # DISCONNECTED — a previously-live session that went down.
+                icon_utils.set_icon_from_name(self.status_icon, "wired-lock-none-symbolic")
+                self.status_icon.add_css_class("conn-status-down")
                 self.status_icon.set_tooltip_text("Disconnected")
 
             self.status_icon.queue_draw()

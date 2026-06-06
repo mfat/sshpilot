@@ -1446,6 +1446,82 @@ class PreferencesWindow(Adw.Window):
             
             interface_page.add(sidebar_group)
 
+            # Sidebar behavior
+            sidebar_behavior_group = Adw.PreferencesGroup(title="Sidebar behavior")
+
+            hide_on_startup_switch = Adw.SwitchRow()
+            hide_on_startup_switch.set_title("Hide Sidebar on Startup")
+            hide_on_startup_switch.set_subtitle("Start with the sidebar collapsed")
+            hide_on_startup_switch.set_active(
+                bool(self.config.get_setting('ui.sidebar_hide_on_startup', False))
+            )
+            hide_on_startup_switch.connect(
+                'notify::active',
+                lambda r, _p: self.config.set_setting('ui.sidebar_hide_on_startup', bool(r.get_active())),
+            )
+            sidebar_behavior_group.add(hide_on_startup_switch)
+
+            hide_on_terminal_switch = Adw.SwitchRow()
+            hide_on_terminal_switch.set_title("Hide When a Terminal Opens")
+            hide_on_terminal_switch.set_subtitle("Collapse the sidebar when any session opens, including local terminals")
+            hide_on_terminal_switch.set_active(
+                bool(self.config.get_setting('ui.sidebar_hide_on_terminal_open', False))
+            )
+            hide_on_terminal_switch.connect(
+                'notify::active',
+                lambda r, _p: self.config.set_setting('ui.sidebar_hide_on_terminal_open', bool(r.get_active())),
+            )
+            sidebar_behavior_group.add(hide_on_terminal_switch)
+
+            show_when_no_tabs_switch = Adw.SwitchRow()
+            show_when_no_tabs_switch.set_title("Show When No Tab Is Open")
+            show_when_no_tabs_switch.set_subtitle("Reveal the sidebar when returning to the welcome screen")
+            show_when_no_tabs_switch.set_active(
+                bool(self.config.get_setting('ui.sidebar_show_when_no_tabs', False))
+            )
+            show_when_no_tabs_switch.connect(
+                'notify::active',
+                lambda r, _p: self.config.set_setting('ui.sidebar_show_when_no_tabs', bool(r.get_active())),
+            )
+            sidebar_behavior_group.add(show_when_no_tabs_switch)
+
+            interface_page.add(sidebar_behavior_group)
+
+            # Header bar button visibility
+            headerbar_group = Adw.PreferencesGroup(title="Header Bar Buttons")
+
+            def _add_headerbar_switch(title, subtitle, key):
+                row = Adw.SwitchRow()
+                row.set_title(title)
+                row.set_subtitle(subtitle)
+                row.set_active(bool(self.config.get_setting(key, True)))
+
+                def _on_toggled(r, _p, _k=key):
+                    self.config.set_setting(_k, bool(r.get_active()))
+                    if self.parent_window and hasattr(self.parent_window, 'update_headerbar_buttons'):
+                        self.parent_window.update_headerbar_buttons()
+
+                row.connect('notify::active', _on_toggled)
+                headerbar_group.add(row)
+
+            _add_headerbar_switch(
+                "Split View Button",
+                "Show the split-view button (the grid icon that starts a split view)",
+                'ui.headerbar_show_split_view',
+            )
+            _add_headerbar_switch(
+                "Commands Button",
+                "Show the command snippets toggle button",
+                'ui.headerbar_show_commands',
+            )
+            _add_headerbar_switch(
+                "Local Terminal Button",
+                "Show the button that opens a local terminal",
+                'ui.headerbar_show_local_terminal',
+            )
+
+            interface_page.add(headerbar_group)
+
             # Tips group at the bottom of the Interface page. Lets users
             # re-enable the terminal tips banner after dismissing it with
             # "Don't show again".
@@ -1727,6 +1803,20 @@ class PreferencesWindow(Adw.Window):
                 connection_attempts_value = 0
             self.connection_attempts_row.set_value(connection_attempts_value)
             advanced_group.add(self.connection_attempts_row)
+
+            # Default keepalive opt-out. When on (default) and the user hasn't
+            # set an explicit ServerAlive interval below or in ~/.ssh/config,
+            # SSH Pilot applies a sane default so dropped links are detected.
+            self.apply_default_keepalive_row = Adw.SwitchRow()
+            self.apply_default_keepalive_row.set_title("Apply default keepalive")
+            self.apply_default_keepalive_row.set_subtitle(
+                "Detect dropped connections automatically when no ServerAlive "
+                "value is set here or in ~/.ssh/config. Explicit values always win."
+            )
+            self.apply_default_keepalive_row.set_active(
+                bool(self.config.get_setting('ssh.apply_default_keepalive', True))
+            )
+            advanced_group.add(self.apply_default_keepalive_row)
 
             # Keepalive interval
             self.keepalive_interval_row = Adw.SpinRow.new_with_range(0, 300, 5)
@@ -2290,31 +2380,14 @@ class PreferencesWindow(Adw.Window):
 
         auto_hide_row = Adw.SwitchRow()
         auto_hide_row.set_title(_("Auto-hide Sidebar After Sending"))
-        auto_hide_row.set_subtitle(_("Automatically hide the command panel after a command is sent"))
-        auto_hide_enabled = bool(self.config.get_setting('command_blocks.auto_hide_sidebar', False))
-        auto_hide_row.set_active(auto_hide_enabled)
+        auto_hide_row.set_subtitle(_("Hide the command panel as soon as a command is sent"))
+        auto_hide_row.set_active(bool(self.config.get_setting('command_blocks.auto_hide_sidebar', False)))
         self._cb_auto_hide_row = auto_hide_row
+        auto_hide_row.connect(
+            'notify::active',
+            lambda r, _p: self.config.set_setting('command_blocks.auto_hide_sidebar', r.get_active()),
+        )
         group.add(auto_hide_row)
-
-        timeout_row = Adw.SpinRow.new_with_range(1, 30, 1)
-        timeout_row.set_title(_("Hide Delay (seconds)"))
-        timeout_row.set_subtitle(_("Seconds to wait before hiding the panel"))
-        try:
-            timeout_val = max(1, min(30, int(self.config.get_setting('command_blocks.auto_hide_timeout', 3))))
-        except (TypeError, ValueError):
-            timeout_val = 3
-        timeout_row.set_value(timeout_val)
-        timeout_row.set_sensitive(auto_hide_enabled)
-        timeout_row.connect('notify::value', lambda r, _: self.config.set_setting('command_blocks.auto_hide_timeout', int(r.get_value())))
-        self._cb_timeout_row = timeout_row
-        group.add(timeout_row)
-
-        def _on_auto_hide_toggled(row, _param):
-            active = row.get_active()
-            self.config.set_setting('command_blocks.auto_hide_sidebar', active)
-            self._cb_timeout_row.set_sensitive(active)
-
-        auto_hide_row.connect('notify::active', _on_auto_hide_toggled)
 
         page.add(group)
         return page
@@ -2698,6 +2771,11 @@ class PreferencesWindow(Adw.Window):
                 else:
                     connection_attempts = connection_attempts_value
                 self.config.set_setting('ssh.connection_attempts', connection_attempts)
+            if hasattr(self, 'apply_default_keepalive_row'):
+                self.config.set_setting(
+                    'ssh.apply_default_keepalive',
+                    bool(self.apply_default_keepalive_row.get_active()),
+                )
             if hasattr(self, 'keepalive_interval_row'):
                 keepalive_interval_value = int(self.keepalive_interval_row.get_value())
                 if keepalive_interval_value <= 0:
@@ -2809,6 +2887,10 @@ class PreferencesWindow(Adw.Window):
             if hasattr(self, 'connection_attempts_row'):
                 self.config.set_setting('ssh.connection_attempts', None)
                 self.connection_attempts_row.set_value(0)
+            if hasattr(self, 'apply_default_keepalive_row'):
+                default_apply = bool(defaults.get('apply_default_keepalive', True))
+                self.config.set_setting('ssh.apply_default_keepalive', default_apply)
+                self.apply_default_keepalive_row.set_active(default_apply)
             if hasattr(self, 'keepalive_interval_row'):
                 self.config.set_setting('ssh.keepalive_interval', None)
                 self.keepalive_interval_row.set_value(0)
@@ -2885,30 +2967,54 @@ class PreferencesWindow(Adw.Window):
             if parent_window and hasattr(parent_window, 'connection_manager'):
                 parent_window.connection_manager.set_isolated_mode(bool(use_isolated))
 
-            # Inform user that restart is required for changes
+            # Offer an immediate restart to apply the mode change
             if parent_window:
-                dialog = Adw.MessageDialog.new(
-                    parent_window,
-                    "Operation Mode Changed",
-                    "Restart sshPilot to apply the new operation mode"
-                )
-                dialog.add_response("ok", "OK")
-                dialog.set_response_appearance("ok", Adw.ResponseAppearance.SUGGESTED)
-                dialog.set_modal(True)
-                dialog.set_transient_for(parent_window)
-                dialog.present()
+                use_alert = hasattr(Adw, 'AlertDialog')
+                if use_alert:
+                    rdialog = Adw.AlertDialog(
+                        heading=_("Restart Required"),
+                        body=_(
+                            "Restart SSH Pilot to fully apply the new operation mode."
+                        ),
+                    )
+                else:
+                    rdialog = Adw.MessageDialog(
+                        transient_for=parent_window,
+                        modal=True,
+                        heading=_("Restart Required"),
+                        body=_(
+                            "Restart SSH Pilot to fully apply the new operation mode."
+                        ),
+                    )
+                rdialog.add_response('later', _("Later"))
+                rdialog.add_response('restart', _("Restart Now"))
+                rdialog.set_default_response('restart')
+                rdialog.set_close_response('later')
+                try:
+                    rdialog.set_response_appearance(
+                        'restart', Adw.ResponseAppearance.SUGGESTED
+                    )
+                except Exception:
+                    pass
+
+                def _on_restart_response(_d, response):
+                    if response == 'restart':
+                        from .platform_utils import restart_app
+                        restart_app()
+
+                rdialog.connect('response', _on_restart_response)
+                if use_alert:
+                    rdialog.present(self)
+                else:
+                    rdialog.present()
 
         except Exception as e:
             logger.error(f"Failed to toggle isolated SSH mode: {e}")
 
     def _update_operation_mode_styles(self):
-        """Visually de-emphasize the inactive operation mode"""
-        if self.isolated_mode_radio.get_active():
-            self.default_mode_row.add_css_class('dim-label')
-            self.isolated_mode_row.remove_css_class('dim-label')
-        else:
-            self.isolated_mode_row.add_css_class('dim-label')
-            self.default_mode_row.remove_css_class('dim-label')
+        """Ensure neither operation mode row appears disabled."""
+        for row in (self.default_mode_row, self.isolated_mode_row):
+            row.remove_css_class('dim-label')
 
     def get_theme_name_mapping(self):
         """Get mapping between display names and config keys"""

@@ -1,153 +1,139 @@
-# SSH Pilot - Keyboard Shortcuts
+# SSH Pilot — Keyboard Shortcuts
 
-SSH Pilot is designed for efficient keyboard navigation. This guide covers all available keyboard shortcuts for seamless workflow management.
+SSH Pilot is designed for efficient keyboard navigation. Most shortcuts can be customized in **Preferences → Shortcuts** or by pressing **Ctrl+?** (**Cmd+?** on macOS). Split view shortcuts are hardcoded and cannot be changed.
 
 ## Platform Notes
 
-- **Linux/Windows**: Use `Ctrl` key (shown as `Ctrl` in shortcuts)
-- **macOS**: Use `⌘` (Command) key (shown as `Cmd` in shortcuts)
-- **All Platforms**: `Alt` key works the same across platforms
+- **Linux** — the primary modifier is **Ctrl**
+- **macOS** — the primary modifier is **Cmd** (Command key, shown as ⌘)
+- **All platforms** — the **Alt** key works the same way on both
 
 ---
 
 ## General Application
 
-| Action | Linux/Windows | macOS | Description |
-|--------|---------------|-------|-------------|
-| **Quit Application** | `Ctrl+Shift+Q` | `Cmd+Shift+Q` | Exit SSH Pilot |
-| **Preferences** | `Ctrl+,` | `Cmd+,` | Open application preferences |
-| **Help Documentation** | `F1` | `F1` | Open help documentation |
-| **Keyboard Shortcuts** | `Ctrl+Shift+/` | `Cmd+Shift+/` | Show this shortcuts window |
+| Action | Linux | macOS |
+|--------|-------|-------|
+| Quit | Ctrl+Shift+Q | Cmd+Shift+Q |
+| Settings | Ctrl+, | Cmd+, |
+| Keyboard Shortcuts | Ctrl+? | Cmd+? |
+| Documentation | F1 | F1 |
 
 ---
 
-## 📂 Connection Management
+## Connection Management
 
-| Action | Linux/Windows | macOS | Description |
-|--------|---------------|-------|-------------|
-| **New Connection** | `Ctrl+N` | `Cmd+N` | Create a new SSH connection |
-| **Search Connections** | `Ctrl+F` | `Cmd+F` | Search/filter connection list |
-| **Focus Connection List** | `Ctrl+L` | `Cmd+L` | Focus the sidebar connection list |
-| **Quick Connect** | `Ctrl+Alt+C` | `Cmd+Alt+C` | Open the Quick Connect dialog |
-| **Open New Tab** | `Ctrl+Alt+N` | `Cmd+Alt+N` | Open the highlighted connection in a new tab |
-| **Open in New Tab** | `Ctrl+Enter` | `Cmd+Enter` | Force the selected connection to open in a new tab |
-| **Open or Focus Selected Connection** | `Enter` | `Enter` | Focus an existing tab for the selected connection or open a new one |
-| **Manage Remote Files** | `Ctrl+Shift+O` | `Cmd+Shift+O` | Launch the remote file manager for the selected connection* |
-| **Delete Selected Connection(s)** | `Delete` or `Backspace` | `Delete` (⌫) | Remove the highlighted connections after confirmation |
-
----
-
-## 🔑 SSH Key Management
-
-| Action | Linux/Windows | macOS | Description |
-|--------|---------------|-------|-------------|
-| **Copy Key to Server** | `Ctrl+Shift+K` | `Cmd+Shift+K` | SSH key copy utility |
-| **SSH Config Editor** | `Ctrl+Shift+E` | `Cmd+Shift+E` | Edit SSH configuration |
+| Action | Linux | macOS | Notes |
+|--------|-------|-------|-------|
+| New Connection | Ctrl+N | Cmd+N | Opens the connection editor |
+| Open New Connection Tab | Ctrl+Alt+N | Cmd+Alt+N | Opens a new tab for the selected connection |
+| Open or Focus Selected Connection | Enter | Enter | Switches to an existing tab, or opens one |
+| Force Open in New Tab | Ctrl+Enter | Cmd+Enter | Always opens a new tab, even if one exists |
+| Search Connections | Ctrl+F | Cmd+F | Focuses the sidebar search bar |
+| Focus Connection List | Ctrl+Shift+L | Cmd+Shift+L | Moves focus to the sidebar from anywhere |
+| Copy Key to Server | Ctrl+Shift+K | Cmd+Shift+K | Opens the SSH key copy tool |
+| SSH Config Editor | Ctrl+Shift+E | Cmd+Shift+E | Opens the SSH configuration file in a text editor |
+| Manage Files | Ctrl+Shift+O | Cmd+Shift+O | Opens the file manager for the selected connection |
+| Delete Selected Connection(s) | Delete or Backspace | Delete | Prompts for confirmation |
+| Toggle Sidebar | F9 | F9 | Also accessible from the header bar button |
 
 ---
 
-## 🖥️ Terminal Operations
+## Terminal
 
-| Action | Linux/Windows | macOS | Description |
-|--------|---------------|-------|-------------|
-| **Local Terminal** | `Ctrl+Shift+T` | `Cmd+Shift+T` | Open local terminal tab |
-| **Broadcast Command** | `Ctrl+Shift+B` | `Cmd+Shift+B` | Send command to multiple terminals |
-
-### Terminal Text Operations
-
-| Action | Linux/Windows | macOS | Description |
-|--------|---------------|-------|-------------|
-| **Search Terminal** | `Ctrl+F` | `Cmd+F` | Show the in-terminal search banner |
-| **Find Next Match** | `Ctrl+G` or `Enter` | `Cmd+G` or `Enter` | Jump to the next highlighted search result |
-| **Find Previous Match** | `Ctrl+Shift+G` or `Shift+Enter` | `Cmd+Shift+G` or `Shift+Enter` | Jump to the previous highlighted search result |
-| **Dismiss Terminal Search** | `Escape` | `Escape` | Hide the terminal search banner |
-| **Copy** | `Ctrl+Shift+C` | `Cmd+C` | Copy selected text |
-| **Paste** | `Ctrl+Shift+V` | `Cmd+V` | Paste text |
-| **Select All** | `Ctrl+Shift+A` | `Cmd+A` | Select all terminal text |
-| **Zoom In** | `Ctrl+=` (`Ctrl+Plus`) | `Cmd+=` (`Cmd+Plus`) | Increase font size |
-| **Zoom Out** | `Ctrl+Minus` | `Cmd+Minus` | Decrease font size |
-| **Reset Zoom** | `Ctrl+0` | `Cmd+0` | Reset font size to default |
+| Action | Linux | macOS |
+|--------|-------|-------|
+| Search in Terminal | Ctrl+Shift+F | Cmd+Shift+F |
+| Find Next Match | Ctrl+G or Enter | Cmd+G or Enter |
+| Find Previous Match | Ctrl+Shift+G or Shift+Enter | Cmd+Shift+G or Shift+Enter |
+| Dismiss Search | Escape | Escape |
+| Copy | Ctrl+Shift+C | Cmd+C |
+| Paste | Ctrl+Shift+V | Cmd+V |
+| Select All | Ctrl+Shift+A | Cmd+A |
+| Zoom In | Ctrl+= | Cmd+= |
+| Zoom Out | Ctrl+- | Cmd+- |
+| Reset Zoom | Ctrl+0 | Cmd+0 |
+| Local Terminal | Ctrl+Shift+T | Cmd+Shift+T |
+| Broadcast Command | Ctrl+Shift+B | Cmd+Shift+B |
 
 ---
 
-## 📑 Tab Management
+## Tab Management
 
-| Action | Linux/Windows | macOS | Description |
-|--------|---------------|-------|-------------|
-| **Next Tab** | `Alt+Right` | `Alt+Right` | Switch to next tab |
-| **Previous Tab** | `Alt+Left` | `Alt+Left` | Switch to previous tab |
-| **Close Tab** | `Ctrl+F4` | `Cmd+F4` | Close current tab |
-| **Tab Overview** | `Ctrl+Shift+Tab` | `Cmd+Shift+Tab` | Show tab overview |
-
----
-
-## 🎛️ Interface Control
-
-| Action | Linux/Windows | macOS | Description |
-|--------|---------------|-------|-------------|
-| **Toggle Sidebar** | `F9` or `Ctrl+B` | `F9` or `Cmd+B` | Show/hide connection sidebar |
+| Action | Linux | macOS |
+|--------|-------|-------|
+| Next Tab | Ctrl+Page Down | Ctrl+Page Down |
+| Previous Tab | Ctrl+Page Up | Ctrl+Page Up |
+| Move Tab Left | Ctrl+Shift+Page Up | Ctrl+Shift+Page Up |
+| Move Tab Right | Ctrl+Shift+Page Down | Ctrl+Shift+Page Down |
+| Close Tab | Ctrl+Shift+W | Cmd+Shift+W |
+| Tab Overview | Ctrl+Shift+Tab | Cmd+Shift+Tab |
+| New Split View Tab | Ctrl+Shift+S | Cmd+Shift+S |
+| Command Blocks Sidebar | Ctrl+Alt+S | Ctrl+Alt+S |
 
 ---
 
-## 📁 File Manager
+## Split View (not customizable)
 
-| Action | Linux/Windows | macOS | Description |
-|--------|---------------|-------|-------------|
-| **Focus Path Entry** | `Ctrl+L` | `Cmd+L` | Focus the active pane's path entry and select its contents |
-| **Refresh Directory** | `F5` or `Ctrl+R` | `F5` or `Cmd+R` | Reload the visible directory in the focused pane |
-| **Copy Selection** | `Ctrl+C` | `Cmd+C` | Queue the selected files or folders for copy |
-| **Cut Selection** | `Ctrl+X` | `Cmd+X` | Queue the selected files or folders for move |
-| **Paste** | `Ctrl+V` | `Cmd+V` | Paste the queued items into the current directory |
-| **Paste as Move** | `Ctrl+Shift+V` | `Cmd+Shift+V` | Move queued items into the current directory (force move) |
-| **Delete Selection** | `Delete` or `Shift+Delete` | `Delete` or `Shift+Delete` | Delete the selected files or folders in the focused pane |
+These shortcuts are active whenever a split view tab is in focus.
 
----
-
-## 🗂️ Connection Dialog Shortcuts
-
-When editing connection settings:
-
-| Action | Linux/Windows | macOS | Description |
-|--------|---------------|-------|-------------|
-| **Save Connection** | `Ctrl+S` | `Cmd+S` | Save connection changes |
-| **Cancel/Close** | `Escape` | `Escape` | Cancel and close dialog |
+| Action | Shortcut |
+|--------|----------|
+| Focus pane left | Ctrl+Alt+H |
+| Focus pane down | Ctrl+Alt+J |
+| Focus pane up | Ctrl+Alt+K |
+| Focus pane right | Ctrl+Alt+L |
+| Resize pane left | Ctrl+Alt+Shift+H |
+| Resize pane down | Ctrl+Alt+Shift+J |
+| Resize pane up | Ctrl+Alt+Shift+K |
+| Resize pane right | Ctrl+Alt+Shift+L |
+| Side-by-side layout | Ctrl+Shift+\ |
+| Top / bottom layout | Ctrl+Shift+- |
+| Add pane | Ctrl+Shift+N |
+| Close focused pane | Ctrl+Shift+W |
+| Focus pane by number (1–4) | Alt+1 through Alt+4 |
 
 ---
 
-## 🏃 Quick Navigation Tips
+## File Manager
 
-### Efficient Connection Workflow
-1. **Startup**: Press `Enter` on the highlighted server (the first row at launch) to open or focus it immediately
-2. **Search**: Use `Ctrl/Cmd+F` to quickly find connections
-3. **Multi-select**: Hold `Ctrl` while clicking to select multiple connections
-4. **Quick switch**: Use `Ctrl/Cmd+L` to focus the connection list from anywhere
-5. **Remote files**: `Ctrl/Cmd+Shift+O` jumps straight into the remote file manager when available
-
-### Terminal Workflow
-1. **New connection**: `Ctrl/Cmd+Alt+N` opens the selected connection in a new tab
-2. **Force new tab**: `Ctrl/Cmd+Enter` always opens another tab for the highlighted connection
-3. **Local work**: `Ctrl/Cmd+Shift+T` for a local terminal
-4. **Tab switching**: `Alt+Left/Right` for quick tab navigation
-5. **Broadcast**: `Ctrl/Cmd+Shift+B` to send commands to multiple terminals
-
-### Sidebar Management
-- **Toggle visibility**: `F9` or `Ctrl/Cmd+B`
-- **Focus list**: `Ctrl/Cmd+L` from terminal
-- **Arrow navigation**: Use `Up/Down` arrows to select connections
-- **Enter to connect**: Press `Enter` on any selected connection
+| Action | Linux | macOS |
+|--------|-------|-------|
+| Focus path entry | Ctrl+L | Cmd+L |
+| Refresh directory | F5 or Ctrl+R | F5 or Cmd+R |
+| Copy | Ctrl+C | Cmd+C |
+| Cut | Ctrl+X | Cmd+X |
+| Paste | Ctrl+V | Cmd+V |
+| Paste as move | Ctrl+Shift+V | Cmd+Shift+V |
+| Delete | Delete or Shift+Delete | Delete or Shift+Delete |
 
 ---
 
-## 💡 Pro Tips
+## Connection Editor Dialog
 
-- **Multiple connections**: Select multiple connections with `Ctrl+Click`, then right-click for group operations
-- **Keyboard-only workflow**: You can navigate the entire application without touching the mouse
-- **Search shortcuts**: In search mode, use `Enter` to connect to the first filtered result
-- **Context menus**: Right-click (or menu key) on connections for additional options
-- **Quick access**: Memorize `Ctrl/Cmd+Alt+C` for the quick connect dialog when you need to connect to an ad-hoc server
+| Action | Linux | macOS |
+|--------|-------|-------|
+| Save | Ctrl+S | Cmd+S |
+| Cancel / Close | Escape | Escape |
 
 ---
 
-*Remote file manager shortcuts and the `Ctrl/Cmd+Shift+O` accelerator are available when the file manager feature is enabled in your build.*
+## Connection List Navigation
 
-*This document reflects SSH Pilot's current keyboard shortcuts. For the most up-to-date information, press `Ctrl/Cmd+Shift+/` within the application, or access via Help → Keyboard Shortcuts menu.*
+When the sidebar has focus, you can navigate without the mouse:
+
+- **Up / Down arrow** — move between connections and groups
+- **Enter** — connect to the selected server (or focus its existing tab)
+- **Ctrl+Enter** — force open a new tab for the selected connection
+- **Ctrl+click** — select multiple connections for batch operations
+- **Delete** or **Backspace** — delete selected connection(s)
+
+---
+
+## Customizing Shortcuts
+
+Open **Preferences → Shortcuts** or press **Ctrl+?** (**Cmd+?** on macOS). Click the shortcut next to any action and press the new key combination. SSH Pilot detects conflicts and warns you before saving.
+
+To reset a single shortcut to its default, click the reset button on that row.
+
+Shortcuts are saved per user and persist across application restarts.

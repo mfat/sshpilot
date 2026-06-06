@@ -183,6 +183,14 @@ class Config(GObject.Object):
                 'sidebar_show_connection_status': True,
                 'sidebar_show_port_forwarding': False,
                 'sidebar_show_connection_icon': True,
+                # Sidebar behavior (Settings ▸ Sidebar ▸ Sidebar behavior)
+                'sidebar_hide_on_startup': False,
+                'sidebar_hide_on_terminal_open': False,  # incl. local terminals
+                'sidebar_show_when_no_tabs': False,
+                # Header-bar button visibility (Settings ▸ Interface ▸ Header Bar)
+                'headerbar_show_split_view': True,
+                'headerbar_show_commands': True,
+                'headerbar_show_local_terminal': True,
             },
             'welcome': {
                 'background_color': None,  # None for default, or CSS string for custom
@@ -199,6 +207,13 @@ class Config(GObject.Object):
                 'use_isolated_config': False,
                 'ssh_overrides': [],
                 'strict_host_key_checking': 'accept-new',
+                # When the user hasn't configured keepalive (here or in
+                # ~/.ssh/config), apply a sane default ServerAlive* so a dead
+                # link is detected (~interval*count seconds) instead of the
+                # indicator staying green forever. User/per-host values win.
+                'apply_default_keepalive': True,
+                'default_keepalive_interval': 15,
+                'default_keepalive_count': 3,
             },
             'file_manager': {
                 'force_internal': False,
@@ -231,7 +246,6 @@ class Config(GObject.Object):
                 'commands': [],
                 'defaults_loaded': False,
                 'auto_hide_sidebar': False,
-                'auto_hide_timeout': 3,
                 'insert_only': False,
             },
         }
@@ -702,6 +716,9 @@ class Config(GObject.Object):
             'use_isolated_config': False,
             'verbosity': 0,
             'ssh_overrides': [],
+            'apply_default_keepalive': True,
+            'default_keepalive_interval': 15,
+            'default_keepalive_count': 3,
         }
 
         optional_int_keys = {
@@ -711,12 +728,20 @@ class Config(GObject.Object):
             'keepalive_interval',
         }
 
+        # Internal keepalive defaults applied when the user hasn't set their own
+        # keepalive. Always present (non-optional) so the builder can rely on them.
+        positive_int_keys = {
+            'default_keepalive_interval',
+            'default_keepalive_count',
+        }
+
         bool_keys = {
             'auto_add_host_keys',
             'batch_mode',
             'compression',
             'debug_enabled',
             'use_isolated_config',
+            'apply_default_keepalive',
         }
 
         config: Dict[str, Any] = {}
@@ -735,6 +760,12 @@ class Config(GObject.Object):
             elif key in optional_int_keys:
                 # handled separately after defaults loop
                 pass
+            elif key in positive_int_keys:
+                try:
+                    coerced_int = int(value)
+                except (TypeError, ValueError):
+                    coerced_int = int(default_value)
+                value = coerced_int if coerced_int > 0 else int(default_value)
             elif key == 'strict_host_key_checking':
                 if value is None:
                     value = default_value
@@ -1114,15 +1145,6 @@ class Config(GObject.Object):
                 updated = True
             if 'auto_hide_sidebar' not in cb:
                 cb['auto_hide_sidebar'] = False
-                updated = True
-            try:
-                timeout_val = int(cb.get('auto_hide_timeout', 3))
-                if timeout_val < 1 or timeout_val > 30:
-                    raise ValueError
-            except (TypeError, ValueError):
-                timeout_val = 3
-            if cb.get('auto_hide_timeout') != timeout_val:
-                cb['auto_hide_timeout'] = timeout_val
                 updated = True
 
         return config, updated

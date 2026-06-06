@@ -1,6 +1,7 @@
 """Action handlers for MainWindow and registration helper."""
 
 import logging
+import os
 import random
 from typing import Optional
 from gi.repository import Gio, Gtk, Adw, GLib, Gdk
@@ -16,6 +17,9 @@ from . import wol
 
 HAS_NAV_SPLIT = hasattr(Adw, 'NavigationSplitView')
 HAS_OVERLAY_SPLIT = hasattr(Adw, 'OverlaySplitView')
+
+# Grace delay before the usage-tips banner eases into the update banner's area.
+TIPS_BANNER_DELAY_SECONDS = 4
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +69,10 @@ class WindowActions:
 
                 # Update sidebar visibility
                 self._toggle_sidebar_visibility(new_visible)
+
+                # A manual toggle cancels any pending "hide on terminal open" delay.
+                if hasattr(self, '_cancel_pending_sidebar_hide'):
+                    self._cancel_pending_sidebar_hide()
 
                 # Update button state if it exists (inverted logic: active = should hide)
                 if hasattr(self, 'sidebar_toggle_button'):
@@ -1340,17 +1348,26 @@ class WindowActions:
         # Check for updates in background
         check_for_updates_async(on_update_check_complete)
     
-    def _handle_update_check_result(self, latest_version):
-        """Handle the result of an update check (runs on main thread)"""
+    def _handle_update_check_result(self, latest_version, from_startup=False):
+        """Handle the result of an update check (runs on main thread).
+
+        ``from_startup`` is True for the automatic check run at startup; it
+        suppresses the "you're running the latest version" toast (which would be
+        noise on every launch) while still surfacing the tips banner.
+        """
         if latest_version:
             self._latest_version = latest_version
             self._show_update_banner(latest_version)
         else:
-            # No update available - show a toast
-            toast = Adw.Toast.new("You're running the latest version")
-            toast.set_timeout(3)
-            if hasattr(self, 'toast_overlay'):
-                self.toast_overlay.add_toast(toast)
+            # No update available - tell the user (unless this was the silent
+            # startup check) ...
+            if not from_startup:
+                toast = Adw.Toast.new("You're running the latest version")
+                toast.set_timeout(3)
+                if hasattr(self, 'toast_overlay'):
+                    self.toast_overlay.add_toast(toast)
+            # ... and free up the banner area for a usage tip.
+            self._maybe_show_tips_banner()
     
     def _show_update_banner(self, version):
         """Show the update notification banner"""
@@ -1406,8 +1423,79 @@ class WindowActions:
         self.update_banner.set_revealed(False)
         if hasattr(self, 'update_banner_container'):
             self.update_banner_container.set_visible(False)
+        # Now that the update banner is gone, surface a usage tip in its place.
+        self._maybe_show_tips_banner()
 
     # --- Terminal tips banner (shares the update banner's area) ---------------
+
+    def _build_window_tips(self):
+        """Return the usage tips shown in the banner area.
+
+        Tips are read from ``sshpilot/resources/tips.md`` — one tip per line — so
+        they can be added or edited without touching the source. That file lives
+        in the bundled ``resources`` directory, which the packaging copies into
+        every install, so it ships everywhere. Blank lines and lines starting
+        with ``#`` are ignored. Returns an empty list when the file is missing or
+        unreadable, in which case no tips are shown.
+        """
+        here = os.path.dirname(os.path.abspath(__file__))
+        candidates = (
+            os.path.join(here, 'resources', 'tips.md'),
+        )
+        for path in candidates:
+            try:
+                with open(path, 'r', encoding='utf-8') as fh:
+                    raw_lines = fh.readlines()
+            except OSError:
+                continue
+            tips = []
+            for line in raw_lines:
+                text = line.strip()
+                if not text or text.startswith('#'):
+                    continue
+                tips.append(text)
+            return tips
+        return []
+
+    def _maybe_show_tips_banner(self):
+        """Show a usage tip in the banner area, if the user hasn't opted out.
+
+        Called once the update banner's area is free — either there was no
+        update available, or the user dismissed the update banner. The tip is
+        revealed after a short delay so it eases in gracefully rather than
+        snapping into place the instant the window settles or the update banner
+        disappears. ``show_terminal_tip`` itself suppresses the tip while the
+        update banner is still revealed, so the two never stack.
+        """
+        try:
+            if not getattr(self, 'tips_revealer', None):
+                return
+            if not bool(self.config.get_setting('terminal.show_tips', True)):
+                return
+            # Cancel any pending reveal so repeated triggers don't stack.
+            if getattr(self, '_tips_banner_timeout_id', 0):
+                GLib.source_remove(self._tips_banner_timeout_id)
+            self._tips_banner_timeout_id = GLib.timeout_add_seconds(
+                TIPS_BANNER_DELAY_SECONDS, self._reveal_delayed_tips
+            )
+        except Exception as exc:
+            logger.debug("Failed to schedule tips banner: %s", exc)
+
+    def _reveal_delayed_tips(self):
+        """Reveal a tip once the grace delay has elapsed (one-shot timeout)."""
+        self._tips_banner_timeout_id = 0
+        try:
+            if not getattr(self, 'tips_revealer', None):
+                return False
+            # Re-check the opt-out in case the user disabled tips during the wait.
+            if not bool(self.config.get_setting('terminal.show_tips', True)):
+                return False
+            tips = self._build_window_tips()
+            if tips:
+                self.show_terminal_tip(tips)
+        except Exception as exc:
+            logger.debug("Failed to show tips banner: %s", exc)
+        return False  # one-shot
 
     def show_terminal_tip(self, tips):
         """Show a terminal usage tip in the window banner area.
@@ -1417,7 +1505,7 @@ class WindowActions:
         rest. The update banner takes priority: if it is currently shown, the
         tip is suppressed so the two never stack.
         """
-        if not getattr(self, 'tips_banner', None):
+        if not getattr(self, 'tips_revealer', None):
             return
         if getattr(self, 'update_banner', None) is not None and self.update_banner.get_revealed():
             return
@@ -1434,10 +1522,12 @@ class WindowActions:
         """Render the current tip and toggle the Next button to match the list."""
         try:
             tip = self._terminal_tips[self._terminal_tip_index]
-            self.tips_banner.set_title(f"\N{ELECTRIC LIGHT BULB} {tip}")
-            self.tips_banner.set_revealed(True)
+            self.tips_label.set_label(f"\N{ELECTRIC LIGHT BULB} {tip}")
+            # Make sure the container is visible before revealing so the
+            # slide-in animation actually runs.
             if getattr(self, 'tips_banner_container', None) is not None:
                 self.tips_banner_container.set_visible(True)
+            self.tips_revealer.set_reveal_child(True)
             # The Next button is only useful when there's more than one tip.
             if getattr(self, 'tips_next_button', None) is not None:
                 self.tips_next_button.set_visible(len(self._terminal_tips) > 1)
@@ -1453,12 +1543,16 @@ class WindowActions:
         self._display_current_terminal_tip()
 
     def _hide_tips_banner(self):
-        """Hide the terminal tips banner (used on dismiss and update priority)."""
+        """Hide the terminal tips banner (used on dismiss and update priority).
+
+        Only toggle the revealer's reveal-child so the slide-out transition
+        actually plays; the revealer collapses to zero height on its own once the
+        animation finishes. (Setting the container invisible here would skip the
+        animation — the container stays visible; only fullscreen toggles it.)
+        """
         try:
-            if getattr(self, 'tips_banner', None) is not None:
-                self.tips_banner.set_revealed(False)
-            if getattr(self, 'tips_banner_container', None) is not None:
-                self.tips_banner_container.set_visible(False)
+            if getattr(self, 'tips_revealer', None) is not None:
+                self.tips_revealer.set_reveal_child(False)
         except Exception:
             pass
 

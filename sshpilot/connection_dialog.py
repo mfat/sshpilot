@@ -45,7 +45,8 @@ except (ImportError, AttributeError):  # pragma: no cover - used in tests withou
     GLib = _DummyGLib
     GObject.SignalFlags = types.SimpleNamespace(RUN_FIRST=None)
 from .port_utils import get_port_checker
-from .platform_utils import is_macos, get_ssh_dir
+from .platform_utils import is_macos, get_ssh_dir, get_config_dir
+from .path_list import PathList
 from . import wol
 
 # Initialize gettext
@@ -751,6 +752,580 @@ class SSHConfigAdvancedTab(Gtk.Box):
         # Update the parent connection object if we're editing
         self._update_parent_connection()
 
+
+_KEY_BADGE_CSS_REGISTERED = False
+
+
+def _ensure_key_badge_css():
+    """Register the circular order-badge style once for the whole display."""
+    global _KEY_BADGE_CSS_REGISTERED
+    if _KEY_BADGE_CSS_REGISTERED:
+        return
+    display = Gdk.Display.get_default()
+    if display is None:
+        return
+    provider = Gtk.CssProvider()
+    provider.load_from_data(b"""
+    .key-order-badge {
+        min-width: 24px;
+        min-height: 24px;
+        border-radius: 999px;
+        background-color: @accent_bg_color;
+        color: @accent_fg_color;
+        font-weight: bold;
+        padding: 0;
+    }
+    .key-type-pill {
+        background-color: alpha(@accent_color, 0.15);
+        color: @accent_color;
+        border-radius: 6px;
+        padding: 1px 7px;
+        font-size: 0.8em;
+        font-weight: bold;
+        min-width: 72px;
+    }
+    """)
+    Gtk.StyleContext.add_provider_for_display(
+        display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+    )
+    _KEY_BADGE_CSS_REGISTERED = True
+
+
+# --- SSH key fingerprint helpers (type · SHA256 · comment) -------------------
+_FINGERPRINT_CACHE: Dict[str, tuple] = {}
+
+
+def _parse_keygen_line(line: str) -> tuple:
+    """Parse an ``ssh-keygen -l`` line into (type_label, "SHA256:…", comment).
+
+    Example line: ``256 SHA256:abc… user@host (ED25519)``.
+    """
+    parts = (line or "").strip().split()
+    if len(parts) < 2:
+        return ("", "", "")
+    fingerprint = parts[1]
+    key_type = parts[-1].strip("()") if parts[-1].startswith("(") else ""
+    comment = " ".join(parts[2:-1]) if len(parts) > 3 else (parts[2] if len(parts) > 2 else "")
+    return (key_type, fingerprint, comment)
+
+
+def _fingerprint_for_path(path: str) -> tuple:
+    """(type_label, fingerprint, comment) for a key file, via ``ssh-keygen -lf``."""
+    expanded = os.path.expanduser(path or "")
+    if expanded in _FINGERPRINT_CACHE:
+        return _FINGERPRINT_CACHE[expanded]
+    result = ("", "", "")
+    try:
+        proc = subprocess.run(["ssh-keygen", "-lf", expanded],
+                              capture_output=True, text=True, timeout=5)
+        if proc.returncode == 0:
+            result = _parse_keygen_line(proc.stdout)
+    except Exception:
+        logger.debug("ssh-keygen fingerprint failed for %s", path, exc_info=True)
+    _FINGERPRINT_CACHE[expanded] = result
+    return result
+
+
+def _fingerprint_for_pub_line(pub_line: str) -> tuple:
+    """(type_label, fingerprint, comment) for a public-key line (e.g. ssh-add -L)."""
+    try:
+        proc = subprocess.run(["ssh-keygen", "-lf", "-"],
+                              input=(pub_line or "") + "\n",
+                              capture_output=True, text=True, timeout=5)
+        if proc.returncode == 0:
+            return _parse_keygen_line(proc.stdout)
+    except Exception:
+        logger.debug("ssh-keygen fingerprint (stdin) failed", exc_info=True)
+    return ("", "", "")
+
+
+def _accent_hex():
+    """Current libadwaita accent colour as #RRGGBB (theme-aware)."""
+    try:
+        sm = Adw.StyleManager.get_default()
+        rgba = sm.get_accent_color().to_standalone_rgba(sm.get_dark())
+        return "#%02x%02x%02x" % (
+            int(rgba.red * 255), int(rgba.green * 255), int(rgba.blue * 255))
+    except Exception:
+        return "#3584e4"  # GNOME blue fallback
+
+
+def _type_tag_markup(ktype):
+    """Pango markup for a key-type tag (e.g. ED25519) tinted with the accent
+    colour — used inside an Adw.ActionRow subtitle, which is text-only."""
+    if not ktype:
+        return ""
+    accent = _accent_hex()
+    return (f"<span background='{accent}' bgalpha='12%' foreground='{accent}' "
+            f"weight='bold'> {GLib.markup_escape_text(ktype)} </span>")
+
+
+class KeyChooserDialog(Adw.Window):
+    """Modal chooser listing keys on disk and in the agent across two tabs.
+
+    Each tab is a boxed list of selectable rows showing type · fingerprint ·
+    comment/path. Checked rows are committed via ``on_add(path)`` when the user
+    presses Add. Agent keys are materialised to a real path at add time.
+    """
+
+    __gtype_name__ = 'SshPilotKeyChooserDialog'
+
+    def __init__(self, parent, *, disk_keys, agent_keys, existing_paths,
+                 on_add, on_browse=None):
+        super().__init__()
+        self.set_title(_("Add a Key"))
+        self.set_modal(True)
+        if parent is not None:
+            self.set_transient_for(parent)
+        self.set_default_size(540, 580)
+
+        self._on_add = on_add
+        self._on_browse = on_browse
+        self._checks = []  # (payload, check_button); payload is path or callable
+        self._existing = {
+            os.path.realpath(os.path.expanduser(p))
+            for p in (existing_paths or []) if p
+        }
+
+        toolbar = Adw.ToolbarView()
+        header = Adw.HeaderBar()
+
+        cancel_btn = Gtk.Button(label=_("Cancel"))
+        cancel_btn.connect("clicked", lambda *_a: self.close())
+        header.pack_start(cancel_btn)
+
+        self.add_btn = Gtk.Button(label=_("Add"))
+        self.add_btn.add_css_class("suggested-action")
+        self.add_btn.set_sensitive(False)
+        self.add_btn.connect("clicked", self._on_add_clicked)
+        header.pack_end(self.add_btn)
+
+        stack = Adw.ViewStack()
+        switcher = Adw.ViewSwitcher(stack=stack)
+        try:
+            switcher.set_policy(Adw.ViewSwitcherPolicy.WIDE)
+        except Exception:
+            pass
+        header.set_title_widget(switcher)
+
+        stack.add_titled_with_icon(
+            self._build_disk_page(disk_keys), "disk", _("On disk"),
+            "computer-symbolic")
+        stack.add_titled_with_icon(
+            self._build_agent_page(agent_keys), "agent", _("In agent"),
+            "dialog-password-symbolic")
+
+        toolbar.add_top_bar(header)
+        toolbar.set_content(stack)
+        self.set_content(toolbar)
+
+    # ---- page builders --------------------------------------------------
+    def _wrap_group(self, group):
+        scrolled = Gtk.ScrolledWindow()
+        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scrolled.set_vexpand(True)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        box.set_margin_top(12); box.set_margin_bottom(12)
+        box.set_margin_start(12); box.set_margin_end(12)
+        box.append(group)
+        scrolled.set_child(box)
+        return scrolled
+
+    def _build_disk_page(self, disk_keys):
+        group = Adw.PreferencesGroup()
+        for item in disk_keys:
+            group.add(self._make_choice_row(
+                title=item.get("name") or item.get("path"),
+                ktype=item.get("ktype"),
+                meta=item.get("meta"),
+                path=item.get("path"),
+                payload=item.get("path"),
+                dedup_path=item.get("path"),
+            ))
+        if not disk_keys:
+            group.add(self._placeholder_row(_("No private keys found in ~/.ssh")))
+        if callable(self._on_browse):
+            browse = Adw.ButtonRow(title=_("Browse…"), start_icon_name="folder-symbolic")
+            browse.connect("activated", self._on_browse_clicked)
+            group.add(browse)
+        return self._wrap_group(group)
+
+    def _build_agent_page(self, agent_keys):
+        group = Adw.PreferencesGroup()
+        for item in agent_keys:
+            group.add(self._make_choice_row(
+                title=item.get("title"),
+                ktype=item.get("ktype"),
+                meta=item.get("meta"),
+                path=None,
+                payload=item.get("materializer"),
+                dedup_path=None,
+            ))
+        if not agent_keys:
+            group.add(self._placeholder_row(_("No keys loaded in ssh-agent")))
+        return self._wrap_group(group)
+
+    def _placeholder_row(self, text):
+        row = Adw.ActionRow(title=text)
+        row.set_sensitive(False)
+        return row
+
+    def _make_choice_row(self, *, title, ktype=None, meta=None, path=None,
+                         payload, dedup_path):
+        row = Adw.ActionRow(title=title or _("key"))
+        check = Gtk.CheckButton()
+        check.set_valign(Gtk.Align.CENTER)
+        already = bool(dedup_path) and (
+            os.path.realpath(os.path.expanduser(dedup_path)) in self._existing)
+        meta_text = meta or ""
+        if already:
+            meta_text = (meta_text + " · " if meta_text else "") + _("Added")
+
+        # Subtitle: type tag + fingerprint on top, the path dimmed below.
+        tag = _type_tag_markup(ktype)
+        first = "  ".join(p for p in (tag, GLib.markup_escape_text(meta_text) if meta_text else "") if p)
+        lines = []
+        if first:
+            lines.append(first)
+        if path:
+            lines.append(f"<span alpha='55%'>{GLib.markup_escape_text(path)}</span>")
+        if lines:
+            row.set_subtitle("\n".join(lines))
+            try:
+                row.set_subtitle_lines(len(lines))
+            except Exception:
+                pass
+
+        row.add_prefix(check)
+        if already:
+            check.set_active(True)
+            check.set_sensitive(False)
+            row.set_sensitive(False)
+        else:
+            check.connect("toggled", lambda *_a: self._update_add_sensitivity())
+            row.set_activatable_widget(check)
+            self._checks.append((payload, check))
+        return row
+
+    # ---- actions --------------------------------------------------------
+    def _update_add_sensitivity(self):
+        self.add_btn.set_sensitive(any(c.get_active() for _p, c in self._checks))
+
+    def _on_add_clicked(self, *_a):
+        for payload, check in self._checks:
+            if not check.get_active():
+                continue
+            try:
+                path = payload() if callable(payload) else payload
+            except Exception:
+                logger.debug("Key chooser: failed to resolve a selection", exc_info=True)
+                path = None
+            if path:
+                self._on_add(path)
+        self.close()
+
+    def _on_browse_clicked(self, *_a):
+        def _chosen(path):
+            if path:
+                self._on_add(path)
+            self.close()
+        try:
+            self._on_browse(_chosen)
+        except Exception:
+            logger.debug("Key chooser browse failed", exc_info=True)
+
+
+class FileListEditor(Adw.PreferencesGroup):
+    """An editable list of file paths shown as an Adwaita preferences group.
+
+    The group *title* is the section label (e.g. "Identity files (private
+    keys)"); each path is an AdwActionRow with an optional per-key passphrase
+    button and a remove button. The bottom of the group holds one Adw.ButtonRow
+    per *add action* \u2014 e.g. "Add key from disk" and "Add key from agent" \u2014 so
+    different key sources are never mixed in a single menu.
+
+    add_actions: list of dicts, each:
+        {'label': str, 'icon': str (optional),
+         'discover': callable() -> [(display, value)],
+         'browse':  callable(on_chosen) (optional)}
+    A *value* may be a path string or a zero-arg callable returning a path
+    (used to materialise an agent key's public key on demand).
+    """
+
+    __gtype_name__ = 'SshPilotFileListEditor'
+
+    def __init__(self, *, title, add_actions=None,
+                 with_passphrase=False, connection_manager=None,
+                 on_changed=None, verify=None):
+        super().__init__()
+        self.set_title(title)
+        self._model = PathList()
+        self._rows = []
+        self._with_passphrase = with_passphrase
+        self._connection_manager = connection_manager
+        self._on_changed = on_changed
+        # verify(path, passphrase) -> bool before storing (None disables it).
+        self._verify = verify
+
+        # Add actions are compact pill buttons in the group header (not
+        # full-width list rows). _add_rows stays empty so the row-reordering
+        # helpers below are no-ops.
+        self._add_rows = []
+        self._add_buttons = []
+        add_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        add_box.set_valign(Gtk.Align.CENTER)
+        for action in (add_actions or []):
+            btn = Gtk.Button()
+            btn.set_child(Adw.ButtonContent(
+                icon_name=action.get('icon', 'list-add-symbolic'),
+                label=action.get('label', _("Add\u2026")),
+            ))
+            btn.add_css_class('pill')
+            btn.add_css_class('suggested-action')
+            btn.connect('clicked', self._on_add_clicked, action)
+            add_box.append(btn)
+            self._add_buttons.append(btn)
+        if self._add_buttons:
+            self.set_header_suffix(add_box)
+
+    # ---- public API -----------------------------------------------------
+    def get_paths(self):
+        return self._model.get()
+
+    def set_paths(self, paths):
+        for row in list(self._rows):
+            if row.get_parent() is not None:
+                self.remove(row)
+        self._rows = []
+        self._model.set(paths)
+        for p in self._model.get():
+            self._append_key_row(p)
+        self._ensure_add_rows_last()
+
+    def add_path(self, path):
+        if self._model.add(path):
+            self._append_key_row(self._model.get()[-1])
+            self._emit_changed()
+
+    # ---- internals ------------------------------------------------------
+    def _emit_changed(self):
+        if callable(self._on_changed):
+            try:
+                self._on_changed(self)
+            except Exception:
+                logger.debug("FileListEditor on_changed callback failed", exc_info=True)
+
+    def _ensure_add_rows_last(self):
+        """Re-append the add buttons so they stay below the key rows, in order."""
+        for btn in self._add_rows:
+            if btn.get_parent() is not None:
+                self.remove(btn)
+        for btn in self._add_rows:
+            self.add(btn)
+
+    def _append_key_row(self, path):
+        for btn in self._add_rows:
+            if btn.get_parent() is not None:
+                self.remove(btn)
+        if self._with_passphrase:
+            row = self._make_key_expander_row(path)
+        else:
+            row = Adw.ActionRow(title=os.path.basename(path) or path, subtitle=path)
+            try:
+                row.set_subtitle_lines(1)
+            except Exception:
+                pass
+            remove_btn = Gtk.Button(icon_name='user-trash-symbolic')
+            remove_btn.add_css_class('flat')
+            remove_btn.set_valign(Gtk.Align.CENTER)
+            remove_btn.set_tooltip_text(_("Remove"))
+            remove_btn.connect('clicked', lambda _b, p=path, r=row: self._remove_row(p, r))
+            row.add_suffix(remove_btn)
+        self.add(row)
+        self._rows.append(row)
+        for btn in self._add_rows:
+            self.add(btn)
+        self._renumber_rows()
+
+    def _renumber_rows(self):
+        """Keep the circular order badges in sync with each key's position."""
+        n = 0
+        for row in self._rows:
+            badge = getattr(row, '_order_badge', None)
+            if badge is None:
+                continue
+            n += 1
+            badge.set_label(str(n))
+
+    def _make_key_expander_row(self, path):
+        """A key row with its passphrase entry shown beside it (two columns)."""
+        _ensure_key_badge_css()
+        norm = os.path.realpath(os.path.expanduser(path))
+        ktype, _fp, _comment = _fingerprint_for_path(path)
+        # Key list shows name as title; the type tag + path live in the subtitle.
+        # The fingerprint is only shown in the key selector dialog.
+        row = Adw.ActionRow(title=os.path.basename(path) or path)
+        tag = _type_tag_markup(ktype)
+        row.set_subtitle("  ".join(p for p in (tag, GLib.markup_escape_text(path)) if p))
+        try:
+            row.set_subtitle_lines(1)
+        except Exception:
+            pass
+
+        # Prefixes render as number, then icon (add_prefix prepends, so the
+        # icon is added first and the badge last to get this order).
+        key_icon = Gtk.Image.new_from_icon_name('dialog-password-symbolic')
+        key_icon.set_valign(Gtk.Align.CENTER)
+        row.add_prefix(key_icon)
+
+        # Order badge (number in a circle) reflecting the offer order.
+        badge = Gtk.Label(label="")
+        badge.add_css_class('key-order-badge')
+        badge.set_valign(Gtk.Align.CENTER)
+        badge.set_halign(Gtk.Align.CENTER)
+        row.add_prefix(badge)
+        row._order_badge = badge
+
+        # Second column: per-key passphrase entry, always visible next to the key.
+        pass_entry = Gtk.PasswordEntry()
+        pass_entry.set_show_peek_icon(True)
+        pass_entry.set_valign(Gtk.Align.CENTER)
+        pass_entry.set_width_chars(18)
+        try:
+            pass_entry.set_property('placeholder-text', _("Key passphrase"))
+        except Exception:
+            pass
+        if self._connection_manager is not None:
+            try:
+                existing = self._connection_manager.get_key_passphrase(norm) or ''
+                if existing:
+                    pass_entry.set_text(existing)
+            except Exception:
+                pass
+        # Clear the error state as soon as the user edits the value again.
+        pass_entry.connect('changed', lambda e: e.remove_css_class('error'))
+        # Commit on Enter and when focus leaves the entry.
+        pass_entry.connect('activate', self._commit_passphrase, path, norm)
+        focus = Gtk.EventControllerFocus()
+        focus.connect('leave', lambda _c, e=pass_entry, p=path, n=norm: self._commit_passphrase(e, p, n))
+        pass_entry.add_controller(focus)
+        row.add_suffix(pass_entry)
+
+        remove_btn = Gtk.Button(icon_name='user-trash-symbolic')
+        remove_btn.add_css_class('flat')
+        remove_btn.set_valign(Gtk.Align.CENTER)
+        remove_btn.set_tooltip_text(_("Remove"))
+        remove_btn.connect('clicked', lambda _b, p=path, r=row: self._remove_row(p, r))
+        row.add_suffix(remove_btn)
+        return row
+
+    def _commit_passphrase(self, pass_entry, path, norm):
+        text = pass_entry.get_text()
+        if text and callable(self._verify):
+            try:
+                ok = bool(self._verify(path, text))
+            except Exception:
+                ok = False
+            if not ok:
+                pass_entry.add_css_class('error')
+                return
+        pass_entry.remove_css_class('error')
+        if self._connection_manager is not None:
+            try:
+                if text:
+                    self._connection_manager.store_key_passphrase(norm, text)
+                elif hasattr(self._connection_manager, 'delete_key_passphrase'):
+                    self._connection_manager.delete_key_passphrase(norm)
+            except Exception:
+                logger.debug("Failed to store/delete passphrase for %s", norm, exc_info=True)
+
+    def _remove_row(self, path, row):
+        self._model.remove(path)
+        try:
+            self.remove(row)
+        except Exception:
+            pass
+        if row in self._rows:
+            self._rows.remove(row)
+        self._renumber_rows()
+        self._emit_changed()
+
+    def _on_add_clicked(self, row, action):
+        # A 'chooser' action opens a custom dialog instead of the inline popover.
+        chooser = action.get('chooser')
+        if callable(chooser):
+            chooser(self)
+            return
+
+        popover = Gtk.Popover()
+        popover.set_parent(row)
+        popover.set_position(Gtk.PositionType.TOP)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        for m in ('top', 'bottom', 'start', 'end'):
+            getattr(box, f'set_margin_{m}')(6)
+
+        present = set(self._model.get())
+        discover = action.get('discover')
+        items = []
+        if callable(discover):
+            try:
+                items = discover() or []
+            except Exception:
+                logger.debug("FileListEditor discover() failed", exc_info=True)
+                items = []
+        fresh = [(d, v) for d, v in items if callable(v) or (v and v not in present)]
+        rendered_any = False
+        for display, value in fresh:
+            item = Gtk.Button(label=display)
+            item.add_css_class('flat')
+            try:
+                item.get_child().set_halign(Gtk.Align.START)
+            except Exception:
+                pass
+            # Close the popover first, then add on the next idle tick: adding a
+            # row reparents the add-button rows to keep them last, which would
+            # crash if done while a popover is still anchored to one of them.
+            item.connect('clicked', lambda _x, v=value, pop=popover: (
+                pop.popdown(), GLib.idle_add(self._add_value, v)))
+            box.append(item)
+            rendered_any = True
+
+        if not rendered_any and not action.get('browse'):
+            none_lbl = Gtk.Label(label=_("Nothing detected"))
+            none_lbl.add_css_class('dim-label')
+            none_lbl.set_margin_start(6)
+            none_lbl.set_margin_end(6)
+            box.append(none_lbl)
+
+        browse = action.get('browse')
+        if callable(browse):
+            if rendered_any:
+                box.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
+            browse_item = Gtk.Button(label=_("Browse\u2026"))
+            browse_item.add_css_class('flat')
+            browse_item.connect('clicked', lambda _x, pop=popover, b=browse: (pop.popdown(), self._do_browse(b)))
+            box.append(browse_item)
+
+        popover.set_child(box)
+        popover.popup()
+
+    def _add_value(self, value):
+        """Add a path, resolving a callable value (materialise-on-add) first."""
+        try:
+            path = value() if callable(value) else value
+        except Exception:
+            logger.debug("FileListEditor value producer failed", exc_info=True)
+            path = None
+        if path:
+            self.add_path(path)
+
+    def _do_browse(self, browse):
+        if callable(browse):
+            try:
+                browse(self.add_path)
+            except Exception:
+                logger.debug("FileListEditor browse() failed", exc_info=True)
+
 class ConnectionDialog(Adw.Window):
     """Dialog for adding/editing SSH connections using custom layout with pinned buttons"""
     
@@ -965,83 +1540,285 @@ class ConnectionDialog(Adw.Window):
         
         self.add_controller(shortcut_controller)
     
-    def on_auth_method_changed(self, combo_row, param):
-        """Handle authentication method change"""
-        is_key_based = combo_row.get_selected() == 0  # 0 is for key-based auth
-        
-        # Show/hide key file and passphrase fields for key-based auth
-        if hasattr(self, 'keyfile_row'):
-            self.keyfile_row.set_visible(is_key_based)
-        if hasattr(self, 'key_select_row'):
-            self.key_select_row.set_visible(is_key_based)
-        if hasattr(self, 'key_only_row'):
-            self.key_only_row.set_visible(is_key_based and self.key_select_row.get_selected() == 1)
+    def _auth_is_key_based(self) -> bool:
+        try:
+            return self.auth_toggle.get_active() == 0
+        except Exception:
+            return True
 
-        # Password field is always available since key-based auth can also require a password
+    def _selected_auth_method(self) -> int:
+        """0 = key-based, 1 = password."""
+        try:
+            return int(self.auth_toggle.get_active())
+        except Exception:
+            return 0
+
+    def _selected_key_mode(self) -> int:
+        """0 = automatic, 1 = specific + IdentitiesOnly, 2 = specific."""
+        try:
+            specific = bool(getattr(self, 'key_specific_check', None) and self.key_specific_check.get_active())
+        except Exception:
+            specific = False
+        if not specific:
+            return 0
+        try:
+            only = self.key_only_row.get_active()
+        except Exception:
+            only = True
+        return 1 if only else 2
+
+    def _collect_identity_files(self):
+        try:
+            return self.key_editor.get_paths()
+        except Exception:
+            return []
+
+    def _collect_certificate_files(self):
+        try:
+            return self.cert_editor.get_paths()
+        except Exception:
+            return []
+
+    def _selected_add_keys_to_agent(self) -> str:
+        """Return the AddKeysToAgent value for the selected combo row ('' = default)."""
+        try:
+            idx = self.add_keys_to_agent_row.get_selected()
+            return self._add_keys_values[idx] if 0 <= idx < len(self._add_keys_values) else ''
+        except Exception:
+            return ''
+
+    def on_auth_method_changed(self, *args):
+        """Reveal key-based vs password controls based on the auth ToggleGroup."""
+        is_key_based = self._auth_is_key_based()
+        for name in ('key_auto_row', 'key_specific_row', 'add_keys_to_agent_row'):
+            row = getattr(self, name, None)
+            if row is not None:
+                row.set_visible(is_key_based)
         if hasattr(self, 'password_row'):
-            self.password_row.set_visible(True)
+            self.password_row.set_visible(True)  # optional for keys, primary for password
         if hasattr(self, 'pubkey_auth_row'):
             self.pubkey_auth_row.set_visible(not is_key_based)
+        # Agent/hardware key sources apply to BOTH Automatic and specific-key
+        # modes (that's what Automatic relies on); hide only for password auth.
+        if hasattr(self, 'hw_group'):
+            self.hw_group.set_visible(is_key_based)
+        # Update key/cert editor visibility for the current selection mode.
+        self.on_key_select_changed()
 
-        # Also update browse availability per key selection mode
+    def on_key_select_changed(self, *args):
+        """Show the key/cert editors only for key-based auth with a specific key."""
+        is_key_based = self._auth_is_key_based()
         try:
-            self.on_key_select_changed(self.key_select_row, None)
-        except Exception:
-            pass
-        
-
-    def on_key_select_changed(self, combo_row, param):
-        """Enable browse button only when 'Use a specific key' is selected."""
-        try:
-            use_specific = (combo_row.get_selected() == 1) if combo_row else False
+            use_specific = bool(is_key_based and getattr(self, 'key_specific_check', None)
+                                and self.key_specific_check.get_active())
         except Exception:
             use_specific = False
-        # Enable/disable keyfile browse UI
-        try:
-            if hasattr(self, 'keyfile_btn'):
-                self.keyfile_btn.set_sensitive(use_specific)
-            if hasattr(self, 'keyfile_row'):
-                self.keyfile_row.set_sensitive(use_specific)
-            if hasattr(self, 'key_dropdown'):
-                self.key_dropdown.set_sensitive(use_specific)
-            if hasattr(self, 'certificate_row'):
-                self.certificate_row.set_sensitive(use_specific)
-            if hasattr(self, 'cert_dropdown'):
-                self.cert_dropdown.set_sensitive(use_specific)
-            is_key_based = (
-                hasattr(self, 'auth_method_row') and self.auth_method_row.get_selected() == 0
-            )
-            if hasattr(self, 'key_only_row'):
-                self.key_only_row.set_visible(use_specific and is_key_based)
-                self.key_only_row.set_sensitive(use_specific and is_key_based)
-            if hasattr(self, 'key_passphrase_row'):
-                self.key_passphrase_row.set_visible(use_specific and is_key_based)
+        for name in ('key_editor', 'idonly_group', 'cert_editor'):
+            widget = getattr(self, name, None)
+            if widget is not None:
+                widget.set_visible(use_specific)
 
-            if use_specific:
-                key_path = getattr(self, '_selected_keyfile_path', None)
-                if not key_path:
-                    try:
-                        selected = self.key_dropdown.get_selected() if hasattr(self, 'key_dropdown') else -1
-                    except Exception:
-                        selected = -1
-                    if (
-                        hasattr(self, '_key_paths')
-                        and hasattr(self, 'key_dropdown')
-                        and 0 <= selected < len(self._key_paths)
-                    ):
-                        candidate_path = self._key_paths[selected]
-                        if candidate_path and candidate_path != "__BROWSE__":
-                            key_path = candidate_path
-                if key_path:
-                    self._update_passphrase_for_key(key_path)
-            else:
-                if hasattr(self, 'key_passphrase_row'):
-                    self.key_passphrase_row.set_text("")
-                self._active_key_path = None
+    # ---- discovery / browse for the key & certificate FileListEditors -------
+    def _agent_keys(self):
+        """List of (raw_line, blob, key_type, comment) for keys in ssh-agent."""
+        keys = []
+        try:
+            result = subprocess.run(
+                ['ssh-add', '-L'], capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0:
+                for line in result.stdout.splitlines():
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        comment = parts[2] if len(parts) >= 3 else ''
+                        keys.append((line.strip(), parts[1], parts[0], comment))
         except Exception:
-            pass
-        
-    
+            logger.debug("ssh-add -L unavailable", exc_info=True)
+        return keys
+
+    def _make_agent_materializer(self, raw_line):
+        return lambda: self._materialize_agent_pubkey(raw_line)
+
+    def _materialize_agent_pubkey(self, raw_line):
+        """Write an agent key's public key to the app config dir and return its path.
+
+        Referencing that .pub as IdentityFile makes ssh use the agent's matching
+        private key — the standard way to pin an agent-held key with no local
+        private key file. Stored under the app's own config directory (keeping
+        ~/.ssh untouched). Idempotent (named by comment + key-blob hash).
+        """
+        import hashlib
+        parts = raw_line.split()
+        if len(parts) < 2:
+            return ''
+        blob = parts[1]
+        comment = parts[2] if len(parts) >= 3 else ''
+        base = re.sub(r'[^A-Za-z0-9._-]+', '_', comment).strip('_') or 'agent'
+        digest = hashlib.sha256(blob.encode()).hexdigest()[:8]
+        try:
+            agent_dir = os.path.join(get_config_dir(), 'agent_keys')
+            os.makedirs(agent_dir, exist_ok=True)
+        except Exception:
+            return ''
+        path = os.path.join(agent_dir, f"{base}-{digest}.pub")
+        try:
+            if not os.path.exists(path):
+                with open(path, 'w') as f:
+                    f.write(raw_line.strip() + "\n")
+                try:
+                    os.chmod(path, 0o644)
+                except Exception:
+                    pass
+        except Exception:
+            logger.debug("Failed to materialise agent public key", exc_info=True)
+            return ''
+        return path
+
+    @staticmethod
+    def _key_type_label(pub_first_field):
+        t = (pub_first_field or '').lower()
+        if t.startswith('sk-'):
+            return _("FIDO security key")
+        if 'ed25519' in t:
+            return _("Ed25519")
+        if 'ecdsa' in t:
+            return _("ECDSA")
+        if 'rsa' in t:
+            return _("RSA")
+        if 'dss' in t or 'dsa' in t:
+            return _("DSA")
+        return _("key")
+
+    @staticmethod
+    def _read_pub(pub_path):
+        try:
+            with open(pub_path, 'r') as f:
+                parts = f.read().split()
+            return parts if len(parts) >= 2 else None
+        except Exception:
+            return None
+
+    def _discover_disk_keys(self):
+        """[(key_name, path)] of private key files on disk (names only)."""
+        out = []
+        seen = set()
+        cm = getattr(self, 'connection_manager', None)
+        try:
+            if cm is not None and hasattr(cm, 'load_ssh_keys'):
+                for path in (cm.load_ssh_keys() or []):
+                    if path and path not in seen:
+                        seen.add(path)
+                        out.append((os.path.basename(path), path))
+        except Exception:
+            logger.debug("disk key discovery failed", exc_info=True)
+        return out
+
+    def _discover_agent_keys(self):
+        """[(display, materialiser)] of every key currently loaded in ssh-agent.
+
+        Selecting one writes its public key to the app config dir so ssh can use
+        the agent's matching private key."""
+        import hashlib
+        out = []
+        for raw_line, blob, ktype, comment in self._agent_keys():
+            label = self._key_type_label(ktype)
+            name = comment or _("agent key")
+            short = hashlib.sha256(blob.encode()).hexdigest()[:8]
+            out.append((f"{name}  —  {label} ({short})",
+                        self._make_agent_materializer(raw_line)))
+        return out
+
+    def _discover_certs(self):
+        """Return [(display, path)] of detected *-cert.pub certificate files."""
+        out = []
+        try:
+            ssh_dir = get_ssh_dir()
+            if os.path.isdir(ssh_dir):
+                for filename in sorted(os.listdir(ssh_dir)):
+                    if filename.endswith('-cert.pub'):
+                        out.append((filename, os.path.join(ssh_dir, filename)))
+        except Exception:
+            logger.debug("Certificate discovery failed", exc_info=True)
+        return out
+
+    def _browse_file(self, title, on_chosen, filters=None):
+        try:
+            dialog = Gtk.FileDialog(title=title)
+            try:
+                ssh_dir = get_ssh_dir()
+                if os.path.isdir(ssh_dir):
+                    dialog.set_initial_folder(Gio.File.new_for_path(ssh_dir))
+            except Exception:
+                pass
+            if filters is not None:
+                dialog.set_filters(filters)
+            parent = self.get_transient_for()
+            if not isinstance(parent, Gtk.Window):
+                parent = None
+
+            def _done(dlg, result):
+                try:
+                    gfile = dlg.open_finish(result)
+                    if gfile and gfile.get_path():
+                        on_chosen(gfile.get_path())
+                except Exception:
+                    logger.debug("File chooser cancelled or failed", exc_info=True)
+
+            dialog.open(parent, None, _done)
+        except Exception:
+            logger.debug("Failed to open file chooser", exc_info=True)
+
+    def _open_key_chooser(self, editor):
+        """Open the disk/agent key chooser and add selected keys to *editor*."""
+        disk_keys = []
+        for name, path in self._discover_disk_keys():
+            ktype, fp, _comment = _fingerprint_for_path(path)
+            disk_keys.append({'name': name, 'path': path, 'ktype': ktype, 'meta': fp})
+
+        agent_keys = []
+        for raw_line, blob, ktype_raw, comment in self._agent_keys():
+            ktype, fp, _c = _fingerprint_for_pub_line(raw_line)
+            title = comment or _("agent key")
+            agent_keys.append({
+                'title': title,
+                'ktype': ktype,
+                'meta': fp,
+                'materializer': self._make_agent_materializer(raw_line),
+            })
+
+        parent = self.get_root() if hasattr(self, 'get_root') else None
+        if not isinstance(parent, Gtk.Window):
+            parent = None
+        dialog = KeyChooserDialog(
+            parent,
+            disk_keys=disk_keys,
+            agent_keys=agent_keys,
+            existing_paths=editor.get_paths(),
+            on_add=editor.add_path,
+            on_browse=self._browse_key,
+        )
+        dialog.present()
+
+    def _browse_key(self, on_chosen):
+        self._browse_file(_("Select SSH Key File"), on_chosen)
+
+    def _browse_cert(self, on_chosen):
+        filters = None
+        try:
+            cert_filter = Gtk.FileFilter()
+            cert_filter.set_name(_("SSH Certificate Files"))
+            cert_filter.add_pattern("*-cert.pub")
+            cert_filter.add_pattern("*.pub")
+            all_filter = Gtk.FileFilter()
+            all_filter.set_name(_("All Files"))
+            all_filter.add_pattern("*")
+            filters = Gio.ListStore.new(Gtk.FileFilter)
+            filters.append(cert_filter)
+            filters.append(all_filter)
+        except Exception:
+            filters = None
+        self._browse_file(_("Select SSH Certificate File"), on_chosen, filters=filters)
+
     def validate_ssh_config_syntax(self, config_text):
         """Basic SSH config syntax validation"""
         try:
@@ -1085,52 +1862,21 @@ class ConnectionDialog(Adw.Window):
             host = getattr(self, 'hostname_row', None)
             username = getattr(self, 'username_row', None)
             port = getattr(self, 'port_row', None)
-            auth_method = getattr(self, 'auth_method_row', None)
-            key_select_mode = getattr(self, 'key_select_row', None)
-            key_only_row = getattr(self, 'key_only_row', None)
-            
+
             # Get values from UI or use defaults
             nickname_val = nickname.get_text().strip() if nickname else "my-server"
             host_val = host.get_text().strip() if host else "example.com"
             username_val = username.get_text().strip() if username else "user"
             port_val = port.get_text().strip() if port else "22"
-            
-            # Get authentication settings
-            auth_method_val = auth_method.get_selected() if auth_method else 0
-            selection_val = key_select_mode.get_selected() if key_select_mode else 0
-            key_select_mode_val = 0
-            if selection_val == 1:
-                try:
-                    only_active = key_only_row.get_active() if key_only_row else True
-                except Exception:
-                    only_active = True
-                key_select_mode_val = 1 if only_active else 2
-            
-            # Get keyfile and certificate if available
-            keyfile_val = ""
-            certificate_val = ""
-            if hasattr(self, 'keyfile_row') and self.keyfile_row.get_subtitle():
-                keyfile_val = self.keyfile_row.get_subtitle()
-            elif hasattr(self, '_selected_keyfile_path') and self._selected_keyfile_path:
-                keyfile_val = self._selected_keyfile_path
-            elif hasattr(self, 'connection') and self.connection:
-                keyfile_val = getattr(self.connection, 'keyfile', '')
-            
-            # Validate keyfile path - skip placeholder text
-            if keyfile_val and keyfile_val.lower() in ['select key file or leave empty for auto-detection', '']:
-                keyfile_val = ''
-            
-            if hasattr(self, 'certificate_row') and self.certificate_row.get_subtitle():
-                certificate_val = self.certificate_row.get_subtitle()
-            elif hasattr(self, '_selected_cert_path') and self._selected_cert_path:
-                certificate_val = self._selected_cert_path
-            elif hasattr(self, 'connection') and self.connection:
-                certificate_val = getattr(self.connection, 'certificate', '')
-            
-            # Validate certificate path - skip placeholder text
-            if certificate_val and certificate_val.lower() in ['select certificate file (optional)', '']:
-                certificate_val = ''
-            
+
+            # Get authentication settings from the new auth widgets
+            auth_method_val = self._selected_auth_method()
+            key_select_mode_val = self._selected_key_mode()
+
+            # Full lists of identity files / certificates from the editors
+            identity_files = self._collect_identity_files()
+            certificate_files = self._collect_certificate_files()
+
             # Build SSH config block
             config_lines = []
             config_lines.append(f"# SSH Config Block for {nickname_val}")
@@ -1157,14 +1903,15 @@ class ConnectionDialog(Adw.Window):
             password_val = self.password_row.get_text().strip() if hasattr(self, 'password_row') else ''
 
             if auth_method_val == 0:  # Key-based auth (password optional)
-                if key_select_mode_val in (1, 2) and keyfile_val:  # Specific key
-                    config_lines.append(f"    IdentityFile {keyfile_val}")
+                if key_select_mode_val in (1, 2) and identity_files:  # Specific key(s)
+                    for kf in identity_files:
+                        config_lines.append(f"    IdentityFile {kf}")
                     if key_select_mode_val == 1:
                         config_lines.append("    IdentitiesOnly yes")
 
-                    # Add certificate if specified (validate to skip placeholder text)
-                    if certificate_val and certificate_val.lower() not in ['select certificate file (optional)', '']:
-                        config_lines.append(f"    CertificateFile {certificate_val}")
+                    # Add certificate(s) if specified
+                    for cert in certificate_files:
+                        config_lines.append(f"    CertificateFile {cert}")
                 # Add combined authentication if a password is provided
                 if password_val:
                     config_lines.append(
@@ -1215,8 +1962,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         required_attrs = [
             'nickname_row', 'hostname_row', 'username_row', 'port_row',
             'proxy_jump_row', 'forward_agent_row',
-            'auth_method_row', 'keyfile_row', 'password_row', 'key_passphrase_row',
-            'pubkey_auth_row'
+            'auth_toggle', 'key_editor', 'cert_editor', 'password_row',
+            'key_specific_check', 'key_only_row', 'pubkey_auth_row'
         ]
         for attr in required_attrs:
             if not hasattr(self, attr):
@@ -1275,52 +2022,62 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 except Exception as e:
                     logger.debug("Load WoL meta: %s", e)
             
-            # Set authentication method and related fields
+            # Set authentication method (ToggleGroup: 0 key-based, 1 password)
             auth_method = getattr(self.connection, 'auth_method', 0)
-            self.auth_method_row.set_selected(auth_method)
-            self.on_auth_method_changed(self.auth_method_row, None)  # Update UI state
+            try:
+                self.auth_toggle.set_active(int(auth_method or 0))
+            except Exception:
+                pass
             try:
                 self.pubkey_auth_row.set_active(bool(getattr(self.connection, 'pubkey_auth_no', False)))
             except Exception:
                 self.pubkey_auth_row.set_active(False)
-            
-            # Get keyfile path from either keyfile or private_key attribute
-            has_specific_key = False
-            keyfile = getattr(self.connection, 'keyfile', None) or getattr(self.connection, 'private_key', None)
-            if keyfile:
-                # Normalize the keyfile path and ensure it's a string
-                keyfile_path = str(keyfile).strip()
 
-                # Update the connection's keyfile attribute if it comes from private_key
-                if not getattr(self.connection, 'keyfile', None) and hasattr(self.connection, 'private_key'):
-                    self.connection.keyfile = keyfile_path
+            # Populate the identity-file editor with the FULL list the parser
+            # resolved (fall back to the single keyfile for older/partial data).
+            def _clean(value, placeholder):
+                v = str(value or '').strip()
+                return '' if v.lower() in (placeholder, '') else v
 
-                # Only update the UI if we have a valid path
-                if keyfile_path and keyfile_path.lower() not in ['select key file or leave empty for auto-detection', '']:
-                    logger.debug(f"Setting keyfile path in UI: {keyfile_path}")
-                    has_specific_key = True
-                    self.keyfile_row.set_subtitle(keyfile_path)
-                    self._active_key_path = keyfile_path
-                    # Sync the dropdown to match the loaded keyfile
-                    self._sync_key_dropdown_with_current_keyfile()
-                else:
-                    logger.debug(f"Skipping invalid keyfile path: {keyfile_path}")
-                    keyfile_path = None
-                    self._active_key_path = None
-            else:
-                self._active_key_path = None
+            identity_files = [p for p in (getattr(self.connection, 'identity_files', None) or []) if str(p).strip()]
+            if not identity_files:
+                single = _clean(
+                    getattr(self.connection, 'keyfile', None) or getattr(self.connection, 'private_key', None),
+                    'select key file or leave empty for auto-detection',
+                )
+                if single:
+                    identity_files = [single]
+            has_specific_key = bool(identity_files)
+            self.key_editor.set_paths(identity_files)
 
-            # Load certificate path if present
-            if hasattr(self.connection, 'certificate') and self.connection.certificate:
-                cert_path = str(self.connection.certificate).strip()
-                if cert_path and cert_path.lower() not in ['select certificate file (optional)', '']:
-                    logger.debug(f"Setting certificate path in UI: {cert_path}")
-                    self.certificate_row.set_subtitle(cert_path)
-                    # Sync the dropdown to match the loaded certificate
-                    self._sync_cert_dropdown_with_current_cert()
-                else:
-                    logger.debug(f"Skipping invalid certificate path: {cert_path}")
-            
+            # Certificates: full list, with single-value fallback.
+            certificate_files = [p for p in (getattr(self.connection, 'certificate_files', None) or []) if str(p).strip()]
+            if not certificate_files:
+                single_cert = _clean(getattr(self.connection, 'certificate', None), 'select certificate file (optional)')
+                if single_cert:
+                    certificate_files = [single_cert]
+            self.cert_editor.set_paths(certificate_files)
+
+            # Agent / hardware key sources (text fields)
+            for attr, row in (
+                ('identity_agent', getattr(self, 'identity_agent_row', None)),
+                ('pkcs11_provider', getattr(self, 'pkcs11_provider_row', None)),
+                ('security_key_provider', getattr(self, 'security_key_provider_row', None)),
+            ):
+                if row is not None:
+                    try:
+                        row.set_text(str(getattr(self.connection, attr, '') or ''))
+                    except Exception:
+                        pass
+            # AddKeysToAgent → ComboRow selection
+            if hasattr(self, 'add_keys_to_agent_row'):
+                try:
+                    val = str(getattr(self.connection, 'add_keys_to_agent', '') or '').strip().lower()
+                    idx = self._add_keys_values.index(val) if val in self._add_keys_values else 0
+                    self.add_keys_to_agent_row.set_selected(idx)
+                except Exception:
+                    self.add_keys_to_agent_row.set_selected(0)
+
             if hasattr(self.connection, 'password') and self.connection.password:
                 self.password_row.set_text(self.connection.password)
             else:
@@ -1347,65 +2104,44 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             except Exception:
                 self._orig_password = ""
 
-            # Load key passphrase from connection object or from secure storage
-            if hasattr(self.connection, 'key_passphrase') and self.connection.key_passphrase:
-                self.key_passphrase_row.set_text(self.connection.key_passphrase)
-                if keyfile_path:
-                    self._active_key_path = keyfile_path
-            else:
-                # Try to load from secure storage if we have a keyfile
-                try:
-                    if hasattr(self, 'connection_manager') and self.connection_manager and keyfile_path:
-                        stored_passphrase = self.connection_manager.get_key_passphrase(keyfile_path)
-                        if stored_passphrase:
-                            self.key_passphrase_row.set_text(stored_passphrase)
-                            self._active_key_path = keyfile_path
-                except Exception as e:
-                    logger.debug(f"Failed to load stored passphrase: {e}")
-
-            # Load key selection mode (prefer fresh manager copy by nickname)
+            # Key selection mode → Automatic/Specific radios + IdentitiesOnly switch.
+            # (Per-key passphrases are loaded on demand by the editor's key button.)
             try:
-                if hasattr(self, 'key_select_row'):
+                mode = None
+                try:
+                    mgr = getattr(self.parent_window, 'connection_manager', None)
+                    if mgr and hasattr(self.connection, 'nickname'):
+                        fresh = mgr.find_connection_by_nickname(self.connection.nickname)
+                        if fresh is not None and hasattr(fresh, 'key_select_mode'):
+                            mode = int(getattr(fresh, 'key_select_mode', 0) or 0)
+                except Exception:
                     mode = None
-                    # Prefer fresh parse from manager if available
+                if mode is None:
                     try:
-                        mgr = getattr(self.parent_window, 'connection_manager', None)
-                        if mgr and hasattr(self.connection, 'nickname'):
-                            fresh = mgr.find_connection_by_nickname(self.connection.nickname)
-                            if fresh is not None and hasattr(fresh, 'key_select_mode'):
-                                mode = int(getattr(fresh, 'key_select_mode', 0) or 0)
+                        mode = int(getattr(self.connection, 'key_select_mode', 0) or 0)
                     except Exception:
-                        mode = None
-                    if mode is None:
                         try:
-                            mode = int(getattr(self.connection, 'key_select_mode', 0) or 0)
+                            mode = int(self.connection.data.get('key_select_mode', 0)) if hasattr(self.connection, 'data') else 0
                         except Exception:
-                            try:
-                                mode = int(self.connection.data.get('key_select_mode', 0)) if hasattr(self.connection, 'data') else 0
-                            except Exception:
-                                mode = 0
-                    if has_specific_key and mode not in (1, 2):
-                        mode = 2
-                        try:
-                            self.connection.key_select_mode = 2
-                        except Exception:
-                            pass
-                        try:
-                            if hasattr(self.connection, 'data'):
-                                self.connection.data['key_select_mode'] = 2
-                        except Exception:
-                            pass
-                    selection = 1 if mode in (1, 2) else 0
-                    self.key_select_row.set_selected(selection)
-                    if hasattr(self, 'key_only_row'):
-                        try:
-                            self.key_only_row.set_active(mode == 1)
-                        except Exception:
-                            pass
-                    self.on_key_select_changed(self.key_select_row, None)
+                            mode = 0
+                if has_specific_key and mode not in (1, 2):
+                    mode = 2
+                specific = mode in (1, 2)
+                self.key_specific_check.set_active(specific)
+                self.key_auto_check.set_active(not specific)
+                try:
+                    self.key_only_row.set_active(mode == 1)
+                except Exception:
+                    pass
             except Exception:
                 pass
-            
+
+            # Reveal the correct sections for the loaded method/mode.
+            try:
+                self.on_auth_method_changed()
+            except Exception:
+                pass
+
             # Set X11 forwarding
             self.x11_row.set_active(getattr(self.connection, 'x11_forwarding', False))
             
@@ -1852,193 +2588,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         if hasattr(self, 'dynamic_port_row'):
             self._connect_row_validation(self.dynamic_port_row, lambda r: self._validate_port_row(r, _("Local Port")))
 
-    def _populate_detected_keys(self):
-        """Populate key dropdown with detected private keys and a Browse item (reuse KeyManager.discover_keys)."""
-        try:
-            keys = []
-            parent = getattr(self, 'parent_window', None) or None
-            if parent and hasattr(parent, 'key_manager') and parent.key_manager:
-                keys = parent.key_manager.discover_keys() or []
-            names = []
-            paths = []
-            for k in keys:
-                try:
-                    rel = os.path.relpath(
-                        k.private_path,
-                        str(parent.key_manager.ssh_dir) if parent else None,
-                    )
-                    names.append(rel)
-                    paths.append(k.private_path)
-                except Exception:
-                    pass
-            # Add placeholder when none
-            if not names:
-                names.append(_("No keys detected"))
-                paths.append("")
-            # Add browse option
-            names.append(_("Browse…"))
-            paths.append("__BROWSE__")
-            self._key_paths = paths
-            model = Gtk.StringList()
-            for n in names:
-                model.append(n)
-            self.key_dropdown.set_model(model)
-            # Preselect currently set keyfile if present
-            preselect_idx = 0
-            try:
-                current_path = None
-                if hasattr(self, '_selected_keyfile_path') and self._selected_keyfile_path:
-                    current_path = self._selected_keyfile_path
-                elif hasattr(self.keyfile_row, 'get_subtitle'):
-                    current_path = self.keyfile_row.get_subtitle() or None
-                if (not current_path) and hasattr(self, 'connection') and self.connection:
-                    current_path = getattr(self.connection, 'keyfile', None)
-                if current_path and current_path in paths:
-                    preselect_idx = paths.index(current_path)
-            except Exception:
-                preselect_idx = 0
-            try:
-                self.key_dropdown.set_selected(preselect_idx)
-            except Exception:
-                pass
-        except Exception as e:
-            logger.debug(f"Could not populate detected keys: {e}")
-                
-    def _populate_detected_certificates(self):
-        """Populate certificate dropdown with detected certificate files."""
-        try:
-            certificates = []
-            names = []
-            paths = []
-            
-            # Look for certificate files in the SSH directory
-            ssh_dir = get_ssh_dir()
-            if os.path.exists(ssh_dir) and os.path.isdir(ssh_dir):
-                for filename in os.listdir(ssh_dir):
-                    if filename.endswith('-cert.pub'):
-                        cert_path = os.path.join(ssh_dir, filename)
-                        if os.path.isfile(cert_path):
-                            certificates.append(cert_path)
-                            names.append(filename)
-                            paths.append(cert_path)
-            
-            # Add placeholder when none
-            if not names:
-                names.append(_("No certificates detected"))
-                paths.append("")
-            
-            # Add browse option
-            names.append(_("Browse…"))
-            paths.append("__BROWSE__")
-            
-            self._cert_paths = paths
-            model = Gtk.StringList()
-            for n in names:
-                model.append(n)
-            self.cert_dropdown.set_model(model)
-            
-            # Preselect certificate that matches the selected key if available
-            preselect_idx = 0
-            try:
-                current_key_path = None
-                if hasattr(self, '_selected_keyfile_path') and self._selected_keyfile_path:
-                    current_key_path = self._selected_keyfile_path
-                elif hasattr(self.keyfile_row, 'get_subtitle'):
-                    current_key_path = self.keyfile_row.get_subtitle() or None
-                if (not current_key_path) and hasattr(self, 'connection') and self.connection:
-                    current_key_path = getattr(self.connection, 'keyfile', None)
-                
-                # Try to find matching certificate
-                if current_key_path:
-                    key_basename = os.path.basename(current_key_path)
-                    # Remove common extensions to get base name
-                    for ext in ['.pub', '.key', '.pem', '.rsa', '.dsa', '.ecdsa', '.ed25519']:
-                        if key_basename.endswith(ext):
-                            key_basename = key_basename[:-len(ext)]
-                            break
-                    
-                    # Look for matching certificate
-                    expected_cert_name = f"{key_basename}-cert.pub"
-                    expected_cert_path = os.path.join(os.path.dirname(current_key_path), expected_cert_name)
-                    
-                    if expected_cert_path in paths:
-                        preselect_idx = paths.index(expected_cert_path)
-                        logger.debug(f"Auto-selected matching certificate: {expected_cert_name}")
-            except Exception:
-                preselect_idx = 0
-            
-            try:
-                self.cert_dropdown.set_selected(preselect_idx)
-            except Exception:
-                pass
-                
-        except Exception as e:
-            logger.debug(f"Could not populate detected certificates: {e}")
-    
-    def _auto_select_matching_certificate(self, key_path):
-        """Auto-select certificate that matches the selected key"""
-        try:
-            if not hasattr(self, 'cert_dropdown') or not hasattr(self, '_cert_paths'):
-                return
-                
-            # Get the base name of the key file
-            key_basename = os.path.basename(key_path)
-            # Remove common extensions to get base name
-            for ext in ['.pub', '.key', '.pem', '.rsa', '.dsa', '.ecdsa', '.ed25519']:
-                if key_basename.endswith(ext):
-                    key_basename = key_basename[:-len(ext)]
-                    break
-            
-            # Look for matching certificate
-            expected_cert_name = f"{key_basename}-cert.pub"
-            expected_cert_path = os.path.join(os.path.dirname(key_path), expected_cert_name)
-            
-            if expected_cert_path in self._cert_paths:
-                cert_idx = self._cert_paths.index(expected_cert_path)
-                self.cert_dropdown.set_selected(cert_idx)
-                self._selected_cert_path = expected_cert_path
-                if hasattr(self.certificate_row, 'set_subtitle'):
-                    self.certificate_row.set_subtitle(expected_cert_path)
-                logger.debug(f"Auto-selected matching certificate: {expected_cert_name}")
-        except Exception as e:
-            logger.debug(f"Failed to auto-select matching certificate: {e}")
-                
-    def _sync_key_dropdown_with_current_keyfile(self):
-        """Sync the key dropdown selection with the current keyfile path"""
-        try:
-            if not hasattr(self, 'key_dropdown') or not hasattr(self, '_key_paths'):
-                return
-                
-            # Get current keyfile path
-            current_path = None
-            if hasattr(self, '_selected_keyfile_path') and self._selected_keyfile_path:
-                current_path = self._selected_keyfile_path
-            elif hasattr(self.keyfile_row, 'get_subtitle'):
-                current_path = self.keyfile_row.get_subtitle() or None
-            if (not current_path) and hasattr(self, 'connection') and self.connection:
-                current_path = getattr(self.connection, 'keyfile', None)
-                
-            # Find matching index in dropdown
-            if current_path and current_path in self._key_paths:
-                preselect_idx = self._key_paths.index(current_path)
-                logger.debug(f"Syncing dropdown to keyfile: {current_path} (index {preselect_idx})")
-                self.key_dropdown.set_selected(preselect_idx)
-            else:
-                # If the key is not in the dropdown, add it and then select it
-                if current_path and hasattr(self, '_key_paths') and hasattr(self, 'key_dropdown'):
-                    self._key_paths.append(current_path)
-                    model = self.key_dropdown.get_model()
-                    if model:
-                        filename = os.path.basename(current_path)
-                        model.append(filename)
-                        preselect_idx = len(self._key_paths) - 1
-                        logger.debug(f"Added external key to dropdown: {filename} (path: {current_path}, index {preselect_idx})")
-                        self.key_dropdown.set_selected(preselect_idx)
-                else:
-                    logger.debug(f"Could not find keyfile '{current_path}' in dropdown paths")
-        except Exception as e:
-            logger.debug(f"Failed to sync key dropdown: {e}")
-
     def _run_initial_validation(self):
         try:
             if hasattr(self, 'nickname_row'):
@@ -2185,156 +2734,159 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
 
         # Authentication Group
         auth_group = Adw.PreferencesGroup(title=_("Authentication"))
-        
-        # Authentication Method
-        auth_model = Gtk.StringList()
-        auth_model.append(_("Key-based (recommended)"))
-        auth_model.append(_("Password"))
-        
-        self.auth_method_row = Adw.ComboRow()
-        self.auth_method_row.set_title(_("Authentication Method"))
-        self.auth_method_row.set_model(auth_model)
-        self.auth_method_row.connect("notify::selected", self.on_auth_method_changed)
-        # Default to key-based for new connections
+        cm = getattr(self, 'connection_manager', None)
+
+        # --- Method: key-based vs password (AdwToggleGroup) ---
+        method_row = Adw.ActionRow(title=_("Authentication method"))
+        method_row.set_activatable(False)
+        self.auth_toggle = Adw.ToggleGroup()
+        self.auth_toggle.set_valign(Gtk.Align.CENTER)
         try:
-            self.auth_method_row.set_selected(0)
+            key_toggle = Adw.Toggle(label=_("Key-based"))
+            pw_toggle = Adw.Toggle(label=_("Password"))
+            self.auth_toggle.add(key_toggle)
+            self.auth_toggle.add(pw_toggle)
+        except Exception:
+            logger.debug("Failed to build auth ToggleGroup", exc_info=True)
+        try:
+            self.auth_toggle.set_active(0)
         except Exception:
             pass
-        auth_group.add(self.auth_method_row)
+        self.auth_toggle.connect("notify::active", self.on_auth_method_changed)
+        method_row.add_suffix(self.auth_toggle)
+        auth_group.add(method_row)
 
-        # Key selection mode for key-based auth
-        key_select_model = Gtk.StringList()
-        key_select_model.append(_("Automatic"))
-        key_select_model.append(_("Use a specific key"))
-        self.key_select_row = Adw.ComboRow()
-        self.key_select_row.set_title(_("Key selection"))
-        self.key_select_row.set_model(key_select_model)
-        # default: Auto (try all available keys)
-        self.key_select_row.set_selected(0)
-        self.key_select_row.connect("notify::selected", self.on_key_select_changed)
-        auth_group.add(self.key_select_row)
-        
-        # Keyfile dropdown with detected keys and an inline Browse item
-        self.keyfile_row = Adw.ActionRow(title=_("SSH Key"), subtitle=_("Select key file or leave empty for auto-detection"))
-        # Build dropdown items from detected keys
-        self.key_dropdown = Gtk.DropDown()
-        self.key_dropdown.set_hexpand(True)
-        # Populate via helper
-        self._key_paths = []
-        self._populate_detected_keys()
+        # --- Key selection mode: Automatic vs Use a specific key (radio rows) ---
+        self.key_auto_check = Gtk.CheckButton()
+        self.key_auto_check.set_valign(Gtk.Align.CENTER)
+        self.key_specific_check = Gtk.CheckButton()
+        self.key_specific_check.set_group(self.key_auto_check)
+        self.key_specific_check.set_valign(Gtk.Align.CENTER)
+        self.key_auto_check.set_active(True)
 
-        def _on_key_selected(drop, _param):
-            try:
-                idx = drop.get_selected()
-                if idx < 0 or idx >= len(getattr(self, '_key_paths', [])):
-                    return
-                path = self._key_paths[idx]
-                if path == "__BROWSE__":
-                    # Revert selection to previous if any
-                    try:
-                        drop.set_selected(0)
-                    except Exception:
-                        pass
-                    self.browse_for_key_file()
-                elif path:
-                    self._selected_keyfile_path = path
-                    if hasattr(self.keyfile_row, 'set_subtitle'):
-                        self.keyfile_row.set_subtitle(path)
-                    
-                    # Update passphrase field for the selected key
-                    self._update_passphrase_for_key(path)
-                    
-                    # Auto-select matching certificate if available
-                    self._auto_select_matching_certificate(path)
-                    
-            except Exception:
-                pass
-        try:
-            self.key_dropdown.connect('notify::selected', _on_key_selected)
-        except Exception:
-            pass
+        self.key_auto_row = Adw.ActionRow(
+            title=_("Automatic"),
+            subtitle=_("Try the default keys and any keys offered by the agent"),
+        )
+        self.key_auto_row.add_prefix(self.key_auto_check)
+        self.key_auto_row.set_activatable_widget(self.key_auto_check)
+        auth_group.add(self.key_auto_row)
 
-        # Pack dropdown and add to row
-        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        box.append(self.key_dropdown)
-        self.keyfile_row.add_suffix(box)
-        self.keyfile_row.set_activatable(False)
-        auth_group.add(self.keyfile_row)
+        self.key_specific_row = Adw.ActionRow(
+            title=_("Use a specific key"),
+            subtitle=_("Choose one or more private keys for this connection"),
+        )
+        self.key_specific_row.add_prefix(self.key_specific_check)
+        self.key_specific_row.set_activatable_widget(self.key_specific_check)
+        auth_group.add(self.key_specific_row)
 
-        # Key Passphrase – shown immediately after the key dropdown when "Use a specific key" is active
-        self.key_passphrase_row = Adw.PasswordEntryRow(title=_("Key Passphrase"))
-        self.key_passphrase_row.set_show_apply_button(False)
-        self.key_passphrase_row.set_visible(False)
-        auth_group.add(self.key_passphrase_row)
+        self.key_auto_check.connect("toggled", self.on_key_select_changed)
+        self.key_specific_check.connect("toggled", self.on_key_select_changed)
 
-        self.key_only_row = Adw.SwitchRow()
-        self.key_only_row.set_title(_("Only use the specified key"))
-        self.key_only_row.set_subtitle(_("This will append \"IdentitiesOnly yes\" to the configuration."))
-        self.key_only_row.set_active(True)
-        self.key_only_row.set_visible(False)
-        auth_group.add(self.key_only_row)
+        # The identity-files / certificates editors are their own preference
+        # groups (built below) so they're clearly separated from the controls in
+        # this group; the IdentitiesOnly toggle lives in its own group too.
 
-        # Password
+        # AddKeysToAgent / Password / pubkey are created here but mounted in a
+        # separate "behaviour" group BELOW the IdentitiesOnly toggle (see below).
+        self._add_keys_values = ['', 'yes', 'no', 'ask', 'confirm']
+        akta_model = Gtk.StringList()
+        for lbl in (_("Default"), _("Yes"), _("No"), _("Ask"), _("Confirm")):
+            akta_model.append(lbl)
+        self.add_keys_to_agent_row = Adw.ComboRow(title=_("Add keys to agent"))
+        self.add_keys_to_agent_row.set_subtitle(_("Load the key into ssh-agent on first use (AddKeysToAgent)"))
+        self.add_keys_to_agent_row.set_model(akta_model)
+        self.add_keys_to_agent_row.set_selected(0)
+
         self.password_row = Adw.PasswordEntryRow(title=_("Password (optional)"))
         self.password_row.set_show_apply_button(False)
-        # Always visible; optional for key-based auth
-        self.password_row.set_visible(True)
-        auth_group.add(self.password_row)
 
-        # Certificate dropdown for key-based auth with specific key
-        self.certificate_row = Adw.ActionRow(title=_("SSH Certificate"), subtitle=_("Select certificate file (optional)"))
-        # Build dropdown items from detected certificates
-        self.cert_dropdown = Gtk.DropDown()
-        self.cert_dropdown.set_hexpand(True)
-        # Populate via helper
-        self._cert_paths = []
-        self._populate_detected_certificates()
-
-        def _on_cert_selected(drop, _param):
-            try:
-                idx = drop.get_selected()
-                if idx < 0 or idx >= len(getattr(self, '_cert_paths', [])):
-                    return
-                path = self._cert_paths[idx]
-                if path == "__BROWSE__":
-                    # Revert selection to previous if any
-                    try:
-                        drop.set_selected(0)
-                    except Exception:
-                        pass
-                    self.browse_for_certificate_file()
-                elif path:
-                    self._selected_cert_path = path
-                    if hasattr(self.certificate_row, 'set_subtitle'):
-                        self.certificate_row.set_subtitle(path)
-                    
-            except Exception:
-                pass
-        try:
-            self.cert_dropdown.connect('notify::selected', _on_cert_selected)
-        except Exception:
-                pass
-
-        # Pack dropdown and add to row
-        cert_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        cert_box.append(self.cert_dropdown)
-        self.certificate_row.add_suffix(cert_box)
-        self.certificate_row.set_activatable(False)
-        auth_group.add(self.certificate_row)
-
-        # Initialize key UI sensitivity for new connections
-        try:
-            # Ensure visibility/sensitivity matches defaults
-            self.on_auth_method_changed(self.auth_method_row, None)
-            self.on_key_select_changed(self.key_select_row, None)
-        except Exception:
-            pass
-
-        # Disable pubkey authentication toggle for password auth
         self.pubkey_auth_row = Adw.SwitchRow()
         self.pubkey_auth_row.set_title(_("Disable public key authentication (force password only)"))
         self.pubkey_auth_row.set_active(False)
-        auth_group.add(self.pubkey_auth_row)
+
+        # --- Identity files (private keys) — own group with a title label,
+        # key rows, and a bottom "Add a key…" button. Agent keys are offered in
+        # a separate section of the add menu (never mixed with on-disk keys).
+        self.key_editor = FileListEditor(
+            title=_("Identity files (private keys)"),
+            add_actions=[
+                {'label': _("Add a key…"), 'icon': 'list-add-symbolic',
+                 'chooser': self._open_key_chooser},
+            ],
+            with_passphrase=True,
+            connection_manager=cm,
+            verify=lambda path, passphrase: self.validator.verify_key_passphrase(
+                os.path.expanduser(path), passphrase
+            ),
+        )
+        self.key_editor.set_description(_("Add private keys to be tried by SSH"))
+
+        # IdentitiesOnly — its own group, clearly separated from the keys above.
+        self.idonly_group = Adw.PreferencesGroup()
+        self.key_only_row = Adw.SwitchRow()
+        self.key_only_row.set_title(_("Only use these keys"))
+        self.key_only_row.set_subtitle(_("Append \"IdentitiesOnly yes\" to the configuration."))
+        self.key_only_row.set_active(True)
+        self.idonly_group.add(self.key_only_row)
+
+        # --- Certificates — own group, same pattern.
+        self.cert_editor = FileListEditor(
+            title=_("Certificates"),
+            add_actions=[
+                {'label': _("Add a certificate…"), 'icon': 'list-add-symbolic',
+                 'discover': self._discover_certs, 'browse': self._browse_cert},
+            ],
+            with_passphrase=False,
+            connection_manager=cm,
+        )
+
+        # --- Auth behaviour — below the "Only use these keys" toggle.
+        behaviour_group = Adw.PreferencesGroup()
+        behaviour_group.add(self.add_keys_to_agent_row)
+        behaviour_group.add(self.password_row)
+        behaviour_group.add(self.pubkey_auth_row)
+
+        # Initialize visibility for new connections
+        try:
+            self.on_auth_method_changed(self.auth_toggle, None)
+        except Exception:
+            pass
+
+        # --- Agent & hardware key sources -------------------------------------
+        # A key (and any cert that pairs with it) may come from an ssh-agent, a
+        # PKCS#11 smartcard, or a FIDO security key rather than an on-disk file.
+        # These compose with the identity files above; ssh resolves which key
+        # (and cert) authenticates. Leave blank to use defaults.
+        self.hw_group = hw_group = Adw.PreferencesGroup(
+            title=_("Agent and hardware keys"),
+            description=_("Optional. Use keys from an agent, smartcard (PKCS#11), "
+                          "or FIDO security key. Leave blank for defaults."),
+        )
+        self.identity_agent_row = Adw.EntryRow(title=_("IdentityAgent (socket path, $VARIABLE, or none)"))
+        hw_group.add(self.identity_agent_row)
+
+        self.pkcs11_provider_row = Adw.EntryRow(title=_("PKCS#11 provider (library path)"))
+        pkcs_btn = Gtk.Button(icon_name='document-open-symbolic')
+        pkcs_btn.add_css_class('flat')
+        pkcs_btn.set_valign(Gtk.Align.CENTER)
+        pkcs_btn.set_tooltip_text(_("Browse for provider library"))
+        pkcs_btn.connect('clicked', lambda *_a: self._browse_file(
+            _("Select PKCS#11 provider library"),
+            lambda p: self.pkcs11_provider_row.set_text(p)))
+        self.pkcs11_provider_row.add_suffix(pkcs_btn)
+        hw_group.add(self.pkcs11_provider_row)
+
+        self.security_key_provider_row = Adw.EntryRow(title=_("FIDO security key provider (library path)"))
+        sk_btn = Gtk.Button(icon_name='document-open-symbolic')
+        sk_btn.add_css_class('flat')
+        sk_btn.set_valign(Gtk.Align.CENTER)
+        sk_btn.set_tooltip_text(_("Browse for provider library"))
+        sk_btn.connect('clicked', lambda *_a: self._browse_file(
+            _("Select FIDO security key provider library"),
+            lambda p: self.security_key_provider_row.set_text(p)))
+        self.security_key_provider_row.add_suffix(sk_btn)
+        hw_group.add(self.security_key_provider_row)
 
         # ProxyJump Group
         proxy_group = Adw.PreferencesGroup(title=_("ProxyJump"))
@@ -2574,7 +3126,9 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         # X11 Forwarding moved to Port Forwarding view
         
         # Return groups for PreferencesPage
-        return [basic_group, auth_group, proxy_group, wol_group, advanced_group]
+        return [basic_group, auth_group, self.key_editor, self.idonly_group,
+                self.cert_editor, behaviour_group, hw_group,
+                proxy_group, wol_group, advanced_group]
     
     def build_port_forwarding_groups(self):
         """Build PreferencesGroups for the Advanced page (Port Forwarding first, X11 last)"""
@@ -2776,152 +3330,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         
         # Show the rules list
         self.rules_list.show()
-    
-    def browse_for_key_file(self):
-        """Open file chooser to browse for SSH key file using portal-aware API."""
-        try:
-            dialog = Gtk.FileDialog(title=_("Select SSH Key File"))
-
-            # Default to SSH directory when available
-            try:
-                ssh_dir = get_ssh_dir()
-                if os.path.isdir(ssh_dir):
-                    dialog.set_initial_folder(Gio.File.new_for_path(ssh_dir))
-            except Exception:
-                pass
-
-            parent = self.get_transient_for()
-            if not isinstance(parent, Gtk.Window):
-                parent = None
-
-            dialog.open(parent, None, self.on_key_file_selected)
-        except Exception as e:
-            logger.error(f"Failed to open key file chooser: {e}")
-
-    def browse_for_certificate_file(self):
-        """Open file chooser to browse for SSH certificate file using portal-aware API."""
-        try:
-            dialog = Gtk.FileDialog(title=_("Select SSH Certificate File"))
-
-            # Default to SSH directory when available
-            try:
-                ssh_dir = get_ssh_dir()
-                if os.path.isdir(ssh_dir):
-                    dialog.set_initial_folder(Gio.File.new_for_path(ssh_dir))
-            except Exception:
-                pass
-
-            # Add filter for certificate files
-            cert_filter = Gtk.FileFilter()
-            cert_filter.set_name(_("SSH Certificate Files"))
-            cert_filter.add_pattern("*-cert.pub")
-            cert_filter.add_pattern("*.pub")
-            all_filter = Gtk.FileFilter()
-            all_filter.set_name(_("All Files"))
-            all_filter.add_pattern("*")
-
-            filters = Gio.ListStore.new(Gtk.FileFilter)
-            filters.append(cert_filter)
-            filters.append(all_filter)
-            dialog.set_filters(filters)
-            dialog.set_default_filter(cert_filter)
-
-            parent = self.get_transient_for()
-            if not isinstance(parent, Gtk.Window):
-                parent = None
-            dialog.open(parent, None, self.on_certificate_file_selected)
-        except Exception as e:
-            logger.error(f"Failed to open certificate file chooser: {e}")
-
-
-    
-    def on_key_file_selected(self, dialog, result):
-        """Handle selected key file from file chooser"""
-        try:
-            key_file = dialog.open_finish(result)
-        except GLib.Error:
-            return
-        if key_file:
-            key_path = key_file.get_path()
-            self.keyfile_row.set_subtitle(key_path)
-
-            # Add the browsed key to the dropdown if it's not already there
-            if hasattr(self, '_key_paths') and key_path not in self._key_paths:
-                self._key_paths.append(key_path)
-                # Update the dropdown model with just the filename
-                if hasattr(self, 'key_dropdown'):
-                    model = self.key_dropdown.get_model()
-                    if model:
-                        filename = os.path.basename(key_path)
-                        model.append(filename)
-
-            # Set the selected keyfile path
-            self._selected_keyfile_path = key_path
-
-            # Sync the dropdown to select the browsed key
-            self._sync_key_dropdown_with_current_keyfile()
-    
-    def on_certificate_file_selected(self, dialog, result):
-        """Handle selected certificate file from file chooser"""
-        try:
-            cert_file = dialog.open_finish(result)
-        except GLib.Error:
-            return
-        if cert_file:
-            cert_path = cert_file.get_path()
-            self.certificate_row.set_subtitle(cert_path)
-
-            # Add the browsed certificate to the dropdown if it's not already there
-            if hasattr(self, '_cert_paths') and cert_path not in self._cert_paths:
-                self._cert_paths.append(cert_path)
-                # Update the dropdown model with just the filename
-                if hasattr(self, 'cert_dropdown'):
-                    model = self.cert_dropdown.get_model()
-                    if model:
-                        filename = os.path.basename(cert_path)
-                        model.append(filename)
-
-            # Set the selected certificate path
-            self._selected_cert_path = cert_path
-
-            # Sync the dropdown to select the browsed certificate
-            self._sync_cert_dropdown_with_current_cert()
-    
-    def _sync_cert_dropdown_with_current_cert(self):
-        """Sync the certificate dropdown selection with the current certificate path"""
-        try:
-            if not hasattr(self, 'cert_dropdown') or not hasattr(self, '_cert_paths'):
-                return
-                
-            # Get current certificate path
-            current_path = None
-            if hasattr(self, '_selected_cert_path') and self._selected_cert_path:
-                current_path = self._selected_cert_path
-            elif hasattr(self.certificate_row, 'get_subtitle'):
-                current_path = self.certificate_row.get_subtitle() or None
-            if (not current_path) and hasattr(self, 'connection') and self.connection:
-                current_path = getattr(self.connection, 'certificate', None)
-                
-            # Find matching index in dropdown
-            if current_path and current_path in self._cert_paths:
-                preselect_idx = self._cert_paths.index(current_path)
-                logger.debug(f"Syncing certificate dropdown to: {current_path} (index {preselect_idx})")
-                self.cert_dropdown.set_selected(preselect_idx)
-            else:
-                # If the certificate is not in the dropdown, add it and then select it
-                if current_path and hasattr(self, '_cert_paths') and hasattr(self, 'cert_dropdown'):
-                    self._cert_paths.append(current_path)
-                    model = self.cert_dropdown.get_model()
-                    if model:
-                        filename = os.path.basename(current_path)
-                        model.append(filename)
-                        preselect_idx = len(self._cert_paths) - 1
-                        logger.debug(f"Added external certificate to dropdown: {filename} (path: {current_path}, index {preselect_idx})")
-                        self.cert_dropdown.set_selected(preselect_idx)
-                else:
-                    logger.debug(f"Could not find certificate '{current_path}' in dropdown paths")
-        except Exception as e:
-            logger.debug(f"Failed to sync certificate dropdown: {e}")
     
     def on_delete_forwarding_rule_clicked(self, button, rule):
         """Handle delete port forwarding rule button click"""
@@ -3553,92 +3961,28 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         
         # Persist exactly what is in the editor list (enabled rules only) - no sanitization
         forwarding_rules = [dict(r) for r in self.forwarding_rules if r.get('enabled', True)]
+        # Identity files / certificates come straight from the editors (full
+        # lists). Per-key passphrases are stored as the user edits them via each
+        # key row's passphrase button, so there is nothing to persist here.
+        identity_files = self._collect_identity_files()
+        certificate_files = self._collect_certificate_files()
+        keyfile_value = identity_files[0] if identity_files else ''
+        certificate_value = certificate_files[0] if certificate_files else ''
+
         try:
             logger.info(
-                "ConnectionDialog save: %d forwarding rules collected, keyfile: '%s'",
-                len(forwarding_rules or []), keyfile_value
+                "ConnectionDialog save: %d forwarding rules, %d identity files",
+                len(forwarding_rules or []), len(identity_files),
             )
             logger.debug("Forwarding rules: %s", forwarding_rules)
         except Exception:
             pass
-        
+
         # Detect if password text was changed by user during this edit session
         try:
             password_changed = (self.password_row.get_text() != getattr(self, '_orig_password', None))
         except Exception:
             password_changed = False
-
-        # Resolve keyfile from dropdown/browse/subtitle/existing
-        try:
-            keyfile_value = ''
-            if hasattr(self, 'key_dropdown') and hasattr(self, '_key_paths'):
-                sel = self.key_dropdown.get_selected()
-                if 0 <= sel < len(self._key_paths):
-                    pth = self._key_paths[sel]
-                    if pth and pth != '__BROWSE__':
-                        keyfile_value = pth
-            if (not keyfile_value) and hasattr(self, '_selected_keyfile_path') and self._selected_keyfile_path:
-                keyfile_value = str(self._selected_keyfile_path)
-            if (not keyfile_value) and hasattr(self.keyfile_row, 'get_subtitle'):
-                keyfile_value = self.keyfile_row.get_subtitle() or ''
-            if (not keyfile_value) and self.is_editing and hasattr(self, 'connection') and self.connection:
-                keyfile_value = str(getattr(self.connection, 'keyfile', '') or '')
-        except Exception:
-            keyfile_value = ''
-
-        # Verify passphrase before proceeding with save
-        key_passphrase = self.key_passphrase_row.get_text()
-        
-        if keyfile_value and keyfile_value != "Select key file" and key_passphrase:
-            # Verify the passphrase matches the private key
-            if not self.validator.verify_key_passphrase(keyfile_value, key_passphrase):
-                self.show_error(_("The passphrase you entered is invalid for this key. Please try again."))
-                return
-
-        # Store key passphrase in secret storage if provided
-        if keyfile_value and keyfile_value != "Select key file":
-            original_keyfile_value = keyfile_value
-            normalized_keyfile_value = os.path.realpath(os.path.expanduser(original_keyfile_value))
-            try:
-                if hasattr(self, 'connection_manager') and self.connection_manager:
-                    if hasattr(self.connection_manager, 'store_key_passphrase'):
-                        if key_passphrase:
-                            # Store new or modified passphrase (already verified above)
-                            self.connection_manager.store_key_passphrase(normalized_keyfile_value, key_passphrase)
-                        elif hasattr(self.connection_manager, 'delete_key_passphrase'):
-                            # User cleared the field - remove stored passphrase
-                            self.connection_manager.delete_key_passphrase(normalized_keyfile_value)
-                            if (
-                                original_keyfile_value
-                                and original_keyfile_value != normalized_keyfile_value
-                            ):
-                                self.connection_manager.delete_key_passphrase(original_keyfile_value)
-            except Exception as e:
-                logger.warning(f"Failed to store/delete key passphrase: {e}")
-
-        # Get certificate path
-        certificate_value = ''
-        try:
-            if hasattr(self, 'cert_dropdown') and hasattr(self, '_cert_paths'):
-                sel = self.cert_dropdown.get_selected()
-                if 0 <= sel < len(self._cert_paths):
-                    pth = self._cert_paths[sel]
-                    if pth and pth != '__BROWSE__':
-                        certificate_value = pth
-            if (not certificate_value) and hasattr(self, '_selected_cert_path') and self._selected_cert_path:
-                certificate_value = str(self._selected_cert_path)
-            if (not certificate_value) and hasattr(self.certificate_row, 'get_subtitle'):
-                subtitle_value = self.certificate_row.get_subtitle() or ''
-                # Filter out placeholder text
-                if subtitle_value and not subtitle_value.lower().startswith('select certificate'):
-                    certificate_value = subtitle_value
-            if (not certificate_value) and self.is_editing and hasattr(self, 'connection') and self.connection:
-                conn_cert_value = str(getattr(self.connection, 'certificate', '') or '')
-                # Filter out placeholder text
-                if conn_cert_value and not conn_cert_value.lower().startswith('select certificate'):
-                    certificate_value = conn_cert_value
-        except Exception:
-            certificate_value = ''
 
 
         # Get extra SSH config from advanced tab
@@ -3651,16 +3995,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 logger.error(f"Error getting extra SSH config from advanced tab: {e}")
                 extra_ssh_config = ''
 
-        key_select_mode_val = 0
-        try:
-            if hasattr(self, 'key_select_row'):
-                key_selection = self.key_select_row.get_selected()
-                if key_selection == 1:
-                    use_only = getattr(self, 'key_only_row', None)
-                    only_active = use_only.get_active() if use_only else True
-                    key_select_mode_val = 1 if only_active else 2
-        except Exception:
-            key_select_mode_val = 0
+        key_select_mode_val = self._selected_key_mode()
 
         # Gather connection data
         connection_data = {
@@ -3668,11 +4003,19 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             'hostname': self.hostname_row.get_text().strip(),
             'username': self.username_row.get_text().strip(),
             'port': int(self.port_row.get_text().strip() or '22'),
-            'auth_method': self.auth_method_row.get_selected(),
+            'auth_method': self._selected_auth_method(),
             'keyfile': keyfile_value,
+            'identity_files': identity_files,
             'certificate': certificate_value,
+            'certificate_files': certificate_files,
             'key_select_mode': key_select_mode_val,
-            'key_passphrase': self.key_passphrase_row.get_text(),
+            'identity_agent': (self.identity_agent_row.get_text().strip()
+                               if hasattr(self, 'identity_agent_row') else ''),
+            'add_keys_to_agent': self._selected_add_keys_to_agent(),
+            'pkcs11_provider': (self.pkcs11_provider_row.get_text().strip()
+                                if hasattr(self, 'pkcs11_provider_row') else ''),
+            'security_key_provider': (self.security_key_provider_row.get_text().strip()
+                                      if hasattr(self, 'security_key_provider_row') else ''),
             'password': self.password_row.get_text(),
             'x11_forwarding': self.x11_row.get_active(),
             'pubkey_auth_no': self.pubkey_auth_row.get_active(),
@@ -3889,46 +4232,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         dialog.set_close_response("ok")
         dialog.present()
 
-    def _update_passphrase_for_key(self, key_path):
-        """Update the passphrase field when a different key is selected"""
-        try:
-            if not key_path or not hasattr(self, 'key_passphrase_row'):
-                return
-
-            existing_text = ""
-            try:
-                existing_text = self.key_passphrase_row.get_text()
-            except Exception:
-                existing_text = ""
-
-            current_key = getattr(self, '_active_key_path', None)
-
-            if existing_text:
-                if getattr(self, '_loading_connection_data', False):
-                    self._active_key_path = key_path
-                    return
-                if current_key == key_path:
-                    self._active_key_path = key_path
-                    return
-
-            # Clear the passphrase field first
-            self.key_passphrase_row.set_text("")
-
-            # Try to load passphrase from secure storage for the selected key
-            if hasattr(self, 'connection_manager') and self.connection_manager:
-                stored_passphrase = self.connection_manager.get_key_passphrase(key_path)
-                if stored_passphrase:
-                    self.key_passphrase_row.set_text(stored_passphrase)
-                    logger.debug(f"Loaded passphrase for key: {key_path}")
-                else:
-                    logger.debug(f"No stored passphrase for key: {key_path}")
-            else:
-                logger.debug(f"No connection manager available for key: {key_path}")
-
-            self._active_key_path = key_path
-        except Exception as e:
-            logger.debug(f"Failed to update passphrase for key {key_path}: {e}")
-    
     def _refresh_connection_data_from_ssh_config(self):
         """Refresh connection data from the updated SSH config file"""
         try:

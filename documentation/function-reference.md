@@ -1232,8 +1232,6 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`on_preferences(action, param)`** — Handle preferences action
 
-- **`on_quick_connect(action, param)`** — Open quick connect dialog
-
 - **`on_quit_action(action=None, param=None)`** — Handle Ctrl (⌘ on macOS)+Q by routing through the application quit path.
 
 - **`on_search(action, param)`** — Handle search action
@@ -2704,17 +2702,14 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 
 
+## Module: `sshpilot.command_converter`
+
+### Functions
+
+- **`parse_ssh_command(command_text)`** — Convert a full `ssh ...` command line (or a bare `user@host`) into a connection-data dict. Returns the dict on success, `{"error": message}` for rejected input, or `None` when it cannot be parsed. See `documentation/command-converter.md`.
+
+
 ## Module: `sshpilot.welcome_page`
-
-### Class: `QuickConnectDialog`
-
-- **`__init__(parent_window)`** — Handles init.
-
-- **`_parse_ssh_command(command_text)`** — Parse SSH command text and extract connection parameters
-
-- **`on_connect(*args)`** — Handle connect button or Enter key
-
-- **`on_response(dialog, response)`** — Handle dialog response
 
 ### Class: `WelcomePage`
 
@@ -2731,10 +2726,6 @@ This document enumerates the functions and methods available in the `sshpilot` p
 - **`_get_safe_current_shortcuts()`** — Safely get current shortcuts including user customizations from the app.
 
 - **`_on_layout_toggle_changed(toggle)`** — Handle layout toggle change
-
-- **`_parse_ssh_command(command_text)`** — Parse SSH command text and extract connection parameters
-
-- **`on_quick_connect_clicked(button)`** — Open quick connect dialog
 
 - **`open_online_help()`** — Open online help documentation
 

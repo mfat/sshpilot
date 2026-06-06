@@ -9,8 +9,16 @@ from gettext import gettext as _
 
 logger = logging.getLogger(__name__)
 
-# Installed once per process; scoped to box.add-pane-strip so it only
-# affects the strip widget and nothing else in the app.
+# Alt+1..9 → zero-based pane index (number row + numeric keypad).
+_ALT_NUM_KEYS = {}
+for _i in range(1, 10):
+    _ALT_NUM_KEYS[getattr(Gdk, f'KEY_{_i}')] = _i - 1
+    _ALT_NUM_KEYS[getattr(Gdk, f'KEY_KP_{_i}')] = _i - 1
+
+# Installed once per process; scoped to the .add-pane-strip / scroll-spacer
+# style classes so it only affects those widgets and nothing else in the app.
+# Class-only selectors so the rule applies whether the strip is a Gtk.Box or a
+# Gtk.ActionBar (the ActionBar provides its own border/padding).
 _drop_zone_css_installed = False
 
 def _ensure_drop_zone_css() -> None:
@@ -18,18 +26,13 @@ def _ensure_drop_zone_css() -> None:
     if _drop_zone_css_installed:
         return
     provider = Gtk.CssProvider()
-    # Targets plain box.add-pane-strip so there are no Adwaita sub-node
-    # overrides to fight.  Two background-color declarations: the rgba()
-    # fallback fires on systems where @accent_bg_color is unavailable.
+    # Only the drag-over highlight is styled here; the strip's frame/padding now
+    # comes from Gtk.ActionBar's native styling.
     provider.load_from_data(b"""
-box.toolbar.add-pane-strip {
-    border-top: 2px solid alpha(@window_fg_color, 0.25);
-    padding: 8px 12px;
-}
-box.add-pane-strip.drag-over {
+.add-pane-strip.drag-over {
     background-color: rgba(42, 161, 152, 0.25);
 }
-box.add-pane-scroll-spacer.drag-over {
+.add-pane-scroll-spacer.drag-over {
     background-color: rgba(42, 161, 152, 0.25);
 }
 """)
@@ -290,8 +293,14 @@ class SplitPane(Gtk.Box):
         sub.add_css_class("dim-label")
         inner.append(sub)
 
+        select_host_btn = Gtk.Button(label=_("Select host"))
+        select_host_btn.add_css_class("suggested-action")
+        select_host_btn.add_css_class("pill")
+        select_host_btn.set_halign(Gtk.Align.CENTER)
+        select_host_btn.connect("clicked", self._on_select_host_clicked)
+        inner.append(select_host_btn)
+
         pick_btn = Gtk.Button(label=_("Pick existing tab"))
-        pick_btn.add_css_class("suggested-action")
         pick_btn.add_css_class("pill")
         pick_btn.set_halign(Gtk.Align.CENTER)
         pick_btn.connect("clicked", self._on_pick_existing_tab_clicked)
@@ -338,6 +347,19 @@ class SplitPane(Gtk.Box):
 
     def add_terminal(self, terminal, title: Optional[str] = None) -> None:
         """Embed a TerminalWidget as a sub-tab in this pane."""
+        # If this terminal came from the main tab view it carries the window's
+        # convert-to-split DropTarget. Inside a pane that target just swallows
+        # connection drops over the terminal area (its handler finds no main-tab
+        # page), so only the tab bar would accept drops. Detach it so the pane's
+        # own drop target handles drops anywhere in the pane.
+        _convert_dt = getattr(terminal, '_convert_to_split_dt', None)
+        if _convert_dt is not None:
+            try:
+                terminal.remove_controller(_convert_dt)
+            except Exception:
+                pass
+            terminal._convert_to_split_dt = None
+
         # Ensure the terminal is detached from any existing parent first so
         # GTK4 allows reparenting into the inner TabView.
         try:
@@ -448,8 +470,15 @@ class SplitPane(Gtk.Box):
 
             for nick in nicknames:
                 conn = self._window.connection_manager.find_connection_by_nickname(nick)
-                if conn is not None:
+                if conn is None:
+                    continue
+                # Never stack multiple tabs inside one pane. Fill THIS pane only
+                # while it's still an empty placeholder; once it holds a terminal,
+                # each dropped connection opens in a new pane instead.
+                if self.get_terminal_count() == 0:
                     self.add_connection(conn)
+                else:
+                    self._split_view_tab.add_pane().add_connection(conn)
             return True
         except Exception as exc:
             logger.error("SplitPane drop failed: %s", exc)
@@ -497,6 +526,16 @@ class SplitPane(Gtk.Box):
         popover.connect("closed", on_closed)
         popover.popup()
         GLib.idle_add(lambda: (entry.grab_focus(), entry.select_region(0, -1), False)[-1])
+
+    # ── "Select host" button (reuses the command-snippets host picker) ─────────
+
+    def _on_select_host_clicked(self, button: Gtk.Button) -> None:
+        from .host_picker import show_host_picker  # noqa: PLC0415
+        show_host_picker(
+            self._window,
+            button,
+            lambda conn: self.add_connection(conn),
+        )
 
     # ── "Pick existing tab" button ────────────────────────────────────────────
 
@@ -660,21 +699,31 @@ class SplitViewTab(Gtk.Box):
         self._scroll_overlay.set_clip_overlay(self._drag_ghost, True)
         self.append(self._scroll_overlay)
 
-        for widget in (self, self._scroll_overlay, self._pane_scroll):
-            widget.connect('notify::height', self._schedule_viewport_sync)
+        # Refit the panes whenever the scroll viewport's height changes. GTK4
+        # widgets have no usable size-change signal ('notify::height' is not a
+        # real property and Gtk.Box ignores a do_size_allocate override), but the
+        # scrolled window's vertical adjustment emits 'notify::page-size' whenever
+        # its visible height changes — on window resize AND when the bottom action
+        # bar reveals and steals space. page-size tracks the viewport only (not
+        # the content height we set during the sync), so there's no feedback loop.
+        self._pane_scroll.get_vadjustment().connect(
+            'notify::page-size', self._schedule_viewport_sync
+        )
         self.connect('map', self._schedule_viewport_sync)
+        # Reveal the action bar ~1s after the tab is first shown, then leave it.
+        self.connect('map', self._on_first_map_reveal_strip)
         try:
             window.connect('notify::default-height', self._schedule_viewport_sync)
-            window.connect('notify::height', self._schedule_viewport_sync)
         except Exception:
             pass
 
-        # Toolbar strip below the panes
+        # Action bar strip below the panes (revealed shortly after the tab opens)
         self._add_pane_btn: Optional[Gtk.Button] = None
-        self._add_pane_strip: Optional[Gtk.Box] = None
+        self._add_pane_strip: Optional[Gtk.ActionBar] = None
         self._layout_h_btn: Optional[Gtk.ToggleButton] = None
         self._layout_v_btn: Optional[Gtk.ToggleButton] = None
         self._layout_toggle_updating: list = [False]
+        self._add_strip_reveal_scheduled = False
         self._add_strip = self._build_add_pane_strip()
         self.append(self._add_strip)
 
@@ -815,10 +864,13 @@ class SplitViewTab(Gtk.Box):
     def _build_add_pane_strip(self) -> Gtk.Widget:
         _ensure_drop_zone_css()
 
-        strip = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        strip.add_css_class("toolbar")
+        # Gtk.ActionBar gives native bottom-bar styling and a built-in revealer
+        # (set_revealed) animation. It starts hidden and is revealed shortly
+        # after the tab is shown (see _on_first_map_reveal_strip).
+        strip = Gtk.ActionBar()
         strip.add_css_class("add-pane-strip")
         strip.set_hexpand(True)
+        strip.set_revealed(False)
 
         self._layout_h_btn, self._layout_v_btn, self._layout_toggle_updating = (
             create_layout_toggle_buttons(
@@ -827,8 +879,8 @@ class SplitViewTab(Gtk.Box):
                 as_pill=True,
             )
         )
-        strip.append(self._layout_h_btn)
-        strip.append(self._layout_v_btn)
+        strip.pack_start(self._layout_h_btn)
+        strip.pack_start(self._layout_v_btn)
 
         from sshpilot import icon_utils  # noqa: PLC0415
 
@@ -837,34 +889,33 @@ class SplitViewTab(Gtk.Box):
         scroll_top_btn.set_tooltip_text(_("Scroll to top"))
         scroll_top_btn.add_css_class("pill")
         scroll_top_btn.connect("clicked", lambda _b: self.scroll_panes_to_top())
-        strip.append(scroll_top_btn)
+        strip.pack_start(scroll_top_btn)
 
         scroll_bottom_btn = Gtk.Button()
         icon_utils.set_button_icon(scroll_bottom_btn, 'bottom-large-symbolic')
         scroll_bottom_btn.set_tooltip_text(_("Scroll to bottom"))
         scroll_bottom_btn.add_css_class("pill")
         scroll_bottom_btn.connect("clicked", lambda _b: self.scroll_panes_to_bottom())
-        strip.append(scroll_bottom_btn)
+        strip.pack_start(scroll_bottom_btn)
 
         large_btn = Gtk.Button(label=_("Default"))
         large_btn.add_css_class("pill")
         large_btn.set_tooltip_text(_("Reset panes to their default size"))
         large_btn.connect("clicked", lambda _b: self._on_default_clicked())
-        strip.append(large_btn)
+        strip.pack_start(large_btn)
 
         compact_btn = Gtk.Button(label=_("Compact"))
         compact_btn.add_css_class("pill")
         compact_btn.set_tooltip_text(_("Reset panes to a smaller size"))
         compact_btn.connect("clicked", lambda _b: self.reset_all_row_heights(0.3))
-        strip.append(compact_btn)
+        strip.pack_start(compact_btn)
 
-        add_btn = Gtk.Button(label=_("Add Terminal"))
+        add_btn = Gtk.Button(label=_("+ Add Terminal"))
         add_btn.add_css_class("suggested-action")
         add_btn.add_css_class("pill")
-        add_btn.set_halign(Gtk.Align.END)
-        add_btn.set_hexpand(True)
         add_btn.connect("clicked", lambda _b: self.add_pane())
-        strip.append(add_btn)
+        # pack_end places it at the trailing edge — no manual halign/hexpand hack.
+        strip.pack_end(add_btn)
 
         self._add_pane_btn = add_btn
         self._add_pane_strip = strip
@@ -876,6 +927,22 @@ class SplitViewTab(Gtk.Box):
         strip.add_controller(dt)
 
         return strip
+
+    def _on_first_map_reveal_strip(self, *_args) -> None:
+        """On the tab's first map, schedule the action bar's animated reveal a
+        second later. Guarded so repeated map/unmap cycles don't re-trigger it."""
+        if self._add_strip_reveal_scheduled:
+            return
+        self._add_strip_reveal_scheduled = True
+        GLib.timeout_add(1000, self._reveal_add_strip)
+
+    def _reveal_add_strip(self) -> bool:
+        if self._add_pane_strip is not None:
+            try:
+                self._add_pane_strip.set_revealed(True)
+            except Exception:
+                pass
+        return False  # one-shot
 
     # ── drag-over strip state ─────────────────────────────────────────────────
 
@@ -1339,6 +1406,12 @@ class SplitViewTab(Gtk.Box):
 
         if exceeds:
             self._fill_viewport = False
+        elif not self._manual_row_indices:
+            # Content fits and nothing is manually sized → restore auto-fill so a
+            # layout that can fill the viewport (e.g. two side-by-side panes after
+            # a VERTICAL→HORIZONTAL switch) does so by default. Without this the
+            # flag is sticky-off after any over-tall (exceeding) layout.
+            self._fill_viewport = True
 
         auto_fill_h: Optional[int] = None
         if self._fill_viewport and not exceeds:
@@ -1549,14 +1622,18 @@ class SplitViewTab(Gtk.Box):
         if keyval in (Gdk.KEY_minus, Gdk.KEY_underscore) and mods == CTRL_SH:
             self.set_layout_mode(self.VERTICAL)
             return True
-        if keyval in (Gdk.KEY_W, Gdk.KEY_w) and mods == CTRL_SH:
-            pane = self._get_focused_pane()
-            if pane:
-                pane.close_pane()
-            return True
         # Ctrl+Shift+N — add pane (Ctrl+Shift+T is taken by local-terminal action)
         if keyval in (Gdk.KEY_N, Gdk.KEY_n) and mods == CTRL_SH:
             self.add_pane()
+            return True
+
+        # Alt+1..9 — focus the Nth pane. (Ctrl+Shift+W "close focused pane" is
+        # now handled by the global, context-aware tab-close action so it works
+        # both inside and outside split views without a precedence clash.)
+        if mods == Gdk.ModifierType.ALT_MASK and keyval in _ALT_NUM_KEYS:
+            idx = _ALT_NUM_KEYS[keyval]
+            if 0 <= idx < len(self._panes):
+                self._focus_pane(self._panes[idx])
             return True
 
         return False
@@ -1570,6 +1647,16 @@ class SplitViewTab(Gtk.Box):
                 return widget
             widget = widget.get_parent()
         return None
+
+    def close_focused_pane(self) -> None:
+        """Close the focused pane (used by the context-aware Close Tab action).
+        Falls back to the last-active / first pane. Closing the last pane closes
+        the whole split-view tab via remove_pane()."""
+        pane = (self._get_focused_pane()
+                or self._last_active_pane
+                or (self._panes[0] if self._panes else None))
+        if pane is not None:
+            pane.close_pane()
 
     def _pane_grid_pos(self, idx: int) -> tuple:
         if self._layout_mode == self.VERTICAL:

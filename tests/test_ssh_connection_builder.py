@@ -68,7 +68,8 @@ def test_ssh_options_precede_host_and_raw_remote_command():
 
 
 def test_sshpass_when_password_present_even_for_key_auth():
-    """A stored password triggers sshpass even for key auth (auth_method=0)."""
+    """Key auth is authoritative: a stored password is ignored for key auth,
+    but used (sshpass) when password auth is selected."""
     conn = Connection(
         {
             'host': 'example.com',
@@ -80,10 +81,12 @@ def test_sshpass_when_password_present_even_for_key_auth():
     )
     ctx = ConnectionContext(connection=conn, command_type='ssh')
     result = build_ssh_connection(ctx)
-    assert result.use_sshpass is True
-    assert result.password == 'secret'
+    # auth_method=0 (key-based): password is irrelevant -> askpass, not sshpass.
+    assert result.use_sshpass is False
+    assert result.password is None
+    assert result.use_askpass is True
 
-    # Password auth (auth_method=1) with the same stored password also uses sshpass.
+    # Password auth (auth_method=1) with the same stored password uses sshpass.
     conn.auth_method = 1
     ctx = ConnectionContext(connection=conn, command_type='ssh')
     result = build_ssh_connection(ctx)

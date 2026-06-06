@@ -65,6 +65,9 @@ class BaseTerminalBackend(Protocol):
     def copy_clipboard(self) -> None:
         """Copy the current terminal selection to the clipboard."""
 
+    def get_has_selection(self) -> bool:
+        """Whether the terminal currently has a text selection."""
+
     def paste_clipboard(self) -> None:
         """Paste clipboard contents into the terminal."""
 
@@ -457,6 +460,9 @@ class VTETerminalBackend:
     def copy_clipboard(self) -> None:
         if self.vte.get_has_selection():
             self.vte.copy_clipboard_format(Vte.Format.TEXT)
+
+    def get_has_selection(self) -> bool:
+        return bool(self.vte.get_has_selection())
 
     def paste_clipboard(self) -> None:
         self.vte.paste_clipboard()

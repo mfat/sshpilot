@@ -42,7 +42,7 @@ HAS_TIMED_ANIMATION = hasattr(Adw, 'TimedAnimation')
 
 from gettext import gettext as _
 
-from .connection_manager import ConnectionManager, Connection
+from .connection_manager import ConnectionManager, Connection, ConnectionState
 from .terminal import TerminalWidget
 from .terminal_manager import TerminalManager
 from .config import Config
@@ -82,7 +82,7 @@ from .actions import WindowActions, register_window_actions
 from . import shutdown
 from .search_utils import connection_matches
 from .shortcut_utils import get_primary_modifier_label
-from .platform_utils import is_macos, get_config_dir
+from .platform_utils import is_macos, get_config_dir, get_ssh_dir
 from .command_blocks import CommandBlocksPanel, CommandBlockStore
 from .context_menu import IconContextMenu
 from .ssh_utils import ensure_writable_ssh_home
@@ -90,6 +90,40 @@ from .scp_utils import assemble_scp_transfer_args, classify_sftp_error, download
 from .ssh_password_exec import run_ssh_with_password, run_scp_with_password
 
 logger = logging.getLogger(__name__)
+
+
+_tips_banner_css_installed = False
+
+
+def _ensure_tips_banner_css() -> None:
+    """Install the accent (Adwaita blue) styling for the terminal tips banner.
+
+    The banner is a plain Gtk.Box (``.tips-banner``) inside a Gtk.Revealer, so we
+    paint the box and recolor its inline buttons. @accent_bg_color /
+    @accent_fg_color follow the user's accent + light/dark theme. Installed once
+    per display, mirroring split_view's CSS helper.
+    """
+    global _tips_banner_css_installed
+    if _tips_banner_css_installed:
+        return
+    display = Gdk.Display.get_default()
+    if display is None:
+        return
+    provider = Gtk.CssProvider()
+    provider.load_from_data(b"""
+.tips-banner {
+    background-color: @accent_bg_color;
+    background-image: none;
+    color: @accent_fg_color;
+    padding: 6px 12px;
+}
+""")
+    Gtk.StyleContext.add_provider_for_display(
+        display,
+        provider,
+        Gtk.STYLE_PROVIDER_PRIORITY_USER,
+    )
+    _tips_banner_css_installed = True
 
 
 def _format_ssh_target(host: str, user: str) -> str:
@@ -595,6 +629,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.terminal_to_connection: Dict[TerminalWidget, Connection] = {}
         self.connection_rows = {}   # connection -> [row_widget, ...] (a connection may appear in several groups)
         self._context_menu_row = None
+        self._context_menu_popover = None
         # Hide hosts toggle state
         try:
             self._hide_hosts = bool(self.config.get_setting('ui.hide_hosts', False))
@@ -678,6 +713,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception as e:
             logger.error(f"Failed to install sidebar CSS: {e}")
 
+        # Apply header-bar button visibility preferences now that the buttons
+        # exist (split view, commands, local terminal).
+        try:
+            self.update_headerbar_buttons()
+        except Exception as e:
+            logger.error(f"Failed to apply header-bar button visibility: {e}")
+
         # Check startup behavior setting and show appropriate view
         try:
             startup_behavior = self.config.get_setting('app-startup-behavior', 'welcome')
@@ -697,9 +739,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             except Exception:
                 pass
         elif startup_behavior == 'terminal':
-            # Show terminal when explicitly requested
+            # Show terminal when explicitly requested. Create it SYNCHRONOUSLY
+            # here (this runs during __init__, before the window is presented) so
+            # the tab view is shown from the first frame — deferring it via
+            # idle_add briefly flashed the welcome/start page first.
             try:
-                GLib.idle_add(self.terminal_manager.show_local_terminal)
+                self.terminal_manager.show_local_terminal()
             except Exception as e:
                 logger.error(f"Failed to show local terminal on startup: {e}")
 
@@ -732,6 +777,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
         # Mark startup as complete after a short delay to allow all initialization to finish
         GLib.timeout_add(500, self._on_startup_complete)
+        # Note: "hide sidebar on startup" is applied at split-view creation
+        # (before the window is presented) so it never flashes visible.
 
     def _restore_startup_session(self, startup_behavior):
         """Restore a session on startup based on the configured behavior."""
@@ -776,14 +823,28 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 logger.debug("Checking for updates on startup")
                 
                 def on_update_check_complete(latest_version):
-                    """Callback when startup update check completes"""
-                    if latest_version:
-                        GLib.idle_add(self._handle_update_check_result, latest_version)
-                
+                    """Callback when startup update check completes.
+
+                    Always route through the result handler (even when there is
+                    no update) so the tips banner is surfaced once the update
+                    banner's area is known to be free. ``from_startup=True``
+                    keeps the silent check from raising a toast.
+                    """
+                    GLib.idle_add(
+                        self._handle_update_check_result, latest_version, True
+                    )
+
                 check_for_updates_async(on_update_check_complete)
         except Exception as e:
             logger.debug(f"Failed to check for updates on startup: {e}")
-        
+
+        # One-time operation mode chooser
+        try:
+            if self._should_prompt_operation_mode():
+                GLib.idle_add(self._show_operation_mode_dialog)
+        except Exception as e:
+            logger.debug(f"Failed to schedule operation mode prompt: {e}")
+
         return False  # Don't repeat
     
     def _queue_focus_operation(self, focus_func):
@@ -849,6 +910,20 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             .navigation-sidebar.dragging {
               opacity: 0.7;
               transform: scale(0.98);
+            }
+
+            /* Selected sidebar row: always use the accent so selection is
+               visible in dark mode by default. libadwaita's default
+               navigation-sidebar selection is a neutral shade that is nearly
+               invisible against the dark card background; this rule (which the
+               accent-override path already emits, but only when an override is
+               set) makes selection clear unconditionally.
+               @accent_bg_color / @accent_fg_color follow the system accent and
+               any user override. The more specific .tinted:selected rule below
+               keeps the identical color for grouped rows. */
+            .navigation-sidebar row:selected {
+              background-color: @accent_bg_color;
+              color: @accent_fg_color;
             }
 
             .navigation-sidebar row.tinted {
@@ -1102,6 +1177,24 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         rows = self._get_target_connection_rows(prefer_context=prefer_context)
         return self._connections_from_rows(rows)
 
+    def _page_for_child(self, child):
+        """Return the Adw.TabPage for ``child`` in the main tab_view, or None.
+
+        Unlike ``tab_view.get_page(child)``, this never emits the
+        ``child_belongs_to_this_view`` CRITICAL assertion when ``child`` isn't in
+        the main view — e.g. a terminal that has been embedded in a split-view
+        pane (which lives in that pane's own inner tab view, not tab_view).
+        """
+        try:
+            pages = self.tab_view.get_pages()
+            for i in range(pages.get_n_items()):
+                page = pages.get_item(i)
+                if page is not None and page.get_child() is child:
+                    return page
+        except Exception:
+            pass
+        return None
+
     def _rows_for_connection(self, connection) -> List[Gtk.ListBoxRow]:
         """Return every visible row representing ``connection``.
 
@@ -1343,27 +1436,50 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # instead of floating over the terminal where it would mask output.
         # The update banner takes priority over tips (see show_terminal_tip and
         # _show_update_banner).
-        tips_overlay = Gtk.Overlay()
-        tips_overlay.set_visible(False)
-        self.tips_banner = Adw.Banner()
-        self.tips_banner.set_revealed(False)
-        self.tips_banner.set_button_label(_('Don\'t show again'))
-        self.tips_banner.connect('button-clicked', self._on_tips_banner_dont_show_again)
-        tips_overlay.set_child(self.tips_banner)
-        # Leading-edge button cluster: "Next tip" (cycles) + "Dismiss". The
-        # banner's own trailing button is "Don't show again".
-        tips_buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        tips_buttons.set_halign(Gtk.Align.START)
-        tips_buttons.set_valign(Gtk.Align.CENTER)
-        tips_buttons.set_margin_start(12)
+        # A Gtk.Revealer holding a single inline row: the extra buttons are real
+        # children of the banner body, so no Gtk.Overlay hack is needed to show
+        # them (Adw.Banner only exposes one action button). The revealer gives us
+        # the same slide-in/out animation Adw.Banner.set_revealed() provided.
+        _ensure_tips_banner_css()
+        self.tips_revealer = Gtk.Revealer()
+        # SLIDE_DOWN slides the banner in from the top edge and collapses it back
+        # up on dismiss (matching Adw.Banner's feel).
+        self.tips_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
+        self.tips_revealer.set_transition_duration(250)
+        self.tips_revealer.set_reveal_child(False)
+
+        # No outer margins: the accent background must span the full width like
+        # the previous Adw.Banner. Horizontal padding comes from the .tips-banner
+        # CSS instead, so there are no gaps on the sides.
+        tips_body = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        tips_body.add_css_class('tips-banner')
+
+        # Leading-edge button cluster: "Next tip" (cycles) + "Dismiss".
         self.tips_next_button = Gtk.Button(label=_('Next tip'))
+        self.tips_next_button.set_valign(Gtk.Align.CENTER)
         self.tips_next_button.connect('clicked', self._on_tips_banner_next)
         tips_dismiss_button = Gtk.Button(label=_('Dismiss'))
+        tips_dismiss_button.set_valign(Gtk.Align.CENTER)
         tips_dismiss_button.connect('clicked', self._on_tips_banner_dismiss)
-        tips_buttons.append(self.tips_next_button)
-        tips_buttons.append(tips_dismiss_button)
-        tips_overlay.add_overlay(tips_buttons)
-        self.tips_banner_container = tips_overlay
+        tips_body.append(self.tips_next_button)
+        tips_body.append(tips_dismiss_button)
+
+        # Tip text fills the middle.
+        self.tips_label = Gtk.Label()
+        self.tips_label.set_hexpand(True)
+        self.tips_label.set_halign(Gtk.Align.CENTER)
+        self.tips_label.set_wrap(True)
+        self.tips_label.set_justify(Gtk.Justification.CENTER)
+        tips_body.append(self.tips_label)
+
+        # Trailing button: "Don't show again".
+        tips_dont_show_button = Gtk.Button(label=_('Don\'t show again'))
+        tips_dont_show_button.set_valign(Gtk.Align.CENTER)
+        tips_dont_show_button.connect('clicked', self._on_tips_banner_dont_show_again)
+        tips_body.append(tips_dont_show_button)
+
+        self.tips_revealer.set_child(tips_body)
+        self.tips_banner_container = self.tips_revealer
 
         # Create header bar
         self.header_bar = Gtk.HeaderBar()
@@ -1389,7 +1505,21 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.sidebar_toggle_button.set_active(False)
         self.sidebar_toggle_button.connect('toggled', self.on_sidebar_toggle)
         self.header_bar.pack_start(self.sidebar_toggle_button)
-        
+
+        # Add local terminal button right after the sidebar toggle
+        self.local_terminal_button = Gtk.Button()
+        icon_utils.set_button_icon(self.local_terminal_button, 'utilities-terminal-symbolic')
+        self.local_terminal_button.set_tooltip_text(
+            f'Open Local Terminal ({get_primary_modifier_label()}+Shift+T)'
+        )
+        self.local_terminal_button.add_css_class('flat')
+        self.local_terminal_button.set_action_name('app.local-terminal')
+        self.header_bar.pack_start(self.local_terminal_button)
+        # Keep a stable reference: self.local_terminal_button is reassigned later
+        # to the tab-bar button. This one is the header-bar local-terminal button,
+        # toggled by Preferences ▸ Interface ▸ Header Bar.
+        self._headerbar_local_terminal_button = self.local_terminal_button
+
         # Add view toggle button to switch between welcome and tabs
         self.view_toggle_button = Gtk.Button()
         from sshpilot import icon_utils
@@ -1446,20 +1576,34 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             self._split_variant = 'paned'
             logger.debug("Using Gtk.Paned fallback")
         
-        # Sidebar always starts visible
-        sidebar_visible = True
+        # Initial sidebar visibility. Apply "hide on startup" HERE — before the
+        # window is presented — so it never flashes visible then collapses.
+        try:
+            start_hidden = bool(self.config.get_setting('ui.sidebar_hide_on_startup', False))
+        except Exception:
+            start_hidden = False
+        sidebar_visible = not start_hidden
         # Track sidebar visibility state for NavigationSplitView (which doesn't have get_show_sidebar)
-        self._sidebar_visible = True
-        
-        # For OverlaySplitView, we need to explicitly show the sidebar
+        self._sidebar_visible = sidebar_visible
+        # Keep the header toggle button in sync (active == hidden).
+        if hasattr(self, 'sidebar_toggle_button'):
+            try:
+                self.sidebar_toggle_button.set_active(start_hidden)
+            except Exception:
+                pass
+
+        # For OverlaySplitView, we need to explicitly set the sidebar state
         if HAS_OVERLAY_SPLIT:
             try:
-                self.split_view.set_show_sidebar(True)
-                logger.debug("Set OverlaySplitView sidebar to visible")
+                self.split_view.set_show_sidebar(sidebar_visible)
+                logger.debug(f"Set OverlaySplitView sidebar visible={sidebar_visible}")
             except Exception as e:
-                logger.error(f"Failed to show OverlaySplitView sidebar: {e}")
-        elif HAS_NAV_SPLIT:
-            logger.debug("NavigationSplitView sidebar will be shown when content is set")
+                logger.error(f"Failed to set OverlaySplitView sidebar: {e}")
+        elif HAS_NAV_SPLIT and start_hidden:
+            try:
+                self._toggle_sidebar_visibility(False)
+            except Exception:
+                pass
         
         # Create sidebar
         self.setup_sidebar()
@@ -1538,6 +1682,23 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             pass
         return 0
 
+    def update_headerbar_buttons(self):
+        """Show/hide the toggleable header-bar buttons per preferences
+        (Settings ▸ Interface ▸ Header Bar)."""
+        mapping = (
+            ('split_view_button', 'ui.headerbar_show_split_view'),
+            ('_cmd_blocks_toggle_btn', 'ui.headerbar_show_commands'),
+            ('_headerbar_local_terminal_button', 'ui.headerbar_show_local_terminal'),
+        )
+        for attr, key in mapping:
+            btn = getattr(self, attr, None)
+            if btn is None:
+                continue
+            try:
+                btn.set_visible(bool(self.config.get_setting(key, True)))
+            except Exception:
+                logger.debug("Failed to apply header-bar button visibility for %s", attr, exc_info=True)
+
     def update_sidebar_display(self):
         """Update sidebar display based on current preferences."""
         if not hasattr(self, 'connection_list'):
@@ -1558,7 +1719,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             if hasattr(row, 'host_label'):
                 row.host_label.set_visible(show_user_hostname)
             if hasattr(row, 'status_icon'):
-                row.status_icon.set_visible(show_status)
+                # update_status() applies both the icon and visibility, honoring
+                # the show_status pref AND keeping idle (UNKNOWN) rows iconless.
+                if hasattr(row, 'update_status'):
+                    row.update_status()
+                else:
+                    row.status_icon.set_visible(show_status)
             if hasattr(row, '_update_forwarding_indicators'):
                 row._update_forwarding_indicators()
             
@@ -2015,12 +2181,119 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             # Use a simple gesture but avoid all coordinate-based operations
             context_click = Gtk.GestureClick()
             context_click.set_button(Gdk.BUTTON_SECONDARY)  # Only handle right-click
-            
+            # Capture phase so this gesture handles the right-click before the
+            # ListBox's own row handling.
+            context_click.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+
+            def _build_and_show_menu(row):
+                # Build a Gtk.PopoverMenu from the shared sidebar context menu helper.
+                menu = IconContextMenu()
+
+                def _on_popover_closed(popover, *_):
+                    # Only clear context state if this is still the active
+                    # popover — a newer right-click may have already replaced
+                    # it. Always unparent so popovers don't accumulate.
+                    if getattr(self, '_context_menu_popover', None) is popover:
+                        self._context_menu_popover = None
+                        self._context_menu_row = None
+                        self._context_menu_connection = None
+                    try:
+                        popover.unparent()
+                    except Exception:
+                        pass
+
+                if hasattr(row, 'group_id'):
+                    menu.add_section(
+                        menu.add_item('document-edit-symbolic', _('Edit Group'), lambda: self.on_edit_group_action(None, None)),
+                        menu.add_item('view-grid-symbolic', _('Open in Split View'), lambda: self.on_open_group_in_split_view_action(None, None)),
+                        menu.add_item('utilities-terminal-symbolic', _('Run Command…'), lambda: self.on_run_command_action()),
+                        menu.add_item('user-trash-symbolic', _('Delete Group'), lambda: self.on_delete_group_action(None, None)),
+                    )
+                else:
+                    conn = getattr(row, 'connection', None)
+
+                    menu.add_section(
+                        menu.add_item('list-add-symbolic', _('Open New Connection'), lambda: self.on_open_new_connection_action(None, None)),
+                        menu.add_item('document-edit-symbolic', _('Edit Connection'), lambda: self.on_edit_connection_action(None, None)),
+                        menu.add_item('view-grid-symbolic', _('Open in Split View'), lambda: self.on_open_in_split_view_action(None, None)),
+                        menu.add_item('utilities-terminal-symbolic', _('Run Command on Host…'), lambda: self.on_run_command_action()),
+                        menu.add_item('edit-copy-symbolic', _('Duplicate Connection'), lambda: self.on_duplicate_connection_action(None, None)),
+                        menu.add_item('edit-copy-symbolic', _('Copy Address'), lambda: self._copy_connection_address()),
+                    )
+
+                    wol_item = None
+                    try:
+                        conn_meta = self.config.get_connection_meta(conn.nickname) if conn else {}
+                        if (conn_meta or {}).get('wol_mac', '').strip():
+                            wol_item = menu.add_item('network-wireless-symbolic', _('Wake on LAN'), lambda: self.on_wake_on_lan_action(None, None))
+                    except Exception:
+                        pass
+                    menu.add_section(
+                        menu.add_item('folder-symbolic', _('Manage Files'), lambda: self.on_manage_files_action(None, None)) if not should_hide_file_manager_options() else None,
+                        menu.add_item('dialog-password-symbolic', _('Copy Key to Server'), lambda: self.on_copy_key_to_server_action(None, None)),
+                        wol_item,
+                        menu.add_item('utilities-terminal-symbolic', _('Open in System Terminal'), lambda: self.on_open_in_system_terminal_action(None, None)) if not should_hide_external_terminal_options() else None,
+                    )
+
+                    current_groups = self.group_manager.get_connection_groups(conn.nickname) if conn else []
+                    row_group_id = getattr(row, '_group_id', None)
+                    ungroup_label = _('Remove from Group') if (row_group_id and len(current_groups) > 1) else _('Ungroup')
+                    menu.add_section(
+                        menu.add_item('folder-symbolic', _('Move to Group'), lambda: self.on_move_to_group_action(None, None)),
+                        menu.add_item('list-add-symbolic', _('Copy to Group'), lambda: self.on_copy_to_group_action(None, None)),
+                        menu.add_item('edit-undo-symbolic', ungroup_label, lambda: self.on_move_to_ungrouped_action(None, None)) if current_groups else None,
+                    )
+
+                    try:
+                        is_pinned = self.config.is_pinned(conn.nickname) if conn else False
+                        if is_pinned:
+                            menu.add_section(
+                                menu.add_item('starred-symbolic', _('Unpin from Start Page'), lambda: self._toggle_pin_connection(conn)),
+                            )
+                        else:
+                            menu.add_section(
+                                menu.add_item('non-starred-symbolic', _('Pin to Start Page'), lambda: self._toggle_pin_connection(conn)),
+                            )
+                    except Exception:
+                        pass
+
+                    menu.add_section(
+                        menu.add_item('user-trash-symbolic', _('Delete'), lambda: self.on_delete_connection_action(None, None)),
+                    )
+
+                popover = menu.show(row, on_closed=_on_popover_closed)
+                self._context_menu_popover = popover
+
+                # Disable the autohide modal grab. An autohide popover grabs all
+                # input while open, so the next right-click on another row is
+                # swallowed to dismiss this popover and never reaches our gesture
+                # (a "dead click"). Without the grab, every right-click reaches the
+                # handler, which closes this menu and opens the next one in a
+                # single click. We handle dismissal ourselves (see below).
+                try:
+                    popover.set_autohide(False)
+                except Exception:
+                    pass
+
+                # Escape closes the menu (autohide normally provides this).
+                try:
+                    key_ctrl = Gtk.EventControllerKey()
+
+                    def _on_menu_key(_c, keyval, _code, _state):
+                        if keyval == Gdk.KEY_Escape:
+                            popover.popdown()
+                            return True
+                        return False
+
+                    key_ctrl.connect('key-pressed', _on_menu_key)
+                    popover.add_controller(key_ctrl)
+                except Exception:
+                    pass
+
             def _on_right_click(gesture, n_press, x, y):
                 try:
                     logger.debug("Simple right-click detected - showing context menu for selected row")
-                    
-                    
+
                     # Try to detect the clicked row, but fall back to selected row if detection fails
                     row = None
                     try:
@@ -2057,85 +2330,102 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     if not row:
                         logger.debug("No row available for context menu")
                         return
-                    
+
+                    # Claim the event sequence so the right-click stops here and
+                    # is not also processed by the ListBox's own handling.
+                    try:
+                        gesture.set_state(Gtk.EventSequenceState.CLAIMED)
+                    except Exception:
+                        pass
+
+                    # Dismiss and detach any context menu still open from a
+                    # previous right-click before showing the new one. The menu is
+                    # non-autohide, so this right-click reaches us instead of being
+                    # swallowed to close the old popover, letting us replace it in a
+                    # single click.
+                    prev_popover = getattr(self, '_context_menu_popover', None)
+                    if prev_popover is not None:
+                        self._context_menu_popover = None
+                        try:
+                            prev_popover.popdown()
+                        except Exception:
+                            pass
+                        try:
+                            if prev_popover.get_parent() is not None:
+                                prev_popover.unparent()
+                        except Exception:
+                            pass
+
+                    # Highlight the right-clicked row so the UI reflects which
+                    # connection the context menu applies to. Mirror standard
+                    # file-manager behavior: right-clicking a row that isn't part
+                    # of the current selection selects just that row; right-
+                    # clicking within an existing multi-selection preserves it.
+                    try:
+                        already_selected = row in self.connection_list.get_selected_rows()
+                    except Exception:
+                        already_selected = False
+                    if not already_selected:
+                        self._select_only_row(row)
+
+                    # Move the keyboard focus (focus ring) to the right-clicked row
+                    # too, otherwise it stays on a previously keyboard-focused row.
+                    try:
+                        row.grab_focus()
+                    except Exception:
+                        pass
+
                     # Set context menu data
                     self._context_menu_row = row
                     self._context_menu_connection = getattr(row, 'connection', None)
                     self._context_menu_group_row = row if hasattr(row, 'group_id') else None
 
-                    # Build a Gtk.PopoverMenu from the shared sidebar context menu helper.
-                    menu = IconContextMenu()
+                    _build_and_show_menu(row)
 
-                    def _on_popover_closed(*_):
-                        self._context_menu_row = None
-                        self._context_menu_connection = None
-
-                    if hasattr(row, 'group_id'):
-                        menu.add_section(
-                            menu.add_item('document-edit-symbolic', _('Edit Group'), lambda: self.on_edit_group_action(None, None)),
-                            menu.add_item('view-grid-symbolic', _('Open in Split View'), lambda: self.on_open_group_in_split_view_action(None, None)),
-                            menu.add_item('utilities-terminal-symbolic', _('Run Command…'), lambda: self.on_run_command_action()),
-                            menu.add_item('user-trash-symbolic', _('Delete Group'), lambda: self.on_delete_group_action(None, None)),
-                        )
-                    else:
-                        conn = getattr(row, 'connection', None)
-
-                        menu.add_section(
-                            menu.add_item('list-add-symbolic', _('Open New Connection'), lambda: self.on_open_new_connection_action(None, None)),
-                            menu.add_item('view-grid-symbolic', _('Open in Split View'), lambda: self.on_open_in_split_view_action(None, None)),
-                            menu.add_item('utilities-terminal-symbolic', _('Run Command…'), lambda: self.on_run_command_action()),
-                            menu.add_item('document-edit-symbolic', _('Edit Connection'), lambda: self.on_edit_connection_action(None, None)),
-                            menu.add_item('edit-copy-symbolic', _('Duplicate Connection'), lambda: self.on_duplicate_connection_action(None, None)),
-                            menu.add_item('edit-copy-symbolic', _('Copy Address'), lambda: self._copy_connection_address()),
-                        )
-
-                        wol_item = None
-                        try:
-                            conn_meta = self.config.get_connection_meta(conn.nickname) if conn else {}
-                            if (conn_meta or {}).get('wol_mac', '').strip():
-                                wol_item = menu.add_item('network-wireless-symbolic', _('Wake on LAN'), lambda: self.on_wake_on_lan_action(None, None))
-                        except Exception:
-                            pass
-                        menu.add_section(
-                            menu.add_item('folder-symbolic', _('Manage Files'), lambda: self.on_manage_files_action(None, None)) if not should_hide_file_manager_options() else None,
-                            menu.add_item('dialog-password-symbolic', _('Copy Key to Server'), lambda: self.on_copy_key_to_server_action(None, None)),
-                            wol_item,
-                            menu.add_item('utilities-terminal-symbolic', _('Open in System Terminal'), lambda: self.on_open_in_system_terminal_action(None, None)) if not should_hide_external_terminal_options() else None,
-                        )
-
-                        current_groups = self.group_manager.get_connection_groups(conn.nickname) if conn else []
-                        row_group_id = getattr(row, '_group_id', None)
-                        ungroup_label = _('Remove from Group') if (row_group_id and len(current_groups) > 1) else _('Ungroup')
-                        menu.add_section(
-                            menu.add_item('folder-symbolic', _('Move to Group'), lambda: self.on_move_to_group_action(None, None)),
-                            menu.add_item('list-add-symbolic', _('Copy to Group'), lambda: self.on_copy_to_group_action(None, None)),
-                            menu.add_item('edit-undo-symbolic', ungroup_label, lambda: self.on_move_to_ungrouped_action(None, None)) if current_groups else None,
-                        )
-
-                        try:
-                            is_pinned = self.config.is_pinned(conn.nickname) if conn else False
-                            if is_pinned:
-                                menu.add_section(
-                                    menu.add_item('starred-symbolic', _('Unpin from Start Page'), lambda: self._toggle_pin_connection(conn)),
-                                )
-                            else:
-                                menu.add_section(
-                                    menu.add_item('non-starred-symbolic', _('Pin to Start Page'), lambda: self._toggle_pin_connection(conn)),
-                                )
-                        except Exception:
-                            pass
-
-                        menu.add_section(
-                            menu.add_item('user-trash-symbolic', _('Delete'), lambda: self.on_delete_connection_action(None, None)),
-                        )
-
-                    menu.show(row, on_closed=_on_popover_closed)
-                    
                 except Exception as e:
                     logger.error(f"Failed to create context menu: {e}")
             
             context_click.connect('pressed', _on_right_click)
             self.connection_list.add_controller(context_click)
+
+            # Because the context menu is non-autohide (see _build_and_show_menu),
+            # it no longer dismisses itself when the user clicks away. Close it on
+            # any primary/middle press elsewhere in the window so it behaves like a
+            # normal context menu. Presses on the popover's own menu items land on
+            # a separate surface and do not reach this controller, so selecting an
+            # item still works. Runs in the capture phase but never claims the
+            # event, so normal click handling proceeds.
+            def _dismiss_context_menu_on_press(gesture, n_press, x, y):
+                pop = getattr(self, '_context_menu_popover', None)
+                if pop is None:
+                    return
+                self._context_menu_popover = None
+                try:
+                    pop.popdown()
+                except Exception:
+                    pass
+                try:
+                    if pop.get_parent() is not None:
+                        pop.unparent()
+                except Exception:
+                    pass
+
+            dismiss_click = Gtk.GestureClick()
+            dismiss_click.set_button(0)  # any button
+            dismiss_click.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+
+            def _on_dismiss_press(gesture, n_press, x, y):
+                # The right-click handler manages replacing the menu itself; only
+                # dismiss here for non-secondary buttons.
+                try:
+                    if gesture.get_current_button() == Gdk.BUTTON_SECONDARY:
+                        return
+                except Exception:
+                    pass
+                _dismiss_context_menu_on_press(gesture, n_press, x, y)
+
+            dismiss_click.connect('pressed', _on_dismiss_press)
+            self.add_controller(dismiss_click)
 
             middle_click = Gtk.GestureClick()
             middle_click.set_button(Gdk.BUTTON_MIDDLE)
@@ -2643,6 +2933,19 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.tab_view.set_hexpand(True)
         self.tab_view.set_vexpand(True)
 
+        # Disable Adw.TabView's built-in Alt+1..9 / Alt+0 tab-selection shortcuts.
+        # They otherwise shadow split-view "Alt+N focus pane" whenever more than
+        # one tab is open (the tab_view is an ancestor of the split-view tab, so
+        # its handler runs first). Tab switching is via Ctrl+PageUp/Down.
+        try:
+            self.tab_view.set_shortcuts(
+                self.tab_view.get_shortcuts()
+                & ~Adw.TabViewShortcuts.ALT_DIGITS
+                & ~Adw.TabViewShortcuts.ALT_ZERO
+            )
+        except Exception:
+            logger.debug("Could not adjust Adw.TabView shortcuts", exc_info=True)
+
         # Provide widget-scoped Alt+Arrow navigation helpers for tab-specific focus
         try:
             tab_nav = Gtk.ShortcutController()
@@ -2784,8 +3087,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
         # Command blocks toggle button (right sidebar)
         self._cmd_blocks_toggle_btn = Gtk.ToggleButton()
-        self._cmd_blocks_toggle_btn.set_icon_name('star-large-symbolic')
-        self._cmd_blocks_toggle_btn.add_css_class('flat')
+        _cmd_btn_content = Adw.ButtonContent()
+        _cmd_btn_content.set_icon_name('play-large-symbolic')
+        _cmd_btn_content.set_label(_('Commands'))
+        self._cmd_blocks_toggle_btn.set_child(_cmd_btn_content)
+        self._cmd_blocks_toggle_btn.add_css_class('opaque')
         self._cmd_blocks_toggle_btn.set_tooltip_text(_('Toggle Command Blocks (Ctrl+Alt+S)'))
         self._updating_cmd_toggle = False
 
@@ -3349,6 +3655,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 self.view_toggle_button.set_visible(True)
             else:
                 self.view_toggle_button.set_visible(False)  # Hide button when no tabs
+
+        # Sidebar behavior: reveal the sidebar when there are genuinely no tabs.
+        try:
+            if (self.config.get_setting('ui.sidebar_show_when_no_tabs', False)
+                    and self.tab_view.get_n_pages() == 0):
+                self._apply_sidebar_visible(True)
+        except Exception:
+            logger.debug("sidebar show-when-no-tabs failed", exc_info=True)
 
         logger.info("Showing welcome view")
 
@@ -4569,7 +4883,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             ('new-connection', _('New Connection')),
             ('search', _('Search Connections')),
             ('toggle-list', _('Focus Connection List')),
-            ('quick-connect', _('Quick Connect')),
             ('open-new-connection-tab', _('Open New Tab')),
             ('new-key', _('Copy Key to Server')),
             ('manage-files', _('Manage Files')),
@@ -4606,6 +4919,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         tab_actions = [
             ('tab-next', _('Next Tab')),
             ('tab-prev', _('Previous Tab')),
+            ('tab-move-left', _('Move Tab Left')),
+            ('tab-move-right', _('Move Tab Right')),
             ('tab-close', _('Close Tab')),
             ('tab-overview', _('Tab Overview')),
             ('new-split-view-tab', _('New Split View Tab')),
@@ -4645,7 +4960,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         group_split.add_shortcut(Gtk.ShortcutsShortcut(
             title=_('Add pane'), accelerator='<Ctrl><Shift>n'))
         group_split.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Close pane'), accelerator='<Ctrl><Shift>w'))
+            title=_('Close focused pane'), accelerator='<Ctrl><Shift>w'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Focus pane 1–4'), accelerator='<Alt>1'))
         section.add_group(group_split)
 
     def _get_safe_current_shortcuts(self):
@@ -4706,8 +5023,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         group_connections.add_shortcut(Gtk.ShortcutsShortcut(
             title=_('Focus Connection List'), accelerator=f"{primary}<Shift>l"))
         group_connections.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Quick Connect'), accelerator=f"{primary}<Alt>c"))
-        group_connections.add_shortcut(Gtk.ShortcutsShortcut(
             title=_('Manage Files'), accelerator=f"{primary}<Shift>o"))
         section.add_group(group_connections)
 
@@ -4726,11 +5041,15 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         group_tabs.add_shortcut(Gtk.ShortcutsShortcut(
             title=_('Open New Tab'), accelerator=f"{primary}<Alt>n"))
         group_tabs.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Next Tab'), accelerator='<Alt>Right'))
+            title=_('Next Tab'), accelerator=f"{primary}Page_Down"))
         group_tabs.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Previous Tab'), accelerator='<Alt>Left'))
+            title=_('Previous Tab'), accelerator=f"{primary}Page_Up"))
         group_tabs.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Close Tab'), accelerator=f"{primary}F4"))
+            title=_('Move Tab Left'), accelerator=f"{primary}<Shift>Page_Up"))
+        group_tabs.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Move Tab Right'), accelerator=f"{primary}<Shift>Page_Down"))
+        group_tabs.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Close Tab'), accelerator=f"{primary}<Shift>w"))
         group_tabs.add_shortcut(Gtk.ShortcutsShortcut(
             title=_('Tab Overview'), accelerator=f"{primary}<Shift>Tab"))
         section.add_group(group_tabs)
@@ -4760,7 +5079,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         group_split.add_shortcut(Gtk.ShortcutsShortcut(
             title=_('Add pane'), accelerator='<Ctrl><Shift>n'))
         group_split.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Close pane'), accelerator='<Ctrl><Shift>w'))
+            title=_('Close focused pane'), accelerator='<Ctrl><Shift>w'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Focus pane 1–4'), accelerator='<Alt>1'))
         section.add_group(group_split)
 
     def toggle_list_focus(self):
@@ -4769,12 +5090,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # focusing, a child *row* holds focus, so has_focus() on the ListBox
         # itself is False and the toggle would never return to the terminal.
         if self._focus_is_in_connection_list():
-            # Focus current terminal
-            current_page = self.tab_view.get_selected_page()
-            if current_page:
-                child = current_page.get_child()
-                if hasattr(child, 'vte'):
-                    self._focus_terminal_widget(child)
+            # Focus the active terminal. Use the split-view-aware lookup so this
+            # also returns focus to the active pane of a SplitViewTab (a
+            # SplitViewTab child has no .vte attribute of its own).
+            terminal = self._get_active_terminal_widget()
+            if terminal is not None:
+                self._focus_terminal_widget(terminal)
         else:
             # Focus connection list with toast notification
             self.focus_connection_list()
@@ -4803,6 +5124,35 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             page = self.tab_view.get_nth_page(new_index)
             if page:
                 self.tab_view.set_selected_page(page)
+        except Exception:
+            pass
+
+    def _move_tab_relative(self, delta: int):
+        """Reorder the selected tab one position left (-1) or right (+1)."""
+        try:
+            page = self.tab_view.get_selected_page()
+            if page is None:
+                return
+            if delta < 0:
+                self.tab_view.reorder_backward(page)
+            elif delta > 0:
+                self.tab_view.reorder_forward(page)
+        except Exception:
+            pass
+
+    def _close_active_tab_or_pane(self):
+        """Close the current tab — but in a split-view tab, close the focused
+        pane instead (Ctrl+Shift+W is context-dependent)."""
+        try:
+            page = self.tab_view.get_selected_page()
+            if page is None:
+                return
+            child = page.get_child()
+            from .split_view import SplitViewTab
+            if isinstance(child, SplitViewTab) and hasattr(child, 'close_focused_pane'):
+                child.close_focused_pane()
+                return
+            self.tab_view.close_page(page)
         except Exception:
             pass
 
@@ -4894,7 +5244,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             if target_term not in terms_for_conn:
                 target_term = terms_for_conn[0]
 
-            page = self.tab_view.get_page(target_term)
+            page = self._page_for_child(target_term)
             if page is None:
                 return
 
@@ -4935,7 +5285,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     # Fallback to the first tab for this connection
                     target_term = terms_for_conn[0]
                 
-                page = self.tab_view.get_page(target_term)
+                page = self._page_for_child(target_term)
                 if page is not None:
                     self.tab_view.set_selected_page(page)
                     # Update most-recent mapping
@@ -4980,7 +5330,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 # Compute next index (wrap)
                 next_idx = (current_idx + 1) % len(terms_for_conn) if current_idx >= 0 else 0
                 next_term = terms_for_conn[next_idx]
-                page = self.tab_view.get_page(next_term)
+                page = self._page_for_child(next_term)
                 if page is not None:
                     self.tab_view.set_selected_page(page)
                     # Update most-recent mapping
@@ -5226,7 +5576,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             should_hide = button.get_active()
             is_visible = not should_hide
             self._toggle_sidebar_visibility(is_visible)
-            
+            # A manual toggle cancels any pending "hide on terminal open" delay.
+            self._cancel_pending_sidebar_hide()
+
             # Update button icon and tooltip based on current sidebar state
             from sshpilot import icon_utils
             if is_visible:
@@ -5244,6 +5596,37 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 
         except Exception as e:
             logger.error(f"Failed to toggle sidebar: {e}")
+
+    # --- Sidebar behavior (Settings ▸ Sidebar ▸ Sidebar behavior) ------------
+    def _apply_sidebar_visible(self, visible: bool) -> None:
+        """Programmatically show/hide the sidebar and keep the toggle button in
+        sync (used by the behavior hooks)."""
+        try:
+            self._toggle_sidebar_visibility(visible)
+            if hasattr(self, 'sidebar_toggle_button'):
+                # Button 'active' means "hidden" (see on_sidebar_toggle).
+                self.sidebar_toggle_button.set_active(not visible)
+        except Exception:
+            logger.debug("apply_sidebar_visible failed", exc_info=True)
+
+    def _cancel_pending_sidebar_hide(self) -> None:
+        tid = getattr(self, '_sidebar_hide_timer_id', None)
+        if tid:
+            try:
+                GLib.source_remove(tid)
+            except Exception:
+                pass
+        self._sidebar_hide_timer_id = None
+
+    def _hide_sidebar_after_terminal(self) -> bool:
+        """Deferred hide so a freshly-opened terminal settles before the sidebar
+        slides away (smoother than hiding instantly)."""
+        self._sidebar_hide_timer_id = None
+        try:
+            self._apply_sidebar_visible(False)
+        except Exception:
+            logger.debug("hide_sidebar_after_terminal failed", exc_info=True)
+        return GLib.SOURCE_REMOVE
 
     def on_view_toggle_clicked(self, button):
         """Handle view toggle button click to switch between welcome and tabs"""
@@ -7822,6 +8205,17 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             logger.debug("Could not register convert-to-split drop: %s", exc)
         self._update_layout_toggle_state()
 
+        # Sidebar behavior: a session (SSH or local) just opened. Hide after a
+        # short delay so the terminal settles, then the sidebar slides away.
+        try:
+            if self.config.get_setting('ui.sidebar_hide_on_terminal_open', False):
+                self._cancel_pending_sidebar_hide()
+                self._sidebar_hide_timer_id = GLib.timeout_add(
+                    350, self._hide_sidebar_after_terminal
+                )
+        except Exception:
+            logger.debug("sidebar hide-on-terminal-open failed", exc_info=True)
+
     def _register_convert_to_split_drop(self, terminal, page) -> None:
         """Attach a drop target to terminal so dragging a connection converts the tab to split view."""
         from gi.repository import Gtk, Gdk, GObject
@@ -7861,10 +8255,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     return False
 
                 # Only convert if the terminal is still in the main tab_view
-                try:
-                    source_page = self.tab_view.get_page(terminal)
-                except Exception:
-                    source_page = None
+                source_page = self._page_for_child(terminal)
                 if source_page is None:
                     return False
 
@@ -7912,8 +8303,20 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 finally:
                     self._suppress_close_confirmation = False
                     self._moving_tab_to_pane = False
-                # Defer reparent so tab_view fully completes its close sequence
-                GLib.idle_add(svt._panes[0].add_terminal, terminal, title)
+                # Defer reparent so tab_view fully completes its close sequence.
+                # Pane 1 is filled synchronously below, so the proportional
+                # paned settles before pane 0 gets its (deferred) terminal — that
+                # leaves the divider at the empty placeholder's natural size, not
+                # 50/50. Re-equalize once the terminal is embedded so the panes
+                # match every other split scenario.
+                def _embed_terminal_in_pane0():
+                    svt._panes[0].add_terminal(terminal, title)
+                    # _on_default_clicked resets horizontal splits to 50/50 and
+                    # applies the default sizing for the pane count (fill for ≤2,
+                    # 50% rows for more) — same as a freshly-opened split.
+                    GLib.idle_add(lambda: (svt._on_default_clicked(), False)[1])
+                    return False
+                GLib.idle_add(_embed_terminal_in_pane0)
 
                 # Add each dropped connection to pane 1 (and extra panes beyond)
                 for i, conn in enumerate(connections):
@@ -7942,6 +8345,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         dt.connect("drop", _on_drop)
         dt.connect("enter", lambda _t, _x, _y: Gdk.DragAction.MOVE)
         terminal.add_controller(dt)
+        # Remember it so SplitPane.add_terminal can detach it when this terminal
+        # is embedded into a pane (otherwise it keeps intercepting connection
+        # drops over the terminal area, so only the tab bar would accept them).
+        terminal._convert_to_split_dt = dt
 
     # ── layout toggle state / apply ───────────────────────────────────────────
 
@@ -8161,7 +8568,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         try:
             for term in terminals:
                 try:
-                    page = self.tab_view.get_page(term)
+                    page = self._page_for_child(term)
                     if page:
                         self.tab_view.close_page(page)
                 except Exception:
@@ -8195,15 +8602,74 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Use idle_add to restore scroll position after UI updates complete
         GLib.idle_add(_restore_scroll_only)
 
+    def _recompute_connection_state(self, connection):
+        """Aggregate per-terminal state into the connection's authoritative state.
+
+        This is the single place the OR-across-terminals rule lives (moved out of
+        the sidebar renderer): a connection is CONNECTED while any of its
+        terminals is connected, and only drops to DISCONNECTED when the last one
+        goes down. A richer "down" state already set on the connection (FAILED)
+        is preserved rather than being flattened to DISCONNECTED.
+        """
+        # Local terminals use a lightweight LocalConnection without the status
+        # API and have no sidebar row — nothing to aggregate.
+        if not hasattr(connection, 'get_status'):
+            return
+        try:
+            terminals = []
+            if hasattr(self, 'connection_to_terminals'):
+                terminals = list(self.connection_to_terminals.get(connection, []) or [])
+            # Fall back to the most-recent terminal map for edge cases where the
+            # comprehensive map hasn't been populated yet (mirrors prior renderer).
+            if not terminals and hasattr(self, 'active_terminals'):
+                recent = self.active_terminals.get(connection)
+                if recent is not None:
+                    terminals = [recent]
+
+            def _term_state(t):
+                s = getattr(t, 'connection_state', None)
+                if isinstance(s, ConnectionState):
+                    return s
+                return (
+                    ConnectionState.CONNECTED
+                    if getattr(t, 'is_connected', False)
+                    else ConnectionState.DISCONNECTED
+                )
+
+            states = [_term_state(t) for t in terminals]
+
+            # Priority across a connection's terminals: any live tab wins, then a
+            # tab still connecting, then a failed attempt (keep its reason), else
+            # disconnected.
+            if any(s == ConnectionState.CONNECTED for s in states):
+                self.connection_manager.update_connection_state(connection, ConnectionState.CONNECTED)
+            elif any(s == ConnectionState.CONNECTING for s in states):
+                self.connection_manager.update_connection_state(connection, ConnectionState.CONNECTING)
+            elif any(s == ConnectionState.FAILED for s in states):
+                reason = ''
+                for t in terminals:
+                    if _term_state(t) == ConnectionState.FAILED:
+                        reason = getattr(t, 'connection_state_reason', '') or ''
+                        break
+                self.connection_manager.update_connection_state(
+                    connection, ConnectionState.FAILED, reason
+                )
+            elif terminals:
+                self.connection_manager.update_connection_state(connection, ConnectionState.DISCONNECTED)
+            elif connection.get_status() != ConnectionState.FAILED:
+                # No terminals at all: drop to DISCONNECTED unless a standalone
+                # FAILED was set (e.g. a failure recorded before teardown).
+                self.connection_manager.update_connection_state(connection, ConnectionState.DISCONNECTED)
+        except Exception as e:
+            logger.error(f"Failed to recompute connection state: {e}")
+
     def on_connection_status_changed(self, manager, connection, is_connected):
-        """Handle connection status change"""
+        """Handle connection status change (render-only — state is authoritative)."""
         logger.debug(f"Connection status changed: {connection.nickname} - {'Connected' if is_connected else 'Disconnected'}")
         rows = self._rows_for_connection(connection)
         if rows:
-            # Force update the connection's is_connected state
-            connection.is_connected = is_connected
             for row in rows:
-                # Update each row's status and force a redraw
+                # Render each row from the connection's authoritative state.
                 row.update_status()
                 row.queue_draw()
 
@@ -8521,6 +8987,294 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             self.config.set_setting('file_manager.first_run_prompt_shown', True)
         except Exception as exc:
             logger.error("Failed to persist file manager first-run choice: %s", exc)
+
+    # --- Operation mode first-run dialog ---
+
+    def _should_prompt_operation_mode(self) -> bool:
+        """Return True if the operation mode dialog should be shown."""
+        try:
+            already_shown = bool(
+                self.config.get_setting('ssh.operation_mode_prompt_shown', False)
+            )
+        except Exception:
+            already_shown = False
+
+        if not already_shown:
+            # Migrate the old key name used before the rename.
+            try:
+                old_val = self.config.get_setting('ssh.config_mode_prompt_shown', None)
+                if old_val is not None:
+                    already_shown = bool(old_val)
+                    # Write under new key and purge the old one.
+                    self.config.set_setting('ssh.operation_mode_prompt_shown', already_shown)
+                    try:
+                        ssh_section = self.config.config_data.get('ssh', {})
+                        ssh_section.pop('config_mode_prompt_shown', None)
+                        self.config.save_json_config()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+        if already_shown:
+            return False
+        if getattr(self, 'isolated_mode', False):
+            try:
+                self.config.set_setting('ssh.operation_mode_prompt_shown', True)
+            except Exception:
+                pass
+            return False
+        return True
+
+    def _prompt_backup_ssh_config(self) -> None:
+        """Let the user back up ~/.ssh/config to a location they choose.
+
+        Uses Gtk.FileDialog (portal-backed, so it works inside the Flatpak
+        sandbox) to pick the destination, copies the config there, then shows
+        an alert confirming the saved path.  Does nothing — and never raises —
+        if there is no config to back up.
+        """
+        src = Path(get_ssh_dir()) / 'config'
+        if not src.exists() or src.stat().st_size == 0:
+            logger.debug("No SSH config to back up; skipping backup prompt")
+            return
+
+        dialog = Gtk.FileDialog.new()
+        dialog.set_title(_("Back Up SSH Config"))
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        dialog.set_initial_name(f"ssh_config_backup_{timestamp}.bak")
+
+        def _on_done(dlg, result):
+            try:
+                gfile = dlg.save_finish(result)
+            except GLib.Error:
+                return  # user cancelled or portal denied
+            if gfile is None:
+                return
+            dst = gfile.get_path()
+            if not dst:
+                logger.warning("Backup destination has no local path")
+                return
+            try:
+                shutil.copy2(str(src), dst)
+                logger.info("SSH config backed up to %s", dst)
+            except Exception as exc:
+                logger.error("Could not back up SSH config: %s", exc)
+                self._show_backup_result_alert(False, dst)
+                return
+            self._show_backup_result_alert(True, dst)
+
+        try:
+            dialog.save(self, None, _on_done)
+        except Exception as exc:
+            logger.error("Could not open backup save dialog: %s", exc, exc_info=True)
+
+    def _show_backup_result_alert(self, success: bool, path: str) -> None:
+        """Tell the user where the SSH config backup was (or wasn't) saved."""
+        if success:
+            heading = _("Backup Saved")
+            body = _("Your SSH config was backed up to:\n{path}").format(path=path)
+        else:
+            heading = _("Backup Failed")
+            body = _(
+                "SSH Pilot could not save the backup to:\n{path}"
+            ).format(path=path)
+
+        if hasattr(Adw, 'AlertDialog'):
+            alert = Adw.AlertDialog(heading=heading, body=body)
+            alert.add_response('ok', _("OK"))
+            alert.set_default_response('ok')
+            alert.set_close_response('ok')
+            alert.present(self)
+        else:
+            alert = Adw.MessageDialog(
+                transient_for=self, modal=True, heading=heading, body=body
+            )
+            alert.add_response('ok', _("OK"))
+            alert.set_default_response('ok')
+            alert.set_close_response('ok')
+            alert.present()
+
+    def _apply_operation_mode_choice(
+        self, choice: Optional[str], copy: bool = False
+    ) -> None:
+        """Persist the operation mode choice and optionally seed the isolated config.
+
+        When the user picks Isolated the app must restart for the new config
+        path to take full effect (ConnectionManager and KeyManager are already
+        initialised with the default path).  restart_app() is called after all
+        settings are saved so the fresh process picks up the new mode.
+        """
+        try:
+            if choice == 'isolated':
+                self.config.set_setting('ssh.use_isolated_config', True)
+                self.config.set_setting('ssh.operation_mode_prompt_shown', True)
+                if copy:
+                    src = Path(get_ssh_dir()) / 'config'
+                    dst = Path(get_config_dir()) / 'ssh_config'
+                    if src.exists() and not dst.exists():
+                        try:
+                            dst.parent.mkdir(parents=True, exist_ok=True)
+                            shutil.copy2(str(src), str(dst))
+                            logger.info("Seeded isolated SSH config from %s", src)
+                        except Exception as exc:
+                            logger.warning(
+                                "Could not copy SSH config to isolated path: %s", exc
+                            )
+                from .platform_utils import restart_app
+                restart_app()
+            elif choice == 'default':
+                self.config.set_setting('ssh.use_isolated_config', False)
+                self.config.set_setting('ssh.operation_mode_prompt_shown', True)
+            else:
+                # Skip — mark shown so the dialog never reappears.
+                self.config.set_setting('ssh.operation_mode_prompt_shown', True)
+        except Exception as exc:
+            logger.error("Failed to persist operation mode choice: %s", exc)
+
+    def _show_operation_mode_dialog(self) -> None:
+        """One-time dialog asking the user which operation mode to use.
+
+        Follows the GNOME HIG choice-dialog pattern used by
+        _show_file_manager_first_run_dialog.  When the user picks Isolated,
+        _apply_operation_mode_choice calls restart_app() so the new config
+        path is honoured from the very next launch.
+        """
+        heading = _("Choose Operation Mode")
+        body = _(
+            "SSH Pilot can use your .ssh/config "
+            "or use its own configuration file. "
+            
+        )
+
+        use_alert = hasattr(Adw, 'AlertDialog')
+        if use_alert:
+            dialog = Adw.AlertDialog(heading=heading, body=body)
+        else:
+            dialog = Adw.MessageDialog(
+                transient_for=self, modal=True, heading=heading, body=body
+            )
+
+        content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        content_box.set_margin_top(12)
+        content_box.set_size_request(460, -1)
+
+        icon = Gtk.Image.new_from_icon_name('shield-full-symbolic')
+        icon.set_pixel_size(64)
+        icon.set_halign(Gtk.Align.CENTER)
+        icon.set_margin_bottom(4)
+        content_box.append(icon)
+
+        mode_group = Adw.PreferencesGroup()
+
+        default_row = Adw.ActionRow()
+        default_row.set_title(_("Default — use ~/.ssh/config"))
+        default_row.set_subtitle(_("SSH Pilot shares config with the system SSH client"))
+        default_radio = Gtk.CheckButton()
+        default_radio.set_valign(Gtk.Align.CENTER)
+        default_radio.set_active(True)
+        default_row.add_prefix(default_radio)
+        default_row.set_activatable_widget(default_radio)
+        mode_group.add(default_row)
+
+        isolated_row = Adw.ActionRow()
+        isolated_row.set_title(_("Isolated — use a private SSH config"))
+        isolated_row.set_subtitle(
+            _("SSH Pilot stores its own ssh config file in its directory")
+        )
+        isolated_radio = Gtk.CheckButton()
+        isolated_radio.set_valign(Gtk.Align.CENTER)
+        isolated_radio.set_group(default_radio)
+        isolated_row.add_prefix(isolated_radio)
+        isolated_row.set_activatable_widget(isolated_radio)
+        mode_group.add(isolated_row)
+
+        content_box.append(mode_group)
+
+        src_exists = (Path(get_ssh_dir()) / 'config').exists()
+        copy_group = Adw.PreferencesGroup()
+        copy_row = Adw.ActionRow()
+        copy_row.set_title(_("Copy existing ssh config into the isolated profile"))
+        copy_row.set_subtitle(_("Your hosts and keys will be available immediately"))
+        copy_check = Gtk.CheckButton()
+        copy_check.set_valign(Gtk.Align.CENTER)
+        copy_check.set_active(True)
+        copy_row.add_prefix(copy_check)
+        copy_row.set_activatable_widget(copy_check)
+        copy_group.add(copy_row)
+        copy_group.set_visible(False)
+        content_box.append(copy_group)
+
+        # Default mode: offer an explicit, opt-in backup of the existing config.
+        # Shown only when there is a config to back up; the actual destination
+        # is chosen later via a portal-aware save dialog.
+        backup_group = Adw.PreferencesGroup()
+        backup_row = Adw.ActionRow()
+        backup_row.set_title(_("Back up my existing SSH config first"))
+        backup_row.set_subtitle(
+            _("You'll choose where to save a copy of ~/.ssh/config")
+        )
+        backup_check = Gtk.CheckButton()
+        backup_check.set_valign(Gtk.Align.CENTER)
+        backup_check.set_active(True)
+        backup_row.add_prefix(backup_check)
+        backup_row.set_activatable_widget(backup_check)
+        backup_group.add(backup_row)
+        backup_group.set_visible(src_exists)
+        content_box.append(backup_group)
+
+        def _sync_option_visibility(*_args):
+            isolated = isolated_radio.get_active()
+            copy_group.set_visible(isolated and src_exists)
+            backup_group.set_visible(not isolated and src_exists)
+
+        default_radio.connect('toggled', _sync_option_visibility)
+        isolated_radio.connect('toggled', _sync_option_visibility)
+        _sync_option_visibility()
+
+        footer = Gtk.Label(
+            label=_("You can change this anytime in Preferences › SSH Settings.")
+        )
+        footer.set_wrap(True)
+        footer.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        footer.set_xalign(0)
+        footer.set_halign(Gtk.Align.START)
+        footer.add_css_class('caption')
+        footer.add_css_class('dim-label')
+        content_box.append(footer)
+
+        dialog.set_extra_child(content_box)
+
+        dialog.add_response('skip', _("Skip"))
+        dialog.add_response('confirm', _("Confirm"))
+        dialog.set_default_response('confirm')
+        dialog.set_close_response('skip')
+        try:
+            dialog.set_response_appearance(
+                'confirm', Adw.ResponseAppearance.SUGGESTED
+            )
+        except Exception:
+            pass
+
+        def _on_response(_d, response: str) -> None:
+            if response == 'confirm':
+                if isolated_radio.get_active():
+                    self._apply_operation_mode_choice(
+                        'isolated', copy=copy_check.get_active() and src_exists
+                    )
+                else:
+                    self._apply_operation_mode_choice('default')
+                    if backup_check.get_active() and src_exists:
+                        self._prompt_backup_ssh_config()
+            else:
+                self._apply_operation_mode_choice(None)
+
+        dialog.connect('response', _on_response)
+
+        if use_alert:
+            dialog.present(self)
+        else:
+            dialog.present()
 
     def _show_file_manager_first_run_dialog(self, on_choice) -> None:
         """Present the one-time built-in vs system chooser.
@@ -10419,7 +11173,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 old_connection.keyfile = connection_data['keyfile']
                 old_connection.certificate = connection_data.get('certificate', '')
                 old_connection.password = connection_data['password']
-                old_connection.key_passphrase = connection_data['key_passphrase']
+                old_connection.key_passphrase = connection_data.get('key_passphrase', getattr(old_connection, 'key_passphrase', '')) or ''
                 old_connection.auth_method = connection_data['auth_method']
                 # Persist key selection mode in-memory so the dialog reflects it without restart
                 try:

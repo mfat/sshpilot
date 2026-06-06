@@ -77,7 +77,7 @@ class TerminalManager:
             if connection in window.active_terminals:
                 terminal = window.active_terminals[connection]
                 self._ensure_backend_alignment(terminal)
-                page = window.tab_view.get_page(terminal)
+                page = window._page_for_child(terminal)
                 if page is not None:
                     window.tab_view.set_selected_page(page)
                     return
@@ -88,7 +88,7 @@ class TerminalManager:
                     del window.active_terminals[connection]
             existing_terms = window.connection_to_terminals.get(connection) or []
             for t in reversed(existing_terms):
-                page = window.tab_view.get_page(t)
+                page = window._page_for_child(t)
                 if page is not None:
                     self._ensure_backend_alignment(t)
                     window.active_terminals[connection] = t
@@ -750,7 +750,10 @@ class TerminalManager:
 
     # Terminal signal handlers
     def on_terminal_connected(self, terminal):
-        terminal.connection.is_connected = True
+        # Aggregate across all terminals of this connection (OR-logic) and set
+        # the authoritative state in the reporting layer instead of writing the
+        # boolean here.
+        self.window._recompute_connection_state(terminal.connection)
         for row in self.window._rows_for_connection(terminal.connection):
             row.update_status()
             row.queue_draw()
@@ -769,7 +772,10 @@ class TerminalManager:
                 f"Terminal reconnected after settings update: {terminal.connection.nickname}")
 
     def on_terminal_disconnected(self, terminal):
-        terminal.connection.is_connected = False
+        # The just-disconnected terminal has already flipped its own
+        # is_connected flag; recompute the connection's aggregate state so a
+        # connection with other live terminals stays CONNECTED.
+        self.window._recompute_connection_state(terminal.connection)
         for row in self.window._rows_for_connection(terminal.connection):
             row.update_status()
             row.queue_draw()
@@ -783,7 +789,7 @@ class TerminalManager:
         )
 
     def on_terminal_title_changed(self, terminal, title):
-        page = self.window.tab_view.get_page(terminal)
+        page = self.window._page_for_child(terminal)
         if page:
             if getattr(page, 'custom_tab_title', None):
                 return

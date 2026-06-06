@@ -62,8 +62,9 @@ ACTION_LABELS: Dict[str, str] = {
     'shortcuts': _('Keyboard Shortcuts'),
     'tab-next': _('Next Tab'),
     'tab-prev': _('Previous Tab'),
+    'tab-move-left': _('Move Tab Left'),
+    'tab-move-right': _('Move Tab Right'),
     'tab-overview': _('Tab Overview'),
-    'quick-connect': _('Quick Connect'),
     'new-split-view-tab': _('New Split View Tab'),
     'toggle-command-blocks': _('Command Blocks Sidebar'),
 }
@@ -267,10 +268,10 @@ class ShortcutsPreferencesPage(PreferencesPageBase):
             'new-key',
             'manage-files',
             'edit-ssh-config',
-            'quick-connect',
         ]
         terminal_actions = ['local-terminal', 'terminal-search', 'broadcast-command', 'toggle-command-blocks']
-        tab_actions = ['tab-next', 'tab-prev', 'tab-close', 'tab-overview', 'new-split-view-tab']
+        tab_actions = ['tab-next', 'tab-prev', 'tab-move-left', 'tab-move-right',
+                       'tab-close', 'tab-overview', 'new-split-view-tab']
 
         for name in self._action_names:
             row = Adw.ActionRow()
@@ -366,7 +367,8 @@ class ShortcutsPreferencesPage(PreferencesPageBase):
             ('Ctrl+Shift+\\', _('Side-by-side layout')),
             ('Ctrl+Shift+-', _('Top / bottom layout')),
             ('Ctrl+Shift+N', _('Add pane')),
-            ('Ctrl+Shift+W', _('Close pane')),
+            ('Ctrl+Shift+W', _('Close focused pane')),
+            ('Alt+1 … Alt+4', _('Focus pane by number')),
         ]
         for accel, label in _SPLIT_SHORTCUTS:
             row = Adw.ActionRow()

@@ -207,13 +207,13 @@ class SshPilotApplication(Adw.Application):
         if mac:
             self.create_action('local-terminal', self.on_local_terminal, ['<Meta><Shift>t'])
             self.create_action('preferences', self.on_preferences, ['<Meta>comma'])
-            self.create_action('tab-close', self.on_tab_close, ['<Meta>F4'])
+            self.create_action('tab-close', self.on_tab_close, ['<Meta><Shift>w'])
             self.create_action('broadcast-command', self.on_broadcast_command, ['<Meta><Shift>b'])
             self.create_action('new-split-view-tab', self.on_new_split_view_tab, ['<Meta><Shift>s'])
         else:
             self.create_action('local-terminal', self.on_local_terminal, ['<primary><shift>t'])
             self.create_action('preferences', self.on_preferences, ['<primary>comma'])
-            self.create_action('tab-close', self.on_tab_close, ['<primary>F4'])
+            self.create_action('tab-close', self.on_tab_close, ['<primary><shift>w'])
             self.create_action('broadcast-command', self.on_broadcast_command, ['<primary><shift>b'])
             self.create_action('new-split-view-tab', self.on_new_split_view_tab, ['<primary><shift>s'])
         
@@ -226,20 +226,17 @@ class SshPilotApplication(Adw.Application):
         shortcuts_accel = ['<Meta>question'] if mac else ['<primary>question']
         self.create_action('shortcuts', self.on_shortcuts, shortcuts_accel)
         # Tab navigation accelerators
-        self.create_action('tab-next', self.on_tab_next, ['<Alt>Right'])
-        self.create_action('tab-prev', self.on_tab_prev, ['<Alt>Left'])
-        
+        self.create_action('tab-next', self.on_tab_next, ['<primary>Page_Down'])
+        self.create_action('tab-prev', self.on_tab_prev, ['<primary>Page_Up'])
+        # Move the current tab within the tab bar
+        self.create_action('tab-move-left', self.on_tab_move_left, ['<primary><shift>Page_Up'])
+        self.create_action('tab-move-right', self.on_tab_move_right, ['<primary><shift>Page_Down'])
+
         # Tab overview accelerator
         if mac:
             self.create_action('tab-overview', self.on_tab_overview, ['<Meta><Shift>Tab'])
         else:
             self.create_action('tab-overview', self.on_tab_overview, ['<primary><shift>Tab'])
-        
-        # Quick connect accelerator
-        if mac:
-            self.create_action('quick-connect', self.on_quick_connect, ['<Meta><Alt>c'])
-        else:
-            self.create_action('quick-connect', self.on_quick_connect, ['<primary><Alt>c'])
         
         # Connect to signals
         self.connect('shutdown', self.on_shutdown)
@@ -823,17 +820,31 @@ class SshPilotApplication(Adw.Application):
             win._select_tab_relative(-1)
 
     def on_tab_close(self, action, param):
-        """Close the currently selected tab"""
+        """Close the current tab — or, in a split-view tab, the focused pane."""
         win = self.props.active_window
         if not win:
             return
         try:
-            page = win.tab_view.get_selected_page()
-            if page:
-                # Trigger the normal close flow (will prompt if enabled)
-                win.tab_view.close_page(page)
+            if hasattr(win, '_close_active_tab_or_pane'):
+                win._close_active_tab_or_pane()
+            else:
+                page = win.tab_view.get_selected_page()
+                if page:
+                    win.tab_view.close_page(page)
         except Exception:
             pass
+
+    def on_tab_move_left(self, action, param):
+        """Move the current tab one position to the left."""
+        win = self.props.active_window
+        if win and hasattr(win, '_move_tab_relative'):
+            win._move_tab_relative(-1)
+
+    def on_tab_move_right(self, action, param):
+        """Move the current tab one position to the right."""
+        win = self.props.active_window
+        if win and hasattr(win, '_move_tab_relative'):
+            win._move_tab_relative(1)
 
     def on_tab_overview(self, action, param):
         """Toggle tab overview"""
@@ -846,19 +857,6 @@ class SshPilotApplication(Adw.Application):
             win.tab_overview.set_open(not is_open)
         except Exception as e:
             logger.error(f"Failed to toggle tab overview: {e}")
-
-    def on_quick_connect(self, action, param):
-        """Open quick connect dialog"""
-        win = self.props.active_window
-        if not win:
-            return
-        try:
-            # Import here to avoid circular imports
-            from .welcome_page import QuickConnectDialog
-            dialog = QuickConnectDialog(win)
-            dialog.present()
-        except Exception as e:
-            logger.error(f"Failed to open quick connect dialog: {e}")
 
     def on_broadcast_command(self, action, param):
         """Handle broadcast command action (Ctrl/⌘+Shift+B)"""
