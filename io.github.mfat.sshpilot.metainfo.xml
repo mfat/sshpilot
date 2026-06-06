@@ -63,6 +63,16 @@
     <release version="5.2.0" date="2026-06-06">
       <description>
         <p>Drag and drop a connection on an existing terminal to create a split view</p>
+        <p>New first-run dialog and option to back up .ssh/config</p>
+        <p>Updated connection status indicators</p>
+        <p>Updated port forwarding indicators</p>
+        <p>New sidebar behavior options — configure autohide from Settings</p>
+        <p>Improvements to Split View</p>
+        <p>Added local terminal button to the headerbar</p>
+        <p>New toggles for headerbar buttons</p>
+        <p>More improvements for the command sidebar</p>
+        <p>New option to add multiple private keys and certificates</p>
+        <p>Improved .ssh/config parsing logic</p>
       </description>
     </release>
     <release version="5.1.7" date="2026-06-03">

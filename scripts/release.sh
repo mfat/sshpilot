@@ -128,11 +128,10 @@ fi
 echo
 echo "Enter changelog for v$VERSION (plain lines; do not prefix with '-'):"
 echo "End with Ctrl-D:"
-CHANGELOG=""
-while IFS= read -re line; do
-  CHANGELOG="${CHANGELOG}${line}"$'\n'
-done
-CHANGELOG="${CHANGELOG%$'\n'}"
+# Read the whole changelog from stdin until EOF (Ctrl-D). Using `cat` rather
+# than a `read -e` loop avoids readline/bracketed-paste mangling that dropped
+# every line but the first when pasting multi-line notes.
+CHANGELOG="$(cat)"
 if [[ -z "${CHANGELOG}" ]]; then
   echo "WARNING: Empty changelog."
 fi
