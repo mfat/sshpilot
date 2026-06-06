@@ -60,6 +60,11 @@
 
 
 
+    <release version="5.2.0" date="2026-06-06">
+      <description>
+        <p>Drag and drop a connection on an existing terminal to create a split view</p>
+      </description>
+    </release>
     <release version="5.1.7" date="2026-06-03">
       <description>
         <p>Bug fixes and improvements</p>
