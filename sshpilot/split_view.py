@@ -699,14 +699,21 @@ class SplitViewTab(Gtk.Box):
         self._scroll_overlay.set_clip_overlay(self._drag_ghost, True)
         self.append(self._scroll_overlay)
 
-        for widget in (self, self._scroll_overlay, self._pane_scroll):
-            widget.connect('notify::height', self._schedule_viewport_sync)
+        # Refit the panes whenever the scroll viewport's height changes. GTK4
+        # widgets have no usable size-change signal ('notify::height' is not a
+        # real property and Gtk.Box ignores a do_size_allocate override), but the
+        # scrolled window's vertical adjustment emits 'notify::page-size' whenever
+        # its visible height changes — on window resize AND when the bottom action
+        # bar reveals and steals space. page-size tracks the viewport only (not
+        # the content height we set during the sync), so there's no feedback loop.
+        self._pane_scroll.get_vadjustment().connect(
+            'notify::page-size', self._schedule_viewport_sync
+        )
         self.connect('map', self._schedule_viewport_sync)
         # Reveal the action bar ~1s after the tab is first shown, then leave it.
         self.connect('map', self._on_first_map_reveal_strip)
         try:
             window.connect('notify::default-height', self._schedule_viewport_sync)
-            window.connect('notify::height', self._schedule_viewport_sync)
         except Exception:
             pass
 
