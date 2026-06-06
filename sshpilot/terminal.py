@@ -3917,7 +3917,13 @@ class TerminalWidget(Gtk.Box):
                 
                 root = self.get_root()
                 if root and hasattr(root, 'tab_view'):
-                    page = root.tab_view.get_page(self)
+                    # Safe lookup: this terminal may be embedded in a split-view
+                    # pane (not in the main tab_view), which would otherwise trip
+                    # the get_page CRITICAL assertion.
+                    if hasattr(root, '_page_for_child'):
+                        page = root._page_for_child(self)
+                    else:
+                        page = root.tab_view.get_page(self)
                     if page:
                         try:
                             setattr(root, '_suppress_close_confirmation', True)

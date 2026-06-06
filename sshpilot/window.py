@@ -1171,6 +1171,24 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         rows = self._get_target_connection_rows(prefer_context=prefer_context)
         return self._connections_from_rows(rows)
 
+    def _page_for_child(self, child):
+        """Return the Adw.TabPage for ``child`` in the main tab_view, or None.
+
+        Unlike ``tab_view.get_page(child)``, this never emits the
+        ``child_belongs_to_this_view`` CRITICAL assertion when ``child`` isn't in
+        the main view — e.g. a terminal that has been embedded in a split-view
+        pane (which lives in that pane's own inner tab view, not tab_view).
+        """
+        try:
+            pages = self.tab_view.get_pages()
+            for i in range(pages.get_n_items()):
+                page = pages.get_item(i)
+                if page is not None and page.get_child() is child:
+                    return page
+        except Exception:
+            pass
+        return None
+
     def _rows_for_connection(self, connection) -> List[Gtk.ListBoxRow]:
         """Return every visible row representing ``connection``.
 
@@ -5129,7 +5147,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             if target_term not in terms_for_conn:
                 target_term = terms_for_conn[0]
 
-            page = self.tab_view.get_page(target_term)
+            page = self._page_for_child(target_term)
             if page is None:
                 return
 
@@ -5170,7 +5188,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     # Fallback to the first tab for this connection
                     target_term = terms_for_conn[0]
                 
-                page = self.tab_view.get_page(target_term)
+                page = self._page_for_child(target_term)
                 if page is not None:
                     self.tab_view.set_selected_page(page)
                     # Update most-recent mapping
@@ -5215,7 +5233,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 # Compute next index (wrap)
                 next_idx = (current_idx + 1) % len(terms_for_conn) if current_idx >= 0 else 0
                 next_term = terms_for_conn[next_idx]
-                page = self.tab_view.get_page(next_term)
+                page = self._page_for_child(next_term)
                 if page is not None:
                     self.tab_view.set_selected_page(page)
                     # Update most-recent mapping
@@ -8140,10 +8158,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     return False
 
                 # Only convert if the terminal is still in the main tab_view
-                try:
-                    source_page = self.tab_view.get_page(terminal)
-                except Exception:
-                    source_page = None
+                source_page = self._page_for_child(terminal)
                 if source_page is None:
                     return False
 
@@ -8452,7 +8467,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         try:
             for term in terminals:
                 try:
-                    page = self.tab_view.get_page(term)
+                    page = self._page_for_child(term)
                     if page:
                         self.tab_view.close_page(page)
                 except Exception:

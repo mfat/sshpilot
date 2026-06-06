@@ -445,8 +445,15 @@ class SplitPane(Gtk.Box):
 
             for nick in nicknames:
                 conn = self._window.connection_manager.find_connection_by_nickname(nick)
-                if conn is not None:
+                if conn is None:
+                    continue
+                # Never stack multiple tabs inside one pane. Fill THIS pane only
+                # while it's still an empty placeholder; once it holds a terminal,
+                # each dropped connection opens in a new pane instead.
+                if self.get_terminal_count() == 0:
                     self.add_connection(conn)
+                else:
+                    self._split_view_tab.add_pane().add_connection(conn)
             return True
         except Exception as exc:
             logger.error("SplitPane drop failed: %s", exc)
