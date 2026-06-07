@@ -8862,7 +8862,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             else:
                 message = f"You have {active_count} open terminal tabs."
                 detail = f"Closing the application will disconnect all connections."
-            heading = "Active SSH Connections"
         else:
             # Only local terminals with active jobs
             if active_count == 1:
@@ -8871,15 +8870,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             else:
                 message = f"You have {active_count} local terminals with active jobs."
                 detail = f"Closing the application will terminate all running processes."
-            heading = "Active Local Terminal Jobs"
-        
+
         # Use Gtk.AlertDialog: it builds its own top-level window, so the
         # compositor maps it even when the main window is in the background
         # (an in-window Adw.AlertDialog is drawn inside the background surface
         # and stays unreachable on Wayland).
         dialog = Gtk.AlertDialog()
         dialog.set_modal(True)
-        dialog.set_message(heading)
+        dialog.set_message("Quit SSH Pilot?")
         dialog.set_detail(f"{message}\n\n{detail}")
         dialog.set_buttons(['Cancel', 'Quit Anyway'])
         dialog.set_cancel_button(0)   # Escape / dismiss -> Cancel
@@ -8902,6 +8900,18 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 index = -1
             if index == 1:  # "Quit Anyway"
                 shutdown.cleanup_and_quit(self)
+            else:
+                # Cancel / dismissed: the user is staying in the app, so bring
+                # the main window to the front. The button click provided a
+                # valid activation token, so present() is honored on Wayland.
+                try:
+                    self.unminimize()
+                except Exception as e:
+                    logger.debug(f"Failed to unminimize window: {e}")
+                try:
+                    self.present()
+                except Exception as e:
+                    logger.debug(f"Failed to bring window to foreground: {e}")
         finally:
             if app is not None:
                 app.release()
