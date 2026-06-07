@@ -8453,11 +8453,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             return
 
         # Cleanup terminal-to-connection maps when a page is detached
+        detached_connection = None
         try:
             if hasattr(page, 'get_child'):
                 child = page.get_child()
                 if child in self.terminal_to_connection:
                     connection = self.terminal_to_connection.get(child)
+                    detached_connection = connection
                     # Remove reverse map
                     del self.terminal_to_connection[child]
                     # Remove from per-connection list
@@ -8486,6 +8488,16 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             # Update button visibility when tabs remain
             if hasattr(self, 'view_toggle_button'):
                 self.view_toggle_button.set_visible(True)
+
+        # Recompute the affected connection's state now that the terminal has
+        # been removed from the maps. With no terminals left this resolves to
+        # UNKNOWN, hiding the sidebar status icon instead of leaving a stale red
+        # "Disconnected" indicator after an intentional close.
+        if detached_connection is not None:
+            try:
+                self._recompute_connection_state(detached_connection)
+            except Exception:
+                pass
 
     def on_open_split_view_clicked(self, button):
         """Open a new empty split-view tab."""
@@ -8656,10 +8668,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 )
             elif terminals:
                 self.connection_manager.update_connection_state(connection, ConnectionState.DISCONNECTED)
-            elif connection.get_status() != ConnectionState.FAILED:
-                # No terminals at all: drop to DISCONNECTED unless a standalone
-                # FAILED was set (e.g. a failure recorded before teardown).
-                self.connection_manager.update_connection_state(connection, ConnectionState.DISCONNECTED)
+            else:
+                # No terminals at all (every tab for this connection is closed):
+                # there is nothing to report, so go neutral and hide the
+                # indicator rather than showing a red "Disconnected"/"failed"
+                # icon for what is an intentional close.
+                self.connection_manager.update_connection_state(connection, ConnectionState.UNKNOWN)
         except Exception as e:
             logger.error(f"Failed to recompute connection state: {e}")
 
@@ -8806,14 +8820,45 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # No active connections or all local terminals are idle, safe to close
         return False  # Allow close
 
-    def show_quit_confirmation_dialog(self):
-        """Show confirmation dialog when quitting with active connections"""
-        # Bring the main window to the foreground first
+    def prompt_ssh_passphrase(self, key_path: str, prompt: str = "") -> "str | None":
+        """Show the SSH key passphrase prompt as a modal child of the main window.
+
+        Invoked (on the GTK main thread) by the askpass IPC server so the prompt
+        renders above the main window instead of as a stray top-level helper
+        window that can hide behind it on Wayland. Returns the passphrase, or
+        None if the user cancelled. Blocks until the dialog is dismissed.
+        """
+        # Bring the app forward so the modal prompt is clearly attached to it.
+        try:
+            self.unminimize()
+        except Exception as e:
+            logger.debug(f"Failed to unminimize window: {e}")
         try:
             self.present()
         except Exception as e:
             logger.debug(f"Failed to bring window to foreground: {e}")
-        
+        return _show_password_passphrase_dialog(
+            self,
+            prompt_type="passphrase",
+            key_path=key_path or None,
+        )
+
+    def show_quit_confirmation_dialog(self):
+        """Show confirmation dialog when quitting with active connections"""
+        # Best-effort raise of the main window. On X11 / for a minimized window
+        # this brings it forward; on Wayland a background app can't force a raise
+        # without an activation token, so this only flags attention there. The
+        # confirmation itself is a real top-level Gtk.AlertDialog (below) so it is
+        # surfaced by the compositor regardless.
+        try:
+            self.unminimize()
+        except Exception as e:
+            logger.debug(f"Failed to unminimize window: {e}")
+        try:
+            self.present()
+        except Exception as e:
+            logger.debug(f"Failed to bring window to foreground: {e}")
+
         # Categorize connected terminals
         connected_items = []
         local_terminals = []
@@ -8840,7 +8885,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             else:
                 message = f"You have {active_count} open terminal tabs."
                 detail = f"Closing the application will disconnect all connections."
-            heading = "Active SSH Connections"
         else:
             # Only local terminals with active jobs
             if active_count == 1:
@@ -8849,36 +8893,51 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             else:
                 message = f"You have {active_count} local terminals with active jobs."
                 detail = f"Closing the application will terminate all running processes."
-            heading = "Active Local Terminal Jobs"
-        
-        dialog = Adw.AlertDialog()
-        dialog.set_heading(heading)
-        dialog.set_body(f"{message}\n\n{detail}")
-        
-        dialog.add_response('cancel', 'Cancel')
-        dialog.add_response('quit', 'Quit Anyway')
-        dialog.set_response_appearance('quit', Adw.ResponseAppearance.DESTRUCTIVE)
-        dialog.set_default_response('quit')
-        dialog.set_close_response('cancel')
-        
-        dialog.connect('response', self.on_quit_confirmation_response)
+
+        # Use Gtk.AlertDialog: it builds its own top-level window, so the
+        # compositor maps it even when the main window is in the background
+        # (an in-window Adw.AlertDialog is drawn inside the background surface
+        # and stays unreachable on Wayland).
+        dialog = Gtk.AlertDialog()
+        dialog.set_modal(True)
+        dialog.set_message("Quit SSH Pilot?")
+        dialog.set_detail(f"{message}\n\n{detail}")
+        dialog.set_buttons(['Cancel', 'Quit Anyway'])
+        dialog.set_cancel_button(0)   # Escape / dismiss -> Cancel
+        dialog.set_default_button(1)  # Enter -> Quit Anyway
+
         app = self.get_application()
         if app is not None:
             app.hold()
 
-        dialog.present(self)
+        dialog.choose(self, None, self._on_quit_alert_chosen)
 
-    def on_quit_confirmation_response(self, dialog, response):
-        """Handle quit confirmation dialog response"""
+    def _on_quit_alert_chosen(self, dialog, result):
+        """Handle the quit confirmation Gtk.AlertDialog result."""
         app = self.get_application()
         try:
-            if response == 'quit':
-                # Start cleanup process
+            try:
+                index = dialog.choose_finish(result)
+            except GLib.Error:
+                # Dismissed via Escape / window close -> treat as Cancel.
+                index = -1
+            if index == 1:  # "Quit Anyway"
                 shutdown.cleanup_and_quit(self)
+            else:
+                # Cancel / dismissed: the user is staying in the app, so bring
+                # the main window to the front. The button click provided a
+                # valid activation token, so present() is honored on Wayland.
+                try:
+                    self.unminimize()
+                except Exception as e:
+                    logger.debug(f"Failed to unminimize window: {e}")
+                try:
+                    self.present()
+                except Exception as e:
+                    logger.debug(f"Failed to bring window to foreground: {e}")
         finally:
             if app is not None:
                 app.release()
-            dialog.close()
 
 
     def on_open_new_connection_action(self, action, param=None):

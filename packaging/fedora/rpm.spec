@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:5.2.0}
+Version:        %{?version}%{!?version:5.2.1}
 Release:        1%{?dist}
 Summary:        Manage your servers with ease
 
@@ -92,6 +92,9 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/io.github.mfat.sshpil
 %{_datadir}/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg
 
 %changelog
+* Sun Jun 07 2026 mFat <newmfat@gmail.com> - 5.2.1
+- Bug fixes
+
 * Sat Jun 06 2026 mFat <newmfat@gmail.com> - 5.2.0
 - Drag and drop a connection on an existing terminal to create a split view
 
