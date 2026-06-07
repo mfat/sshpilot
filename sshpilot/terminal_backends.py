@@ -489,21 +489,33 @@ class VTETerminalBackend:
             logger.debug("Failed to feed child on VTE backend", exc_info=True)
 
     def get_content(self, max_chars: Optional[int] = None) -> Optional[str]:
+        content = None
+        # Modern API (VTE 0.76+). get_text_range is deprecated and yields no text
+        # on current VTE, which blinded callers like the connect-evidence poller.
         try:
-            content_result = self.vte.get_text_range(
-                0,
-                0,
-                -1,
-                -1,
-                lambda *args: True,
-            )
-            content = content_result[0] if content_result else None
-            if content and max_chars and len(content) > max_chars:
-                return content[-max_chars:]
-            return content
+            if hasattr(self.vte, "get_text_format"):
+                content = self.vte.get_text_format(Vte.Format.TEXT)
         except Exception:
-            logger.debug("Failed to read VTE content", exc_info=True)
-            return None
+            content = None
+        if content is None:
+            try:
+                if hasattr(self.vte, "get_text_range_format"):
+                    rows = self.vte.get_row_count()
+                    res = self.vte.get_text_range_format(Vte.Format.TEXT, 0, 0, rows, -1)
+                    content = res[0] if res else None
+            except Exception:
+                content = None
+        if content is None:
+            # Legacy fallback for very old VTE that predates the *_format APIs.
+            try:
+                res = self.vte.get_text_range(0, 0, -1, -1, lambda *args: True)
+                content = res[0] if res else None
+            except Exception:
+                logger.debug("Failed to read VTE content", exc_info=True)
+                content = None
+        if content and max_chars and len(content) > max_chars:
+            return content[-max_chars:]
+        return content
 
     def search_set_regex(self, regex: Optional[Any]) -> None:
         if regex is None:
