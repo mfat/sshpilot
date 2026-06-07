@@ -8822,12 +8822,20 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
     def show_quit_confirmation_dialog(self):
         """Show confirmation dialog when quitting with active connections"""
-        # Bring the main window to the foreground first
+        # Best-effort raise of the main window. On X11 / for a minimized window
+        # this brings it forward; on Wayland a background app can't force a raise
+        # without an activation token, so this only flags attention there. The
+        # confirmation itself is a real top-level Gtk.AlertDialog (below) so it is
+        # surfaced by the compositor regardless.
+        try:
+            self.unminimize()
+        except Exception as e:
+            logger.debug(f"Failed to unminimize window: {e}")
         try:
             self.present()
         except Exception as e:
             logger.debug(f"Failed to bring window to foreground: {e}")
-        
+
         # Categorize connected terminals
         connected_items = []
         local_terminals = []
@@ -8865,34 +8873,38 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 detail = f"Closing the application will terminate all running processes."
             heading = "Active Local Terminal Jobs"
         
-        dialog = Adw.AlertDialog()
-        dialog.set_heading(heading)
-        dialog.set_body(f"{message}\n\n{detail}")
-        
-        dialog.add_response('cancel', 'Cancel')
-        dialog.add_response('quit', 'Quit Anyway')
-        dialog.set_response_appearance('quit', Adw.ResponseAppearance.DESTRUCTIVE)
-        dialog.set_default_response('quit')
-        dialog.set_close_response('cancel')
-        
-        dialog.connect('response', self.on_quit_confirmation_response)
+        # Use Gtk.AlertDialog: it builds its own top-level window, so the
+        # compositor maps it even when the main window is in the background
+        # (an in-window Adw.AlertDialog is drawn inside the background surface
+        # and stays unreachable on Wayland).
+        dialog = Gtk.AlertDialog()
+        dialog.set_modal(True)
+        dialog.set_message(heading)
+        dialog.set_detail(f"{message}\n\n{detail}")
+        dialog.set_buttons(['Cancel', 'Quit Anyway'])
+        dialog.set_cancel_button(0)   # Escape / dismiss -> Cancel
+        dialog.set_default_button(1)  # Enter -> Quit Anyway
+
         app = self.get_application()
         if app is not None:
             app.hold()
 
-        dialog.present(self)
+        dialog.choose(self, None, self._on_quit_alert_chosen)
 
-    def on_quit_confirmation_response(self, dialog, response):
-        """Handle quit confirmation dialog response"""
+    def _on_quit_alert_chosen(self, dialog, result):
+        """Handle the quit confirmation Gtk.AlertDialog result."""
         app = self.get_application()
         try:
-            if response == 'quit':
-                # Start cleanup process
+            try:
+                index = dialog.choose_finish(result)
+            except GLib.Error:
+                # Dismissed via Escape / window close -> treat as Cancel.
+                index = -1
+            if index == 1:  # "Quit Anyway"
                 shutdown.cleanup_and_quit(self)
         finally:
             if app is not None:
                 app.release()
-            dialog.close()
 
 
     def on_open_new_connection_action(self, action, param=None):
