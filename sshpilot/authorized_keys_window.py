@@ -88,6 +88,10 @@ class AuthorizedKeysWindow(Adw.Window):
         self._dirty = False
         self._loaded = False
         self._local_path: Optional[str] = None
+        self._closing = False
+        self._manager_signal_ids: List[int] = []
+        self._open_raw_editors: List[Gtk.Window] = []
+        self._teardown_when_idle = False
 
         if local_path is not None:
             self._local_path = os.path.expanduser(local_path)
@@ -119,8 +123,10 @@ class AuthorizedKeysWindow(Adw.Window):
             assert manager is not None  # constructor enforces this
             if getattr(manager, "_sftp", None) is None:
                 try:
-                    manager.connect("connected", lambda *_: GLib.idle_add(self._reload))
-                    manager.connect("connection-error", lambda _m, msg: GLib.idle_add(self._toast, _("Connection error: {}").format(msg)))
+                    sid = manager.connect("connected", self._on_manager_connected)
+                    self._manager_signal_ids.append(sid)
+                    sid = manager.connect("connection-error", self._on_manager_connection_error)
+                    self._manager_signal_ids.append(sid)
                 except Exception as exc:
                     logger.debug("Could not hook SFTP signals: %s", exc)
                 try:
@@ -222,6 +228,20 @@ class AuthorizedKeysWindow(Adw.Window):
         )
         controller.add_shortcut(save_shortcut)
         self.add_controller(controller)
+
+    # ------------------------------------------------------------------
+    # Manager signal handlers (kept named so we can disconnect them)
+    # ------------------------------------------------------------------
+
+    def _on_manager_connected(self, _manager) -> None:
+        if self._closing:
+            return
+        GLib.idle_add(self._reload)
+
+    def _on_manager_connection_error(self, _manager, msg) -> None:
+        if self._closing:
+            return
+        GLib.idle_add(self._toast, _("Connection error: {}").format(msg))
 
     # ------------------------------------------------------------------
     # Toast / status
@@ -478,6 +498,14 @@ class AuthorizedKeysWindow(Adw.Window):
         dlg.present()
 
     def _append_pubkey_from_path(self, public_path: str) -> None:
+        # KeyManager.discover_keys() derives public_path as private_path
+        # + ".pub" without checking existence — the .pub file may not be
+        # on disk if the user imported only the private key.
+        if not os.path.exists(public_path):
+            self._toast(
+                _("No public-key file found at {}. Generate it with `ssh-keygen -y -f <private>` and try again.").format(public_path)
+            )
+            return
         try:
             with open(public_path, "r", encoding="utf-8") as fh:
                 text = fh.read().strip()
@@ -520,7 +548,8 @@ class AuthorizedKeysWindow(Adw.Window):
                     file_name="authorized_keys",
                     is_local=True,
                 )
-                editor.connect("close-request", lambda *_: (self._reload(), False)[1])
+                editor.connect("close-request", self._on_raw_editor_close)
+                self._open_raw_editors.append(editor)
                 editor.present()
             except Exception as exc:
                 logger.error("Failed to open raw editor: %s", exc)
@@ -545,11 +574,26 @@ class AuthorizedKeysWindow(Adw.Window):
                 is_local=False,
                 sftp_manager=self._manager,
             )
-            editor.connect("close-request", lambda *_: (self._reload(), False)[1])
+            editor.connect("close-request", self._on_raw_editor_close)
+            self._open_raw_editors.append(editor)
             editor.present()
         except Exception as exc:
             logger.error("Failed to open raw editor: %s", exc)
             self._toast(_("Raw editor failed: {}").format(exc))
+
+    def _on_raw_editor_close(self, editor) -> bool:
+        try:
+            self._open_raw_editors.remove(editor)
+        except ValueError:
+            pass
+        if not self._closing:
+            # Refresh the list — the raw editor may have changed the file.
+            self._reload()
+        # If our own window was closed while a raw editor was still open,
+        # we deferred shutting down the SFTP manager. Do it now if this
+        # was the last child.
+        self._maybe_close_manager()
+        return False
 
     # ------------------------------------------------------------------
     # Close
@@ -583,13 +627,39 @@ class AuthorizedKeysWindow(Adw.Window):
         return True  # block default close while we ask
 
     def _teardown(self) -> None:
+        self._closing = True
+        # Disconnect any handlers we attached to the manager so it can't
+        # call back into a destroyed widget.
+        manager = self._manager
+        if manager is not None:
+            for sid in self._manager_signal_ids:
+                try:
+                    manager.disconnect(sid)
+                except Exception as exc:
+                    logger.debug("disconnect %s failed: %s", sid, exc)
+            self._manager_signal_ids.clear()
+
         if self._local_path is not None:
             return
+
+        # Defer closing the SFTP manager if a raw editor is still using it.
+        # The raw editor's close-request handler calls _maybe_close_manager
+        # which will close it once we're the last reference.
+        if self._open_raw_editors:
+            self._teardown_when_idle = True
+            return
+        self._close_manager_now()
+
+    def _close_manager_now(self) -> None:
         try:
             if self._manager is not None:
                 self._manager.close()
         except Exception as exc:
             logger.debug("Error closing SFTP manager: %s", exc)
+
+    def _maybe_close_manager(self) -> None:
+        if not self._open_raw_editors and self._teardown_when_idle:
+            self._close_manager_now()
 
 
 # ---------------------------------------------------------------------------
@@ -874,16 +944,19 @@ class AuthorizedKeyEntryDialog(Adw.Window):
 
         new_opts = [(n, v) for n, v in entry.options if n not in managed]
 
+        # Emit BOTH groups according to their switch state, not just the
+        # currently-visible one. The opt-out switches stay set to their
+        # last value when greyed, and silently dropping them on save would
+        # erase the user's no-* preferences across a restrict on/off toggle.
         restrict_on = self._restrict_switch.get_active()
         if restrict_on:
             new_opts.append(("restrict", True))
-            for name, sw in self._opt_in_switches.items():
-                if sw.get_active():
-                    new_opts.append((name, True))
-        else:
-            for name, sw in self._opt_out_switches.items():
-                if sw.get_active():
-                    new_opts.append((name, True))
+        for name, sw in self._opt_in_switches.items():
+            if sw.get_active():
+                new_opts.append((name, True))
+        for name, sw in self._opt_out_switches.items():
+            if sw.get_active():
+                new_opts.append((name, True))
 
         if self._cert_authority_switch.get_active():
             new_opts.append(("cert-authority", True))

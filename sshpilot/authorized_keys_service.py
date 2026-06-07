@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import os
 import posixpath
+import shutil
 import time
 from concurrent.futures import Future
 from typing import List
@@ -84,43 +85,64 @@ class AuthorizedKeysService:
 
         def _do() -> None:
             sftp = self._manager._sftp
-            ssh = self._manager._client
-            if sftp is None or ssh is None:
+            if sftp is None:
                 raise RuntimeError("SFTP session is not connected")
             _, ssh_dir, ak_path = self._resolve_paths(sftp)
 
-            # Ensure ~/.ssh exists with correct mode. mkdir -p is harmless.
-            quoted = _shell_quote(ssh_dir)
-            _, stdout, stderr = ssh.exec_command(
-                f"mkdir -p {quoted} && chmod 700 {quoted}"
-            )
-            exit_status = stdout.channel.recv_exit_status()
-            if exit_status != 0:
-                err = stderr.read().decode("utf-8", errors="replace")
-                raise IOError(f"Failed to ensure {ssh_dir}: {err.strip()}")
+            # Ensure ~/.ssh exists with mode 0700. Use SFTP rather than
+            # ssh.exec_command so we don't depend on a POSIX login shell
+            # being available on the remote (Windows OpenSSH, restricted
+            # shells, etc).
+            try:
+                sftp.mkdir(ssh_dir, 0o700)
+            except IOError:
+                # Already exists — that's fine.
+                pass
+            try:
+                sftp.chmod(ssh_dir, 0o700)
+            except IOError as exc:
+                # Non-fatal: continue and let the write fail with a clearer
+                # error if the directory really isn't writable.
+                logger.debug("chmod 700 on %s failed: %s", ssh_dir, exc)
 
-            # Backup existing file if requested and it exists.
+            # Back up the existing file by *copying* (not renaming). A
+            # rename would leave no authorized_keys on the host between the
+            # rename and the subsequent atomic install — if the connection
+            # dies there, the user is locked out. A copy keeps the live
+            # file in place until the final posix_rename swaps it.
             if do_backup:
                 try:
                     sftp.stat(ak_path)
-                    backup_path = f"{ak_path}.bak-{int(time.time())}"
-                    # posix_rename overwrites; use it to keep the move atomic.
-                    sftp.posix_rename(ak_path, backup_path)
-                    logger.info("Backed up authorized_keys to %s", backup_path)
                 except IOError:
-                    # No existing file to back up.
-                    pass
+                    pass  # nothing to back up
+                else:
+                    backup_path = f"{ak_path}.bak-{int(time.time())}"
+                    with sftp.file(ak_path, "r") as src:
+                        existing = src.read()
+                    with sftp.file(backup_path, "w") as dst:
+                        dst.write(existing)
+                    try:
+                        sftp.chmod(backup_path, 0o600)
+                    except IOError as exc:
+                        logger.debug("chmod 600 on backup failed: %s", exc)
+                    logger.info("Backed up authorized_keys to %s", backup_path)
 
+            # Create tmp file, set restrictive mode *before* writing the
+            # content, so the keys are never world-readable on the remote.
             tmp_path = ak_path + ".sshpilot.tmp"
             payload = serialized.encode("utf-8")
-            with sftp.file(tmp_path, "w") as fh:
-                fh.write(payload)
+            fh = sftp.file(tmp_path, "w")
             try:
-                sftp.chmod(tmp_path, 0o600)
-            except IOError as exc:
-                logger.debug("chmod on tmp failed (continuing): %s", exc)
+                try:
+                    sftp.chmod(tmp_path, 0o600)
+                except IOError as exc:
+                    logger.debug("chmod on empty tmp failed: %s", exc)
+                fh.write(payload)
+            finally:
+                fh.close()
+            # posix_rename preserves the source's mode, so the final file
+            # is 0600 without a follow-up chmod.
             sftp.posix_rename(tmp_path, ak_path)
-            sftp.chmod(ak_path, 0o600)
 
         future = self._manager._submit(_do)
 
@@ -130,11 +152,6 @@ class AuthorizedKeysService:
 
         future.add_done_callback(_mark_backup_done)
         return future
-
-
-def _shell_quote(s: str) -> str:
-    """Minimal POSIX shell single-quoting for paths."""
-    return "'" + s.replace("'", "'\\''") + "'"
 
 
 class LocalAuthorizedKeysService:
@@ -174,20 +191,29 @@ class LocalAuthorizedKeysService:
             except OSError as exc:
                 logger.debug("chmod 700 on %s failed: %s", ssh_dir, exc)
 
+            # Backup is a copy, not a rename, so the live file stays in
+            # place if anything goes wrong before the final replace.
             if make_backup and not self._backup_done and os.path.exists(self.path):
                 backup = f"{self.path}.bak-{int(time.time())}"
-                os.replace(self.path, backup)
+                shutil.copy2(self.path, backup)
+                try:
+                    os.chmod(backup, 0o600)
+                except OSError as exc:
+                    logger.debug("chmod 600 on backup failed: %s", exc)
                 logger.info("Backed up %s -> %s", self.path, backup)
 
+            # Create the tmp file with restrictive perms *before* writing
+            # any content, so the keys are never world-readable.
             tmp = self.path + ".sshpilot.tmp"
-            payload = serialize(items).encode("utf-8")
-            with open(tmp, "wb") as fh:
-                fh.write(payload)
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
             try:
-                os.chmod(tmp, 0o600)
-            except OSError as exc:
-                logger.debug("chmod on tmp failed: %s", exc)
+                payload = serialize(items).encode("utf-8")
+                os.write(fd, payload)
+            finally:
+                os.close(fd)
             os.replace(tmp, self.path)
+            # Belt-and-braces: ensure final file is 0600 even if the
+            # platform's umask interfered with O_CREAT mode.
             os.chmod(self.path, 0o600)
             if make_backup and not self._backup_done:
                 self._backup_done = True

@@ -280,7 +280,9 @@ def _classify_options(
         if name in KNOWN_OPTIONS:
             known.append((name, value))
         else:
-            unknown.append(_serialize_option(name, value))
+            tok = _serialize_option(name, value)
+            if tok:
+                unknown.append(tok)
     return known, unknown
 
 
@@ -288,7 +290,9 @@ def _serialize_option(name: str, value: OptionValue) -> str:
     if value is True:
         return name
     if value is False:
-        return name  # shouldn't happen
+        # A False flag means the option is *not* set; emitting the bare name
+        # would silently re-enable it. Return empty and let the caller filter.
+        return ""
     # Escape backslashes and double quotes.
     escaped = str(value).replace("\\", "\\\\").replace('"', '\\"')
     return f'{name}="{escaped}"'
@@ -320,7 +324,7 @@ def parse_file(text: str) -> List[Item]:
             disabled = True
             body = candidate
 
-        split = _split_line(body) if not disabled else _split_line(body)
+        split = _split_line(body)
         if split is None:
             items.append(line)
             continue
@@ -356,7 +360,9 @@ def _serialize_entry(entry: AuthorizedKeyEntry) -> str:
     # Options: known first (in stored order), then unknown verbatim.
     opt_pieces: List[str] = []
     for name, value in entry.options:
-        opt_pieces.append(_serialize_option(name, value))
+        tok = _serialize_option(name, value)
+        if tok:
+            opt_pieces.append(tok)
     opt_pieces.extend(entry.unknown_options)
     line_parts: List[str] = []
     if opt_pieces:

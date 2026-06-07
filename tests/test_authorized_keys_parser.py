@@ -143,3 +143,22 @@ def test_flag_option_no_equals():
     e = _entries(items)[0]
     assert ("restrict", True) in e.options
     assert ("cert-authority", True) in e.options
+
+
+def test_false_flag_is_not_emitted():
+    """A flag option stored with value False must NOT round-trip as the
+    bare name (which would silently re-enable it). It should be dropped."""
+    text = f"ssh-ed25519 {KEY_BLOB} alice\n"
+    items = parse_file(text)
+    e = _entries(items)[0]
+    # Inject an inconsistent False flag and ensure serialisation drops it.
+    e.options = [("restrict", False), ("cert-authority", False)]
+    e.mark_dirty()
+    out = serialize(items)
+    assert "restrict" not in out
+    assert "cert-authority" not in out
+    # The key line is still emitted.
+    assert "ssh-ed25519" in out
+    # And it's well-formed (no stray commas / leading space).
+    line = out.strip().splitlines()[0]
+    assert line.startswith("ssh-ed25519 ")
