@@ -8820,6 +8820,29 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # No active connections or all local terminals are idle, safe to close
         return False  # Allow close
 
+    def prompt_ssh_passphrase(self, key_path: str, prompt: str = "") -> "str | None":
+        """Show the SSH key passphrase prompt as a modal child of the main window.
+
+        Invoked (on the GTK main thread) by the askpass IPC server so the prompt
+        renders above the main window instead of as a stray top-level helper
+        window that can hide behind it on Wayland. Returns the passphrase, or
+        None if the user cancelled. Blocks until the dialog is dismissed.
+        """
+        # Bring the app forward so the modal prompt is clearly attached to it.
+        try:
+            self.unminimize()
+        except Exception as e:
+            logger.debug(f"Failed to unminimize window: {e}")
+        try:
+            self.present()
+        except Exception as e:
+            logger.debug(f"Failed to bring window to foreground: {e}")
+        return _show_password_passphrase_dialog(
+            self,
+            prompt_type="passphrase",
+            key_path=key_path or None,
+        )
+
     def show_quit_confirmation_dialog(self):
         """Show confirmation dialog when quitting with active connections"""
         # Best-effort raise of the main window. On X11 / for a minimized window

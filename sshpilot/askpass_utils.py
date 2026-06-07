@@ -37,7 +37,27 @@ logger = logging.getLogger(__name__)
 _ASKPASS_DIR = None
 _ASKPASS_SCRIPT = None
 
+# Address + auth token of the main app's in-process passphrase-prompt IPC server.
+# Set by sshpilot.askpass_server.start() (main process) and advertised to SSH
+# children via get_ssh_env_with_askpass(). Plain strings only — read from worker
+# threads, so this must never import or touch GTK.
+_ASKPASS_SOCKET = None
+_ASKPASS_TOKEN = None
+
 _SCHEMA = None
+
+
+def set_askpass_ipc(socket_path: "str | None", token: "str | None") -> None:
+    """Publish (or clear) the main app's passphrase-prompt IPC endpoint.
+
+    Called by the main process once its Unix-socket server is listening so that
+    every SSH child it spawns can be told where to route passphrase prompts.
+    Pass ``(None, None)`` on shutdown to stop advertising it.
+    """
+
+    global _ASKPASS_SOCKET, _ASKPASS_TOKEN
+    _ASKPASS_SOCKET = socket_path or None
+    _ASKPASS_TOKEN = token or None
 
 _ASKPASS_LOG_PATH = None
 _ASKPASS_LOG_OFFSET = 0
@@ -470,6 +490,68 @@ def _run_askpass_dialog(key_path: str, log_fn) -> "str | None":
     return passphrase_result[0]
 
 
+def _route_passphrase_to_main_app(
+    key_path: str, prompt: str, log_fn
+) -> "tuple[bool, str | None]":
+    """Ask the running main app to show the passphrase prompt in-process.
+
+    Returns ``(handled, value)``:
+    - ``(True, "<passphrase>")`` — the user entered a passphrase.
+    - ``(True, None)``           — the user cancelled (do NOT also show the
+      standalone window).
+    - ``(False, None)``          — the main app is unreachable / errored; the
+      caller should fall back to the standalone dialog.
+    """
+    import json
+    import socket
+
+    sock_path = os.environ.get("SSHPILOT_ASKPASS_SOCKET", "")
+    token = os.environ.get("SSHPILOT_ASKPASS_TOKEN", "")
+    if not sock_path or not token:
+        return (False, None)
+
+    request = json.dumps(
+        {"token": token, "type": "passphrase", "key_path": key_path, "prompt": prompt}
+    )
+
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+            client.settimeout(5)
+            client.connect(sock_path)
+            client.sendall((request + "\n").encode("utf-8"))
+            # The user may take a while to type; allow a generous read window.
+            client.settimeout(600)
+            chunks = []
+            while b"\n" not in b"".join(chunks):
+                data = client.recv(4096)
+                if not data:
+                    break
+                chunks.append(data)
+    except Exception as exc:
+        log_fn(f"ASKPASS: main-app routing unavailable ({exc}); using fallback")
+        return (False, None)
+
+    raw = b"".join(chunks).split(b"\n", 1)[0].strip()
+    if not raw:
+        log_fn("ASKPASS: main-app closed connection without a reply; using fallback")
+        return (False, None)
+
+    try:
+        reply = json.loads(raw.decode("utf-8"))
+    except Exception as exc:
+        log_fn(f"ASKPASS: malformed reply from main app ({exc}); using fallback")
+        return (False, None)
+
+    if reply.get("ok"):
+        log_fn("ASKPASS: passphrase provided by main-app dialog")
+        return (True, reply.get("passphrase"))
+    if reply.get("fallback"):
+        log_fn("ASKPASS: main app asked to use the standalone window")
+        return (False, None)
+    log_fn("ASKPASS: passphrase prompt cancelled in main-app dialog")
+    return (True, None)
+
+
 def handle_askpass_cli(prompt: str) -> "str | None":
     """Handle --askpass CLI mode (re-invoked by SSH as SSH_ASKPASS handler).
 
@@ -541,6 +623,16 @@ def handle_askpass_cli(prompt: str) -> "str | None":
         _log("ASKPASS: built-in passphrase prompt disabled; deferring to system/SSH")
         return None
 
+    # Prefer routing the prompt to the running main app so it renders as a modal
+    # child of the main window (avoids the prompt hiding behind it on Wayland).
+    handled, routed = _route_passphrase_to_main_app(key_path, prompt, _log)
+    if handled:
+        if routed is not None:
+            return routed
+        _log("ASKPASS: user cancelled main-app dialog, exiting with code 1")
+        return None
+
+    # Main app not reachable: show our own standalone window as before.
     passphrase = _run_askpass_dialog(key_path, _log)
     if passphrase is not None:
         _log("ASKPASS: User entered passphrase in GUI dialog")
@@ -806,6 +898,16 @@ def get_ssh_env_with_askpass(require: str = "prefer") -> dict:
     env["GNOME_KEYRING_PID"] = ""
     env["GNOME_KEYRING_SOCKET"] = ""
     # Don't disable DBUS_SESSION_BUS_ADDRESS - libsecret needs it
+    # If the main app is running an in-process passphrase-prompt server, tell the
+    # askpass helper how to reach it so the prompt renders as a modal child of the
+    # main window instead of a stray top-level that can hide behind it. Set them
+    # authoritatively (clearing any stale inherited value when not advertising).
+    if _ASKPASS_SOCKET and _ASKPASS_TOKEN:
+        env["SSHPILOT_ASKPASS_SOCKET"] = _ASKPASS_SOCKET
+        env["SSHPILOT_ASKPASS_TOKEN"] = _ASKPASS_TOKEN
+    else:
+        env.pop("SSHPILOT_ASKPASS_SOCKET", None)
+        env.pop("SSHPILOT_ASKPASS_TOKEN", None)
     return env
 
 def get_ssh_env_with_askpass_for_password(host: str, username: str) -> dict:

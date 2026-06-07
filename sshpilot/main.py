@@ -277,11 +277,29 @@ class SshPilotApplication(Adw.Application):
             from .window import MainWindow
             self.window = MainWindow(application=app, isolated=self.isolated_mode)
             self.window.present()
-        
+
+        # Start the in-process passphrase-prompt server so SSH askpass prompts
+        # render as modal children of the main window instead of stray helper
+        # windows that can hide behind it on Wayland. start() is idempotent.
+        try:
+            win = self.window or self.props.active_window
+            if win is not None:
+                from . import askpass_server
+                askpass_server.start(win)
+        except Exception as exc:
+            logger.debug(f"Failed to start askpass prompt server: {exc}")
+
     def on_shutdown(self, app):
         """Clean up all resources when application is shutting down"""
         logger.info("Application shutdown initiated, cleaning up...")
-        
+
+        # Stop the askpass prompt server and unlink its socket.
+        try:
+            from . import askpass_server
+            askpass_server.stop()
+        except Exception as exc:
+            logger.debug(f"Failed to stop askpass prompt server: {exc}")
+
         # Close all file manager windows
         try:
             def _cleanup_window(window):
