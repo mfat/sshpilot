@@ -269,6 +269,7 @@ echo "  Dev branch pushed:   origin/$DEV_BRANCH"
 echo "  Merge commit on:     $MAIN_BRANCH"
 echo "  Tag to push:         v$VERSION"
 echo "  CI will build .deb/.rpm/DMG packages, publish the GitHub release, and update APT/Homebrew."
+echo "  A Flathub manifest-bump PR is opened automatically on flathub/io.github.mfat.sshpilot; merge it to publish to Flathub."
 echo
 read -rp "Push $MAIN_BRANCH and tag v$VERSION to origin? [y/N]: " CONFIRM_PUSH
 CONFIRM_PUSH=${CONFIRM_PUSH:-N}
