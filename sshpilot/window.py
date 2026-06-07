@@ -8453,11 +8453,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             return
 
         # Cleanup terminal-to-connection maps when a page is detached
+        detached_connection = None
         try:
             if hasattr(page, 'get_child'):
                 child = page.get_child()
                 if child in self.terminal_to_connection:
                     connection = self.terminal_to_connection.get(child)
+                    detached_connection = connection
                     # Remove reverse map
                     del self.terminal_to_connection[child]
                     # Remove from per-connection list
@@ -8486,6 +8488,16 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             # Update button visibility when tabs remain
             if hasattr(self, 'view_toggle_button'):
                 self.view_toggle_button.set_visible(True)
+
+        # Recompute the affected connection's state now that the terminal has
+        # been removed from the maps. With no terminals left this resolves to
+        # UNKNOWN, hiding the sidebar status icon instead of leaving a stale red
+        # "Disconnected" indicator after an intentional close.
+        if detached_connection is not None:
+            try:
+                self._recompute_connection_state(detached_connection)
+            except Exception:
+                pass
 
     def on_open_split_view_clicked(self, button):
         """Open a new empty split-view tab."""
@@ -8656,10 +8668,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 )
             elif terminals:
                 self.connection_manager.update_connection_state(connection, ConnectionState.DISCONNECTED)
-            elif connection.get_status() != ConnectionState.FAILED:
-                # No terminals at all: drop to DISCONNECTED unless a standalone
-                # FAILED was set (e.g. a failure recorded before teardown).
-                self.connection_manager.update_connection_state(connection, ConnectionState.DISCONNECTED)
+            else:
+                # No terminals at all (every tab for this connection is closed):
+                # there is nothing to report, so go neutral and hide the
+                # indicator rather than showing a red "Disconnected"/"failed"
+                # icon for what is an intentional close.
+                self.connection_manager.update_connection_state(connection, ConnectionState.UNKNOWN)
         except Exception as e:
             logger.error(f"Failed to recompute connection state: {e}")
 
