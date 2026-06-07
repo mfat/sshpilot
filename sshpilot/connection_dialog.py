@@ -58,6 +58,56 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+
+class _AuthMethodToggleFallback(Gtk.Box):
+    """Segmented-control fallback for Adw.ToggleGroup (libadwaita < 1.7).
+
+    Adw.ToggleGroup/Adw.Toggle only exist in libadwaita 1.7+, so on older
+    runtimes (e.g. Ubuntu 24.04 ships 1.5) the connection dialog would crash
+    while building the auth-method selector. This implements the subset of the
+    AdwToggleGroup API the dialog relies on: an integer ``active`` property
+    (emits ``notify::active``), plus ``get_active``/``set_active``, built from
+    linked Gtk.ToggleButtons.
+    """
+
+    __gtype_name__ = "SshPilotAuthMethodToggleFallback"
+    active = GObject.Property(type=int, default=0)
+
+    def __init__(self, labels):
+        super().__init__(orientation=Gtk.Orientation.HORIZONTAL)
+        self.add_css_class("linked")
+        self._buttons = []
+        self._syncing = False
+        for index, label in enumerate(labels):
+            button = Gtk.ToggleButton(label=label)
+            if self._buttons:
+                button.set_group(self._buttons[0])
+            button.connect("toggled", self._on_toggled, index)
+            self.append(button)
+            self._buttons.append(button)
+        if self._buttons:
+            self._syncing = True
+            self._buttons[0].set_active(True)
+            self._syncing = False
+
+    def _on_toggled(self, button, index):
+        if self._syncing or not button.get_active():
+            return
+        self.set_property("active", index)  # emits notify::active when changed
+
+    def get_active(self):
+        return int(self.get_property("active"))
+
+    def set_active(self, index):
+        if 0 <= index < len(self._buttons):
+            self._syncing = True
+            try:
+                self._buttons[index].set_active(True)
+            finally:
+                self._syncing = False
+            self.set_property("active", index)
+
+
 class ValidationResult:
     def __init__(self, is_valid: bool = True, message: str = "", severity: str = "info"):
         self.is_valid = is_valid
@@ -2739,15 +2789,22 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         # --- Method: key-based vs password (AdwToggleGroup) ---
         method_row = Adw.ActionRow(title=_("Authentication method"))
         method_row.set_activatable(False)
-        self.auth_toggle = Adw.ToggleGroup()
-        self.auth_toggle.set_valign(Gtk.Align.CENTER)
-        try:
-            key_toggle = Adw.Toggle(label=_("Key-based"))
-            pw_toggle = Adw.Toggle(label=_("Password"))
-            self.auth_toggle.add(key_toggle)
-            self.auth_toggle.add(pw_toggle)
-        except Exception:
-            logger.debug("Failed to build auth ToggleGroup", exc_info=True)
+        # Adw.ToggleGroup/Adw.Toggle require libadwaita 1.7+. On older runtimes
+        # (e.g. Ubuntu 24.04 ships 1.5) fall back to a linked-button segmented
+        # control so editing a connection still works (issue #965).
+        if hasattr(Adw, "ToggleGroup"):
+            self.auth_toggle = Adw.ToggleGroup()
+            self.auth_toggle.set_valign(Gtk.Align.CENTER)
+            try:
+                key_toggle = Adw.Toggle(label=_("Key-based"))
+                pw_toggle = Adw.Toggle(label=_("Password"))
+                self.auth_toggle.add(key_toggle)
+                self.auth_toggle.add(pw_toggle)
+            except Exception:
+                logger.debug("Failed to build auth ToggleGroup", exc_info=True)
+        else:
+            self.auth_toggle = _AuthMethodToggleFallback([_("Key-based"), _("Password")])
+            self.auth_toggle.set_valign(Gtk.Align.CENTER)
         try:
             self.auth_toggle.set_active(0)
         except Exception:
