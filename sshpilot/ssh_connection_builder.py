@@ -42,7 +42,7 @@ class NativeAuth:
     apply ``env`` to the child process and add ``extra_opts`` to the command.
     """
     env: Dict[str, str]            # Environment to spawn the command with
-    extra_opts: List[str]          # Extra command options (e.g. -o IdentityAgent=none)
+    extra_opts: List[str]          # Extra command options to pass to ssh/scp
     use_sshpass: bool = False      # Feed ``password`` via sshpass
     password: Optional[str] = None # Stored password for sshpass
     use_askpass: bool = False      # SSH_ASKPASS is wired up
@@ -62,13 +62,9 @@ def resolve_native_auth(
     * Password auth selected: clear askpass and signal sshpass (with the stored
       password when one exists).
     * Askpass disabled in settings: let SSH prompt natively on the TTY.
-    * Key-based auth: the password is irrelevant — SSH authenticates with the
-      key, so we enable askpass (keyring autofill, GUI prompt fallback) and,
-      unless the user forwards the agent or pins an explicit IdentityAgent,
-      bypass the agent (`-o IdentityAgent=none` + drop SSH_AUTH_SOCK) so SSH
-      loads the key from disk and calls askpass. gnome-keyring otherwise
-      advertises the key but refuses to sign it when locked, and SSH will not
-      fall back to the file.
+    * Key-based auth: enable askpass (keyring autofill, GUI prompt fallback).
+      The agent is left intact so SSH uses it when keys are already loaded.
+      askpass fires for any passphrases the agent cannot supply.
     """
     auth_method = int(getattr(connection, 'auth_method', 0) or 0)
     password_auth_selected = (auth_method == 1)
@@ -110,24 +106,8 @@ def resolve_native_auth(
 
     # Key-based auth with askpass.
     env = get_ssh_env_with_askpass(require="prefer")
-    extra_opts: List[str] = []
-    forward_agent = bool(getattr(connection, 'forward_agent', False))
-    explicit_identity_agent = bool(
-        (getattr(connection, 'identity_agent_directive', '') or '').strip()
-    )
-    if not forward_agent and not explicit_identity_agent:
-        env.pop('SSH_AUTH_SOCK', None)
-        extra_opts = ['-o', 'IdentityAgent=none']
-        logger.debug("resolve_native_auth: askpass + agent bypassed (IdentityAgent=none)")
-    else:
-        logger.debug(
-            "resolve_native_auth: askpass applied, agent kept "
-            "(forward_agent=%s, explicit IdentityAgent=%s)",
-            forward_agent, explicit_identity_agent,
-        )
-    return NativeAuth(
-        env=env, extra_opts=extra_opts, use_askpass=True, password_mode=False,
-    )
+    logger.debug("resolve_native_auth: askpass enabled, agent available")
+    return NativeAuth(env=env, extra_opts=[], use_askpass=True, password_mode=False)
 
 
 def build_native_command(
