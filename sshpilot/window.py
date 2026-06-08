@@ -2231,6 +2231,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     menu.add_section(
                         menu.add_item('folder-symbolic', _('Manage Files'), lambda: self.on_manage_files_action(None, None)) if not should_hide_file_manager_options() else None,
                         menu.add_item('dialog-password-symbolic', _('Copy Key to Server'), lambda: self.on_copy_key_to_server_action(None, None)),
+                        menu.add_item('dialog-password-symbolic', _('Manage authorized_keys…'), lambda: self.on_manage_authorized_keys_action(None, None)),
                         wol_item,
                         menu.add_item('utilities-terminal-symbolic', _('Open in System Terminal'), lambda: self.on_open_in_system_terminal_action(None, None)) if not should_hide_external_terminal_options() else None,
                     )
@@ -3335,6 +3336,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         menu.append('Copy Key to Server', 'app.new-key')
         menu.append('SSH Config Editor', 'app.edit-ssh-config')
         menu.append('Known Hosts Editor', 'win.edit-known-hosts')
+        menu.append('Manage Local authorized_keys…', 'win.manage-local-authorized-keys')
         menu.append('Broadcast Command', 'app.broadcast-command')
         
         # Sessions submenu
@@ -8981,6 +8983,86 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 self._open_manage_files_for_connection(connection)
             except Exception as e:
                 logger.error(f"Error opening file manager: {e}")
+
+    def on_manage_local_authorized_keys_action(self, action, param=None):
+        """Open the structured editor on the local user's ~/.ssh/authorized_keys."""
+        try:
+            from .authorized_keys_window import AuthorizedKeysWindow
+        except Exception as exc:
+            logger.error("authorized_keys editor unavailable: %s", exc)
+            return
+        try:
+            window = AuthorizedKeysWindow(
+                parent=self,
+                local_path="~/.ssh/authorized_keys",
+                connection_manager=self.connection_manager,
+                key_manager=getattr(self, 'key_manager', None),
+            )
+            window.present()
+        except Exception as exc:
+            logger.error("Failed to open local authorized_keys editor: %s", exc)
+
+    def on_manage_authorized_keys_action(self, action, param=None):
+        """Open the structured authorized_keys editor for the right-clicked connection."""
+        if not (hasattr(self, '_context_menu_connection') and self._context_menu_connection):
+            return
+        connection = self._context_menu_connection
+        try:
+            from .authorized_keys_window import AuthorizedKeysWindow
+            from .file_manager_window import AsyncSFTPManager
+        except Exception as exc:
+            logger.error("authorized_keys editor unavailable: %s", exc)
+            return
+
+        host_value = _get_connection_host(connection) or _get_connection_alias(connection)
+        username = getattr(connection, 'username', '') or ''
+        port_value = getattr(connection, 'port', 22) or 22
+
+        ssh_config = None
+        if hasattr(self, 'config') and self.config is not None:
+            try:
+                ssh_config = self.config.get_ssh_config()
+            except Exception as exc:
+                logger.debug("Failed to read SSH configuration for authorized_keys editor: %s", exc)
+                ssh_config = None
+
+        initial_password = getattr(connection, 'password', None) or None
+        if not initial_password and self.connection_manager is not None:
+            try:
+                initial_password = self.connection_manager.get_password(host_value, username)
+            except Exception as exc:
+                logger.debug("Password lookup failed for authorized_keys editor: %s", exc)
+                initial_password = None
+
+        try:
+            manager = AsyncSFTPManager(
+                str(host_value or ''),
+                str(username or ''),
+                int(port_value),
+                password=initial_password,
+                connection=connection,
+                connection_manager=self.connection_manager,
+                ssh_config=ssh_config,
+            )
+        except Exception as exc:
+            logger.error("Failed to create SFTP manager for authorized_keys: %s", exc)
+            return
+
+        try:
+            window = AuthorizedKeysWindow(
+                parent=self,
+                connection=connection,
+                sftp_manager=manager,
+                connection_manager=self.connection_manager,
+                key_manager=getattr(self, 'key_manager', None),
+            )
+            window.present()
+        except Exception as exc:
+            logger.error("Failed to open authorized_keys editor: %s", exc)
+            try:
+                manager.close()
+            except Exception:
+                pass
 
     def _open_manage_files_for_connection(self, connection):
         """Open files for the supplied connection.
