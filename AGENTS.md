@@ -51,7 +51,7 @@ Rules:
   delegates to `native_connect()`. There is **no** non-native/legacy command
   path and no native-mode toggle.
 - The command is intentionally minimal:
-  `ssh -F <config> [ssh_overrides…] [-o IdentityAgent=none] <host> [remote-cmd]`.
+  `ssh -F <config> [ssh_overrides…] <host> [remote-cmd]`.
 - Per-host settings are **not** placed on the command line. sshPilot writes
   `IdentityFile`, `Port`, `LocalForward`/`RemoteForward`/`DynamicForward`,
   `ProxyJump`, `ProxyCommand`, `ForwardX11`, `CertificateFile`, `RemoteCommand`,
@@ -72,12 +72,9 @@ identically. Modes:
   with a write-once FIFO to feed the password; clear `SSH_ASKPASS` and set
   `SSH_ASKPASS_REQUIRE=never` so ssh never falls back to askpass.
 - **Key-based** (default, askpass enabled): set `SSH_ASKPASS` (REQUIRE=prefer)
-  so ssh asks our askpass helper for the key passphrase. Also apply the **agent
-  bypass** — add `-o IdentityAgent=none` and drop `SSH_AUTH_SOCK` — *unless* the
-  connection forwards the agent (`ForwardAgent`) or pins an explicit
-  `IdentityAgent`. The bypass exists because gnome-keyring advertises a locked
-  key but refuses to sign it ("agent refused operation"), and ssh will not fall
-  back to the on-disk key, so askpass would never fire.
+  so ssh asks our askpass helper for any key passphrase it needs. The agent is
+  left intact — SSH uses it when keys are already loaded, and falls back to
+  askpass (keyring lookup → GTK prompt) for passphrases the agent cannot supply.
 - **Askpass disabled** (the `use-askpass` setting is off): set no `SSH_ASKPASS`;
   ssh prompts natively on the TTY.
 

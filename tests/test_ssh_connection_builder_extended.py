@@ -216,21 +216,13 @@ def test_resolve_native_auth_askpass_disabled():
     assert 'SSH_ASKPASS_REQUIRE' not in auth.env
 
 
-def test_resolve_native_auth_key_mode_bypasses_agent():
+def test_resolve_native_auth_key_mode_uses_askpass():
     conn = Connection({'host': 'h', 'hostname': 'h', 'auth_method': 0})
     auth = resolve_native_auth(conn)
     assert auth.use_askpass is True
     assert auth.use_sshpass is False
-    assert auth.extra_opts == ['-o', 'IdentityAgent=none']
-    assert 'SSH_AUTH_SOCK' not in auth.env
-    assert auth.env.get('SSH_ASKPASS')
-
-
-def test_resolve_native_auth_key_mode_keeps_agent_with_forward_agent():
-    conn = Connection({'host': 'h', 'hostname': 'h', 'auth_method': 0, 'forward_agent': True})
-    auth = resolve_native_auth(conn)
-    assert auth.use_askpass is True
     assert auth.extra_opts == []
+    assert auth.env.get('SSH_ASKPASS')
 
 
 # --- proxy / agent: now sourced from ~/.ssh/config, not the command ---

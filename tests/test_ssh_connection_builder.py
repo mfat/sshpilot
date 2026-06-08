@@ -201,24 +201,7 @@ def test_native_command_minimal_shape():
     assert 'IdentityAgent=none' not in cmd
 
 
-def test_build_ssh_connection_adds_identity_agent_bypass_for_key_auth():
+def test_key_auth_does_not_add_identity_agent_bypass():
     conn = Connection({'host': 'k.example', 'hostname': 'k.example', 'auth_method': 0})
     cmd = build_ssh_connection(ConnectionContext(connection=conn)).command
-    assert '-o' in cmd
-    assert 'IdentityAgent=none' in cmd
-    # The bypass option precedes the host.
-    assert cmd.index('IdentityAgent=none') < _host_index(cmd)
-
-
-def test_identity_agent_bypass_skipped_when_forward_agent():
-    conn = Connection({'host': 'fa.example', 'hostname': 'fa.example', 'forward_agent': True})
-    cmd = build_ssh_connection(ConnectionContext(connection=conn)).command
     assert 'IdentityAgent=none' not in cmd
-
-
-def test_identity_agent_bypass_skipped_when_directive_set():
-    conn = Connection({'host': 'ia.example', 'hostname': 'ia.example'})
-    conn.identity_agent_directive = '/run/user/1000/agent.sock'
-    auth = resolve_native_auth(conn)
-    assert auth.extra_opts == []
-    assert auth.use_askpass is True
