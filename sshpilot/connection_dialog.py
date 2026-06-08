@@ -1106,7 +1106,7 @@ class FileListEditor(Adw.PreferencesGroup):
 
     def __init__(self, *, title, add_actions=None,
                  with_passphrase=False, connection_manager=None,
-                 on_changed=None, verify=None):
+                 on_changed=None, verify=None, rows_group=None):
         super().__init__()
         self.set_title(title)
         self._model = PathList()
@@ -1114,6 +1114,8 @@ class FileListEditor(Adw.PreferencesGroup):
         self._with_passphrase = with_passphrase
         self._connection_manager = connection_manager
         self._on_changed = on_changed
+        self._rows_group = rows_group or self
+        self._rows_visible = True
         # verify(path, passphrase) -> bool before storing (None disables it).
         self._verify = verify
 
@@ -1145,12 +1147,20 @@ class FileListEditor(Adw.PreferencesGroup):
     def set_paths(self, paths):
         for row in list(self._rows):
             if row.get_parent() is not None:
-                self.remove(row)
+                self._remove_row_widget(row)
         self._rows = []
         self._model.set(paths)
         for p in self._model.get():
             self._append_key_row(p)
         self._ensure_add_rows_last()
+
+    def set_visible(self, visible):
+        super().set_visible(visible)
+        self._rows_visible = visible
+        for row in self._rows:
+            row.set_visible(visible)
+        for row in self._add_rows:
+            row.set_visible(visible)
 
     def add_path(self, path):
         if self._model.add(path):
@@ -1169,14 +1179,23 @@ class FileListEditor(Adw.PreferencesGroup):
         """Re-append the add buttons so they stay below the key rows, in order."""
         for btn in self._add_rows:
             if btn.get_parent() is not None:
-                self.remove(btn)
+                self._remove_row_widget(btn)
         for btn in self._add_rows:
-            self.add(btn)
+            self._add_row_widget(btn)
+
+    def _add_row_widget(self, row):
+        row.set_visible(self._rows_visible)
+        self._rows_group.add(row)
+
+    def _remove_row_widget(self, row):
+        parent = row.get_parent()
+        if parent is not None and hasattr(parent, 'remove'):
+            parent.remove(row)
 
     def _append_key_row(self, path):
         for btn in self._add_rows:
             if btn.get_parent() is not None:
-                self.remove(btn)
+                self._remove_row_widget(btn)
         if self._with_passphrase:
             row = self._make_key_expander_row(path)
         else:
@@ -1191,10 +1210,10 @@ class FileListEditor(Adw.PreferencesGroup):
             remove_btn.set_tooltip_text(_("Remove"))
             remove_btn.connect('clicked', lambda _b, p=path, r=row: self._remove_row(p, r))
             row.add_suffix(remove_btn)
-        self.add(row)
+        self._add_row_widget(row)
         self._rows.append(row)
         for btn in self._add_rows:
-            self.add(btn)
+            self._add_row_widget(btn)
         self._renumber_rows()
 
     def _renumber_rows(self):
@@ -1292,7 +1311,7 @@ class FileListEditor(Adw.PreferencesGroup):
     def _remove_row(self, path, row):
         self._model.remove(path)
         try:
-            self.remove(row)
+            self._remove_row_widget(row)
         except Exception:
             pass
         if row in self._rows:
@@ -2833,7 +2852,20 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             title=_("Use a specific key"),
             subtitle=_("Choose one or more private keys for this connection"),
         )
+        key_add_btn = Gtk.Button()
+        key_add_btn.set_child(Adw.ButtonContent(
+            icon_name='list-add-symbolic',
+            label=_("Add a key…"),
+        ))
+        key_add_btn.add_css_class('pill')
+        key_add_btn.add_css_class('suggested-action')
+        key_add_btn.set_valign(Gtk.Align.CENTER)
+        key_add_btn.connect(
+            'clicked',
+            lambda _btn: self._open_key_chooser(self.key_editor),
+        )
         self.key_specific_row.add_prefix(self.key_specific_check)
+        self.key_specific_row.add_suffix(key_add_btn)
         self.key_specific_row.set_activatable_widget(self.key_specific_check)
         auth_group.add(self.key_specific_row)
 
@@ -2862,22 +2894,17 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         self.pubkey_auth_row.set_title(_("Disable public key authentication (force password only)"))
         self.pubkey_auth_row.set_active(False)
 
-        # --- Identity files (private keys) — own group with a title label,
-        # key rows, and a bottom "Add a key…" button. Agent keys are offered in
-        # a separate section of the add menu (never mixed with on-disk keys).
+        # --- Identity files (private keys) — own group with key rows.
         self.key_editor = FileListEditor(
-            title=_("Identity files (private keys)"),
-            add_actions=[
-                {'label': _("Add a key…"), 'icon': 'list-add-symbolic',
-                 'chooser': self._open_key_chooser},
-            ],
+            title=_(""),
             with_passphrase=True,
             connection_manager=cm,
+            rows_group=auth_group,
             verify=lambda path, passphrase: self.validator.verify_key_passphrase(
                 os.path.expanduser(path), passphrase
             ),
         )
-        self.key_editor.set_description(_("Add private keys to be tried by SSH"))
+        self.key_editor.set_description(_(""))
 
         # IdentitiesOnly — its own group, clearly separated from the keys above.
         self.idonly_group = Adw.PreferencesGroup()
@@ -3183,8 +3210,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         # X11 Forwarding moved to Port Forwarding view
         
         # Return groups for PreferencesPage
-        return [basic_group, auth_group, self.key_editor, self.idonly_group,
-                self.cert_editor, behaviour_group, hw_group,
+        return [basic_group, auth_group, self.idonly_group, self.cert_editor,
+                behaviour_group, hw_group,
                 proxy_group, wol_group, advanced_group]
     
     def build_port_forwarding_groups(self):
