@@ -664,6 +664,10 @@ class SplitViewTab(Gtk.Box):
         self._row_height_ratios: List[float] = []
         self._manual_row_indices: set[int] = set()
         self._row_boxes: List[Gtk.Box] = []
+        # Horizontal paneds currently in the layout, ordered by pane-pair index.
+        # Tracked so width ratios can be preserved across rebuilds and
+        # deterministically re-applied (the width analogue of _row_heights).
+        self._h_paneds: List[Gtk.Paned] = []
         self._fill_viewport = True
         self._viewport_sync_scheduled = False
         self._scroll_spacer: Optional[Gtk.Box] = None
@@ -1072,6 +1076,11 @@ class SplitViewTab(Gtk.Box):
         is_vertical = (orientation == Gtk.Orientation.VERTICAL)
         p._split_ratio = ratio
         p._in_ratio_update = False
+        # Until the intended ratio has been applied at a real allocation, GTK's
+        # own default-position notifications must NOT overwrite _split_ratio —
+        # otherwise a ratio carried over from a previous layout is clobbered back
+        # to the natural-size split before _apply_ratio gets to enforce it.
+        p._ratio_settled = False
 
         def _apply_ratio(paned: Gtk.Paned) -> None:
             total = paned.get_allocated_height() if is_vertical else paned.get_allocated_width()
@@ -1084,6 +1093,7 @@ class SplitViewTab(Gtk.Box):
             paned._in_ratio_update = True
             paned.set_position(pos)
             paned._in_ratio_update = False
+            paned._ratio_settled = True
             return False  # for GLib.idle_add
 
         def on_map(paned, *_args) -> None:
@@ -1094,7 +1104,9 @@ class SplitViewTab(Gtk.Box):
                 _apply_ratio(paned)
 
         def on_position_notify(paned, _param) -> None:
-            if paned._in_ratio_update:
+            # Ignore programmatic moves and GTK's pre-settlement default
+            # positions; only record the ratio from genuine user drags.
+            if paned._in_ratio_update or not paned._ratio_settled:
                 return
             total = paned.get_allocated_height() if is_vertical else paned.get_allocated_width()
             if total > 0:
@@ -1105,6 +1117,11 @@ class SplitViewTab(Gtk.Box):
         p.connect(dim_signal, on_dimension_changed)
         p.connect("notify::position", on_position_notify)
 
+        # Allow callers (e.g. _rebuild_layout) to force the ratio back onto the
+        # divider once the paned has a real allocation, without relying on the
+        # map / notify::width signals having fired.
+        p._force_ratio = lambda _p=p: _apply_ratio(_p)
+
         return p
 
     # ── layout rebuild ────────────────────────────────────────────────────────
@@ -1112,6 +1129,15 @@ class SplitViewTab(Gtk.Box):
     def _rebuild_layout(self) -> None:
         """Detach all panes and rebuild a fully resizable pane tree."""
         self._scroll_spacer = None
+
+        # Preserve the horizontal split ratio of each pane pair across the
+        # rebuild (the width analogue of old_heights below). The old paned
+        # objects still carry their _split_ratio even after teardown.
+        old_h_ratios = {
+            i: getattr(p, "_split_ratio", 0.5)
+            for i, p in enumerate(self._h_paneds)
+        }
+        self._h_paneds = []
 
         def _release_paned(widget: Gtk.Widget) -> None:
             """Recursively null Paned children so panes can be safely re-parented.
@@ -1202,10 +1228,15 @@ class SplitViewTab(Gtk.Box):
                 if len(pair) == 1:
                     row_widgets.append(pair[0])
                 else:
-                    h_paned = self._make_proportional_paned(Gtk.Orientation.HORIZONTAL)
+                    pair_idx = i // 2
+                    h_paned = self._make_proportional_paned(
+                        Gtk.Orientation.HORIZONTAL,
+                        ratio=old_h_ratios.get(pair_idx, 0.5),
+                    )
                     h_paned.set_start_child(pair[0])
                     h_paned.set_end_child(pair[1])
                     row_widgets.append(h_paned)
+                    self._h_paneds.append(h_paned)
 
             old_heights = list(self._row_heights)
             self._row_heights = []
@@ -1234,6 +1265,26 @@ class SplitViewTab(Gtk.Box):
 
         self._normalize_pane_heights()
         self._schedule_viewport_sync()
+        # Force each horizontal divider back onto its ratio once the rebuilt
+        # paneds have a real allocation. Without this a recreated paned whose
+        # width did not change (e.g. the top row when a 3rd pane is added)
+        # never re-applies its ratio via map/notify and falls back to GTK's
+        # natural-size split, making the two panes unequal.
+        GLib.idle_add(self._apply_horizontal_ratios)
+
+    def _apply_horizontal_ratios(self) -> bool:
+        """Re-assert each horizontal paned's split ratio after a rebuild.
+
+        Returns True (so GLib.idle_add re-runs it) while any paned still has no
+        allocation yet; False once every divider has been positioned.
+        """
+        pending = False
+        for paned in self._h_paneds:
+            if paned.get_allocated_width() > 0:
+                paned._force_ratio()
+            else:
+                pending = True
+        return pending
 
     def _chain_panes(
         self,
