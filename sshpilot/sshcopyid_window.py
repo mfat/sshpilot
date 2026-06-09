@@ -1,9 +1,10 @@
 import os
 import logging
 from gettext import gettext as _
-from gi.repository import Gtk, Adw, GLib
+from gi.repository import Gtk, Adw, GLib, Gio
 
 from .key_manager import KeyManager, SSHKey
+from .platform_utils import get_ssh_dir
 from .connection_manager import ConnectionManager, Connection
 from typing import Optional, Tuple
 import shutil
@@ -22,6 +23,21 @@ from .connection_display import (
 from .ssh_utils import ensure_writable_ssh_home
 
 logger = logging.getLogger(__name__)
+
+
+def _ssh_key_from_public_path(path: str) -> SSHKey:
+    """Build an SSHKey for a user-chosen public key file.
+
+    ssh-copy-id only needs the public key (``-i <pub>``), so we set
+    ``public_path`` to exactly the chosen file regardless of extension. The
+    private path is the conventional sibling (the ``.pub`` suffix stripped) and
+    is only used for the dropdown label, mirroring discovered keys.
+    """
+    priv = path[:-4] if path.endswith('.pub') else path
+    key = SSHKey(priv)
+    key.public_path = path
+    return key
+
 
 class SshCopyIdWindow(Adw.Window):
     """
@@ -144,6 +160,14 @@ class SshCopyIdWindow(Adw.Window):
             self.dropdown_existing.set_can_focus(True)  # Make it focusable for tab navigation
             existing_box.append(Gtk.Label(label="Select key:", xalign=0))
             existing_box.append(self.dropdown_existing)
+
+            # Browse for a public key outside ~/.ssh (portal-aware file chooser)
+            self.browse_existing_button = Gtk.Button(label=_("Browse…"))
+            self.browse_existing_button.add_css_class("flat")
+            self.browse_existing_button.set_can_focus(True)
+            self.browse_existing_button.set_tooltip_text(_("Choose a public key file…"))
+            self.browse_existing_button.connect("clicked", self._browse_public_key)
+            existing_box.append(self.browse_existing_button)
 
             # Fill dropdown with discovered keys
             self._reload_existing_keys()
@@ -348,6 +372,67 @@ class SshCopyIdWindow(Adw.Window):
             dd = Gtk.DropDown.new_from_strings(["Error loading keys"])
             self.dropdown_existing.set_model(dd.get_model())
             self.dropdown_existing.set_selected(0)
+
+    def _browse_public_key(self, *_):
+        """Open a portal-aware file chooser to pick a public key file."""
+        try:
+            dialog = Gtk.FileDialog(title=_("Select Public Key"))
+            try:
+                ssh_dir = get_ssh_dir()
+                if os.path.isdir(ssh_dir):
+                    dialog.set_initial_folder(Gio.File.new_for_path(ssh_dir))
+            except Exception:
+                pass
+            try:
+                pub_filter = Gtk.FileFilter()
+                pub_filter.set_name(_("SSH Public Keys"))
+                pub_filter.add_pattern("*.pub")
+                all_filter = Gtk.FileFilter()
+                all_filter.set_name(_("All Files"))
+                all_filter.add_pattern("*")
+                filters = Gio.ListStore.new(Gtk.FileFilter)
+                filters.append(pub_filter)
+                filters.append(all_filter)
+                dialog.set_filters(filters)
+            except Exception:
+                pass
+            dialog.open(self, None, self._on_public_key_chosen)
+        except Exception:
+            logger.debug("Failed to open public key chooser", exc_info=True)
+
+    def _on_public_key_chosen(self, dlg, result):
+        try:
+            gfile = dlg.open_finish(result)
+            if gfile and gfile.get_path():
+                self._add_browsed_public_key(gfile.get_path())
+        except Exception:
+            logger.debug("Public key chooser cancelled or failed", exc_info=True)
+
+    def _add_browsed_public_key(self, path):
+        """Add a browsed public key to the dropdown and select it.
+
+        Rebuilds the dropdown model from the cached key list (the source of
+        truth) so the selected index always lines up with the cache, even when
+        it previously held a placeholder ("No keys found").
+        """
+        cache = getattr(self, "_existing_keys_cache", None) or []
+
+        # De-dupe: if this exact public key is already listed, just select it.
+        for i, key in enumerate(cache):
+            if getattr(key, "public_path", None) == path:
+                self.dropdown_existing.set_selected(i)
+                self.radio_existing.set_active(True)
+                return
+
+        cache = list(cache)
+        cache.append(_ssh_key_from_public_path(path))
+        self._existing_keys_cache = cache
+
+        names = [os.path.basename(k.private_path) for k in cache]
+        self.dropdown_existing.set_model(Gtk.StringList.new(names))
+        self.dropdown_existing.set_selected(len(names) - 1)
+        # Browsing implies copying an existing key.
+        self.radio_existing.set_active(True)
 
     def _info(self, title, body):
         try:
