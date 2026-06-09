@@ -3355,12 +3355,21 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             except Exception:
                 listen_port_row.set_text(str(existing_rule.get('listen_port', '')))
             if t == 'remote':
-                # For remote rules, the destination is local_host/local_port
-                remote_host_row.set_text(str(existing_rule.get('local_host', 'localhost')))
-                try:
-                    remote_port_row.set_text(str(int(existing_rule.get('local_port', 0) or 0)))
-                except Exception:
-                    remote_port_row.set_text(str(existing_rule.get('local_port', '')))
+                # For remote rules, the destination is local_host/local_port.
+                # A single-argument (SOCKS) rule has no destination — leave the
+                # fields blank so it round-trips as SOCKS instead of being forced
+                # into a localhost destination on save.
+                if existing_rule.get('socks') or not (
+                    existing_rule.get('local_host') or existing_rule.get('local_port')
+                ):
+                    remote_host_row.set_text('')
+                    remote_port_row.set_text('')
+                else:
+                    remote_host_row.set_text(str(existing_rule.get('local_host', 'localhost')))
+                    try:
+                        remote_port_row.set_text(str(int(existing_rule.get('local_port', 0) or 0)))
+                    except Exception:
+                        remote_port_row.set_text(str(existing_rule.get('local_port', '')))
             else:
                 remote_host_row.set_text(str(existing_rule.get('remote_host', 'localhost')))
                 try:
@@ -3479,18 +3488,34 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         }
         if rtype == 'local':
             # LocalForward: [listen_addr:]listen_port remote_host:remote_port
+            # The destination is mandatory and must be a valid port.
+            try:
+                remote_port = int((remote_port_row.get_text() or '0').strip() or '0')
+            except Exception:
+                remote_port = 0
+            if remote_port <= 0 or remote_port > 65535:
+                self.show_error(_("Please enter a valid destination port (1–65535)"))
+                return
             rule['remote_host'] = remote_host_row.get_text().strip() or 'localhost'
-            try:
-                rule['remote_port'] = int((remote_port_row.get_text() or '0').strip() or '0')
-            except Exception:
-                rule['remote_port'] = 0
+            rule['remote_port'] = remote_port
         elif rtype == 'remote':
-            # RemoteForward: [listen_addr:]listen_port local_host:local_port
-            rule['local_host'] = remote_host_row.get_text().strip() or 'localhost'
+            # RemoteForward: [listen_addr:]listen_port [local_host:local_port]
+            # With no destination it is a reverse SOCKS proxy (single-argument
+            # form, ssh_config(5)). An empty destination is therefore valid and
+            # means SOCKS rather than a malformed forward.
+            dest_host = remote_host_row.get_text().strip()
             try:
-                rule['local_port'] = int((remote_port_row.get_text() or '0').strip() or '0')
+                dest_port = int((remote_port_row.get_text() or '0').strip() or '0')
             except Exception:
-                rule['local_port'] = 0
+                dest_port = 0
+            if not dest_host and dest_port <= 0:
+                rule['socks'] = True
+            else:
+                if dest_port <= 0 or dest_port > 65535:
+                    self.show_error(_("Please enter a valid destination port (1–65535)"))
+                    return
+                rule['local_host'] = dest_host or 'localhost'
+                rule['local_port'] = dest_port
 
         if not hasattr(self, 'forwarding_rules') or self.forwarding_rules is None:
             self.forwarding_rules = []
@@ -3543,13 +3568,18 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                         listen_port_row.set_text('8080')
                 except Exception:
                     listen_port_row.set_text('8080')
-                if not remote_host_row.get_text().strip():
-                    remote_host_row.set_text('localhost')
-                try:
-                    if int((remote_port_row.get_text() or '0').strip() or '0') == 0:
+                # Only seed a destination when the user actively switches into
+                # Remote from another type; on the initial load we leave it as-is
+                # so an existing single-argument (SOCKS) rule keeps its blank
+                # destination instead of being silently turned into a forward.
+                if previous_idx is not None and previous_idx != idx:
+                    if not remote_host_row.get_text().strip():
+                        remote_host_row.set_text('localhost')
+                    try:
+                        if int((remote_port_row.get_text() or '0').strip() or '0') == 0:
+                            remote_port_row.set_text('22')
+                    except Exception:
                         remote_port_row.set_text('22')
-                except Exception:
-                    remote_port_row.set_text('22')
             else:  # Dynamic
                 if not listen_addr_row.get_text().strip():
                     listen_addr_row.set_text('localhost')

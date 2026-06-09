@@ -1998,13 +1998,16 @@ class ConnectionManager(GObject.Object):
                 dest_spec = f"{_format_forward_host(dest_host) or dest_host}:{rule.get('remote_port', '')}"
                 lines.append(f"    LocalForward {listen_spec} {dest_spec}")
             elif rule.get('type') == 'remote':
-                # Single-argument (SOCKS) form has no destination.
-                if rule.get('socks') or not (rule.get('local_host') or rule.get('remote_host')):
+                # Single-argument (SOCKS) form has no destination. A destination
+                # needs both a host and a port; if either is missing fall back to
+                # the SOCKS form rather than emitting a malformed "host:" spec.
+                dest_host = rule.get('local_host') or rule.get('remote_host', '')
+                dest_port = rule.get('local_port') or rule.get('remote_port')
+                if rule.get('socks') or not dest_host or not dest_port:
                     lines.append(f"    RemoteForward {listen_spec}")
                 else:
                     # For RemoteForward we forward remote listen -> local destination
-                    dest_host = rule.get('local_host') or rule.get('remote_host', '')
-                    dest_spec = f"{_format_forward_host(dest_host) or dest_host}:{rule.get('local_port') or rule.get('remote_port', '')}"
+                    dest_spec = f"{_format_forward_host(dest_host) or dest_host}:{dest_port}"
                     lines.append(f"    RemoteForward {listen_spec} {dest_spec}")
             elif rule.get('type') == 'dynamic':
                 lines.append(f"    DynamicForward {listen_spec}")

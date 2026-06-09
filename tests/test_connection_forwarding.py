@@ -109,6 +109,24 @@ class TestForwardingConfigOutput:
                              "remote_host": "localhost", "remote_port": 80}])
         assert _forward_lines(entry) == []
 
+    def test_remote_with_dest_host_but_no_port_falls_back_to_socks(self, tmp_path):
+        """A remote rule missing its destination port must never emit "host:"."""
+        cm = _make_cm(tmp_path)
+        entry = _entry(cm, [{"type": "remote", "listen_addr": "localhost",
+                             "listen_port": 9999, "local_host": "localhost",
+                             "local_port": 0}])
+        assert _forward_lines(entry) == ["RemoteForward localhost:9999"]
+
+    def test_socks_remote_round_trips_through_parser(self, tmp_path):
+        """Parse a single-arg RemoteForward and write it back unchanged."""
+        cm = _make_cm(tmp_path)
+        parsed = cm.parse_host_config(
+            {"host": "h", "hostname": "h", "remoteforward": "9999"}, source="user"
+        )
+        rule = parsed["forwarding_rules"][0]
+        assert rule.get("socks") is True
+        assert _forward_lines(_entry(cm, [rule])) == ["RemoteForward localhost:9999"]
+
 
 # ---------------------------------------------------------------------------
 # rule editor widgets -> rule dict (ConnectionDialog._save_rule_from_editor)
@@ -200,6 +218,49 @@ class TestSaveRuleFromEditor:
         _save(dialog, kind="local", listen_port="0")
         assert dialog.forwarding_rules == []
         assert dialog._save_errors  # an error was surfaced to the user
+
+    def test_remote_with_empty_destination_is_socks(self, monkeypatch):
+        """A remote rule with a blank destination is the SOCKS single-arg form."""
+        dialog = _make_dialog(monkeypatch)
+        _save(dialog, kind="remote", listen_port="9999", dest_host="", dest_port="")
+        assert dialog.forwarding_rules == [{
+            "type": "remote", "enabled": True,
+            "listen_addr": "localhost", "listen_port": 9999, "socks": True,
+        }]
+        assert dialog._save_errors == []
+
+    def test_remote_invalid_destination_port_is_rejected(self, monkeypatch):
+        """A remote rule with a destination host but a bad port is rejected, not corrupted."""
+        dialog = _make_dialog(monkeypatch)
+        _save(dialog, kind="remote", listen_port="9999", dest_host="db", dest_port="0")
+        assert dialog.forwarding_rules == []
+        assert dialog._save_errors
+
+    def test_local_invalid_destination_port_is_rejected(self, monkeypatch):
+        dialog = _make_dialog(monkeypatch)
+        _save(dialog, kind="local", listen_port="8080", dest_host="web", dest_port="0")
+        assert dialog.forwarding_rules == []
+        assert dialog._save_errors
+
+    def test_editing_socks_rule_preserves_it(self, monkeypatch):
+        """Opening a parsed SOCKS rule (blank destination) and saving keeps it SOCKS.
+
+        Mirrors the dialog's populate step, which leaves the destination fields
+        blank for a single-arg rule.
+        """
+        dialog = _make_dialog(monkeypatch)
+        socks = {"type": "remote", "enabled": True, "listen_addr": "localhost",
+                 "listen_port": 9999, "socks": True}
+        dialog.forwarding_rules = [socks]
+        dialog._save_rule_from_editor(
+            socks, _Combo(1), _Entry("localhost"), _Entry("9999"),
+            _Entry(""), _Entry(""),
+        )
+        assert dialog.forwarding_rules == [{
+            "type": "remote", "enabled": True,
+            "listen_addr": "localhost", "listen_port": 9999, "socks": True,
+        }]
+        assert dialog._save_errors == []
 
     def test_editing_existing_rule_replaces_in_place(self, monkeypatch):
         dialog = _make_dialog(monkeypatch)
