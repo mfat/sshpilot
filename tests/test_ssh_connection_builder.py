@@ -68,8 +68,8 @@ def test_ssh_options_precede_host_and_raw_remote_command():
 
 
 def test_sshpass_when_password_present_even_for_key_auth():
-    """Key auth is authoritative: a stored password is ignored for key auth,
-    but used (sshpass) when password auth is selected."""
+    """Combined auth: a key-auth connection with a stored password (and no saved
+    key passphrase) falls back to the password via sshpass."""
     conn = Connection(
         {
             'host': 'example.com',
@@ -79,12 +79,14 @@ def test_sshpass_when_password_present_even_for_key_auth():
             'password': 'secret',
         }
     )
+    conn.resolved_identity_files = []  # no key -> no saved passphrase
     ctx = ConnectionContext(connection=conn, command_type='ssh')
     result = build_ssh_connection(ctx)
-    # auth_method=0 (key-based): password is irrelevant -> askpass, not sshpass.
-    assert result.use_sshpass is False
-    assert result.password is None
-    assert result.use_askpass is True
+    # auth_method=0 + stored password, no saved passphrase -> combined sshpass.
+    assert result.use_sshpass is True
+    assert result.password == 'secret'
+    assert result.use_askpass is False
+    assert 'SSH_ASKPASS' not in result.env
 
     # Password auth (auth_method=1) with the same stored password uses sshpass.
     conn.auth_method = 1
@@ -94,7 +96,9 @@ def test_sshpass_when_password_present_even_for_key_auth():
     assert result.password == 'secret'
 
 
-def test_key_auth_without_password_uses_askpass_not_sshpass():
+def test_key_auth_without_anything_saved_uses_native_prompts():
+    # Key auth, no saved passphrase and no saved password -> neither askpass nor
+    # sshpass; SSH prompts on the TTY (and can fall back to password naturally).
     conn = Connection(
         {
             'host': 'example.com',
@@ -103,10 +107,12 @@ def test_key_auth_without_password_uses_askpass_not_sshpass():
             'auth_method': 0,
         }
     )
+    conn.resolved_identity_files = []
     result = build_ssh_connection(ConnectionContext(connection=conn))
     assert result.use_sshpass is False
     assert result.password is None
-    assert result.use_askpass is True
+    assert result.use_askpass is False
+    assert 'SSH_ASKPASS' not in result.env
 
 
 def _forwarding_conn():

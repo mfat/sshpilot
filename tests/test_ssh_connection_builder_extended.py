@@ -79,6 +79,19 @@ def _build(
     return result.command, result
 
 
+def _build_from(conn, *, command_type: str = 'ssh', connection_manager=None, config=None):
+    """Like _build but for a pre-constructed Connection (so the test can set
+    attributes such as resolved_identity_files first)."""
+    ctx = ConnectionContext(
+        connection=conn,
+        connection_manager=connection_manager,
+        config=config,
+        command_type=command_type,
+    )
+    result = build_ssh_connection(ctx)
+    return result.command, result
+
+
 class _ConfigStub:
     def __init__(self, ssh_cfg: Optional[dict] = None, settings: Optional[dict] = None):
         self._ssh_cfg = ssh_cfg or {}
@@ -144,20 +157,22 @@ def test_password_auth_with_stored_password_uses_sshpass():
     assert 'IdentityAgent=none' not in cmd
 
 
-def test_key_auth_ignores_stored_password_and_uses_askpass():
-    # Key-based auth is authoritative: a stored/leftover password is irrelevant
-    # and must not divert key auth into sshpass (which would suppress askpass).
-    cmd, result = _build(
-        {
-            'host': 'combo.example',
-            'hostname': 'combo.example',
-            'auth_method': 0,
-            'password': 'backup',
-        },
-    )
-    assert result.use_sshpass is False
-    assert result.password is None
-    assert result.use_askpass is True
+def test_key_auth_with_stored_password_uses_combined_sshpass():
+    # Combined auth: key auth + a stored password (no saved key passphrase) ->
+    # try the key, fall back to the password via sshpass.
+    conn = Connection({
+        'host': 'combo.example',
+        'hostname': 'combo.example',
+        'auth_method': 0,
+        'password': 'backup',
+    })
+    conn.resolved_identity_files = []  # no saved passphrase
+    cmd, result = _build_from(conn)
+    assert result.use_sshpass is True
+    assert result.password == 'backup'
+    assert result.use_askpass is False
+    assert 'SSH_ASKPASS' not in result.env
+    assert result.env.get('SSH_ASKPASS_REQUIRE') == 'never'
     assert not _has_o_option(cmd, 'PreferredAuthentications')
 
 
@@ -216,13 +231,43 @@ def test_resolve_native_auth_askpass_disabled():
     assert 'SSH_ASKPASS_REQUIRE' not in auth.env
 
 
-def test_resolve_native_auth_key_mode_uses_askpass():
+def test_resolve_native_auth_key_mode_saved_passphrase_uses_askpass(monkeypatch):
+    import sshpilot.ssh_connection_builder as scb
+    monkeypatch.setattr(scb, 'lookup_passphrase', lambda _p: 'pp')
     conn = Connection({'host': 'h', 'hostname': 'h', 'auth_method': 0})
+    conn.resolved_identity_files = ['/home/u/.ssh/k']
     auth = resolve_native_auth(conn)
     assert auth.use_askpass is True
     assert auth.use_sshpass is False
     assert auth.extra_opts == []
     assert auth.env.get('SSH_ASKPASS')
+
+
+def test_resolve_native_auth_key_mode_nothing_saved_no_askpass(monkeypatch):
+    import sshpilot.ssh_connection_builder as scb
+    monkeypatch.setattr(scb, 'lookup_passphrase', lambda _p: '')
+    monkeypatch.setattr(scb, '_get_stored_password', lambda _c, _m=None: None)
+    conn = Connection({'host': 'h', 'hostname': 'h', 'auth_method': 0})
+    conn.resolved_identity_files = ['/home/u/.ssh/k']
+    auth = resolve_native_auth(conn)
+    assert auth.use_askpass is False
+    assert auth.use_sshpass is False
+    assert 'SSH_ASKPASS' not in auth.env
+    assert 'SSH_ASKPASS_REQUIRE' not in auth.env
+
+
+def test_resolve_native_auth_key_mode_probe_error_failsafe_askpass(monkeypatch):
+    import sshpilot.ssh_connection_builder as scb
+
+    def boom(_p):
+        raise RuntimeError("keyring down")
+
+    monkeypatch.setattr(scb, 'lookup_passphrase', boom)
+    conn = Connection({'host': 'h', 'hostname': 'h', 'auth_method': 0})
+    conn.resolved_identity_files = ['/home/u/.ssh/k']
+    auth = resolve_native_auth(conn)
+    # Fail-safe: can't tell -> keep askpass on (never regress autofill).
+    assert auth.use_askpass is True
 
 
 # --- proxy / agent: now sourced from ~/.ssh/config, not the command ---

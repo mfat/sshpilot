@@ -512,15 +512,18 @@ class Connection:
                 native_mode=True,  # Use native mode
             )
 
-            # Build SSH connection command using ssh_connection_builder
-            ssh_conn_cmd = build_ssh_connection(ctx)
-            ssh_cmd = ssh_conn_cmd.command
-
-            # Store resolved identity files if available
+            # Resolve identity files FIRST so resolve_native_auth (inside
+            # build_ssh_connection) can decide auth from what's saved for them
+            # (saved passphrase -> askpass; else saved password -> sshpass; else
+            # native prompts) without recomputing `ssh -G`.
             try:
                 self.resolved_identity_files = self.collect_identity_file_candidates()
             except Exception:
                 self.resolved_identity_files = []
+
+            # Build SSH connection command using ssh_connection_builder
+            ssh_conn_cmd = build_ssh_connection(ctx)
+            ssh_cmd = ssh_conn_cmd.command
 
             self.ssh_cmd = ssh_cmd
             # Store the full builder result (command + env + auth flags) so the
