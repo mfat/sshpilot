@@ -6,9 +6,14 @@ import types
 sys.modules.setdefault("cairo", types.ModuleType("cairo"))
 
 
-def test_ssh_copy_id_identity_agent_disabled_uses_force(monkeypatch, tmp_path):
+def test_ssh_copy_id_saved_passphrase_uses_askpass(monkeypatch, tmp_path):
+    # ssh-copy-id now resolves auth via the shared resolve_native_auth: a saved
+    # key passphrase -> askpass (REQUIRE=prefer), same as the terminal and SCP.
     window_mod = importlib.import_module("sshpilot.window")
     askpass_mod = importlib.import_module("sshpilot.askpass_utils")
+    scb = importlib.import_module("sshpilot.ssh_connection_builder")
+    # The ssh-copy-id runner now lives in sshcopyid_window; patch its symbols.
+    runner_mod = importlib.import_module("sshpilot.sshcopyid_window")
 
     class DummyWidget:
         def __init__(self, *args, **kwargs):
@@ -104,9 +109,9 @@ def test_ssh_copy_id_identity_agent_disabled_uses_force(monkeypatch, tmp_path):
         "DISPLAY": ":1",
     }
 
-    monkeypatch.setattr(window_mod, "TerminalWidget", DummyTerminalWidget)
+    monkeypatch.setattr(runner_mod, "TerminalWidget", DummyTerminalWidget)
     monkeypatch.setattr(
-        window_mod,
+        runner_mod,
         "Adw",
         types.SimpleNamespace(
             Window=DummyWidget,
@@ -116,7 +121,7 @@ def test_ssh_copy_id_identity_agent_disabled_uses_force(monkeypatch, tmp_path):
         raising=False,
     )
     monkeypatch.setattr(
-        window_mod,
+        runner_mod,
         "Gtk",
         types.SimpleNamespace(
             Box=DummyWidget,
@@ -128,7 +133,7 @@ def test_ssh_copy_id_identity_agent_disabled_uses_force(monkeypatch, tmp_path):
         raising=False,
     )
     monkeypatch.setattr(
-        window_mod,
+        runner_mod,
         "GLib",
         types.SimpleNamespace(
             shell_quote=lambda value: value,
@@ -138,15 +143,15 @@ def test_ssh_copy_id_identity_agent_disabled_uses_force(monkeypatch, tmp_path):
         raising=False,
     )
     monkeypatch.setattr(
-        window_mod,
+        runner_mod,
         "Vte",
         types.SimpleNamespace(PtyFlags=types.SimpleNamespace(DEFAULT=0)),
         raising=False,
     )
-    monkeypatch.setattr(window_mod, "Config", DummyConfig, raising=False)
-    monkeypatch.setattr(window_mod, "ensure_writable_ssh_home", lambda env: None, raising=False)
+    monkeypatch.setattr(runner_mod, "Config", DummyConfig, raising=False)
+    monkeypatch.setattr(runner_mod, "ensure_writable_ssh_home", lambda env: None, raising=False)
     monkeypatch.setattr(
-        window_mod.shutil,
+        runner_mod.shutil,
         "which",
         lambda name: "/usr/bin/ssh-copy-id" if name == "ssh-copy-id" else None,
     )
@@ -164,6 +169,13 @@ def test_ssh_copy_id_identity_agent_disabled_uses_force(monkeypatch, tmp_path):
         raising=False,
     )
     monkeypatch.setattr(askpass_mod, "lookup_passphrase", lambda *_: "", raising=False)
+
+    # resolve_native_auth (in ssh_connection_builder) decides the auth: make the
+    # key look like it has a saved passphrase -> askpass(prefer).
+    monkeypatch.setattr(scb, "lookup_passphrase", lambda *_: "pp", raising=False)
+    monkeypatch.setattr(
+        scb, "get_ssh_env_with_askpass", lambda require="prefer": prefer_env.copy(), raising=False
+    )
 
     private_path = tmp_path / "id_test"
     private_path.write_text("private")
@@ -194,16 +206,18 @@ def test_ssh_copy_id_identity_agent_disabled_uses_force(monkeypatch, tmp_path):
     window_instance = window_mod.MainWindow.__new__(window_mod.MainWindow)
     window_instance.connection_manager = manager
     window_instance.config = DummyConfig()
+    window_instance.sshcopyid_runner = runner_mod.SshCopyIdRunner(window_instance)
 
     window_instance._show_ssh_copy_id_terminal_using_main_widget(connection, ssh_key)
 
     spawned_env = DummyTerminalWidget.last_instance.vte.spawn_env
     assert spawned_env is not None
-    assert "SSH_ASKPASS_REQUIRE=force" in spawned_env
+    assert "SSH_ASKPASS_REQUIRE=prefer" in spawned_env
 
 
 def test_ssh_copy_id_preflight_blocks_missing_binary(monkeypatch, tmp_path):
     window_mod = importlib.import_module("sshpilot.window")
+    runner_mod = importlib.import_module("sshpilot.sshcopyid_window")
 
     monkeypatch.setattr(window_mod.shutil, "which", lambda name: None)
     monkeypatch.setattr(window_mod.os.path, "exists", lambda path: False)
@@ -228,6 +242,7 @@ def test_ssh_copy_id_preflight_blocks_missing_binary(monkeypatch, tmp_path):
     errors = []
     window_instance = window_mod.MainWindow.__new__(window_mod.MainWindow)
     window_instance._error_dialog = lambda *args: errors.append(args)
+    window_instance.sshcopyid_runner = runner_mod.SshCopyIdRunner(window_instance)
 
     window_instance._show_ssh_copy_id_terminal_using_main_widget(connection, ssh_key)
 
@@ -238,13 +253,14 @@ def test_ssh_copy_id_preflight_blocks_missing_binary(monkeypatch, tmp_path):
 
 def test_ssh_copy_id_preflight_rejects_unreadable_public_key(monkeypatch, tmp_path):
     window_mod = importlib.import_module("sshpilot.window")
+    runner_mod = importlib.import_module("sshpilot.sshcopyid_window")
 
     monkeypatch.setattr(
         window_mod.shutil,
         "which",
         lambda name: "/usr/bin/ssh-copy-id" if name == "ssh-copy-id" else None,
     )
-    monkeypatch.setattr(window_mod, "ensure_writable_ssh_home", lambda env: None, raising=False)
+    monkeypatch.setattr(runner_mod, "ensure_writable_ssh_home", lambda env: None, raising=False)
 
     public_path = tmp_path / "id_test.pub"
     public_path.write_text("public")
@@ -260,7 +276,8 @@ def test_ssh_copy_id_preflight_rejects_unreadable_public_key(monkeypatch, tmp_pa
     )
 
     window_instance = window_mod.MainWindow.__new__(window_mod.MainWindow)
-    result = window_instance._preflight_ssh_copy_id(connection, ssh_key)
+    runner = runner_mod.SshCopyIdRunner(window_instance)
+    result = runner._preflight(connection, ssh_key)
 
     assert result is not None
     assert result[0] == "Public key file is not readable"

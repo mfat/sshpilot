@@ -663,6 +663,7 @@ class ConnectionRow(Gtk.ListBoxRow):
         self.nickname_label.set_ellipsize(Pango.EllipsizeMode.END)
         self.nickname_label.set_width_chars(10)  # Minimum width
         self.nickname_label.set_max_width_chars(25)  # Maximum natural width (prevents expansion)
+        self.nickname_label.set_tooltip_text(connection.nickname)
         info_box.append(self.nickname_label)
 
         self.host_label = Gtk.Label()
@@ -1237,6 +1238,7 @@ class ConnectionRow(Gtk.ListBoxRow):
 
         if hide:
             self.host_label.set_text("••••••••••")
+            self.host_label.set_tooltip_text('')
             return
 
         format_kwargs = {}
@@ -1245,6 +1247,7 @@ class ConnectionRow(Gtk.ListBoxRow):
 
         display = _format_connection_host_display(self.connection, **format_kwargs)
         self.host_label.set_text(display or '')
+        self.host_label.set_tooltip_text(display or '')
 
     def apply_hide_hosts(self, hide: bool):
         self._apply_host_label_text()
@@ -1330,6 +1333,7 @@ class ConnectionRow(Gtk.ListBoxRow):
     def update_display(self):
         if hasattr(self.connection, "nickname") and hasattr(self, "nickname_label"):
             self.nickname_label.set_markup(f"<b>{self.connection.nickname}</b>")
+            self.nickname_label.set_tooltip_text(self.connection.nickname)
 
         if hasattr(self.connection, "username") and hasattr(self, "host_label"):
             self._apply_host_label_text(include_port=True)

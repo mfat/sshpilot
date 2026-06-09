@@ -7,6 +7,7 @@ if 'cairo' not in sys.modules:
     sys.modules['cairo'] = types.ModuleType('cairo')
 
 from sshpilot import askpass_utils, window
+from sshpilot import scp_window
 
 
 class _DummyConfig:
@@ -33,21 +34,30 @@ class _DummyConnectionManager:
 
 
 class _DummyWindow:
+    """Stands in for MainWindow as the ScpWindowController's collaborator."""
+
     def __init__(self):
         self.connection_manager = _DummyConnectionManager()
+        self.config = _DummyConfig()
 
-    def _append_scp_option_pair(self, options, flag, value):
-        return window.MainWindow._append_scp_option_pair(self, options, flag, value)
 
-    def _extend_scp_options_from_connection(self, connection, options):
-        return window.MainWindow._extend_scp_options_from_connection(self, connection, options)
+def _make_ctrl(dummy_window):
+    ctrl = scp_window.ScpWindowController.__new__(scp_window.ScpWindowController)
+    ctrl.window = dummy_window
+    ctrl._scp_auth = None
+    ctrl._scp_askpass_env = {}
+    ctrl._scp_strip_askpass = False
+    ctrl._scp_askpass_helpers = []
+    return ctrl
 
-    def _build_scp_connection_profile(self, connection):
-        return window.MainWindow._build_scp_connection_profile(self, connection)
+
+def _scp_argv(dummy_window, *args, **kwargs):
+    return _make_ctrl(dummy_window)._build_scp_argv(*args, **kwargs)
 
 
 def _build_args(monkeypatch, tmp_path, key_mode):
     monkeypatch.setattr(window, 'Config', _DummyConfig)
+    monkeypatch.setattr(scp_window, 'Config', _DummyConfig)
 
     key_path = tmp_path / 'id_test_key'
     key_path.write_text('dummy')
@@ -63,7 +73,7 @@ def _build_args(monkeypatch, tmp_path, key_mode):
 
     dummy_window = _DummyWindow()
 
-    argv = window.MainWindow._build_scp_argv(
+    argv = _scp_argv(
         dummy_window,
         connection,
         ['local.txt'],
@@ -92,6 +102,7 @@ def test_build_scp_argv_mode_2_skips_identities_only(monkeypatch, tmp_path):
 
 def test_build_scp_argv_skips_key_prep_when_identity_agent_disabled(monkeypatch, tmp_path):
     monkeypatch.setattr(window, 'Config', _DummyConfig)
+    monkeypatch.setattr(scp_window, 'Config', _DummyConfig)
 
     key_path = tmp_path / 'id_test_key'
     key_path.write_text('dummy')
@@ -108,7 +119,7 @@ def test_build_scp_argv_skips_key_prep_when_identity_agent_disabled(monkeypatch,
 
     dummy_window = _DummyWindow()
 
-    window.MainWindow._build_scp_argv(
+    _scp_argv(
         dummy_window,
         connection,
         ['local.txt'],
@@ -121,6 +132,7 @@ def test_build_scp_argv_skips_key_prep_when_identity_agent_disabled(monkeypatch,
 
 def test_build_scp_argv_prefers_alias_and_proxy(monkeypatch, tmp_path):
     monkeypatch.setattr(window, 'Config', _DummyConfig)
+    monkeypatch.setattr(scp_window, 'Config', _DummyConfig)
 
     config_path = tmp_path / 'ssh_config'
     config_path.write_text('Host testbox\n    HostName example.com\n')
@@ -141,7 +153,7 @@ def test_build_scp_argv_prefers_alias_and_proxy(monkeypatch, tmp_path):
     dummy_window = _DummyWindow()
     dummy_window.connection_manager.ssh_config_path = str(config_path)
 
-    argv = window.MainWindow._build_scp_argv(
+    argv = _scp_argv(
         dummy_window,
         connection,
         ['local.txt'],
@@ -157,6 +169,7 @@ def test_build_scp_argv_prefers_alias_and_proxy(monkeypatch, tmp_path):
 
 def test_build_scp_argv_adds_recursive_for_directories(monkeypatch, tmp_path):
     monkeypatch.setattr(window, 'Config', _DummyConfig)
+    monkeypatch.setattr(scp_window, 'Config', _DummyConfig)
 
     key_path = tmp_path / 'id_test_key'
     key_path.write_text('dummy')
@@ -175,7 +188,7 @@ def test_build_scp_argv_adds_recursive_for_directories(monkeypatch, tmp_path):
 
     dummy_window = _DummyWindow()
 
-    argv = window.MainWindow._build_scp_argv(
+    argv = _scp_argv(
         dummy_window,
         connection,
         [str(source_dir)],
