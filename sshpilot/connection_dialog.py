@@ -4017,61 +4017,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         self.emit('connection-saved', connection_data)
         self.close()
 
-    def _sanitize_forwarding_rules(self, rules):
-        """Validate and normalize forwarding rules before saving.
-        - Ensure listen_addr defaults to localhost (or 0.0.0.0 for remote if provided as such)
-        - Ensure listen_port > 0
-        - For local/remote: ensure remote_host non-empty and remote_port > 0
-        Invalid rules are dropped silently.
-        """
-        sanitized = []
-        for r in rules or []:
-            try:
-                rtype = r.get('type')
-                listen_addr = (r.get('listen_addr') or '').strip() or 'localhost'
-                listen_port = int(r.get('listen_port') or 0)
-                if listen_port <= 0:
-                    continue
-                if rtype == 'local':
-                    remote_host = (r.get('remote_host') or '').strip() or 'localhost'
-                    remote_port = int(r.get('remote_port') or 0)
-                    if remote_port <= 0:
-                        continue
-                    sanitized.append({
-                        'type': 'local',
-                        'enabled': True,
-                        'listen_addr': listen_addr,
-                        'listen_port': listen_port,
-                        'remote_host': remote_host,
-                        'remote_port': remote_port,
-                    })
-                elif rtype == 'remote':
-                    local_host = (r.get('local_host') or r.get('remote_host') or '').strip() or 'localhost'
-                    local_port = int(r.get('local_port') or r.get('remote_port') or 0)
-                    if local_port <= 0:
-                        continue
-                    sanitized.append({
-                        'type': 'remote',
-                        'enabled': True,
-                        'listen_addr': listen_addr,
-                        'listen_port': listen_port,
-                        'local_host': local_host,
-                        'local_port': local_port,
-                    })
-                elif rtype == 'dynamic':
-                    sanitized.append({
-                        'type': 'dynamic',
-                        'enabled': True,
-                        'listen_addr': listen_addr,
-                        'listen_port': listen_port,
-                    })
-            except Exception:
-                # Skip malformed rule
-                pass
-        return sanitized
-
-
-    
     def show_error(self, message):
         """Show error message"""
         try:
