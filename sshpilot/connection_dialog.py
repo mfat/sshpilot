@@ -1864,6 +1864,8 @@ class ConnectionDialog(Adw.Window):
         except Exception:
             use_specific = False
 
+        # In Automatic mode keep the specific-key rows visible but inactive, so
+        # users can see what would apply without being able to edit it.
         key_editor = getattr(self, 'key_editor', None)
         if key_editor is not None:
             key_editor.set_visible(is_key_based)
@@ -1871,11 +1873,13 @@ class ConnectionDialog(Adw.Window):
 
         key_only_row = getattr(self, 'key_only_row', None)
         if key_only_row is not None:
-            key_only_row.set_visible(use_specific)
+            key_only_row.set_visible(is_key_based)
+            key_only_row.set_sensitive(use_specific)
 
         cert_editor = getattr(self, 'cert_editor', None)
         if cert_editor is not None:
-            cert_editor.set_visible(use_specific)
+            cert_editor.set_visible(is_key_based)
+            cert_editor.set_sensitive(use_specific)
 
     # ---- discovery / browse for the key & certificate FileListEditors -------
     def _agent_keys(self):
