@@ -1707,7 +1707,7 @@ class PreferencesWindow(Adw.Window):
             self.askpass_switch = Adw.SwitchRow()
             self.askpass_switch.set_title("Use SSH askpass helper")
             self.askpass_switch.set_subtitle(
-                "Lets sshPilot autofill key passphrases from the keyring. "
+                "Lets SSH Pilot autofill key passphrases from the keyring. "
                 "When off, SSH handles passphrase prompts itself."
             )
             askpass_on = bool(self.config.get_setting('use-askpass', True))
@@ -1736,9 +1736,8 @@ class PreferencesWindow(Adw.Window):
             self.agent_preload_switch = Adw.SwitchRow()
             self.agent_preload_switch.set_title("Preload keys into ssh-agent")
             self.agent_preload_switch.set_subtitle(
-                "On connect, load keys whose passphrase you've saved into ssh-agent "
-                "so they authenticate silently (keys without a saved passphrase are "
-                "left for SSH to prompt)"
+                "Add keys with a saved passphrase to ssh-agent so they connect "
+                "without a prompt"
             )
             self.agent_preload_switch.set_active(
                 bool(self.config.get_setting('ssh.agent_preload_keys', True))
