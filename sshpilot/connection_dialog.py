@@ -1202,8 +1202,8 @@ class FileListEditor(Adw.PreferencesGroup):
         # verify(path, passphrase) -> bool before storing (None disables it).
         self._verify = verify
 
-        # Add actions are pill buttons in the group header by default, or list
-        # rows below the path rows when add_at_bottom is True.
+        # Add actions sit in the group header by default, or in list rows below
+        # the path rows when add_at_bottom is True.
         self._add_rows = []
         self._add_buttons = []
         add_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
@@ -1217,7 +1217,6 @@ class FileListEditor(Adw.PreferencesGroup):
                     icon_name=icon,
                     label=label,
                 ))
-                btn.add_css_class('pill')
             else:
                 btn.set_icon_name(icon)
                 btn.add_css_class('flat')
