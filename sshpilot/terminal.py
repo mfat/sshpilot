@@ -1072,6 +1072,19 @@ class TerminalWidget(Gtk.Box):
                     logger.warning(f"Pre-connection command timed out: {pre_cmd}")
                 except Exception as pre_exc:
                     logger.warning(f"Pre-connection command failed: {pre_exc}")
+
+            # Preload this host's key(s) into ssh-agent before spawning ssh so a
+            # passphrased key locked in gnome-keyring gets unlocked and can sign
+            # (the agent is never disabled). Done here, on the connect worker
+            # thread, so the GLib main loop stays free and OUR askpass dialog can
+            # render for a not-stored passphrase. Best-effort; never blocks spawn.
+            try:
+                preload = getattr(self.connection, '_preload_keys_into_agent', None)
+                if callable(preload):
+                    preload(self.config)
+            except Exception as preload_exc:
+                logger.debug(f"Key preload skipped/failed: {preload_exc}")
+
             GLib.idle_add(self._setup_ssh_terminal)
         except Exception as e:
             logger.error(f"SSH connection failed: {e}")

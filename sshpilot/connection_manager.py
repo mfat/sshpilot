@@ -512,27 +512,95 @@ class Connection:
                 native_mode=True,  # Use native mode
             )
 
-            # Build SSH connection command using ssh_connection_builder
-            ssh_conn_cmd = build_ssh_connection(ctx)
-            ssh_cmd = ssh_conn_cmd.command
-
-            # Store resolved identity files if available
+            # Resolve identity files FIRST so resolve_native_auth (inside
+            # build_ssh_connection) can decide auth from what's saved for them
+            # (saved passphrase -> askpass; else saved password -> sshpass; else
+            # native prompts) without recomputing `ssh -G`.
             try:
                 self.resolved_identity_files = self.collect_identity_file_candidates()
             except Exception:
                 self.resolved_identity_files = []
+
+            # Build SSH connection command using ssh_connection_builder
+            ssh_conn_cmd = build_ssh_connection(ctx)
+            ssh_cmd = ssh_conn_cmd.command
 
             self.ssh_cmd = ssh_cmd
             # Store the full builder result (command + env + auth flags) so the
             # terminal can spawn it directly without re-deriving auth/env.
             self.ssh_env = dict(ssh_conn_cmd.env)
             self.ssh_connection_cmd = ssh_conn_cmd
+            # NOTE: key preload into ssh-agent is NOT done here. native_connect
+            # runs under loop.run_until_complete on the GLib main thread, which
+            # blocks the main loop — so our in-process askpass dialog could not
+            # render for a not-stored passphrase. The terminal calls
+            # _preload_keys_into_agent() from its worker thread instead (where the
+            # GLib loop is free), so the prompt works. See terminal.py.
             self.is_connected = True
             return True
         except Exception as exc:
             logger.error(f"Failed to prepare native SSH command for {self}: {exc}")
             self.is_connected = False
             return False
+
+    def _preload_keys_into_agent(self, app_config=None) -> None:
+        """Best-effort: load this host's on-disk key(s) into ssh-agent — but ONLY
+        keys whose passphrase the user has stored in the keyring. A stored
+        passphrase is the user's opt-in for silent agent auth; we then ``ssh-add``
+        the key (askpass autofills the passphrase) so a gnome-keyring-locked key
+        gets unlocked and can sign (the agent is never disabled).
+
+        Keys with NO stored passphrase are left untouched — we do NOT ``ssh-add``
+        them. That signals the user prefers SSH / the OS / ssh-agent to prompt
+        naturally, and avoids adding/unlocking a key they didn't ask us to.
+
+        MUST be called from a thread where the GLib main loop is free (e.g. the
+        terminal's connect worker thread). Never raises.
+        """
+        try:
+            from .askpass_utils import ensure_key_in_agent, lookup_passphrase
+
+            cfg = app_config
+            if cfg is None:
+                try:
+                    from .config import Config
+                    cfg = Config()
+                except Exception:
+                    cfg = None
+
+            preload = True
+            lifetime = 0
+            if cfg is not None and hasattr(cfg, 'get_setting'):
+                try:
+                    preload = bool(cfg.get_setting('ssh.agent_preload_keys', True))
+                    lifetime = int(cfg.get_setting('ssh.agent_preload_lifetime', 0) or 0)
+                except Exception:
+                    preload, lifetime = True, 0
+            if not preload:
+                return
+
+            # Key-based auth only.
+            if int(getattr(self, 'auth_method', 0) or 0) != 0:
+                return
+
+            # Respect a user-pinned agent (IdentityAgent none / custom socket):
+            # never disturb the agent they chose.
+            if getattr(self, 'identity_agent_disabled', False) or \
+                    (getattr(self, 'identity_agent_directive', '') or '').strip():
+                return
+
+            for path in (getattr(self, 'resolved_identity_files', []) or []):
+                try:
+                    # Keyring-only: skip keys with no stored passphrase entirely
+                    # (no ssh-add) → user gets the natural OS/agent prompt.
+                    if not lookup_passphrase(path):
+                        continue
+                    ensure_key_in_agent(path, force=True, lifetime=lifetime)
+                    logger.debug("Preloaded key into ssh-agent: %s", path)
+                except Exception as exc:
+                    logger.debug("Key preload failed for %s: %s", path, exc)
+        except Exception:
+            pass
 
     async def disconnect(self):
         """Close the SSH connection and clean up"""
@@ -1764,10 +1832,10 @@ class ConnectionManager(GObject.Object):
         from .askpass_utils import ensure_key_in_agent
         return ensure_key_in_agent(key_path)
 
-    def prepare_key_for_connection(self, key_path: str) -> bool:
-        """Prepare SSH key for connection by adding it to ssh-agent"""
+    def prepare_key_for_connection(self, key_path: str, *, force: bool = True) -> bool:
+        """Prepare SSH key for connection by unlocking it in ssh-agent"""
         from .askpass_utils import prepare_key_for_connection
-        return prepare_key_for_connection(key_path)
+        return prepare_key_for_connection(key_path, force=force)
 
     def invalidate_cached_commands(self):
         """Clear cached SSH commands so future launches pick up new settings."""

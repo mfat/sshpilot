@@ -158,7 +158,7 @@ def _apply_native_auth_env(env: Dict[str, str], auth: Any) -> None:
 
     dict.update() cannot remove keys that are absent from the source, so we
     explicitly drop askpass/agent vars that the auth resolver cleared (e.g.
-    SSH_AUTH_SOCK when the agent is bypassed for keyring autofill).
+    SSH_ASKPASS in password mode).
     """
     env.update(auth.env)
     for key in ('SSH_ASKPASS', 'SSH_ASKPASS_REQUIRE', 'SSH_AUTH_SOCK'):
@@ -215,7 +215,7 @@ def _build_scp_argv_prefix(
         if key_select_mode == 1 and 'IdentitiesOnly=yes' not in argv:
             argv.extend(['-o', 'IdentitiesOnly=yes'])
 
-    # Shared authentication options (e.g. -o IdentityAgent=none for agent bypass).
+    # Shared authentication options from resolve_native_auth.
     argv.extend(auth.extra_opts)
 
     if extra_ssh_opts:

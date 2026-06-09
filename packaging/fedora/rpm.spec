@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:5.2.3}
+Version:        %{?version}%{!?version:5.2.4}
 Release:        1%{?dist}
 Summary:        Manage your servers with ease
 
@@ -92,6 +92,9 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/io.github.mfat.sshpil
 %{_datadir}/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg
 
 %changelog
+* Tue Jun 09 2026 mFat <newmfat@gmail.com> - 5.2.4
+- Bug fixes and UI improvements
+
 * Sun Jun 07 2026 mFat <newmfat@gmail.com> - 5.2.3
 - Added fallback for older libadwaita versions failing to load connection editor
 
