@@ -995,7 +995,15 @@ class KeyChooserDialog(Adw.Window):
         if not disk_keys:
             group.add(self._placeholder_row(_("No private keys found in ~/.ssh")))
         if callable(self._on_browse):
-            browse = Adw.ButtonRow(title=_("Browse…"), start_icon_name="folder-symbolic")
+            try:
+                browse = Adw.ButtonRow(title=_("Browse…"), start_icon_name="folder-symbolic")
+            except AttributeError:
+                # Adw.ButtonRow requires libadwaita >= 1.6
+                browse = Adw.ActionRow(title=_("Browse…"))
+                try:
+                    browse.add_prefix(Gtk.Image.new_from_icon_name("folder-symbolic"))
+                except Exception:
+                    pass
             browse.connect("activated", self._on_browse_clicked)
             group.add(browse)
         return self._wrap_group(group)
