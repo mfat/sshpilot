@@ -527,17 +527,12 @@ class Connection:
             # terminal can spawn it directly without re-deriving auth/env.
             self.ssh_env = dict(ssh_conn_cmd.env)
             self.ssh_connection_cmd = ssh_conn_cmd
-
-            # Preload this host's keyring-backed key(s) into ssh-agent so a
-            # passphrased key locked in gnome-keyring gets unlocked and can sign
-            # (the agent is never disabled). Run off the loop-pumping thread so
-            # the blocking ssh-add can't stall the connect; best-effort only.
-            try:
-                loop = asyncio.get_running_loop()
-                await loop.run_in_executor(None, self._preload_keys_into_agent, cfg)
-            except Exception as exc:
-                logger.debug(f"Key preload skipped/failed for {self}: {exc}")
-
+            # NOTE: key preload into ssh-agent is NOT done here. native_connect
+            # runs under loop.run_until_complete on the GLib main thread, which
+            # blocks the main loop — so our in-process askpass dialog could not
+            # render for a not-stored passphrase. The terminal calls
+            # _preload_keys_into_agent() from its worker thread instead (where the
+            # GLib loop is free), so the prompt works. See terminal.py.
             self.is_connected = True
             return True
         except Exception as exc:
@@ -546,13 +541,20 @@ class Connection:
             return False
 
     def _preload_keys_into_agent(self, app_config=None) -> None:
-        """Best-effort: force-load this host's on-disk keys into ssh-agent.
+        """Best-effort: force-load this host's on-disk key(s) into ssh-agent so a
+        passphrased key locked in gnome-keyring gets unlocked and can sign (the
+        agent is never disabled).
 
-        Only keys whose passphrase is already stored in the keyring are added
-        (keyring-only), so every ``ssh-add`` is silent and never needs a prompt
-        dialog — which matters because the GLib main loop is blocked while the
-        connect coroutine runs. Hands the agent an *unlocked* key so a
-        gnome-keyring-locked key can sign. Never raises.
+        Keys whose passphrase is in the keyring load **silently** (askpass
+        autofills). For a key whose passphrase is NOT stored we still run
+        ``ssh-add`` so OUR askpass renders the passphrase prompt (instead of
+        gnome-keyring's OS prompt) — but only for the FIRST such key, to avoid a
+        prompt per candidate on multi-key hosts.
+
+        MUST be called from a thread where the GLib main loop is free (e.g. the
+        terminal's connect worker thread) so the in-process askpass dialog can
+        render; never from the run_until_complete main-thread connect. Never
+        raises.
         """
         try:
             from .askpass_utils import ensure_key_in_agent, lookup_passphrase
@@ -586,14 +588,20 @@ class Connection:
                     (getattr(self, 'identity_agent_directive', '') or '').strip():
                 return
 
+            prompted_unstored = False
             for path in (getattr(self, 'resolved_identity_files', []) or []):
                 try:
-                    # Keyring-only gate: only preload keys we can unlock silently.
-                    # (Also skips unencrypted keys, which don't need preloading.)
-                    if not lookup_passphrase(path):
-                        continue
+                    has_stored = bool(lookup_passphrase(path))
+                    if not has_stored:
+                        # Only one interactive prompt per connect (avoid spam on
+                        # hosts that resolve to several candidate keys).
+                        if prompted_unstored:
+                            continue
+                        prompted_unstored = True
                     ensure_key_in_agent(path, force=True, lifetime=lifetime)
-                    logger.debug("Preloaded key into ssh-agent: %s", path)
+                    logger.debug(
+                        "Preloaded key into ssh-agent: %s (stored=%s)", path, has_stored
+                    )
                 except Exception as exc:
                     logger.debug("Key preload failed for %s: %s", path, exc)
         except Exception:

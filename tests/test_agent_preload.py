@@ -134,13 +134,25 @@ def _patch_preload(monkeypatch, stored_paths):
     return added
 
 
-def test_preload_adds_only_keyring_backed_keys(monkeypatch):
+def test_preload_silent_stored_and_one_prompt_for_unstored(monkeypatch):
     conn = _make_connection(resolved_identity_files=['/k/stored', '/k/unstored'])
     added = _patch_preload(monkeypatch, stored_paths={'/k/stored'})
 
     conn._preload_keys_into_agent(_Cfg(lifetime=600))
 
-    assert added == [('/k/stored', True, 600)]  # unstored key skipped
+    # stored loads silently; the unstored key is still added so OUR askpass
+    # prompts (instead of gnome-keyring's OS prompt).
+    assert added == [('/k/stored', True, 600), ('/k/unstored', True, 600)]
+
+
+def test_preload_caps_interactive_prompts_to_one(monkeypatch):
+    conn = _make_connection(resolved_identity_files=['/k/a', '/k/b', '/k/c'])
+    added = _patch_preload(monkeypatch, stored_paths=set())  # none stored
+
+    conn._preload_keys_into_agent(_Cfg())
+
+    # Only the first unstored key is added → at most one interactive prompt.
+    assert added == [('/k/a', True, 0)]
 
 
 def test_preload_skipped_for_password_auth(monkeypatch):
