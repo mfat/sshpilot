@@ -23,7 +23,7 @@ command/auth builders are exactly what was removed.
 Reuse these (and only these):
 - **Open/prepare a connection:** `Connection.native_connect()` →
   `build_ssh_connection(ctx)`. (`Connection.connect()` is just an alias.)
-- **Decide authentication (askpass/keyring/agent-bypass or sshpass):**
+- **Decide authentication (askpass/keyring or sshpass):**
   `resolve_native_auth(connection, connection_manager, app_config)` — the ONLY
   place auth is decided. Every command-based caller must get its env + extra
   options from here.
@@ -35,8 +35,12 @@ Reuse these (and only these):
 Rules:
 - If an existing function *almost* fits, **extend it** (add a parameter / handle
   the case) rather than cloning a variant. One builder, one auth resolver.
-- Never hand-roll `SSH_ASKPASS`, `IdentityAgent`, `sshpass`, or the agent bypass
-  in a new place — call `resolve_native_auth`.
+- Never hand-roll `SSH_ASKPASS`, `IdentityAgent`, or `sshpass` in a new place —
+  call `resolve_native_auth`.
+- **Never disable/bypass the ssh-agent.** Do not add `-o IdentityAgent=none` and
+  do not drop `SSH_AUTH_SOCK` for key auth (a removed misfeature — see the
+  Authentication modes below). The agent is always left intact; askpass is only
+  the passphrase fallback.
 - Never append per-host SSH settings to a command line — persist them to
   `~/.ssh/config` (see below) and let the native command pick them up.
 - The only exception is the **paramiko** SFTP file manager, which is in-process
