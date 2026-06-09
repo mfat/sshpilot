@@ -3201,12 +3201,17 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             elif rule_type == 'remote':
                 row.set_title(_("Remote Port Forwarding"))
                 row.add_prefix(icon_utils.new_image_from_icon_name("network-receive-symbolic"))
-                description = _("Remote {remote_host}:{remote_port} → {dest_host}:{dest_port}").format(
-                    remote_host=rule.get('listen_addr', 'localhost'),
-                    remote_port=rule.get('listen_port', ''),
-                    dest_host=rule.get('local_host') or rule.get('remote_host', ''),
-                    dest_port=rule.get('local_port') or rule.get('remote_port', '')
-                )
+                listen_addr = rule.get('listen_addr') or ''
+                listen_port = rule.get('listen_port', '')
+                remote_src = f"{listen_addr}:{listen_port}" if listen_addr else f"{listen_port}"
+                dest_host = rule.get('local_host') or rule.get('remote_host') or ''
+                dest_port = rule.get('local_port') or rule.get('remote_port') or ''
+                if rule.get('socks') or not (dest_host or dest_port):
+                    description = _("Remote {src} → SOCKS").format(src=remote_src)
+                else:
+                    description = _("Remote {src} → {dest_host}:{dest_port}").format(
+                        src=remote_src, dest_host=dest_host, dest_port=dest_port
+                    )
             elif rule_type == 'dynamic':
                 row.set_title(_("Dynamic Port Forwarding (SOCKS)"))
                 row.add_prefix(icon_utils.new_image_from_icon_name("network-workgroup-symbolic"))
@@ -3444,7 +3449,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
     def _save_rule_from_editor(self, existing_rule, type_row, listen_addr_row, listen_port_row, remote_host_row, remote_port_row):
         idx = type_row.get_selected()
         rtype = 'local' if idx == 0 else ('remote' if idx == 1 else 'dynamic')
-        listen_addr = listen_addr_row.get_text().strip() or 'localhost'
+        listen_addr = listen_addr_row.get_text().strip()
         try:
             listen_port = int((listen_port_row.get_text() or '0').strip() or '0')
         except Exception:
@@ -3457,7 +3462,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         if rtype in ['local', 'dynamic']:
             try:
                 port_checker = get_port_checker()
-                conflicts = port_checker.get_port_conflicts([listen_port], listen_addr)
+                conflicts = port_checker.get_port_conflicts([listen_port], listen_addr or 'localhost')
                 
                 if conflicts:
                     port, port_info = conflicts[0]
@@ -3469,7 +3474,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                         )
                     
                     # Suggest alternative port
-                    alt_port = port_checker.find_available_port(listen_port, listen_addr)
+                    alt_port = port_checker.find_available_port(listen_port, listen_addr or 'localhost')
                     if alt_port:
                         conflict_msg += _("\n\nSuggested alternative: port {alt_port}").format(alt_port=alt_port)
                     
@@ -3483,7 +3488,11 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         rule = {
             'type': rtype,
             'enabled': True,
-            'listen_addr': listen_addr,
+            # RemoteForward binds on the REMOTE host: an empty bind address means
+            # "let the remote/GatewayPorts decide" (loopback by default), so keep
+            # it empty rather than pinning localhost. Local/dynamic bind locally
+            # and keep defaulting to localhost.
+            'listen_addr': listen_addr if rtype == 'remote' else (listen_addr or 'localhost'),
             'listen_port': listen_port,
         }
         if rtype == 'local':
@@ -3561,8 +3570,12 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 except Exception:
                     remote_port_row.set_text('22')
             elif idx == 1:  # Remote
-                if not listen_addr_row.get_text().strip():
-                    listen_addr_row.set_text('localhost')
+                # The bind address is on the REMOTE host and is optional — keep it
+                # empty by default. On a real switch into Remote, clear whatever a
+                # previous type seeded so it starts blank; on the initial load of
+                # an existing rule leave the populated value untouched.
+                if previous_idx is not None and previous_idx != idx:
+                    listen_addr_row.set_text('')
                 try:
                     if int((listen_port_row.get_text() or '0').strip() or '0') == 0:
                         listen_port_row.set_text('8080')

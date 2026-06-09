@@ -121,13 +121,13 @@ def format_forwarding_rule(rule: Dict[str, Any]) -> str:
             rp=rule.get("remote_port", ""),
         )
     if rule_type == "remote":
-        listen_addr = rule.get("listen_addr") or "localhost"
+        listen_addr = rule.get("listen_addr") or ""
         listen_port = rule.get("listen_port", "")
+        src = f"{listen_addr}:{listen_port}" if listen_addr else f"{listen_port}"
         if rule.get("socks"):
-            return _("Remote {la}:{lp} → SOCKS").format(la=listen_addr, lp=listen_port)
-        return _("Remote {la}:{lp} → {dh}:{dp}").format(
-            la=listen_addr,
-            lp=listen_port,
+            return _("Remote {src} → SOCKS").format(src=src)
+        return _("Remote {src} → {dh}:{dp}").format(
+            src=src,
             dh=rule.get("local_host") or rule.get("remote_host", ""),
             dp=rule.get("local_port") or rule.get("remote_port", ""),
         )

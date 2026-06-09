@@ -118,14 +118,57 @@ class TestForwardingConfigOutput:
         assert _forward_lines(entry) == ["RemoteForward localhost:9999"]
 
     def test_socks_remote_round_trips_through_parser(self, tmp_path):
-        """Parse a single-arg RemoteForward and write it back unchanged."""
+        """Parse a single-arg RemoteForward and write it back unchanged.
+
+        The config omits the bind address, so it must NOT be coerced to localhost.
+        """
         cm = _make_cm(tmp_path)
         parsed = cm.parse_host_config(
             {"host": "h", "hostname": "h", "remoteforward": "9999"}, source="user"
         )
         rule = parsed["forwarding_rules"][0]
         assert rule.get("socks") is True
-        assert _forward_lines(_entry(cm, [rule])) == ["RemoteForward localhost:9999"]
+        assert not rule.get("listen_addr")  # bind preserved as empty, not localhost
+        assert _forward_lines(_entry(cm, [rule])) == ["RemoteForward 9999"]
+
+    def test_remote_empty_bind_omits_host_prefix(self, tmp_path):
+        """An empty remote bind address writes just the port (no localhost prefix)."""
+        cm = _make_cm(tmp_path)
+        entry = _entry(cm, [{"type": "remote", "listen_addr": "", "listen_port": 2222,
+                             "local_host": "localhost", "local_port": 22}])
+        assert _forward_lines(entry) == ["RemoteForward 2222 localhost:22"]
+
+    def test_remote_empty_bind_socks_omits_host_prefix(self, tmp_path):
+        cm = _make_cm(tmp_path)
+        entry = _entry(cm, [{"type": "remote", "listen_addr": "", "listen_port": 9999,
+                             "socks": True}])
+        assert _forward_lines(entry) == ["RemoteForward 9999"]
+
+    def test_remote_explicit_bind_is_kept(self, tmp_path):
+        cm = _make_cm(tmp_path)
+        entry = _entry(cm, [{"type": "remote", "listen_addr": "0.0.0.0", "listen_port": 2222,
+                             "local_host": "localhost", "local_port": 22}])
+        assert _forward_lines(entry) == ["RemoteForward 0.0.0.0:2222 localhost:22"]
+
+    def test_omitted_bind_round_trips_per_type(self, tmp_path):
+        """Parser keeps localhost for local/dynamic but empty for remote, and
+        each round-trips through the writer."""
+        cm = _make_cm(tmp_path)
+        parsed = cm.parse_host_config({
+            "host": "h", "hostname": "h",
+            "localforward": "8080 localhost:80",
+            "dynamicforward": "1080",
+            "remoteforward": "2222 localhost:22",
+        }, source="user")
+        rules = {r["type"]: r for r in parsed["forwarding_rules"]}
+        assert rules["local"]["listen_addr"] == "localhost"
+        assert rules["dynamic"]["listen_addr"] == "localhost"
+        assert rules["remote"]["listen_addr"] == ""  # remote bind preserved empty
+        assert _forward_lines(_entry(cm, parsed["forwarding_rules"])) == [
+            "LocalForward localhost:8080 localhost:80",
+            "RemoteForward 2222 localhost:22",
+            "DynamicForward localhost:1080",
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -218,6 +261,18 @@ class TestSaveRuleFromEditor:
         _save(dialog, kind="local", listen_port="0")
         assert dialog.forwarding_rules == []
         assert dialog._save_errors  # an error was surfaced to the user
+
+    def test_remote_empty_bind_is_preserved(self, monkeypatch):
+        """Leaving the (optional) remote bind address blank stores it empty."""
+        dialog = _make_dialog(monkeypatch)
+        _save(dialog, kind="remote", listen_addr="", listen_port="2222",
+              dest_host="localhost", dest_port="22")
+        assert dialog.forwarding_rules == [{
+            "type": "remote", "enabled": True,
+            "listen_addr": "", "listen_port": 2222,
+            "local_host": "localhost", "local_port": 22,
+        }]
+        assert dialog._save_errors == []
 
     def test_remote_with_empty_destination_is_socks(self, monkeypatch):
         """A remote rule with a blank destination is the SOCKS single-arg form."""

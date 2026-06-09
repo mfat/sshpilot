@@ -1335,12 +1335,16 @@ class ConnectionManager(GObject.Object):
                     forward_specs = [forward_specs]
                     
                 def _parse_listen_spec(spec):
-                    """Return (bind_addr, port) for a "[bind_address:]port" token, or None."""
+                    """Return (bind_addr, port) for a "[bind_address:]port" token, or None.
+
+                    An omitted/empty bind address is returned as '' (not coerced to
+                    localhost); callers decide the default per forwarding type.
+                    """
                     if ':' in spec:
                         bind_addr, port_str = spec.rsplit(':', 1)
-                        bind_addr = bind_addr.strip().strip('[]') or 'localhost'
+                        bind_addr = bind_addr.strip().strip('[]')
                     else:
-                        bind_addr, port_str = 'localhost', spec
+                        bind_addr, port_str = '', spec
                     port = _safe_int(port_str, None)
                     return None if port is None else (bind_addr, port)
 
@@ -1353,7 +1357,7 @@ class ConnectionManager(GObject.Object):
                         bind_addr, listen_port = listen
                         parsed['forwarding_rules'].append({
                             'type': 'dynamic',
-                            'listen_addr': bind_addr,
+                            'listen_addr': bind_addr or 'localhost',
                             'listen_port': listen_port,
                             'enabled': True
                         })
@@ -1384,7 +1388,7 @@ class ConnectionManager(GObject.Object):
                                 continue
                             parsed['forwarding_rules'].append({
                                 'type': 'local',
-                                'listen_addr': bind_addr,
+                                'listen_addr': bind_addr or 'localhost',
                                 'listen_port': listen_port,
                                 'remote_host': remote_host,
                                 'remote_port': remote_port,
@@ -1987,11 +1991,15 @@ class ConnectionManager(GObject.Object):
         
         # Add port forwarding rules if any (ensure sane defaults)
         for rule in data.get('forwarding_rules', []):
-            listen_addr = (rule.get('listen_addr') or 'localhost').strip()
+            listen_addr = (rule.get('listen_addr') or '').strip()
             listen_port = rule.get('listen_port', '')
             if not listen_port:
                 continue
-            listen_spec = f"{_format_forward_host(listen_addr) or 'localhost'}:{listen_port}"
+            # An empty bind address is written without a host prefix (omitted), so
+            # ssh/GatewayPorts decides the bind. local/dynamic always carry a
+            # localhost default, so only an empty remote bind drops the prefix.
+            listen_host = _format_forward_host(listen_addr)
+            listen_spec = f"{listen_host}:{listen_port}" if listen_host else f"{listen_port}"
             
             if rule.get('type') == 'local':
                 dest_host = rule.get('remote_host', '')
