@@ -2464,102 +2464,11 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             if not hasattr(self, 'forwarding_rules'):
                 self.forwarding_rules = []
                 
-            # Initialize forwarding_rules if it doesn't exist
-            if not hasattr(self, 'forwarding_rules'):
-                self.forwarding_rules = []
-                
-            # Initialize forwarding_rules if it doesn't exist
-            if not hasattr(self, 'forwarding_rules'):
-                self.forwarding_rules = []
-                
             # Load port forwarding rules
             if hasattr(self.connection, 'forwarding_rules') and self.connection.forwarding_rules:
                 self.forwarding_rules = self.connection.forwarding_rules
                 logger.debug(f"Loaded forwarding rules: {self.forwarding_rules}")
                 
-                # Reset all toggles and hide settings boxes first
-                toggle_map = {
-                    'local_forwarding_enabled': ('local_settings_box', 'local'),
-                    'remote_forwarding_enabled': ('remote_settings_box', 'remote'),
-                    'dynamic_forwarding_enabled': ('dynamic_settings_box', 'dynamic')
-                }
-                
-                for toggle_name, (box_name, rule_type) in toggle_map.items():
-                    if hasattr(self, toggle_name) and hasattr(self, box_name):
-                        # Initialize toggle state
-                        toggle = getattr(self, toggle_name)
-                        box = getattr(self, box_name)
-                        
-                        # Check if we have a rule of this type
-                        has_rule = any(r.get('type') == rule_type and r.get('enabled', True) 
-                                     for r in self.forwarding_rules)
-                        
-                        # Set toggle state and box visibility
-                        toggle.set_active(has_rule)
-                        box.set_visible(has_rule)
-                
-                # Update UI based on saved rules
-                for rule in self.forwarding_rules:
-                    if not rule.get('enabled', True):
-                        continue
-
-                    rule_type = rule.get('type')
-
-                    # Handle local forwarding
-                    if rule_type == 'local' and hasattr(self, 'local_forwarding_enabled'):
-                        self.local_forwarding_enabled.set_active(True)
-                        if hasattr(self, 'local_port_row') and 'listen_port' in rule:
-                            try:
-                                self.local_port_row.set_text(str(int(rule['listen_port'])))
-                            except Exception:
-                                self.local_port_row.set_text(str(rule['listen_port']))
-                        if hasattr(self, 'remote_host_row') and 'remote_host' in rule:
-                            self.remote_host_row.set_text(rule['remote_host'])
-                        if hasattr(self, 'remote_port_row') and 'remote_port' in rule:
-                            try:
-                                self.remote_port_row.set_text(str(int(rule['remote_port'])))
-                            except Exception:
-                                self.remote_port_row.set_text(str(rule['remote_port']))
-
-                    # Handle remote forwarding
-                    elif rule_type == 'remote' and hasattr(self, 'remote_forwarding_enabled'):
-                        self.remote_forwarding_enabled.set_active(True)
-                        if hasattr(self, 'remote_bind_host_row') and 'listen_addr' in rule:
-                            try:
-                                self.remote_bind_host_row.set_text(str(rule.get('listen_addr') or 'localhost'))
-                            except Exception:
-                                pass
-                        if hasattr(self, 'remote_bind_port_row') and 'listen_port' in rule:
-                            try:
-                                self.remote_bind_port_row.set_text(str(int(rule['listen_port'])))
-                            except Exception:
-                                self.remote_bind_port_row.set_text(str(rule['listen_port']))
-                        # Destination (local) host/port
-                        if hasattr(self, 'dest_host_row'):
-                            try:
-                                self.dest_host_row.set_text(
-                                    str(rule.get('local_host') or rule.get('remote_host', 'localhost'))
-                                )
-                            except Exception:
-                                pass
-                        if hasattr(self, 'dest_port_row'):
-                            try:
-                                self.dest_port_row.set_text(
-                                    str(int(rule.get('local_port') or rule.get('remote_port') or 0))
-                                )
-                            except Exception:
-                                self.dest_port_row.set_text(str(rule.get('local_port') or rule.get('remote_port') or ''))
-                    
-                    # Handle dynamic forwarding
-                    elif rule_type == 'dynamic' and hasattr(self, 'dynamic_forwarding_enabled'):
-                        self.dynamic_forwarding_enabled.set_active(True)
-                        if hasattr(self, 'dynamic_port_row') and 'listen_port' in rule:
-                            try:
-                                self.dynamic_port_row.set_text(str(int(rule['listen_port'])))
-                            except Exception:
-                                self.dynamic_port_row.set_text(str(rule['listen_port']))
-                
-                # Load the rules into the UI
                 self.load_port_forwarding_rules()
 
         except Exception as e:
@@ -2825,27 +2734,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             self._connect_row_validation(self.hostname_row, lambda r: self._validate_field_row('hostname', r))
         if hasattr(self, 'port_row'):
             self._connect_row_validation(self.port_row, lambda r: self._validate_field_row('port', r, context="SSH"))
-        # Local forwarding
-        if hasattr(self, 'local_port_row'):
-            self._connect_row_validation(self.local_port_row, lambda r: self._validate_port_row(r, _("Local Port")))
-        if hasattr(self, 'remote_host_row'):
-            self._connect_row_validation(self.remote_host_row, lambda r: self._validate_host_row(r, allow_empty=False))
-        if hasattr(self, 'remote_port_row'):
-            self._connect_row_validation(self.remote_port_row, lambda r: self._validate_port_row(r, _("Target Port")))
-        # Remote forwarding
-        if hasattr(self, 'remote_bind_host_row'):
-            self._connect_row_validation(self.remote_bind_host_row, lambda r: self._validate_host_row(r, allow_empty=True))
-        if hasattr(self, 'remote_bind_port_row'):
-            self._connect_row_validation(self.remote_bind_port_row, lambda r: self._validate_port_row(r, _("Remote port")))
-        if hasattr(self, 'dest_host_row'):
-            self._connect_row_validation(self.dest_host_row, lambda r: self._validate_host_row(r, allow_empty=False))
-        if hasattr(self, 'dest_port_row'):
-            self._connect_row_validation(self.dest_port_row, lambda r: self._validate_port_row(r, _("Destination port")))
-        # Dynamic forwarding
-        if hasattr(self, 'dynamic_bind_row'):
-            self._connect_row_validation(self.dynamic_bind_row, lambda r: self._validate_host_row(r, allow_empty=True))
-        if hasattr(self, 'dynamic_port_row'):
-            self._connect_row_validation(self.dynamic_port_row, lambda r: self._validate_port_row(r, _("Local Port")))
 
     def _run_initial_validation(self):
         try:
@@ -2892,30 +2780,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             res = self._validate_field_row('port', self.port_row, context="SSH")
             if not res.is_valid:
                 return self.port_row
-        # Local forwarding
-        if hasattr(self, 'local_forwarding_enabled') and self.local_forwarding_enabled.get_active():
-            if hasattr(self, 'local_port_row') and not self._validate_port_row(self.local_port_row, _("Local Port")):
-                return self.local_port_row
-            if hasattr(self, 'remote_host_row') and not self._validate_host_row(self.remote_host_row, allow_empty=False):
-                return self.remote_host_row
-            if hasattr(self, 'remote_port_row') and not self._validate_port_row(self.remote_port_row, _("Target Port")):
-                return self.remote_port_row
-        # Remote forwarding
-        if hasattr(self, 'remote_forwarding_enabled') and self.remote_forwarding_enabled.get_active():
-            if hasattr(self, 'remote_bind_host_row') and not self._validate_host_row(self.remote_bind_host_row, allow_empty=True):
-                return self.remote_bind_host_row
-            if hasattr(self, 'remote_bind_port_row') and not self._validate_port_row(self.remote_bind_port_row, _("Remote port")):
-                return self.remote_bind_port_row
-            if hasattr(self, 'dest_host_row') and not self._validate_host_row(self.dest_host_row, allow_empty=False):
-                return self.dest_host_row
-            if hasattr(self, 'dest_port_row') and not self._validate_port_row(self.dest_port_row, _("Destination port")):
-                return self.dest_port_row
-        # Dynamic forwarding
-        if hasattr(self, 'dynamic_forwarding_enabled') and self.dynamic_forwarding_enabled.get_active():
-            if hasattr(self, 'dynamic_bind_row') and not self._validate_host_row(self.dynamic_bind_row, allow_empty=True):
-                return self.dynamic_bind_row
-            if hasattr(self, 'dynamic_port_row') and not self._validate_port_row(self.dynamic_port_row, _("Local Port")):
-                return self.dynamic_port_row
         return None
     
     def build_authentication_groups(self):
@@ -3386,19 +3250,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
 
         # Remove the rule from the list
         self.forwarding_rules = [r for r in self.forwarding_rules if r != rule]
-
-        # Sync old-style toggle switches so save-time validation doesn't block
-        for toggle_attr, rule_type in [
-            ('local_forwarding_enabled', 'local'),
-            ('remote_forwarding_enabled', 'remote'),
-            ('dynamic_forwarding_enabled', 'dynamic'),
-        ]:
-            if hasattr(self, toggle_attr):
-                has_rule = any(
-                    r.get('type') == rule_type and r.get('enabled', True)
-                    for r in self.forwarding_rules
-                )
-                getattr(self, toggle_attr).set_active(has_rule)
 
         # Reload the rules UI
         self.load_port_forwarding_rules()
@@ -4177,91 +4028,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         return sanitized
 
 
-    
-    def on_forwarding_toggled(self, switch, param, settings_box):
-        """Handle toggling of port forwarding settings visibility and state"""
-        is_active = switch.get_active()
-        settings_box.set_visible(is_active)
-        local_toggle = getattr(self, 'local_forwarding_enabled', None)
-        remote_toggle = getattr(self, 'remote_forwarding_enabled', None)
-        dynamic_toggle = getattr(self, 'dynamic_forwarding_enabled', None)
-        # Run inline validation on fields within this section when enabled
-        try:
-            if is_active:
-                if switch == local_toggle:
-                    if hasattr(self, 'local_port_row'):
-                        self._validate_port_row(self.local_port_row, _("Local Port"))
-                    if hasattr(self, 'remote_host_row'):
-                        self._validate_host_row(self.remote_host_row, allow_empty=False)
-                    if hasattr(self, 'remote_port_row'):
-                        self._validate_port_row(self.remote_port_row, _("Target Port"))
-                elif switch == remote_toggle:
-                    if hasattr(self, 'remote_bind_host_row'):
-                        self._validate_host_row(self.remote_bind_host_row, allow_empty=True)
-                    if hasattr(self, 'remote_bind_port_row'):
-                        self._validate_port_row(self.remote_bind_port_row, _("Remote port"))
-                    if hasattr(self, 'dest_host_row'):
-                        self._validate_host_row(self.dest_host_row, allow_empty=False)
-                    if hasattr(self, 'dest_port_row'):
-                        self._validate_port_row(self.dest_port_row, _("Destination port"))
-                elif switch == dynamic_toggle:
-                    if hasattr(self, 'dynamic_bind_row'):
-                        self._validate_host_row(self.dynamic_bind_row, allow_empty=True)
-                    if hasattr(self, 'dynamic_port_row'):
-                        self._validate_port_row(self.dynamic_port_row, _("Local Port"))
-        except Exception:
-            pass
-        
-        # Initialize forwarding_rules if it doesn't exist
-        if not hasattr(self, 'forwarding_rules'):
-            self.forwarding_rules = []
-            
-        # Determine the rule type based on the switch
-        rule_type = None
-        if switch == local_toggle:
-            rule_type = 'local'
-        elif switch == remote_toggle:
-            rule_type = 'remote'
-        elif switch == dynamic_toggle:
-            rule_type = 'dynamic'
-            
-        if rule_type:
-            # Only update the rule if it doesn't exist or if we're disabling it
-            existing_rule = next((r for r in self.forwarding_rules if r.get('type') == rule_type), None)
-            
-            if not is_active:
-                # If disabling, just remove the rule
-                self.forwarding_rules = [r for r in self.forwarding_rules if r.get('type') != rule_type]
-            elif not existing_rule or not existing_rule.get('enabled', True):
-                # If enabling and no existing rule or rule is disabled, add a new one
-                rule = {'type': rule_type, 'enabled': True}
-                
-                # Set default values based on rule type
-                if rule_type == 'local' and hasattr(self, 'local_port_row') and hasattr(self, 'remote_host_row') and hasattr(self, 'remote_port_row'):
-                    rule.update({
-                        'listen_addr': 'localhost',
-                        'listen_port': int((self.local_port_row.get_text() or '0').strip() or '0'),
-                        'remote_host': self.remote_host_row.get_text().strip() or 'localhost',
-                        'remote_port': int((self.remote_port_row.get_text() or '0').strip() or '0')
-                    })
-                elif rule_type == 'remote' and hasattr(self, 'remote_bind_host_row') and hasattr(self, 'remote_bind_port_row') and hasattr(self, 'dest_host_row') and hasattr(self, 'dest_port_row'):
-                    rule.update({
-                        'listen_addr': self.remote_bind_host_row.get_text().strip() or 'localhost',
-                        'listen_port': int((self.remote_bind_port_row.get_text() or '0').strip() or '0'),
-                        'local_host': self.dest_host_row.get_text().strip() or 'localhost',
-                        'local_port': int((self.dest_port_row.get_text() or '0').strip() or '0')
-                    })
-                elif rule_type == 'dynamic' and hasattr(self, 'dynamic_port_row'):
-                    rule.update({
-                        'listen_addr': (self.dynamic_bind_row.get_text().strip() if hasattr(self, 'dynamic_bind_row') else '') or 'localhost',
-                        'listen_port': int((self.dynamic_port_row.get_text() or '0').strip() or '0')
-                    })
-                
-                self.forwarding_rules.append(rule)
-                logger.debug(f"Updated {rule_type} forwarding rule: {rule}")
-            
-            # Update the rules list in the UI
-            self.load_port_forwarding_rules()
     
     def show_error(self, message):
         """Show error message"""
