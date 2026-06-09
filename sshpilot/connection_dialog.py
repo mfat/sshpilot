@@ -3193,7 +3193,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             if rule_type == 'local':
                 row.set_title(_("Local Port Forwarding"))
                 row.add_prefix(icon_utils.new_image_from_icon_name("network-transmit-receive-symbolic"))
-                description = _("Local port {local_port} → {remote_host}:{remote_port}").format(
+                description = _("Local {local_port} → {remote_host}:{remote_port}").format(
                     local_port=rule.get('listen_port', ''),
                     remote_host=rule.get('remote_host', ''),
                     remote_port=rule.get('remote_port', '')
