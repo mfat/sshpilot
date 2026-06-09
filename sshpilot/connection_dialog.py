@@ -1672,18 +1672,13 @@ class ConnectionDialog(Adw.Window):
         except Exception:
             pass
 
-        switcher_scroll = Gtk.ScrolledWindow()
-        switcher_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.NEVER)
-        switcher_scroll.set_propagate_natural_height(True)
-        switcher_scroll.set_child(switcher)
-
         switcher_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         switcher_card.add_css_class("card")
         switcher_card.set_hexpand(True)
         switcher_card.set_margin_start(12)
         switcher_card.set_margin_end(12)
         switcher_card.set_margin_top(12)
-        switcher_card.append(switcher_scroll)
+        switcher_card.append(switcher)
 
         def _relayout_switcher(*_args):
             try:
