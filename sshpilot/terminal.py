@@ -583,39 +583,30 @@ class TerminalWidget(Gtk.Box):
         self.dismiss_button.connect('clicked', lambda *_: self._set_disconnected_banner_visible(False))
         self.disconnected_banner.append(self.dismiss_button)
 
-        # Allow window to force an exact height match to the sidebar toolbar using per-widget CSS min-height
+        # The banner now lives in the layout flow and uses its natural (compact)
+        # height. Height-matching to the sidebar toolbar was only needed when it
+        # floated as an overlay; keep the no-op so existing callers in window.py
+        # stay harmless without inflating the banner.
         self._banner_css_provider = None
         def _apply_external_height(new_h: int):
-            try:
-                h = max(0, int(new_h))
-                display = Gdk.Display.get_default()
-                if not display:
-                    return
-                css = f".{self._banner_unique_class} {{ min-height: {h}px; }}"
-                provider = Gtk.CssProvider()
-                provider.load_from_data(css.encode('utf-8'))
-                Gtk.StyleContext.add_provider_for_display(display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
-                # Keep a reference to prevent GC; latest provider wins at same priority
-                self._banner_css_provider = provider
-            except Exception:
-                pass
+            return
         self.set_banner_height = _apply_external_height
 
         # Wrap the banner in a Revealer (hidden by default; an error reveals it
-        # with a slide-up animation). The revealer — not the banner — goes in the
-        # overlay so revealing it does not change the terminal's natural height
-        # (which would otherwise resize split panes). The per-instance min-height
-        # CSS stays on the inner banner box, so the revealer animates 0 → that
-        # height and the sidebar-toolbar height sync keeps working.
+        # with a slide-up animation). The revealer sits in the layout flow BELOW
+        # the terminal (not as an overlay child) so revealing it makes room for
+        # the banner — pushing the terminal up — instead of floating over and
+        # masking the bottom rows of output. It only appears on disconnect/error,
+        # so the brief reflow is fine.
         self.disconnected_revealer = Gtk.Revealer()
         self.disconnected_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_UP)
         self.disconnected_revealer.set_transition_duration(200)
         self.disconnected_revealer.set_halign(Gtk.Align.FILL)
-        self.disconnected_revealer.set_valign(Gtk.Align.END)
         self.disconnected_revealer.set_hexpand(True)
+        self.disconnected_revealer.set_vexpand(False)
         self.disconnected_revealer.set_reveal_child(False)
         self.disconnected_revealer.set_child(self.disconnected_banner)
-        self.overlay.add_overlay(self.disconnected_revealer)
+        self.terminal_stack.append(self.disconnected_revealer)
 
         # Container for terminal stack only
         self.container_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
