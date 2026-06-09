@@ -104,7 +104,7 @@ class ScpWindowController:
         try:
             file_dialog = Gtk.FileDialog(title=_('Select files to upload'))
             file_dialog.open_multiple(
-                self,
+                self.window,
                 None,
                 lambda fd, res: self._on_upload_files_chosen(fd, res, connection),
             )
