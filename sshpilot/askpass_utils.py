@@ -333,8 +333,13 @@ def _askpass_enabled() -> bool:
 
 
 def _builtin_passphrase_prompt_enabled() -> bool:
-    """Whether the built-in GUI passphrase prompt is enabled (default True)."""
-    return bool(_read_app_setting("use-builtin-passphrase-prompt", True))
+    """Whether the built-in GUI passphrase prompt is enabled (default False).
+
+    Off by default: keyring autofill still works (it's resolved before this
+    gate), and for a key with no stored passphrase we defer to SSH / the OS /
+    ssh-agent to prompt naturally rather than showing our own dialog.
+    """
+    return bool(_read_app_setting("use-builtin-passphrase-prompt", False))
 
 
 def _run_askpass_dialog(key_path: str, log_fn) -> "str | None":

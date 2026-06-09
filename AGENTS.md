@@ -122,11 +122,15 @@ stays minimal and lets the spawned `ssh` resolve the config itself at run time.
 - `require` is OpenSSH's `SSH_ASKPASS_REQUIRE`: `prefer` (default — use askpass
   even when a TTY exists, OpenSSH ≥ 8.4), `force`, or `never`.
 - ssh invokes our helper (CLI entry `handle_askpass_cli`), which calls
-  `lookup_passphrase(key_path)` → keyring; if nothing is stored it shows the
-  built-in GTK passphrase dialog (`_run_askpass_dialog`). Helper output is
+  `lookup_passphrase(key_path)` → keyring; if a passphrase is stored it is
+  returned silently (autofill). If nothing is stored, the built-in GTK dialog
+  (`_run_askpass_dialog`) shows ONLY when `use-builtin-passphrase-prompt` is on
+  — it is **off by default**, so by default the helper returns nothing for an
+  unstored key and ssh / the OS / ssh-agent prompts naturally. Helper output is
   streamed into the app log by the askpass log forwarder.
-- The `use-askpass` setting (master) and `use-builtin-passphrase-prompt`
-  (sub-option) gate this; with askpass off, ssh prompts natively on the TTY.
+- The `use-askpass` setting (master, default on — keyring autofill) and
+  `use-builtin-passphrase-prompt` (sub-option, default off — our GUI prompt)
+  gate this; with askpass off, ssh prompts natively on the TTY.
 
 ### sshpass mechanics
 The password is fed to ssh via a **write-once FIFO**, never on the command line

@@ -541,20 +541,18 @@ class Connection:
             return False
 
     def _preload_keys_into_agent(self, app_config=None) -> None:
-        """Best-effort: force-load this host's on-disk key(s) into ssh-agent so a
-        passphrased key locked in gnome-keyring gets unlocked and can sign (the
-        agent is never disabled).
+        """Best-effort: load this host's on-disk key(s) into ssh-agent — but ONLY
+        keys whose passphrase the user has stored in the keyring. A stored
+        passphrase is the user's opt-in for silent agent auth; we then ``ssh-add``
+        the key (askpass autofills the passphrase) so a gnome-keyring-locked key
+        gets unlocked and can sign (the agent is never disabled).
 
-        Keys whose passphrase is in the keyring load **silently** (askpass
-        autofills). For a key whose passphrase is NOT stored we still run
-        ``ssh-add`` so OUR askpass renders the passphrase prompt (instead of
-        gnome-keyring's OS prompt) — but only for the FIRST such key, to avoid a
-        prompt per candidate on multi-key hosts.
+        Keys with NO stored passphrase are left untouched — we do NOT ``ssh-add``
+        them. That signals the user prefers SSH / the OS / ssh-agent to prompt
+        naturally, and avoids adding/unlocking a key they didn't ask us to.
 
         MUST be called from a thread where the GLib main loop is free (e.g. the
-        terminal's connect worker thread) so the in-process askpass dialog can
-        render; never from the run_until_complete main-thread connect. Never
-        raises.
+        terminal's connect worker thread). Never raises.
         """
         try:
             from .askpass_utils import ensure_key_in_agent, lookup_passphrase
@@ -588,20 +586,14 @@ class Connection:
                     (getattr(self, 'identity_agent_directive', '') or '').strip():
                 return
 
-            prompted_unstored = False
             for path in (getattr(self, 'resolved_identity_files', []) or []):
                 try:
-                    has_stored = bool(lookup_passphrase(path))
-                    if not has_stored:
-                        # Only one interactive prompt per connect (avoid spam on
-                        # hosts that resolve to several candidate keys).
-                        if prompted_unstored:
-                            continue
-                        prompted_unstored = True
+                    # Keyring-only: skip keys with no stored passphrase entirely
+                    # (no ssh-add) → user gets the natural OS/agent prompt.
+                    if not lookup_passphrase(path):
+                        continue
                     ensure_key_in_agent(path, force=True, lifetime=lifetime)
-                    logger.debug(
-                        "Preloaded key into ssh-agent: %s (stored=%s)", path, has_stored
-                    )
+                    logger.debug("Preloaded key into ssh-agent: %s", path)
                 except Exception as exc:
                     logger.debug("Key preload failed for %s: %s", path, exc)
         except Exception:

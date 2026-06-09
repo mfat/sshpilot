@@ -134,25 +134,25 @@ def _patch_preload(monkeypatch, stored_paths):
     return added
 
 
-def test_preload_silent_stored_and_one_prompt_for_unstored(monkeypatch):
+def test_preload_only_adds_stored_keys(monkeypatch):
     conn = _make_connection(resolved_identity_files=['/k/stored', '/k/unstored'])
     added = _patch_preload(monkeypatch, stored_paths={'/k/stored'})
 
     conn._preload_keys_into_agent(_Cfg(lifetime=600))
 
-    # stored loads silently; the unstored key is still added so OUR askpass
-    # prompts (instead of gnome-keyring's OS prompt).
-    assert added == [('/k/stored', True, 600), ('/k/unstored', True, 600)]
+    # Keyring-only: the stored key loads (force-unlock); the unstored key is
+    # never ssh-added — the user gets the natural OS/agent prompt for it.
+    assert added == [('/k/stored', True, 600)]
 
 
-def test_preload_caps_interactive_prompts_to_one(monkeypatch):
+def test_preload_skips_all_unstored_keys(monkeypatch):
     conn = _make_connection(resolved_identity_files=['/k/a', '/k/b', '/k/c'])
     added = _patch_preload(monkeypatch, stored_paths=set())  # none stored
 
     conn._preload_keys_into_agent(_Cfg())
 
-    # Only the first unstored key is added → at most one interactive prompt.
-    assert added == [('/k/a', True, 0)]
+    # No stored passphrases → nothing is added to the agent.
+    assert added == []
 
 
 def test_preload_skipped_for_password_auth(monkeypatch):
@@ -181,6 +181,34 @@ def test_preload_skipped_when_setting_disabled(monkeypatch):
     added = _patch_preload(monkeypatch, stored_paths={'/home/u/.ssh/k'})
     conn._preload_keys_into_agent(_Cfg(preload=False))
     assert added == []
+
+
+def test_builtin_passphrase_prompt_defaults_off(monkeypatch):
+    from sshpilot import askpass_utils
+
+    # Simulate the setting being unset: _read_app_setting returns the default.
+    monkeypatch.setattr(
+        askpass_utils, '_read_app_setting', lambda key, default: default
+    )
+    assert askpass_utils._builtin_passphrase_prompt_enabled() is False
+
+    # Explicitly enabled → True.
+    monkeypatch.setattr(
+        askpass_utils, '_read_app_setting',
+        lambda key, default: True if key == 'use-builtin-passphrase-prompt' else default,
+    )
+    assert askpass_utils._builtin_passphrase_prompt_enabled() is True
+
+
+def test_askpass_autofill_stays_enabled_by_default(monkeypatch):
+    # The master askpass/autofill switch must remain on by default — only the
+    # built-in graphical prompt is off.
+    from sshpilot import askpass_utils
+
+    monkeypatch.setattr(
+        askpass_utils, '_read_app_setting', lambda key, default: default
+    )
+    assert askpass_utils._askpass_enabled() is True
 
 
 def test_preload_swallows_errors(monkeypatch):
