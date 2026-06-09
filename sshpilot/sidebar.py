@@ -1333,6 +1333,7 @@ class ConnectionRow(Gtk.ListBoxRow):
     def update_display(self):
         if hasattr(self.connection, "nickname") and hasattr(self, "nickname_label"):
             self.nickname_label.set_markup(f"<b>{self.connection.nickname}</b>")
+            self.nickname_label.set_tooltip_text(self.connection.nickname)
 
         if hasattr(self.connection, "username") and hasattr(self, "host_label"):
             self._apply_host_label_text(include_port=True)

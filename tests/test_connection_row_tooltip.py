@@ -96,3 +96,21 @@ def test_nickname_label_tooltip_set_in_init():
     source = inspect.getsource(sidebar_mod.ConnectionRow.__init__)
     assert 'nickname_label.set_tooltip_text' in source
     assert 'connection.nickname' in source
+
+
+def test_update_display_refreshes_nickname_tooltip(monkeypatch):
+    """update_display refreshes nickname_label tooltip so a rename is not left stale."""
+    conn = Connection({'nickname': 'renamed', 'host': 'prod.example.com'})
+    row, sidebar_mod = _make_row(conn)
+    row.nickname_label = MagicMock()
+    monkeypatch.setattr(
+        sidebar_mod, '_format_connection_host_display',
+        lambda c, **kw: 'prod.example.com',
+    )
+    row.get_root = lambda: _FakeRoot(hide_hosts=False)
+    row._update_forwarding_indicators = lambda: None
+    row.update_status = lambda: None
+
+    row.update_display()
+
+    row.nickname_label.set_tooltip_text.assert_called_once_with('renamed')
