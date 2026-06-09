@@ -1170,6 +1170,13 @@ class FileListEditor(Adw.PreferencesGroup):
         for row in self._add_rows:
             row.set_visible(visible)
 
+    def set_sensitive(self, sensitive):
+        super().set_sensitive(sensitive)
+        for row in self._rows:
+            row.set_sensitive(sensitive)
+        for row in self._add_rows:
+            row.set_sensitive(sensitive)
+
     def add_path(self, path):
         if self._model.add(path):
             self._append_key_row(self._model.get()[-1])
@@ -1683,14 +1690,24 @@ class ConnectionDialog(Adw.Window):
         self.on_key_select_changed()
 
     def on_key_select_changed(self, *args):
-        """Show the key/cert editors only for key-based auth with a specific key."""
+        """Show key rows for key auth, but only enable editing in specific-key mode."""
         is_key_based = self._auth_is_key_based()
         try:
             use_specific = bool(is_key_based and getattr(self, 'key_specific_check', None)
                                 and self.key_specific_check.get_active())
         except Exception:
             use_specific = False
-        for name in ('key_editor', 'idonly_group', 'cert_editor'):
+
+        key_editor = getattr(self, 'key_editor', None)
+        if key_editor is not None:
+            key_editor.set_visible(is_key_based)
+            key_editor.set_sensitive(use_specific)
+
+        key_add_btn = getattr(self, 'key_add_btn', None)
+        if key_add_btn is not None:
+            key_add_btn.set_sensitive(use_specific)
+
+        for name in ('idonly_group', 'cert_editor'):
             widget = getattr(self, name, None)
             if widget is not None:
                 widget.set_visible(use_specific)
@@ -2860,20 +2877,20 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             title=_("Use a specific key"),
             subtitle=_("Choose one or more private keys for this connection"),
         )
-        key_add_btn = Gtk.Button()
-        key_add_btn.set_child(Adw.ButtonContent(
+        self.key_add_btn = Gtk.Button()
+        self.key_add_btn.set_child(Adw.ButtonContent(
             icon_name='list-add-symbolic',
             label=_("Add a key…"),
         ))
-        key_add_btn.add_css_class('pill')
-        key_add_btn.add_css_class('suggested-action')
-        key_add_btn.set_valign(Gtk.Align.CENTER)
-        key_add_btn.connect(
+        self.key_add_btn.add_css_class('pill')
+        self.key_add_btn.add_css_class('suggested-action')
+        self.key_add_btn.set_valign(Gtk.Align.CENTER)
+        self.key_add_btn.connect(
             'clicked',
             lambda _btn: self._open_key_chooser(self.key_editor),
         )
         self.key_specific_row.add_prefix(self.key_specific_check)
-        self.key_specific_row.add_suffix(key_add_btn)
+        self.key_specific_row.add_suffix(self.key_add_btn)
         self.key_specific_row.set_activatable_widget(self.key_specific_check)
         auth_group.add(self.key_specific_row)
 
