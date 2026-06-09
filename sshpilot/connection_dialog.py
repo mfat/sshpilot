@@ -1578,20 +1578,15 @@ class ConnectionDialog(Adw.Window):
         header_bar.set_show_end_title_buttons(True)
         main_box.append(header_bar)
         
-        # Create scrollable content area
-        scrolled_window = Gtk.ScrolledWindow()
-        scrolled_window.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scrolled_window.set_vexpand(True)
-        
-        # Create preferences content
+        # Create tabbed preferences content (switcher pinned above scrollable pages)
         self.preferences_content = self.create_preferences_content()
-        scrolled_window.set_child(self.preferences_content)
+        self.preferences_content.set_vexpand(True)
         
         # Create pinned bottom section with buttons
         bottom_section = self.create_bottom_section()
         
         # Assemble the layout
-        main_box.append(scrolled_window)
+        main_box.append(self.preferences_content)
         main_box.append(bottom_section)
         
         # Set the content
@@ -1613,81 +1608,123 @@ class ConnectionDialog(Adw.Window):
         except Exception as e:
             logger.error(f"Failed to populate connection data: {e}")
     
-    def create_preferences_content(self):
-        """Create the preferences content with all pages"""
-        # Create a notebook for tabbed interface
-        notebook = Gtk.Notebook()
-        notebook.set_show_tabs(True)
-        notebook.set_show_border(False)
-        
-        # General page
-        general_page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        general_page.set_margin_top(12)
-        general_page.set_margin_bottom(12)
-        general_page.set_margin_start(12)
-        general_page.set_margin_end(12)
-        
+    def _build_connection_tab_pages(self):
+        """Build the connection editor tab pages as (name, title, widget) tuples."""
+
+        def _page_box():
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+            box.set_margin_top(12)
+            box.set_margin_bottom(12)
+            box.set_margin_start(12)
+            box.set_margin_end(12)
+            return box
+
+        general_page = _page_box()
         for group in self.build_connection_groups():
             general_page.append(group)
-        
-        general_label = Gtk.Label(label=_("Connection"))
-        notebook.append_page(general_page, general_label)
 
-        # Authentication page
-        authentication_page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        authentication_page.set_margin_top(12)
-        authentication_page.set_margin_bottom(12)
-        authentication_page.set_margin_start(12)
-        authentication_page.set_margin_end(12)
-
+        authentication_page = _page_box()
         for group in self.build_authentication_groups():
             authentication_page.append(group)
 
-        authentication_label = Gtk.Label(label=_("Authentication"))
-        notebook.append_page(authentication_page, authentication_label)
-
-        # Port Forwarding page
-        forwarding_page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        forwarding_page.set_margin_top(12)
-        forwarding_page.set_margin_bottom(12)
-        forwarding_page.set_margin_start(12)
-        forwarding_page.set_margin_end(12)
-        
+        forwarding_page = _page_box()
         for group in self.build_port_forwarding_groups():
             forwarding_page.append(group)
 
-        forwarding_label = Gtk.Label(label=_("Port Forwarding"))
-        notebook.append_page(forwarding_page, forwarding_label)
-
-        # Commands page
-        commands_page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        commands_page.set_margin_top(12)
-        commands_page.set_margin_bottom(12)
-        commands_page.set_margin_start(12)
-        commands_page.set_margin_end(12)
-
+        commands_page = _page_box()
         commands_page.append(self.build_commands_group())
 
-        commands_label = Gtk.Label(label=_("Commands"))
-        notebook.append_page(commands_page, commands_label)
-
-        # Advanced page
-        advanced_page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        advanced_page.set_margin_top(12)
-        advanced_page.set_margin_bottom(12)
-        advanced_page.set_margin_start(12)
-        advanced_page.set_margin_end(12)
-        
-        # Create the advanced tab and wrap it in a preferences group
+        advanced_page = _page_box()
         self.advanced_tab = SSHConfigAdvancedTab(self.connection_manager, parent_dialog=self)
         advanced_group = Adw.PreferencesGroup()
         advanced_group.add(self.advanced_tab)
         advanced_page.append(advanced_group)
-        
-        advanced_label = Gtk.Label(label=_("Advanced"))
-        notebook.append_page(advanced_page, advanced_label)
-        
-        return notebook
+
+        return [
+            ("connection", _("Connection"), general_page),
+            ("authentication", _("Authentication"), authentication_page),
+            ("forwarding", _("Port Forwarding"), forwarding_page),
+            ("commands", _("Commands"), commands_page),
+            ("advanced", _("Advanced"), advanced_page),
+        ]
+
+    def _create_preferences_viewstack_content(self, pages):
+        """Card-style tabs via Adw.ViewStack + Adw.InlineViewSwitcher (libadwaita 1.7+)."""
+        stack = Adw.ViewStack()
+        stack.set_vexpand(True)
+        for name, title, widget in pages:
+            stack.add_titled(widget, name, title)
+
+        switcher = Adw.InlineViewSwitcher()
+        switcher.set_stack(stack)
+        switcher.set_hexpand(True)
+        switcher.set_halign(Gtk.Align.FILL)
+        try:
+            switcher.set_display_mode(Adw.InlineViewSwitcherDisplayMode.LABELS)
+        except Exception:
+            pass
+        try:
+            switcher.set_can_shrink(False)
+        except Exception:
+            pass
+        try:
+            switcher.set_homogeneous(False)
+        except Exception:
+            pass
+
+        switcher_scroll = Gtk.ScrolledWindow()
+        switcher_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.NEVER)
+        switcher_scroll.set_propagate_natural_height(True)
+        switcher_scroll.set_child(switcher)
+
+        switcher_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        switcher_card.add_css_class("card")
+        switcher_card.set_hexpand(True)
+        switcher_card.set_margin_start(12)
+        switcher_card.set_margin_end(12)
+        switcher_card.set_margin_top(12)
+        switcher_card.append(switcher_scroll)
+
+        def _relayout_switcher(*_args):
+            try:
+                switcher.queue_resize()
+            except Exception:
+                pass
+            return False
+
+        switcher.connect("map", lambda *_a: GLib.idle_add(_relayout_switcher))
+
+        scrolled = Gtk.ScrolledWindow()
+        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scrolled.set_vexpand(True)
+        scrolled.set_child(stack)
+
+        container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        container.set_vexpand(True)
+        container.append(switcher_card)
+        container.append(scrolled)
+        return container
+
+    def _create_preferences_notebook_content(self, pages):
+        """Fallback tabbed layout for libadwaita < 1.7 (no InlineViewSwitcher)."""
+        notebook = Gtk.Notebook()
+        notebook.set_show_tabs(True)
+        notebook.set_show_border(False)
+        for _name, title, widget in pages:
+            notebook.append_page(widget, Gtk.Label(label=title))
+
+        scrolled = Gtk.ScrolledWindow()
+        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scrolled.set_vexpand(True)
+        scrolled.set_child(notebook)
+        return scrolled
+
+    def create_preferences_content(self):
+        """Create tabbed preferences content."""
+        pages = self._build_connection_tab_pages()
+        if hasattr(Adw, "InlineViewSwitcher"):
+            return self._create_preferences_viewstack_content(pages)
+        return self._create_preferences_notebook_content(pages)
     
     def create_bottom_section(self):
         """Create the pinned bottom section with save/cancel buttons"""
@@ -3042,11 +3079,19 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         page.set_hexpand(True)
         page.set_vexpand(True)
         
-        # Destination Group
-        basic_group = Adw.PreferencesGroup(title=_("Destination"))
+        _nickname_hint = _("Nickname is used as the SSH Host label; no white spaces allowed.")
+        # Host Group
+        basic_group = Adw.PreferencesGroup(
+            title=_("Host"),
+            description=_nickname_hint,
+        )
         
         # Nickname
         self.nickname_row = Adw.EntryRow(title=_("Nickname"))
+        try:
+            self.nickname_row.set_subtitle(_nickname_hint)
+        except Exception:
+            pass
         basic_group.add(self.nickname_row)
         
         # Hostname
