@@ -1,164 +1,220 @@
-"""Tests for SSH port-forwarding command construction."""
+"""Tests for SSH port-forwarding across all three types (local, remote, dynamic).
+
+Forwarding is not done with per-tunnel ``ssh -L/-R/-D`` subprocesses anymore;
+``~/.ssh/config`` is the source of truth (see CLAUDE.md / AGENTS.md). A rule
+travels two code paths, both covered here for every type:
+
+  1. UI -> rule dict:   ``ConnectionDialog._save_rule_from_editor`` turns the
+     rule-editor widgets into the ``forwarding_rules`` entry.
+  2. rule dict -> config: ``ConnectionManager.format_ssh_config_entry`` writes
+     the ``LocalForward`` / ``RemoteForward`` / ``DynamicForward`` directive.
+"""
 
 from __future__ import annotations
 
-import asyncio
-from typing import Any, List, Tuple
+import importlib
 
 import pytest
 
-from sshpilot.connection_manager import Connection
-import sshpilot.config as config_mod
-
-asyncio.set_event_loop(asyncio.new_event_loop())
+from sshpilot.connection_manager import ConnectionManager
 
 
-class _DummyProcess:
-    def __init__(self):
-        self.returncode = None
-        self.stdout = None
-        self.stderr = None
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
-    async def wait(self) -> int:
-        return 0
-
-
-def _prepare_connection(monkeypatch: pytest.MonkeyPatch) -> Connection:
-    class _ConfigStub:
-        def get_ssh_config(self) -> dict:
-            return {
-                'keepalive_interval': 30,
-                'keepalive_count_max': 3,
-            }
-
-    monkeypatch.setattr(config_mod, 'Config', _ConfigStub)
-    conn = Connection({'host': 'fwd.example', 'hostname': 'fwd.example', 'username': 'alice'})
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(conn.connect())
-    return conn
+def _make_cm(tmp_path):
+    cm = ConnectionManager.__new__(ConnectionManager)
+    cm.connections = []
+    cm.rules = []
+    cm.ssh_config_path = str(tmp_path / "config")
+    return cm
 
 
-def _host_index(cmd: List[str]) -> int:
-    idx = 1
-    takes_value = {'-o', '-i', '-F', '-p', '-P', '-D', '-L', '-R'}
-    while idx < len(cmd):
-        token = cmd[idx]
-        if token in takes_value and idx + 1 < len(cmd):
-            idx += 2
-            continue
-        if token.startswith('-'):
-            idx += 1
-            continue
-        return idx
-    return -1
+def _forward_lines(entry: str):
+    prefixes = ("LocalForward", "RemoteForward", "DynamicForward")
+    return [ln.strip() for ln in entry.splitlines() if ln.strip().startswith(prefixes)]
 
 
-def test_build_forwarding_ssh_command_orders_local_forward_before_host():
-    conn = Connection({'host': 'order.example', 'hostname': 'order.example'})
-    cmd, env = conn._build_forwarding_ssh_command(
-        ['-N', '-L', '127.0.0.1:8022:remote:22']
+def _entry(cm, rules):
+    return cm.format_ssh_config_entry({
+        "nickname": "fwd",
+        "hostname": "fwd.example.com",
+        "forwarding_rules": rules,
+    })
+
+
+# ---------------------------------------------------------------------------
+# rule dict -> ~/.ssh/config (ConnectionManager.format_ssh_config_entry)
+# ---------------------------------------------------------------------------
+
+class TestForwardingConfigOutput:
+    def test_local_forward_exact_line(self, tmp_path):
+        cm = _make_cm(tmp_path)
+        entry = _entry(cm, [{
+            "type": "local", "listen_addr": "localhost", "listen_port": 8080,
+            "remote_host": "localhost", "remote_port": 80,
+        }])
+        assert _forward_lines(entry) == ["LocalForward localhost:8080 localhost:80"]
+
+    def test_remote_forward_exact_line(self, tmp_path):
+        cm = _make_cm(tmp_path)
+        entry = _entry(cm, [{
+            "type": "remote", "listen_addr": "localhost", "listen_port": 2222,
+            "local_host": "localhost", "local_port": 22,
+        }])
+        assert _forward_lines(entry) == ["RemoteForward localhost:2222 localhost:22"]
+
+    def test_remote_forward_socks_single_arg(self, tmp_path):
+        """A RemoteForward with no destination is the SOCKS (single-argument) form."""
+        cm = _make_cm(tmp_path)
+        entry = _entry(cm, [{
+            "type": "remote", "listen_addr": "localhost", "listen_port": 9999,
+        }])
+        assert _forward_lines(entry) == ["RemoteForward localhost:9999"]
+
+    def test_dynamic_forward_exact_line(self, tmp_path):
+        cm = _make_cm(tmp_path)
+        entry = _entry(cm, [{
+            "type": "dynamic", "listen_addr": "localhost", "listen_port": 1080,
+        }])
+        assert _forward_lines(entry) == ["DynamicForward localhost:1080"]
+
+    def test_ipv6_bind_address_is_bracketed(self, tmp_path):
+        cm = _make_cm(tmp_path)
+        entry = _entry(cm, [{
+            "type": "local", "listen_addr": "::1", "listen_port": 8080,
+            "remote_host": "localhost", "remote_port": 80,
+        }])
+        assert _forward_lines(entry) == ["LocalForward [::1]:8080 localhost:80"]
+
+    def test_all_three_types_written_together(self, tmp_path):
+        cm = _make_cm(tmp_path)
+        entry = _entry(cm, [
+            {"type": "local", "listen_addr": "localhost", "listen_port": 8080,
+             "remote_host": "web", "remote_port": 80},
+            {"type": "remote", "listen_addr": "localhost", "listen_port": 2222,
+             "local_host": "localhost", "local_port": 22},
+            {"type": "dynamic", "listen_addr": "localhost", "listen_port": 1080},
+        ])
+        assert _forward_lines(entry) == [
+            "LocalForward localhost:8080 web:80",
+            "RemoteForward localhost:2222 localhost:22",
+            "DynamicForward localhost:1080",
+        ]
+
+    def test_rule_without_listen_port_is_skipped(self, tmp_path):
+        cm = _make_cm(tmp_path)
+        entry = _entry(cm, [{"type": "local", "listen_addr": "localhost",
+                             "remote_host": "localhost", "remote_port": 80}])
+        assert _forward_lines(entry) == []
+
+
+# ---------------------------------------------------------------------------
+# rule editor widgets -> rule dict (ConnectionDialog._save_rule_from_editor)
+# ---------------------------------------------------------------------------
+
+class _Combo:
+    def __init__(self, selected: int):
+        self._selected = selected
+
+    def get_selected(self) -> int:
+        return self._selected
+
+
+class _Entry:
+    def __init__(self, text: str = ""):
+        self._text = text
+
+    def get_text(self) -> str:
+        return self._text
+
+
+class _NoConflictChecker:
+    def get_port_conflicts(self, ports, addr):
+        return []
+
+    def find_available_port(self, port, addr):
+        return None
+
+
+def _make_dialog(monkeypatch):
+    """A ConnectionDialog built via __new__, with the GTK/port-checker bits stubbed."""
+    cd_mod = importlib.import_module("sshpilot.connection_dialog")
+    monkeypatch.setattr(cd_mod, "get_port_checker", lambda: _NoConflictChecker())
+    dialog = cd_mod.ConnectionDialog.__new__(cd_mod.ConnectionDialog)
+    dialog.forwarding_rules = []
+    dialog.load_port_forwarding_rules = lambda: None
+    dialog._save_errors = []
+    dialog.show_error = lambda msg: dialog._save_errors.append(msg)
+    return dialog
+
+
+def _save(dialog, *, kind, listen_addr="localhost", listen_port="8080",
+          dest_host="localhost", dest_port="22"):
+    """Drive _save_rule_from_editor for a given type with fake editor widgets."""
+    type_idx = {"local": 0, "remote": 1, "dynamic": 2}[kind]
+    dialog._save_rule_from_editor(
+        None,
+        _Combo(type_idx),
+        _Entry(listen_addr),
+        _Entry(listen_port),
+        _Entry(dest_host),
+        _Entry(dest_port),
     )
-    host_idx = _host_index(cmd)
-    l_idx = cmd.index('-L')
-    assert l_idx < host_idx
-    assert cmd[0] == 'ssh'
-    assert 'SSH_ASKPASS' not in env
 
 
-def test_start_local_forwarding_uses_builder_not_stale_ssh_cmd(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    conn = _prepare_connection(monkeypatch)
-    captured: List[Tuple[str, ...]] = []
+class TestSaveRuleFromEditor:
+    def test_local_rule_shape(self, monkeypatch):
+        dialog = _make_dialog(monkeypatch)
+        _save(dialog, kind="local", listen_port="8080", dest_host="web", dest_port="80")
+        assert dialog.forwarding_rules == [{
+            "type": "local", "enabled": True,
+            "listen_addr": "localhost", "listen_port": 8080,
+            "remote_host": "web", "remote_port": 80,
+        }]
+        assert dialog._save_errors == []
 
-    async def _fake_exec(*args: str, **kwargs: Any):
-        captured.append(tuple(args))
+    def test_remote_rule_shape(self, monkeypatch):
+        dialog = _make_dialog(monkeypatch)
+        _save(dialog, kind="remote", listen_port="2222", dest_host="localhost", dest_port="22")
+        assert dialog.forwarding_rules == [{
+            "type": "remote", "enabled": True,
+            "listen_addr": "localhost", "listen_port": 2222,
+            "local_host": "localhost", "local_port": 22,
+        }]
+        assert dialog._save_errors == []
 
-        async def _communicate():
-            return b'', b''
+    def test_dynamic_rule_shape(self, monkeypatch):
+        dialog = _make_dialog(monkeypatch)
+        _save(dialog, kind="dynamic", listen_port="1080")
+        # Dynamic carries no destination host/port keys.
+        assert dialog.forwarding_rules == [{
+            "type": "dynamic", "enabled": True,
+            "listen_addr": "localhost", "listen_port": 1080,
+        }]
+        assert dialog._save_errors == []
 
-        proc = _DummyProcess()
-        proc.communicate = _communicate  # type: ignore[method-assign]
-        return proc
+    def test_invalid_listen_port_is_rejected(self, monkeypatch):
+        dialog = _make_dialog(monkeypatch)
+        _save(dialog, kind="local", listen_port="0")
+        assert dialog.forwarding_rules == []
+        assert dialog._save_errors  # an error was surfaced to the user
 
-    monkeypatch.setattr(asyncio, 'create_subprocess_exec', _fake_exec)
+    def test_editing_existing_rule_replaces_in_place(self, monkeypatch):
+        dialog = _make_dialog(monkeypatch)
+        existing = {"type": "local", "enabled": True, "listen_addr": "localhost",
+                    "listen_port": 8080, "remote_host": "old", "remote_port": 80}
+        other = {"type": "dynamic", "enabled": True, "listen_addr": "localhost",
+                 "listen_port": 1080}
+        dialog.forwarding_rules = [existing, other]
 
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(
-        conn.start_local_forwarding('127.0.0.1', 8022, 'internal', 22)
-    )
+        dialog._save_rule_from_editor(
+            existing, _Combo(0), _Entry("localhost"), _Entry("8080"),
+            _Entry("new"), _Entry("443"),
+        )
 
-    assert captured
-    cmd = captured[0]
-    host_idx = _host_index(list(cmd))
-    l_idx = list(cmd).index('-L')
-    assert l_idx < host_idx
-    assert '127.0.0.1:8022:internal:22' in cmd
-    assert 'ServerAliveInterval=30' in cmd
-
-
-def test_start_remote_forwarding_uses_builder(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    conn = _prepare_connection(monkeypatch)
-    captured: List[Tuple[str, ...]] = []
-
-    async def _fake_exec(*args: str, **kwargs: Any):
-        captured.append(tuple(args))
-
-        async def _communicate():
-            return b'', b''
-
-        proc = _DummyProcess()
-        proc.communicate = _communicate  # type: ignore[method-assign]
-        return proc
-
-    monkeypatch.setattr(asyncio, 'create_subprocess_exec', _fake_exec)
-
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(
-        conn.start_remote_forwarding('0.0.0.0', 9000, 'db.internal', 5432)
-    )
-
-    assert captured
-    cmd = list(captured[0])
-    host_idx = _host_index(cmd)
-    r_idx = cmd.index('-R')
-    assert r_idx < host_idx
-
-
-def test_dynamic_forwarding_places_dynamic_flag_before_host(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    captured: List[Tuple[str, ...]] = []
-
-    async def _fake_exec(*args: str, **kwargs: Any):
-        captured.append(tuple(args))
-
-        class _Proc(_DummyProcess):
-            async def communicate(self):
-                self.returncode = 0
-                return b'', b''
-
-            def terminate(self):
-                return None
-
-        return _Proc()
-
-    monkeypatch.setattr(asyncio, 'create_subprocess_exec', _fake_exec)
-    monkeypatch.setattr(
-        config_mod,
-        'Config',
-        lambda: type('C', (), {'get_ssh_config': lambda self: {'batch_mode': True}})(),
-    )
-
-    conn = Connection({'host': 'socks.example', 'hostname': 'socks.example', 'username': 'u'})
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(conn.start_dynamic_forwarding('127.0.0.1', 9050))
-
-    assert captured
-    cmd = list(captured[0])
-    host_idx = _host_index(cmd)
-    d_idx = cmd.index('-D')
-    assert d_idx < host_idx
-    assert 'BatchMode=yes' in cmd
+        assert len(dialog.forwarding_rules) == 2
+        assert dialog.forwarding_rules[0]["remote_host"] == "new"
+        assert dialog.forwarding_rules[0]["remote_port"] == 443
+        assert dialog.forwarding_rules[1] is other  # untouched
