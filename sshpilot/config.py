@@ -214,6 +214,11 @@ class Config(GObject.Object):
                 'apply_default_keepalive': True,
                 'default_keepalive_interval': 15,
                 'default_keepalive_count': 3,
+                # Preload a host's keyring-backed key(s) into ssh-agent on
+                # connect so a passphrased key locked in gnome-keyring gets
+                # unlocked and can sign (the agent is never disabled).
+                'agent_preload_keys': True,
+                'agent_preload_lifetime': 0,  # ssh-add -t <secs>; 0 = no expiry
             },
             'file_manager': {
                 'force_internal': False,

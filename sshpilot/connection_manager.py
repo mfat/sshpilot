@@ -527,12 +527,77 @@ class Connection:
             # terminal can spawn it directly without re-deriving auth/env.
             self.ssh_env = dict(ssh_conn_cmd.env)
             self.ssh_connection_cmd = ssh_conn_cmd
+
+            # Preload this host's keyring-backed key(s) into ssh-agent so a
+            # passphrased key locked in gnome-keyring gets unlocked and can sign
+            # (the agent is never disabled). Run off the loop-pumping thread so
+            # the blocking ssh-add can't stall the connect; best-effort only.
+            try:
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(None, self._preload_keys_into_agent, cfg)
+            except Exception as exc:
+                logger.debug(f"Key preload skipped/failed for {self}: {exc}")
+
             self.is_connected = True
             return True
         except Exception as exc:
             logger.error(f"Failed to prepare native SSH command for {self}: {exc}")
             self.is_connected = False
             return False
+
+    def _preload_keys_into_agent(self, app_config=None) -> None:
+        """Best-effort: force-load this host's on-disk keys into ssh-agent.
+
+        Only keys whose passphrase is already stored in the keyring are added
+        (keyring-only), so every ``ssh-add`` is silent and never needs a prompt
+        dialog — which matters because the GLib main loop is blocked while the
+        connect coroutine runs. Hands the agent an *unlocked* key so a
+        gnome-keyring-locked key can sign. Never raises.
+        """
+        try:
+            from .askpass_utils import ensure_key_in_agent, lookup_passphrase
+
+            cfg = app_config
+            if cfg is None:
+                try:
+                    from .config import Config
+                    cfg = Config()
+                except Exception:
+                    cfg = None
+
+            preload = True
+            lifetime = 0
+            if cfg is not None and hasattr(cfg, 'get_setting'):
+                try:
+                    preload = bool(cfg.get_setting('ssh.agent_preload_keys', True))
+                    lifetime = int(cfg.get_setting('ssh.agent_preload_lifetime', 0) or 0)
+                except Exception:
+                    preload, lifetime = True, 0
+            if not preload:
+                return
+
+            # Key-based auth only.
+            if int(getattr(self, 'auth_method', 0) or 0) != 0:
+                return
+
+            # Respect a user-pinned agent (IdentityAgent none / custom socket):
+            # never disturb the agent they chose.
+            if getattr(self, 'identity_agent_disabled', False) or \
+                    (getattr(self, 'identity_agent_directive', '') or '').strip():
+                return
+
+            for path in (getattr(self, 'resolved_identity_files', []) or []):
+                try:
+                    # Keyring-only gate: only preload keys we can unlock silently.
+                    # (Also skips unencrypted keys, which don't need preloading.)
+                    if not lookup_passphrase(path):
+                        continue
+                    ensure_key_in_agent(path, force=True, lifetime=lifetime)
+                    logger.debug("Preloaded key into ssh-agent: %s", path)
+                except Exception as exc:
+                    logger.debug("Key preload failed for %s: %s", path, exc)
+        except Exception:
+            pass
 
     async def disconnect(self):
         """Close the SSH connection and clean up"""
@@ -1764,10 +1829,10 @@ class ConnectionManager(GObject.Object):
         from .askpass_utils import ensure_key_in_agent
         return ensure_key_in_agent(key_path)
 
-    def prepare_key_for_connection(self, key_path: str) -> bool:
-        """Prepare SSH key for connection by adding it to ssh-agent"""
+    def prepare_key_for_connection(self, key_path: str, *, force: bool = True) -> bool:
+        """Prepare SSH key for connection by unlocking it in ssh-agent"""
         from .askpass_utils import prepare_key_for_connection
-        return prepare_key_for_connection(key_path)
+        return prepare_key_for_connection(key_path, force=force)
 
     def invalidate_cached_commands(self):
         """Clear cached SSH commands so future launches pick up new settings."""

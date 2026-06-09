@@ -928,25 +928,40 @@ def get_ssh_env_with_forced_askpass() -> dict:
     """Get SSH environment with forced askpass for passphrase handling"""
     return get_ssh_env_with_askpass("force")
 
-def ensure_key_in_agent(key_path: str) -> bool:
-    """Ensure SSH key is loaded in ssh-agent with passphrase"""
+def ensure_key_in_agent(key_path: str, *, force: bool = False, lifetime: int = 0) -> bool:
+    """Ensure an SSH key is loaded (and unlocked) in ssh-agent.
+
+    ``force=True`` skips the ``ssh-add -l`` presence check and always runs
+    ``ssh-add``. This is required for gnome-keyring, which *advertises* an
+    on-disk key (its fingerprint shows in ``ssh-add -l``) but REFUSES to sign it
+    while locked — so a presence-only skip would leave the key locked and ssh
+    cannot fall back to the on-disk file. Re-running ``ssh-add`` decrypts the key
+    client-side (our askpass autofills the passphrase from the keyring) and hands
+    the unlocked key to the agent. It is idempotent and silent when the
+    passphrase is in the keyring.
+
+    ``lifetime > 0`` adds ``-t <lifetime>`` so the agent drops the key after that
+    many seconds.
+    """
     if not os.path.isfile(key_path):
         logger.error(f"Key file not found: {key_path}")
         return False
 
-    # Check if key is already in ssh-agent
-    try:
-        result = subprocess.run(
-            ['ssh-add', '-l'],
-            capture_output=True,
-            text=True,
-            timeout=5
-        )
-        if result.returncode == 0 and key_path in result.stdout:
-            logger.debug(f"Key already in ssh-agent: {key_path}")
-            return True
-    except Exception:
-        pass
+    # Check if key is already in ssh-agent. Skipped when force=True because a
+    # listed key may be locked (gnome-keyring) and still need an actual ssh-add.
+    if not force:
+        try:
+            result = subprocess.run(
+                ['ssh-add', '-l'],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode == 0 and key_path in result.stdout:
+                logger.debug(f"Key already in ssh-agent: {key_path}")
+                return True
+        except Exception:
+            pass
 
     # Adding the key to the agent requires our askpass to supply the passphrase.
     # If the askpass helper is disabled, don't try — let SSH prompt natively.
@@ -956,23 +971,28 @@ def ensure_key_in_agent(key_path: str) -> bool:
 
     # Add key to ssh-agent using our askpass script
     env = get_ssh_env_with_askpass("force")
-    
+
+    add_cmd = ['ssh-add']
+    if lifetime and lifetime > 0:
+        add_cmd += ['-t', str(int(lifetime))]
+    add_cmd.append(key_path)
+
     try:
         result = subprocess.run(
-            ['ssh-add', key_path],
+            add_cmd,
             env=env,
             capture_output=True,
             text=True,
             timeout=30
         )
-        
+
         if result.returncode == 0:
             logger.debug(f"Successfully added key to ssh-agent: {key_path}")
             return True
         else:
             logger.error(f"Failed to add key to ssh-agent: {result.stderr}")
             return False
-            
+
     except subprocess.TimeoutExpired:
         logger.error(f"Timeout adding key to ssh-agent: {key_path}")
         return False
@@ -980,9 +1000,13 @@ def ensure_key_in_agent(key_path: str) -> bool:
         logger.error(f"Error adding key to ssh-agent: {e}")
         return False
 
-def prepare_key_for_connection(key_path: str) -> bool:
-    """Prepare SSH key for connection by ensuring it's in ssh-agent"""
-    return ensure_key_in_agent(key_path)
+def prepare_key_for_connection(key_path: str, *, force: bool = True) -> bool:
+    """Prepare SSH key for connection by ensuring it's unlocked in ssh-agent.
+
+    Forces the ``ssh-add`` by default so a gnome-keyring-locked key is actually
+    unlocked (see ``ensure_key_in_agent``).
+    """
+    return ensure_key_in_agent(key_path, force=force)
 
 def get_scp_ssh_options() -> list:
     """Get SSH options for SCP operations with passphrased keys"""
