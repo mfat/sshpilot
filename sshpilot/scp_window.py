@@ -5,6 +5,7 @@ import atexit
 from gettext import gettext as _
 from dataclasses import dataclass
 from typing import List, Optional
+from pathlib import Path
 
 import gi
 try:
