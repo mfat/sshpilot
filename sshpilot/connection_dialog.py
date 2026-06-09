@@ -2837,7 +2837,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         # --- Key handling ---
         self.idonly_group = Adw.PreferencesGroup(title=_("Key handling"))
         self.key_only_row = Adw.SwitchRow()
-        self.key_only_row.set_title(_("Only use these keys"))
+        self.key_only_row.set_title(_("Only use the selected key(s)"))
         self.key_only_row.set_subtitle(_("Write IdentitiesOnly yes for this connection."))
         self.key_only_row.set_active(True)
         self.idonly_group.add(self.key_only_row)
