@@ -3074,7 +3074,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         page.set_hexpand(True)
         page.set_vexpand(True)
         
-        _nickname_hint = _("Nickname is used as the SSH Host label; no white spaces allowed.")
+        _nickname_hint = _("Nickname is used as the SSH Host label; no whitespaces allowed.")
         # Host Group
         basic_group = Adw.PreferencesGroup(
             title=_("Host"),
