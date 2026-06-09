@@ -53,6 +53,9 @@ class SshCopyIdWindow(Adw.Window):
         parent._show_ssh_copy_id_terminal_using_main_widget(connection, ssh_key)
     """
 
+    #: Trailing dropdown entry that opens the file chooser instead of selecting a key.
+    _BROWSE_LABEL = _("Browse for a key file…")
+
     def __init__(self, parent, connection, key_manager, connection_manager):
         logger.info("SshCopyIdWindow: Initializing window")
         logger.debug(f"SshCopyIdWindow: Constructor called with connection: {getattr(connection, 'nickname', 'unknown')}")
@@ -156,20 +159,18 @@ class SshCopyIdWindow(Adw.Window):
             existing_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
             existing_box.set_margin_start(12)
             existing_box.set_margin_bottom(6)
+            # Selection state guards for the dropdown (which carries a final
+            # "Browse…" item that opens a portal-aware file chooser).
+            self._programmatic_dd_change = False
+            self._last_real_selection = 0
+            self._key_chooser_native = None
             self.dropdown_existing = Gtk.DropDown()
             self.dropdown_existing.set_can_focus(True)  # Make it focusable for tab navigation
+            self.dropdown_existing.connect("notify::selected", self._on_dropdown_selected)
             existing_box.append(Gtk.Label(label="Select key:", xalign=0))
             existing_box.append(self.dropdown_existing)
 
-            # Browse for a public key outside ~/.ssh (portal-aware file chooser)
-            self.browse_existing_button = Gtk.Button(label=_("Browse…"))
-            self.browse_existing_button.add_css_class("flat")
-            self.browse_existing_button.set_can_focus(True)
-            self.browse_existing_button.set_tooltip_text(_("Choose a public key file…"))
-            self.browse_existing_button.connect("clicked", self._browse_public_key)
-            existing_box.append(self.browse_existing_button)
-
-            # Fill dropdown with discovered keys
+            # Fill dropdown with discovered keys (plus the trailing Browse item)
             self._reload_existing_keys()
             logger.info("SshCopyIdWindow: Existing key dropdown created successfully")
         except Exception as e:
@@ -344,43 +345,60 @@ class SshCopyIdWindow(Adw.Window):
         try:
             keys = self._km.discover_keys()
             logger.info(f"SshCopyIdWindow: Discovered {len(keys)} keys")
-            logger.debug(f"SshCopyIdWindow: Key discovery returned {len(keys)} keys")
-            
-            # Log details of each discovered key
-            for i, key in enumerate(keys):
-                logger.debug(f"SshCopyIdWindow: Key {i+1}: private_path='{key.private_path}', "
-                           f"public_path='{key.public_path}', exists={os.path.exists(key.private_path)}")
-            
-            names = [os.path.basename(k.private_path) for k in keys] or ["No keys found"]
-            logger.debug(f"SshCopyIdWindow: Key names for dropdown: {names}")
-            
-            dd = Gtk.DropDown.new_from_strings(names)
-            if keys:
-                dd.set_selected(0)
-                logger.debug(f"SshCopyIdWindow: Selected first key in dropdown")
-            
-            self.dropdown_existing.set_model(dd.get_model())
-            self.dropdown_existing.set_selected(dd.get_selected())
-            # keep a cached list to resolve on OK
-            self._existing_keys_cache = keys
-            logger.info(f"SshCopyIdWindow: Dropdown populated with {len(names)} items")
-            logger.debug(f"SshCopyIdWindow: Cached {len(keys)} keys for later use")
+            self._existing_keys_cache = list(keys)
+            names = [os.path.basename(k.private_path) for k in keys] or [_("No keys found")]
+            self._last_real_selection = 0
+            self._rebuild_existing_dropdown(names, 0)
+            logger.info(f"SshCopyIdWindow: Dropdown populated with {len(names)} key item(s)")
         except Exception as e:
             logger.error(f"SshCopyIdWindow: Failed to load existing keys: {e}")
             logger.debug(f"SshCopyIdWindow: Exception details: {type(e).__name__}: {str(e)}")
             self._existing_keys_cache = []
-            dd = Gtk.DropDown.new_from_strings(["Error loading keys"])
-            self.dropdown_existing.set_model(dd.get_model())
-            self.dropdown_existing.set_selected(0)
+            self._last_real_selection = 0
+            self._rebuild_existing_dropdown([_("Error loading keys")], 0)
 
-    def _browse_public_key(self, *_):
-        """Open a portal-aware file chooser to pick a public key file."""
+    def _rebuild_existing_dropdown(self, names, select_index):
+        """Set the dropdown model to *names* plus a trailing Browse item.
+
+        Wrapped in a suppression flag so the programmatic model/selection change
+        doesn't re-enter the ``notify::selected`` handler (which would otherwise
+        treat it as a user picking the Browse item).
+        """
+        self._programmatic_dd_change = True
         try:
-            dialog = Gtk.FileDialog(title=_("Select Public Key"))
+            items = list(names) + [self._BROWSE_LABEL]
+            self.dropdown_existing.set_model(Gtk.StringList.new(items))
+            self.dropdown_existing.set_selected(select_index)
+        finally:
+            self._programmatic_dd_change = False
+
+    def _on_dropdown_selected(self, *_):
+        """Open the file chooser when the trailing Browse item is picked."""
+        if self._programmatic_dd_change:
+            return
+        model = self.dropdown_existing.get_model()
+        if model is None:
+            return
+        idx = self.dropdown_existing.get_selected()
+        sentinel = model.get_n_items() - 1  # the Browse item is always last
+        if idx == sentinel:
+            self._open_key_file_chooser()
+        else:
+            self._last_real_selection = idx
+
+    def _open_key_file_chooser(self):
+        """Portal-aware native file chooser for selecting a public key."""
+        try:
+            dlg = Gtk.FileChooserNative(
+                title=_("Select Public Key"),
+                action=Gtk.FileChooserAction.OPEN,
+                transient_for=self,
+                modal=True,
+            )
             try:
                 ssh_dir = get_ssh_dir()
                 if os.path.isdir(ssh_dir):
-                    dialog.set_initial_folder(Gio.File.new_for_path(ssh_dir))
+                    dlg.set_current_folder(Gio.File.new_for_path(ssh_dir))
             except Exception:
                 pass
             try:
@@ -390,47 +408,66 @@ class SshCopyIdWindow(Adw.Window):
                 all_filter = Gtk.FileFilter()
                 all_filter.set_name(_("All Files"))
                 all_filter.add_pattern("*")
-                filters = Gio.ListStore.new(Gtk.FileFilter)
-                filters.append(pub_filter)
-                filters.append(all_filter)
-                dialog.set_filters(filters)
+                dlg.add_filter(pub_filter)
+                dlg.add_filter(all_filter)
             except Exception:
                 pass
-            dialog.open(self, None, self._on_public_key_chosen)
+            # Keep a reference so the native dialog isn't garbage-collected.
+            self._key_chooser_native = dlg
+            dlg.connect("response", self._on_key_file_response)
+            dlg.show()
         except Exception:
-            logger.debug("Failed to open public key chooser", exc_info=True)
+            logger.warning("Failed to open public key file chooser", exc_info=True)
+            self._revert_dropdown_selection()
 
-    def _on_public_key_chosen(self, dlg, result):
+    def _on_key_file_response(self, dlg, response):
         try:
-            gfile = dlg.open_finish(result)
-            if gfile and gfile.get_path():
-                self._add_browsed_public_key(gfile.get_path())
-        except Exception:
-            logger.debug("Public key chooser cancelled or failed", exc_info=True)
+            path = None
+            if response == Gtk.ResponseType.ACCEPT:
+                gfile = dlg.get_file()
+                path = gfile.get_path() if gfile else None
+            if path:
+                self._add_browsed_public_key(path)
+            else:
+                self._revert_dropdown_selection()
+        finally:
+            dlg.destroy()
+            self._key_chooser_native = None
+
+    def _revert_dropdown_selection(self):
+        """Restore the last real selection after a cancelled/failed browse."""
+        self._programmatic_dd_change = True
+        try:
+            self.dropdown_existing.set_selected(self._last_real_selection)
+        finally:
+            self._programmatic_dd_change = False
 
     def _add_browsed_public_key(self, path):
         """Add a browsed public key to the dropdown and select it.
 
-        Rebuilds the dropdown model from the cached key list (the source of
-        truth) so the selected index always lines up with the cache, even when
-        it previously held a placeholder ("No keys found").
+        The cached key list is the source of truth; the model is rebuilt from it
+        (plus the Browse item) so selection indices always line up, even when the
+        list previously held only a placeholder ("No keys found").
         """
-        cache = getattr(self, "_existing_keys_cache", None) or []
+        cache = list(getattr(self, "_existing_keys_cache", None) or [])
 
         # De-dupe: if this exact public key is already listed, just select it.
         for i, key in enumerate(cache):
             if getattr(key, "public_path", None) == path:
-                self.dropdown_existing.set_selected(i)
+                self._last_real_selection = i
+                self._rebuild_existing_dropdown(
+                    [os.path.basename(k.private_path) for k in cache], i
+                )
                 self.radio_existing.set_active(True)
                 return
 
-        cache = list(cache)
         cache.append(_ssh_key_from_public_path(path))
         self._existing_keys_cache = cache
-
-        names = [os.path.basename(k.private_path) for k in cache]
-        self.dropdown_existing.set_model(Gtk.StringList.new(names))
-        self.dropdown_existing.set_selected(len(names) - 1)
+        new_idx = len(cache) - 1
+        self._last_real_selection = new_idx
+        self._rebuild_existing_dropdown(
+            [os.path.basename(k.private_path) for k in cache], new_idx
+        )
         # Browsing implies copying an existing key.
         self.radio_existing.set_active(True)
 
