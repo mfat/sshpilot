@@ -1647,12 +1647,21 @@ class ConnectionDialog(Adw.Window):
             ("advanced", _("Advanced"), advanced_page),
         ]
 
+    @staticmethod
+    def _wrap_page_scrolled(widget):
+        """Give a tab page its own scroller so scroll position doesn't carry over between tabs."""
+        scrolled = Gtk.ScrolledWindow()
+        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scrolled.set_vexpand(True)
+        scrolled.set_child(widget)
+        return scrolled
+
     def _create_preferences_viewstack_content(self, pages):
         """Card-style tabs via Adw.ViewStack + Adw.InlineViewSwitcher (libadwaita 1.7+)."""
         stack = Adw.ViewStack()
         stack.set_vexpand(True)
         for name, title, widget in pages:
-            stack.add_titled(widget, name, title)
+            stack.add_titled(self._wrap_page_scrolled(widget), name, title)
 
         switcher = Adw.InlineViewSwitcher()
         switcher.set_stack(stack)
@@ -1688,15 +1697,10 @@ class ConnectionDialog(Adw.Window):
 
         switcher.connect("map", lambda *_a: GLib.idle_add(_relayout_switcher))
 
-        scrolled = Gtk.ScrolledWindow()
-        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scrolled.set_vexpand(True)
-        scrolled.set_child(stack)
-
         container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         container.set_vexpand(True)
         container.append(switcher_card)
-        container.append(scrolled)
+        container.append(stack)
         return container
 
     def _create_preferences_notebook_content(self, pages):
@@ -1704,14 +1708,10 @@ class ConnectionDialog(Adw.Window):
         notebook = Gtk.Notebook()
         notebook.set_show_tabs(True)
         notebook.set_show_border(False)
+        notebook.set_vexpand(True)
         for _name, title, widget in pages:
-            notebook.append_page(widget, Gtk.Label(label=title))
-
-        scrolled = Gtk.ScrolledWindow()
-        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scrolled.set_vexpand(True)
-        scrolled.set_child(notebook)
-        return scrolled
+            notebook.append_page(self._wrap_page_scrolled(widget), Gtk.Label(label=title))
+        return notebook
 
     def create_preferences_content(self):
         """Create tabbed preferences content."""
