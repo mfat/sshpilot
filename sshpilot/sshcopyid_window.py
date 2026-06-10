@@ -870,6 +870,19 @@ class SshCopyIdRunner:
                 getattr(self.window, 'config', None),
             )
 
+            # Combined auth (publickey AND password) needs the key in ssh-agent so
+            # its passphrase isn't prompted while sshpass owns the pty for the
+            # password. The terminal connect path preloads stored-passphrase keys
+            # from its worker thread; ssh-copy-id spawns its own command, so do the
+            # same here. Best-effort and non-interactive (only keys whose
+            # passphrase is stored are added).
+            try:
+                preload = getattr(connection, '_preload_keys_into_agent', None)
+                if callable(preload):
+                    preload(getattr(self.window, 'config', None))
+            except Exception:
+                logger.debug("ssh-copy-id: key preload failed", exc_info=True)
+
             # Build ssh-copy-id command with options derived from connection settings
             logger.debug("Main window: Building ssh-copy-id command arguments")
             argv = self._build_argv(
