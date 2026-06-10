@@ -123,7 +123,8 @@ def _ensure_toggle_suggested_css():
         return
     provider = Gtk.CssProvider()
     provider.load_from_data(b"""
-    toggle-group.toggle-suggested {
+    toggle-group.toggle-suggested,
+    inline-view-switcher.toggle-suggested toggle-group {
         --active-toggle-bg-color: @accent_bg_color;
         --active-toggle-fg-color: @accent_fg_color;
     }
@@ -1667,6 +1668,8 @@ class ConnectionDialog(Adw.Window):
         switcher.set_stack(stack)
         switcher.set_hexpand(True)
         switcher.set_halign(Gtk.Align.FILL)
+        _ensure_toggle_suggested_css()
+        switcher.add_css_class("toggle-suggested")
         try:
             switcher.set_display_mode(Adw.InlineViewSwitcherDisplayMode.LABELS)
         except Exception:
