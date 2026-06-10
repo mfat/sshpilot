@@ -723,8 +723,10 @@ def build_ssh_connection(
         # SCP, and ssh-copy-id all authenticate identically.
         auth = resolve_native_auth(connection, connection_manager, app_config)
 
-        # BatchMode preference (never for password auth, which needs to prompt).
-        if bool(app_ssh_config.get('batch_mode', False)) and not auth.password_mode:
+        # BatchMode preference — never on any sshpass path (password auth OR
+        # combined publickey+password), since sshpass needs the prompt to answer.
+        if (bool(app_ssh_config.get('batch_mode', False))
+                and not auth.password_mode and not auth.use_sshpass):
             if 'BatchMode=yes' not in base_cmd:
                 base_cmd.extend(['-o', 'BatchMode=yes'])
 
