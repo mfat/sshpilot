@@ -67,9 +67,6 @@ if sys.platform == "darwin":
     if "SHELL" not in os.environ:
         os.environ["SHELL"] = "/bin/bash"
     
-    # Critical for macOS keychain access (from working bundle)
-    os.environ["KEYCHAIN_ACCESS_GROUP"] = "*"
-    
     # Set up XDG directories for keyring
     home = os.environ["HOME"]
     os.environ["XDG_CONFIG_HOME"] = os.path.join(home, ".config")

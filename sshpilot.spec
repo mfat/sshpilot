@@ -200,9 +200,24 @@ app = BUNDLE(
     coll,
     name=f"{app_name}.app",
     icon=icon_file if os.path.exists(icon_file) else None,
-    bundle_identifier="app.sshpilot",
+    bundle_identifier="io.github.mfat.sshpilot",
     info_plist={
         "NSHighResolutionCapable": True,
         "LSMinimumSystemVersion": "12.0",
     },
 )
+
+# Ad-hoc codesign so macOS can match the bundle's identity across launches,
+# preventing repeated keychain authorization prompts.
+if sys.platform == "darwin":
+    import subprocess as _sp
+    _app_path = os.path.join("dist", f"{app_name}.app")
+    if os.path.exists(_app_path):
+        _r = _sp.run(
+            ["codesign", "--force", "--deep", "--sign", "-", _app_path],
+            capture_output=True, text=True,
+        )
+        if _r.returncode == 0:
+            print(f"Ad-hoc code signed: {_app_path}")
+        else:
+            print(f"Warning: codesign failed (non-fatal): {_r.stderr.strip()}")
