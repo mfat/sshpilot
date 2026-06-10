@@ -1,5 +1,5 @@
 # sshpilot.spec — build with: pyinstaller --clean sshpilot.spec
-import os, glob, platform, sysconfig
+import os, sys, glob, platform, sysconfig
 from pathlib import Path
 from PyInstaller.utils.hooks import collect_submodules
 
