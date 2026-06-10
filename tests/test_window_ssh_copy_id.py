@@ -94,10 +94,6 @@ def test_ssh_copy_id_saved_passphrase_uses_askpass(monkeypatch, tmp_path):
         def store_key_passphrase(self, *args, **kwargs):
             return None
 
-    def fake_idle_add(func, *args, **kwargs):
-        func(*args, **kwargs)
-        return 1
-
     forced_env = {
         "SSH_ASKPASS": "/tmp/helper",
         "SSH_ASKPASS_REQUIRE": "force",
@@ -112,11 +108,26 @@ def test_ssh_copy_id_saved_passphrase_uses_askpass(monkeypatch, tmp_path):
     monkeypatch.setattr(runner_mod, "TerminalWidget", DummyTerminalWidget)
     monkeypatch.setattr(
         runner_mod,
+        "_build_copy_progress_row",
+        lambda *_args, **_kwargs: (
+            DummyWidget(),
+            lambda: False,
+            lambda: None,
+            lambda: None,
+        ),
+    )
+    monkeypatch.setattr(
+        runner_mod,
         "Adw",
         types.SimpleNamespace(
-            Window=DummyWidget,
+            ActionRow=DummyWidget,
+            AlertDialog=DummyWidget,
+            Dialog=types.SimpleNamespace(new=lambda: DummyWidget()),
+            PreferencesGroup=DummyWidget,
+            ToolbarView=DummyWidget,
             HeaderBar=DummyWidget,
             MessageDialog=DummyWidget,
+            WindowTitle=types.SimpleNamespace(new=lambda *args, **kwargs: DummyWidget()),
         ),
         raising=False,
     )
@@ -127,7 +138,8 @@ def test_ssh_copy_id_saved_passphrase_uses_askpass(monkeypatch, tmp_path):
             Box=DummyWidget,
             Label=DummyWidget,
             Button=DummyWidget,
-            Align=types.SimpleNamespace(START=0, END=1),
+            Align=types.SimpleNamespace(START=0, END=1, CENTER=3),
+            Fixed=DummyWidget,
             Orientation=types.SimpleNamespace(VERTICAL=0, HORIZONTAL=1),
         ),
         raising=False,
@@ -138,7 +150,7 @@ def test_ssh_copy_id_saved_passphrase_uses_askpass(monkeypatch, tmp_path):
         types.SimpleNamespace(
             shell_quote=lambda value: value,
             SpawnFlags=types.SimpleNamespace(DEFAULT=0),
-            idle_add=fake_idle_add,
+            idle_add=lambda func, *args, **kwargs: func(*args, **kwargs) or 1,
         ),
         raising=False,
     )

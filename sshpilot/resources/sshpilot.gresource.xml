@@ -57,6 +57,7 @@
     <file alias="sidebar-show-symbolic.svg">icons/scalable/actions/sidebar-show-symbolic.svg</file>
     <file alias="terminal-split-horizontal-symbolic.svg">icons/scalable/actions/terminal-split-horizontal.svg</file>
     <file alias="terminal-split-vertical-symbolic.svg">icons/scalable/actions/terminal-split-vertical.svg</file>
+    <file alias="success-small-symbolic.svg">icons/scalable/actions/success-small-symbolic.svg</file>
     <file alias="star-large-symbolic.svg">icons/scalable/actions/star-large-symbolic.svg</file>
     <file alias="play-large-symbolic.svg">icons/scalable/actions/play-large-symbolic.svg</file>
     <file alias="plus-large-symbolic.svg">icons/scalable/actions/plus-large-symbolic.svg</file>
