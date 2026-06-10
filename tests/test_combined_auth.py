@@ -36,6 +36,7 @@ import socket
 import subprocess
 import threading
 import time
+from contextlib import contextmanager
 from types import SimpleNamespace
 
 import pytest
@@ -48,6 +49,7 @@ from sshpilot.ssh_connection_builder import resolve_native_auth
 
 PASSPHRASE = "secretpass"
 PASSWORD = "hunter2"
+OTP_CODE = "123456"
 USERNAME = "tester"
 
 _REQUIRED_BINS = ["ssh", "ssh-keygen", "ssh-add", "ssh-agent", "sshpass"]
@@ -101,11 +103,119 @@ class _CombinedAuthServer(paramiko.ServerInterface):
         return True
 
 
+class _PublicKeyOnlyServer(paramiko.ServerInterface):
+    """Accepts a valid public key and never asks for the saved password."""
+
+    def __init__(self, authorized_blobs):
+        self._authorized = set(authorized_blobs)
+
+    def get_allowed_auths(self, username):
+        return "publickey"
+
+    def check_auth_publickey(self, username, key):
+        if key.asbytes() in self._authorized:
+            return paramiko.AUTH_SUCCESSFUL
+        return paramiko.AUTH_FAILED
+
+    def check_channel_request(self, kind, chanid):
+        if kind == "session":
+            return paramiko.OPEN_SUCCEEDED
+        return paramiko.OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED
+
+    def check_channel_exec_request(self, channel, command):
+        channel.send_exit_status(0)
+        return True
+
+
+class _PasswordOnlyServer(paramiko.ServerInterface):
+    """Accepts only the account password."""
+
+    def __init__(self, password):
+        self._password = password
+
+    def get_allowed_auths(self, username):
+        return "password"
+
+    def check_auth_password(self, username, password):
+        if password == self._password:
+            return paramiko.AUTH_SUCCESSFUL
+        return paramiko.AUTH_FAILED
+
+    def check_channel_request(self, kind, chanid):
+        if kind == "session":
+            return paramiko.OPEN_SUCCEEDED
+        return paramiko.OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED
+
+    def check_channel_exec_request(self, channel, command):
+        channel.send_exit_status(0)
+        return True
+
+
+class _PublicKeyInteractiveServer(paramiko.ServerInterface):
+    """Requires a valid public key, then one keyboard-interactive response."""
+
+    def __init__(self, authorized_blobs, prompt, expected_response):
+        self._authorized = set(authorized_blobs)
+        self._prompt = prompt
+        self._expected_response = expected_response
+        self._pk_ok = False
+
+    def get_allowed_auths(self, username):
+        return "keyboard-interactive" if self._pk_ok else "publickey"
+
+    def check_auth_publickey(self, username, key):
+        if key.asbytes() in self._authorized:
+            self._pk_ok = True
+            return paramiko.AUTH_PARTIALLY_SUCCESSFUL
+        return paramiko.AUTH_FAILED
+
+    def check_auth_interactive(self, username, submethods):
+        if not self._pk_ok:
+            return paramiko.AUTH_FAILED
+        return paramiko.InteractiveQuery(
+            "sshPilot test",
+            "additional verification required",
+            (self._prompt, False),
+        )
+
+    def check_auth_interactive_response(self, responses):
+        if self._pk_ok and responses and responses[0] == self._expected_response:
+            return paramiko.AUTH_SUCCESSFUL
+        return paramiko.AUTH_FAILED
+
+    def check_channel_request(self, kind, chanid):
+        if kind == "session":
+            return paramiko.OPEN_SUCCEEDED
+        return paramiko.OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED
+
+    def check_channel_exec_request(self, channel, command):
+        channel.send_exit_status(0)
+        return True
+
+
 def _handle_conn(client_sock, host_key, authorized_blobs, password):
     try:
         transport = paramiko.Transport(client_sock)
         transport.add_server_key(host_key)
         transport.start_server(server=_CombinedAuthServer(authorized_blobs, password))
+        chan = transport.accept(timeout=10)
+        if chan is not None:
+            time.sleep(0.2)
+            try:
+                chan.close()
+            except Exception:
+                pass
+        time.sleep(0.2)
+        transport.close()
+    except Exception:
+        pass
+
+
+def _handle_conn_with_factory(client_sock, host_key, server_factory):
+    try:
+        transport = paramiko.Transport(client_sock)
+        transport.add_server_key(host_key)
+        transport.start_server(server=server_factory())
         chan = transport.accept(timeout=10)
         if chan is not None:
             time.sleep(0.2)
@@ -135,6 +245,22 @@ def _serve(listen_sock, host_key, authorized_blobs, password, stop_evt):
         ).start()
 
 
+def _serve_with_factory(listen_sock, host_key, server_factory, stop_evt):
+    listen_sock.settimeout(0.5)
+    while not stop_evt.is_set():
+        try:
+            client, _addr = listen_sock.accept()
+        except socket.timeout:
+            continue
+        except OSError:
+            break
+        threading.Thread(
+            target=_handle_conn_with_factory,
+            args=(client, host_key, server_factory),
+            daemon=True,
+        ).start()
+
+
 # ---------------------------------------------------------------------------
 # Key / server fixtures
 # ---------------------------------------------------------------------------
@@ -145,6 +271,39 @@ def _keygen(path, passphrase):
          "-C", "combined-auth-test"],
         check=True, capture_output=True,
     )
+
+
+def _authorized_blob(key_path, passphrase=None):
+    return paramiko.Ed25519Key.from_private_key_file(
+        str(key_path),
+        password=passphrase,
+    ).asbytes()
+
+
+@contextmanager
+def _auth_server(server_factory):
+    host_key = paramiko.RSAKey.generate(2048)
+    listen = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listen.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    listen.bind(("127.0.0.1", 0))
+    listen.listen(8)
+    port = listen.getsockname()[1]
+    stop_evt = threading.Event()
+    thread = threading.Thread(
+        target=_serve_with_factory,
+        args=(listen, host_key, server_factory, stop_evt),
+        daemon=True,
+    )
+    thread.start()
+    try:
+        yield SimpleNamespace(port=port)
+    finally:
+        stop_evt.set()
+        try:
+            listen.close()
+        except Exception:
+            pass
+        thread.join(timeout=2)
 
 
 @pytest.fixture(scope="module")
@@ -258,7 +417,18 @@ def _resolve(monkeypatch, *, passphrase_stored, password_stored, identity_file,
     return resolve_native_auth(conn, cm, app_config=app_config)
 
 
-def _ssh_connect(port, key_path, *, agent_sock=None, sshpass_password=None):
+def _ssh_connect(
+    port,
+    key_path=None,
+    *,
+    agent_sock=None,
+    sshpass_password=None,
+    preferred_auth="publickey,password",
+    pubkey_auth=True,
+    password_auth=True,
+    keyboard_interactive_auth=True,
+    timeout=25,
+):
     """Run the real ssh client against the mock server; return its exit code.
 
     Mirrors how sshPilot would supply secrets: the key is offered via -i (and
@@ -266,17 +436,20 @@ def _ssh_connect(port, key_path, *, agent_sock=None, sshpass_password=None):
     password is fed by sshpass. Returns 0 on a fully-authenticated session.
     """
     base = [
-        "ssh", "-p", str(port), "-i", key_path,
+        "ssh", "-p", str(port),
         "-o", "StrictHostKeyChecking=no",
         "-o", "UserKnownHostsFile=/dev/null",
-        "-o", "PreferredAuthentications=publickey,password",
-        "-o", "PubkeyAuthentication=yes",
-        "-o", "PasswordAuthentication=yes",
+        "-o", f"PreferredAuthentications={preferred_auth}",
+        "-o", f"PubkeyAuthentication={'yes' if pubkey_auth else 'no'}",
+        "-o", f"PasswordAuthentication={'yes' if password_auth else 'no'}",
+        "-o", f"KbdInteractiveAuthentication={'yes' if keyboard_interactive_auth else 'no'}",
         "-o", "NumberOfPasswordPrompts=1",
-        "-o", "IdentitiesOnly=yes",
         "-o", "ConnectTimeout=5",
-        f"{USERNAME}@127.0.0.1", "true",
     ]
+    if key_path:
+        base[3:3] = ["-i", key_path]
+        base.extend(["-o", "IdentitiesOnly=yes"])
+    base.extend([f"{USERNAME}@127.0.0.1", "true"])
     env = os.environ.copy()
     env.pop("SSH_ASKPASS", None)
     env["SSH_ASKPASS_REQUIRE"] = "never"
@@ -293,7 +466,7 @@ def _ssh_connect(port, key_path, *, agent_sock=None, sshpass_password=None):
         argv = base[:1] + ["-o", "BatchMode=yes"] + base[1:]
 
     try:
-        proc = subprocess.run(argv, env=env, capture_output=True, timeout=25, text=True)
+        proc = subprocess.run(argv, env=env, capture_output=True, timeout=timeout, text=True)
         return proc.returncode
     except subprocess.TimeoutExpired:
         return 124
@@ -536,6 +709,28 @@ class TestCombinedAuthConnection:
                          passphrase_stored=True, password_stored=True)
         assert rc == 0
 
+    def test_both_stored_wrong_password_fails_combined_auth(self, monkeypatch, combined_server, agent):
+        key = combined_server.enc_key
+        monkeypatch.setattr(
+            ssh_connection_builder,
+            "ensure_key_in_agent",
+            lambda path, *, force=False, lifetime=0: True,
+        )
+        conn = _make_conn(key)
+        auth = resolve_native_auth(conn, _make_cm("wrong-password"))
+        assert auth.use_sshpass is True
+        assert auth.password == "wrong-password"
+
+        agent.add(key, PASSPHRASE, combined_server.tmp)
+        rc = _ssh_connect(
+            combined_server.port,
+            key,
+            agent_sock=agent.sock,
+            sshpass_password=auth.password,
+        )
+
+        assert rc != 0
+
     def test_only_passphrase_fails_no_password(self, monkeypatch, combined_server, agent):
         # Key usable via agent, but nothing satisfies the mandatory password step.
         rc = self._drive(monkeypatch, combined_server, agent,
@@ -552,6 +747,98 @@ class TestCombinedAuthConnection:
     def test_neither_stored_fails(self, monkeypatch, combined_server, agent):
         rc = self._drive(monkeypatch, combined_server, agent,
                          passphrase_stored=False, password_stored=False)
+        assert rc != 0
+
+    def test_pubkey_only_host_ignores_wrong_saved_password(self, monkeypatch, combined_server, agent):
+        key = combined_server.enc_key
+        authorized = [_authorized_blob(key, PASSPHRASE)]
+        monkeypatch.setattr(
+            ssh_connection_builder,
+            "lookup_passphrase",
+            lambda path: PASSPHRASE if path == key else "",
+        )
+        monkeypatch.setattr(
+            ssh_connection_builder,
+            "ensure_key_in_agent",
+            lambda path, *, force=False, lifetime=0: True,
+        )
+        conn = _make_conn(key)
+        auth = resolve_native_auth(conn, _make_cm("wrong-password"))
+        assert auth.use_sshpass is True
+        assert auth.password == "wrong-password"
+
+        agent.add(key, PASSPHRASE, combined_server.tmp)
+        with _auth_server(lambda: _PublicKeyOnlyServer(authorized)) as server:
+            rc = _ssh_connect(
+                server.port,
+                key,
+                agent_sock=agent.sock,
+                sshpass_password=auth.password,
+                preferred_auth="publickey,password",
+            )
+
+        assert rc == 0
+
+    def test_password_only_host_succeeds_with_saved_password(self, combined_server):
+        with _auth_server(lambda: _PasswordOnlyServer(PASSWORD)) as server:
+            rc = _ssh_connect(
+                server.port,
+                key_path=None,
+                sshpass_password=PASSWORD,
+                preferred_auth="password",
+                pubkey_auth=False,
+                keyboard_interactive_auth=False,
+            )
+
+        assert rc == 0
+
+    def test_publickey_then_keyboard_interactive_password_succeeds(
+        self, combined_server, agent
+    ):
+        key = combined_server.enc_key
+        authorized = [_authorized_blob(key, PASSPHRASE)]
+        agent.add(key, PASSPHRASE, combined_server.tmp)
+
+        with _auth_server(
+            lambda: _PublicKeyInteractiveServer(
+                authorized,
+                "Password: ",
+                PASSWORD,
+            )
+        ) as server:
+            rc = _ssh_connect(
+                server.port,
+                key,
+                agent_sock=agent.sock,
+                sshpass_password=PASSWORD,
+                preferred_auth="publickey,keyboard-interactive,password",
+            )
+
+        assert rc == 0
+
+    def test_publickey_then_keyboard_interactive_otp_is_not_answered_by_saved_password(
+        self, combined_server, agent
+    ):
+        key = combined_server.enc_key
+        authorized = [_authorized_blob(key, PASSPHRASE)]
+        agent.add(key, PASSPHRASE, combined_server.tmp)
+
+        with _auth_server(
+            lambda: _PublicKeyInteractiveServer(
+                authorized,
+                "Verification code: ",
+                OTP_CODE,
+            )
+        ) as server:
+            rc = _ssh_connect(
+                server.port,
+                key,
+                agent_sock=agent.sock,
+                sshpass_password=PASSWORD,
+                preferred_auth="publickey,keyboard-interactive,password",
+                timeout=8,
+            )
+
         assert rc != 0
 
     # ---- positive controls (prove the server + the combined path work) ----
