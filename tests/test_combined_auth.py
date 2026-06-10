@@ -21,12 +21,11 @@ Two layers:
     mirroring sshPilot's keyring preload; password via sshpass when a password
     is "stored"), and assert whether the publickey+password handshake completes.
 
-The connection layer documents the current behaviour: against a combined-auth
-host with an *encrypted* key, none of the four scenarios succeed, because the
-resolver supplies the passphrase XOR the password, never both. Two positive
-controls show (a) the mock server + combined path work for an unencrypted key
-with a stored password, and (b) supplying *both* secrets together succeeds —
-i.e. the shape a combined-auth fix would need.
+Against a combined-auth host with an *encrypted* key, only the "both stored"
+scenario succeeds: the resolver wires the key (via the agent preload, using the
+stored passphrase) AND sshpass (for the stored password). The other three fail
+because one of the two required factors is missing. Positive controls also show
+the combined path works for an unencrypted key with a stored password.
 """
 from __future__ import annotations
 
@@ -247,7 +246,8 @@ def _make_cm(stored_password):
     return SimpleNamespace(get_password=lambda host, user: stored_password)
 
 
-def _resolve(monkeypatch, *, passphrase_stored, password_stored, identity_file, auth_method=0):
+def _resolve(monkeypatch, *, passphrase_stored, password_stored, identity_file,
+             auth_method=0, app_config=None):
     """Drive resolve_native_auth with mocked keyring + stored password."""
     monkeypatch.setattr(
         ssh_connection_builder, "lookup_passphrase",
@@ -255,7 +255,7 @@ def _resolve(monkeypatch, *, passphrase_stored, password_stored, identity_file, 
     )
     conn = _make_conn(identity_file, auth_method=auth_method)
     cm = _make_cm(PASSWORD if password_stored else None)
-    return resolve_native_auth(conn, cm, app_config=None)
+    return resolve_native_auth(conn, cm, app_config=app_config)
 
 
 def _ssh_connect(port, key_path, *, agent_sock=None, sshpass_password=None):
@@ -306,12 +306,22 @@ def _ssh_connect(port, key_path, *, agent_sock=None, sshpass_password=None):
 class TestResolverDecision:
     KEY = "/home/u/.ssh/id_ed25519"
 
-    def test_both_stored_uses_passphrase_ignores_password(self, monkeypatch):
+    def test_both_stored_wires_combined_auth(self, monkeypatch):
+        # Combined auth: passphrase (via agent preload) + password (via sshpass).
         auth = _resolve(monkeypatch, passphrase_stored=True, password_stored=True,
                         identity_file=self.KEY)
+        assert auth.use_sshpass is True
+        assert auth.password == PASSWORD
+        assert auth.use_askpass is False  # askpass stripped so it can't hijack pw
+
+    def test_both_stored_falls_back_to_askpass_when_preload_disabled(self, monkeypatch):
+        # Without agent preload the key wouldn't be in the agent, so combined auth
+        # is unsafe; keep askpass-only autofill (no regression for pubkey-only hosts).
+        cfg = SimpleNamespace(get_setting=lambda k, d=None: False if k == "ssh.agent_preload_keys" else d)
+        auth = _resolve(monkeypatch, passphrase_stored=True, password_stored=True,
+                        identity_file=self.KEY, app_config=cfg)
         assert auth.use_askpass is True
         assert auth.use_sshpass is False
-        assert auth.password is None  # password never wired in
 
     def test_only_passphrase_uses_askpass(self, monkeypatch):
         auth = _resolve(monkeypatch, passphrase_stored=True, password_stored=False,
@@ -346,22 +356,24 @@ class TestCombinedAuthConnection:
         auth = _resolve(monkeypatch, passphrase_stored=passphrase_stored,
                         password_stored=password_stored, identity_file=key)
         agent_sock = None
-        if auth.use_askpass:
-            # A stored passphrase => sshPilot preloads the key into the agent.
+        # sshPilot preloads keys that have a stored passphrase into ssh-agent,
+        # independent of which mechanism resolve_native_auth selects.
+        if passphrase_stored:
             agent.add(key, PASSPHRASE, combined_server.tmp)
             agent_sock = agent.sock
         sshpass_pw = auth.password if auth.use_sshpass else None
         return _ssh_connect(combined_server.port, key, agent_sock=agent_sock,
                             sshpass_password=sshpass_pw)
 
-    def test_both_stored_fails_no_password_supplied(self, monkeypatch, combined_server, agent):
-        # Key usable (passphrase->agent) but resolver wires NO password → the
-        # server's mandatory password step can't be satisfied.
+    def test_both_stored_succeeds_combined_auth(self, monkeypatch, combined_server, agent):
+        # Combined auth now satisfied: key via agent (passphrase) + password via
+        # sshpass → full publickey+password handshake.
         rc = self._drive(monkeypatch, combined_server, agent,
                          passphrase_stored=True, password_stored=True)
-        assert rc != 0
+        assert rc == 0
 
     def test_only_passphrase_fails_no_password(self, monkeypatch, combined_server, agent):
+        # Key usable via agent, but nothing satisfies the mandatory password step.
         rc = self._drive(monkeypatch, combined_server, agent,
                          passphrase_stored=True, password_stored=False)
         assert rc != 0

@@ -64,11 +64,17 @@ def resolve_native_auth(
     * Askpass disabled in settings: let SSH prompt natively on the TTY.
     * Key-based auth — depends on what the user has saved (a saved secret is the
       opt-in for non-interactive auth):
+        - saved passphrase + saved password -> combined auth (hosts requiring
+          BOTH publickey and password): the key is preloaded into ssh-agent via
+          its passphrase, so pubkey is non-interactive, and sshpass answers the
+          separate password prompt. askpass is stripped (REQUIRE=prefer would let
+          it hijack the password prompt). Only when key preloading is active;
+          otherwise falls back to askpass-only below.
         - saved key passphrase  -> askpass (REQUIRE=prefer) autofills it; key is
           primary, agent left intact. No sshpass.
-        - else saved password   -> "combined auth": strip askpass and signal
-          sshpass with the stored password, so SSH tries the key and falls back
-          to the password (the terminal and SCP both wrap sshpass from this).
+        - else saved password   -> strip askpass and signal sshpass with the
+          stored password, so SSH tries the key and falls back to the password
+          (the terminal and SCP both wrap sshpass from this).
         - else (nothing saved)  -> no askpass, no sshpass; SSH prompts on the
           TTY for the passphrase and then the password, naturally.
     """
@@ -115,7 +121,25 @@ def resolve_native_auth(
         has_stored_passphrase = True
 
     if has_stored_passphrase:
-        # Saved key passphrase -> askpass autofills it; key is primary.
+        # Combined auth: some hosts require BOTH publickey and password
+        # (AuthenticationMethods publickey,password). When a password is also
+        # saved (and the key will be preloaded into ssh-agent via its stored
+        # passphrase), satisfy both: the agent answers the key, and sshpass
+        # answers the password. askpass is stripped because with REQUIRE=prefer
+        # it would also intercept the password prompt, which the helper can't
+        # serve. Falls through to askpass-only autofill when no password is
+        # saved or preloading is disabled (the agent wouldn't hold the key).
+        stored_password = _get_stored_password(connection, connection_manager)
+        if stored_password and _agent_preload_active(connection, app_config):
+            env = os.environ.copy()
+            env.pop('SSH_ASKPASS', None)
+            env['SSH_ASKPASS_REQUIRE'] = 'never'
+            logger.debug("resolve_native_auth: combined auth -> agent key (passphrase) + sshpass password")
+            return NativeAuth(
+                env=env, extra_opts=[], use_sshpass=True, password=stored_password,
+                use_askpass=False, password_mode=False,
+            )
+        # Saved key passphrase only -> askpass autofills it; key is primary.
         env = get_ssh_env_with_askpass(require="prefer")
         logger.debug("resolve_native_auth: key auth, askpass autofill (saved passphrase)")
         return NativeAuth(env=env, extra_opts=[], use_askpass=True, password_mode=False)
@@ -326,6 +350,27 @@ def _get_stored_password(
     except Exception:
         pass
     return None
+
+
+def _agent_preload_active(connection: any, app_config: Optional[any] = None) -> bool:
+    """Whether this host's keys get preloaded into ssh-agent.
+
+    Mirrors the gating in ``ConnectionManager._preload_keys_into_agent``. Combined
+    auth (publickey AND password) relies on the key already being in the agent so
+    its passphrase is never prompted while sshpass owns the pty for the password.
+    If preloading won't happen, we must NOT take the combined path (it would leave
+    an encrypted key unusable); fall back to askpass-only autofill instead.
+    """
+    try:
+        if getattr(connection, 'identity_agent_disabled', False):
+            return False
+        if (getattr(connection, 'identity_agent_directive', '') or '').strip():
+            return False
+        if app_config is not None and hasattr(app_config, 'get_setting'):
+            return bool(app_config.get_setting('ssh.agent_preload_keys', True))
+        return True
+    except Exception:
+        return True
 
 
 def _get_stored_passphrase(
