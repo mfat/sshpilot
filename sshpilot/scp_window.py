@@ -4,7 +4,7 @@ import threading
 import atexit
 from gettext import gettext as _
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from pathlib import Path
 
 import gi
