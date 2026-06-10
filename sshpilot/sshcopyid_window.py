@@ -1415,16 +1415,15 @@ class SshCopyIdRunner:
                         # Reveal the error output behind the alert dialog.
                         set_terminal_expanded(True)
 
-                    heading = _('Success') if ok else _('Error')
-                    body = (
-                        _('Public key copied to {}@{}').format(
-                            connection.username, host_value,
-                        )
-                        if ok
-                        else _(
-                            'Failed to copy the public key. '
-                            'Check logs for details.'
-                        )
+                    if ok:
+                        # The progress row and terminal already show success;
+                        # an alert on top would be redundant.
+                        return False
+
+                    heading = _('Error')
+                    body = _(
+                        'Failed to copy the public key. '
+                        'Check logs for details.'
                     )
                     if hasattr(Adw, 'AlertDialog'):
                         msg = Adw.AlertDialog(heading=heading, body=body)
