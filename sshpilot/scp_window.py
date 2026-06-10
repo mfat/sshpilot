@@ -22,9 +22,11 @@ from .connection_display import (
     get_connection_host as _get_connection_host,
 )
 from .scp_utils import (
+    _build_scp_argv_prefix,
     assemble_scp_transfer_args,
     classify_sftp_error,
     download_file,
+    insert_legacy_scp_flag,
     upload_file,
 )
 
@@ -255,28 +257,13 @@ class ScpWindowController:
         combined_auth = (auth_method == 0 and has_saved_password)
         use_publickey_with_password = combined_auth and not getattr(connection, 'pubkey_auth_no', False)
 
+        # Only auth-specific and connection-attribute options live here; the
+        # shared option builder (_build_scp_argv_prefix / _build_base_ssh_command)
+        # supplies app-level overrides, strict-host policy, port and the
+        # explicit keyfile, so they must not be duplicated in this list.
         ssh_options: List[str] = []
-        try:
-            cfg = self.window.config if hasattr(self.window, 'config') else Config()
-            ssh_cfg = cfg.get_ssh_config() if hasattr(cfg, 'get_ssh_config') else {}
-        except Exception:
-            ssh_cfg = {}
-
-        strict_val = str(ssh_cfg.get('strict_host_key_checking', '') or '').strip()
-        auto_add = bool(ssh_cfg.get('auto_add_host_keys', True))
-
-        if strict_val:
-            ssh_options += ['-o', f'StrictHostKeyChecking={strict_val}']
-        elif auto_add and not has_saved_password:
-            ssh_options += ['-o', 'StrictHostKeyChecking=accept-new']
-
         if getattr(connection, 'pubkey_auth_no', False):
             ssh_options += ['-o', 'PubkeyAuthentication=no']
-
-        if keyfile_ok and key_mode in (1, 2):
-            ssh_options += ['-i', expanded_keyfile]
-            if key_mode == 1:
-                ssh_options += ['-o', 'IdentitiesOnly=yes']
 
         self._extend_scp_options_from_connection(connection, ssh_options)
 
@@ -1290,26 +1277,6 @@ class ScpWindowController:
                         )
             except Exception:
                 pass
-        port = profile.port
-        ssh_extra_opts = list(profile.ssh_options)
-
-        if known_hosts_path:
-            ssh_extra_opts += ['-o', f'UserKnownHostsFile={known_hosts_path}']
-
-        argv = ['scp', '-v']
-        # Legacy SCP/rcp protocol (-O) does not require a remote sftp-server.
-        if legacy:
-            argv.append('-O')
-        try:
-            if direction == 'upload' and any(os.path.isdir(path) for path in transfer_sources):
-                argv.append('-r')
-        except Exception:
-            # If any path check fails (e.g. non-string items), continue without recursion.
-            logger.debug('SCP: Failed to inspect sources for recursion; continuing without -r')
-        if port and port != 22:
-            argv += ['-P', str(port)]
-        argv += ssh_extra_opts
-
         # Resolve auth via the single shared resolver (same as terminal + ssh-copy-id):
         # askpass for a saved passphrase, sshpass for a saved password, or bare TTY
         # prompts when nothing is saved. Stash it for _show_scp_terminal_window to
@@ -1322,16 +1289,41 @@ class ScpWindowController:
             getattr(self.window, 'config', None),
         )
         self._scp_auth = auth
-        if auth.extra_opts:
-            argv += list(auth.extra_opts)
-        if auth.use_sshpass and auth.password:
-            argv, _sshpass_cleanup = wrap_argv_with_sshpass(argv, auth.password)
-            import atexit
-            atexit.register(_sshpass_cleanup)
         logger.debug(
             "SCP: auth resolved (askpass=%s, sshpass=%s)",
             auth.use_askpass, auth.use_sshpass,
         )
+
+        try:
+            recursive = direction == 'upload' and any(
+                os.path.isdir(path) for path in transfer_sources
+            )
+        except Exception:
+            # If any path check fails (e.g. non-string items), continue without recursion.
+            logger.debug('SCP: Failed to inspect sources for recursion; continuing without -r')
+            recursive = False
+
+        # Shared scp prefix (same builder as the programmatic download/upload
+        # path): app-level overrides, strict-host policy, port, explicit
+        # keyfile, ClearAllForwardings and auth options, plus the
+        # window-specific options carried by the profile.
+        argv = _build_scp_argv_prefix(
+            connection,
+            getattr(self.window, 'config', None),
+            recursive,
+            known_hosts_path,
+            list(profile.ssh_options),
+            auth,
+        )
+        argv.insert(1, '-v')
+        # Legacy SCP/rcp protocol (-O) does not require a remote sftp-server.
+        if legacy:
+            argv = insert_legacy_scp_flag(argv)
+
+        if auth.use_sshpass and auth.password:
+            argv, _sshpass_cleanup = wrap_argv_with_sshpass(argv, auth.password)
+            import atexit
+            atexit.register(_sshpass_cleanup)
 
         for path in transfer_sources:
             argv.append(path)

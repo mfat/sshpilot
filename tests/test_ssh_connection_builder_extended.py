@@ -470,3 +470,60 @@ def test_connect_builds_native_command(tmp_path, monkeypatch):
     assert conn.ssh_cmd[-1] == 'khhost'
     # No known_hosts injected into the command.
     assert not any('UserKnownHostsFile' in part for part in conn.ssh_cmd)
+
+
+# --- _build_base_ssh_command: per-binary option guards ---
+
+
+def _base_cmd(command_type, effective_config=None, app_config=None, conn_data=None):
+    from sshpilot.ssh_connection_builder import _build_base_ssh_command
+
+    conn = Connection(conn_data or {'host': 'h', 'hostname': 'h'})
+    return _build_base_ssh_command(conn, effective_config or {}, app_config, command_type)
+
+
+def test_base_command_scp_and_copy_id_clear_forwardings():
+    assert _has_o_option(_base_cmd('scp'), 'ClearAllForwardings=yes')
+    assert _has_o_option(_base_cmd('ssh-copy-id'), 'ClearAllForwardings=yes')
+    assert not _has_o_option(_base_cmd('ssh'), 'ClearAllForwardings')
+    assert not _has_o_option(_base_cmd('sftp'), 'ClearAllForwardings')
+
+
+def test_base_command_copy_id_skips_unsupported_flags():
+    # ssh-copy-id rejects -v/-C/-A and BatchMode defeats its interactive purpose.
+    cfg = _ConfigStub({'verbosity': 2, 'compression': True, 'batch_mode': True})
+    cmd = _base_cmd('ssh-copy-id', app_config=cfg,
+                    effective_config={'forwardagent': 'yes', 'forwardx11': 'yes'})
+    assert '-v' not in cmd
+    assert '-C' not in cmd
+    assert '-A' not in cmd
+    assert '-X' not in cmd
+    assert not _has_o_option(cmd, 'BatchMode')
+    # ...while scp still honors the app-level flags.
+    scp_cmd = _base_cmd('scp', app_config=cfg)
+    assert '-v' in scp_cmd
+    assert '-C' in scp_cmd
+    assert _has_o_option(scp_cmd, 'BatchMode=yes')
+
+
+def test_base_command_copy_id_never_injects_identity(tmp_path):
+    # -i for ssh-copy-id selects the key to INSTALL; the config identity must
+    # not leak in or it would change which key gets copied.
+    key = tmp_path / 'id_test'
+    key.write_text('k')
+    effective = {'identityfile': [str(key)], 'identitiesonly': 'yes'}
+    cmd = _base_cmd('ssh-copy-id', effective_config=effective)
+    assert '-i' not in cmd
+    assert not _has_o_option(cmd, 'IdentitiesOnly')
+    scp_cmd = _base_cmd('scp', effective_config=effective)
+    assert '-i' in scp_cmd and str(key) in scp_cmd
+
+
+def test_base_command_x11_flag_only_for_ssh():
+    # scp -X selects the transfer protocol and sftp -X sets an sftp option, so
+    # a bare -X must only ever be emitted for ssh.
+    effective = {'forwardx11': 'yes'}
+    assert '-X' in _base_cmd('ssh', effective_config=effective)
+    assert '-X' not in _base_cmd('scp', effective_config=effective)
+    assert '-X' not in _base_cmd('sftp', effective_config=effective)
+    assert '-X' not in _base_cmd('ssh-copy-id', effective_config=effective)

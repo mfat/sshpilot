@@ -1142,43 +1142,31 @@ class SshCopyIdRunner:
             raise RuntimeError(f"Public key file not found: {ssh_key.public_path}")
         
         logger.debug(f"Main window: Public key file verified: {ssh_key.public_path}")
-        argv = ['ssh-copy-id']
-        
+
+        # Shared command prefix via the single option builder (same one the SCP
+        # paths use): app-level -o options, strict-host policy, port and
+        # ClearAllForwardings. The builder skips flags ssh-copy-id can't take
+        # (-v/-C/-A/BatchMode) and never injects IdentityFile for it, so the
+        # operation authenticates with the key being copied.
+        from .ssh_connection_builder import _build_base_ssh_command
+        from .ssh_config_utils import get_effective_ssh_config
+
+        try:
+            effective_config = get_effective_ssh_config(host_value) if host_value else {}
+        except Exception:
+            effective_config = {}
+        app_cfg = getattr(self.window, 'config', None)
+        if app_cfg is None:
+            app_cfg = Config()
+        argv = _build_base_ssh_command(connection, effective_config, app_cfg, 'ssh-copy-id')
+
         # Add force option if enabled
         if force:
             argv.append('-f')
             logger.debug("Main window: Added force option (-f) to ssh-copy-id")
-        
+
         argv.extend(['-i', ssh_key.public_path])
         logger.debug(f"Main window: Base command: {argv}")
-        try:
-            port = getattr(connection, 'port', 22)
-            logger.debug(f"Main window: Connection port: {port}")
-            if port and port != 22:
-                argv += ['-p', str(connection.port)]
-                logger.debug(f"Main window: Added port option: -p {connection.port}")
-        except Exception as e:
-            logger.debug(f"Main window: Error getting port: {e}")
-            pass
-        # Honor app SSH settings: strict host key checking / auto-add
-        logger.debug("Main window: Loading SSH configuration")
-        try:
-            cfg = Config()
-            ssh_cfg = cfg.get_ssh_config() if hasattr(cfg, 'get_ssh_config') else {}
-            logger.debug(f"Main window: SSH config: {ssh_cfg}")
-            strict_val = str(ssh_cfg.get('strict_host_key_checking', '') or '').strip()
-            auto_add = bool(ssh_cfg.get('auto_add_host_keys', True))
-            logger.debug(f"Main window: SSH settings - strict_val='{strict_val}', auto_add={auto_add}")
-            if strict_val:
-                argv += ['-o', f'StrictHostKeyChecking={strict_val}']
-                logger.debug(f"Main window: Added strict host key checking: {strict_val}")
-            elif auto_add:
-                argv += ['-o', 'StrictHostKeyChecking=accept-new']
-                logger.debug("Main window: Added auto-accept new host keys")
-        except Exception as e:
-            logger.debug(f"Main window: Error loading SSH config: {e}")
-            argv += ['-o', 'StrictHostKeyChecking=accept-new']
-            logger.debug("Main window: Using default strict host key checking: accept-new")
 
         if known_hosts_path:
             argv += ['-o', f'UserKnownHostsFile={known_hosts_path}']
