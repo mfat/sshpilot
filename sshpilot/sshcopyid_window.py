@@ -864,6 +864,10 @@ class SshCopyIdRunner:
             # Resolve auth once via the single shared resolver so ssh-copy-id
             # authenticates exactly like the terminal and SCP.
             from .ssh_connection_builder import resolve_native_auth
+            # For combined auth (publickey AND password) the key must be in
+            # ssh-agent so its passphrase isn't prompted while sshpass owns the
+            # pty for the password. resolve_native_auth now loads it as part of
+            # committing to the combined path, so no separate preload is needed.
             auth = resolve_native_auth(
                 connection,
                 getattr(self.window, 'connection_manager', None),

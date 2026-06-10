@@ -589,7 +589,18 @@ class Connection:
                     (getattr(self, 'identity_agent_directive', '') or '').strip():
                 return
 
-            for path in (getattr(self, 'resolved_identity_files', []) or []):
+            # Use the cached identities when present, else fall back to the same
+            # discovery the auth resolver uses (collect_identity_file_candidates),
+            # so a fresh, non-terminal caller still preloads the keys the resolver
+            # based its combined-auth decision on.
+            candidates = getattr(self, 'resolved_identity_files', None)
+            if not candidates and hasattr(self, 'collect_identity_file_candidates'):
+                try:
+                    candidates = self.collect_identity_file_candidates()
+                except Exception:
+                    candidates = None
+
+            for path in (candidates or []):
                 try:
                     # Keyring-only: skip keys with no stored passphrase entirely
                     # (no ssh-add) → user gets the natural OS/agent prompt.

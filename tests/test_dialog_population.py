@@ -147,6 +147,46 @@ class TestWriteNothingSkipped:
         assert "Ciphers aes256-gcm@openssh.com" in entry
         assert "Compression yes" in entry
 
+    def test_writes_nonstandard_certificate_names_and_quotes_spaces(self, tmp_path):
+        cm = make_cm(tmp_path / "config")
+        key_one = tmp_path / "alpha key"
+        key_two = tmp_path / "bravo"
+        cert_one = tmp_path / "signed one.pub"
+        cert_two = tmp_path / "not-a-key-cert-name.pub"
+        data = {
+            "nickname": "certs",
+            "hostname": "certs.example.com",
+            "username": "alice",
+            "auth_method": 0,
+            "key_select_mode": 2,
+            "identity_files": [str(key_one), str(key_two)],
+            "certificate_files": [str(cert_one), str(cert_two)],
+        }
+
+        entry = cm.format_ssh_config_entry(data)
+
+        assert f'IdentityFile "{key_one}"' in entry
+        assert f'CertificateFile "{cert_one}"' in entry
+        assert f"CertificateFile {cert_two}" in entry
+        assert entry.count("CertificateFile ") == 2
+
+    def test_legacy_single_certificate_falls_back_to_certificate_files(self, tmp_path):
+        cm = make_cm(tmp_path / "config")
+        cert = tmp_path / "legacy custom name.pub"
+        data = {
+            "nickname": "legacy-cert",
+            "hostname": "legacy.example.com",
+            "auth_method": 0,
+            "key_select_mode": 2,
+            "keyfile": str(tmp_path / "id_ed25519"),
+            "certificate": str(cert),
+        }
+
+        entry = cm.format_ssh_config_entry(data)
+
+        assert f'CertificateFile "{cert}"' in entry
+        assert entry.count("CertificateFile ") == 1
+
     def test_reparse_preserves_all_identityfiles(self, tmp_path):
         """Write a 3-key host, re-parse it, and confirm all 3 survive."""
         cfg = tmp_path / "config"
@@ -165,6 +205,35 @@ class TestWriteNothingSkipped:
             "key_select_mode": 2, "identity_files": c.identity_files,
         })
         assert entry.count("IdentityFile ") == 3
+
+    def test_update_preserves_extra_certificatefiles_when_dialog_sends_primary_only(self, tmp_path):
+        from sshpilot.connection_manager import Connection
+
+        cm = make_cm(tmp_path / "config")
+        conn = Connection({
+            "nickname": "cert-edit",
+            "hostname": "cert-edit.example.com",
+            "auth_method": 0,
+            "key_select_mode": 2,
+            "keyfile": "/h/.ssh/id_ed25519",
+            "identity_files": ["/h/.ssh/id_ed25519"],
+            "certificate": "/h/.ssh/old-primary.pub",
+            "certificate_files": [
+                "/h/.ssh/old-primary.pub",
+                "/h/.ssh/nonstandard-extra.pub",
+            ],
+        })
+        payload = {
+            "certificate": "/h/.ssh/new primary.pub",
+            "keyfile": "/h/.ssh/id_ed25519",
+        }
+
+        cm._preserve_multivalue_on_update(conn, payload)
+
+        assert payload["certificate_files"] == [
+            "/h/.ssh/new primary.pub",
+            "/h/.ssh/nonstandard-extra.pub",
+        ]
 
 
 # ---------------------------------------------------------------------------

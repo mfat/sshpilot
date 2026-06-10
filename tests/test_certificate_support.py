@@ -90,10 +90,15 @@ def test_certificate_support(tmp_path):
     conn = Connection(data)
     asyncio.get_event_loop().run_until_complete(conn.connect())
 
-    assert any(f'CertificateFile={cert_path}' in part for part in conn.ssh_cmd)
+    # Native mode keeps per-host settings in ~/.ssh/config, not on the command
+    # line. The prepared command should stay minimal, while the config writer
+    # emits the certificate directive.
+    assert not any('CertificateFile' in part for part in conn.ssh_cmd)
+    cm = ConnectionManager.__new__(ConnectionManager)
+    entry = cm.format_ssh_config_entry(data)
+    assert f'CertificateFile {cert_path}' in entry
 
     # Verify parsing from SSH config format
-    cm = ConnectionManager.__new__(ConnectionManager)
     parsed = ConnectionManager.parse_host_config(cm, {
         'host': 'cert-test',
         'hostname': 'localhost',
@@ -102,6 +107,7 @@ def test_certificate_support(tmp_path):
         'certificatefile': cert_path,
     })
     assert parsed['certificate'] == cert_path
+    assert parsed['certificate_files'] == [cert_path]
 
     # Ensure updates propagate the certificate field
     conn2 = Connection({'hostname': 'localhost'})
