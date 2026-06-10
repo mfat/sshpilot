@@ -12,6 +12,7 @@
     <file alias="dialog-password-symbolic.svg">icons/scalable/actions/dialog-password-symbolic.svg</file>
     <file alias="dialog-warning-symbolic.svg">icons/scalable/actions/dialog-warning-symbolic.svg</file>
     <file alias="document-edit-symbolic.svg">icons/scalable/actions/document-edit-symbolic.svg</file>
+    <file alias="error-outline-symbolic.svg">icons/scalable/actions/error-outline-symbolic.svg</file>
     <file alias="document-properties-symbolic.svg">icons/scalable/actions/document-properties-symbolic.svg</file>
     <file alias="document-save-symbolic.svg">icons/scalable/actions/document-save-symbolic.svg</file>
     <file alias="document-send-symbolic.svg">icons/scalable/actions/document-send-symbolic.svg</file>
@@ -57,6 +58,7 @@
     <file alias="sidebar-show-symbolic.svg">icons/scalable/actions/sidebar-show-symbolic.svg</file>
     <file alias="terminal-split-horizontal-symbolic.svg">icons/scalable/actions/terminal-split-horizontal.svg</file>
     <file alias="terminal-split-vertical-symbolic.svg">icons/scalable/actions/terminal-split-vertical.svg</file>
+    <file alias="success-small-symbolic.svg">icons/scalable/actions/success-small-symbolic.svg</file>
     <file alias="star-large-symbolic.svg">icons/scalable/actions/star-large-symbolic.svg</file>
     <file alias="play-large-symbolic.svg">icons/scalable/actions/play-large-symbolic.svg</file>
     <file alias="plus-large-symbolic.svg">icons/scalable/actions/plus-large-symbolic.svg</file>

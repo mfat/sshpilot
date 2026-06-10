@@ -1,21 +1,24 @@
-import os
+import atexit
 import logging
-from gettext import gettext as _
-from gi.repository import Gtk, Adw, GLib, Gio
-
-from .key_manager import KeyManager, SSHKey
-from .platform_utils import get_ssh_dir
-from .connection_manager import ConnectionManager, Connection
-from typing import Optional, Tuple
+import os
 import shutil
+from gettext import gettext as _
+from typing import Callable, Optional, Tuple
+
 import gi
+from gi.repository import Adw, GLib, Gio, Gdk, Gtk
+
 try:
     gi.require_version('Vte', '3.91')
     from gi.repository import Vte
 except Exception:
     Vte = None
-from .terminal import TerminalWidget
+
 from .config import Config
+from .connection_manager import Connection, ConnectionManager
+from .key_manager import KeyManager, SSHKey
+from .platform_utils import get_ssh_dir
+from .terminal import TerminalWidget
 from .connection_display import (
     get_connection_alias as _get_connection_alias,
     get_connection_host as _get_connection_host,
@@ -23,6 +26,346 @@ from .connection_display import (
 from .ssh_utils import ensure_writable_ssh_home
 
 logger = logging.getLogger(__name__)
+
+_SSHCOPYID_TERMINAL_CARD_CSS = False
+
+
+def _ensure_sshcopyid_terminal_card_css() -> None:
+    global _SSHCOPYID_TERMINAL_CARD_CSS
+    if _SSHCOPYID_TERMINAL_CARD_CSS:
+        return
+    try:
+        display = Gdk.Display.get_default()
+        if display is None:
+            return
+        provider = Gtk.CssProvider()
+        provider.load_from_data(
+            b'.sshcopyid-terminal-card { overflow: hidden; }'
+        )
+        Gtk.StyleContext.add_provider_for_display(
+            display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+        _SSHCOPYID_TERMINAL_CARD_CSS = True
+    except Exception:
+        logger.debug('ssh-copy-id terminal card CSS unavailable', exc_info=True)
+
+
+_COPYID_FAILURE_MARKERS = (
+    'permission denied',
+    'authentication failed',
+    'connection refused',
+    'operation not permitted',
+    'no such file or directory',
+    'host key verification failed',
+    'failed to install',
+    'failed to copy',
+)
+
+
+def _normalize_child_exit_status(status) -> int:
+    try:
+        value = int(status)
+    except (TypeError, ValueError):
+        return -1
+    try:
+        if os.WIFEXITED(value):
+            return os.WEXITSTATUS(value)
+    except Exception:
+        pass
+    if 0 <= value < 256:
+        return value
+    return (value >> 8) & 0xFF
+
+
+def _read_ssh_copyid_terminal_text(term_widget: TerminalWidget) -> str:
+    vte = getattr(term_widget, 'vte', None)
+    if vte is None:
+        backend = getattr(term_widget, 'backend', None)
+        vte = getattr(backend, 'vte', None) if backend else None
+    # get_text_format() (used by backend.get_content) returns a fragment on
+    # screens that received feed() data before the pty was attached — which
+    # this dialog does — so read an explicit range up to the cursor row.
+    try:
+        if vte is not None and hasattr(vte, 'get_text_range_format'):
+            try:
+                _col, cursor_row = vte.get_cursor_position()
+                end_row = cursor_row + 1
+            except Exception:
+                end_row = vte.get_row_count()
+            content_result = vte.get_text_range_format(
+                Vte.Format.TEXT, 0, 0, end_row, -1,
+            )
+            if content_result and content_result[0]:
+                return content_result[0]
+    except Exception:
+        pass
+    try:
+        backend = getattr(term_widget, 'backend', None)
+        if backend and hasattr(backend, 'get_content'):
+            content = backend.get_content()
+            if content:
+                return content
+    except Exception:
+        pass
+    try:
+        if vte is not None:
+            content_result = vte.get_text_range(0, 0, -1, -1, lambda *args: True)
+            if content_result:
+                return content_result[0] or ''
+    except Exception:
+        pass
+    return ''
+
+
+# ssh-copy-id prints these (unlocalized) on a successful run; failure markers
+# can also appear in successful runs (e.g. a mistyped password the user
+# retried), so a success marker outranks them when the exit code is zero.
+_COPYID_SUCCESS_MARKERS = (
+    'number of key(s) added',
+    'all keys were skipped because they already exist',
+)
+
+
+def _terminal_indicates_copy_failure(text: str) -> bool:
+    lowered = (text or '').lower()
+    return any(marker in lowered for marker in _COPYID_FAILURE_MARKERS)
+
+
+def _terminal_indicates_copy_success(text: str) -> bool:
+    lowered = (text or '').lower()
+    return any(marker in lowered for marker in _COPYID_SUCCESS_MARKERS)
+
+
+def _copyid_run_succeeded(exit_code: int, content: str) -> bool:
+    if exit_code != 0:
+        return False
+    if _terminal_indicates_copy_success(content):
+        return True
+    return not _terminal_indicates_copy_failure(content)
+
+
+# Interactive prompts ssh may print when askpass/sshpass don't cover auth.
+# Only the last non-empty line is checked, so scrollback text such as
+# "Permission denied (publickey,password)." can't false-positive.
+_COPYID_PROMPT_COLON_MARKERS = (
+    'password',
+    'passphrase',
+    'pin',
+    'verification code',
+    'otp',
+)
+_COPYID_PROMPT_INLINE_MARKERS = (
+    '(yes/no',
+    'continue connecting',
+    "please type 'yes'",
+)
+
+
+def _terminal_awaiting_input(text: str) -> bool:
+    lines = [line.strip() for line in (text or '').splitlines()]
+    lines = [line for line in lines if line]
+    if not lines:
+        return False
+    last = lines[-1].lower()
+    if any(marker in last for marker in _COPYID_PROMPT_INLINE_MARKERS):
+        return True
+    if last.endswith(':'):
+        return any(marker in last for marker in _COPYID_PROMPT_COLON_MARKERS)
+    return False
+
+
+def _wrap_sshcopyid_terminal(term_widget: TerminalWidget) -> Gtk.Widget:
+    """Wrap the dialog terminal in an Adwaita card with clipped rounded corners."""
+    _ensure_sshcopyid_terminal_card_css()
+    frame = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+    frame.add_css_class('card')
+    frame.add_css_class('sshcopyid-terminal-card')
+    try:
+        frame.set_overflow(Gtk.Overflow.HIDDEN)
+    except Exception:
+        pass
+    frame.set_hexpand(True)
+    frame.set_vexpand(True)
+    term_widget.set_hexpand(True)
+    term_widget.set_vexpand(True)
+    frame.append(term_widget)
+    return frame
+
+
+def _build_terminal_disclosure(
+    terminal_card: Gtk.Widget,
+    on_expanded_changed: Callable[[bool], None],
+) -> Tuple[Gtk.Widget, Callable[[bool], None], Callable[[], bool]]:
+    """Wrap the terminal card in a revealer with a Show/Hide Terminal toggle."""
+    from . import icon_utils
+
+    revealer = Gtk.Revealer()
+    revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
+    revealer.set_transition_duration(250)
+    revealer.set_reveal_child(False)
+    revealer.set_vexpand(True)
+    revealer.set_child(terminal_card)
+
+    chevron = icon_utils.new_image_from_icon_name('pan-end-symbolic')
+    label = Gtk.Label(label=_('Show Terminal'))
+
+    button_content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+    button_content.append(chevron)
+    button_content.append(label)
+
+    toggle = Gtk.ToggleButton()
+    toggle.add_css_class('flat')
+    toggle.set_child(button_content)
+    toggle.set_halign(Gtk.Align.CENTER)
+
+    def _on_toggled(button):
+        expanded = bool(button.get_active())
+        revealer.set_reveal_child(expanded)
+        label.set_label(_('Hide Terminal') if expanded else _('Show Terminal'))
+        try:
+            icon_utils.set_icon_from_name(
+                chevron,
+                'pan-down-symbolic' if expanded else 'pan-end-symbolic',
+            )
+        except Exception:
+            pass
+        try:
+            on_expanded_changed(expanded)
+        except Exception:
+            logger.debug('ssh-copy-id terminal disclosure callback failed', exc_info=True)
+
+    toggle.connect('toggled', _on_toggled)
+
+    box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+    box.append(toggle)
+    box.append(revealer)
+
+    def set_expanded(expanded: bool) -> None:
+        toggle.set_active(bool(expanded))
+
+    def is_expanded() -> bool:
+        return bool(toggle.get_active())
+
+    return box, set_expanded, is_expanded
+
+
+def _build_copy_progress_row(
+    pub_name: str,
+    target: str,
+) -> Tuple[
+    Gtk.Widget,
+    Callable[[], bool],
+    Callable[[], None],
+    Callable[[], None],
+    Callable[[], None],
+]:
+    """Build spinner + status label row for the ssh-copy-id progress dialog."""
+    from . import icon_utils
+
+    key_name = pub_name or _('selected')
+    copying_text = _('Copying key {name} to {target}').format(
+        name=key_name,
+        target=target,
+    )
+    copied_text = _('Copied key {name} to {target}').format(
+        name=key_name,
+        target=target,
+    )
+    failed_text = _('Failed to copy key {name} to {target}').format(
+        name=key_name,
+        target=target,
+    )
+
+    row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+    row.set_halign(Gtk.Align.CENTER)
+    row.set_margin_top(4)
+    row.set_margin_bottom(8)
+
+    icon_slot = Gtk.Stack()
+    icon_slot.set_halign(Gtk.Align.CENTER)
+    icon_slot.set_valign(Gtk.Align.CENTER)
+    icon_slot.set_size_request(20, 20)
+
+    spinner = Gtk.Spinner()
+    spinner.set_size_request(20, 20)
+
+    success_icon = icon_utils.new_image_from_icon_name('success-small-symbolic')
+    success_icon.set_pixel_size(20)
+    try:
+        success_icon.add_css_class('success')
+    except Exception:
+        pass
+
+    error_icon = icon_utils.new_image_from_icon_name('error-outline-symbolic')
+    error_icon.set_pixel_size(20)
+    try:
+        error_icon.add_css_class('error')
+    except Exception:
+        pass
+
+    icon_slot.add_named(spinner, 'spinner')
+    icon_slot.add_named(success_icon, 'success')
+    icon_slot.add_named(error_icon, 'error')
+    icon_slot.set_visible_child_name('spinner')
+
+    label = Gtk.Label(label=copying_text)
+    label.set_halign(Gtk.Align.START)
+    label.set_valign(Gtk.Align.CENTER)
+    label.set_wrap(True)
+
+    row.append(icon_slot)
+    row.append(label)
+
+    def start() -> bool:
+        try:
+            spinner.set_spinning(True)
+            spinner.start()
+        except Exception:
+            pass
+        return False
+
+    def stop() -> None:
+        try:
+            spinner.set_spinning(False)
+            spinner.stop()
+            spinner.set_visible(False)
+        except Exception:
+            pass
+
+    def _set_status_style(style_class: str) -> None:
+        for css_class in ('dim-label', 'success', 'error'):
+            try:
+                label.remove_css_class(css_class)
+            except Exception:
+                pass
+        try:
+            label.add_css_class(style_class)
+        except Exception:
+            pass
+
+    def mark_success() -> None:
+        try:
+            spinner.set_spinning(False)
+            spinner.stop()
+            icon_slot.set_visible_child_name('success')
+            label.set_label(copied_text)
+            _set_status_style('success')
+        except Exception:
+            pass
+
+    def mark_failure() -> None:
+        try:
+            spinner.set_spinning(False)
+            spinner.stop()
+            icon_slot.set_visible_child_name('error')
+            label.set_label(failed_text)
+            _set_status_style('error')
+        except Exception:
+            pass
+
+    spinner.connect('map', lambda *_: spinner.start())
+
+    return row, start, stop, mark_success, mark_failure
 
 
 def _ssh_key_from_public_path(path: str) -> SSHKey:
@@ -740,19 +1083,20 @@ class SshCopyIdRunner:
         return None
 
     def run(self, connection, ssh_key, force=False):
-        """Show a window with header bar and embedded terminal running ssh-copy-id.
-
-        Requirements:
-        - Terminal expands horizontally, no borders around it
-        - Header bar contains Cancel and Close buttons
-        """
+        """Show an Adw window with embedded terminal running ssh-copy-id."""
         logger.info("Main window: Starting ssh-copy-id terminal window creation")
         host_value = _get_connection_host(connection) or _get_connection_alias(connection)
-        logger.debug(f"Main window: Connection details - host: {host_value}, "
-                    f"username: {getattr(connection, 'username', 'unknown')}, "
-                    f"port: {getattr(connection, 'port', 22)}")
-        logger.debug(f"Main window: SSH key details - private_path: {getattr(ssh_key, 'private_path', 'unknown')}, "
-                    f"public_path: {getattr(ssh_key, 'public_path', 'unknown')}")
+        logger.debug(
+            "Main window: Connection details - host: %s, username: %s, port: %s",
+            host_value,
+            getattr(connection, 'username', 'unknown'),
+            getattr(connection, 'port', 22),
+        )
+        logger.debug(
+            "Main window: SSH key details - private_path: %s, public_path: %s",
+            getattr(ssh_key, 'private_path', 'unknown'),
+            getattr(ssh_key, 'public_path', 'unknown'),
+        )
 
         try:
             preflight_error = self._preflight(connection, ssh_key)
@@ -761,135 +1105,161 @@ class SshCopyIdRunner:
                 self.window._error_dialog(_("SSH Key Copy Error"), heading, body)
                 return
 
-            target = f"{connection.username}@{host_value}" if getattr(connection, 'username', '') else host_value
+            target = (
+                f"{connection.username}@{host_value}"
+                if getattr(connection, 'username', '')
+                else host_value
+            )
             pub_name = os.path.basename(getattr(ssh_key, 'public_path', '') or '')
-            body_text = _('This will add your public key to the server\'s ~/.ssh/authorized_keys so future logins can use SSH keys.')
-            logger.debug(f"Main window: Target: {target}, public key name: {pub_name}")
+            logger.debug("Main window: Target: %s, public key name: %s", target, pub_name)
 
-            dlg = Adw.Window()
-            dlg.set_transient_for(self.window)
-            dlg.set_modal(True)
-            logger.debug("Main window: Created modal window")
-            try:
-                dlg.set_title(_('ssh-copy-id'))
-            except Exception:
-                pass
-            try:
-                dlg.set_default_size(920, 520)
-            except Exception:
-                pass
+            dlg = Adw.Dialog.new()
+            dlg.set_title(_('ssh-copy-id'))
+            # Track the content's natural size so the dialog grows/shrinks
+            # with the terminal revealer animation.
+            dlg.set_follows_content_size(True)
 
-            # Header bar with Cancel
+            toolbar = Adw.ToolbarView()
+            dlg.set_child(toolbar)
+
             header = Adw.HeaderBar()
-            title_widget = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-            title_label = Gtk.Label(label=_('ssh-copy-id'))
-            title_label.set_halign(Gtk.Align.START)
-            subtitle_label = Gtk.Label(label=_('Copying {key} to {target}').format(key=pub_name or _('selected key'), target=target))
-            subtitle_label.set_halign(Gtk.Align.START)
-            try:
-                title_label.add_css_class('title-2')
-                subtitle_label.add_css_class('dim-label')
-            except Exception:
-                pass
-            title_widget.append(title_label)
-            title_widget.append(subtitle_label)
-            header.set_title_widget(title_widget)
+            header.set_show_end_title_buttons(False)
+            header.set_title_widget(Gtk.Label(label=_('ssh-copy-id')))
 
-            # Close button is omitted; window has native close (X)
+            copyid_exit_state = {
+                'finished': False,
+                'handler_id': None,
+                'prompt_poll_id': None,
+            }
 
-            # Content: TerminalWidget without connecting spinner/banner
-            content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-            content_box.set_hexpand(True)
-            content_box.set_vexpand(True)
-            try:
-                content_box.set_margin_top(12)
-                content_box.set_margin_bottom(12)
-                content_box.set_margin_start(6)
-                content_box.set_margin_end(6)
-            except Exception:
-                pass
-            # Optional info text under header bar
-            info_lbl = Gtk.Label(label=body_text)
-            info_lbl.set_halign(Gtk.Align.START)
-            try:
-                info_lbl.add_css_class('dim-label')
-                info_lbl.set_wrap(True)
-            except Exception:
-                pass
-            content_box.append(info_lbl)
+            def _stop_prompt_poller() -> None:
+                poll_id = copyid_exit_state.get('prompt_poll_id')
+                if poll_id is None:
+                    return
+                copyid_exit_state['prompt_poll_id'] = None
+                try:
+                    GLib.source_remove(poll_id)
+                except Exception:
+                    pass
 
-            term_widget = TerminalWidget(connection, self.window.config, self.window.connection_manager)
-            # Hide connecting overlay and suppress disconnect banner for this non-SSH task
-            try:
-                term_widget._set_connecting_overlay_visible(False)
-                setattr(term_widget, '_suppress_disconnect_banner', True)
-                term_widget._set_disconnected_banner_visible(False)
-            except Exception:
-                pass
-            term_widget.set_hexpand(True)
-            term_widget.set_vexpand(True)
-            # No frame: avoid borders around the terminal
-            content_box.append(term_widget)
-
-            # Bottom button area with Close button
-            button_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-            button_box.set_halign(Gtk.Align.END)
-            button_box.set_margin_top(12)
-
-            cancel_btn = Gtk.Button(label=_('Close'))
-            try:
-                cancel_btn.add_css_class('suggested-action')
-            except Exception:
-                pass
-            button_box.append(cancel_btn)
-
-            content_box.append(button_box)
-
-            # Root container combines header and content
-            root_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-            root_box.append(header)
-            root_box.append(content_box)
-            dlg.set_content(root_box)
-
-            def _on_cancel(btn):
+            def _on_dialog_closed(*_args):
+                # Closing the dialog (Cancel/Close button or Esc) kills the
+                # child below, which still fires child-exited; mark the run
+                # finished first so cancellation isn't reported as a failure.
+                copyid_exit_state['finished'] = True
+                _stop_prompt_poller()
+                stop_copy_spinner()
                 try:
                     if hasattr(term_widget, 'disconnect'):
                         term_widget.disconnect()
                 except Exception:
                     pass
-                dlg.close()
-            cancel_btn.connect('clicked', _on_cancel)
-            # No explicit close button; use window close (X)
 
-            # Resolve auth once via the single shared resolver so ssh-copy-id
-            # authenticates exactly like the terminal and SCP.
+            dlg.connect('closed', _on_dialog_closed)
+
+            def _close_window(*_args):
+                dlg.close()
+
+            cancel_btn = Gtk.Button(label=_('Cancel'))
+            cancel_btn.connect('clicked', _close_window)
+            header.pack_start(cancel_btn)
+
+            close_btn = Gtk.Button(label=_('Close'))
+            close_btn.add_css_class('suggested-action')
+            close_btn.connect('clicked', _close_window)
+            header.pack_end(close_btn)
+
+            toolbar.add_top_bar(header)
+
+            content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+            content_box.set_hexpand(True)
+            content_box.set_vexpand(True)
+            # Constant natural width so toggling the terminal only changes
+            # height; VTE reflows its columns to whatever width it gets.
+            content_box.set_size_request(560, -1)
+            content_box.set_margin_top(12)
+            content_box.set_margin_bottom(12)
+            content_box.set_margin_start(12)
+            content_box.set_margin_end(12)
+
+            (
+                progress_row,
+                start_copy_spinner,
+                stop_copy_spinner,
+                mark_copy_success,
+                mark_copy_failure,
+            ) = _build_copy_progress_row(pub_name, target)
+            content_box.append(progress_row)
+
+            term_widget = TerminalWidget(
+                connection,
+                self.window.config,
+                self.window.connection_manager,
+            )
+            try:
+                term_widget._set_connecting_overlay_visible(False)
+                setattr(term_widget, '_suppress_disconnect_banner', True)
+                setattr(term_widget, '_suppress_connection_exit_handling', True)
+                term_widget._set_disconnected_banner_visible(False)
+            except Exception:
+                pass
+            terminal_card = _wrap_sshcopyid_terminal(term_widget)
+            # VTE's natural height is tiny; give the expanded card a real one.
+            terminal_card.set_size_request(-1, 260)
+
+            def _focus_terminal_input() -> bool:
+                try:
+                    if hasattr(term_widget, 'vte') and term_widget.vte:
+                        term_widget.vte.grab_focus()
+                    else:
+                        term_widget.grab_focus()
+                except Exception:
+                    pass
+                return False
+
+            def _on_terminal_expanded_changed(expanded: bool) -> None:
+                if not expanded:
+                    return
+                # First expansion (manual or auto) ends prompt watching.
+                _stop_prompt_poller()
+                if not copyid_exit_state['finished']:
+                    GLib.idle_add(_focus_terminal_input)
+
+            (
+                terminal_disclosure,
+                set_terminal_expanded,
+                terminal_is_expanded,
+            ) = _build_terminal_disclosure(terminal_card, _on_terminal_expanded_changed)
+            content_box.append(terminal_disclosure)
+
+            toolbar.set_content(content_box)
+
+            from .scp_utils import _apply_native_auth_env
             from .ssh_connection_builder import resolve_native_auth
-            # For combined auth (publickey AND password) the key must be in
-            # ssh-agent so its passphrase isn't prompted while sshpass owns the
-            # pty for the password. resolve_native_auth now loads it as part of
-            # committing to the combined path, so no separate preload is needed.
+            from .ssh_password_exec import wrap_argv_with_sshpass
+
             auth = resolve_native_auth(
                 connection,
                 getattr(self.window, 'connection_manager', None),
                 getattr(self.window, 'config', None),
             )
 
-            # Build ssh-copy-id command with options derived from connection settings
-            logger.debug("Main window: Building ssh-copy-id command arguments")
+            known_hosts_path = None
+            manager = getattr(self.window, 'connection_manager', None)
+            if manager is not None:
+                known_hosts_path = getattr(manager, 'known_hosts_path', None)
+
             argv = self._build_argv(
                 connection,
                 ssh_key,
                 force,
-                known_hosts_path=self.window.connection_manager.known_hosts_path,
+                known_hosts_path=known_hosts_path,
                 auth=auth,
             )
             cmdline = ' '.join([GLib.shell_quote(a) for a in argv])
             logger.info("Starting ssh-copy-id: %s", ' '.join(argv))
-            logger.info("Full command line: %s", cmdline)
-            logger.debug(f"Main window: Command argv: {argv}")
-            logger.debug(f"Main window: Shell-quoted command: {cmdline}")
+            logger.debug("Main window: Shell-quoted command: %s", cmdline)
 
-            # Helper to write colored lines into the terminal
             def _feed_colored_line(text: str, color: str):
                 colors = {
                     'red': '\x1b[31m',
@@ -900,70 +1270,47 @@ class SshCopyIdRunner:
                 prefix = colors.get(color, '')
                 try:
                     if hasattr(term_widget, 'backend') and term_widget.backend:
-                        term_widget.backend.feed(("\r\n" + prefix + text + "\x1b[0m\r\n").encode('utf-8'))
+                        term_widget.backend.feed(
+                            ("\r\n" + prefix + text + "\x1b[0m\r\n").encode('utf-8')
+                        )
                     elif hasattr(term_widget, 'vte') and term_widget.vte:
-                        term_widget.vte.feed(("\r\n" + prefix + text + "\x1b[0m\r\n").encode('utf-8'))
+                        term_widget.vte.feed(
+                            ("\r\n" + prefix + text + "\x1b[0m\r\n").encode('utf-8')
+                        )
                 except Exception:
                     pass
 
-            # Initial info line
             _feed_colored_line(_('Running ssh-copy-id…'), 'yellow')
-
-            # Apply the resolved auth: env (askpass/keyring or none), any extra
-            # opts (before the target), and sshpass for a stored password. This is
-            # the single shared auth path (same as terminal + SCP).
-            logger.debug("Main window: Applying resolved auth to ssh-copy-id env/argv")
-            from .scp_utils import _apply_native_auth_env
-            from .ssh_password_exec import wrap_argv_with_sshpass
 
             env = os.environ.copy()
             _apply_native_auth_env(env, auth)
             if auth.extra_opts:
-                # ssh-copy-id requires -o options before the target.
                 argv[-1:-1] = auth.extra_opts
             if auth.use_sshpass and auth.password:
                 argv, _sshpass_cleanup = wrap_argv_with_sshpass(argv, auth.password, env=env)
-                import atexit
                 atexit.register(_sshpass_cleanup)
             logger.debug(
                 "Main window: ssh-copy-id auth (askpass=%s, sshpass=%s)",
-                auth.use_askpass, auth.use_sshpass,
+                auth.use_askpass,
+                auth.use_sshpass,
             )
 
             ensure_writable_ssh_home(env)
 
-            # Ensure /app/bin is first in PATH for Flatpak compatibility
-            logger.debug("Main window: Setting up PATH for Flatpak compatibility")
             if os.path.exists('/app/bin'):
                 current_path = env.get('PATH', '')
-                logger.debug(f"Main window: Current PATH: {current_path}")
                 if '/app/bin' not in current_path:
                     env['PATH'] = f"/app/bin:{current_path}"
-                    logger.debug(f"Main window: Updated PATH: {env['PATH']}")
-                else:
-                    logger.debug("Main window: /app/bin already in PATH")
-            else:
-                logger.debug("Main window: /app/bin does not exist, skipping PATH modification")
 
             cmdline = ' '.join([GLib.shell_quote(a) for a in argv])
-            logger.info("Starting ssh-copy-id: %s", ' '.join(argv))
-            logger.debug(f"Main window: Final command line: {cmdline}")
             envv = [f"{k}={v}" for k, v in env.items()]
-            logger.debug(f"Main window: Environment variables count: {len(envv)}")
+            env_dict = {}
+            for env_item in envv:
+                if '=' in env_item:
+                    key, value = env_item.split('=', 1)
+                    env_dict[key] = value
 
             try:
-                logger.debug("Main window: Spawning ssh-copy-id process in terminal")
-                logger.debug(f"Main window: Working directory: {os.path.expanduser('~') or '/'}")
-                logger.debug(f"Main window: Command: ['bash', '-lc', '{cmdline}']")
-
-                # Convert envv to dict for backend
-                env_dict = {}
-                if envv:
-                    for env_item in envv:
-                        if '=' in env_item:
-                            key, value = env_item.split('=', 1)
-                            env_dict[key] = value
-
                 if hasattr(term_widget, 'backend') and term_widget.backend:
                     term_widget.backend.spawn_async(
                         argv=['bash', '-lc', cmdline],
@@ -972,144 +1319,187 @@ class SshCopyIdRunner:
                         flags=0,
                         child_setup=None,
                         callback=None,
-                        user_data=None
+                        user_data=None,
                     )
                 elif hasattr(term_widget, 'vte') and term_widget.vte:
                     term_widget.vte.spawn_async(
                         Vte.PtyFlags.DEFAULT,
                         os.path.expanduser('~') or '/',
                         ['bash', '-lc', cmdline],
-                        envv,  # <— use merged env
+                        envv,
                         GLib.SpawnFlags.DEFAULT,
                         None,
                         None,
                         -1,
                         None,
-                        None
+                        None,
                     )
                 logger.debug("Main window: ssh-copy-id process spawned successfully")
 
-                # Show result modal when the command finishes
-                def _on_copyid_exited(widget, status):
-                    logger.debug(f"Main window: ssh-copy-id process exited with raw status: {status}")
-                    # Normalize exit code
-                    exit_code = None
+                def _disconnect_copyid_exit_handler() -> None:
+                    handler_id = copyid_exit_state.get('handler_id')
+                    if handler_id is None:
+                        return
                     try:
-                        if os.WIFEXITED(status):
-                            exit_code = os.WEXITSTATUS(status)
-                            logger.debug(f"Main window: Process exited normally, exit code: {exit_code}")
-                        else:
-                            exit_code = status if 0 <= int(status) < 256 else ((int(status) >> 8) & 0xFF)
-                            logger.debug(f"Main window: Process did not exit normally, normalized exit code: {exit_code}")
-                    except Exception as e:
-                        logger.debug(f"Main window: Error normalizing exit status: {e}")
-                        try:
-                            exit_code = int(status)
-                            logger.debug(f"Main window: Converted status to int: {exit_code}")
-                        except Exception as e2:
-                            logger.debug(f"Main window: Failed to convert status to int: {e2}")
-                            exit_code = status
+                        if hasattr(term_widget, 'backend') and term_widget.backend:
+                            term_widget.backend.disconnect(handler_id)
+                        elif hasattr(term_widget, 'vte') and term_widget.vte:
+                            term_widget.vte.disconnect(handler_id)
+                    except Exception:
+                        pass
+                    copyid_exit_state['handler_id'] = None
 
-                    logger.info(f"ssh-copy-id exited with status: {status}, normalized exit_code: {exit_code}")
+                def _finish_ssh_copy_id(status) -> bool:
+                    if copyid_exit_state['finished']:
+                        return False
+                    copyid_exit_state['finished'] = True
+                    _stop_prompt_poller()
+                    _disconnect_copyid_exit_handler()
 
-                    # Simple verification: just check exit code like default ssh-copy-id
-                    ok = (exit_code == 0)
+                    exit_code = _normalize_child_exit_status(status)
+                    content = _read_ssh_copyid_terminal_text(term_widget)
+                    content_failed = _terminal_indicates_copy_failure(content)
+                    content_succeeded = _terminal_indicates_copy_success(content)
+                    ok = _copyid_run_succeeded(exit_code, content)
 
-                    # Get error details from output if failed
+                    logger.info(
+                        "ssh-copy-id exited with status: %s, normalized exit_code: %s, "
+                        "content_failure=%s, content_success=%s, ok=%s",
+                        status,
+                        exit_code,
+                        content_failed,
+                        content_succeeded,
+                        ok,
+                    )
+
                     error_details = None
                     if not ok:
-                        try:
-                            content = None
-                            backend = getattr(term_widget, 'backend', None)
-                            if backend and hasattr(backend, 'get_content'):
-                                content = backend.get_content()
-                            if content is None and hasattr(term_widget, 'vte') and term_widget.vte:
-                                content_result = term_widget.vte.get_text_range(
-                                    0,
-                                    0,
-                                    -1,
-                                    -1,
-                                    lambda *args: True,
-                                )
-                                content = content_result[0] if content_result else None
-                            if content:
-                                # Look for common error patterns in the output
-                                content_lower = content.lower()
-                                if 'permission denied' in content_lower:
-                                    error_details = 'Permission denied - check user credentials and server permissions'
-                                elif 'connection refused' in content_lower:
-                                    error_details = 'Connection refused - check server address and SSH service'
-                                elif 'authentication failed' in content_lower:
-                                    error_details = 'Authentication failed - check username and password/key'
-                                elif 'no such file or directory' in content_lower:
-                                    error_details = 'File not found - check if SSH directory exists on server'
-                                elif 'operation not permitted' in content_lower:
-                                    error_details = 'Operation not permitted - check server permissions'
-                                else:
-                                    # Extract the last few lines of output for context
-                                    stripped_content = content.strip() if content else ''
-                                    lines = stripped_content.split('\n') if stripped_content else []
-                                    if lines:
-                                        error_details = f"Error details: {lines[-1]}"
-                        except Exception as e:
-                            logger.debug(f"Main window: Error extracting error details: {e}")
+                        content_lower = content.lower()
+                        if 'permission denied' in content_lower:
+                            error_details = (
+                                'Permission denied - check user credentials '
+                                'and server permissions'
+                            )
+                        elif 'connection refused' in content_lower:
+                            error_details = (
+                                'Connection refused - check server address '
+                                'and SSH service'
+                            )
+                        elif 'authentication failed' in content_lower:
+                            error_details = (
+                                'Authentication failed - check username and password/key'
+                            )
+                        elif 'no such file or directory' in content_lower:
+                            error_details = (
+                                'File not found - check if SSH directory exists on server'
+                            )
+                        elif 'operation not permitted' in content_lower:
+                            error_details = (
+                                'Operation not permitted - check server permissions'
+                            )
+                        else:
+                            lines = [
+                                line for line in content.strip().split('\n') if line
+                            ]
+                            if lines:
+                                error_details = f"Error details: {lines[-1]}"
 
                     if ok:
-                        logger.info("ssh-copy-id completed successfully")
-                        logger.debug("Main window: ssh-copy-id succeeded, showing success message")
+                        mark_copy_success()
                         _feed_colored_line(_('Public key was installed successfully.'), 'green')
                     else:
-                        logger.error(f"ssh-copy-id failed with exit code: {exit_code}")
-                        logger.debug(f"Main window: ssh-copy-id failed with exit code {exit_code}")
+                        mark_copy_failure()
                         _feed_colored_line(_('Failed to install the public key.'), 'red')
                         if error_details:
                             _feed_colored_line(error_details, 'red')
+                        # Reveal the error output behind the alert dialog.
+                        set_terminal_expanded(True)
 
-                    def _present_result_dialog():
-                        logger.debug(f"Main window: Presenting result dialog - success: {ok}")
+                    if ok:
+                        # The progress row and terminal already show success;
+                        # an alert on top would be redundant.
+                        return False
+
+                    heading = _('Error')
+                    body = _(
+                        'Failed to copy the public key. '
+                        'Check logs for details.'
+                    )
+                    if hasattr(Adw, 'AlertDialog'):
+                        msg = Adw.AlertDialog(heading=heading, body=body)
+                        msg.add_response('ok', _('OK'))
+                        msg.set_default_response('ok')
+                        msg.set_close_response('ok')
+                        msg.present(dlg)
+                    else:
                         msg = Adw.MessageDialog(
-                            transient_for=dlg,
+                            transient_for=self.window,
                             modal=True,
-                            heading=_('Success') if ok else _('Error'),
-                            body=(_('Public key copied to {}@{}').format(connection.username, host_value)
-                                  if ok else _('Failed to copy the public key. Check logs for details.')),
+                            heading=heading,
+                            body=body,
                         )
                         msg.add_response('ok', _('OK'))
                         msg.set_default_response('ok')
                         msg.set_close_response('ok')
                         msg.present()
-                        logger.debug("Main window: Result dialog presented")
-                        return False
+                    return False
 
-                    GLib.idle_add(_present_result_dialog)
+                def _on_copyid_exited(widget, status):
+                    GLib.idle_add(_finish_ssh_copy_id, status)
 
-                try:
-                    # Connect child-exited signal using backend
-                    if hasattr(term_widget, 'backend') and term_widget.backend:
+                if hasattr(term_widget, 'backend') and term_widget.backend:
+                    copyid_exit_state['handler_id'] = (
                         term_widget.backend.connect_child_exited(_on_copyid_exited)
-                    elif hasattr(term_widget, 'vte') and term_widget.vte:
-                        term_widget.vte.connect('child-exited', _on_copyid_exited)
-                except Exception:
-                    pass
+                    )
+                elif hasattr(term_widget, 'vte') and term_widget.vte:
+                    copyid_exit_state['handler_id'] = term_widget.vte.connect(
+                        'child-exited', _on_copyid_exited,
+                    )
+
+                def _poll_for_prompt() -> bool:
+                    if copyid_exit_state['finished'] or terminal_is_expanded():
+                        copyid_exit_state['prompt_poll_id'] = None
+                        return GLib.SOURCE_REMOVE
+                    content = _read_ssh_copyid_terminal_text(term_widget)
+                    if _terminal_awaiting_input(content):
+                        copyid_exit_state['prompt_poll_id'] = None
+                        set_terminal_expanded(True)
+                        return GLib.SOURCE_REMOVE
+                    return GLib.SOURCE_CONTINUE
+
+                copyid_exit_state['prompt_poll_id'] = GLib.timeout_add(
+                    400, _poll_for_prompt,
+                )
             except Exception as e:
-                logger.error(f'Failed to spawn ssh-copy-id in TerminalWidget: {e}')
-                logger.debug(f'Main window: Exception details: {type(e).__name__}: {str(e)}')
+                logger.error('Failed to spawn ssh-copy-id in TerminalWidget: %s', e)
                 dlg.close()
-                # No fallback method available
-                logger.error(f'Terminal ssh-copy-id failed: {e}')
-                self.window._error_dialog(_("SSH Key Copy Error"),
-                                  _("Failed to copy SSH key to server."), 
-                                  f"Terminal error: {str(e)}\n\nPlease check:\n• Network connectivity\n• SSH server configuration\n• User permissions")
+                self.window._error_dialog(
+                    _("SSH Key Copy Error"),
+                    _("Failed to copy SSH key to server."),
+                    (
+                        f"Terminal error: {str(e)}\n\nPlease check:\n"
+                        "• Network connectivity\n"
+                        "• SSH server configuration\n"
+                        "• User permissions"
+                    ),
+                )
                 return
 
-            dlg.present()
-            logger.debug("Main window: ssh-copy-id terminal window presented successfully")
+            dlg.present(self.window)
+            GLib.idle_add(start_copy_spinner)
+            logger.debug("Main window: ssh-copy-id dialog presented successfully")
         except Exception as e:
-            logger.error(f'VTE ssh-copy-id window failed: {e}')
-            logger.debug(f'Main window: Exception details: {type(e).__name__}: {str(e)}')
-            self.window._error_dialog(_("SSH Key Copy Error"),
-                              _("Failed to create ssh-copy-id terminal window."), 
-                              f"Error: {str(e)}\n\nThis could be due to:\n• Missing VTE terminal widget\n• Display/GTK issues\n• System resource limitations")
+            logger.error('VTE ssh-copy-id window failed: %s', e)
+            self.window._error_dialog(
+                _("SSH Key Copy Error"),
+                _("Failed to create ssh-copy-id terminal window."),
+                (
+                    f"Error: {str(e)}\n\nThis could be due to:\n"
+                    "• Missing VTE terminal widget\n"
+                    "• Display/GTK issues\n"
+                    "• System resource limitations"
+                ),
+            )
 
 
     def _build_argv(
@@ -1142,43 +1532,31 @@ class SshCopyIdRunner:
             raise RuntimeError(f"Public key file not found: {ssh_key.public_path}")
         
         logger.debug(f"Main window: Public key file verified: {ssh_key.public_path}")
-        argv = ['ssh-copy-id']
-        
+
+        # Shared command prefix via the single option builder (same one the SCP
+        # paths use): app-level -o options, strict-host policy, port and
+        # ClearAllForwardings. The builder skips flags ssh-copy-id can't take
+        # (-v/-C/-A/BatchMode) and never injects IdentityFile for it, so the
+        # operation authenticates with the key being copied.
+        from .ssh_connection_builder import _build_base_ssh_command
+        from .ssh_config_utils import get_effective_ssh_config
+
+        try:
+            effective_config = get_effective_ssh_config(host_value) if host_value else {}
+        except Exception:
+            effective_config = {}
+        app_cfg = getattr(self.window, 'config', None)
+        if app_cfg is None:
+            app_cfg = Config()
+        argv = _build_base_ssh_command(connection, effective_config, app_cfg, 'ssh-copy-id')
+
         # Add force option if enabled
         if force:
             argv.append('-f')
             logger.debug("Main window: Added force option (-f) to ssh-copy-id")
-        
+
         argv.extend(['-i', ssh_key.public_path])
         logger.debug(f"Main window: Base command: {argv}")
-        try:
-            port = getattr(connection, 'port', 22)
-            logger.debug(f"Main window: Connection port: {port}")
-            if port and port != 22:
-                argv += ['-p', str(connection.port)]
-                logger.debug(f"Main window: Added port option: -p {connection.port}")
-        except Exception as e:
-            logger.debug(f"Main window: Error getting port: {e}")
-            pass
-        # Honor app SSH settings: strict host key checking / auto-add
-        logger.debug("Main window: Loading SSH configuration")
-        try:
-            cfg = Config()
-            ssh_cfg = cfg.get_ssh_config() if hasattr(cfg, 'get_ssh_config') else {}
-            logger.debug(f"Main window: SSH config: {ssh_cfg}")
-            strict_val = str(ssh_cfg.get('strict_host_key_checking', '') or '').strip()
-            auto_add = bool(ssh_cfg.get('auto_add_host_keys', True))
-            logger.debug(f"Main window: SSH settings - strict_val='{strict_val}', auto_add={auto_add}")
-            if strict_val:
-                argv += ['-o', f'StrictHostKeyChecking={strict_val}']
-                logger.debug(f"Main window: Added strict host key checking: {strict_val}")
-            elif auto_add:
-                argv += ['-o', 'StrictHostKeyChecking=accept-new']
-                logger.debug("Main window: Added auto-accept new host keys")
-        except Exception as e:
-            logger.debug(f"Main window: Error loading SSH config: {e}")
-            argv += ['-o', 'StrictHostKeyChecking=accept-new']
-            logger.debug("Main window: Using default strict host key checking: accept-new")
 
         if known_hosts_path:
             argv += ['-o', f'UserKnownHostsFile={known_hosts_path}']

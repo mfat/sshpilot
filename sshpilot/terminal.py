@@ -3892,7 +3892,13 @@ class TerminalWidget(Gtk.Box):
         if getattr(self, '_is_quitting', False):
             logger.debug("Terminal is quitting, skipping child exit handler")
             return
-            
+
+        # Embedded one-shot command UIs (e.g. ssh-copy-id dialog) handle exit
+        # themselves and must not run connection teardown side effects here.
+        if getattr(self, '_suppress_connection_exit_handling', False):
+            logger.debug("Skipping connection exit handling for embedded command terminal")
+            return
+
         logger.debug(f"Terminal child exited with status: {status}")
         
         # Defer the heavy work to avoid blocking the signal handler

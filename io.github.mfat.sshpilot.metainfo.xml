@@ -60,6 +60,13 @@
 
 
 
+    <release version="5.2.8" date="2026-06-10">
+      <description>
+        <p>Updated ssh-copy-id dialog</p>
+        <p>Fixes macOS keychain prompting repeatedly</p>
+        <p>Minor UI improvements and bug fixes</p>
+      </description>
+    </release>
     <release version="5.2.7" date="2026-06-10">
       <description>
         <p>Bug fixes</p>

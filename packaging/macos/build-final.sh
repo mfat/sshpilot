@@ -129,10 +129,6 @@ export USER="$USER"
 export LOGNAME="$USER"
 export SHELL="/bin/bash"
 
-# Ensure the app can access the user's keychain
-# This is important for macOS keychain access
-export KEYCHAIN_ACCESS_GROUP="*"
-
 # Set up XDG directories for keyring
 export XDG_CONFIG_HOME="$HOME/.config"
 export XDG_DATA_HOME="$HOME/.local/share"
@@ -199,6 +195,13 @@ if [ ! -d "$BUNDLE_PATH" ]; then
 fi
 
 echo -e "${GREEN}App bundle created successfully at: $BUNDLE_PATH${NC}"
+
+# Ad-hoc codesign so macOS can match the bundle's identity across launches,
+# preventing repeated keychain authorization prompts.
+echo -e "${GREEN}Ad-hoc code signing bundle...${NC}"
+codesign --force --deep --sign - "$BUNDLE_PATH" \
+    && echo -e "${GREEN}Bundle signed successfully${NC}" \
+    || echo -e "${YELLOW}Warning: codesign failed (non-fatal — keychain prompts may still appear)${NC}"
 
 # Run tests
 echo -e "${GREEN}Running bundle tests...${NC}"

@@ -450,7 +450,13 @@ def _build_base_ssh_command(
         cmd = ['ssh-copy-id']
     else:
         cmd = ['ssh']
-    
+
+    # ssh-copy-id is a shell script with a restricted option set (-i/-p/-o/-f/
+    # -n/-s/-x): it rejects flags ssh/scp/sftp share (-v, -C, -A), its -i names
+    # the key being COPIED rather than an authentication identity, and BatchMode
+    # would defeat its interactive purpose (first login usually needs a prompt).
+    is_copy_id = (command_type == 'ssh-copy-id')
+
     # Get app-level SSH settings
     app_ssh_config = {}
     if app_config:
@@ -458,18 +464,18 @@ def _build_base_ssh_command(
             app_ssh_config = app_config.get_ssh_config() if hasattr(app_config, 'get_ssh_config') else {}
         except Exception:
             pass
-    
+
     # Apply app-level overrides (verbosity, compression, etc.)
     verbosity = int(app_ssh_config.get('verbosity', 0) or 0)
-    if verbosity > 0:
+    if verbosity > 0 and not is_copy_id:
         for _ in range(min(verbosity, 3)):
             cmd.append('-v')
-    
+
     compression = bool(app_ssh_config.get('compression', False))
-    if compression:
+    if compression and not is_copy_id:
         cmd.append('-C')
 
-    if bool(app_ssh_config.get('batch_mode', False)):
+    if bool(app_ssh_config.get('batch_mode', False)) and not is_copy_id:
         cmd.extend(['-o', 'BatchMode=yes'])
 
     # Apply connection timeout if specified
@@ -528,15 +534,18 @@ def _build_base_ssh_command(
         else:
             cmd.extend(['-p', str(port)])
     
-    # Apply IdentityFile from SSH config (SSH config is primary source)
-    identity_files = _get_ssh_config_list(config, 'identityfile')
-    for identity_file in identity_files:
-        if identity_file and os.path.isfile(os.path.expanduser(identity_file)):
-            cmd.extend(['-i', os.path.expanduser(identity_file)])
-            # If IdentitiesOnly is set, only use this key
-            if _get_ssh_config_value(config, 'identitiesonly', '').lower() in ('yes', 'true', '1'):
-                cmd.extend(['-o', 'IdentitiesOnly=yes'])
-                break  # Only first key when IdentitiesOnly is set
+    # Apply IdentityFile from SSH config (SSH config is primary source).
+    # Never for ssh-copy-id: there -i selects the key to install, and the
+    # operation must authenticate with the key being copied.
+    if not is_copy_id:
+        identity_files = _get_ssh_config_list(config, 'identityfile')
+        for identity_file in identity_files:
+            if identity_file and os.path.isfile(os.path.expanduser(identity_file)):
+                cmd.extend(['-i', os.path.expanduser(identity_file)])
+                # If IdentitiesOnly is set, only use this key
+                if _get_ssh_config_value(config, 'identitiesonly', '').lower() in ('yes', 'true', '1'):
+                    cmd.extend(['-o', 'IdentitiesOnly=yes'])
+                    break  # Only first key when IdentitiesOnly is set
     
     # Apply CertificateFile if specified
     cert_file = _get_ssh_config_value(config, 'certificatefile')
@@ -555,20 +564,25 @@ def _build_base_ssh_command(
         if proxy_jump_filtered:
             cmd.extend(['-o', f'ProxyJump={",".join(proxy_jump_filtered)}'])
     
-    # Apply X11 forwarding if enabled
+    # Apply X11 forwarding if enabled. Only for ssh: scp -X selects the
+    # transfer protocol and sftp -X sets an sftp option, so a bare -X there
+    # would swallow the next argument.
     forward_x11 = _get_ssh_config_value(config, 'forwardx11', '').lower()
-    if forward_x11 in ('yes', 'true', '1'):
+    if forward_x11 in ('yes', 'true', '1') and command_type == 'ssh':
         cmd.append('-X')
 
     forward_agent = _get_ssh_config_value(config, 'forwardagent', '').lower()
-    if forward_agent in ('yes', 'true', '1'):
+    if forward_agent in ('yes', 'true', '1') and not is_copy_id:
         cmd.append('-A')
         cmd.extend(['-o', 'ForwardAgent=yes'])
-    
-    # Apply other SSH config options that should be passed through
-    # (SSH config is primary source, so we trust it)
-    # Note: We don't override PreferredAuthentications here - let SSH config handle it
-    
+
+    # Port forwards are useless for file-transfer operations and harmful when
+    # ExitOnForwardFailure=yes is set (a port already in use by an active
+    # terminal session would kill the transfer). ClearAllForwardings only
+    # cancels Local/Remote/Dynamic forwards; X11 and agent forwarding are unaffected.
+    if command_type in ('scp', 'ssh-copy-id'):
+        cmd.extend(['-o', 'ClearAllForwardings=yes'])
+
     return cmd
 
 

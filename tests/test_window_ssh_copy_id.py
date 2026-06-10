@@ -94,10 +94,6 @@ def test_ssh_copy_id_saved_passphrase_uses_askpass(monkeypatch, tmp_path):
         def store_key_passphrase(self, *args, **kwargs):
             return None
 
-    def fake_idle_add(func, *args, **kwargs):
-        func(*args, **kwargs)
-        return 1
-
     forced_env = {
         "SSH_ASKPASS": "/tmp/helper",
         "SSH_ASKPASS_REQUIRE": "force",
@@ -112,11 +108,36 @@ def test_ssh_copy_id_saved_passphrase_uses_askpass(monkeypatch, tmp_path):
     monkeypatch.setattr(runner_mod, "TerminalWidget", DummyTerminalWidget)
     monkeypatch.setattr(
         runner_mod,
+        "_build_copy_progress_row",
+        lambda *_args, **_kwargs: (
+            DummyWidget(),
+            lambda: False,
+            lambda: None,
+            lambda: None,
+            lambda: None,
+        ),
+    )
+    monkeypatch.setattr(
+        runner_mod,
+        "_build_terminal_disclosure",
+        lambda *_args, **_kwargs: (
+            DummyWidget(),
+            lambda _expanded: None,
+            lambda: False,
+        ),
+    )
+    monkeypatch.setattr(
+        runner_mod,
         "Adw",
         types.SimpleNamespace(
-            Window=DummyWidget,
+            ActionRow=DummyWidget,
+            AlertDialog=DummyWidget,
+            Dialog=types.SimpleNamespace(new=lambda: DummyWidget()),
+            PreferencesGroup=DummyWidget,
+            ToolbarView=DummyWidget,
             HeaderBar=DummyWidget,
             MessageDialog=DummyWidget,
+            WindowTitle=types.SimpleNamespace(new=lambda *args, **kwargs: DummyWidget()),
         ),
         raising=False,
     )
@@ -127,7 +148,8 @@ def test_ssh_copy_id_saved_passphrase_uses_askpass(monkeypatch, tmp_path):
             Box=DummyWidget,
             Label=DummyWidget,
             Button=DummyWidget,
-            Align=types.SimpleNamespace(START=0, END=1),
+            Align=types.SimpleNamespace(START=0, END=1, CENTER=3),
+            Fixed=DummyWidget,
             Orientation=types.SimpleNamespace(VERTICAL=0, HORIZONTAL=1),
         ),
         raising=False,
@@ -138,7 +160,11 @@ def test_ssh_copy_id_saved_passphrase_uses_askpass(monkeypatch, tmp_path):
         types.SimpleNamespace(
             shell_quote=lambda value: value,
             SpawnFlags=types.SimpleNamespace(DEFAULT=0),
-            idle_add=fake_idle_add,
+            idle_add=lambda func, *args, **kwargs: func(*args, **kwargs) or 1,
+            timeout_add=lambda *args, **kwargs: 1,
+            source_remove=lambda *_args: None,
+            SOURCE_REMOVE=False,
+            SOURCE_CONTINUE=True,
         ),
         raising=False,
     )
@@ -281,3 +307,80 @@ def test_ssh_copy_id_preflight_rejects_unreadable_public_key(monkeypatch, tmp_pa
 
     assert result is not None
     assert result[0] == "Public key file is not readable"
+
+
+def test_copyid_verdict_password_retry_is_success():
+    # A mistyped-then-corrected password leaves "Permission denied" on screen,
+    # but ssh-copy-id's own success message outranks the failure markers.
+    runner_mod = importlib.import_module("sshpilot.sshcopyid_window")
+
+    content = (
+        "demo@example.com's password: \n"
+        "Permission denied, please try again.\n"
+        "demo@example.com's password: \n"
+        "Number of key(s) added: 1\n"
+    )
+    assert runner_mod._copyid_run_succeeded(0, content)
+
+
+def test_copyid_verdict_already_installed_is_success():
+    runner_mod = importlib.import_module("sshpilot.sshcopyid_window")
+
+    content = (
+        "WARNING: All keys were skipped because they already exist "
+        "on the remote system.\n"
+    )
+    assert runner_mod._copyid_run_succeeded(0, content)
+
+
+def test_copyid_verdict_failure_markers_veto_zero_exit():
+    runner_mod = importlib.import_module("sshpilot.sshcopyid_window")
+
+    content = "demo@example.com: Permission denied (publickey,password).\n"
+    assert not runner_mod._copyid_run_succeeded(0, content)
+
+
+def test_copyid_verdict_nonzero_exit_is_failure():
+    runner_mod = importlib.import_module("sshpilot.sshcopyid_window")
+
+    assert not runner_mod._copyid_run_succeeded(1, "Number of key(s) added: 1\n")
+    assert not runner_mod._copyid_run_succeeded(255, "")
+
+
+def test_copyid_verdict_clean_zero_exit_is_success():
+    runner_mod = importlib.import_module("sshpilot.sshcopyid_window")
+
+    assert runner_mod._copyid_run_succeeded(0, "")
+
+
+def test_terminal_awaiting_input_detects_prompts():
+    runner_mod = importlib.import_module("sshpilot.sshcopyid_window")
+
+    positives = [
+        "demo@example.com's password: ",
+        "Password:",
+        "Enter passphrase for key '/home/u/.ssh/id_ed25519':",
+        "Are you sure you want to continue connecting (yes/no/[fingerprint])? ",
+        "Verification code:",
+        "Enter PIN for authenticator:",
+        # Prompt as the last line after earlier output.
+        "Running ssh-copy-id\nINFO: attempting to log in\ndemo@host's password: ",
+    ]
+    for text in positives:
+        assert runner_mod._terminal_awaiting_input(text), text
+
+
+def test_terminal_awaiting_input_ignores_non_prompts():
+    runner_mod = importlib.import_module("sshpilot.sshcopyid_window")
+
+    negatives = [
+        "",
+        "Running ssh-copy-id…",
+        "Number of key(s) added: 1",
+        "demo@example.com: Permission denied (publickey,password).",
+        "INFO: attempting to log in with the new key(s)",
+        # Prompt no longer the last line once later output arrives.
+        "demo@host's password: \nNumber of key(s) added: 1",
+    ]
+    for text in negatives:
+        assert not runner_mod._terminal_awaiting_input(text), text
