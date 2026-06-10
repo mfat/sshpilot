@@ -78,6 +78,27 @@ def _normalize_child_exit_status(status) -> int:
 
 
 def _read_ssh_copyid_terminal_text(term_widget: TerminalWidget) -> str:
+    vte = getattr(term_widget, 'vte', None)
+    if vte is None:
+        backend = getattr(term_widget, 'backend', None)
+        vte = getattr(backend, 'vte', None) if backend else None
+    # get_text_format() (used by backend.get_content) returns a fragment on
+    # screens that received feed() data before the pty was attached — which
+    # this dialog does — so read an explicit range up to the cursor row.
+    try:
+        if vte is not None and hasattr(vte, 'get_text_range_format'):
+            try:
+                _col, cursor_row = vte.get_cursor_position()
+                end_row = cursor_row + 1
+            except Exception:
+                end_row = vte.get_row_count()
+            content_result = vte.get_text_range_format(
+                Vte.Format.TEXT, 0, 0, end_row, -1,
+            )
+            if content_result and content_result[0]:
+                return content_result[0]
+    except Exception:
+        pass
     try:
         backend = getattr(term_widget, 'backend', None)
         if backend and hasattr(backend, 'get_content'):
@@ -87,7 +108,6 @@ def _read_ssh_copyid_terminal_text(term_widget: TerminalWidget) -> str:
     except Exception:
         pass
     try:
-        vte = getattr(term_widget, 'vte', None)
         if vte is not None:
             content_result = vte.get_text_range(0, 0, -1, -1, lambda *args: True)
             if content_result:
@@ -124,6 +144,36 @@ def _copyid_run_succeeded(exit_code: int, content: str) -> bool:
     return not _terminal_indicates_copy_failure(content)
 
 
+# Interactive prompts ssh may print when askpass/sshpass don't cover auth.
+# Only the last non-empty line is checked, so scrollback text such as
+# "Permission denied (publickey,password)." can't false-positive.
+_COPYID_PROMPT_COLON_MARKERS = (
+    'password',
+    'passphrase',
+    'pin',
+    'verification code',
+    'otp',
+)
+_COPYID_PROMPT_INLINE_MARKERS = (
+    '(yes/no',
+    'continue connecting',
+    "please type 'yes'",
+)
+
+
+def _terminal_awaiting_input(text: str) -> bool:
+    lines = [line.strip() for line in (text or '').splitlines()]
+    lines = [line for line in lines if line]
+    if not lines:
+        return False
+    last = lines[-1].lower()
+    if any(marker in last for marker in _COPYID_PROMPT_INLINE_MARKERS):
+        return True
+    if last.endswith(':'):
+        return any(marker in last for marker in _COPYID_PROMPT_COLON_MARKERS)
+    return False
+
+
 def _wrap_sshcopyid_terminal(term_widget: TerminalWidget) -> Gtk.Widget:
     """Wrap the dialog terminal in an Adwaita card with clipped rounded corners."""
     _ensure_sshcopyid_terminal_card_css()
@@ -140,6 +190,63 @@ def _wrap_sshcopyid_terminal(term_widget: TerminalWidget) -> Gtk.Widget:
     term_widget.set_vexpand(True)
     frame.append(term_widget)
     return frame
+
+
+def _build_terminal_disclosure(
+    terminal_card: Gtk.Widget,
+    on_expanded_changed: Callable[[bool], None],
+) -> Tuple[Gtk.Widget, Callable[[bool], None], Callable[[], bool]]:
+    """Wrap the terminal card in a revealer with a Show/Hide Terminal toggle."""
+    from . import icon_utils
+
+    revealer = Gtk.Revealer()
+    revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
+    revealer.set_transition_duration(250)
+    revealer.set_reveal_child(False)
+    revealer.set_vexpand(True)
+    revealer.set_child(terminal_card)
+
+    chevron = icon_utils.new_image_from_icon_name('pan-end-symbolic')
+    label = Gtk.Label(label=_('Show Terminal'))
+
+    button_content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+    button_content.append(chevron)
+    button_content.append(label)
+
+    toggle = Gtk.ToggleButton()
+    toggle.add_css_class('flat')
+    toggle.set_child(button_content)
+    toggle.set_halign(Gtk.Align.CENTER)
+
+    def _on_toggled(button):
+        expanded = bool(button.get_active())
+        revealer.set_reveal_child(expanded)
+        label.set_label(_('Hide Terminal') if expanded else _('Show Terminal'))
+        try:
+            icon_utils.set_icon_from_name(
+                chevron,
+                'pan-down-symbolic' if expanded else 'pan-end-symbolic',
+            )
+        except Exception:
+            pass
+        try:
+            on_expanded_changed(expanded)
+        except Exception:
+            logger.debug('ssh-copy-id terminal disclosure callback failed', exc_info=True)
+
+    toggle.connect('toggled', _on_toggled)
+
+    box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+    box.append(toggle)
+    box.append(revealer)
+
+    def set_expanded(expanded: bool) -> None:
+        toggle.set_active(bool(expanded))
+
+    def is_expanded() -> bool:
+        return bool(toggle.get_active())
+
+    return box, set_expanded, is_expanded
 
 
 def _build_copy_progress_row(
@@ -1008,9 +1115,9 @@ class SshCopyIdRunner:
 
             dlg = Adw.Dialog.new()
             dlg.set_title(_('ssh-copy-id'))
-            dlg.set_content_width(920)
-            dlg.set_content_height(520)
-            dlg.set_follows_content_size(False)
+            # Track the content's natural size so the dialog grows/shrinks
+            # with the terminal revealer animation.
+            dlg.set_follows_content_size(True)
 
             toolbar = Adw.ToolbarView()
             dlg.set_child(toolbar)
@@ -1019,13 +1126,28 @@ class SshCopyIdRunner:
             header.set_show_end_title_buttons(False)
             header.set_title_widget(Gtk.Label(label=_('ssh-copy-id')))
 
-            copyid_exit_state = {'finished': False, 'handler_id': None}
+            copyid_exit_state = {
+                'finished': False,
+                'handler_id': None,
+                'prompt_poll_id': None,
+            }
+
+            def _stop_prompt_poller() -> None:
+                poll_id = copyid_exit_state.get('prompt_poll_id')
+                if poll_id is None:
+                    return
+                copyid_exit_state['prompt_poll_id'] = None
+                try:
+                    GLib.source_remove(poll_id)
+                except Exception:
+                    pass
 
             def _on_dialog_closed(*_args):
                 # Closing the dialog (Cancel/Close button or Esc) kills the
                 # child below, which still fires child-exited; mark the run
                 # finished first so cancellation isn't reported as a failure.
                 copyid_exit_state['finished'] = True
+                _stop_prompt_poller()
                 stop_copy_spinner()
                 try:
                     if hasattr(term_widget, 'disconnect'):
@@ -1052,6 +1174,8 @@ class SshCopyIdRunner:
             content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
             content_box.set_hexpand(True)
             content_box.set_vexpand(True)
+            # Constant natural width so toggling the terminal only changes height.
+            content_box.set_size_request(860, -1)
             content_box.set_margin_top(12)
             content_box.set_margin_bottom(12)
             content_box.set_margin_start(12)
@@ -1078,7 +1202,34 @@ class SshCopyIdRunner:
                 term_widget._set_disconnected_banner_visible(False)
             except Exception:
                 pass
-            content_box.append(_wrap_sshcopyid_terminal(term_widget))
+            terminal_card = _wrap_sshcopyid_terminal(term_widget)
+            # VTE's natural height is tiny; give the expanded card a real one.
+            terminal_card.set_size_request(-1, 340)
+
+            def _focus_terminal_input() -> bool:
+                try:
+                    if hasattr(term_widget, 'vte') and term_widget.vte:
+                        term_widget.vte.grab_focus()
+                    else:
+                        term_widget.grab_focus()
+                except Exception:
+                    pass
+                return False
+
+            def _on_terminal_expanded_changed(expanded: bool) -> None:
+                if not expanded:
+                    return
+                # First expansion (manual or auto) ends prompt watching.
+                _stop_prompt_poller()
+                if not copyid_exit_state['finished']:
+                    GLib.idle_add(_focus_terminal_input)
+
+            (
+                terminal_disclosure,
+                set_terminal_expanded,
+                terminal_is_expanded,
+            ) = _build_terminal_disclosure(terminal_card, _on_terminal_expanded_changed)
+            content_box.append(terminal_disclosure)
 
             toolbar.set_content(content_box)
 
@@ -1201,6 +1352,7 @@ class SshCopyIdRunner:
                     if copyid_exit_state['finished']:
                         return False
                     copyid_exit_state['finished'] = True
+                    _stop_prompt_poller()
                     _disconnect_copyid_exit_handler()
 
                     exit_code = _normalize_child_exit_status(status)
@@ -1259,6 +1411,8 @@ class SshCopyIdRunner:
                         _feed_colored_line(_('Failed to install the public key.'), 'red')
                         if error_details:
                             _feed_colored_line(error_details, 'red')
+                        # Reveal the error output behind the alert dialog.
+                        set_terminal_expanded(True)
 
                     heading = _('Success') if ok else _('Error')
                     body = (
@@ -1301,6 +1455,21 @@ class SshCopyIdRunner:
                     copyid_exit_state['handler_id'] = term_widget.vte.connect(
                         'child-exited', _on_copyid_exited,
                     )
+
+                def _poll_for_prompt() -> bool:
+                    if copyid_exit_state['finished'] or terminal_is_expanded():
+                        copyid_exit_state['prompt_poll_id'] = None
+                        return GLib.SOURCE_REMOVE
+                    content = _read_ssh_copyid_terminal_text(term_widget)
+                    if _terminal_awaiting_input(content):
+                        copyid_exit_state['prompt_poll_id'] = None
+                        set_terminal_expanded(True)
+                        return GLib.SOURCE_REMOVE
+                    return GLib.SOURCE_CONTINUE
+
+                copyid_exit_state['prompt_poll_id'] = GLib.timeout_add(
+                    400, _poll_for_prompt,
+                )
             except Exception as e:
                 logger.error('Failed to spawn ssh-copy-id in TerminalWidget: %s', e)
                 dlg.close()

@@ -119,6 +119,15 @@ def test_ssh_copy_id_saved_passphrase_uses_askpass(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(
         runner_mod,
+        "_build_terminal_disclosure",
+        lambda *_args, **_kwargs: (
+            DummyWidget(),
+            lambda _expanded: None,
+            lambda: False,
+        ),
+    )
+    monkeypatch.setattr(
+        runner_mod,
         "Adw",
         types.SimpleNamespace(
             ActionRow=DummyWidget,
@@ -152,6 +161,10 @@ def test_ssh_copy_id_saved_passphrase_uses_askpass(monkeypatch, tmp_path):
             shell_quote=lambda value: value,
             SpawnFlags=types.SimpleNamespace(DEFAULT=0),
             idle_add=lambda func, *args, **kwargs: func(*args, **kwargs) or 1,
+            timeout_add=lambda *args, **kwargs: 1,
+            source_remove=lambda *_args: None,
+            SOURCE_REMOVE=False,
+            SOURCE_CONTINUE=True,
         ),
         raising=False,
     )
@@ -338,3 +351,36 @@ def test_copyid_verdict_clean_zero_exit_is_success():
     runner_mod = importlib.import_module("sshpilot.sshcopyid_window")
 
     assert runner_mod._copyid_run_succeeded(0, "")
+
+
+def test_terminal_awaiting_input_detects_prompts():
+    runner_mod = importlib.import_module("sshpilot.sshcopyid_window")
+
+    positives = [
+        "demo@example.com's password: ",
+        "Password:",
+        "Enter passphrase for key '/home/u/.ssh/id_ed25519':",
+        "Are you sure you want to continue connecting (yes/no/[fingerprint])? ",
+        "Verification code:",
+        "Enter PIN for authenticator:",
+        # Prompt as the last line after earlier output.
+        "Running ssh-copy-id\nINFO: attempting to log in\ndemo@host's password: ",
+    ]
+    for text in positives:
+        assert runner_mod._terminal_awaiting_input(text), text
+
+
+def test_terminal_awaiting_input_ignores_non_prompts():
+    runner_mod = importlib.import_module("sshpilot.sshcopyid_window")
+
+    negatives = [
+        "",
+        "Running ssh-copy-id…",
+        "Number of key(s) added: 1",
+        "demo@example.com: Permission denied (publickey,password).",
+        "INFO: attempting to log in with the new key(s)",
+        # Prompt no longer the last line once later output arrives.
+        "demo@host's password: \nNumber of key(s) added: 1",
+    ]
+    for text in negatives:
+        assert not runner_mod._terminal_awaiting_input(text), text
