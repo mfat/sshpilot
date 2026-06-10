@@ -564,11 +564,14 @@ def _build_base_ssh_command(
     if forward_agent in ('yes', 'true', '1'):
         cmd.append('-A')
         cmd.extend(['-o', 'ForwardAgent=yes'])
-    
-    # Apply other SSH config options that should be passed through
-    # (SSH config is primary source, so we trust it)
-    # Note: We don't override PreferredAuthentications here - let SSH config handle it
-    
+
+    # Port forwards are useless for file-transfer operations and harmful when
+    # ExitOnForwardFailure=yes is set (a port already in use by an active
+    # terminal session would kill the transfer). ClearAllForwardings only
+    # cancels Local/Remote/Dynamic forwards; X11 and agent forwarding are unaffected.
+    if command_type in ('scp', 'ssh-copy-id'):
+        cmd.extend(['-o', 'ClearAllForwardings=yes'])
+
     return cmd
 
 

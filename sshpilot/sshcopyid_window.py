@@ -1183,6 +1183,10 @@ class SshCopyIdRunner:
         if known_hosts_path:
             argv += ['-o', f'UserKnownHostsFile={known_hosts_path}']
 
+        # Port forwards are useless for key-copying and can cause failure when
+        # ExitOnForwardFailure=yes is set and a port is already in use.
+        argv += ['-o', 'ClearAllForwardings=yes']
+
         # Derive auth prefs. Prefer the resolved NativeAuth (single shared auth
         # decision); fall back to recomputing from the connection when not given.
         logger.debug("Main window: Determining authentication preferences")

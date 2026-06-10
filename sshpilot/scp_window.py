@@ -1309,6 +1309,9 @@ class ScpWindowController:
         if port and port != 22:
             argv += ['-P', str(port)]
         argv += ssh_extra_opts
+        # Port forwards are useless for file transfers and can fail when
+        # ExitOnForwardFailure=yes is set and a port is already in use.
+        argv += ['-o', 'ClearAllForwardings=yes']
 
         # Resolve auth via the single shared resolver (same as terminal + ssh-copy-id):
         # askpass for a saved passphrase, sshpass for a saved password, or bare TTY
