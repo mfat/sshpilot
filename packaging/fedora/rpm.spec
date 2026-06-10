@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:5.2.8}
+Version:        %{?version}%{!?version:5.2.9}
 Release:        1%{?dist}
 Summary:        Manage your servers with ease
 
@@ -92,6 +92,9 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/io.github.mfat.sshpil
 %{_datadir}/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg
 
 %changelog
+* Thu Jun 11 2026 mFat <newmfat@gmail.com> - 5.2.9
+- Bug fixes
+
 * Wed Jun 10 2026 mFat <newmfat@gmail.com> - 5.2.8
 - Updated ssh-copy-id dialog
 - Fixes macOS keychain prompting repeatedly
