@@ -385,6 +385,28 @@ def test_app_config_batch_mode_skipped_for_password_mode():
     assert not _has_o_option(cmd, 'BatchMode=yes')
 
 
+def test_app_config_batch_mode_skipped_for_combined_auth_sshpass(monkeypatch):
+    import sshpilot.ssh_connection_builder as scb
+
+    cfg = _ConfigStub({'batch_mode': True})
+    conn = Connection({
+        'host': 'bothbatch.example',
+        'hostname': 'bothbatch.example',
+        'auth_method': 0,
+        'password': 'account-password',
+    })
+    conn.resolved_identity_files = ['/home/u/.ssh/k']
+    monkeypatch.setattr(scb, 'lookup_passphrase', lambda _p: 'key-passphrase')
+    monkeypatch.setattr(scb, 'ensure_key_in_agent', lambda _p, *, force=False, lifetime=0: True)
+
+    cmd, result = _build_from(conn, config=cfg)
+
+    assert result.use_sshpass is True
+    assert result.password == 'account-password'
+    # Any sshpass-backed path needs prompts enabled so sshpass can answer them.
+    assert not _has_o_option(cmd, 'BatchMode=yes')
+
+
 def test_keepalive_and_timeout_only_via_ssh_overrides():
     # Native mode no longer derives ServerAlive*/ConnectTimeout from app config
     # keys; they must be passed verbatim via ssh_overrides (written to config).
