@@ -1174,8 +1174,9 @@ class SshCopyIdRunner:
             content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
             content_box.set_hexpand(True)
             content_box.set_vexpand(True)
-            # Constant natural width so toggling the terminal only changes height.
-            content_box.set_size_request(860, -1)
+            # Constant natural width so toggling the terminal only changes
+            # height; VTE reflows its columns to whatever width it gets.
+            content_box.set_size_request(560, -1)
             content_box.set_margin_top(12)
             content_box.set_margin_bottom(12)
             content_box.set_margin_start(12)
@@ -1204,7 +1205,7 @@ class SshCopyIdRunner:
                 pass
             terminal_card = _wrap_sshcopyid_terminal(term_widget)
             # VTE's natural height is tiny; give the expanded card a real one.
-            terminal_card.set_size_request(-1, 340)
+            terminal_card.set_size_request(-1, 260)
 
             def _focus_terminal_input() -> bool:
                 try:
