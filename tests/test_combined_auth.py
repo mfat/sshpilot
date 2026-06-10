@@ -343,6 +343,168 @@ class TestResolverDecision:
         assert auth.use_sshpass is False
 
 
+class TestCombinedAuthPreloadHandoff:
+    KEY = "/home/u/.ssh/id_ed25519"
+
+    def test_preload_uses_identities_discovered_by_resolver_when_cache_empty(self, monkeypatch):
+        """Fresh non-terminal callers can resolve identities without caching them.
+
+        The combined-auth branch then disables askpass and relies on agent
+        preload, so preload must use the same identity candidate set the resolver
+        used even when ``resolved_identity_files`` starts empty.
+        """
+        from sshpilot import askpass_utils
+        from sshpilot.connection_manager import Connection
+
+        conn = Connection({
+            "host": "combo.example",
+            "hostname": "combo.example",
+            "username": USERNAME,
+            "auth_method": 0,
+        })
+        conn.resolved_identity_files = []
+        monkeypatch.setattr(
+            conn,
+            "collect_identity_file_candidates",
+            lambda: [self.KEY],
+        )
+        monkeypatch.setattr(
+            ssh_connection_builder,
+            "lookup_passphrase",
+            lambda path: PASSPHRASE if path == self.KEY else "",
+        )
+
+        auth = resolve_native_auth(conn, _make_cm(PASSWORD))
+        assert auth.use_sshpass is True
+        assert auth.use_askpass is False
+
+        added = []
+        monkeypatch.setattr(
+            askpass_utils,
+            "lookup_passphrase",
+            lambda path: PASSPHRASE if path == self.KEY else "",
+        )
+        monkeypatch.setattr(
+            askpass_utils,
+            "ensure_key_in_agent",
+            lambda path, *, force=False, lifetime=0: added.append((path, force, lifetime)) or True,
+        )
+
+        conn._preload_keys_into_agent(SimpleNamespace(get_setting=lambda _k, default=None: default))
+
+        assert added == [(self.KEY, True, 0)]
+
+    def test_scp_auto_identity_mode_preloads_resolver_discovered_key(self, monkeypatch):
+        """SCP automatic-key mode must preload config identities before sshpass.
+
+        Specific-key SCP already prepares ``profile.keyfile_expanded``. Automatic
+        mode has no explicit profile keyfile, so it must preload the identities
+        discovered by the shared resolver before taking the combined-auth path.
+        """
+        from sshpilot import scp_window
+
+        monkeypatch.setattr(
+            ssh_connection_builder,
+            "lookup_passphrase",
+            lambda path: PASSPHRASE if path == self.KEY else "",
+        )
+
+        class _Config:
+            def get_ssh_config(self):
+                return {}
+
+            def get_setting(self, _key, default=None):
+                return default
+
+        class _Manager:
+            known_hosts_path = None
+
+            def __init__(self):
+                self.prepare_calls = []
+
+            def get_password(self, *_):
+                return PASSWORD
+
+            def get_key_passphrase(self, path):
+                return PASSPHRASE if path == TestCombinedAuthPreloadHandoff.KEY else None
+
+            def prepare_key_for_connection(self, path):
+                self.prepare_calls.append(path)
+                return True
+
+        manager = _Manager()
+        controller = scp_window.ScpWindowController.__new__(scp_window.ScpWindowController)
+        controller.window = SimpleNamespace(connection_manager=manager, config=_Config())
+        controller._scp_auth = None
+        controller._scp_askpass_env = {}
+
+        connection = SimpleNamespace(
+            hostname="combo.example",
+            host="combo.example",
+            username=USERNAME,
+            port=22,
+            auth_method=0,
+            keyfile="",
+            key_select_mode=0,
+            resolved_identity_files=[],
+            collect_identity_file_candidates=lambda: [self.KEY],
+        )
+
+        controller._build_scp_argv(
+            connection,
+            ["local.txt"],
+            "/remote/path",
+            direction="upload",
+        )
+
+        assert manager.prepare_calls == [self.KEY]
+
+    def test_failed_agent_preload_keeps_askpass_for_pubkey_only_fallback(self, monkeypatch):
+        """Best-effort preload failure must not strand saved-passphrase key auth.
+
+        The resolver currently decides combined auth from preload *intent*. If
+        ssh-add then fails, the terminal swallows that failure and still spawns
+        with askpass disabled. For pubkey-only hosts that merely have an optional
+        saved password, this regresses the old saved-passphrase askpass path.
+        """
+        from sshpilot import askpass_utils
+        from sshpilot.connection_manager import Connection
+
+        conn = Connection({
+            "host": "pubkey-only.example",
+            "hostname": "pubkey-only.example",
+            "username": USERNAME,
+            "auth_method": 0,
+        })
+        conn.resolved_identity_files = [self.KEY]
+
+        monkeypatch.setattr(
+            ssh_connection_builder,
+            "lookup_passphrase",
+            lambda path: PASSPHRASE if path == self.KEY else "",
+        )
+        monkeypatch.setattr(
+            askpass_utils,
+            "lookup_passphrase",
+            lambda path: PASSPHRASE if path == self.KEY else "",
+        )
+
+        def fail_ssh_add(*_args, **_kwargs):
+            raise RuntimeError("ssh-add failed")
+
+        monkeypatch.setattr(askpass_utils, "ensure_key_in_agent", fail_ssh_add)
+
+        auth = resolve_native_auth(conn, _make_cm(PASSWORD))
+        assert auth.use_sshpass is True
+
+        # Mirrors terminal.py: preload is best-effort and exceptions are swallowed
+        # before spawning the already-resolved command/env.
+        conn._preload_keys_into_agent(SimpleNamespace(get_setting=lambda _k, default=None: default))
+
+        assert auth.use_askpass is True
+        assert "SSH_ASKPASS" in auth.env
+
+
 # ---------------------------------------------------------------------------
 # Connection layer — real ssh against the combined-auth server
 # ---------------------------------------------------------------------------
