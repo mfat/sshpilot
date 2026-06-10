@@ -60,6 +60,17 @@
 
 
 
+    <release version="5.2.7" date="2026-06-10">
+      <description>
+        <p>Bug fixes</p>
+      </description>
+    </release>
+    <release version="5.2.6" date="2026-06-10">
+      <description>
+        <p>Improved connection editor</p>
+        <p>Bug fixes</p>
+      </description>
+    </release>
     <release version="5.2.5" date="2026-06-09">
       <description>
         <p>Bug fixes</p>

@@ -260,7 +260,7 @@ if ! git merge --no-ff "$DEV_BRANCH" -m "Merge $DEV_BRANCH into $MAIN_BRANCH for
   echo "Conflicts resolved successfully."
 fi
 
-git tag -a "v$VERSION" -m "sshPilot v$VERSION" -m "$CHANGELOG"
+git tag -a "v$VERSION" -m "SSH Pilot v$VERSION" -m "$CHANGELOG"
 
 echo
 echo "Ready to publish v$VERSION:"

@@ -2,7 +2,7 @@
 import os, tempfile, threading, subprocess, shutil
 import re
 import logging
-from typing import Iterable, List, Tuple
+from typing import Callable, Iterable, List, Optional, Tuple
 
 from .platform_utils import get_sshpass_path
 
@@ -95,6 +95,56 @@ def _mk_priv_dir(prefix="sshpilot-pass-") -> str:
     d = tempfile.mkdtemp(prefix=prefix)
     os.chmod(d, 0o700)
     return d
+
+
+def wrap_argv_with_sshpass(
+    argv: List[str],
+    password: str,
+    *,
+    env: Optional[dict] = None,
+) -> Tuple[List[str], Callable[[], None]]:
+    """Wrap ``argv`` so a stored password is fed to ssh/scp/ssh-copy-id via a
+    write-once FIFO (``sshpass -f <fifo>``), keeping the secret off the command
+    line and out of the environment.
+
+    Shared by the terminal, SCP, and ssh-copy-id spawners so the FIFO dance lives
+    in one place. Behaviour:
+
+    * Creates a private 0700 temp dir + FIFO and starts a daemon writer that
+      writes the password exactly once when sshpass opens the FIFO for reading.
+    * Returns ``([sshpass, '-f', fifo, *argv], cleanup)``. ``cleanup()`` removes
+      the temp dir; the caller decides when to call it (e.g. ``atexit.register``
+      or on widget teardown).
+    * If ``env`` is given it is mutated in place: ``SSH_ASKPASS`` is dropped and
+      ``SSH_ASKPASS_REQUIRE=never`` is set so OpenSSH never diverts the password
+      prompt to askpass.
+    * If sshpass is unavailable, returns ``(argv, no-op)`` unchanged but still
+      mutates ``env`` (REQUIRE=never) so the caller falls back to an interactive
+      prompt rather than a stuck askpass.
+    """
+    if env is not None:
+        env.pop("SSH_ASKPASS", None)
+        env["SSH_ASKPASS_REQUIRE"] = "never"
+
+    sshpass = get_sshpass_path()
+    if not sshpass:
+        logging.getLogger(__name__).warning(
+            "sshpass unavailable; falling back to interactive password prompt"
+        )
+        return list(argv), (lambda: None)
+
+    tmpdir = _mk_priv_dir()
+    fifo = os.path.join(tmpdir, "pw.fifo")
+    os.mkfifo(fifo, 0o600)
+    threading.Thread(target=_write_once_fifo, args=(fifo, password), daemon=True).start()
+
+    def _cleanup() -> None:
+        try:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+        except Exception:
+            pass
+
+    return [sshpass, "-f", fifo, *argv], _cleanup
 
 def run_ssh_with_password(host: str, user: str, password: str, *,
                           port: int = 22,

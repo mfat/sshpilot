@@ -76,10 +76,12 @@ class _AuthMethodToggleFallback(Gtk.Box):
     def __init__(self, labels):
         super().__init__(orientation=Gtk.Orientation.HORIZONTAL)
         self.add_css_class("linked")
+        self.set_hexpand(True)
         self._buttons = []
         self._syncing = False
         for index, label in enumerate(labels):
             button = Gtk.ToggleButton(label=label)
+            button.set_hexpand(True)
             if self._buttons:
                 button.set_group(self._buttons[0])
             button.connect("toggled", self._on_toggled, index)
@@ -106,6 +108,72 @@ class _AuthMethodToggleFallback(Gtk.Box):
             finally:
                 self._syncing = False
             self.set_property("active", index)
+
+
+_TOGGLE_SUGGESTED_CSS_REGISTERED = False
+
+
+def _ensure_toggle_suggested_css():
+    """Register accent styling for the active item in connection-dialog toggle groups."""
+    global _TOGGLE_SUGGESTED_CSS_REGISTERED
+    if _TOGGLE_SUGGESTED_CSS_REGISTERED:
+        return
+    display = Gdk.Display.get_default()
+    if display is None:
+        return
+    provider = Gtk.CssProvider()
+    provider.load_from_data(b"""
+    toggle-group.toggle-suggested {
+        --active-toggle-bg-color: @accent_bg_color;
+        --active-toggle-fg-color: @accent_fg_color;
+    }
+    .linked-toggle-suggested button:checked {
+        background-color: @accent_bg_color;
+        color: @accent_fg_color;
+    }
+    """)
+    Gtk.StyleContext.add_provider_for_display(
+        display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+    )
+    _TOGGLE_SUGGESTED_CSS_REGISTERED = True
+
+
+def _build_expanding_toggle_group(labels):
+    """Build a full-width Adw.ToggleGroup, or Gtk toggle fallback on older libadwaita."""
+    _ensure_toggle_suggested_css()
+    if hasattr(Adw, "ToggleGroup"):
+        toggle = Adw.ToggleGroup()
+        toggle.add_css_class("toggle-suggested")
+        toggle.set_valign(Gtk.Align.CENTER)
+        toggle.set_hexpand(True)
+        try:
+            toggle.set_homogeneous(True)
+        except Exception:
+            pass
+        try:
+            for label in labels:
+                toggle.add(Adw.Toggle(label=label))
+        except Exception:
+            logger.debug("Failed to build ToggleGroup", exc_info=True)
+    else:
+        toggle = _AuthMethodToggleFallback(labels)
+        toggle.add_css_class("linked-toggle-suggested")
+        toggle.set_valign(Gtk.Align.CENTER)
+        toggle.set_hexpand(True)
+    try:
+        toggle.set_active(0)
+    except Exception:
+        pass
+    return toggle
+
+
+def _set_action_row_child(row, widget):
+    """Place *widget* as the sole content of an ActionRow when supported."""
+    try:
+        row.set_child(widget)
+    except Exception:
+        widget.set_hexpand(True)
+        row.add_prefix(widget)
 
 
 class ValidationResult:
@@ -1114,7 +1182,8 @@ class FileListEditor(Adw.PreferencesGroup):
 
     def __init__(self, *, title, add_actions=None,
                  with_passphrase=False, connection_manager=None,
-                 on_changed=None, verify=None, rows_group=None):
+                 on_changed=None, verify=None, rows_group=None,
+                 add_at_bottom=False, empty_placeholder=None):
         super().__init__()
         self.set_title(title)
         self._model = PathList()
@@ -1124,29 +1193,52 @@ class FileListEditor(Adw.PreferencesGroup):
         self._on_changed = on_changed
         self._rows_group = rows_group or self
         self._rows_visible = True
+        self._add_at_bottom = add_at_bottom
+        self._empty_row = None
+        if empty_placeholder:
+            self._empty_row = Adw.ActionRow(title=empty_placeholder)
+            self._empty_row.set_sensitive(False)
+            self._empty_row.set_activatable(False)
         # verify(path, passphrase) -> bool before storing (None disables it).
         self._verify = verify
 
-        # Add actions are compact pill buttons in the group header (not
-        # full-width list rows). _add_rows stays empty so the row-reordering
-        # helpers below are no-ops.
+        # Add actions sit in the group header by default, or in list rows below
+        # the path rows when add_at_bottom is True.
         self._add_rows = []
         self._add_buttons = []
         add_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         add_box.set_valign(Gtk.Align.CENTER)
         for action in (add_actions or []):
+            icon = action.get('icon', 'list-add-symbolic')
+            label = action.get('label', '')
             btn = Gtk.Button()
-            btn.set_child(Adw.ButtonContent(
-                icon_name=action.get('icon', 'list-add-symbolic'),
-                label=action.get('label', _("Add\u2026")),
-            ))
-            btn.add_css_class('pill')
-            btn.add_css_class('suggested-action')
+            if label:
+                btn.set_child(Adw.ButtonContent(
+                    icon_name=icon,
+                    label=label,
+                ))
+            else:
+                btn.set_icon_name(icon)
+                btn.add_css_class('flat')
+                btn.set_tooltip_text(action.get('tooltip') or _("Add"))
             btn.connect('clicked', self._on_add_clicked, action)
-            add_box.append(btn)
-            self._add_buttons.append(btn)
+            if add_at_bottom:
+                row = Adw.ActionRow()
+                row.set_activatable(False)
+                btn.set_valign(Gtk.Align.CENTER)
+                btn.set_halign(Gtk.Align.START)
+                row.add_prefix(btn)
+                row._add_button = btn
+                self._add_rows.append(row)
+            else:
+                add_box.append(btn)
+                self._add_buttons.append(btn)
         if self._add_buttons:
             self.set_header_suffix(add_box)
+        if self._add_at_bottom:
+            for row in self._add_rows:
+                self._add_row_widget(row)
+        self._sync_empty_placeholder()
 
     # ---- public API -----------------------------------------------------
     def get_paths(self):
@@ -1161,6 +1253,7 @@ class FileListEditor(Adw.PreferencesGroup):
         for p in self._model.get():
             self._append_key_row(p)
         self._ensure_add_rows_last()
+        self._sync_empty_placeholder()
 
     def set_visible(self, visible):
         super().set_visible(visible)
@@ -1169,6 +1262,15 @@ class FileListEditor(Adw.PreferencesGroup):
             row.set_visible(visible)
         for row in self._add_rows:
             row.set_visible(visible)
+        if self._empty_row is not None:
+            self._empty_row.set_visible(visible)
+
+    def set_sensitive(self, sensitive):
+        super().set_sensitive(sensitive)
+        for row in self._rows:
+            row.set_sensitive(sensitive)
+        for row in self._add_rows:
+            row.set_sensitive(sensitive)
 
     def add_path(self, path):
         if self._model.add(path):
@@ -1188,6 +1290,23 @@ class FileListEditor(Adw.PreferencesGroup):
         for btn in self._add_rows:
             if btn.get_parent() is not None:
                 self._remove_row_widget(btn)
+        for btn in self._add_rows:
+            self._add_row_widget(btn)
+
+    def _sync_empty_placeholder(self):
+        """Show or hide the empty-state row above the add button."""
+        if self._empty_row is None:
+            return
+        if self._model.get():
+            if self._empty_row.get_parent() is not None:
+                self._remove_row_widget(self._empty_row)
+            return
+        if self._empty_row.get_parent() is not None:
+            return
+        for btn in self._add_rows:
+            if btn.get_parent() is not None:
+                self._remove_row_widget(btn)
+        self._add_row_widget(self._empty_row)
         for btn in self._add_rows:
             self._add_row_widget(btn)
 
@@ -1223,6 +1342,7 @@ class FileListEditor(Adw.PreferencesGroup):
         for btn in self._add_rows:
             self._add_row_widget(btn)
         self._renumber_rows()
+        self._sync_empty_placeholder()
 
     def _renumber_rows(self):
         """Keep the circular order badges in sync with each key's position."""
@@ -1325,6 +1445,7 @@ class FileListEditor(Adw.PreferencesGroup):
         if row in self._rows:
             self._rows.remove(row)
         self._renumber_rows()
+        self._sync_empty_placeholder()
         self._emit_changed()
 
     def _on_add_clicked(self, row, action):
@@ -1456,20 +1577,15 @@ class ConnectionDialog(Adw.Window):
         header_bar.set_show_end_title_buttons(True)
         main_box.append(header_bar)
         
-        # Create scrollable content area
-        scrolled_window = Gtk.ScrolledWindow()
-        scrolled_window.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scrolled_window.set_vexpand(True)
-        
-        # Create preferences content
+        # Create tabbed preferences content (switcher pinned above scrollable pages)
         self.preferences_content = self.create_preferences_content()
-        scrolled_window.set_child(self.preferences_content)
+        self.preferences_content.set_vexpand(True)
         
         # Create pinned bottom section with buttons
         bottom_section = self.create_bottom_section()
         
         # Assemble the layout
-        main_box.append(scrolled_window)
+        main_box.append(self.preferences_content)
         main_box.append(bottom_section)
         
         # Set the content
@@ -1491,68 +1607,118 @@ class ConnectionDialog(Adw.Window):
         except Exception as e:
             logger.error(f"Failed to populate connection data: {e}")
     
-    def create_preferences_content(self):
-        """Create the preferences content with all pages"""
-        # Create a notebook for tabbed interface
-        notebook = Gtk.Notebook()
-        notebook.set_show_tabs(True)
-        notebook.set_show_border(False)
-        
-        # General page
-        general_page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        general_page.set_margin_top(12)
-        general_page.set_margin_bottom(12)
-        general_page.set_margin_start(12)
-        general_page.set_margin_end(12)
-        
+    def _build_connection_tab_pages(self):
+        """Build the connection editor tab pages as (name, title, widget) tuples."""
+
+        def _page_box():
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+            box.set_margin_top(12)
+            box.set_margin_bottom(12)
+            box.set_margin_start(12)
+            box.set_margin_end(12)
+            return box
+
+        general_page = _page_box()
         for group in self.build_connection_groups():
             general_page.append(group)
-        
-        general_label = Gtk.Label(label=_("Connection"))
-        notebook.append_page(general_page, general_label)
 
-        # Port Forwarding page
-        forwarding_page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        forwarding_page.set_margin_top(12)
-        forwarding_page.set_margin_bottom(12)
-        forwarding_page.set_margin_start(12)
-        forwarding_page.set_margin_end(12)
-        
+        authentication_page = _page_box()
+        for group in self.build_authentication_groups():
+            authentication_page.append(group)
+
+        forwarding_page = _page_box()
         for group in self.build_port_forwarding_groups():
             forwarding_page.append(group)
 
-        forwarding_label = Gtk.Label(label=_("Port Forwarding"))
-        notebook.append_page(forwarding_page, forwarding_label)
-
-        # Commands page
-        commands_page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        commands_page.set_margin_top(12)
-        commands_page.set_margin_bottom(12)
-        commands_page.set_margin_start(12)
-        commands_page.set_margin_end(12)
-
+        commands_page = _page_box()
         commands_page.append(self.build_commands_group())
 
-        commands_label = Gtk.Label(label=_("Commands"))
-        notebook.append_page(commands_page, commands_label)
-
-        # Advanced page
-        advanced_page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        advanced_page.set_margin_top(12)
-        advanced_page.set_margin_bottom(12)
-        advanced_page.set_margin_start(12)
-        advanced_page.set_margin_end(12)
-        
-        # Create the advanced tab and wrap it in a preferences group
+        advanced_page = _page_box()
         self.advanced_tab = SSHConfigAdvancedTab(self.connection_manager, parent_dialog=self)
         advanced_group = Adw.PreferencesGroup()
         advanced_group.add(self.advanced_tab)
         advanced_page.append(advanced_group)
-        
-        advanced_label = Gtk.Label(label=_("Advanced"))
-        notebook.append_page(advanced_page, advanced_label)
-        
-        return notebook
+
+        return [
+            ("connection", _("Connection"), general_page),
+            ("authentication", _("Authentication"), authentication_page),
+            ("forwarding", _("Port Forwarding"), forwarding_page),
+            ("commands", _("Commands"), commands_page),
+            ("advanced", _("Advanced"), advanced_page),
+        ]
+
+    def _create_preferences_viewstack_content(self, pages):
+        """Card-style tabs via Adw.ViewStack + Adw.InlineViewSwitcher (libadwaita 1.7+)."""
+        stack = Adw.ViewStack()
+        stack.set_vexpand(True)
+        for name, title, widget in pages:
+            stack.add_titled(widget, name, title)
+
+        switcher = Adw.InlineViewSwitcher()
+        switcher.set_stack(stack)
+        switcher.set_hexpand(True)
+        switcher.set_halign(Gtk.Align.FILL)
+        try:
+            switcher.set_display_mode(Adw.InlineViewSwitcherDisplayMode.LABELS)
+        except Exception:
+            pass
+        try:
+            switcher.set_can_shrink(False)
+        except Exception:
+            pass
+        try:
+            switcher.set_homogeneous(False)
+        except Exception:
+            pass
+
+        switcher_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        switcher_card.add_css_class("card")
+        switcher_card.set_hexpand(True)
+        switcher_card.set_margin_start(12)
+        switcher_card.set_margin_end(12)
+        switcher_card.set_margin_top(12)
+        switcher_card.append(switcher)
+
+        def _relayout_switcher(*_args):
+            try:
+                switcher.queue_resize()
+            except Exception:
+                pass
+            return False
+
+        switcher.connect("map", lambda *_a: GLib.idle_add(_relayout_switcher))
+
+        scrolled = Gtk.ScrolledWindow()
+        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scrolled.set_vexpand(True)
+        scrolled.set_child(stack)
+
+        container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        container.set_vexpand(True)
+        container.append(switcher_card)
+        container.append(scrolled)
+        return container
+
+    def _create_preferences_notebook_content(self, pages):
+        """Fallback tabbed layout for libadwaita < 1.7 (no InlineViewSwitcher)."""
+        notebook = Gtk.Notebook()
+        notebook.set_show_tabs(True)
+        notebook.set_show_border(False)
+        for _name, title, widget in pages:
+            notebook.append_page(widget, Gtk.Label(label=title))
+
+        scrolled = Gtk.ScrolledWindow()
+        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scrolled.set_vexpand(True)
+        scrolled.set_child(notebook)
+        return scrolled
+
+    def create_preferences_content(self):
+        """Create tabbed preferences content."""
+        pages = self._build_connection_tab_pages()
+        if hasattr(Adw, "InlineViewSwitcher"):
+            return self._create_preferences_viewstack_content(pages)
+        return self._create_preferences_notebook_content(pages)
     
     def create_bottom_section(self):
         """Create the pinned bottom section with save/cancel buttons"""
@@ -1633,7 +1799,8 @@ class ConnectionDialog(Adw.Window):
     def _selected_key_mode(self) -> int:
         """0 = automatic, 1 = specific + IdentitiesOnly, 2 = specific."""
         try:
-            specific = bool(getattr(self, 'key_specific_check', None) and self.key_specific_check.get_active())
+            specific = bool(getattr(self, 'key_select_row', None)
+                            and self.key_select_row.get_selected() == 1)
         except Exception:
             specific = False
         if not specific:
@@ -1667,11 +1834,17 @@ class ConnectionDialog(Adw.Window):
     def on_auth_method_changed(self, *args):
         """Reveal key-based vs password controls based on the auth ToggleGroup."""
         is_key_based = self._auth_is_key_based()
-        for name in ('key_auto_row', 'key_specific_row', 'add_keys_to_agent_row'):
+        for name in ('key_selection_group', 'key_select_row',
+                     'idonly_group', 'add_keys_to_agent_row'):
             row = getattr(self, name, None)
             if row is not None:
                 row.set_visible(is_key_based)
         if hasattr(self, 'password_row'):
+            try:
+                title = _("Password (optional)") if is_key_based else _("Password")
+                self.password_row.set_title(title)
+            except Exception:
+                pass
             self.password_row.set_visible(True)  # optional for keys, primary for password
         if hasattr(self, 'pubkey_auth_row'):
             self.pubkey_auth_row.set_visible(not is_key_based)
@@ -1683,17 +1856,30 @@ class ConnectionDialog(Adw.Window):
         self.on_key_select_changed()
 
     def on_key_select_changed(self, *args):
-        """Show the key/cert editors only for key-based auth with a specific key."""
+        """Show key rows for key auth, but only enable editing in specific-key mode."""
         is_key_based = self._auth_is_key_based()
         try:
-            use_specific = bool(is_key_based and getattr(self, 'key_specific_check', None)
-                                and self.key_specific_check.get_active())
+            use_specific = bool(is_key_based and getattr(self, 'key_select_row', None)
+                                and self.key_select_row.get_selected() == 1)
         except Exception:
             use_specific = False
-        for name in ('key_editor', 'idonly_group', 'cert_editor'):
-            widget = getattr(self, name, None)
-            if widget is not None:
-                widget.set_visible(use_specific)
+
+        # In Automatic mode keep the specific-key rows visible but inactive, so
+        # users can see what would apply without being able to edit it.
+        key_editor = getattr(self, 'key_editor', None)
+        if key_editor is not None:
+            key_editor.set_visible(is_key_based)
+            key_editor.set_sensitive(use_specific)
+
+        key_only_row = getattr(self, 'key_only_row', None)
+        if key_only_row is not None:
+            key_only_row.set_visible(is_key_based)
+            key_only_row.set_sensitive(use_specific)
+
+        cert_editor = getattr(self, 'cert_editor', None)
+        if cert_editor is not None:
+            cert_editor.set_visible(is_key_based)
+            cert_editor.set_sensitive(use_specific)
 
     # ---- discovery / browse for the key & certificate FileListEditors -------
     def _agent_keys(self):
@@ -2040,7 +2226,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             'nickname_row', 'hostname_row', 'username_row', 'port_row',
             'proxy_jump_row', 'forward_agent_row',
             'auth_toggle', 'key_editor', 'cert_editor', 'password_row',
-            'key_specific_check', 'key_only_row', 'pubkey_auth_row'
+            'key_select_row', 'key_only_row', 'pubkey_auth_row'
         ]
         for attr in required_attrs:
             if not hasattr(self, attr):
@@ -2204,8 +2390,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 if has_specific_key and mode not in (1, 2):
                     mode = 2
                 specific = mode in (1, 2)
-                self.key_specific_check.set_active(specific)
-                self.key_auto_check.set_active(not specific)
+                self.key_select_row.set_selected(1 if specific else 0)
                 try:
                     self.key_only_row.set_active(mode == 1)
                 except Exception:
@@ -2282,102 +2467,11 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             if not hasattr(self, 'forwarding_rules'):
                 self.forwarding_rules = []
                 
-            # Initialize forwarding_rules if it doesn't exist
-            if not hasattr(self, 'forwarding_rules'):
-                self.forwarding_rules = []
-                
-            # Initialize forwarding_rules if it doesn't exist
-            if not hasattr(self, 'forwarding_rules'):
-                self.forwarding_rules = []
-                
             # Load port forwarding rules
             if hasattr(self.connection, 'forwarding_rules') and self.connection.forwarding_rules:
                 self.forwarding_rules = self.connection.forwarding_rules
                 logger.debug(f"Loaded forwarding rules: {self.forwarding_rules}")
                 
-                # Reset all toggles and hide settings boxes first
-                toggle_map = {
-                    'local_forwarding_enabled': ('local_settings_box', 'local'),
-                    'remote_forwarding_enabled': ('remote_settings_box', 'remote'),
-                    'dynamic_forwarding_enabled': ('dynamic_settings_box', 'dynamic')
-                }
-                
-                for toggle_name, (box_name, rule_type) in toggle_map.items():
-                    if hasattr(self, toggle_name) and hasattr(self, box_name):
-                        # Initialize toggle state
-                        toggle = getattr(self, toggle_name)
-                        box = getattr(self, box_name)
-                        
-                        # Check if we have a rule of this type
-                        has_rule = any(r.get('type') == rule_type and r.get('enabled', True) 
-                                     for r in self.forwarding_rules)
-                        
-                        # Set toggle state and box visibility
-                        toggle.set_active(has_rule)
-                        box.set_visible(has_rule)
-                
-                # Update UI based on saved rules
-                for rule in self.forwarding_rules:
-                    if not rule.get('enabled', True):
-                        continue
-
-                    rule_type = rule.get('type')
-
-                    # Handle local forwarding
-                    if rule_type == 'local' and hasattr(self, 'local_forwarding_enabled'):
-                        self.local_forwarding_enabled.set_active(True)
-                        if hasattr(self, 'local_port_row') and 'listen_port' in rule:
-                            try:
-                                self.local_port_row.set_text(str(int(rule['listen_port'])))
-                            except Exception:
-                                self.local_port_row.set_text(str(rule['listen_port']))
-                        if hasattr(self, 'remote_host_row') and 'remote_host' in rule:
-                            self.remote_host_row.set_text(rule['remote_host'])
-                        if hasattr(self, 'remote_port_row') and 'remote_port' in rule:
-                            try:
-                                self.remote_port_row.set_text(str(int(rule['remote_port'])))
-                            except Exception:
-                                self.remote_port_row.set_text(str(rule['remote_port']))
-
-                    # Handle remote forwarding
-                    elif rule_type == 'remote' and hasattr(self, 'remote_forwarding_enabled'):
-                        self.remote_forwarding_enabled.set_active(True)
-                        if hasattr(self, 'remote_bind_host_row') and 'listen_addr' in rule:
-                            try:
-                                self.remote_bind_host_row.set_text(str(rule.get('listen_addr') or 'localhost'))
-                            except Exception:
-                                pass
-                        if hasattr(self, 'remote_bind_port_row') and 'listen_port' in rule:
-                            try:
-                                self.remote_bind_port_row.set_text(str(int(rule['listen_port'])))
-                            except Exception:
-                                self.remote_bind_port_row.set_text(str(rule['listen_port']))
-                        # Destination (local) host/port
-                        if hasattr(self, 'dest_host_row'):
-                            try:
-                                self.dest_host_row.set_text(
-                                    str(rule.get('local_host') or rule.get('remote_host', 'localhost'))
-                                )
-                            except Exception:
-                                pass
-                        if hasattr(self, 'dest_port_row'):
-                            try:
-                                self.dest_port_row.set_text(
-                                    str(int(rule.get('local_port') or rule.get('remote_port') or 0))
-                                )
-                            except Exception:
-                                self.dest_port_row.set_text(str(rule.get('local_port') or rule.get('remote_port') or ''))
-                    
-                    # Handle dynamic forwarding
-                    elif rule_type == 'dynamic' and hasattr(self, 'dynamic_forwarding_enabled'):
-                        self.dynamic_forwarding_enabled.set_active(True)
-                        if hasattr(self, 'dynamic_port_row') and 'listen_port' in rule:
-                            try:
-                                self.dynamic_port_row.set_text(str(int(rule['listen_port'])))
-                            except Exception:
-                                self.dynamic_port_row.set_text(str(rule['listen_port']))
-                
-                # Load the rules into the UI
                 self.load_port_forwarding_rules()
 
         except Exception as e:
@@ -2643,27 +2737,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             self._connect_row_validation(self.hostname_row, lambda r: self._validate_field_row('hostname', r))
         if hasattr(self, 'port_row'):
             self._connect_row_validation(self.port_row, lambda r: self._validate_field_row('port', r, context="SSH"))
-        # Local forwarding
-        if hasattr(self, 'local_port_row'):
-            self._connect_row_validation(self.local_port_row, lambda r: self._validate_port_row(r, _("Local Port")))
-        if hasattr(self, 'remote_host_row'):
-            self._connect_row_validation(self.remote_host_row, lambda r: self._validate_host_row(r, allow_empty=False))
-        if hasattr(self, 'remote_port_row'):
-            self._connect_row_validation(self.remote_port_row, lambda r: self._validate_port_row(r, _("Target Port")))
-        # Remote forwarding
-        if hasattr(self, 'remote_bind_host_row'):
-            self._connect_row_validation(self.remote_bind_host_row, lambda r: self._validate_host_row(r, allow_empty=True))
-        if hasattr(self, 'remote_bind_port_row'):
-            self._connect_row_validation(self.remote_bind_port_row, lambda r: self._validate_port_row(r, _("Remote port")))
-        if hasattr(self, 'dest_host_row'):
-            self._connect_row_validation(self.dest_host_row, lambda r: self._validate_host_row(r, allow_empty=False))
-        if hasattr(self, 'dest_port_row'):
-            self._connect_row_validation(self.dest_port_row, lambda r: self._validate_port_row(r, _("Destination port")))
-        # Dynamic forwarding
-        if hasattr(self, 'dynamic_bind_row'):
-            self._connect_row_validation(self.dynamic_bind_row, lambda r: self._validate_host_row(r, allow_empty=True))
-        if hasattr(self, 'dynamic_port_row'):
-            self._connect_row_validation(self.dynamic_port_row, lambda r: self._validate_port_row(r, _("Local Port")))
 
     def _run_initial_validation(self):
         try:
@@ -2710,32 +2783,153 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             res = self._validate_field_row('port', self.port_row, context="SSH")
             if not res.is_valid:
                 return self.port_row
-        # Local forwarding
-        if hasattr(self, 'local_forwarding_enabled') and self.local_forwarding_enabled.get_active():
-            if hasattr(self, 'local_port_row') and not self._validate_port_row(self.local_port_row, _("Local Port")):
-                return self.local_port_row
-            if hasattr(self, 'remote_host_row') and not self._validate_host_row(self.remote_host_row, allow_empty=False):
-                return self.remote_host_row
-            if hasattr(self, 'remote_port_row') and not self._validate_port_row(self.remote_port_row, _("Target Port")):
-                return self.remote_port_row
-        # Remote forwarding
-        if hasattr(self, 'remote_forwarding_enabled') and self.remote_forwarding_enabled.get_active():
-            if hasattr(self, 'remote_bind_host_row') and not self._validate_host_row(self.remote_bind_host_row, allow_empty=True):
-                return self.remote_bind_host_row
-            if hasattr(self, 'remote_bind_port_row') and not self._validate_port_row(self.remote_bind_port_row, _("Remote port")):
-                return self.remote_bind_port_row
-            if hasattr(self, 'dest_host_row') and not self._validate_host_row(self.dest_host_row, allow_empty=False):
-                return self.dest_host_row
-            if hasattr(self, 'dest_port_row') and not self._validate_port_row(self.dest_port_row, _("Destination port")):
-                return self.dest_port_row
-        # Dynamic forwarding
-        if hasattr(self, 'dynamic_forwarding_enabled') and self.dynamic_forwarding_enabled.get_active():
-            if hasattr(self, 'dynamic_bind_row') and not self._validate_host_row(self.dynamic_bind_row, allow_empty=True):
-                return self.dynamic_bind_row
-            if hasattr(self, 'dynamic_port_row') and not self._validate_port_row(self.dynamic_port_row, _("Local Port")):
-                return self.dynamic_port_row
         return None
     
+    def build_authentication_groups(self):
+        """Build PreferencesGroups for authentication settings."""
+        cm = getattr(self, 'connection_manager', None)
+
+        # --- Method: key-based vs password (AdwToggleGroup) ---
+        auth_group = Adw.PreferencesGroup(title=_("Authentication method"))
+        method_row = Adw.ActionRow()
+        method_row.set_activatable(False)
+        self.auth_toggle = _build_expanding_toggle_group([_("Key-based"), _("Password")])
+        self.auth_toggle.connect("notify::active", self.on_auth_method_changed)
+        _set_action_row_child(method_row, self.auth_toggle)
+        auth_group.add(method_row)
+
+        # --- Key selection mode: Automatic vs Use specific keys ---
+        self.key_selection_group = Adw.PreferencesGroup()
+        key_select_model = Gtk.StringList()
+        key_select_model.append(_("Automatic"))
+        key_select_model.append(_("Use Specific Key(s)"))
+        self.key_select_row = Adw.ComboRow(title=_("Key selection"))
+        self.key_select_row.set_subtitle(_("Use SSH defaults or pick specific keys below."))
+        self.key_select_row.set_model(key_select_model)
+        self.key_select_row.set_selected(0)
+        self.key_select_row.connect("notify::selected", self.on_key_select_changed)
+        self.key_selection_group.add(self.key_select_row)
+
+        # --- Identity files (private keys) ---
+        self.key_editor = FileListEditor(
+            title=_("Private Keys"),
+            with_passphrase=True,
+            connection_manager=cm,
+            add_actions=[{
+                'icon': 'plus-large-symbolic',
+                'label': _("Add"),
+                'chooser': lambda editor: self._open_key_chooser(editor),
+            }],
+            add_at_bottom=True,
+            verify=lambda path, passphrase: self.validator.verify_key_passphrase(
+                os.path.expanduser(path), passphrase
+            ),
+        )
+
+        # --- Certificates ---
+        self.cert_editor = FileListEditor(
+            title=_("Certificates"),
+            add_actions=[
+                {'icon': 'plus-large-symbolic', 'label': _("Add"),
+                 'discover': self._discover_certs, 'browse': self._browse_cert},
+            ],
+            add_at_bottom=True,
+            with_passphrase=False,
+            connection_manager=cm,
+        )
+
+        # --- Key handling ---
+        self.idonly_group = Adw.PreferencesGroup(title=_("Key handling"))
+        self.key_only_row = Adw.SwitchRow()
+        self.key_only_row.set_title(_("Only use the selected key(s)"))
+        self.key_only_row.set_subtitle(_("Write IdentitiesOnly yes for this connection."))
+        self.key_only_row.set_active(True)
+        self.idonly_group.add(self.key_only_row)
+
+        self._add_keys_values = ['', 'yes', 'no', 'ask', 'confirm']
+        akta_model = Gtk.StringList()
+        for lbl in (_("Default"), _("Yes"), _("No"), _("Ask"), _("Confirm")):
+            akta_model.append(lbl)
+        self.add_keys_to_agent_row = Adw.ComboRow(title=_("Add keys to agent"))
+        self.add_keys_to_agent_row.set_subtitle(
+            _("Load keys into ssh-agent on first use (AddKeysToAgent)")
+        )
+        self.add_keys_to_agent_row.set_model(akta_model)
+        self.add_keys_to_agent_row.set_selected(0)
+        self.idonly_group.add(self.add_keys_to_agent_row)
+
+        # --- Password / password-only options ---
+        password_group = Adw.PreferencesGroup(title=_("Password"))
+        self.password_row = Adw.PasswordEntryRow(title=_("Password (optional)"))
+        self.password_row.set_show_apply_button(False)
+        password_group.add(self.password_row)
+
+        self.pubkey_auth_row = Adw.SwitchRow()
+        self.pubkey_auth_row.set_title(_("Disable public key authentication"))
+        self.pubkey_auth_row.set_subtitle(_("Force password authentication only (PubkeyAuthentication no)."))
+        self.pubkey_auth_row.set_active(False)
+        password_group.add(self.pubkey_auth_row)
+
+        # --- Agent & hardware key sources -------------------------------------
+        # A key (and any cert that pairs with it) may come from an ssh-agent, a
+        # PKCS#11 smartcard, or a FIDO security key rather than an on-disk file.
+        self.hw_group = hw_group = Adw.PreferencesGroup(
+            title=_("Agent and hardware keys"),
+            description=_("Optional sources for IdentityAgent, PKCS#11, and FIDO security keys."),
+        )
+        self.identity_agent_row = Adw.EntryRow(title=_("IdentityAgent"))
+        try:
+            self.identity_agent_row.set_subtitle(_("Socket path, $VARIABLE, or none"))
+        except Exception:
+            pass
+        hw_group.add(self.identity_agent_row)
+
+        self.pkcs11_provider_row = Adw.EntryRow(title=_("PKCS#11 provider"))
+        try:
+            self.pkcs11_provider_row.set_subtitle(_("Provider library path"))
+        except Exception:
+            pass
+        pkcs_btn = Gtk.Button(icon_name='document-open-symbolic')
+        pkcs_btn.add_css_class('flat')
+        pkcs_btn.set_valign(Gtk.Align.CENTER)
+        pkcs_btn.set_tooltip_text(_("Browse for provider library"))
+        pkcs_btn.connect('clicked', lambda *_a: self._browse_file(
+            _("Select PKCS#11 provider library"),
+            lambda p: self.pkcs11_provider_row.set_text(p)))
+        self.pkcs11_provider_row.add_suffix(pkcs_btn)
+        hw_group.add(self.pkcs11_provider_row)
+
+        self.security_key_provider_row = Adw.EntryRow(title=_("FIDO security key provider"))
+        try:
+            self.security_key_provider_row.set_subtitle(_("Provider library path"))
+        except Exception:
+            pass
+        sk_btn = Gtk.Button(icon_name='document-open-symbolic')
+        sk_btn.add_css_class('flat')
+        sk_btn.set_valign(Gtk.Align.CENTER)
+        sk_btn.set_tooltip_text(_("Browse for provider library"))
+        sk_btn.connect('clicked', lambda *_a: self._browse_file(
+            _("Select FIDO security key provider library"),
+            lambda p: self.security_key_provider_row.set_text(p)))
+        self.security_key_provider_row.add_suffix(sk_btn)
+        hw_group.add(self.security_key_provider_row)
+
+        # Initialize visibility for new connections.
+        try:
+            self.on_auth_method_changed(self.auth_toggle, None)
+        except Exception:
+            pass
+
+        return [
+            auth_group,
+            self.key_selection_group,
+            self.key_editor,
+            self.cert_editor,
+            self.idonly_group,
+            password_group,
+            hw_group,
+        ]
+
     def build_connection_groups(self):
         """Build PreferencesGroups for the General page"""
         # Create main container
@@ -2747,11 +2941,19 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         page.set_hexpand(True)
         page.set_vexpand(True)
         
-        # Basic Settings Group
-        basic_group = Adw.PreferencesGroup(title=_("Basic Settings"))
+        _nickname_hint = _("Nickname is used as the SSH Host label; no whitespaces allowed.")
+        # Host Group
+        basic_group = Adw.PreferencesGroup(
+            title=_("Host"),
+            description=_nickname_hint,
+        )
         
         # Nickname
         self.nickname_row = Adw.EntryRow(title=_("Nickname"))
+        try:
+            self.nickname_row.set_subtitle(_nickname_hint)
+        except Exception:
+            pass
         basic_group.add(self.nickname_row)
         
         # Hostname
@@ -2809,184 +3011,21 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         wol_detect_row.set_activatable(False)
         wol_group.add(wol_detect_row)
 
-        # Authentication Group
-        auth_group = Adw.PreferencesGroup(title=_("Authentication"))
-        cm = getattr(self, 'connection_manager', None)
-
-        # --- Method: key-based vs password (AdwToggleGroup) ---
-        method_row = Adw.ActionRow(title=_("Authentication method"))
-        method_row.set_activatable(False)
-        # Adw.ToggleGroup/Adw.Toggle require libadwaita 1.7+. On older runtimes
-        # (e.g. Ubuntu 24.04 ships 1.5) fall back to a linked-button segmented
-        # control so editing a connection still works (issue #965).
-        if hasattr(Adw, "ToggleGroup"):
-            self.auth_toggle = Adw.ToggleGroup()
-            self.auth_toggle.set_valign(Gtk.Align.CENTER)
-            try:
-                key_toggle = Adw.Toggle(label=_("Key-based"))
-                pw_toggle = Adw.Toggle(label=_("Password"))
-                self.auth_toggle.add(key_toggle)
-                self.auth_toggle.add(pw_toggle)
-            except Exception:
-                logger.debug("Failed to build auth ToggleGroup", exc_info=True)
-        else:
-            self.auth_toggle = _AuthMethodToggleFallback([_("Key-based"), _("Password")])
-            self.auth_toggle.set_valign(Gtk.Align.CENTER)
+        # Routing / jump hosts.
+        proxy_group = Adw.PreferencesGroup(
+            title=_("Routing"),
+            description=_("Optional SSH path settings used before authentication."),
+        )
+        self.proxy_jump_row = Adw.EntryRow(title=_("Jump hosts"))
         try:
-            self.auth_toggle.set_active(0)
+            self.proxy_jump_row.set_subtitle(_("Comma-separated ProxyJump chain"))
         except Exception:
             pass
-        self.auth_toggle.connect("notify::active", self.on_auth_method_changed)
-        method_row.add_suffix(self.auth_toggle)
-        auth_group.add(method_row)
+        entry = self.proxy_jump_row.get_child()
+        if entry and hasattr(entry, 'set_placeholder_text'):
+            entry.set_placeholder_text("bastion1,bastion2,bastion3")
 
-        # --- Key selection mode: Automatic vs Use a specific key (radio rows) ---
-        self.key_auto_check = Gtk.CheckButton()
-        self.key_auto_check.set_valign(Gtk.Align.CENTER)
-        self.key_specific_check = Gtk.CheckButton()
-        self.key_specific_check.set_group(self.key_auto_check)
-        self.key_specific_check.set_valign(Gtk.Align.CENTER)
-        self.key_auto_check.set_active(True)
-
-        self.key_auto_row = Adw.ActionRow(
-            title=_("Automatic"),
-            subtitle=_("Try the default keys and any keys offered by the agent"),
-        )
-        self.key_auto_row.add_prefix(self.key_auto_check)
-        self.key_auto_row.set_activatable_widget(self.key_auto_check)
-        auth_group.add(self.key_auto_row)
-
-        self.key_specific_row = Adw.ActionRow(
-            title=_("Use a specific key"),
-            subtitle=_("Choose one or more private keys for this connection"),
-        )
-        key_add_btn = Gtk.Button()
-        key_add_btn.set_child(Adw.ButtonContent(
-            icon_name='list-add-symbolic',
-            label=_("Add a key…"),
-        ))
-        key_add_btn.add_css_class('pill')
-        key_add_btn.add_css_class('suggested-action')
-        key_add_btn.set_valign(Gtk.Align.CENTER)
-        key_add_btn.connect(
-            'clicked',
-            lambda _btn: self._open_key_chooser(self.key_editor),
-        )
-        self.key_specific_row.add_prefix(self.key_specific_check)
-        self.key_specific_row.add_suffix(key_add_btn)
-        self.key_specific_row.set_activatable_widget(self.key_specific_check)
-        auth_group.add(self.key_specific_row)
-
-        self.key_auto_check.connect("toggled", self.on_key_select_changed)
-        self.key_specific_check.connect("toggled", self.on_key_select_changed)
-
-        # The identity-files / certificates editors are their own preference
-        # groups (built below) so they're clearly separated from the controls in
-        # this group; the IdentitiesOnly toggle lives in its own group too.
-
-        # AddKeysToAgent / Password / pubkey are created here but mounted in a
-        # separate "behaviour" group BELOW the IdentitiesOnly toggle (see below).
-        self._add_keys_values = ['', 'yes', 'no', 'ask', 'confirm']
-        akta_model = Gtk.StringList()
-        for lbl in (_("Default"), _("Yes"), _("No"), _("Ask"), _("Confirm")):
-            akta_model.append(lbl)
-        self.add_keys_to_agent_row = Adw.ComboRow(title=_("Add keys to agent"))
-        self.add_keys_to_agent_row.set_subtitle(_("Load the key into ssh-agent on first use (AddKeysToAgent)"))
-        self.add_keys_to_agent_row.set_model(akta_model)
-        self.add_keys_to_agent_row.set_selected(0)
-
-        self.password_row = Adw.PasswordEntryRow(title=_("Password (optional)"))
-        self.password_row.set_show_apply_button(False)
-
-        self.pubkey_auth_row = Adw.SwitchRow()
-        self.pubkey_auth_row.set_title(_("Disable public key authentication (force password only)"))
-        self.pubkey_auth_row.set_active(False)
-
-        # --- Identity files (private keys) — own group with key rows.
-        self.key_editor = FileListEditor(
-            title=_(""),
-            with_passphrase=True,
-            connection_manager=cm,
-            rows_group=auth_group,
-            verify=lambda path, passphrase: self.validator.verify_key_passphrase(
-                os.path.expanduser(path), passphrase
-            ),
-        )
-        self.key_editor.set_description(_(""))
-
-        # IdentitiesOnly — its own group, clearly separated from the keys above.
-        self.idonly_group = Adw.PreferencesGroup()
-        self.key_only_row = Adw.SwitchRow()
-        self.key_only_row.set_title(_("Only use these keys"))
-        self.key_only_row.set_subtitle(_("Append \"IdentitiesOnly yes\" to the configuration."))
-        self.key_only_row.set_active(True)
-        self.idonly_group.add(self.key_only_row)
-
-        # --- Certificates — own group, same pattern.
-        self.cert_editor = FileListEditor(
-            title=_("Certificates"),
-            add_actions=[
-                {'label': _("Add a certificate…"), 'icon': 'list-add-symbolic',
-                 'discover': self._discover_certs, 'browse': self._browse_cert},
-            ],
-            with_passphrase=False,
-            connection_manager=cm,
-        )
-
-        # --- Auth behaviour — below the "Only use these keys" toggle.
-        behaviour_group = Adw.PreferencesGroup()
-        behaviour_group.add(self.add_keys_to_agent_row)
-        behaviour_group.add(self.password_row)
-        behaviour_group.add(self.pubkey_auth_row)
-
-        # Initialize visibility for new connections
-        try:
-            self.on_auth_method_changed(self.auth_toggle, None)
-        except Exception:
-            pass
-
-        # --- Agent & hardware key sources -------------------------------------
-        # A key (and any cert that pairs with it) may come from an ssh-agent, a
-        # PKCS#11 smartcard, or a FIDO security key rather than an on-disk file.
-        # These compose with the identity files above; ssh resolves which key
-        # (and cert) authenticates. Leave blank to use defaults.
-        self.hw_group = hw_group = Adw.PreferencesGroup(
-            title=_("Agent and hardware keys"),
-            description=_("Optional. Use keys from an agent, smartcard (PKCS#11), "
-                          "or FIDO security key. Leave blank for defaults."),
-        )
-        self.identity_agent_row = Adw.EntryRow(title=_("IdentityAgent (socket path, $VARIABLE, or none)"))
-        hw_group.add(self.identity_agent_row)
-
-        self.pkcs11_provider_row = Adw.EntryRow(title=_("PKCS#11 provider (library path)"))
-        pkcs_btn = Gtk.Button(icon_name='document-open-symbolic')
-        pkcs_btn.add_css_class('flat')
-        pkcs_btn.set_valign(Gtk.Align.CENTER)
-        pkcs_btn.set_tooltip_text(_("Browse for provider library"))
-        pkcs_btn.connect('clicked', lambda *_a: self._browse_file(
-            _("Select PKCS#11 provider library"),
-            lambda p: self.pkcs11_provider_row.set_text(p)))
-        self.pkcs11_provider_row.add_suffix(pkcs_btn)
-        hw_group.add(self.pkcs11_provider_row)
-
-        self.security_key_provider_row = Adw.EntryRow(title=_("FIDO security key provider (library path)"))
-        sk_btn = Gtk.Button(icon_name='document-open-symbolic')
-        sk_btn.add_css_class('flat')
-        sk_btn.set_valign(Gtk.Align.CENTER)
-        sk_btn.set_tooltip_text(_("Browse for provider library"))
-        sk_btn.connect('clicked', lambda *_a: self._browse_file(
-            _("Select FIDO security key provider library"),
-            lambda p: self.security_key_provider_row.set_text(p)))
-        self.security_key_provider_row.add_suffix(sk_btn)
-        hw_group.add(self.security_key_provider_row)
-
-        # ProxyJump Group
-        proxy_group = Adw.PreferencesGroup(title=_("ProxyJump"))
-
-        # ProxyJump hosts (comma-separated for multiple hops)
-        self.proxy_jump_row = Adw.EntryRow(title=_("Multiple comma-separated hosts supported: bastion1,bastion2,bastion3"))
-
-        # Inventory picker button — lets the user pick a host from the saved inventory
+        # Inventory picker button — lets the user pick a host from the saved inventory.
         if self.connection_manager and self.connection_manager.connections:
             pick_btn = Gtk.Button()
             pick_btn.set_icon_name('view-list-symbolic')
@@ -2998,229 +3037,13 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
 
         proxy_group.add(self.proxy_jump_row)
 
-        # Agent forwarding toggle
         self.forward_agent_row = Adw.SwitchRow()
-        self.forward_agent_row.set_title(_("Agent Forwarding"))
+        self.forward_agent_row.set_title(_("Forward agent"))
+        self.forward_agent_row.set_subtitle(_("Allow the remote host to use your local ssh-agent"))
         self.forward_agent_row.set_active(False)
         proxy_group.add(self.forward_agent_row)
 
-        # Remove unused advanced label group from this page
-        advanced_group = Adw.PreferencesGroup()
-        advanced_group.set_visible(False)
-        
-        # Local Port Forwarding (moved to Port Forwarding view)
-        local_forwarding_group = Adw.PreferencesGroup(title=_("Local Port Forwarding"))
-        
-        # Enable toggle for local port forwarding
-        self.local_forwarding_enabled = Adw.SwitchRow()
-        self.local_forwarding_enabled.set_title(_("Local Port Forwarding"))
-        self.local_forwarding_enabled.set_subtitle(_("Forward a local port to a remote host"))
-        local_forwarding_group.add(self.local_forwarding_enabled)
-        
-        # Local port forwarding settings
-        local_settings_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        local_settings_box.set_margin_start(12)
-        local_settings_box.set_margin_end(12)
-        local_settings_box.set_margin_bottom(12)
-        
-        local_port_row = Adw.EntryRow()
-        local_port_row.set_title(_("Local Port"))
-        try:
-            local_port_row.set_subtitle(_("Local port to forward"))
-        except Exception:
-            pass
-        try:
-            lpe = local_port_row.get_child()
-            if lpe and hasattr(lpe, 'set_input_purpose'):
-                lpe.set_input_purpose(Gtk.InputPurpose.DIGITS)
-            if lpe and hasattr(lpe, 'set_max_length'):
-                lpe.set_max_length(5)
-        except Exception:
-            pass
-        local_settings_box.append(local_port_row)
-        
-        remote_host_row = Adw.EntryRow()
-        remote_host_row.set_title(_("Target Host"))
-        entry = remote_host_row.get_child()
-        if entry and hasattr(entry, 'set_placeholder_text'):
-            entry.set_placeholder_text("localhost")
-        remote_host_row.set_show_apply_button(False)
-        local_settings_box.append(remote_host_row)
-        
-        remote_port_row = Adw.EntryRow()
-        remote_port_row.set_title(_("Target Port"))
-        try:
-            remote_port_row.set_subtitle(_("Port on remote host"))
-        except Exception:
-            pass
-        try:
-            rpe = remote_port_row.get_child()
-            if rpe and hasattr(rpe, 'set_input_purpose'):
-                rpe.set_input_purpose(Gtk.InputPurpose.DIGITS)
-            if rpe and hasattr(rpe, 'set_max_length'):
-                rpe.set_max_length(5)
-        except Exception:
-            pass
-        local_settings_box.append(remote_port_row)
-        
-        # Add settings box to group
-        local_forwarding_group.add(local_settings_box)
-        
-        # Store references to the rows for saving
-        self.local_port_row = local_port_row
-        self.remote_host_row = remote_host_row
-        self.remote_port_row = remote_port_row
-        self.local_settings_box = local_settings_box  # Store reference to the settings box
-        
-        # Connect toggle to show/hide settings
-        self.local_forwarding_enabled.connect('notify::active', self.on_forwarding_toggled, local_settings_box)
-        
-        # Initially hide settings if not enabled
-        local_settings_box.set_visible(False)
-        
-        # group kept for structure but hidden in this view
-        local_forwarding_group.set_visible(False)
-        
-        # Remote Port Forwarding (moved)
-        remote_forwarding_group = Adw.PreferencesGroup(title=_("Remote Port Forwarding"))
-        
-        # Enable toggle for remote port forwarding
-        self.remote_forwarding_enabled = Adw.SwitchRow()
-        self.remote_forwarding_enabled.set_title(_("Remote Port Forwarding"))
-        self.remote_forwarding_enabled.set_subtitle(_("Forward a remote port to a local host"))
-        remote_forwarding_group.add(self.remote_forwarding_enabled)
-        
-        # Remote port forwarding settings (RemoteHost, RemotePort -> DestinationHost, DestinationPort)
-        remote_settings_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        remote_settings_box.set_margin_start(12)
-        remote_settings_box.set_margin_end(12)
-        remote_settings_box.set_margin_bottom(12)
-        
-        remote_bind_host_row = Adw.EntryRow()
-        remote_bind_host_row.set_title(_("Remote host (optional)"))
-        rbh_entry = remote_bind_host_row.get_child()
-        if rbh_entry and hasattr(rbh_entry, 'set_placeholder_text'):
-            rbh_entry.set_placeholder_text("localhost")
-        remote_bind_host_row.set_show_apply_button(False)
-        remote_bind_host_row.set_text("localhost")
-        remote_settings_box.append(remote_bind_host_row)
-        
-        remote_bind_port_row = Adw.EntryRow()
-        remote_bind_port_row.set_title(_("Remote port"))
-        try:
-            rbpe = remote_bind_port_row.get_child()
-            if rbpe and hasattr(rbpe, 'set_input_purpose'):
-                rbpe.set_input_purpose(Gtk.InputPurpose.DIGITS)
-            if rbpe and hasattr(rbpe, 'set_max_length'):
-                rbpe.set_max_length(5)
-        except Exception:
-            pass
-        remote_settings_box.append(remote_bind_port_row)
-        
-        dest_host_row = Adw.EntryRow()
-        dest_host_row.set_title(_("Destination host"))
-        dest_entry = dest_host_row.get_child()
-        if dest_entry and hasattr(dest_entry, 'set_placeholder_text'):
-            dest_entry.set_placeholder_text("localhost")
-        dest_host_row.set_show_apply_button(False)
-        dest_host_row.set_text("localhost")
-        remote_settings_box.append(dest_host_row)
-
-        dest_port_row = Adw.EntryRow()
-        dest_port_row.set_title(_("Destination port"))
-        try:
-            # Align subtitle to previous implementation wording
-            dest_port_row.set_subtitle(_("Local port to forward"))
-        except Exception:
-            pass
-        try:
-            dpe = dest_port_row.get_child()
-            if dpe and hasattr(dpe, 'set_input_purpose'):
-                dpe.set_input_purpose(Gtk.InputPurpose.DIGITS)
-            if dpe and hasattr(dpe, 'set_max_length'):
-                dpe.set_max_length(5)
-        except Exception:
-            pass
-        remote_settings_box.append(dest_port_row)
-        
-        # Add settings box to group
-        remote_forwarding_group.add(remote_settings_box)
-        
-        # Store references to the rows for saving
-        self.remote_bind_host_row = remote_bind_host_row
-        self.remote_bind_port_row = remote_bind_port_row
-        self.dest_host_row = dest_host_row
-        self.dest_port_row = dest_port_row
-        self.remote_settings_box = remote_settings_box  # Store reference to the settings box
-        
-        # Connect toggle to show/hide settings
-        self.remote_forwarding_enabled.connect('notify::active', self.on_forwarding_toggled, remote_settings_box)
-        
-        # Initially hide settings if not enabled
-        remote_settings_box.set_visible(False)
-        
-        remote_forwarding_group.set_visible(False)
-        
-        # Dynamic Port Forwarding (moved)
-        dynamic_forwarding_group = Adw.PreferencesGroup(title=_("Dynamic Port Forwarding (SOCKS)"))
-        
-        # Enable toggle for dynamic port forwarding
-        self.dynamic_forwarding_enabled = Adw.SwitchRow()
-        self.dynamic_forwarding_enabled.set_title(_("Dynamic Port Forwarding"))
-        self.dynamic_forwarding_enabled.set_subtitle(_("Create a SOCKS proxy on local port"))
-        dynamic_forwarding_group.add(self.dynamic_forwarding_enabled)
-        
-        # Dynamic port forwarding settings
-        dynamic_settings_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        dynamic_settings_box.set_margin_start(12)
-        dynamic_settings_box.set_margin_end(12)
-        dynamic_settings_box.set_margin_bottom(12)
-        
-        dynamic_bind_row = Adw.EntryRow()
-        dynamic_bind_row.set_title(_("Bind address (optional)"))
-        try:
-            dbe = dynamic_bind_row.get_child()
-            if dbe and hasattr(dbe, 'set_placeholder_text'):
-                dbe.set_placeholder_text("localhost")
-        except Exception:
-            pass
-        dynamic_settings_box.append(dynamic_bind_row)
-
-        dynamic_port_row = Adw.EntryRow()
-        dynamic_port_row.set_title(_("Local Port"))
-        try:
-            dpe2 = dynamic_port_row.get_child()
-            if dpe2 and hasattr(dpe2, 'set_input_purpose'):
-                dpe2.set_input_purpose(Gtk.InputPurpose.DIGITS)
-            if dpe2 and hasattr(dpe2, 'set_max_length'):
-                dpe2.set_max_length(5)
-        except Exception:
-            pass
-        dynamic_port_row.set_text("1080")  # Default SOCKS port
-        dynamic_settings_box.append(dynamic_port_row)
-        
-        # Add settings box to group
-        dynamic_forwarding_group.add(dynamic_settings_box)
-        
-        # Store reference for saving
-        self.dynamic_bind_row = dynamic_bind_row
-        self.dynamic_port_row = dynamic_port_row
-        self.dynamic_settings_box = dynamic_settings_box  # Store reference to the settings box
-        
-        # Connect toggle to show/hide settings
-        self.dynamic_forwarding_enabled.connect('notify::active', self.on_forwarding_toggled, dynamic_settings_box)
-        
-        # Initially hide settings if not enabled
-        dynamic_settings_box.set_visible(False)
-        
-        dynamic_forwarding_group.set_visible(False)
-        
-        # X11 Forwarding moved to Port Forwarding view
-        
-        # Return groups for PreferencesPage
-        return [basic_group, auth_group, self.idonly_group, self.cert_editor,
-                behaviour_group, hw_group,
-                proxy_group, wol_group, advanced_group]
+        return [basic_group, proxy_group, wol_group]
     
     def build_port_forwarding_groups(self):
         """Build PreferencesGroups for the Advanced page (Port Forwarding first, X11 last)"""
@@ -3373,7 +3196,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             if rule_type == 'local':
                 row.set_title(_("Local Port Forwarding"))
                 row.add_prefix(icon_utils.new_image_from_icon_name("network-transmit-receive-symbolic"))
-                description = _("Local port {local_port} → {remote_host}:{remote_port}").format(
+                description = _("Local {local_port} → {remote_host}:{remote_port}").format(
                     local_port=rule.get('listen_port', ''),
                     remote_host=rule.get('remote_host', ''),
                     remote_port=rule.get('remote_port', '')
@@ -3381,12 +3204,17 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             elif rule_type == 'remote':
                 row.set_title(_("Remote Port Forwarding"))
                 row.add_prefix(icon_utils.new_image_from_icon_name("network-receive-symbolic"))
-                description = _("Remote {remote_host}:{remote_port} → {dest_host}:{dest_port}").format(
-                    remote_host=rule.get('listen_addr', 'localhost'),
-                    remote_port=rule.get('listen_port', ''),
-                    dest_host=rule.get('local_host') or rule.get('remote_host', ''),
-                    dest_port=rule.get('local_port') or rule.get('remote_port', '')
-                )
+                listen_addr = rule.get('listen_addr') or ''
+                listen_port = rule.get('listen_port', '')
+                remote_src = f"{listen_addr}:{listen_port}" if listen_addr else f"{listen_port}"
+                dest_host = rule.get('local_host') or rule.get('remote_host') or ''
+                dest_port = rule.get('local_port') or rule.get('remote_port') or ''
+                if rule.get('socks') or not (dest_host or dest_port):
+                    description = _("Remote {src} → SOCKS").format(src=remote_src)
+                else:
+                    description = _("Remote {src} → {dest_host}:{dest_port}").format(
+                        src=remote_src, dest_host=dest_host, dest_port=dest_port
+                    )
             elif rule_type == 'dynamic':
                 row.set_title(_("Dynamic Port Forwarding (SOCKS)"))
                 row.add_prefix(icon_utils.new_image_from_icon_name("network-workgroup-symbolic"))
@@ -3430,19 +3258,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
 
         # Remove the rule from the list
         self.forwarding_rules = [r for r in self.forwarding_rules if r != rule]
-
-        # Sync old-style toggle switches so save-time validation doesn't block
-        for toggle_attr, rule_type in [
-            ('local_forwarding_enabled', 'local'),
-            ('remote_forwarding_enabled', 'remote'),
-            ('dynamic_forwarding_enabled', 'dynamic'),
-        ]:
-            if hasattr(self, toggle_attr):
-                has_rule = any(
-                    r.get('type') == rule_type and r.get('enabled', True)
-                    for r in self.forwarding_rules
-                )
-                getattr(self, toggle_attr).set_active(has_rule)
 
         # Reload the rules UI
         self.load_port_forwarding_rules()
@@ -3548,12 +3363,21 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             except Exception:
                 listen_port_row.set_text(str(existing_rule.get('listen_port', '')))
             if t == 'remote':
-                # For remote rules, the destination is local_host/local_port
-                remote_host_row.set_text(str(existing_rule.get('local_host', 'localhost')))
-                try:
-                    remote_port_row.set_text(str(int(existing_rule.get('local_port', 0) or 0)))
-                except Exception:
-                    remote_port_row.set_text(str(existing_rule.get('local_port', '')))
+                # For remote rules, the destination is local_host/local_port.
+                # A single-argument (SOCKS) rule has no destination — leave the
+                # fields blank so it round-trips as SOCKS instead of being forced
+                # into a localhost destination on save.
+                if existing_rule.get('socks') or not (
+                    existing_rule.get('local_host') or existing_rule.get('local_port')
+                ):
+                    remote_host_row.set_text('')
+                    remote_port_row.set_text('')
+                else:
+                    remote_host_row.set_text(str(existing_rule.get('local_host', 'localhost')))
+                    try:
+                        remote_port_row.set_text(str(int(existing_rule.get('local_port', 0) or 0)))
+                    except Exception:
+                        remote_port_row.set_text(str(existing_rule.get('local_port', '')))
             else:
                 remote_host_row.set_text(str(existing_rule.get('remote_host', 'localhost')))
                 try:
@@ -3628,7 +3452,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
     def _save_rule_from_editor(self, existing_rule, type_row, listen_addr_row, listen_port_row, remote_host_row, remote_port_row):
         idx = type_row.get_selected()
         rtype = 'local' if idx == 0 else ('remote' if idx == 1 else 'dynamic')
-        listen_addr = listen_addr_row.get_text().strip() or 'localhost'
+        listen_addr = listen_addr_row.get_text().strip()
         try:
             listen_port = int((listen_port_row.get_text() or '0').strip() or '0')
         except Exception:
@@ -3641,7 +3465,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         if rtype in ['local', 'dynamic']:
             try:
                 port_checker = get_port_checker()
-                conflicts = port_checker.get_port_conflicts([listen_port], listen_addr)
+                conflicts = port_checker.get_port_conflicts([listen_port], listen_addr or 'localhost')
                 
                 if conflicts:
                     port, port_info = conflicts[0]
@@ -3653,7 +3477,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                         )
                     
                     # Suggest alternative port
-                    alt_port = port_checker.find_available_port(listen_port, listen_addr)
+                    alt_port = port_checker.find_available_port(listen_port, listen_addr or 'localhost')
                     if alt_port:
                         conflict_msg += _("\n\nSuggested alternative: port {alt_port}").format(alt_port=alt_port)
                     
@@ -3667,23 +3491,43 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         rule = {
             'type': rtype,
             'enabled': True,
-            'listen_addr': listen_addr,
+            # RemoteForward binds on the REMOTE host: an empty bind address means
+            # "let the remote/GatewayPorts decide" (loopback by default), so keep
+            # it empty rather than pinning localhost. Local/dynamic bind locally
+            # and keep defaulting to localhost.
+            'listen_addr': listen_addr if rtype == 'remote' else (listen_addr or 'localhost'),
             'listen_port': listen_port,
         }
         if rtype == 'local':
             # LocalForward: [listen_addr:]listen_port remote_host:remote_port
+            # The destination is mandatory and must be a valid port.
+            try:
+                remote_port = int((remote_port_row.get_text() or '0').strip() or '0')
+            except Exception:
+                remote_port = 0
+            if remote_port <= 0 or remote_port > 65535:
+                self.show_error(_("Please enter a valid destination port (1–65535)"))
+                return
             rule['remote_host'] = remote_host_row.get_text().strip() or 'localhost'
-            try:
-                rule['remote_port'] = int((remote_port_row.get_text() or '0').strip() or '0')
-            except Exception:
-                rule['remote_port'] = 0
+            rule['remote_port'] = remote_port
         elif rtype == 'remote':
-            # RemoteForward: [listen_addr:]listen_port local_host:local_port
-            rule['local_host'] = remote_host_row.get_text().strip() or 'localhost'
+            # RemoteForward: [listen_addr:]listen_port [local_host:local_port]
+            # With no destination it is a reverse SOCKS proxy (single-argument
+            # form, ssh_config(5)). An empty destination is therefore valid and
+            # means SOCKS rather than a malformed forward.
+            dest_host = remote_host_row.get_text().strip()
             try:
-                rule['local_port'] = int((remote_port_row.get_text() or '0').strip() or '0')
+                dest_port = int((remote_port_row.get_text() or '0').strip() or '0')
             except Exception:
-                rule['local_port'] = 0
+                dest_port = 0
+            if not dest_host and dest_port <= 0:
+                rule['socks'] = True
+            else:
+                if dest_port <= 0 or dest_port > 65535:
+                    self.show_error(_("Please enter a valid destination port (1–65535)"))
+                    return
+                rule['local_host'] = dest_host or 'localhost'
+                rule['local_port'] = dest_port
 
         if not hasattr(self, 'forwarding_rules') or self.forwarding_rules is None:
             self.forwarding_rules = []
@@ -3729,20 +3573,29 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 except Exception:
                     remote_port_row.set_text('22')
             elif idx == 1:  # Remote
-                if not listen_addr_row.get_text().strip():
-                    listen_addr_row.set_text('localhost')
+                # The bind address is on the REMOTE host and is optional — keep it
+                # empty by default. On a real switch into Remote, clear whatever a
+                # previous type seeded so it starts blank; on the initial load of
+                # an existing rule leave the populated value untouched.
+                if previous_idx is not None and previous_idx != idx:
+                    listen_addr_row.set_text('')
                 try:
                     if int((listen_port_row.get_text() or '0').strip() or '0') == 0:
                         listen_port_row.set_text('8080')
                 except Exception:
                     listen_port_row.set_text('8080')
-                if not remote_host_row.get_text().strip():
-                    remote_host_row.set_text('localhost')
-                try:
-                    if int((remote_port_row.get_text() or '0').strip() or '0') == 0:
+                # Only seed a destination when the user actively switches into
+                # Remote from another type; on the initial load we leave it as-is
+                # so an existing single-argument (SOCKS) rule keeps its blank
+                # destination instead of being silently turned into a forward.
+                if previous_idx is not None and previous_idx != idx:
+                    if not remote_host_row.get_text().strip():
+                        remote_host_row.set_text('localhost')
+                    try:
+                        if int((remote_port_row.get_text() or '0').strip() or '0') == 0:
+                            remote_port_row.set_text('22')
+                    except Exception:
                         remote_port_row.set_text('22')
-                except Exception:
-                    remote_port_row.set_text('22')
             else:  # Dynamic
                 if not listen_addr_row.get_text().strip():
                     listen_addr_row.set_text('localhost')
@@ -4167,143 +4020,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         self.emit('connection-saved', connection_data)
         self.close()
 
-    def _sanitize_forwarding_rules(self, rules):
-        """Validate and normalize forwarding rules before saving.
-        - Ensure listen_addr defaults to localhost (or 0.0.0.0 for remote if provided as such)
-        - Ensure listen_port > 0
-        - For local/remote: ensure remote_host non-empty and remote_port > 0
-        Invalid rules are dropped silently.
-        """
-        sanitized = []
-        for r in rules or []:
-            try:
-                rtype = r.get('type')
-                listen_addr = (r.get('listen_addr') or '').strip() or 'localhost'
-                listen_port = int(r.get('listen_port') or 0)
-                if listen_port <= 0:
-                    continue
-                if rtype == 'local':
-                    remote_host = (r.get('remote_host') or '').strip() or 'localhost'
-                    remote_port = int(r.get('remote_port') or 0)
-                    if remote_port <= 0:
-                        continue
-                    sanitized.append({
-                        'type': 'local',
-                        'enabled': True,
-                        'listen_addr': listen_addr,
-                        'listen_port': listen_port,
-                        'remote_host': remote_host,
-                        'remote_port': remote_port,
-                    })
-                elif rtype == 'remote':
-                    local_host = (r.get('local_host') or r.get('remote_host') or '').strip() or 'localhost'
-                    local_port = int(r.get('local_port') or r.get('remote_port') or 0)
-                    if local_port <= 0:
-                        continue
-                    sanitized.append({
-                        'type': 'remote',
-                        'enabled': True,
-                        'listen_addr': listen_addr,
-                        'listen_port': listen_port,
-                        'local_host': local_host,
-                        'local_port': local_port,
-                    })
-                elif rtype == 'dynamic':
-                    sanitized.append({
-                        'type': 'dynamic',
-                        'enabled': True,
-                        'listen_addr': listen_addr,
-                        'listen_port': listen_port,
-                    })
-            except Exception:
-                # Skip malformed rule
-                pass
-        return sanitized
-
-
-    
-    def on_forwarding_toggled(self, switch, param, settings_box):
-        """Handle toggling of port forwarding settings visibility and state"""
-        is_active = switch.get_active()
-        settings_box.set_visible(is_active)
-        # Run inline validation on fields within this section when enabled
-        try:
-            if is_active:
-                if switch == self.local_forwarding_enabled:
-                    if hasattr(self, 'local_port_row'):
-                        self._validate_port_row(self.local_port_row, _("Local Port"))
-                    if hasattr(self, 'remote_host_row'):
-                        self._validate_host_row(self.remote_host_row, allow_empty=False)
-                    if hasattr(self, 'remote_port_row'):
-                        self._validate_port_row(self.remote_port_row, _("Target Port"))
-                elif switch == self.remote_forwarding_enabled:
-                    if hasattr(self, 'remote_bind_host_row'):
-                        self._validate_host_row(self.remote_bind_host_row, allow_empty=True)
-                    if hasattr(self, 'remote_bind_port_row'):
-                        self._validate_port_row(self.remote_bind_port_row, _("Remote port"))
-                    if hasattr(self, 'dest_host_row'):
-                        self._validate_host_row(self.dest_host_row, allow_empty=False)
-                    if hasattr(self, 'dest_port_row'):
-                        self._validate_port_row(self.dest_port_row, _("Destination port"))
-                elif switch == self.dynamic_forwarding_enabled:
-                    if hasattr(self, 'dynamic_bind_row'):
-                        self._validate_host_row(self.dynamic_bind_row, allow_empty=True)
-                    if hasattr(self, 'dynamic_port_row'):
-                        self._validate_port_row(self.dynamic_port_row, _("Local Port"))
-        except Exception:
-            pass
-        
-        # Initialize forwarding_rules if it doesn't exist
-        if not hasattr(self, 'forwarding_rules'):
-            self.forwarding_rules = []
-            
-        # Determine the rule type based on the switch
-        rule_type = None
-        if switch == self.local_forwarding_enabled:
-            rule_type = 'local'
-        elif switch == self.remote_forwarding_enabled:
-            rule_type = 'remote'
-        elif switch == self.dynamic_forwarding_enabled:
-            rule_type = 'dynamic'
-            
-        if rule_type:
-            # Only update the rule if it doesn't exist or if we're disabling it
-            existing_rule = next((r for r in self.forwarding_rules if r.get('type') == rule_type), None)
-            
-            if not is_active:
-                # If disabling, just remove the rule
-                self.forwarding_rules = [r for r in self.forwarding_rules if r.get('type') != rule_type]
-            elif not existing_rule or not existing_rule.get('enabled', True):
-                # If enabling and no existing rule or rule is disabled, add a new one
-                rule = {'type': rule_type, 'enabled': True}
-                
-                # Set default values based on rule type
-                if rule_type == 'local' and hasattr(self, 'local_port_row') and hasattr(self, 'remote_host_row') and hasattr(self, 'remote_port_row'):
-                    rule.update({
-                        'listen_addr': 'localhost',
-                        'listen_port': int((self.local_port_row.get_text() or '0').strip() or '0'),
-                        'remote_host': self.remote_host_row.get_text().strip() or 'localhost',
-                        'remote_port': int((self.remote_port_row.get_text() or '0').strip() or '0')
-                    })
-                elif rule_type == 'remote' and hasattr(self, 'remote_bind_host_row') and hasattr(self, 'remote_bind_port_row') and hasattr(self, 'dest_host_row') and hasattr(self, 'dest_port_row'):
-                    rule.update({
-                        'listen_addr': self.remote_bind_host_row.get_text().strip() or 'localhost',
-                        'listen_port': int((self.remote_bind_port_row.get_text() or '0').strip() or '0'),
-                        'local_host': self.dest_host_row.get_text().strip() or 'localhost',
-                        'local_port': int((self.dest_port_row.get_text() or '0').strip() or '0')
-                    })
-                elif rule_type == 'dynamic' and hasattr(self, 'dynamic_port_row'):
-                    rule.update({
-                        'listen_addr': (self.dynamic_bind_row.get_text().strip() if hasattr(self, 'dynamic_bind_row') else '') or 'localhost',
-                        'listen_port': int((self.dynamic_port_row.get_text() or '0').strip() or '0')
-                    })
-                
-                self.forwarding_rules.append(rule)
-                logger.debug(f"Updated {rule_type} forwarding rule: {rule}")
-            
-            # Update the rules list in the UI
-            self.load_port_forwarding_rules()
-    
     def show_error(self, message):
         """Show error message"""
         try:

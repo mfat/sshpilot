@@ -589,7 +589,18 @@ class Connection:
                     (getattr(self, 'identity_agent_directive', '') or '').strip():
                 return
 
-            for path in (getattr(self, 'resolved_identity_files', []) or []):
+            # Use the cached identities when present, else fall back to the same
+            # discovery the auth resolver uses (collect_identity_file_candidates),
+            # so a fresh, non-terminal caller still preloads the keys the resolver
+            # based its combined-auth decision on.
+            candidates = getattr(self, 'resolved_identity_files', None)
+            if not candidates and hasattr(self, 'collect_identity_file_candidates'):
+                try:
+                    candidates = self.collect_identity_file_candidates()
+                except Exception:
+                    candidates = None
+
+            for path in (candidates or []):
                 try:
                     # Keyring-only: skip keys with no stored passphrase entirely
                     # (no ssh-add) → user gets the natural OS/agent prompt.
@@ -1335,12 +1346,16 @@ class ConnectionManager(GObject.Object):
                     forward_specs = [forward_specs]
                     
                 def _parse_listen_spec(spec):
-                    """Return (bind_addr, port) for a "[bind_address:]port" token, or None."""
+                    """Return (bind_addr, port) for a "[bind_address:]port" token, or None.
+
+                    An omitted/empty bind address is returned as '' (not coerced to
+                    localhost); callers decide the default per forwarding type.
+                    """
                     if ':' in spec:
                         bind_addr, port_str = spec.rsplit(':', 1)
-                        bind_addr = bind_addr.strip().strip('[]') or 'localhost'
+                        bind_addr = bind_addr.strip().strip('[]')
                     else:
-                        bind_addr, port_str = 'localhost', spec
+                        bind_addr, port_str = '', spec
                     port = _safe_int(port_str, None)
                     return None if port is None else (bind_addr, port)
 
@@ -1353,7 +1368,7 @@ class ConnectionManager(GObject.Object):
                         bind_addr, listen_port = listen
                         parsed['forwarding_rules'].append({
                             'type': 'dynamic',
-                            'listen_addr': bind_addr,
+                            'listen_addr': bind_addr or 'localhost',
                             'listen_port': listen_port,
                             'enabled': True
                         })
@@ -1384,7 +1399,7 @@ class ConnectionManager(GObject.Object):
                                 continue
                             parsed['forwarding_rules'].append({
                                 'type': 'local',
-                                'listen_addr': bind_addr,
+                                'listen_addr': bind_addr or 'localhost',
                                 'listen_port': listen_port,
                                 'remote_host': remote_host,
                                 'remote_port': remote_port,
@@ -1987,24 +2002,31 @@ class ConnectionManager(GObject.Object):
         
         # Add port forwarding rules if any (ensure sane defaults)
         for rule in data.get('forwarding_rules', []):
-            listen_addr = (rule.get('listen_addr') or 'localhost').strip()
+            listen_addr = (rule.get('listen_addr') or '').strip()
             listen_port = rule.get('listen_port', '')
             if not listen_port:
                 continue
-            listen_spec = f"{_format_forward_host(listen_addr) or 'localhost'}:{listen_port}"
+            # An empty bind address is written without a host prefix (omitted), so
+            # ssh/GatewayPorts decides the bind. local/dynamic always carry a
+            # localhost default, so only an empty remote bind drops the prefix.
+            listen_host = _format_forward_host(listen_addr)
+            listen_spec = f"{listen_host}:{listen_port}" if listen_host else f"{listen_port}"
             
             if rule.get('type') == 'local':
                 dest_host = rule.get('remote_host', '')
                 dest_spec = f"{_format_forward_host(dest_host) or dest_host}:{rule.get('remote_port', '')}"
                 lines.append(f"    LocalForward {listen_spec} {dest_spec}")
             elif rule.get('type') == 'remote':
-                # Single-argument (SOCKS) form has no destination.
-                if rule.get('socks') or not (rule.get('local_host') or rule.get('remote_host')):
+                # Single-argument (SOCKS) form has no destination. A destination
+                # needs both a host and a port; if either is missing fall back to
+                # the SOCKS form rather than emitting a malformed "host:" spec.
+                dest_host = rule.get('local_host') or rule.get('remote_host', '')
+                dest_port = rule.get('local_port') or rule.get('remote_port')
+                if rule.get('socks') or not dest_host or not dest_port:
                     lines.append(f"    RemoteForward {listen_spec}")
                 else:
                     # For RemoteForward we forward remote listen -> local destination
-                    dest_host = rule.get('local_host') or rule.get('remote_host', '')
-                    dest_spec = f"{_format_forward_host(dest_host) or dest_host}:{rule.get('local_port') or rule.get('remote_port', '')}"
+                    dest_spec = f"{_format_forward_host(dest_host) or dest_host}:{dest_port}"
                     lines.append(f"    RemoteForward {listen_spec} {dest_spec}")
             elif rule.get('type') == 'dynamic':
                 lines.append(f"    DynamicForward {listen_spec}")
