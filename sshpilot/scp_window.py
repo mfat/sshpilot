@@ -585,7 +585,7 @@ class ScpWindowController:
                     local_row.set_text(path)
 
                 try:
-                    file_dialog.select_folder(self, None, _on_destination_chosen)
+                    file_dialog.select_folder(dialog, None, _on_destination_chosen)
                 except Exception as err:
                     logger.error(f'Failed to present destination chooser: {err}')
                     status_label.set_text(
