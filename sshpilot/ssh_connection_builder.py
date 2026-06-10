@@ -65,11 +65,13 @@ def resolve_native_auth(
     * Key-based auth — depends on what the user has saved (a saved secret is the
       opt-in for non-interactive auth):
         - saved passphrase + saved password -> combined auth (hosts requiring
-          BOTH publickey and password): the key is preloaded into ssh-agent via
+          BOTH publickey and password): the key is loaded into ssh-agent here via
           its passphrase, so pubkey is non-interactive, and sshpass answers the
           separate password prompt. askpass is stripped (REQUIRE=prefer would let
-          it hijack the password prompt). Only when key preloading is active;
-          otherwise falls back to askpass-only below.
+          it hijack the password prompt). Taken ONLY when preloading is active
+          and the agent load actually succeeds; if the load fails (no agent,
+          ssh-add error, stale passphrase) it falls back to askpass-only below,
+          so a pubkey-only host still authenticates from the saved passphrase.
         - saved key passphrase  -> askpass (REQUIRE=prefer) autofills it; key is
           primary, agent left intact. No sshpass.
         - else saved password   -> strip askpass and signal sshpass with the
@@ -108,29 +110,40 @@ def resolve_native_auth(
         logger.debug("resolve_native_auth: askpass disabled by setting")
         return NativeAuth(env=env, extra_opts=[], use_askpass=False, password_mode=False)
 
-    # Key-based auth. Decide based on what the user has saved for this host.
-    # Probe is best-effort: on any error, fall back to askpass-on (never regress
-    # the saved-passphrase autofill).
-    has_stored_passphrase = True
-    try:
-        candidates = getattr(connection, 'resolved_identity_files', None)
-        if not candidates and hasattr(connection, 'collect_identity_file_candidates'):
+    # Key-based auth. Discover the identity candidates once (the same set used by
+    # the passphrase probe and the agent preload). Probe is best-effort: on any
+    # error, fall back to askpass-on (never regress the saved-passphrase autofill).
+    candidates = getattr(connection, 'resolved_identity_files', None)
+    if not candidates and hasattr(connection, 'collect_identity_file_candidates'):
+        try:
             candidates = connection.collect_identity_file_candidates()
-        has_stored_passphrase = any(lookup_passphrase(p) for p in (candidates or []))
+        except Exception:
+            candidates = None
+    candidates = list(candidates or [])
+    probe_failed = False
+    try:
+        passphrase_keys = [p for p in candidates if lookup_passphrase(p)]
     except Exception:
-        has_stored_passphrase = True
+        passphrase_keys, probe_failed = [], True
+    has_stored_passphrase = bool(passphrase_keys) or probe_failed
 
     if has_stored_passphrase:
         # Combined auth: some hosts require BOTH publickey and password
-        # (AuthenticationMethods publickey,password). When a password is also
-        # saved (and the key will be preloaded into ssh-agent via its stored
-        # passphrase), satisfy both: the agent answers the key, and sshpass
-        # answers the password. askpass is stripped because with REQUIRE=prefer
-        # it would also intercept the password prompt, which the helper can't
-        # serve. Falls through to askpass-only autofill when no password is
-        # saved or preloading is disabled (the agent wouldn't hold the key).
+        # (AuthenticationMethods publickey,password). Take this path only when a
+        # password is also saved AND the key can actually be loaded into
+        # ssh-agent — we load it here, non-interactively via its stored
+        # passphrase. Only on a real load do we strip askpass and drive the
+        # password with sshpass (the agent, not askpass, answers the key; askpass
+        # with REQUIRE=prefer would otherwise hijack the password prompt it can't
+        # serve). If the load fails — no agent, ssh-add error, stale passphrase —
+        # we fall through to askpass-only autofill so a pubkey-only host still
+        # authenticates from the saved passphrase (no regression). Gated by
+        # _agent_preload_active() so a pinned/disabled agent isn't disturbed.
         stored_password = _get_stored_password(connection, connection_manager)
-        if stored_password and _agent_preload_active(connection, app_config):
+        if (stored_password
+                and _agent_preload_active(connection, app_config)
+                and any(_load_key_into_agent(p, connection_manager)
+                        for p in passphrase_keys)):
             env = os.environ.copy()
             env.pop('SSH_ASKPASS', None)
             env['SSH_ASKPASS_REQUIRE'] = 'never'
@@ -139,7 +152,7 @@ def resolve_native_auth(
                 env=env, extra_opts=[], use_sshpass=True, password=stored_password,
                 use_askpass=False, password_mode=False,
             )
-        # Saved key passphrase only -> askpass autofills it; key is primary.
+        # Saved key passphrase (no usable combined path) -> askpass autofill.
         env = get_ssh_env_with_askpass(require="prefer")
         logger.debug("resolve_native_auth: key auth, askpass autofill (saved passphrase)")
         return NativeAuth(env=env, extra_opts=[], use_askpass=True, password_mode=False)
@@ -371,6 +384,22 @@ def _agent_preload_active(connection: any, app_config: Optional[any] = None) -> 
         return True
     except Exception:
         return True
+
+
+def _load_key_into_agent(key_path: str, connection_manager: Optional[any] = None) -> bool:
+    """Best-effort: load (and unlock) *key_path* in ssh-agent; True on success.
+
+    Prefers the connection manager's preparer so every caller shares one
+    agent-loading path (and tests can observe it); falls back to
+    ``ensure_key_in_agent(force=True)``. Used by combined auth, which must know
+    the key is actually in the agent before disabling askpass.
+    """
+    try:
+        if connection_manager is not None and hasattr(connection_manager, 'prepare_key_for_connection'):
+            return bool(connection_manager.prepare_key_for_connection(key_path))
+        return bool(ensure_key_in_agent(key_path, force=True))
+    except Exception:
+        return False
 
 
 def _get_stored_passphrase(

@@ -307,7 +307,10 @@ class TestResolverDecision:
     KEY = "/home/u/.ssh/id_ed25519"
 
     def test_both_stored_wires_combined_auth(self, monkeypatch):
-        # Combined auth: passphrase (via agent preload) + password (via sshpass).
+        # Combined auth: passphrase (via agent load) + password (via sshpass).
+        # The resolver now actually loads the key into the agent; succeed here.
+        monkeypatch.setattr(ssh_connection_builder, "ensure_key_in_agent",
+                            lambda path, *, force=False, lifetime=0: True)
         auth = _resolve(monkeypatch, passphrase_stored=True, password_stored=True,
                         identity_file=self.KEY)
         assert auth.use_sshpass is True
@@ -372,6 +375,12 @@ class TestCombinedAuthPreloadHandoff:
             ssh_connection_builder,
             "lookup_passphrase",
             lambda path: PASSPHRASE if path == self.KEY else "",
+        )
+        # The resolver loads the key into the agent to commit to combined auth;
+        # let that succeed so the decision is the combined path.
+        monkeypatch.setattr(
+            ssh_connection_builder, "ensure_key_in_agent",
+            lambda path, *, force=False, lifetime=0: True,
         )
 
         auth = resolve_native_auth(conn, _make_cm(PASSWORD))
@@ -459,49 +468,39 @@ class TestCombinedAuthPreloadHandoff:
 
         assert manager.prepare_calls == [self.KEY]
 
-    def test_failed_agent_preload_keeps_askpass_for_pubkey_only_fallback(self, monkeypatch):
-        """Best-effort preload failure must not strand saved-passphrase key auth.
+    def test_failed_agent_load_falls_back_to_askpass_for_pubkey_only(self, monkeypatch):
+        """A failed agent load must not strand saved-passphrase key auth.
 
-        The resolver currently decides combined auth from preload *intent*. If
-        ssh-add then fails, the terminal swallows that failure and still spawns
-        with askpass disabled. For pubkey-only hosts that merely have an optional
-        saved password, this regresses the old saved-passphrase askpass path.
+        The resolver makes the combined decision contingent on actually loading
+        the key into ssh-agent. If that load fails (no agent / ssh-add error /
+        stale passphrase), it must fall back to askpass-only — NOT a sshpass-only
+        path with askpass stripped — so a pubkey-only host that merely has an
+        optional saved password still authenticates from the saved passphrase.
         """
-        from sshpilot import askpass_utils
-        from sshpilot.connection_manager import Connection
-
-        conn = Connection({
-            "host": "pubkey-only.example",
-            "hostname": "pubkey-only.example",
-            "username": USERNAME,
-            "auth_method": 0,
-        })
-        conn.resolved_identity_files = [self.KEY]
-
-        monkeypatch.setattr(
-            ssh_connection_builder,
-            "lookup_passphrase",
-            lambda path: PASSPHRASE if path == self.KEY else "",
+        conn = SimpleNamespace(
+            auth_method=0,
+            resolved_identity_files=[self.KEY],
+            password=None,
+            hostname="pubkey-only.example",
+            host="pubkey-only.example",
+            username=USERNAME,
         )
         monkeypatch.setattr(
-            askpass_utils,
-            "lookup_passphrase",
+            ssh_connection_builder, "lookup_passphrase",
             lambda path: PASSPHRASE if path == self.KEY else "",
         )
 
-        def fail_ssh_add(*_args, **_kwargs):
+        # The resolver attempts the agent load via ssh_connection_builder's
+        # imported name; make it fail.
+        def fail_load(*_args, **_kwargs):
             raise RuntimeError("ssh-add failed")
 
-        monkeypatch.setattr(askpass_utils, "ensure_key_in_agent", fail_ssh_add)
+        monkeypatch.setattr(ssh_connection_builder, "ensure_key_in_agent", fail_load)
 
         auth = resolve_native_auth(conn, _make_cm(PASSWORD))
-        assert auth.use_sshpass is True
 
-        # Mirrors terminal.py: preload is best-effort and exceptions are swallowed
-        # before spawning the already-resolved command/env.
-        conn._preload_keys_into_agent(SimpleNamespace(get_setting=lambda _k, default=None: default))
-
-        assert auth.use_askpass is True
+        assert auth.use_askpass is True       # passphrase autofill preserved
+        assert auth.use_sshpass is False      # no sshpass when the key isn't loaded
         assert "SSH_ASKPASS" in auth.env
 
 
@@ -515,11 +514,14 @@ class TestCombinedAuthConnection:
         """Resolve auth for an encrypted-key connection, then connect supplying
         exactly the secrets sshPilot would, and return the ssh exit code."""
         key = combined_server.enc_key
+        # The resolver's combined branch loads the key into ssh-agent; stub that
+        # to succeed only when a passphrase is "stored" (keyring-gated), and do
+        # the real agent load below so the actual ssh run can use it.
+        monkeypatch.setattr(ssh_connection_builder, "ensure_key_in_agent",
+                            lambda path, *, force=False, lifetime=0: passphrase_stored)
         auth = _resolve(monkeypatch, passphrase_stored=passphrase_stored,
                         password_stored=password_stored, identity_file=key)
         agent_sock = None
-        # sshPilot preloads keys that have a stored passphrase into ssh-agent,
-        # independent of which mechanism resolve_native_auth selects.
         if passphrase_stored:
             agent.add(key, PASSPHRASE, combined_server.tmp)
             agent_sock = agent.sock
