@@ -114,6 +114,7 @@ def test_ssh_copy_id_saved_passphrase_uses_askpass(monkeypatch, tmp_path):
             lambda: False,
             lambda: None,
             lambda: None,
+            lambda: None,
         ),
     )
     monkeypatch.setattr(

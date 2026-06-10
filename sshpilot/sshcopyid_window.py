@@ -50,6 +50,58 @@ def _ensure_sshcopyid_terminal_card_css() -> None:
         logger.debug('ssh-copy-id terminal card CSS unavailable', exc_info=True)
 
 
+_COPYID_FAILURE_MARKERS = (
+    'permission denied',
+    'authentication failed',
+    'connection refused',
+    'operation not permitted',
+    'no such file or directory',
+    'host key verification failed',
+    'failed to install',
+    'failed to copy',
+)
+
+
+def _normalize_child_exit_status(status) -> int:
+    try:
+        value = int(status)
+    except (TypeError, ValueError):
+        return -1
+    try:
+        if os.WIFEXITED(value):
+            return os.WEXITSTATUS(value)
+    except Exception:
+        pass
+    if 0 <= value < 256:
+        return value
+    return (value >> 8) & 0xFF
+
+
+def _read_ssh_copyid_terminal_text(term_widget: TerminalWidget) -> str:
+    try:
+        backend = getattr(term_widget, 'backend', None)
+        if backend and hasattr(backend, 'get_content'):
+            content = backend.get_content()
+            if content:
+                return content
+    except Exception:
+        pass
+    try:
+        vte = getattr(term_widget, 'vte', None)
+        if vte is not None:
+            content_result = vte.get_text_range(0, 0, -1, -1, lambda *args: True)
+            if content_result:
+                return content_result[0] or ''
+    except Exception:
+        pass
+    return ''
+
+
+def _terminal_indicates_copy_failure(text: str) -> bool:
+    lowered = (text or '').lower()
+    return any(marker in lowered for marker in _COPYID_FAILURE_MARKERS)
+
+
 def _wrap_sshcopyid_terminal(term_widget: TerminalWidget) -> Gtk.Widget:
     """Wrap the dialog terminal in an Adwaita card with clipped rounded corners."""
     _ensure_sshcopyid_terminal_card_css()
@@ -71,7 +123,13 @@ def _wrap_sshcopyid_terminal(term_widget: TerminalWidget) -> Gtk.Widget:
 def _build_copy_progress_row(
     pub_name: str,
     target: str,
-) -> Tuple[Gtk.Widget, Callable[[], bool], Callable[[], None], Callable[[], None]]:
+) -> Tuple[
+    Gtk.Widget,
+    Callable[[], bool],
+    Callable[[], None],
+    Callable[[], None],
+    Callable[[], None],
+]:
     """Build spinner + status label row for the ssh-copy-id progress dialog."""
     from . import icon_utils
 
@@ -81,6 +139,10 @@ def _build_copy_progress_row(
         target=target,
     )
     copied_text = _('Copied key {name} to {target}').format(
+        name=key_name,
+        target=target,
+    )
+    failed_text = _('Failed to copy key {name} to {target}').format(
         name=key_name,
         target=target,
     )
@@ -105,8 +167,16 @@ def _build_copy_progress_row(
     except Exception:
         pass
 
+    error_icon = icon_utils.new_image_from_icon_name('error-outline-symbolic')
+    error_icon.set_pixel_size(20)
+    try:
+        error_icon.add_css_class('error')
+    except Exception:
+        pass
+
     icon_slot.add_named(spinner, 'spinner')
     icon_slot.add_named(success_icon, 'success')
+    icon_slot.add_named(error_icon, 'error')
     icon_slot.set_visible_child_name('spinner')
 
     label = Gtk.Label(label=copying_text)
@@ -133,26 +203,40 @@ def _build_copy_progress_row(
         except Exception:
             pass
 
+    def _set_status_style(style_class: str) -> None:
+        for css_class in ('dim-label', 'success', 'error'):
+            try:
+                label.remove_css_class(css_class)
+            except Exception:
+                pass
+        try:
+            label.add_css_class(style_class)
+        except Exception:
+            pass
+
     def mark_success() -> None:
         try:
             spinner.set_spinning(False)
             spinner.stop()
             icon_slot.set_visible_child_name('success')
             label.set_label(copied_text)
-            try:
-                label.remove_css_class('dim-label')
-            except Exception:
-                pass
-            try:
-                label.add_css_class('success')
-            except Exception:
-                pass
+            _set_status_style('success')
+        except Exception:
+            pass
+
+    def mark_failure() -> None:
+        try:
+            spinner.set_spinning(False)
+            spinner.stop()
+            icon_slot.set_visible_child_name('error')
+            label.set_label(failed_text)
+            _set_status_style('error')
         except Exception:
             pass
 
     spinner.connect('map', lambda *_: spinner.start())
 
-    return row, start, stop, mark_success
+    return row, start, stop, mark_success, mark_failure
 
 
 def _ssh_key_from_public_path(path: str) -> SSHKey:
@@ -941,9 +1025,13 @@ class SshCopyIdRunner:
             content_box.set_margin_start(12)
             content_box.set_margin_end(12)
 
-            progress_row, start_copy_spinner, stop_copy_spinner, mark_copy_success = (
-                _build_copy_progress_row(pub_name, target)
-            )
+            (
+                progress_row,
+                start_copy_spinner,
+                stop_copy_spinner,
+                mark_copy_success,
+                mark_copy_failure,
+            ) = _build_copy_progress_row(pub_name, target)
             content_box.append(progress_row)
 
             term_widget = TerminalWidget(
@@ -954,6 +1042,7 @@ class SshCopyIdRunner:
             try:
                 term_widget._set_connecting_overlay_visible(False)
                 setattr(term_widget, '_suppress_disconnect_banner', True)
+                setattr(term_widget, '_suppress_connection_exit_handling', True)
                 term_widget._set_disconnected_banner_visible(False)
             except Exception:
                 pass
@@ -1063,121 +1152,123 @@ class SshCopyIdRunner:
                     )
                 logger.debug("Main window: ssh-copy-id process spawned successfully")
 
-                def _on_copyid_exited(widget, status):
-                    exit_code = None
+                copyid_exit_state = {'finished': False, 'handler_id': None}
+
+                def _disconnect_copyid_exit_handler() -> None:
+                    handler_id = copyid_exit_state.get('handler_id')
+                    if handler_id is None:
+                        return
                     try:
-                        if os.WIFEXITED(status):
-                            exit_code = os.WEXITSTATUS(status)
-                        else:
-                            exit_code = (
-                                status
-                                if 0 <= int(status) < 256
-                                else ((int(status) >> 8) & 0xFF)
-                            )
+                        if hasattr(term_widget, 'backend') and term_widget.backend:
+                            term_widget.backend.disconnect(handler_id)
+                        elif hasattr(term_widget, 'vte') and term_widget.vte:
+                            term_widget.vte.disconnect(handler_id)
                     except Exception:
-                        try:
-                            exit_code = int(status)
-                        except Exception:
-                            exit_code = status
+                        pass
+                    copyid_exit_state['handler_id'] = None
+
+                def _finish_ssh_copy_id(status) -> bool:
+                    if copyid_exit_state['finished']:
+                        return False
+                    copyid_exit_state['finished'] = True
+                    _disconnect_copyid_exit_handler()
+
+                    exit_code = _normalize_child_exit_status(status)
+                    content = _read_ssh_copyid_terminal_text(term_widget)
+                    content_failed = _terminal_indicates_copy_failure(content)
+                    ok = exit_code == 0 and not content_failed
 
                     logger.info(
-                        "ssh-copy-id exited with status: %s, normalized exit_code: %s",
+                        "ssh-copy-id exited with status: %s, normalized exit_code: %s, "
+                        "content_failure=%s, ok=%s",
                         status,
                         exit_code,
+                        content_failed,
+                        ok,
                     )
-                    ok = (exit_code == 0)
 
                     error_details = None
                     if not ok:
-                        try:
-                            content = None
-                            backend = getattr(term_widget, 'backend', None)
-                            if backend and hasattr(backend, 'get_content'):
-                                content = backend.get_content()
-                            if content is None and hasattr(term_widget, 'vte') and term_widget.vte:
-                                content_result = term_widget.vte.get_text_range(
-                                    0, 0, -1, -1, lambda *args: True,
-                                )
-                                content = content_result[0] if content_result else None
-                            if content:
-                                content_lower = content.lower()
-                                if 'permission denied' in content_lower:
-                                    error_details = (
-                                        'Permission denied - check user credentials '
-                                        'and server permissions'
-                                    )
-                                elif 'connection refused' in content_lower:
-                                    error_details = (
-                                        'Connection refused - check server address '
-                                        'and SSH service'
-                                    )
-                                elif 'authentication failed' in content_lower:
-                                    error_details = (
-                                        'Authentication failed - check username and password/key'
-                                    )
-                                elif 'no such file or directory' in content_lower:
-                                    error_details = (
-                                        'File not found - check if SSH directory exists on server'
-                                    )
-                                elif 'operation not permitted' in content_lower:
-                                    error_details = (
-                                        'Operation not permitted - check server permissions'
-                                    )
-                                else:
-                                    lines = [
-                                        line for line in content.strip().split('\n') if line
-                                    ]
-                                    if lines:
-                                        error_details = f"Error details: {lines[-1]}"
-                        except Exception as exc:
-                            logger.debug("Main window: Error extracting error details: %s", exc)
+                        content_lower = content.lower()
+                        if 'permission denied' in content_lower:
+                            error_details = (
+                                'Permission denied - check user credentials '
+                                'and server permissions'
+                            )
+                        elif 'connection refused' in content_lower:
+                            error_details = (
+                                'Connection refused - check server address '
+                                'and SSH service'
+                            )
+                        elif 'authentication failed' in content_lower:
+                            error_details = (
+                                'Authentication failed - check username and password/key'
+                            )
+                        elif 'no such file or directory' in content_lower:
+                            error_details = (
+                                'File not found - check if SSH directory exists on server'
+                            )
+                        elif 'operation not permitted' in content_lower:
+                            error_details = (
+                                'Operation not permitted - check server permissions'
+                            )
+                        else:
+                            lines = [
+                                line for line in content.strip().split('\n') if line
+                            ]
+                            if lines:
+                                error_details = f"Error details: {lines[-1]}"
 
                     if ok:
                         mark_copy_success()
                         _feed_colored_line(_('Public key was installed successfully.'), 'green')
                     else:
-                        stop_copy_spinner()
+                        mark_copy_failure()
                         _feed_colored_line(_('Failed to install the public key.'), 'red')
                         if error_details:
                             _feed_colored_line(error_details, 'red')
 
-                    def _present_result_dialog():
-                        heading = _('Success') if ok else _('Error')
-                        body = (
-                            _('Public key copied to {}@{}').format(
-                                connection.username, host_value,
-                            )
-                            if ok
-                            else _(
-                                'Failed to copy the public key. '
-                                'Check logs for details.'
-                            )
+                    heading = _('Success') if ok else _('Error')
+                    body = (
+                        _('Public key copied to {}@{}').format(
+                            connection.username, host_value,
                         )
-                        if hasattr(Adw, 'AlertDialog'):
-                            msg = Adw.AlertDialog(heading=heading, body=body)
-                            msg.add_response('ok', _('OK'))
-                            msg.set_default_response('ok')
-                            msg.set_close_response('ok')
-                            msg.present(dlg)
-                        else:
-                            msg = Adw.MessageDialog(
-                                transient_for=self.window,
-                                modal=True,
-                                heading=heading,
-                                body=body,
-                            )
-                            msg.add_response('ok', _('OK'))
-                            msg.set_default_response('ok')
-                            msg.set_close_response('ok')
-                            msg.present()
-                        return False
+                        if ok
+                        else _(
+                            'Failed to copy the public key. '
+                            'Check logs for details.'
+                        )
+                    )
+                    if hasattr(Adw, 'AlertDialog'):
+                        msg = Adw.AlertDialog(heading=heading, body=body)
+                        msg.add_response('ok', _('OK'))
+                        msg.set_default_response('ok')
+                        msg.set_close_response('ok')
+                        msg.present(dlg)
+                    else:
+                        msg = Adw.MessageDialog(
+                            transient_for=self.window,
+                            modal=True,
+                            heading=heading,
+                            body=body,
+                        )
+                        msg.add_response('ok', _('OK'))
+                        msg.set_default_response('ok')
+                        msg.set_close_response('ok')
+                        msg.present()
+                    return False
 
-                    GLib.idle_add(_present_result_dialog)
+                def _on_copyid_exited(widget, status):
+                    GLib.idle_add(_finish_ssh_copy_id, status)
 
                 if hasattr(term_widget, 'backend') and term_widget.backend:
-                    term_widget.backend.connect_child_exited(_on_copyid_exited)
+                    copyid_exit_state['handler_id'] = (
+                        term_widget.backend.connect_child_exited(_on_copyid_exited)
+                    )
                 elif hasattr(term_widget, 'vte') and term_widget.vte:
-                    term_widget.vte.connect('child-exited', _on_copyid_exited)
+                    copyid_exit_state['handler_id'] = term_widget.vte.connect(
+                        'child-exited', _on_copyid_exited,
+                    )
             except Exception as e:
                 logger.error('Failed to spawn ssh-copy-id in TerminalWidget: %s', e)
                 dlg.close()

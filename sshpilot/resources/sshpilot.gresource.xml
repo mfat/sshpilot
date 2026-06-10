@@ -12,6 +12,7 @@
     <file alias="dialog-password-symbolic.svg">icons/scalable/actions/dialog-password-symbolic.svg</file>
     <file alias="dialog-warning-symbolic.svg">icons/scalable/actions/dialog-warning-symbolic.svg</file>
     <file alias="document-edit-symbolic.svg">icons/scalable/actions/document-edit-symbolic.svg</file>
+    <file alias="error-outline-symbolic.svg">icons/scalable/actions/error-outline-symbolic.svg</file>
     <file alias="document-properties-symbolic.svg">icons/scalable/actions/document-properties-symbolic.svg</file>
     <file alias="document-save-symbolic.svg">icons/scalable/actions/document-save-symbolic.svg</file>
     <file alias="document-send-symbolic.svg">icons/scalable/actions/document-send-symbolic.svg</file>
