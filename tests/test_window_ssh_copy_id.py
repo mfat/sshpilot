@@ -294,3 +294,47 @@ def test_ssh_copy_id_preflight_rejects_unreadable_public_key(monkeypatch, tmp_pa
 
     assert result is not None
     assert result[0] == "Public key file is not readable"
+
+
+def test_copyid_verdict_password_retry_is_success():
+    # A mistyped-then-corrected password leaves "Permission denied" on screen,
+    # but ssh-copy-id's own success message outranks the failure markers.
+    runner_mod = importlib.import_module("sshpilot.sshcopyid_window")
+
+    content = (
+        "demo@example.com's password: \n"
+        "Permission denied, please try again.\n"
+        "demo@example.com's password: \n"
+        "Number of key(s) added: 1\n"
+    )
+    assert runner_mod._copyid_run_succeeded(0, content)
+
+
+def test_copyid_verdict_already_installed_is_success():
+    runner_mod = importlib.import_module("sshpilot.sshcopyid_window")
+
+    content = (
+        "WARNING: All keys were skipped because they already exist "
+        "on the remote system.\n"
+    )
+    assert runner_mod._copyid_run_succeeded(0, content)
+
+
+def test_copyid_verdict_failure_markers_veto_zero_exit():
+    runner_mod = importlib.import_module("sshpilot.sshcopyid_window")
+
+    content = "demo@example.com: Permission denied (publickey,password).\n"
+    assert not runner_mod._copyid_run_succeeded(0, content)
+
+
+def test_copyid_verdict_nonzero_exit_is_failure():
+    runner_mod = importlib.import_module("sshpilot.sshcopyid_window")
+
+    assert not runner_mod._copyid_run_succeeded(1, "Number of key(s) added: 1\n")
+    assert not runner_mod._copyid_run_succeeded(255, "")
+
+
+def test_copyid_verdict_clean_zero_exit_is_success():
+    runner_mod = importlib.import_module("sshpilot.sshcopyid_window")
+
+    assert runner_mod._copyid_run_succeeded(0, "")

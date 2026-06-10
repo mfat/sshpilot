@@ -97,9 +97,31 @@ def _read_ssh_copyid_terminal_text(term_widget: TerminalWidget) -> str:
     return ''
 
 
+# ssh-copy-id prints these (unlocalized) on a successful run; failure markers
+# can also appear in successful runs (e.g. a mistyped password the user
+# retried), so a success marker outranks them when the exit code is zero.
+_COPYID_SUCCESS_MARKERS = (
+    'number of key(s) added',
+    'all keys were skipped because they already exist',
+)
+
+
 def _terminal_indicates_copy_failure(text: str) -> bool:
     lowered = (text or '').lower()
     return any(marker in lowered for marker in _COPYID_FAILURE_MARKERS)
+
+
+def _terminal_indicates_copy_success(text: str) -> bool:
+    lowered = (text or '').lower()
+    return any(marker in lowered for marker in _COPYID_SUCCESS_MARKERS)
+
+
+def _copyid_run_succeeded(exit_code: int, content: str) -> bool:
+    if exit_code != 0:
+        return False
+    if _terminal_indicates_copy_success(content):
+        return True
+    return not _terminal_indicates_copy_failure(content)
 
 
 def _wrap_sshcopyid_terminal(term_widget: TerminalWidget) -> Gtk.Widget:
@@ -997,13 +1019,23 @@ class SshCopyIdRunner:
             header.set_show_end_title_buttons(False)
             header.set_title_widget(Gtk.Label(label=_('ssh-copy-id')))
 
-            def _close_window(*_args):
+            copyid_exit_state = {'finished': False, 'handler_id': None}
+
+            def _on_dialog_closed(*_args):
+                # Closing the dialog (Cancel/Close button or Esc) kills the
+                # child below, which still fires child-exited; mark the run
+                # finished first so cancellation isn't reported as a failure.
+                copyid_exit_state['finished'] = True
                 stop_copy_spinner()
                 try:
                     if hasattr(term_widget, 'disconnect'):
                         term_widget.disconnect()
                 except Exception:
                     pass
+
+            dlg.connect('closed', _on_dialog_closed)
+
+            def _close_window(*_args):
                 dlg.close()
 
             cancel_btn = Gtk.Button(label=_('Cancel'))
@@ -1152,8 +1184,6 @@ class SshCopyIdRunner:
                     )
                 logger.debug("Main window: ssh-copy-id process spawned successfully")
 
-                copyid_exit_state = {'finished': False, 'handler_id': None}
-
                 def _disconnect_copyid_exit_handler() -> None:
                     handler_id = copyid_exit_state.get('handler_id')
                     if handler_id is None:
@@ -1176,14 +1206,16 @@ class SshCopyIdRunner:
                     exit_code = _normalize_child_exit_status(status)
                     content = _read_ssh_copyid_terminal_text(term_widget)
                     content_failed = _terminal_indicates_copy_failure(content)
-                    ok = exit_code == 0 and not content_failed
+                    content_succeeded = _terminal_indicates_copy_success(content)
+                    ok = _copyid_run_succeeded(exit_code, content)
 
                     logger.info(
                         "ssh-copy-id exited with status: %s, normalized exit_code: %s, "
-                        "content_failure=%s, ok=%s",
+                        "content_failure=%s, content_success=%s, ok=%s",
                         status,
                         exit_code,
                         content_failed,
+                        content_succeeded,
                         ok,
                     )
 
