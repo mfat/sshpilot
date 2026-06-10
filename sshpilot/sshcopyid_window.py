@@ -864,24 +864,15 @@ class SshCopyIdRunner:
             # Resolve auth once via the single shared resolver so ssh-copy-id
             # authenticates exactly like the terminal and SCP.
             from .ssh_connection_builder import resolve_native_auth
+            # For combined auth (publickey AND password) the key must be in
+            # ssh-agent so its passphrase isn't prompted while sshpass owns the
+            # pty for the password. resolve_native_auth now loads it as part of
+            # committing to the combined path, so no separate preload is needed.
             auth = resolve_native_auth(
                 connection,
                 getattr(self.window, 'connection_manager', None),
                 getattr(self.window, 'config', None),
             )
-
-            # Combined auth (publickey AND password) needs the key in ssh-agent so
-            # its passphrase isn't prompted while sshpass owns the pty for the
-            # password. The terminal connect path preloads stored-passphrase keys
-            # from its worker thread; ssh-copy-id spawns its own command, so do the
-            # same here. Best-effort and non-interactive (only keys whose
-            # passphrase is stored are added).
-            try:
-                preload = getattr(connection, '_preload_keys_into_agent', None)
-                if callable(preload):
-                    preload(getattr(self.window, 'config', None))
-            except Exception:
-                logger.debug("ssh-copy-id: key preload failed", exc_info=True)
 
             # Build ssh-copy-id command with options derived from connection settings
             logger.debug("Main window: Building ssh-copy-id command arguments")
