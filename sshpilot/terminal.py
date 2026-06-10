@@ -1112,6 +1112,11 @@ class TerminalWidget(Gtk.Box):
                 use_askpass = False
                 password_value = None
 
+            # Remember whether a stored password was supplied this attempt, so an
+            # auth failure can say "saved password rejected" rather than a generic
+            # "authentication failed".
+            self._used_stored_password = bool(password_value)
+
             logger.debug(f"SSH command from builder: {' '.join(ssh_cmd)}")
 
             # Password authentication: feed the stored password to ssh via sshpass
@@ -1625,6 +1630,13 @@ class TerminalWidget(Gtk.Box):
 
         if 'permission denied' in msg or 'authentication failed' in msg \
                 or 'too many authentication failures' in msg:
+            # If we fed a stored password and the server still denied access, the
+            # saved password is almost certainly the culprit — say so, so the user
+            # knows to fix it instead of staring at a generic message. (Not for the
+            # "too many authentication failures" case, which is about offered keys.)
+            if getattr(self, '_used_stored_password', False) \
+                    and ('permission denied' in msg or 'authentication failed' in msg):
+                return ConnectionState.FAILED, 'Saved password rejected'
             return ConnectionState.FAILED, 'Authentication failed'
         if 'connection refused' in msg:
             return ConnectionState.FAILED, 'Connection refused'
