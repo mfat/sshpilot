@@ -1184,12 +1184,14 @@ class FileListEditor(Adw.PreferencesGroup):
     def __init__(self, *, title, add_actions=None,
                  with_passphrase=False, connection_manager=None,
                  on_changed=None, verify=None, rows_group=None,
-                 add_at_bottom=False, empty_placeholder=None):
+                 add_at_bottom=False, empty_placeholder=None,
+                 reorderable=False):
         super().__init__()
         self.set_title(title)
         self._model = PathList()
         self._rows = []
         self._with_passphrase = with_passphrase
+        self._reorderable = reorderable
         self._connection_manager = connection_manager
         self._on_changed = on_changed
         self._rows_group = rows_group or self
@@ -1338,6 +1340,9 @@ class FileListEditor(Adw.PreferencesGroup):
             remove_btn.set_tooltip_text(_("Remove"))
             remove_btn.connect('clicked', lambda _b, p=path, r=row: self._remove_row(p, r))
             row.add_suffix(remove_btn)
+        row._path = path
+        if self._reorderable:
+            self._setup_row_dnd(row)
         self._add_row_widget(row)
         self._rows.append(row)
         for btn in self._add_rows:
@@ -1354,6 +1359,66 @@ class FileListEditor(Adw.PreferencesGroup):
                 continue
             n += 1
             badge.set_label(str(n))
+
+    # ---- drag-and-drop reordering ----------------------------------------
+    def _setup_row_dnd(self, row):
+        """Let *row* be dragged onto another row to change the offer order."""
+        handle = Gtk.Image.new_from_icon_name('list-drag-handle-symbolic')
+        handle.set_valign(Gtk.Align.CENTER)
+        handle.add_css_class('dim-label')
+        row.add_prefix(handle)
+
+        source = Gtk.DragSource()
+        source.set_actions(Gdk.DragAction.MOVE)
+        source.connect('prepare', self._on_drag_prepare, row)
+        source.connect('drag-begin', self._on_drag_begin, row)
+        row.add_controller(source)
+
+        target = Gtk.DropTarget.new(GObject.TYPE_STRING, Gdk.DragAction.MOVE)
+        target.connect('drop', self._on_drop, row)
+        row.add_controller(target)
+
+    def _on_drag_prepare(self, _source, _x, _y, row):
+        path = getattr(row, '_path', None)
+        if not path or not row.get_sensitive():
+            return None
+        return Gdk.ContentProvider.new_for_value(path)
+
+    def _on_drag_begin(self, source, _drag, row):
+        try:
+            source.set_icon(Gtk.WidgetPaintable.new(row), 0, 0)
+        except Exception:
+            pass
+
+    def _on_drop(self, _target, value, _x, y, row):
+        src_path = str(value)
+        dest_path = getattr(row, '_path', None)
+        paths = self._model.get()
+        # Only accept drags that originate from this editor's own rows.
+        if src_path not in paths or dest_path not in paths or src_path == dest_path:
+            return False
+        src_index = paths.index(src_path)
+        dest_index = paths.index(dest_path)
+        # Dropping on the lower half of a row inserts after it, upper half before.
+        after = y > row.get_height() / 2
+        new_index = dest_index - (1 if src_index < dest_index else 0) + (1 if after else 0)
+        if not self._model.move(src_path, new_index):
+            return False
+        self._sync_row_order()
+        self._emit_changed()
+        return True
+
+    def _sync_row_order(self):
+        """Re-attach the existing row widgets in model order (preserves entry state)."""
+        order = {p: i for i, p in enumerate(self._model.get())}
+        self._rows.sort(key=lambda r: order.get(getattr(r, '_path', None), len(order)))
+        for row in self._rows:
+            if row.get_parent() is not None:
+                self._remove_row_widget(row)
+        for row in self._rows:
+            self._add_row_widget(row)
+        self._ensure_add_rows_last()
+        self._renumber_rows()
 
     def _make_key_expander_row(self, path):
         """A key row with its passphrase entry shown beside it (two columns)."""
@@ -2824,6 +2889,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 'chooser': lambda editor: self._open_key_chooser(editor),
             }],
             add_at_bottom=True,
+            reorderable=True,
             verify=lambda path, passphrase: self.validator.verify_key_passphrase(
                 os.path.expanduser(path), passphrase
             ),

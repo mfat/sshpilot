@@ -47,3 +47,26 @@ class TestPathList:
         pl.set(["/a", "/b"])
         pl.set(["/c"])
         assert pl.get() == ["/c"]
+
+    def test_move_forward_and_backward(self):
+        pl = PathList()
+        pl.set(["/a", "/b", "/c"])
+        assert pl.move("/a", 2) is True
+        assert pl.get() == ["/b", "/c", "/a"]
+        assert pl.move("/a", 0) is True
+        assert pl.get() == ["/a", "/b", "/c"]
+
+    def test_move_clamps_out_of_range_index(self):
+        pl = PathList()
+        pl.set(["/a", "/b", "/c"])
+        assert pl.move("/a", 99) is True
+        assert pl.get() == ["/b", "/c", "/a"]
+        assert pl.move("/c", -5) is True
+        assert pl.get() == ["/c", "/b", "/a"]
+
+    def test_move_returns_false_when_unchanged(self):
+        pl = PathList()
+        pl.set(["/a", "/b"])
+        assert pl.move("/a", 0) is False      # already there
+        assert pl.move("/nope", 1) is False   # unknown path
+        assert pl.get() == ["/a", "/b"]

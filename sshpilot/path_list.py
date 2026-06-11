@@ -28,6 +28,18 @@ class PathList:
         self._items.append(path)
         return True
 
+    def move(self, path, new_index) -> bool:
+        """Move *path* to *new_index* (clamped into range); True if order changed."""
+        if path not in self._items:
+            return False
+        new_index = max(0, min(int(new_index), len(self._items) - 1))
+        old_index = self._items.index(path)
+        if new_index == old_index:
+            return False
+        self._items.pop(old_index)
+        self._items.insert(new_index, path)
+        return True
+
     def remove(self, path) -> bool:
         if path in self._items:
             self._items.remove(path)
