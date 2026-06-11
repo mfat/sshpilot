@@ -545,8 +545,13 @@ class SSHConfigAdvancedTab(Gtk.Box):
         
         key_dropdown.set_selected(0)  # Default to "Select SSH option..."
         
-        # Enable search functionality
+        # Enable search functionality, matching anywhere in the keyword
+        # (the default search mode only matches the prefix).
         key_dropdown.set_enable_search(True)
+        try:
+            key_dropdown.set_search_match_mode(Gtk.StringFilterMatchMode.SUBSTRING)
+        except AttributeError:  # GTK < 4.12
+            pass
         
         # Value entry
         value_entry = Gtk.Entry()
