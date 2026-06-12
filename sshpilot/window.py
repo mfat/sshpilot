@@ -2231,6 +2231,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         menu.add_section(
                             menu.add_item('list-add-symbolic', _('Open New Connections'), lambda: self.on_open_new_connection_action(None, None)),
                             menu.add_item('view-grid-symbolic', _('Open in Split View'), lambda: self.on_open_in_split_view_action(None, None)),
+                            menu.add_item('utilities-terminal-symbolic', _('Run Command on Hosts…'), lambda: self.on_run_command_action()),
                         )
                     else:
                         menu.add_section(
@@ -8140,15 +8141,20 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 pass
     
     def on_run_command_action(self, action=None, param=None):
-        """Open the command picker for the right-clicked connection or group."""
+        """Open the command picker for the right-clicked connection(s) or group."""
         panel = getattr(self, 'command_blocks_panel', None)
         if panel is None:
             return
         anchor = getattr(self, '_context_menu_row', None) or self
+        # Copy the multi-select snapshot by value: it is cleared when the
+        # context menu closes, but the picker popover outlives it.
+        connections = list(getattr(self, '_context_menu_connections', None) or [])
         connection = getattr(self, '_context_menu_connection', None)
         group_row = getattr(self, '_context_menu_group_row', None)
 
-        if connection is not None:
+        if len(connections) > 1:
+            panel.show_command_picker_for_target(anchor, connections=connections)
+        elif connection is not None:
             panel.show_command_picker_for_target(anchor, connection=connection)
         elif group_row is not None:
             gm = getattr(self, 'group_manager', None)
