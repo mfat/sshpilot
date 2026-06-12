@@ -500,19 +500,8 @@ class SSHConfigAdvancedTab(Gtk.Box):
         preview_scrolled.set_min_content_height(150)
         preview_scrolled.set_child(self.config_text_view)
         
-        preview_desc = Gtk.Label(label="To edit the SSH config file directly, press the button below.")
-        preview_desc.add_css_class("dim-label")
-        preview_desc.set_halign(Gtk.Align.START)
-        preview_desc.set_wrap(True)
-
         self.preview_box.append(preview_title)
         self.preview_box.append(preview_scrolled)
-        self.preview_box.append(preview_desc)
-
-        edit_btn = Gtk.Button(label=_("Edit SSH Config"))
-        edit_btn.set_halign(Gtk.Align.START)
-        edit_btn.connect("clicked", self.on_edit_ssh_config_clicked)
-        self.preview_box.append(edit_btn)
 
         # Always show preview
         self.append(self.preview_box)
@@ -690,25 +679,6 @@ class SSHConfigAdvancedTab(Gtk.Box):
         
         buffer = self.config_text_view.get_buffer()
         buffer.set_text(config_text)
-
-    def on_edit_ssh_config_clicked(self, button):
-        """Open raw editor for the SSH config file."""
-        try:
-            from .ssh_config_editor import SSHConfigEditorWindow
-            parent = self.get_ancestor(Adw.Window)
-            editor = SSHConfigEditorWindow(parent, self.connection_manager, on_saved=self._on_editor_saved)
-            editor.present()
-        except Exception as e:
-            logger.error(f"Failed to open SSH config editor: {e}")
-
-    def _on_editor_saved(self):
-        """Refresh preview and parent dialog after editor saves."""
-        try:
-            self.update_config_preview()
-            if self.parent_dialog and hasattr(self.parent_dialog, '_refresh_connection_data_from_ssh_config'):
-                self.parent_dialog._refresh_connection_data_from_ssh_config()
-        except Exception as e:
-            logger.error(f"Error refreshing after SSH config save: {e}")
 
     def get_config_entries(self):
         """Get all valid config entries"""
@@ -4358,24 +4328,3 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         dialog.set_close_response("ok")
         dialog.present()
 
-    def _refresh_connection_data_from_ssh_config(self):
-        """Refresh connection data from the updated SSH config file"""
-        try:
-            if not self.is_editing or not self.connection:
-                return
-            
-            # Reload the connection manager to get fresh data from SSH config
-            if hasattr(self, 'connection_manager') and self.connection_manager:
-                self.connection_manager.load_ssh_config()
-                
-                # Find the updated connection by nickname
-                updated_connection = self.connection_manager.find_connection_by_nickname(self.connection.nickname)
-                if updated_connection:
-                    self.connection = updated_connection
-                    self.load_connection_data(self.connection) # Reload UI with new data
-                    logger.debug(f"Refreshed connection dialog data for '{self.connection.nickname}'")
-                else:
-                    logger.warning(f"Could not find updated connection '{self.connection.nickname}' after SSH config reload")
-        except Exception as e:
-            logger.error(f"Error refreshing connection data from SSH config: {e}", exc_info=True)
-    
