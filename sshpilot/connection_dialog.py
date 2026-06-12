@@ -2357,7 +2357,17 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                                     self.wol_port_row.set_text("9")
                 except Exception as e:
                     logger.debug("Load WoL meta: %s", e)
-            
+
+            # Load tags from connections_meta
+            if hasattr(self, 'tags_row'):
+                try:
+                    cfg = getattr(self.parent_window, 'config', None)
+                    nickname = getattr(self.connection, 'nickname', '').strip()
+                    if cfg and nickname:
+                        self.tags_row.set_text(', '.join(cfg.get_connection_tags(nickname)))
+                except Exception as e:
+                    logger.debug("Load tags meta: %s", e)
+
             # Set authentication method (ToggleGroup: 0 key-based, 1 password)
             auth_method = getattr(self.connection, 'auth_method', 0)
             try:
@@ -3051,6 +3061,12 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         self.port_row.set_text("22")
         basic_group.add(self.port_row)
 
+        # Tags (app metadata, stored in connections_meta — not in ssh_config).
+        # Adw.EntryRow has no subtitle/placeholder, so the hint lives in the title.
+        self.tags_row = Adw.EntryRow(title=_("Tags (comma-separated)"))
+        self.tags_row.set_tooltip_text(_("Used by the sidebar search, e.g. production, web"))
+        basic_group.add(self.tags_row)
+
         # Wake-on-LAN Group
         wol_group = Adw.PreferencesGroup(
             title=_("Wake on LAN"),
@@ -3090,14 +3106,9 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             title=_("Routing"),
             description=_("Optional SSH path settings used before authentication."),
         )
-        self.proxy_jump_row = Adw.EntryRow(title=_("Jump hosts"))
-        try:
-            self.proxy_jump_row.set_subtitle(_("Comma-separated ProxyJump chain"))
-        except Exception:
-            pass
-        entry = self.proxy_jump_row.get_child()
-        if entry and hasattr(entry, 'set_placeholder_text'):
-            entry.set_placeholder_text("bastion1,bastion2,bastion3")
+        # Adw.EntryRow has no subtitle/placeholder, so the hint lives in the title.
+        self.proxy_jump_row = Adw.EntryRow(title=_("Jump hosts (comma-separated)"))
+        self.proxy_jump_row.set_tooltip_text(_("Comma-separated ProxyJump chain, e.g. bastion1, bastion2"))
 
         # Inventory picker button — lets the user pick a host from the saved inventory.
         if self.connection_manager and self.connection_manager.connections:
@@ -4075,6 +4086,18 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                     cfg.set_connection_meta(nickname_for_meta, meta)
             except Exception as e:
                 logger.debug("Save WoL meta: %s", e)
+
+        # Persist tags to connections_meta (keyed by the new nickname, so
+        # renames carry the tags forward)
+        if nickname_for_meta and hasattr(self, 'tags_row'):
+            try:
+                cfg = getattr(self.parent_window, 'config', None)
+                if cfg:
+                    tags_raw = (self.tags_row.get_text() or '').strip()
+                    tags = [t.strip() for t in tags_raw.split(',') if t.strip()] if tags_raw else []
+                    cfg.set_connection_tags(nickname_for_meta, tags)
+            except Exception as e:
+                logger.debug("Save tags meta: %s", e)
 
         # Update the connection object locally when editing (do not persist here; window handles persistence)
         if self.is_editing and self.connection:

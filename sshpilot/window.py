@@ -3384,6 +3384,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
         # Get all connections
         connections = self.connection_manager.get_connections()
+        # Attach tags so the search filter and freshly built rows see them.
+        for conn in connections:
+            try:
+                conn.tags = self.config.get_connection_tags(conn.nickname)
+            except Exception:
+                conn.tags = []
         connections_dict = {conn.nickname: conn for conn in connections}
         search_text = ''
         if hasattr(self, 'search_entry') and self.search_entry:
@@ -9278,6 +9284,20 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         self.group_manager.rename_connection(original_nickname, new_nickname)
                     except Exception:
                         pass
+                    # Migrate per-connection metadata (pinned, WoL, tags) to the
+                    # new nickname. The dialog already wrote its own fields under
+                    # the new key, so those win over the old entry's values.
+                    try:
+                        old_meta = self.config.get_connection_meta(original_nickname)
+                        if old_meta:
+                            new_meta = self.config.get_connection_meta(new_nickname)
+                            merged = {**old_meta, **new_meta}
+                            meta_all = self.config.get_setting('connections_meta', {}) or {}
+                            meta_all.pop(original_nickname, None)
+                            self.config.set_setting('connections_meta', meta_all)
+                            self.config.set_connection_meta(new_nickname, merged)
+                    except Exception:
+                        logger.debug("Failed to migrate connection meta on rename", exc_info=True)
 
                 # Update connection attributes in memory (ensure forwarding rules kept)
                 old_connection.nickname = connection_data['nickname']

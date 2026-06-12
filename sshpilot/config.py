@@ -664,6 +664,23 @@ class Config(GObject.Object):
         except Exception:
             return []
 
+    def get_connection_tags(self, nickname: str) -> list:
+        """Return the list of string tags for a connection (empty if none)."""
+        tags = self.get_connection_meta(nickname).get('tags', [])
+        if isinstance(tags, list):
+            return [str(t).strip() for t in tags if str(t).strip()]
+        return []
+
+    def set_connection_tags(self, nickname: str, tags: list) -> None:
+        """Persist tags for a connection; removes the key when empty."""
+        meta = self.get_connection_meta(nickname)
+        cleaned = [str(t).strip() for t in (tags or []) if str(t).strip()]
+        if cleaned:
+            meta['tags'] = cleaned
+        else:
+            meta.pop('tags', None)
+        self.set_connection_meta(nickname, meta)
+
     def add_custom_theme(self, name: str, theme_data: Dict[str, str]):
         """Add a custom theme"""
         self.terminal_themes[name] = theme_data
