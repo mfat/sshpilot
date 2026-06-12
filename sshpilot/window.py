@@ -1033,9 +1033,32 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
         - Arrow Up from the first row returns focus to the search entry (when
           the search bar is open) so the user can keep editing the query.
+        - Space selects the focused row, Ctrl/⌘+Space toggles it in the
+          multi-selection (the rows are activatable, so without this the
+          row's default Space binding would activate it, i.e. connect).
         - Typing a printable character starts a search (type-ahead): the search
           bar opens, takes focus, and receives the character.
         """
+        if keyval in (Gdk.KEY_space, Gdk.KEY_KP_Space):
+            row = self.connection_list.get_focus_child()
+            if row is None:
+                return False
+            toggle_mask = (
+                Gdk.ModifierType.CONTROL_MASK
+                | getattr(Gdk.ModifierType, 'META_MASK', 0)
+            )
+            try:
+                if state & toggle_mask:
+                    # Toggle the focused row in the multi-selection.
+                    if row in self.connection_list.get_selected_rows():
+                        self.connection_list.unselect_row(row)
+                    else:
+                        self.connection_list.select_row(row)
+                else:
+                    self._select_only_row(row)
+            except Exception:
+                logger.debug("Space selection handling failed", exc_info=True)
+            return True
         if keyval in (Gdk.KEY_Up, Gdk.KEY_KP_Up):
             if (
                 getattr(self, 'search_container', None)
