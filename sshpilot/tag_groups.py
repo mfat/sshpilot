@@ -10,6 +10,11 @@ from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
 TAG_GROUP_ID_PREFIX = "tag::"
 
+# Synthetic key for the Untagged section of the tags view. Real tags are
+# stripped of whitespace and can never contain "\0", so this cannot collide
+# with a user tag named "untagged".
+UNTAGGED_KEY = "\0untagged"
+
 
 def complete_tag_text(text: str, cursor: int, known_tags: Sequence[str]) -> Optional[Tuple[str, int]]:
     """Inline completion for a comma-separated value entry.
@@ -73,6 +78,18 @@ def compute_tag_groups(tag_map: Mapping[str, Sequence[str]]) -> List[Tuple[str, 
         display, members = merged[key]
         result.append((display, sorted(members, key=str.casefold)))
     return result
+
+
+def compute_untagged(tag_map: Mapping[str, Sequence[str]]) -> List[str]:
+    """Nicknames with no non-empty tag, sorted case-insensitively.
+
+    tag_map: nickname -> list of tags (same shape as compute_tag_groups).
+    """
+    result = [
+        nickname for nickname, tags in tag_map.items()
+        if not any(str(t).strip() for t in (tags or []))
+    ]
+    return sorted(result, key=str.casefold)
 
 
 def add_tag_to_list(tags: Sequence[str], new_tag: str) -> Tuple[List[str], bool]:
@@ -146,3 +163,17 @@ def make_tag_group_info(display_tag: str, nicknames: Sequence[str], expanded: bo
         "color": None,
         "is_tag": True,
     }
+
+
+def make_untagged_group_info(name: str, nicknames: Sequence[str], expanded: bool) -> dict:
+    """Synthetic group_info for the tags view's Untagged section.
+
+    Rendered by TagGroupRow like any tag section, but with no ``#`` prefix,
+    no rename, and it never accepts tag-drops (``untagged`` flag).
+    """
+    info = make_tag_group_info(name, nicknames, expanded)
+    info["id"] = TAG_GROUP_ID_PREFIX + UNTAGGED_KEY
+    info["tag_key"] = UNTAGGED_KEY
+    info["prefix"] = ""
+    info["untagged"] = True
+    return info

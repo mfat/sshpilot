@@ -77,7 +77,13 @@ from .scp_window import ScpWindowController, SCPConnectionProfile
 from .groups import GroupManager
 from .session_manager import SessionManager
 from .sidebar import GroupRow, TagGroupRow, ConnectionRow, build_sidebar
-from .tag_groups import compute_tag_groups, make_tag_group_info
+from .tag_groups import (
+    UNTAGGED_KEY,
+    compute_tag_groups,
+    compute_untagged,
+    make_tag_group_info,
+    make_untagged_group_info,
+)
 
 from .welcome_page import WelcomePage
 from .actions import WindowActions, register_window_actions
@@ -619,6 +625,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             self._hide_hosts = bool(self.config.get_setting('ui.hide_hosts', False))
         except Exception:
             self._hide_hosts = False
+
+        # Sidebar view mode: 'hosts' (groups hierarchy) or 'tags'
+        try:
+            view = str(self.config.get_setting('ui.sidebar_view', 'hosts'))
+        except Exception:
+            view = 'hosts'
+        self._sidebar_view = view if view in ('hosts', 'tags') else 'hosts'
 
         # Remember last chosen sort preset
         try:
@@ -2054,6 +2067,42 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             pass
         header.append(hide_button)
 
+        # Sidebar view toggle (hosts hierarchy <-> dedicated tags view).
+        # A ToggleButton so Adwaita renders the active state; the tag icon
+        # is constant.
+        view_button = Gtk.ToggleButton()
+        icon_utils.set_button_icon(view_button, 'tag-symbolic')
+        view_button.set_active(self._sidebar_view == 'tags')
+
+        def _update_view_tooltip(btn):
+            try:
+                btn.set_tooltip_text(
+                    _('Hide tags') if btn.get_active() else _('Show tags')
+                )
+            except Exception:
+                pass
+
+        _update_view_tooltip(view_button)
+
+        def _on_toggle_view(btn, *args):
+            try:
+                self._sidebar_view = 'tags' if btn.get_active() else 'hosts'
+                try:
+                    self.config.set_setting('ui.sidebar_view', self._sidebar_view)
+                except Exception:
+                    pass
+                _update_view_tooltip(btn)
+                self.rebuild_connection_list()
+            except Exception:
+                logger.error("Failed to switch sidebar view", exc_info=True)
+
+        view_button.connect('toggled', _on_toggle_view)
+        try:
+            view_button.set_can_focus(False)
+        except Exception:
+            pass
+        header.append(view_button)
+
         sort_button = self._build_sort_button()
         header.append(sort_button)
 
@@ -2194,8 +2243,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 if getattr(row, 'is_tag_group', False):
                     # Virtual tag groups: rename the tag or open members in
                     # split view — no edit/delete/run (nothing to mutate).
+                    # The Untagged section is not a real tag: no rename.
+                    untagged = bool(getattr(row, 'group_info', {}).get('untagged'))
                     menu.add_section(
-                        menu.add_item('document-edit-symbolic', _('Rename Tag…'), lambda: self.on_rename_tag_action(row)),
+                        None if untagged else menu.add_item('document-edit-symbolic', _('Rename Tag…'), lambda: self.on_rename_tag_action(row)),
                         menu.add_item('view-grid-symbolic', _('Open in Split View'), lambda: self._open_tag_group_split(row)),
                     )
                 elif hasattr(row, 'group_id'):
@@ -3472,6 +3523,18 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         if hasattr(self, 'search_entry') and self.search_entry:
             search_text = self.search_entry.get_text().strip().lower()
 
+        if getattr(self, '_sidebar_view', 'hosts') == 'tags':
+            self._build_tags_view(
+                connections, connections_dict,
+                filter_text=search_text or None,
+            )
+            # Restore scroll position
+            if scroll_position is not None and hasattr(self, 'connection_scrolled') and self.connection_scrolled:
+                vadj = self.connection_scrolled.get_vadjustment()
+                if vadj:
+                    GLib.idle_add(lambda: vadj.set_value(scroll_position))
+            return
+
         if search_text:
             displayed_connections = set()
 
@@ -3504,13 +3567,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         )
                         displayed_connections.add(conn_nickname)
 
-            self._append_tag_group_rows(
-                connections,
-                connections_dict,
-                filter_text=search_text,
-                displayed_connections=displayed_connections,
-            )
-
             matches = [
                 c for c in connections
                 if connection_matches(c, search_text)
@@ -3533,10 +3589,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
         # Build the list with groups
         self._build_grouped_list(hierarchy, connections_dict, 0)
-
-        # Virtual tag groups (derived from connection tags) after the real
-        # hierarchy, before ungrouped connections.
-        self._append_tag_group_rows(connections, connections_dict)
 
         # Add ungrouped connections at the end. A connection is only ungrouped
         # when it does not belong to any group (it may belong to several).
@@ -3578,50 +3630,70 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             vadj = self.connection_scrolled.get_vadjustment()
             if vadj:
                 GLib.idle_add(lambda: vadj.set_value(scroll_position))
-    def _append_tag_group_rows(self, connections, connections_dict,
-                               filter_text=None, displayed_connections=None):
-        """Render virtual tag group rows (derived from tags; never stored).
+    def _build_tags_view(self, connections, connections_dict, filter_text=None):
+        """Render the dedicated tags view: one section per tag, then Untagged.
 
-        With filter_text set (search), only tag groups whose name matches are
-        shown, listing all members regardless of expansion — mirroring how
-        matched real groups behave in the search branch.
-
-        Disabled unless Preferences ▸ Groups ▸ "Show tags as groups in
-        connection list" is on.
+        With filter_text set (search), tag sections whose name matches are
+        shown in full (regardless of expansion), then remaining connections
+        matching the filter are listed flat — mirroring the hosts view's
+        search semantics.
         """
         try:
-            if not bool(self.config.get_setting('ui.show_tag_groups', False)):
-                return
             tag_map = {c.nickname: (getattr(c, 'tags', None) or []) for c in connections}
             tag_groups = compute_tag_groups(tag_map)
             if filter_text is not None:
                 tag_groups = [(t, n) for t, n in tag_groups if filter_text in t.lower()]
-            if not tag_groups:
-                return
             expanded_state = self.config.get_setting('ui.tag_groups_expanded', {}) or {}
+            displayed = set()
+
             for display_tag, nicknames in tag_groups:
                 expanded = bool(expanded_state.get(display_tag.casefold(), True))
                 info = make_tag_group_info(display_tag, nicknames, expanded)
-                tag_row = TagGroupRow(info, self.group_manager, connections_dict)
-                self.connection_list.append(tag_row)
-                # Member rows are always created; collapse hides them in place
-                # (no full rebuild on toggle, so no flicker).
-                member_rows = []
-                for nick in nicknames:
-                    conn = connections_dict.get(nick)
-                    if conn is None:
-                        continue
-                    row = self.add_connection_row(
-                        conn, 1, display_group_id=None, in_tag_section=True,
+                self._append_tag_section(
+                    info, connections_dict, expanded, filter_text, displayed
+                )
+
+            if filter_text is None:
+                untagged = compute_untagged(tag_map)
+                if untagged:
+                    expanded = bool(expanded_state.get(UNTAGGED_KEY, True))
+                    info = make_untagged_group_info(_('Untagged'), untagged, expanded)
+                    self._append_tag_section(
+                        info, connections_dict, expanded, None, displayed
                     )
-                    if row is not None:
-                        row.set_visible(expanded or filter_text is not None)
-                        member_rows.append(row)
-                    if displayed_connections is not None:
-                        displayed_connections.add(nick)
-                tag_row._member_rows = member_rows
+            else:
+                matches = [
+                    c for c in connections
+                    if connection_matches(c, filter_text)
+                    and c.nickname not in displayed
+                ]
+                for conn in sorted(matches, key=lambda c: c.nickname.lower()):
+                    self.add_connection_row(conn)
+
+            self._ungrouped_area_row = None
         except Exception:
-            logger.error("Failed to render tag groups", exc_info=True)
+            logger.error("Failed to render tags view", exc_info=True)
+
+    def _append_tag_section(self, info, connections_dict, expanded,
+                            filter_text, displayed):
+        """Append one TagGroupRow plus its member rows to the list."""
+        tag_row = TagGroupRow(info, self.group_manager, connections_dict)
+        self.connection_list.append(tag_row)
+        # Member rows are always created; collapse hides them in place
+        # (no full rebuild on toggle, so no flicker).
+        member_rows = []
+        for nick in info.get('connections', []):
+            conn = connections_dict.get(nick)
+            if conn is None:
+                continue
+            row = self.add_connection_row(
+                conn, 1, display_group_id=None, in_tag_section=True,
+            )
+            if row is not None:
+                row.set_visible(expanded or filter_text is not None)
+                member_rows.append(row)
+            displayed.add(nick)
+        tag_row._member_rows = member_rows
 
     def _build_grouped_list(self, hierarchy, connections_dict, level):
         """Recursively build the grouped connection list"""
@@ -8446,6 +8518,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         try:
             if not getattr(tag_row, 'is_tag_group', False):
                 return
+            if tag_row.group_info.get('untagged'):
+                return  # the Untagged section is not a real tag
             old_name = str(tag_row.group_info.get('name', ''))
             old_key = str(tag_row.group_info.get('tag_key', '')) or old_name.casefold()
 
@@ -9626,7 +9700,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 except Exception:
                     pass
                 rows = self._rows_for_connection(old_connection)
-                if tags_changed and bool(self.config.get_setting('ui.show_tag_groups', False)):
+                if tags_changed and getattr(self, '_sidebar_view', 'hosts') == 'tags':
                     self.rebuild_connection_list()
                 elif rows:
                     # Update the display for every row representing this connection

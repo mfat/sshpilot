@@ -201,3 +201,47 @@ class TestGroupManagerNoOpContract:
         gm.move_connection("srv", gid)
         gm.remove_connection_from_group("srv", "tag::x")
         assert "srv" in gm.groups[gid]["connections"]
+
+
+class TestComputeUntagged:
+    def test_partitions_tagless_connections(self):
+        from sshpilot.tag_groups import compute_untagged
+
+        tag_map = {
+            "tagged": ["prod"],
+            "Zulu": [],
+            "alpha": None,
+            "blank": ["", "  "],
+        }
+        assert compute_untagged(tag_map) == ["alpha", "blank", "Zulu"]
+
+    def test_empty_map(self):
+        from sshpilot.tag_groups import compute_untagged
+
+        assert compute_untagged({}) == []
+
+
+class TestMakeUntaggedGroupInfo:
+    def test_shape_and_flags(self):
+        from sshpilot.tag_groups import (
+            UNTAGGED_KEY,
+            is_tag_group_id,
+            make_untagged_group_info,
+        )
+
+        info = make_untagged_group_info("Untagged", ["a", "b"], True)
+        assert info["name"] == "Untagged"
+        assert info["connections"] == ["a", "b"]
+        assert info["expanded"] is True
+        assert info["untagged"] is True
+        assert info["prefix"] == ""
+        assert info["is_tag"] is True
+        assert info["tag_key"] == UNTAGGED_KEY
+        assert is_tag_group_id(info["id"])
+
+    def test_key_cannot_collide_with_real_tag(self):
+        from sshpilot.tag_groups import UNTAGGED_KEY, tag_group_id
+
+        # A user tag named "untagged" must map to a different id/key.
+        assert tag_group_id("untagged") != ("tag::" + UNTAGGED_KEY)
+        assert "untagged" != UNTAGGED_KEY

@@ -623,6 +623,9 @@ class TagGroupRow(GroupRow):
         # the split-view button works as inherited — the action only reads
         # group_info['connections'] / ['name'], so a synthetic group is fine.
         self.edit_button.set_tooltip_text(_("Rename Tag"))
+        if group_info.get("untagged"):
+            # The Untagged section is not a real tag — nothing to rename.
+            self.edit_button.set_visible(False)
 
     def _setup_drag_source(self):
         # Tag groups cannot be dragged or reordered.
@@ -649,7 +652,8 @@ class TagGroupRow(GroupRow):
     def _update_display(self):
         super()._update_display()
         name = GLib.markup_escape_text(str(self.group_info.get("name", "")))
-        self.name_label.set_markup(f"<b>#{name}</b>")
+        prefix = GLib.markup_escape_text(str(self.group_info.get("prefix", "#")))
+        self.name_label.set_markup(f"<b>{prefix}{name}</b>")
 
     def _toggle_expand(self):
         # Persist to config, not GroupManager — the group only exists here.
@@ -1741,6 +1745,9 @@ def _on_connection_list_drop(window, target, value, x, y):
                         # Dropping onto a tag group adds the tag to the dragged
                         # connections (copy semantics — GroupManager untouched;
                         # its synthetic id must never reach move_connection).
+                        if target_row.group_info.get("untagged"):
+                            # The Untagged section is not a tag to apply.
+                            return False
                         from .tag_groups import add_tag_to_list
                         tag_name = str(target_row.group_info.get("name", ""))
                         cfg = getattr(window, "config", None)
