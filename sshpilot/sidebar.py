@@ -609,9 +609,10 @@ class TagGroupRow(GroupRow):
         super().__init__(group_info, group_manager, connections_dict)
         self.is_tag_group = True
         self.icon.set_from_icon_name("tag-symbolic")
-        # Read-only v1: no edit / split affordances.
-        self.split_view_button.set_visible(False)
-        self.edit_button.set_visible(False)
+        # The edit button renames the tag (across all tagged connections);
+        # the split-view button works as inherited — the action only reads
+        # group_info['connections'] / ['name'], so a synthetic group is fine.
+        self.edit_button.set_tooltip_text(_("Rename Tag"))
 
     def _setup_drag_source(self):
         # Tag groups cannot be dragged or reordered.
@@ -624,6 +625,16 @@ class TagGroupRow(GroupRow):
         # second toggle is masked by the full rebuild destroying the row, but
         # tag rows survive their in-place toggle, so the gesture must go.
         pass
+
+    def _on_edit_clicked(self, button):
+        # Rename the tag itself, not a GroupManager group (the base handler
+        # routes to on_edit_group_action, which bails on synthetic ids).
+        try:
+            window = self.get_root()
+            if window and hasattr(window, 'on_rename_tag_action'):
+                window.on_rename_tag_action(self)
+        except Exception as e:
+            logger.error(f"Error renaming tag {self.group_id}: {e}")
 
     def _update_display(self):
         super()._update_display()

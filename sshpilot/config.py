@@ -681,6 +681,35 @@ class Config(GObject.Object):
             meta.pop('tags', None)
         self.set_connection_meta(nickname, meta)
 
+    def rename_tag(self, old_tag: str, new_tag: str) -> int:
+        """Rename *old_tag* to *new_tag* on every connection.
+
+        Matches case-insensitively and de-duplicates per connection (renaming
+        onto an existing tag merges). Returns the number of connections
+        changed.
+        """
+        from .tag_groups import rename_tag_in_list
+
+        old_key = str(old_tag).casefold()
+        new_name = str(new_tag).strip()
+        if not new_name:
+            return 0
+        changed_count = 0
+        meta_all = self.get_setting('connections_meta', {})
+        if not isinstance(meta_all, dict):
+            return 0
+        for nickname, meta in list(meta_all.items()):
+            if not isinstance(meta, dict):
+                continue
+            tags = meta.get('tags')
+            if not isinstance(tags, list) or not tags:
+                continue
+            new_tags, changed = rename_tag_in_list(tags, old_key, new_name)
+            if changed:
+                self.set_connection_tags(nickname, new_tags)
+                changed_count += 1
+        return changed_count
+
     def add_custom_theme(self, name: str, theme_data: Dict[str, str]):
         """Add a custom theme"""
         self.terminal_themes[name] = theme_data

@@ -44,6 +44,45 @@ def compute_tag_groups(tag_map: Mapping[str, Sequence[str]]) -> List[Tuple[str, 
     return result
 
 
+def rename_tag_in_list(tags: Sequence[str], old_key: str, new_name: str) -> Tuple[List[str], bool]:
+    """Replace tags matching *old_key* (casefold) with *new_name*.
+
+    De-duplicates case-insensitively, keeping the first occurrence's position.
+    Returns (new_list, changed).
+    """
+    old_key = str(old_key).casefold()
+    result: List[str] = []
+    seen = set()
+    changed = False
+    for raw in (tags or []):
+        tag = str(raw).strip()
+        if not tag:
+            continue
+        if tag.casefold() == old_key:
+            if tag != new_name:
+                changed = True
+            tag = new_name
+        key = tag.casefold()
+        if key in seen:
+            changed = True  # merge collapsed a duplicate
+            continue
+        seen.add(key)
+        result.append(tag)
+    return result, changed
+
+
+def migrate_expanded_state(state: Mapping[str, bool], old_key: str, new_key: str) -> Dict[str, bool]:
+    """Move the expansion flag from *old_key* to *new_key* on tag rename.
+
+    When *new_key* already exists (merge), its value wins. Returns a new dict.
+    """
+    result = dict(state or {})
+    if old_key in result:
+        value = result.pop(old_key)
+        result.setdefault(new_key, value)
+    return result
+
+
 def make_tag_group_info(display_tag: str, nicknames: Sequence[str], expanded: bool) -> dict:
     """Synthetic group_info dict consumable by GroupRow/TagGroupRow.
 

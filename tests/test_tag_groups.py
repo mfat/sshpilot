@@ -10,6 +10,8 @@ from sshpilot.tag_groups import (
     compute_tag_groups,
     is_tag_group_id,
     make_tag_group_info,
+    migrate_expanded_state,
+    rename_tag_in_list,
     tag_group_id,
 )
 
@@ -72,6 +74,44 @@ class TestMakeTagGroupInfo:
         # connections is a copy — mutating it must not affect the input
         info["connections"].append("c")
         assert nicks == ["a", "b"]
+
+
+class TestRenameTagInList:
+    def test_basic_rename(self):
+        assert rename_tag_in_list(["staging", "web"], "staging", "prod") == (["prod", "web"], True)
+
+    def test_case_insensitive_match(self):
+        assert rename_tag_in_list(["Prod"], "prod", "production") == (["production"], True)
+
+    def test_merge_dedups_keeping_first_position(self):
+        assert rename_tag_in_list(["staging", "web", "prod"], "staging", "prod") == (["prod", "web"], True)
+
+    def test_unrelated_tags_untouched(self):
+        assert rename_tag_in_list(["web", "db"], "staging", "prod") == (["web", "db"], False)
+
+    def test_case_only_rename_reports_changed(self):
+        assert rename_tag_in_list(["prod"], "prod", "Prod") == (["Prod"], True)
+
+    def test_empty_input(self):
+        assert rename_tag_in_list([], "a", "b") == ([], False)
+        assert rename_tag_in_list(None, "a", "b") == ([], False)
+
+
+class TestMigrateExpandedState:
+    def test_moves_value(self):
+        assert migrate_expanded_state({"staging": False}, "staging", "prod") == {"prod": False}
+
+    def test_existing_new_key_wins_on_merge(self):
+        state = {"staging": False, "prod": True}
+        assert migrate_expanded_state(state, "staging", "prod") == {"prod": True}
+
+    def test_missing_old_key_unchanged(self):
+        assert migrate_expanded_state({"prod": True}, "staging", "prod") == {"prod": True}
+        assert migrate_expanded_state({}, "a", "b") == {}
+
+    def test_case_only_rename_keeps_state(self):
+        # casefolded key is identical on a case-only rename
+        assert migrate_expanded_state({"prod": False}, "prod", "prod") == {"prod": False}
 
 
 class TestGroupManagerNoOpContract:

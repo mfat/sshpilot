@@ -2172,9 +2172,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             context_click.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
 
             def _build_and_show_menu(row):
-                # Virtual tag groups are read-only: no context menu.
-                if getattr(row, 'is_tag_group', False):
-                    return
                 # Build a Gtk.PopoverMenu from the shared sidebar context menu helper.
                 menu = IconContextMenu()
 
@@ -2191,7 +2188,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     except Exception:
                         pass
 
-                if hasattr(row, 'group_id'):
+                if getattr(row, 'is_tag_group', False):
+                    # Virtual tag groups: rename the tag or open members in
+                    # split view — no edit/delete/run (nothing to mutate).
+                    menu.add_section(
+                        menu.add_item('document-edit-symbolic', _('Rename Tag…'), lambda: self.on_rename_tag_action(row)),
+                        menu.add_item('view-grid-symbolic', _('Open in Split View'), lambda: self._open_tag_group_split(row)),
+                    )
+                elif hasattr(row, 'group_id'):
                     menu.add_section(
                         menu.add_item('document-edit-symbolic', _('Edit Group'), lambda: self.on_edit_group_action(None, None)),
                         menu.add_item('view-grid-symbolic', _('Open in Split View'), lambda: self.on_open_group_in_split_view_action(None, None)),
@@ -2368,9 +2372,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     # Set context menu data
                     self._context_menu_row = row
                     self._context_menu_connection = getattr(row, 'connection', None)
-                    self._context_menu_group_row = row if (
-                        hasattr(row, 'group_id') and not getattr(row, 'is_tag_group', False)
-                    ) else None
+                    # Safe for tag rows too: the only consumer that acts on a
+                    # synthetic tag id is split view (which we want); edit/
+                    # delete/run all bail on groups.get('tag::…') -> None.
+                    self._context_menu_group_row = row if hasattr(row, 'group_id') else None
 
                     _build_and_show_menu(row)
 
@@ -5582,8 +5587,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             self.connection_toolbar.set_visible(False)
             self.group_toolbar.set_visible(True)
 
-            allow_single_group = (
-                len(group_rows) == 1
+            # Rename works for tag groups too (renames the tag); delete does not.
+            allow_single_group = len(group_rows) == 1
+            allow_group_delete = (
+                allow_single_group
                 and not getattr(group_rows[0], 'is_tag_group', False)
             )
             self.delete_button.set_sensitive(False)
@@ -5596,7 +5603,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             if hasattr(self, 'system_terminal_button') and self.system_terminal_button:
                 self.system_terminal_button.set_sensitive(False)
             self.rename_group_button.set_sensitive(allow_single_group)
-            self.delete_group_button.set_sensitive(allow_single_group)
+            self.delete_group_button.set_sensitive(allow_group_delete)
         else:
             self.connection_toolbar.set_visible(False)
             self.group_toolbar.set_visible(False)
@@ -5794,13 +5801,22 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     def on_rename_group_clicked(self, button):
         """Handle rename group button click"""
         selected_row = self.connection_list.get_selected_row()
-        if selected_row and hasattr(selected_row, 'group_id'):
+        if selected_row and getattr(selected_row, 'is_tag_group', False):
+            self.on_rename_tag_action(selected_row)
+        elif selected_row and hasattr(selected_row, 'group_id'):
+            # Pin the context row to the selection so a stale context-menu
+            # row (possibly a tag row) can't divert the action.
+            self._context_menu_group_row = selected_row
             self.on_edit_group_action(None, None)
 
     def on_delete_group_clicked(self, button):
         """Handle delete group button click"""
         selected_row = self.connection_list.get_selected_row()
-        if selected_row and hasattr(selected_row, 'group_id'):
+        if (selected_row and hasattr(selected_row, 'group_id')
+                and not getattr(selected_row, 'is_tag_group', False)):
+            # Pin the context row to the selection so a stale context-menu
+            # row (possibly a tag row) can't divert the action.
+            self._context_menu_group_row = selected_row
             self.on_delete_group_action(None, None)
 
     def on_delete_connection_response(self, dialog, response, payload):
@@ -8364,8 +8380,101 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             
         except Exception as e:
             logger.error(f"Failed to show edit group dialog: {e}")
-    
-    
+
+    def on_rename_tag_action(self, tag_row):
+        """Rename a virtual tag group: rewrite the tag on all tagged connections."""
+        try:
+            if not getattr(tag_row, 'is_tag_group', False):
+                return
+            old_name = str(tag_row.group_info.get('name', ''))
+            old_key = str(tag_row.group_info.get('tag_key', '')) or old_name.casefold()
+
+            dialog = Gtk.Dialog(
+                title=_("Rename Tag"),
+                transient_for=self,
+                modal=True,
+                destroy_with_parent=True
+            )
+            dialog.set_default_size(400, 120)
+            dialog.set_resizable(False)
+
+            content_area = dialog.get_content_area()
+            content_area.set_margin_start(20)
+            content_area.set_margin_end(20)
+            content_area.set_margin_top(20)
+            content_area.set_margin_bottom(20)
+            content_area.set_spacing(12)
+
+            label = Gtk.Label(label=_("Enter a new name for the tag:"))
+            label.set_wrap(True)
+            label.set_xalign(0)
+            content_area.append(label)
+
+            entry = Gtk.Entry()
+            entry.set_text(old_name)
+            entry.set_activates_default(True)
+            entry.set_hexpand(True)
+            content_area.append(entry)
+
+            dialog.add_button(_('Cancel'), Gtk.ResponseType.CANCEL)
+            save_button = dialog.add_button(_('Save'), Gtk.ResponseType.OK)
+            save_button.get_style_context().add_class('suggested-action')
+            dialog.set_default_response(Gtk.ResponseType.OK)
+
+            def _show_error(body):
+                error_dialog = Adw.MessageDialog(
+                    transient_for=self,
+                    modal=True,
+                    heading=_("Error"),
+                    body=body,
+                )
+                error_dialog.add_response('ok', _('OK'))
+                error_dialog.present()
+
+            def on_response(dialog, response):
+                if response == Gtk.ResponseType.OK:
+                    new_name = entry.get_text().strip()
+                    if not new_name:
+                        _show_error(_("Please enter a tag name."))
+                    elif ',' in new_name:
+                        # Tags are entered comma-separated in the connection
+                        # dialog, so a comma in a tag name could not round-trip.
+                        _show_error(_("Tag names cannot contain commas."))
+                    elif new_name != old_name:
+                        from .tag_groups import migrate_expanded_state
+                        self.config.rename_tag(old_name, new_name)
+                        try:
+                            state = self.config.get_setting('ui.tag_groups_expanded', {}) or {}
+                            self.config.set_setting(
+                                'ui.tag_groups_expanded',
+                                migrate_expanded_state(state, old_key, new_name.casefold()),
+                            )
+                        except Exception:
+                            logger.debug("Failed to migrate tag expansion state", exc_info=True)
+                        self.rebuild_connection_list()
+                dialog.destroy()
+
+            dialog.connect('response', on_response)
+            dialog.present()
+
+            def focus_entry():
+                entry.grab_focus()
+                entry.select_region(0, -1)
+                return False
+
+            GLib.idle_add(focus_entry)
+
+        except Exception as e:
+            logger.error(f"Failed to show rename tag dialog: {e}")
+
+    def _open_tag_group_split(self, tag_row):
+        """Open a tag group's connections in split view (context menu path)."""
+        try:
+            self._context_menu_group_row = tag_row
+            self.on_open_group_in_split_view_action(None, None)
+        except Exception as e:
+            logger.error(f"Failed to open tag group in split view: {e}")
+
     def on_move_to_ungrouped_action(self, action, param=None):
         """Handle move to ungrouped / remove from group action.
 

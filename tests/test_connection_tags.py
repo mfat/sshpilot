@@ -76,3 +76,45 @@ def test_corrupt_meta_returns_empty(tmp_path, monkeypatch):
     cfg = make_config(tmp_path, monkeypatch)
     cfg.set_connection_meta('srv', {'tags': 'not-a-list'})
     assert cfg.get_connection_tags('srv') == []
+
+
+def test_rename_tag_across_connections(tmp_path, monkeypatch):
+    cfg = make_config(tmp_path, monkeypatch)
+    cfg.set_connection_tags('a', ['staging', 'web'])
+    cfg.set_connection_tags('b', ['Staging'])      # case-insensitive match
+    cfg.set_connection_tags('c', ['db'])           # untouched
+    count = cfg.rename_tag('staging', 'prod')
+    assert count == 2
+    assert cfg.get_connection_tags('a') == ['prod', 'web']
+    assert cfg.get_connection_tags('b') == ['prod']
+    assert cfg.get_connection_tags('c') == ['db']
+
+
+def test_rename_tag_merges_and_dedups(tmp_path, monkeypatch):
+    cfg = make_config(tmp_path, monkeypatch)
+    cfg.set_connection_tags('a', ['staging', 'prod'])
+    assert cfg.rename_tag('staging', 'prod') == 1
+    assert cfg.get_connection_tags('a') == ['prod']
+
+
+def test_rename_tag_preserves_other_meta(tmp_path, monkeypatch):
+    cfg = make_config(tmp_path, monkeypatch)
+    cfg.pin_connection('a')
+    cfg.set_connection_tags('a', ['staging'])
+    cfg.rename_tag('staging', 'prod')
+    assert cfg.is_pinned('a') is True
+    assert cfg.get_connection_tags('a') == ['prod']
+
+
+def test_rename_tag_case_only(tmp_path, monkeypatch):
+    cfg = make_config(tmp_path, monkeypatch)
+    cfg.set_connection_tags('a', ['prod'])
+    assert cfg.rename_tag('prod', 'Prod') == 1
+    assert cfg.get_connection_tags('a') == ['Prod']
+
+
+def test_rename_tag_rejects_empty_new_name(tmp_path, monkeypatch):
+    cfg = make_config(tmp_path, monkeypatch)
+    cfg.set_connection_tags('a', ['staging'])
+    assert cfg.rename_tag('staging', '   ') == 0
+    assert cfg.get_connection_tags('a') == ['staging']
