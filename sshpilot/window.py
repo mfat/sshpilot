@@ -76,7 +76,14 @@ from .sshcopyid_window import SshCopyIdWindow, SshCopyIdRunner
 from .scp_window import ScpWindowController, SCPConnectionProfile
 from .groups import GroupManager
 from .session_manager import SessionManager
-from .sidebar import GroupRow, ConnectionRow, build_sidebar
+from .sidebar import GroupRow, TagGroupRow, ConnectionRow, build_sidebar
+from .tag_groups import (
+    UNTAGGED_KEY,
+    compute_tag_groups,
+    compute_untagged,
+    make_tag_group_info,
+    make_untagged_group_info,
+)
 
 from .welcome_page import WelcomePage
 from .actions import WindowActions, register_window_actions
@@ -619,6 +626,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception:
             self._hide_hosts = False
 
+        # Sidebar view mode: 'hosts' (groups hierarchy) or 'tags'
+        try:
+            view = str(self.config.get_setting('ui.sidebar_view', 'hosts'))
+        except Exception:
+            view = 'hosts'
+        self._sidebar_view = view if view in ('hosts', 'tags') else 'hosts'
+
         # Remember last chosen sort preset
         try:
             stored_sort = str(self.config.get_setting('ui.connection_sort_last', DEFAULT_CONNECTION_SORT))
@@ -1019,9 +1033,32 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
         - Arrow Up from the first row returns focus to the search entry (when
           the search bar is open) so the user can keep editing the query.
+        - Space selects the focused row, Ctrl/⌘+Space toggles it in the
+          multi-selection (the rows are activatable, so without this the
+          row's default Space binding would activate it, i.e. connect).
         - Typing a printable character starts a search (type-ahead): the search
           bar opens, takes focus, and receives the character.
         """
+        if keyval in (Gdk.KEY_space, Gdk.KEY_KP_Space):
+            row = self.connection_list.get_focus_child()
+            if row is None:
+                return False
+            toggle_mask = (
+                Gdk.ModifierType.CONTROL_MASK
+                | getattr(Gdk.ModifierType, 'META_MASK', 0)
+            )
+            try:
+                if state & toggle_mask:
+                    # Toggle the focused row in the multi-selection.
+                    if row in self.connection_list.get_selected_rows():
+                        self.connection_list.unselect_row(row)
+                    else:
+                        self.connection_list.select_row(row)
+                else:
+                    self._select_only_row(row)
+            except Exception:
+                logger.debug("Space selection handling failed", exc_info=True)
+            return True
         if keyval in (Gdk.KEY_Up, Gdk.KEY_KP_Up):
             if (
                 getattr(self, 'search_container', None)
@@ -2053,6 +2090,42 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             pass
         header.append(hide_button)
 
+        # Sidebar view toggle (hosts hierarchy <-> dedicated tags view).
+        # A ToggleButton so Adwaita renders the active state; the tag icon
+        # is constant.
+        view_button = Gtk.ToggleButton()
+        icon_utils.set_button_icon(view_button, 'tag-symbolic')
+        view_button.set_active(self._sidebar_view == 'tags')
+
+        def _update_view_tooltip(btn):
+            try:
+                btn.set_tooltip_text(
+                    _('Hide tags') if btn.get_active() else _('Show tags')
+                )
+            except Exception:
+                pass
+
+        _update_view_tooltip(view_button)
+
+        def _on_toggle_view(btn, *args):
+            try:
+                self._sidebar_view = 'tags' if btn.get_active() else 'hosts'
+                try:
+                    self.config.set_setting('ui.sidebar_view', self._sidebar_view)
+                except Exception:
+                    pass
+                _update_view_tooltip(btn)
+                self.rebuild_connection_list()
+            except Exception:
+                logger.error("Failed to switch sidebar view", exc_info=True)
+
+        view_button.connect('toggled', _on_toggle_view)
+        try:
+            view_button.set_can_focus(False)
+        except Exception:
+            pass
+        header.append(view_button)
+
         sort_button = self._build_sort_button()
         header.append(sort_button)
 
@@ -2172,6 +2245,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
             def _build_and_show_menu(row):
                 # Build a Gtk.PopoverMenu from the shared sidebar context menu helper.
+                # Reset any batch-target snapshot from a previous menu.
+                self._context_menu_connections = None
                 menu = IconContextMenu()
 
                 def _on_popover_closed(popover, *_):
@@ -2182,12 +2257,22 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         self._context_menu_popover = None
                         self._context_menu_row = None
                         self._context_menu_connection = None
+                        self._context_menu_connections = None
                     try:
                         popover.unparent()
                     except Exception:
                         pass
 
-                if hasattr(row, 'group_id'):
+                if getattr(row, 'is_tag_group', False):
+                    # Virtual tag groups: rename the tag or open members in
+                    # split view — no edit/delete/run (nothing to mutate).
+                    # The Untagged section is not a real tag: no rename.
+                    untagged = bool(getattr(row, 'group_info', {}).get('untagged'))
+                    menu.add_section(
+                        None if untagged else menu.add_item('document-edit-symbolic', _('Rename Tag…'), lambda: self.on_rename_tag_action(row)),
+                        menu.add_item('view-grid-symbolic', _('Open in Split View'), lambda: self._open_tag_group_split(row)),
+                    )
+                elif hasattr(row, 'group_id'):
                     menu.add_section(
                         menu.add_item('document-edit-symbolic', _('Edit Group'), lambda: self.on_edit_group_action(None, None)),
                         menu.add_item('view-grid-symbolic', _('Open in Split View'), lambda: self.on_open_group_in_split_view_action(None, None)),
@@ -2196,49 +2281,91 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     )
                 else:
                     conn = getattr(row, 'connection', None)
+                    # The right-click gesture has already collapsed the
+                    # selection to the clicked row unless it was part of a
+                    # multi-selection, so the selection reflects intent here.
+                    # Dedupe by connection: the same connection may be selected
+                    # through several rows (real group + tag group).
+                    try:
+                        selected_conns = self._connections_from_rows(
+                            self._get_selected_connection_rows()
+                        )
+                    except Exception:
+                        selected_conns = [conn] if conn else []
+                    multi = len(selected_conns) > 1
+                    # Snapshot the targets for the lifetime of this menu so
+                    # batch actions operate on exactly what was selected when
+                    # the menu opened, even if the selection changes before
+                    # the item callback runs.
+                    self._context_menu_connections = list(selected_conns) if multi else None
 
-                    menu.add_section(
-                        menu.add_item('list-add-symbolic', _('Open New Connection'), lambda: self.on_open_new_connection_action(None, None)),
-                        menu.add_item('document-edit-symbolic', _('Edit Connection'), lambda: self.on_edit_connection_action(None, None)),
-                        menu.add_item('view-grid-symbolic', _('Open in Split View'), lambda: self.on_open_in_split_view_action(None, None)),
-                        menu.add_item('utilities-terminal-symbolic', _('Run Command on Host…'), lambda: self.on_run_command_action()),
-                        menu.add_item('edit-copy-symbolic', _('Duplicate Connection'), lambda: self.on_duplicate_connection_action(None, None)),
-                        menu.add_item('edit-copy-symbolic', _('Copy Address'), lambda: self._copy_connection_address()),
-                    )
+                    if multi:
+                        # Multi-selection: only actions that operate on all
+                        # selected connections; per-host dialogs are hidden.
+                        menu.add_section(
+                            menu.add_item('list-add-symbolic', _('Open New Connections'), lambda: self.on_open_new_connection_action(None, None)),
+                            menu.add_item('view-grid-symbolic', _('Open in Split View'), lambda: self.on_open_in_split_view_action(None, None)),
+                            menu.add_item('utilities-terminal-symbolic', _('Run Command on Hosts…'), lambda: self.on_run_command_action()),
+                        )
+                    else:
+                        menu.add_section(
+                            menu.add_item('list-add-symbolic', _('Open New Connection'), lambda: self.on_open_new_connection_action(None, None)),
+                            menu.add_item('document-edit-symbolic', _('Edit Connection'), lambda: self.on_edit_connection_action(None, None)),
+                            menu.add_item('view-grid-symbolic', _('Open in Split View'), lambda: self.on_open_in_split_view_action(None, None)),
+                            menu.add_item('utilities-terminal-symbolic', _('Run Command on Host…'), lambda: self.on_run_command_action()),
+                            menu.add_item('edit-copy-symbolic', _('Duplicate Connection'), lambda: self.on_duplicate_connection_action(None, None)),
+                            menu.add_item('edit-copy-symbolic', _('Copy Address'), lambda: self._copy_connection_address()),
+                        )
+
+                    def _has_wol_mac(c):
+                        try:
+                            meta = self.config.get_connection_meta(c.nickname) if c else {}
+                            return bool((meta or {}).get('wol_mac', '').strip())
+                        except Exception:
+                            return False
 
                     wol_item = None
-                    try:
-                        conn_meta = self.config.get_connection_meta(conn.nickname) if conn else {}
-                        if (conn_meta or {}).get('wol_mac', '').strip():
-                            wol_item = menu.add_item('network-wireless-symbolic', _('Wake on LAN'), lambda: self.on_wake_on_lan_action(None, None))
-                    except Exception:
-                        pass
-                    menu.add_section(
-                        menu.add_item('folder-symbolic', _('Manage Files'), lambda: self.on_manage_files_action(None, None)) if not should_hide_file_manager_options() else None,
-                        menu.add_item('dialog-password-symbolic', _('Copy Key to Server'), lambda: self.on_copy_key_to_server_action(None, None)),
-                        menu.add_item('dialog-password-symbolic', _('Manage authorized_keys…'), lambda: self.on_manage_authorized_keys_action(None, None)),
-                        wol_item,
-                        menu.add_item('utilities-terminal-symbolic', _('Open in System Terminal'), lambda: self.on_open_in_system_terminal_action(None, None)) if not should_hide_external_terminal_options() else None,
-                    )
+                    if any(_has_wol_mac(c) for c in (selected_conns or [conn])):
+                        wol_item = menu.add_item('network-wireless-symbolic', _('Wake on LAN'), lambda: self.on_wake_on_lan_action(None, None))
+                    if multi:
+                        menu.add_section(wol_item)
+                    else:
+                        menu.add_section(
+                            menu.add_item('folder-symbolic', _('Manage Files'), lambda: self.on_manage_files_action(None, None)) if not should_hide_file_manager_options() else None,
+                            menu.add_item('dialog-password-symbolic', _('Copy Key to Server'), lambda: self.on_copy_key_to_server_action(None, None)),
+                            menu.add_item('dialog-password-symbolic', _('Manage authorized_keys…'), lambda: self.on_manage_authorized_keys_action(None, None)),
+                            wol_item,
+                            menu.add_item('utilities-terminal-symbolic', _('Open in System Terminal'), lambda: self.on_open_in_system_terminal_action(None, None)) if not should_hide_external_terminal_options() else None,
+                        )
 
-                    current_groups = self.group_manager.get_connection_groups(conn.nickname) if conn else []
+                    def _conn_groups(c):
+                        try:
+                            return self.group_manager.get_connection_groups(c.nickname) if c else []
+                        except Exception:
+                            return []
+
+                    current_groups = _conn_groups(conn)
+                    any_grouped = any(_conn_groups(c) for c in selected_conns) if multi else bool(current_groups)
                     row_group_id = getattr(row, '_group_id', None)
-                    ungroup_label = _('Remove from Group') if (row_group_id and len(current_groups) > 1) else _('Ungroup')
+                    ungroup_label = _('Remove from Group') if (not multi and row_group_id and len(current_groups) > 1) else _('Ungroup')
                     menu.add_section(
                         menu.add_item('folder-symbolic', _('Move to Group'), lambda: self.on_move_to_group_action(None, None)),
                         menu.add_item('list-add-symbolic', _('Copy to Group'), lambda: self.on_copy_to_group_action(None, None)),
-                        menu.add_item('edit-undo-symbolic', ungroup_label, lambda: self.on_move_to_ungrouped_action(None, None)) if current_groups else None,
+                        menu.add_item('edit-undo-symbolic', ungroup_label, lambda: self.on_move_to_ungrouped_action(None, None)) if any_grouped else None,
                     )
 
                     try:
-                        is_pinned = self.config.is_pinned(conn.nickname) if conn else False
-                        if is_pinned:
+                        pin_targets = selected_conns if multi else ([conn] if conn else [])
+                        all_pinned = bool(pin_targets) and all(
+                            self.config.is_pinned(c.nickname) for c in pin_targets
+                        )
+                        if all_pinned:
                             menu.add_section(
-                                menu.add_item('starred-symbolic', _('Unpin from Start Page'), lambda: self._toggle_pin_connection(conn)),
+                                menu.add_item('starred-symbolic', _('Unpin from Start Page'), lambda: self._toggle_pin_connections(pin_targets)),
                             )
                         else:
                             menu.add_section(
-                                menu.add_item('non-starred-symbolic', _('Pin to Start Page'), lambda: self._toggle_pin_connection(conn)),
+                                menu.add_item('non-starred-symbolic', _('Pin to Start Page'), lambda: self._toggle_pin_connections(pin_targets)),
                             )
                     except Exception:
                         pass
@@ -2364,6 +2491,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     # Set context menu data
                     self._context_menu_row = row
                     self._context_menu_connection = getattr(row, 'connection', None)
+                    # Safe for tag rows too: the only consumer that acts on a
+                    # synthetic tag id is split view (which we want); edit/
+                    # delete/run all bail on groups.get('tag::…') -> None.
                     self._context_menu_group_row = row if hasattr(row, 'group_id') else None
 
                     _build_and_show_menu(row)
@@ -2434,15 +2564,20 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
                 previous_row = getattr(self, '_context_menu_row', None)
                 previous_connection = getattr(self, '_context_menu_connection', None)
+                previous_connections = getattr(self, '_context_menu_connections', None)
 
                 try:
                     self._context_menu_row = row
                     self._context_menu_connection = row.connection
+                    # Middle-click targets only the clicked row; a multi-select
+                    # snapshot from a still-open context menu must not win.
+                    self._context_menu_connections = None
                     self.on_open_new_connection_action(None, None)
                     gesture.set_state(Gtk.EventSequenceState.CLAIMED)
                 finally:
                     self._context_menu_row = previous_row
                     self._context_menu_connection = previous_connection
+                    self._context_menu_connections = previous_connections
 
             middle_click.connect('pressed', _on_middle_click)
             self.connection_list.add_controller(middle_click)
@@ -2456,10 +2591,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             
             def _on_ctrl_enter(widget, *args):
                 try:
-                    selected_row = self.connection_list.get_selected_row()
-                    if selected_row and hasattr(selected_row, 'connection'):
-                        connection = selected_row.connection
-                        self.terminal_manager.connect_to_host(connection, force_new=True)
+                    self._open_new_connection_tabs(
+                        self._connections_from_rows(
+                            self._get_selected_connection_rows()
+                        )
+                    )
                 except Exception as e:
                     logger.error(
                         f"Failed to open new connection with {get_primary_modifier_label()}+Enter: {e}"
@@ -2600,20 +2736,36 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         """Pin or unpin a connection from the start page."""
         if conn is None:
             return
+        self._toggle_pin_connections([conn])
+
+    def _toggle_pin_connections(self, conns):
+        """Pin or unpin a batch of connections from the start page.
+
+        If every connection is already pinned, all are unpinned; otherwise
+        all are pinned (the same aggregate rule the context menu label uses).
+        """
+        conns = [c for c in (conns or []) if c is not None]
+        if not conns:
+            return
         try:
-            nickname = conn.nickname
-            if self.config.is_pinned(nickname):
-                self.config.unpin_connection(nickname)
-                msg = _("Unpinned from start page")
+            all_pinned = all(self.config.is_pinned(c.nickname) for c in conns)
+            for c in conns:
+                if all_pinned:
+                    self.config.unpin_connection(c.nickname)
+                else:
+                    self.config.pin_connection(c.nickname)
+            if len(conns) == 1:
+                msg = _("Unpinned from start page") if all_pinned else _("Pinned to start page")
+            elif all_pinned:
+                msg = _("Unpinned {n} connections from start page").format(n=len(conns))
             else:
-                self.config.pin_connection(nickname)
-                msg = _("Pinned to start page")
+                msg = _("Pinned {n} connections to start page").format(n=len(conns))
             if hasattr(self, 'toast_overlay') and self.toast_overlay:
                 self.toast_overlay.add_toast(Adw.Toast.new(msg))
             if hasattr(self, 'welcome_view') and self.welcome_view:
                 self.welcome_view.refresh_pinned()
         except Exception as e:
-            logger.error(f"Failed to toggle pin for {getattr(conn, 'nickname', '?')}: {e}")
+            logger.error(f"Failed to toggle pin for {len(conns)} connection(s): {e}")
 
     def _resolve_connection_list_event(
         self,
@@ -3384,10 +3536,28 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
         # Get all connections
         connections = self.connection_manager.get_connections()
+        # Attach tags so the search filter and freshly built rows see them.
+        for conn in connections:
+            try:
+                conn.tags = self.config.get_connection_tags(conn.nickname)
+            except Exception:
+                conn.tags = []
         connections_dict = {conn.nickname: conn for conn in connections}
         search_text = ''
         if hasattr(self, 'search_entry') and self.search_entry:
             search_text = self.search_entry.get_text().strip().lower()
+
+        if getattr(self, '_sidebar_view', 'hosts') == 'tags':
+            self._build_tags_view(
+                connections, connections_dict,
+                filter_text=search_text or None,
+            )
+            # Restore scroll position
+            if scroll_position is not None and hasattr(self, 'connection_scrolled') and self.connection_scrolled:
+                vadj = self.connection_scrolled.get_vadjustment()
+                if vadj:
+                    GLib.idle_add(lambda: vadj.set_value(scroll_position))
+            return
 
         if search_text:
             displayed_connections = set()
@@ -3484,6 +3654,71 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             vadj = self.connection_scrolled.get_vadjustment()
             if vadj:
                 GLib.idle_add(lambda: vadj.set_value(scroll_position))
+    def _build_tags_view(self, connections, connections_dict, filter_text=None):
+        """Render the dedicated tags view: one section per tag, then Untagged.
+
+        With filter_text set (search), tag sections whose name matches are
+        shown in full (regardless of expansion), then remaining connections
+        matching the filter are listed flat — mirroring the hosts view's
+        search semantics.
+        """
+        try:
+            tag_map = {c.nickname: (getattr(c, 'tags', None) or []) for c in connections}
+            tag_groups = compute_tag_groups(tag_map)
+            if filter_text is not None:
+                tag_groups = [(t, n) for t, n in tag_groups if filter_text in t.lower()]
+            expanded_state = self.config.get_setting('ui.tag_groups_expanded', {}) or {}
+            displayed = set()
+
+            for display_tag, nicknames in tag_groups:
+                expanded = bool(expanded_state.get(display_tag.casefold(), True))
+                info = make_tag_group_info(display_tag, nicknames, expanded)
+                self._append_tag_section(
+                    info, connections_dict, expanded, filter_text, displayed
+                )
+
+            if filter_text is None:
+                untagged = compute_untagged(tag_map)
+                if untagged:
+                    expanded = bool(expanded_state.get(UNTAGGED_KEY, True))
+                    info = make_untagged_group_info(_('Untagged'), untagged, expanded)
+                    self._append_tag_section(
+                        info, connections_dict, expanded, None, displayed
+                    )
+            else:
+                matches = [
+                    c for c in connections
+                    if connection_matches(c, filter_text)
+                    and c.nickname not in displayed
+                ]
+                for conn in sorted(matches, key=lambda c: c.nickname.lower()):
+                    self.add_connection_row(conn)
+
+            self._ungrouped_area_row = None
+        except Exception:
+            logger.error("Failed to render tags view", exc_info=True)
+
+    def _append_tag_section(self, info, connections_dict, expanded,
+                            filter_text, displayed):
+        """Append one TagGroupRow plus its member rows to the list."""
+        tag_row = TagGroupRow(info, self.group_manager, connections_dict)
+        self.connection_list.append(tag_row)
+        # Member rows are always created; collapse hides them in place
+        # (no full rebuild on toggle, so no flicker).
+        member_rows = []
+        for nick in info.get('connections', []):
+            conn = connections_dict.get(nick)
+            if conn is None:
+                continue
+            row = self.add_connection_row(
+                conn, 1, display_group_id=None, in_tag_section=True,
+            )
+            if row is not None:
+                row.set_visible(expanded or filter_text is not None)
+                member_rows.append(row)
+            displayed.add(nick)
+        tag_row._member_rows = member_rows
+
     def _build_grouped_list(self, hierarchy, connections_dict, level):
         """Recursively build the grouped connection list"""
         for group_info in hierarchy:
@@ -3528,6 +3763,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         connection: Connection,
         indent_level: int = 0,
         display_group_id: Optional[str] = None,
+        in_tag_section: bool = False,
     ):
         """Add a connection row to the list with optional indentation"""
         row = ConnectionRow(
@@ -3536,6 +3772,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             self.config,
             file_manager_callback=self._open_manage_files_for_connection,
             display_group_id=display_group_id,
+            in_tag_section=in_tag_section,
         )
         
         # Apply indentation preference for grouped connections
@@ -5515,7 +5752,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             self.connection_toolbar.set_visible(False)
             self.group_toolbar.set_visible(True)
 
+            # Rename works for tag groups too (renames the tag); delete does not.
             allow_single_group = len(group_rows) == 1
+            allow_group_delete = (
+                allow_single_group
+                and not getattr(group_rows[0], 'is_tag_group', False)
+            )
             self.delete_button.set_sensitive(False)
             if hasattr(self, 'copy_key_button'):
                 self.copy_key_button.set_sensitive(False)
@@ -5526,7 +5768,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             if hasattr(self, 'system_terminal_button') and self.system_terminal_button:
                 self.system_terminal_button.set_sensitive(False)
             self.rename_group_button.set_sensitive(allow_single_group)
-            self.delete_group_button.set_sensitive(allow_single_group)
+            self.delete_group_button.set_sensitive(allow_group_delete)
         else:
             self.connection_toolbar.set_visible(False)
             self.group_toolbar.set_visible(False)
@@ -5724,13 +5966,22 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     def on_rename_group_clicked(self, button):
         """Handle rename group button click"""
         selected_row = self.connection_list.get_selected_row()
-        if selected_row and hasattr(selected_row, 'group_id'):
+        if selected_row and getattr(selected_row, 'is_tag_group', False):
+            self.on_rename_tag_action(selected_row)
+        elif selected_row and hasattr(selected_row, 'group_id'):
+            # Pin the context row to the selection so a stale context-menu
+            # row (possibly a tag row) can't divert the action.
+            self._context_menu_group_row = selected_row
             self.on_edit_group_action(None, None)
 
     def on_delete_group_clicked(self, button):
         """Handle delete group button click"""
         selected_row = self.connection_list.get_selected_row()
-        if selected_row and hasattr(selected_row, 'group_id'):
+        if (selected_row and hasattr(selected_row, 'group_id')
+                and not getattr(selected_row, 'is_tag_group', False)):
+            # Pin the context row to the selection so a stale context-menu
+            # row (possibly a tag row) can't divert the action.
+            self._context_menu_group_row = selected_row
             self.on_delete_group_action(None, None)
 
     def on_delete_connection_response(self, dialog, response, payload):
@@ -6916,39 +7167,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 app.release()
 
 
-    def on_open_new_connection_action(self, action, param=None):
-        """Open a new tab for the selected connection via context menu."""
-        try:
-            connection = getattr(self, '_context_menu_connection', None)
-            if connection is None:
-                # Fallback to selected row if any
-                row = self.connection_list.get_selected_row()
-                connection = getattr(row, 'connection', None) if row else None
-            if connection is None:
-                return
-            self.terminal_manager.connect_to_host(connection, force_new=True)
-        except Exception as e:
-            logger.error(f"Failed to open new connection tab: {e}")
-
-    def on_open_new_connection_tab_action(self, action, param=None):
-        """Open a new tab for the selected connection via global shortcut (Ctrl/⌘+Alt+N)."""
-        try:
-            # Get the currently selected connection
-            row = self.connection_list.get_selected_row()
-            if row and hasattr(row, 'connection'):
-                connection = row.connection
-                self.terminal_manager.connect_to_host(connection, force_new=True)
-            else:
-                # If no connection is selected, show a message or fall back to new connection dialog
-                logger.debug(
-                    f"No connection selected for {get_primary_modifier_label()}+Alt+N, opening new connection dialog"
-                )
-                self.show_connection_dialog()
-        except Exception as e:
-            logger.error(
-                f"Failed to open new connection tab with {get_primary_modifier_label()}+Alt+N: {e}"
-            )
-
     def on_manage_files_action(self, action, param=None):
         """Handle manage files action from context menu"""
         if hasattr(self, '_context_menu_connection') and self._context_menu_connection:
@@ -8003,15 +8221,20 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 pass
     
     def on_run_command_action(self, action=None, param=None):
-        """Open the command picker for the right-clicked connection or group."""
+        """Open the command picker for the right-clicked connection(s) or group."""
         panel = getattr(self, 'command_blocks_panel', None)
         if panel is None:
             return
         anchor = getattr(self, '_context_menu_row', None) or self
+        # Copy the multi-select snapshot by value: it is cleared when the
+        # context menu closes, but the picker popover outlives it.
+        connections = list(getattr(self, '_context_menu_connections', None) or [])
         connection = getattr(self, '_context_menu_connection', None)
         group_row = getattr(self, '_context_menu_group_row', None)
 
-        if connection is not None:
+        if len(connections) > 1:
+            panel.show_command_picker_for_target(anchor, connections=connections)
+        elif connection is not None:
             panel.show_command_picker_for_target(anchor, connection=connection)
         elif group_row is not None:
             gm = getattr(self, 'group_manager', None)
@@ -8294,8 +8517,103 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             
         except Exception as e:
             logger.error(f"Failed to show edit group dialog: {e}")
-    
-    
+
+    def on_rename_tag_action(self, tag_row):
+        """Rename a virtual tag group: rewrite the tag on all tagged connections."""
+        try:
+            if not getattr(tag_row, 'is_tag_group', False):
+                return
+            if tag_row.group_info.get('untagged'):
+                return  # the Untagged section is not a real tag
+            old_name = str(tag_row.group_info.get('name', ''))
+            old_key = str(tag_row.group_info.get('tag_key', '')) or old_name.casefold()
+
+            dialog = Gtk.Dialog(
+                title=_("Rename Tag"),
+                transient_for=self,
+                modal=True,
+                destroy_with_parent=True
+            )
+            dialog.set_default_size(400, 120)
+            dialog.set_resizable(False)
+
+            content_area = dialog.get_content_area()
+            content_area.set_margin_start(20)
+            content_area.set_margin_end(20)
+            content_area.set_margin_top(20)
+            content_area.set_margin_bottom(20)
+            content_area.set_spacing(12)
+
+            label = Gtk.Label(label=_("Enter a new name for the tag:"))
+            label.set_wrap(True)
+            label.set_xalign(0)
+            content_area.append(label)
+
+            entry = Gtk.Entry()
+            entry.set_text(old_name)
+            entry.set_activates_default(True)
+            entry.set_hexpand(True)
+            content_area.append(entry)
+
+            dialog.add_button(_('Cancel'), Gtk.ResponseType.CANCEL)
+            save_button = dialog.add_button(_('Save'), Gtk.ResponseType.OK)
+            save_button.get_style_context().add_class('suggested-action')
+            dialog.set_default_response(Gtk.ResponseType.OK)
+
+            def _show_error(body):
+                error_dialog = Adw.MessageDialog(
+                    transient_for=self,
+                    modal=True,
+                    heading=_("Error"),
+                    body=body,
+                )
+                error_dialog.add_response('ok', _('OK'))
+                error_dialog.present()
+
+            def on_response(dialog, response):
+                if response == Gtk.ResponseType.OK:
+                    new_name = entry.get_text().strip()
+                    if not new_name:
+                        _show_error(_("Please enter a tag name."))
+                    elif ',' in new_name:
+                        # Tags are entered comma-separated in the connection
+                        # dialog, so a comma in a tag name could not round-trip.
+                        _show_error(_("Tag names cannot contain commas."))
+                    elif new_name != old_name:
+                        from .tag_groups import migrate_expanded_state
+                        self.config.rename_tag(old_name, new_name)
+                        try:
+                            state = self.config.get_setting('ui.tag_groups_expanded', {}) or {}
+                            self.config.set_setting(
+                                'ui.tag_groups_expanded',
+                                migrate_expanded_state(state, old_key, new_name.casefold()),
+                            )
+                        except Exception:
+                            logger.debug("Failed to migrate tag expansion state", exc_info=True)
+                        self.rebuild_connection_list()
+                dialog.destroy()
+
+            dialog.connect('response', on_response)
+            dialog.present()
+
+            def focus_entry():
+                entry.grab_focus()
+                entry.select_region(0, -1)
+                return False
+
+            GLib.idle_add(focus_entry)
+
+        except Exception as e:
+            logger.error(f"Failed to show rename tag dialog: {e}")
+
+    def _open_tag_group_split(self, tag_row):
+        """Open a tag group's connections in split view (context menu path)."""
+        try:
+            self._context_menu_group_row = tag_row
+            self.on_open_group_in_split_view_action(None, None)
+        except Exception as e:
+            logger.error(f"Failed to open tag group in split view: {e}")
+
     def on_move_to_ungrouped_action(self, action, param=None):
         """Handle move to ungrouped / remove from group action.
 
@@ -9278,6 +9596,20 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         self.group_manager.rename_connection(original_nickname, new_nickname)
                     except Exception:
                         pass
+                    # Migrate per-connection metadata (pinned, WoL, tags) to the
+                    # new nickname. The dialog already wrote its own fields under
+                    # the new key, so those win over the old entry's values.
+                    try:
+                        old_meta = self.config.get_connection_meta(original_nickname)
+                        if old_meta:
+                            new_meta = self.config.get_connection_meta(new_nickname)
+                            merged = {**old_meta, **new_meta}
+                            meta_all = self.config.get_setting('connections_meta', {}) or {}
+                            meta_all.pop(original_nickname, None)
+                            self.config.set_setting('connections_meta', meta_all)
+                            self.config.set_connection_meta(new_nickname, merged)
+                    except Exception:
+                        logger.debug("Failed to migrate connection meta on rename", exc_info=True)
 
                 # Update connection attributes in memory (ensure forwarding rules kept)
                 old_connection.nickname = connection_data['nickname']
@@ -9361,9 +9693,21 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 
 
 
-                # Update UI
+                # Update UI. Tag group rows are derived during rebuilds, so a
+                # tag change needs a full rebuild when tag groups are shown —
+                # update_display() alone leaves them stale.
+                tags_changed = False
+                try:
+                    fresh_tags = self.config.get_connection_tags(old_connection.nickname)
+                    if list(getattr(old_connection, 'tags', None) or []) != fresh_tags:
+                        tags_changed = True
+                    old_connection.tags = fresh_tags
+                except Exception:
+                    pass
                 rows = self._rows_for_connection(old_connection)
-                if rows:
+                if tags_changed and getattr(self, '_sidebar_view', 'hosts') == 'tags':
+                    self.rebuild_connection_list()
+                elif rows:
                     # Update the display for every row representing this connection
                     for row in rows:
                         row.update_display()

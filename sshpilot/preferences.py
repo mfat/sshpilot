@@ -1054,6 +1054,7 @@ class PreferencesWindow(Adw.Window):
             )
             group_appearance_group.add(self.terminal_group_color_row)
 
+
             groups_page.add(group_appearance_group)
 
             # Group display layout section (shown after appearance options)

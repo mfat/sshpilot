@@ -664,6 +664,68 @@ class Config(GObject.Object):
         except Exception:
             return []
 
+    def get_connection_tags(self, nickname: str) -> list:
+        """Return the list of string tags for a connection (empty if none)."""
+        tags = self.get_connection_meta(nickname).get('tags', [])
+        if isinstance(tags, list):
+            return [str(t).strip() for t in tags if str(t).strip()]
+        return []
+
+    def set_connection_tags(self, nickname: str, tags: list) -> None:
+        """Persist tags for a connection; removes the key when empty."""
+        meta = self.get_connection_meta(nickname)
+        cleaned = [str(t).strip() for t in (tags or []) if str(t).strip()]
+        if cleaned:
+            meta['tags'] = cleaned
+        else:
+            meta.pop('tags', None)
+        self.set_connection_meta(nickname, meta)
+
+    def get_all_tags(self) -> list:
+        """Return all distinct tags across connections with usage counts.
+
+        Case-insensitive merge (first-seen casing wins), sorted alphabetically.
+        Returns a list of (display_tag, connection_count) tuples.
+        """
+        from .tag_groups import compute_tag_groups
+
+        tag_map = {}
+        meta_all = self.get_setting('connections_meta', {})
+        if isinstance(meta_all, dict):
+            for nickname, meta in meta_all.items():
+                if isinstance(meta, dict) and isinstance(meta.get('tags'), list):
+                    tag_map[nickname] = meta['tags']
+        return [(tag, len(nicks)) for tag, nicks in compute_tag_groups(tag_map)]
+
+    def rename_tag(self, old_tag: str, new_tag: str) -> int:
+        """Rename *old_tag* to *new_tag* on every connection.
+
+        Matches case-insensitively and de-duplicates per connection (renaming
+        onto an existing tag merges). Returns the number of connections
+        changed.
+        """
+        from .tag_groups import rename_tag_in_list
+
+        old_key = str(old_tag).casefold()
+        new_name = str(new_tag).strip()
+        if not new_name:
+            return 0
+        changed_count = 0
+        meta_all = self.get_setting('connections_meta', {})
+        if not isinstance(meta_all, dict):
+            return 0
+        for nickname, meta in list(meta_all.items()):
+            if not isinstance(meta, dict):
+                continue
+            tags = meta.get('tags')
+            if not isinstance(tags, list) or not tags:
+                continue
+            new_tags, changed = rename_tag_in_list(tags, old_key, new_name)
+            if changed:
+                self.set_connection_tags(nickname, new_tags)
+                changed_count += 1
+        return changed_count
+
     def add_custom_theme(self, name: str, theme_data: Dict[str, str]):
         """Add a custom theme"""
         self.terminal_themes[name] = theme_data

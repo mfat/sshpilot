@@ -27,3 +27,20 @@ def test_does_not_match_aliases_or_hname():
     assert not connection_matches(conn, "myalias")
     assert not connection_matches(conn, "alias1")
     assert not connection_matches(conn, "alias2")
+
+
+def test_matches_tags_case_insensitive_substring():
+    conn = make_connection("server3", "10.0.0.6")
+    setattr(conn, "tags", ["Production", "web"])
+    assert connection_matches(conn, "prod")
+    assert connection_matches(conn, "WEB")
+    assert not connection_matches(conn, "staging")
+
+
+def test_missing_or_none_tags_do_not_crash():
+    conn = make_connection("server4", "10.0.0.7")
+    assert connection_matches(conn, "server4")
+    assert not connection_matches(conn, "prod")
+    setattr(conn, "tags", None)
+    assert connection_matches(conn, "server4")
+    assert not connection_matches(conn, "prod")

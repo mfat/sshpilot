@@ -1397,11 +1397,13 @@ class CommandBlocksPanel(Gtk.Box):
         *,
         connection=None,
         group: dict | None = None,
+        connections: list | None = None,
     ) -> None:
         """Show a command picker popover anchored to *anchor*.
 
-        Either *connection* (a Connection object) or *group* (a group dict)
-        must be supplied to specify the target.
+        One of *connection* (a Connection object), *group* (a group dict) or
+        *connections* (a list of Connection objects, e.g. a sidebar
+        multi-selection) must be supplied to specify the target.
         """
         commands = self.store.get_commands()
 
@@ -1495,9 +1497,11 @@ class CommandBlocksPanel(Gtk.Box):
             cmd = getattr(list_row, '_cmd', None)
             popover.popdown()
             if cmd is None:
-                self._show_custom_command_dialog(connection=connection, group=group)
+                self._show_custom_command_dialog(connection=connection, group=group,
+                                                 connections=connections)
             else:
-                self._run_cmd_block_on_target(cmd, connection=connection, group=group)
+                self._run_cmd_block_on_target(cmd, connection=connection, group=group,
+                                              connections=connections)
 
         list_box.connect('row-activated', _on_activated)
         scrolled.set_child(list_box)
@@ -1505,24 +1509,34 @@ class CommandBlocksPanel(Gtk.Box):
         popover.set_child(outer)
         GLib.idle_add(popover.popup)
 
-    def _run_cmd_block_on_target(self, cmd: dict, *, connection=None, group=None) -> None:
+    def _run_cmd_block_on_target(self, cmd: dict, *, connection=None, group=None,
+                                 connections=None) -> None:
         if cmd.get('has_placeholders'):
             dlg = PlaceholderDialog(self.window, cmd)
             dlg.connect('send', lambda d, filled: self._dispatch_to_target(
-                filled, cmd.get('id'), connection=connection, group=group))
+                filled, cmd.get('id'), connection=connection, group=group,
+                connections=connections))
             dlg.present()
         else:
             self._dispatch_to_target(cmd.get('command', ''), cmd.get('id'),
-                                     connection=connection, group=group)
+                                     connection=connection, group=group,
+                                     connections=connections)
 
     def _dispatch_to_target(self, command_text: str, cmd_id=None, *,
-                            connection=None, group=None) -> None:
-        if connection is not None:
+                            connection=None, group=None, connections=None) -> None:
+        if connections:
+            if len(connections) == 1:
+                self._connect_and_feed(connections[0], command_text, cmd_id)
+            else:
+                self._feed_connections_in_split_view(
+                    list(connections), _('Split View'), command_text, cmd_id)
+        elif connection is not None:
             self._connect_and_feed(connection, command_text, cmd_id)
         elif group is not None:
             self._feed_group_in_split_view(group, command_text, cmd_id)
 
-    def _show_custom_command_dialog(self, *, connection=None, group=None) -> None:
+    def _show_custom_command_dialog(self, *, connection=None, group=None,
+                                    connections=None) -> None:
         dlg = Adw.AlertDialog(
             heading=_('Run Custom Command'),
             body=_('Enter a shell command to run:'),
@@ -1539,16 +1553,14 @@ class CommandBlocksPanel(Gtk.Box):
             if response == 'run':
                 text = entry.get_text().strip()
                 if text:
-                    self._dispatch_to_target(text, None, connection=connection, group=group)
+                    self._dispatch_to_target(text, None, connection=connection,
+                                             group=group, connections=connections)
 
         dlg.connect('response', _on_response)
         dlg.present(self.window)
 
     def _feed_group_in_split_view(self, group: dict, command_text: str,
                                   cmd_id: str | None = None) -> None:
-        from .split_view import SplitViewTab
-        from sshpilot import icon_utils
-
         cm = getattr(self.window, 'connection_manager', None)
         if cm is None:
             return
@@ -1558,9 +1570,18 @@ class CommandBlocksPanel(Gtk.Box):
             self._show_toast(_('No connections in group'))
             return
 
+        self._feed_connections_in_split_view(
+            connections, group.get('name', _('Group')), command_text, cmd_id)
+
+    def _feed_connections_in_split_view(self, connections: list, title: str,
+                                        command_text: str,
+                                        cmd_id: str | None = None) -> None:
+        from .split_view import SplitViewTab
+        from sshpilot import icon_utils
+
         svt = SplitViewTab(self.window)
         page = self.window.tab_view.append(svt)
-        page.set_title(group.get('name', _('Group')))
+        page.set_title(title)
         page.set_icon(icon_utils.new_gicon_from_icon_name('view-dual-symbolic'))
         svt._tab_page = page
         svt.populate(connections)
