@@ -2204,49 +2204,85 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     )
                 else:
                     conn = getattr(row, 'connection', None)
+                    # The right-click gesture has already collapsed the
+                    # selection to the clicked row unless it was part of a
+                    # multi-selection, so the selection reflects intent here.
+                    # Dedupe by connection: the same connection may be selected
+                    # through several rows (real group + tag group).
+                    try:
+                        selected_conns = self._connections_from_rows(
+                            self._get_selected_connection_rows()
+                        )
+                    except Exception:
+                        selected_conns = [conn] if conn else []
+                    multi = len(selected_conns) > 1
 
-                    menu.add_section(
-                        menu.add_item('list-add-symbolic', _('Open New Connection'), lambda: self.on_open_new_connection_action(None, None)),
-                        menu.add_item('document-edit-symbolic', _('Edit Connection'), lambda: self.on_edit_connection_action(None, None)),
-                        menu.add_item('view-grid-symbolic', _('Open in Split View'), lambda: self.on_open_in_split_view_action(None, None)),
-                        menu.add_item('utilities-terminal-symbolic', _('Run Command on Host…'), lambda: self.on_run_command_action()),
-                        menu.add_item('edit-copy-symbolic', _('Duplicate Connection'), lambda: self.on_duplicate_connection_action(None, None)),
-                        menu.add_item('edit-copy-symbolic', _('Copy Address'), lambda: self._copy_connection_address()),
-                    )
+                    if multi:
+                        # Multi-selection: only actions that operate on all
+                        # selected connections; per-host dialogs are hidden.
+                        menu.add_section(
+                            menu.add_item('list-add-symbolic', _('Open New Connections'), lambda: self.on_open_new_connection_action(None, None)),
+                            menu.add_item('view-grid-symbolic', _('Open in Split View'), lambda: self.on_open_in_split_view_action(None, None)),
+                        )
+                    else:
+                        menu.add_section(
+                            menu.add_item('list-add-symbolic', _('Open New Connection'), lambda: self.on_open_new_connection_action(None, None)),
+                            menu.add_item('document-edit-symbolic', _('Edit Connection'), lambda: self.on_edit_connection_action(None, None)),
+                            menu.add_item('view-grid-symbolic', _('Open in Split View'), lambda: self.on_open_in_split_view_action(None, None)),
+                            menu.add_item('utilities-terminal-symbolic', _('Run Command on Host…'), lambda: self.on_run_command_action()),
+                            menu.add_item('edit-copy-symbolic', _('Duplicate Connection'), lambda: self.on_duplicate_connection_action(None, None)),
+                            menu.add_item('edit-copy-symbolic', _('Copy Address'), lambda: self._copy_connection_address()),
+                        )
+
+                    def _has_wol_mac(c):
+                        try:
+                            meta = self.config.get_connection_meta(c.nickname) if c else {}
+                            return bool((meta or {}).get('wol_mac', '').strip())
+                        except Exception:
+                            return False
 
                     wol_item = None
-                    try:
-                        conn_meta = self.config.get_connection_meta(conn.nickname) if conn else {}
-                        if (conn_meta or {}).get('wol_mac', '').strip():
-                            wol_item = menu.add_item('network-wireless-symbolic', _('Wake on LAN'), lambda: self.on_wake_on_lan_action(None, None))
-                    except Exception:
-                        pass
-                    menu.add_section(
-                        menu.add_item('folder-symbolic', _('Manage Files'), lambda: self.on_manage_files_action(None, None)) if not should_hide_file_manager_options() else None,
-                        menu.add_item('dialog-password-symbolic', _('Copy Key to Server'), lambda: self.on_copy_key_to_server_action(None, None)),
-                        menu.add_item('dialog-password-symbolic', _('Manage authorized_keys…'), lambda: self.on_manage_authorized_keys_action(None, None)),
-                        wol_item,
-                        menu.add_item('utilities-terminal-symbolic', _('Open in System Terminal'), lambda: self.on_open_in_system_terminal_action(None, None)) if not should_hide_external_terminal_options() else None,
-                    )
+                    if any(_has_wol_mac(c) for c in (selected_conns or [conn])):
+                        wol_item = menu.add_item('network-wireless-symbolic', _('Wake on LAN'), lambda: self.on_wake_on_lan_action(None, None))
+                    if multi:
+                        menu.add_section(wol_item)
+                    else:
+                        menu.add_section(
+                            menu.add_item('folder-symbolic', _('Manage Files'), lambda: self.on_manage_files_action(None, None)) if not should_hide_file_manager_options() else None,
+                            menu.add_item('dialog-password-symbolic', _('Copy Key to Server'), lambda: self.on_copy_key_to_server_action(None, None)),
+                            menu.add_item('dialog-password-symbolic', _('Manage authorized_keys…'), lambda: self.on_manage_authorized_keys_action(None, None)),
+                            wol_item,
+                            menu.add_item('utilities-terminal-symbolic', _('Open in System Terminal'), lambda: self.on_open_in_system_terminal_action(None, None)) if not should_hide_external_terminal_options() else None,
+                        )
 
-                    current_groups = self.group_manager.get_connection_groups(conn.nickname) if conn else []
+                    def _conn_groups(c):
+                        try:
+                            return self.group_manager.get_connection_groups(c.nickname) if c else []
+                        except Exception:
+                            return []
+
+                    current_groups = _conn_groups(conn)
+                    any_grouped = any(_conn_groups(c) for c in selected_conns) if multi else bool(current_groups)
                     row_group_id = getattr(row, '_group_id', None)
-                    ungroup_label = _('Remove from Group') if (row_group_id and len(current_groups) > 1) else _('Ungroup')
+                    ungroup_label = _('Remove from Group') if (not multi and row_group_id and len(current_groups) > 1) else _('Ungroup')
                     menu.add_section(
                         menu.add_item('folder-symbolic', _('Move to Group'), lambda: self.on_move_to_group_action(None, None)),
                         menu.add_item('list-add-symbolic', _('Copy to Group'), lambda: self.on_copy_to_group_action(None, None)),
-                        menu.add_item('edit-undo-symbolic', ungroup_label, lambda: self.on_move_to_ungrouped_action(None, None)) if current_groups else None,
+                        menu.add_item('edit-undo-symbolic', ungroup_label, lambda: self.on_move_to_ungrouped_action(None, None)) if any_grouped else None,
                     )
 
                     try:
-                        is_pinned = self.config.is_pinned(conn.nickname) if conn else False
-                        if is_pinned:
+                        pin_targets = selected_conns if multi else ([conn] if conn else [])
+                        all_pinned = bool(pin_targets) and all(
+                            self.config.is_pinned(c.nickname) for c in pin_targets
+                        )
+                        if all_pinned:
                             menu.add_section(
-                                menu.add_item('starred-symbolic', _('Unpin from Start Page'), lambda: self._toggle_pin_connection(conn)),
+                                menu.add_item('starred-symbolic', _('Unpin from Start Page'), lambda: self._toggle_pin_connections(pin_targets)),
                             )
                         else:
                             menu.add_section(
-                                menu.add_item('non-starred-symbolic', _('Pin to Start Page'), lambda: self._toggle_pin_connection(conn)),
+                                menu.add_item('non-starred-symbolic', _('Pin to Start Page'), lambda: self._toggle_pin_connections(pin_targets)),
                             )
                     except Exception:
                         pass
@@ -2611,20 +2647,36 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         """Pin or unpin a connection from the start page."""
         if conn is None:
             return
+        self._toggle_pin_connections([conn])
+
+    def _toggle_pin_connections(self, conns):
+        """Pin or unpin a batch of connections from the start page.
+
+        If every connection is already pinned, all are unpinned; otherwise
+        all are pinned (the same aggregate rule the context menu label uses).
+        """
+        conns = [c for c in (conns or []) if c is not None]
+        if not conns:
+            return
         try:
-            nickname = conn.nickname
-            if self.config.is_pinned(nickname):
-                self.config.unpin_connection(nickname)
-                msg = _("Unpinned from start page")
+            all_pinned = all(self.config.is_pinned(c.nickname) for c in conns)
+            for c in conns:
+                if all_pinned:
+                    self.config.unpin_connection(c.nickname)
+                else:
+                    self.config.pin_connection(c.nickname)
+            if len(conns) == 1:
+                msg = _("Unpinned from start page") if all_pinned else _("Pinned to start page")
+            elif all_pinned:
+                msg = _("Unpinned {n} connections from start page").format(n=len(conns))
             else:
-                self.config.pin_connection(nickname)
-                msg = _("Pinned to start page")
+                msg = _("Pinned {n} connections to start page").format(n=len(conns))
             if hasattr(self, 'toast_overlay') and self.toast_overlay:
                 self.toast_overlay.add_toast(Adw.Toast.new(msg))
             if hasattr(self, 'welcome_view') and self.welcome_view:
                 self.welcome_view.refresh_pinned()
         except Exception as e:
-            logger.error(f"Failed to toggle pin for {getattr(conn, 'nickname', '?')}: {e}")
+            logger.error(f"Failed to toggle pin for {len(conns)} connection(s): {e}")
 
     def _resolve_connection_list_event(
         self,

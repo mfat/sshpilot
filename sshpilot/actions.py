@@ -81,18 +81,28 @@ class WindowActions:
             logger.error(f"Failed to toggle sidebar via action: {e}")
 
     def on_open_new_connection_action(self, action, param=None):
-        """Open a new tab for the selected connection via context menu."""
+        """Open a new tab for each targeted connection via context menu.
+
+        Acts on the multi-selection when present, otherwise on the
+        context-menu (or selected) connection.
+        """
         try:
-            connection = getattr(self, '_context_menu_connection', None)
-            if connection is None:
-                # Fallback to selected row if any
-                row = self.connection_list.get_selected_row()
-                connection = getattr(row, 'connection', None) if row else None
-            if connection is None:
+            if hasattr(self, '_get_target_connections'):
+                connections = self._get_target_connections(prefer_context=True)
+            else:
+                connections = []
+            if not connections:
+                connection = getattr(self, '_context_menu_connection', None)
+                if connection is None:
+                    row = self.connection_list.get_selected_row()
+                    connection = getattr(row, 'connection', None) if row else None
+                connections = [connection] if connection else []
+            if not connections:
                 return
             if hasattr(self, '_return_to_tab_view_if_welcome'):
                 self._return_to_tab_view_if_welcome()
-            self.terminal_manager.connect_to_host(connection, force_new=True)
+            for connection in connections:
+                self.terminal_manager.connect_to_host(connection, force_new=True)
         except Exception as e:
             logger.error(f"Failed to open new connection tab: {e}")
 
@@ -329,37 +339,59 @@ class WindowActions:
             logger.error(f"Failed to open in system terminal: {e}")
 
     def on_wake_on_lan_action(self, action, param=None):
-        """Send Wake-on-LAN magic packet for the context menu connection."""
+        """Send Wake-on-LAN magic packets for the targeted connections.
+
+        Acts on the multi-selection when present (connections without a
+        stored MAC are skipped), otherwise on the context-menu connection.
+        """
         try:
-            connection = getattr(self, '_context_menu_connection', None)
-            if connection is None:
-                row = self.connection_list.get_selected_row()
-                connection = getattr(row, 'connection', None) if row else None
-            if connection is None:
-                return
-            nickname = getattr(connection, 'nickname', '').strip()
-            if not nickname:
-                return
             config = getattr(self, 'config', None)
             if not config:
                 return
-            meta = config.get_connection_meta(nickname)
-            mac = (meta.get('wol_mac') or '').strip()
-            if not mac:
+            if hasattr(self, '_get_target_connections'):
+                connections = self._get_target_connections(prefer_context=True)
+            else:
+                connections = []
+            if not connections:
+                connection = getattr(self, '_context_menu_connection', None)
+                if connection is None:
+                    row = self.connection_list.get_selected_row()
+                    connection = getattr(row, 'connection', None) if row else None
+                connections = [connection] if connection else []
+            sent = 0
+            failures = []
+            for connection in connections:
+                nickname = getattr(connection, 'nickname', '').strip() if connection else ''
+                if not nickname:
+                    continue
+                meta = config.get_connection_meta(nickname)
+                mac = (meta.get('wol_mac') or '').strip()
+                if not mac:
+                    continue
+                broadcast = (meta.get('wol_broadcast_ip') or '').strip() or None
+                try:
+                    port = int(meta.get('wol_port', 9) or 9)
+                except (TypeError, ValueError):
+                    port = 9
+                host = getattr(connection, 'hostname', None) or getattr(connection, 'host', None)
+                host_str = (host or '').strip() or None
+                ok, msg = wol.send_wol(mac, broadcast_ip=broadcast, port=port, host=host_str)
+                if ok:
+                    sent += 1
+                else:
+                    failures.append(f"{nickname}: {msg}")
+            if sent == 0 and not failures:
                 return
-            broadcast = (meta.get('wol_broadcast_ip') or '').strip() or None
-            try:
-                port = int(meta.get('wol_port', 9) or 9)
-            except (TypeError, ValueError):
-                port = 9
-            host = getattr(connection, 'hostname', None) or getattr(connection, 'host', None)
-            host_str = (host or '').strip() or None
-            ok, msg = wol.send_wol(mac, broadcast_ip=broadcast, port=port, host=host_str)
             toast_overlay = getattr(self, 'toast_overlay', None)
             if toast_overlay:
-                toast_msg = _("Wake-on-LAN sent") if ok else _("Wake-on-LAN failed: %s") % msg
+                if failures:
+                    toast_msg = _("Wake-on-LAN failed: %s") % "; ".join(failures)
+                elif sent == 1:
+                    toast_msg = _("Wake-on-LAN sent")
+                else:
+                    toast_msg = _("Wake-on-LAN sent to {n} hosts").format(n=sent)
                 toast = Adw.Toast.new(toast_msg)
-                toast.set_timeout(4 if not ok else 3)
+                toast.set_timeout(4 if failures else 3)
                 toast_overlay.add_toast(toast)
         except Exception as e:
             logger.debug("WoL action: %s", e)
