@@ -2,16 +2,16 @@ SSH Config Parsing: A Definitive Guide
 This document outlines the various scenarios and complexities involved in parsing OpenSSH configuration files (.ssh/config). The primary goal is to reliably differentiate between Connectable Hosts, which should be displayed in a user interface, and Configuration Rules, which apply settings in the background.
 
 ## 1. Core Concepts
-### 🎯 Connectable Hosts
+### Connectable Hosts
 These are specific, named entries that a user can directly connect to. Each `Host` block is expected to declare a single label, and the parser treats each label as its own connection. Multi-label alias lists (for example, `Host webapp webapp-backup`) are unsupported.
 
-### 📜 Configuration Rules
+### Configuration Rules
 These are patterns or conditional blocks that apply settings to a class of connections. They are not directly connectable and should be hidden from a primary server list.
 
 ## 2. Scenarios for Connectable Hosts
 These entries should be parsed and presented to the user as valid connection targets. Each `Host` block should contain exactly one label; alias lists are unsupported and must be split into discrete entries.
 
-> ⚠️ Unsupported: `Host webapp webapp-backup` (alias list). Create separate blocks for each label so that every connection can be listed individually.
+> Unsupported: `Host webapp webapp-backup` (alias list). Create separate blocks for each label so that every connection can be listed individually.
 
 **Example: Single Host Label**
 
@@ -103,7 +103,7 @@ Classification: Meta-Rule
 Reason: This is a command for the parser itself. It is not a host or a rule, but it's essential for discovering all other hosts and rules.
 
 ## 4. Parser Requirements & Recommended Strategy
-### ✅ Minimum Parser Requirements
+### Minimum Parser Requirements
 A custom parser must be able to:
 
 Differentiate Top-Level Keywords: Recognize Host, Match, and Include as distinct block starters.
@@ -118,7 +118,7 @@ Be Case-Insensitive: Treat keywords like Host, User, HostName as case-insensitiv
 
 Process Include: Recursively read and parse included files.
 
-### ⭐ The Gold Standard: Offload to ssh -G
+### The Gold Standard: Offload to `ssh -G`
 The most robust and accurate method is to avoid writing a complex custom parser.
 
 Discover Hosts: Use a simple regex like ^\s*Host\s+([^\s*?!]+)$ to find candidate labels for your UI. This is a "best-effort" discovery step that intentionally ignores `Host` lines with multiple labels because alias lists are unsupported.
