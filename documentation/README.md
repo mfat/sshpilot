@@ -12,10 +12,6 @@ platform documentation that versions with the code:
 | [SSH-config-parsing.md](SSH-config-parsing.md) | Design rationale for host discovery: display-only parsing, `ssh -G` as the source of truth. |
 | [command-converter.md](command-converter.md) | The `ssh ...` command-line → connection-data parser (not yet wired to UI). |
 
-A full API reference can be generated on demand with
-`python3 scripts/generate_function_reference.py` (writes
-`function-reference.md` here; not checked in).
-
 ## Askpass debug log
 
 The askpass helper doesn't log through the main logger. It writes debug

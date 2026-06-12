@@ -4,9 +4,6 @@
 
 sshPilot is a user-friendly, modern SSH connection manager with an integrated terminal for Linux, macOS, and Windows. It's built with Python, GTK4, and libadwaita, providing a native desktop experience.
 
-### Documentation Resources
-- A full catalog of package functions and methods can be generated on demand with `python3 scripts/generate_function_reference.py` (writes `documentation/function-reference.md`, which is not checked in).
-
 ## SSH Connection & Authentication Architecture
 
 This is the single most important subsystem to understand before changing how

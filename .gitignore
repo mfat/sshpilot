@@ -44,5 +44,4 @@ scripts/screenshot_url.sh
 gnome-settings/gnome-control-center/
 
 # Generated files
-documentation/function-reference.md
 sshpilot/vendor/pyxtermjs/index.html
