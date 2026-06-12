@@ -2173,6 +2173,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
             def _build_and_show_menu(row):
                 # Build a Gtk.PopoverMenu from the shared sidebar context menu helper.
+                # Reset any batch-target snapshot from a previous menu.
+                self._context_menu_connections = None
                 menu = IconContextMenu()
 
                 def _on_popover_closed(popover, *_):
@@ -2183,6 +2185,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         self._context_menu_popover = None
                         self._context_menu_row = None
                         self._context_menu_connection = None
+                        self._context_menu_connections = None
                     try:
                         popover.unparent()
                     except Exception:
@@ -2216,6 +2219,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     except Exception:
                         selected_conns = [conn] if conn else []
                     multi = len(selected_conns) > 1
+                    # Snapshot the targets for the lifetime of this menu so
+                    # batch actions operate on exactly what was selected when
+                    # the menu opened, even if the selection changes before
+                    # the item callback runs.
+                    self._context_menu_connections = list(selected_conns) if multi else None
 
                     if multi:
                         # Multi-selection: only actions that operate on all
@@ -7053,20 +7061,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             if app is not None:
                 app.release()
 
-
-    def on_open_new_connection_action(self, action, param=None):
-        """Open a new tab for the selected connection via context menu."""
-        try:
-            connection = getattr(self, '_context_menu_connection', None)
-            if connection is None:
-                # Fallback to selected row if any
-                row = self.connection_list.get_selected_row()
-                connection = getattr(row, 'connection', None) if row else None
-            if connection is None:
-                return
-            self.terminal_manager.connect_to_host(connection, force_new=True)
-        except Exception as e:
-            logger.error(f"Failed to open new connection tab: {e}")
 
     def on_open_new_connection_tab_action(self, action, param=None):
         """Open a new tab for the selected connection via global shortcut (Ctrl/⌘+Alt+N)."""

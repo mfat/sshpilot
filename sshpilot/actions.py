@@ -87,10 +87,10 @@ class WindowActions:
         context-menu (or selected) connection.
         """
         try:
-            if hasattr(self, '_get_target_connections'):
+            # Prefer the snapshot taken when the context menu was opened.
+            connections = list(getattr(self, '_context_menu_connections', None) or [])
+            if not connections and hasattr(self, '_get_target_connections'):
                 connections = self._get_target_connections(prefer_context=True)
-            else:
-                connections = []
             if not connections:
                 connection = getattr(self, '_context_menu_connection', None)
                 if connection is None:
@@ -102,7 +102,13 @@ class WindowActions:
             if hasattr(self, '_return_to_tab_view_if_welcome'):
                 self._return_to_tab_view_if_welcome()
             for connection in connections:
-                self.terminal_manager.connect_to_host(connection, force_new=True)
+                try:
+                    self.terminal_manager.connect_to_host(connection, force_new=True)
+                except Exception as e:
+                    logger.error(
+                        "Failed to open tab for %s: %s",
+                        getattr(connection, 'nickname', '?'), e,
+                    )
         except Exception as e:
             logger.error(f"Failed to open new connection tab: {e}")
 
@@ -348,10 +354,10 @@ class WindowActions:
             config = getattr(self, 'config', None)
             if not config:
                 return
-            if hasattr(self, '_get_target_connections'):
+            # Prefer the snapshot taken when the context menu was opened.
+            connections = list(getattr(self, '_context_menu_connections', None) or [])
+            if not connections and hasattr(self, '_get_target_connections'):
                 connections = self._get_target_connections(prefer_context=True)
-            else:
-                connections = []
             if not connections:
                 connection = getattr(self, '_context_menu_connection', None)
                 if connection is None:
@@ -361,25 +367,28 @@ class WindowActions:
             sent = 0
             failures = []
             for connection in connections:
-                nickname = getattr(connection, 'nickname', '').strip() if connection else ''
-                if not nickname:
-                    continue
-                meta = config.get_connection_meta(nickname)
-                mac = (meta.get('wol_mac') or '').strip()
-                if not mac:
-                    continue
-                broadcast = (meta.get('wol_broadcast_ip') or '').strip() or None
                 try:
-                    port = int(meta.get('wol_port', 9) or 9)
-                except (TypeError, ValueError):
-                    port = 9
-                host = getattr(connection, 'hostname', None) or getattr(connection, 'host', None)
-                host_str = (host or '').strip() or None
-                ok, msg = wol.send_wol(mac, broadcast_ip=broadcast, port=port, host=host_str)
-                if ok:
-                    sent += 1
-                else:
-                    failures.append(f"{nickname}: {msg}")
+                    nickname = getattr(connection, 'nickname', '').strip() if connection else ''
+                    if not nickname:
+                        continue
+                    meta = config.get_connection_meta(nickname)
+                    mac = (meta.get('wol_mac') or '').strip()
+                    if not mac:
+                        continue
+                    broadcast = (meta.get('wol_broadcast_ip') or '').strip() or None
+                    try:
+                        port = int(meta.get('wol_port', 9) or 9)
+                    except (TypeError, ValueError):
+                        port = 9
+                    host = getattr(connection, 'hostname', None) or getattr(connection, 'host', None)
+                    host_str = (host or '').strip() or None
+                    ok, msg = wol.send_wol(mac, broadcast_ip=broadcast, port=port, host=host_str)
+                    if ok:
+                        sent += 1
+                    else:
+                        failures.append(f"{nickname}: {msg}")
+                except Exception as e:
+                    failures.append(f"{getattr(connection, 'nickname', '?')}: {e}")
             if sent == 0 and not failures:
                 return
             toast_overlay = getattr(self, 'toast_overlay', None)
