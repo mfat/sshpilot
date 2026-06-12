@@ -113,6 +113,18 @@ def test_rename_tag_case_only(tmp_path, monkeypatch):
     assert cfg.get_connection_tags('a') == ['Prod']
 
 
+def test_get_all_tags_distinct_sorted_with_counts(tmp_path, monkeypatch):
+    cfg = make_config(tmp_path, monkeypatch)
+    cfg.set_connection_tags('a', ['web', 'Prod'])
+    cfg.set_connection_tags('b', ['prod', 'db'])
+    assert cfg.get_all_tags() == [('db', 1), ('Prod', 2), ('web', 1)]
+
+
+def test_get_all_tags_empty(tmp_path, monkeypatch):
+    cfg = make_config(tmp_path, monkeypatch)
+    assert cfg.get_all_tags() == []
+
+
 def test_rename_tag_rejects_empty_new_name(tmp_path, monkeypatch):
     cfg = make_config(tmp_path, monkeypatch)
     cfg.set_connection_tags('a', ['staging'])

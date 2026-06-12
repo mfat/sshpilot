@@ -681,6 +681,22 @@ class Config(GObject.Object):
             meta.pop('tags', None)
         self.set_connection_meta(nickname, meta)
 
+    def get_all_tags(self) -> list:
+        """Return all distinct tags across connections with usage counts.
+
+        Case-insensitive merge (first-seen casing wins), sorted alphabetically.
+        Returns a list of (display_tag, connection_count) tuples.
+        """
+        from .tag_groups import compute_tag_groups
+
+        tag_map = {}
+        meta_all = self.get_setting('connections_meta', {})
+        if isinstance(meta_all, dict):
+            for nickname, meta in meta_all.items():
+                if isinstance(meta, dict) and isinstance(meta.get('tags'), list):
+                    tag_map[nickname] = meta['tags']
+        return [(tag, len(nicks)) for tag, nicks in compute_tag_groups(tag_map)]
+
     def rename_tag(self, old_tag: str, new_tag: str) -> int:
         """Rename *old_tag* to *new_tag* on every connection.
 

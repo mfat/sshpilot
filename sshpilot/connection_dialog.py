@@ -3065,6 +3065,13 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         # Adw.EntryRow has no subtitle/placeholder, so the hint lives in the title.
         self.tags_row = Adw.EntryRow(title=_("Tags (comma-separated)"))
         self.tags_row.set_tooltip_text(_("Used by the sidebar search, e.g. production, web"))
+        tag_pick_btn = Gtk.Button()
+        tag_pick_btn.set_icon_name('view-list-symbolic')
+        tag_pick_btn.set_tooltip_text(_("Pick from existing tags"))
+        tag_pick_btn.add_css_class('flat')
+        tag_pick_btn.set_valign(Gtk.Align.CENTER)
+        tag_pick_btn.connect('clicked', self._show_tag_picker_popover)
+        self.tags_row.add_suffix(tag_pick_btn)
         basic_group.add(self.tags_row)
 
         # Wake-on-LAN Group
@@ -3953,6 +3960,95 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 self.proxy_jump_row.set_text(current.rstrip(',') + ',' + jump_target)
             else:
                 self.proxy_jump_row.set_text(jump_target)
+            popover.popdown()
+
+        list_box.connect('row-activated', _on_row_activated)
+        scrolled.set_child(list_box)
+        outer.append(scrolled)
+        popover.set_child(outer)
+        popover.popup()
+        search_entry.grab_focus()
+
+    def _show_tag_picker_popover(self, button):
+        """Show a popover to pick from the tags already used by other connections."""
+        cfg = getattr(self.parent_window, 'config', None)
+        if cfg is None or not hasattr(cfg, 'get_all_tags'):
+            return
+        try:
+            candidates = cfg.get_all_tags()
+        except Exception:
+            candidates = []
+        if not candidates:
+            return
+
+        popover = Gtk.Popover()
+        popover.set_parent(button)
+        popover.set_has_arrow(True)
+
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        outer.set_margin_top(8)
+        outer.set_margin_bottom(8)
+        outer.set_margin_start(8)
+        outer.set_margin_end(8)
+        outer.set_size_request(280, -1)
+
+        search_entry = Gtk.SearchEntry()
+        search_entry.set_placeholder_text(_("Filter tags…"))
+        outer.append(search_entry)
+
+        scrolled = Gtk.ScrolledWindow()
+        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scrolled.set_size_request(-1, min(300, len(candidates) * 44 + 8))
+
+        list_box = Gtk.ListBox()
+        list_box.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        list_box.add_css_class('boxed-list')
+
+        def _make_row(tag, count):
+            row = Gtk.ListBoxRow()
+            box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            box.set_margin_top(6)
+            box.set_margin_bottom(6)
+            box.set_margin_start(8)
+            box.set_margin_end(8)
+            icon = Gtk.Image.new_from_icon_name('tag-symbolic')
+            icon.set_valign(Gtk.Align.CENTER)
+            box.append(icon)
+            lbl = Gtk.Label(label=tag)
+            lbl.set_halign(Gtk.Align.START)
+            lbl.set_hexpand(True)
+            lbl.add_css_class('heading')
+            box.append(lbl)
+            lbl_count = Gtk.Label(label=_("{n} connections").format(n=count))
+            lbl_count.add_css_class('caption')
+            lbl_count.add_css_class('dim-label')
+            box.append(lbl_count)
+            row.set_child(box)
+            row._tag = tag
+            return row
+
+        for tag, count in candidates:
+            list_box.append(_make_row(tag, count))
+
+        def _filter_func(row):
+            query = search_entry.get_text().lower().strip()
+            if not query:
+                return True
+            tag = getattr(row, '_tag', None)
+            return bool(tag) and query in tag.lower()
+
+        list_box.set_filter_func(_filter_func)
+        search_entry.connect('search-changed', lambda _e: list_box.invalidate_filter())
+
+        def _on_row_activated(_lb, row):
+            tag = getattr(row, '_tag', None)
+            if not tag:
+                return
+            from .tag_groups import add_tag_to_list
+            current = [t.strip() for t in self.tags_row.get_text().split(',') if t.strip()]
+            tags, changed = add_tag_to_list(current, tag)
+            if changed:
+                self.tags_row.set_text(', '.join(tags))
             popover.popdown()
 
         list_box.connect('row-activated', _on_row_activated)
