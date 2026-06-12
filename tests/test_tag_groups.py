@@ -8,6 +8,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 from sshpilot.tag_groups import (
     TAG_GROUP_ID_PREFIX,
     add_tag_to_list,
+    complete_tag_text,
     compute_tag_groups,
     is_tag_group_id,
     make_tag_group_info,
@@ -75,6 +76,42 @@ class TestMakeTagGroupInfo:
         # connections is a copy — mutating it must not affect the input
         info["connections"].append("c")
         assert nicks == ["a", "b"]
+
+
+class TestCompleteTagText:
+    KNOWN = ["db", "Prod", "production", "web"]
+
+    def test_completes_first_match(self):
+        assert complete_tag_text("pr", 2, self.KNOWN) == ("prod", 2)
+
+    def test_completes_last_segment_only(self):
+        assert complete_tag_text("web, pr", 7, self.KNOWN) == ("web, prod", 7)
+
+    def test_case_insensitive_keeps_typed_casing(self):
+        # typed "PR" + remainder of "Prod" -> "PRod"
+        assert complete_tag_text("PR", 2, self.KNOWN) == ("PRod", 2)
+
+    def test_no_completion_mid_text(self):
+        assert complete_tag_text("pr", 1, self.KNOWN) is None
+
+    def test_exact_match_still_offers_longer_candidate(self):
+        # "Prod" itself is skipped (nothing to add) but "production" extends
+        # the prefix; typing ',' next replaces the selected suffix anyway.
+        assert complete_tag_text("prod", 4, self.KNOWN) == ("production", 4)
+
+    def test_exact_match_with_no_longer_candidate(self):
+        assert complete_tag_text("web", 3, self.KNOWN) is None
+
+    def test_skips_tags_already_in_entry(self):
+        # "prod" already listed -> next candidate is "production"
+        assert complete_tag_text("prod, pr", 8, self.KNOWN) == ("prod, production", 8)
+
+    def test_no_match(self):
+        assert complete_tag_text("xyz", 3, self.KNOWN) is None
+
+    def test_empty_segment(self):
+        assert complete_tag_text("web, ", 5, self.KNOWN) is None
+        assert complete_tag_text("", 0, self.KNOWN) is None
 
 
 class TestAddTagToList:

@@ -2364,7 +2364,13 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                     cfg = getattr(self.parent_window, 'config', None)
                     nickname = getattr(self.connection, 'nickname', '').strip()
                     if cfg and nickname:
-                        self.tags_row.set_text(', '.join(cfg.get_connection_tags(nickname)))
+                        # Suppress inline autocompletion while loading.
+                        self._tags_autocompleting = True
+                        try:
+                            self.tags_row.set_text(', '.join(cfg.get_connection_tags(nickname)))
+                            self._tags_prev_len = len(self.tags_row.get_text())
+                        finally:
+                            self._tags_autocompleting = False
                 except Exception as e:
                     logger.debug("Load tags meta: %s", e)
 
@@ -3072,6 +3078,18 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         tag_pick_btn.set_valign(Gtk.Align.CENTER)
         tag_pick_btn.connect('clicked', self._show_tag_picker_popover)
         self.tags_row.add_suffix(tag_pick_btn)
+        # Inline autocompletion from existing tags (GtkEntryCompletion is
+        # deprecated and never supported Adw.EntryRow, so done by hand).
+        self._tags_autocompleting = False
+        self._tags_prev_len = 0
+        self._tags_suggestion_active = False
+        self.tags_row.connect('changed', self._on_tags_entry_changed)
+        # Tab accepts the selected suggestion and starts the next tag
+        # (capture phase, so it wins over the focus chain).
+        tags_key_ctrl = Gtk.EventControllerKey()
+        tags_key_ctrl.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        tags_key_ctrl.connect('key-pressed', self._on_tags_key_pressed)
+        self.tags_row.add_controller(tags_key_ctrl)
         basic_group.add(self.tags_row)
 
         # Wake-on-LAN Group
@@ -3968,6 +3986,70 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         popover.set_child(outer)
         popover.popup()
         search_entry.grab_focus()
+
+    def _on_tags_entry_changed(self, _editable):
+        """Inline-complete the tag segment being typed from existing tags."""
+        if getattr(self, '_tags_autocompleting', False):
+            return
+        self._tags_suggestion_active = False
+        text = self.tags_row.get_text()
+        prev_len = getattr(self, '_tags_prev_len', 0)
+        self._tags_prev_len = len(text)
+        if len(text) <= prev_len:
+            return  # deletion (e.g. backspacing a suggestion) — don't re-complete
+        try:
+            cursor = self.tags_row.get_position()
+        except Exception:
+            return
+        cfg = getattr(self.parent_window, 'config', None)
+        if cfg is None or not hasattr(cfg, 'get_all_tags'):
+            return
+        from .tag_groups import complete_tag_text
+        try:
+            known = [t for t, _n in cfg.get_all_tags()]
+            result = complete_tag_text(text, cursor, known)
+        except Exception:
+            result = None
+        if result is None:
+            return
+        completed, select_start = result
+        self._tags_autocompleting = True
+        try:
+            self.tags_row.set_text(completed)
+            # Keep prev_len at the typed text's length so deleting the
+            # selected suggestion doesn't immediately re-trigger completion.
+            self._tags_prev_len = select_start
+            self.tags_row.select_region(select_start, -1)
+            self._tags_suggestion_active = True
+        except Exception:
+            pass
+        finally:
+            self._tags_autocompleting = False
+
+    def _on_tags_key_pressed(self, _controller, keyval, _keycode, _state):
+        """Tab accepts the inline suggestion and appends ', ' for the next tag."""
+        if keyval not in (Gdk.KEY_Tab, Gdk.KEY_KP_Tab):
+            return False
+        if not getattr(self, '_tags_suggestion_active', False):
+            return False
+        bounds = self.tags_row.get_selection_bounds()
+        text = self.tags_row.get_text()
+        # Only act while the suggestion (selection reaching the end) is live.
+        if not bounds or bounds[1] != len(text):
+            self._tags_suggestion_active = False
+            return False
+        self._tags_autocompleting = True
+        try:
+            new_text = text + ", "
+            self.tags_row.set_text(new_text)
+            self._tags_prev_len = len(new_text)
+            self.tags_row.set_position(len(new_text))
+        except Exception:
+            return False
+        finally:
+            self._tags_autocompleting = False
+        self._tags_suggestion_active = False
+        return True
 
     def _show_tag_picker_popover(self, button):
         """Show a popover to pick from the tags already used by other connections."""

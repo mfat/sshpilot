@@ -6,9 +6,35 @@ sidebar render time and are never stored in GroupManager — the tags in
 ``connections_meta`` remain the single source of truth.
 """
 
-from typing import Dict, List, Mapping, Sequence, Tuple
+from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
 TAG_GROUP_ID_PREFIX = "tag::"
+
+
+def complete_tag_text(text: str, cursor: int, known_tags: Sequence[str]) -> Optional[Tuple[str, int]]:
+    """Inline completion for a comma-separated tag entry.
+
+    Completes the segment being typed at the end of *text* with the first
+    known tag (case-insensitive prefix match) not already present. Returns
+    (completed_text, selection_start) — the caller selects from
+    selection_start to the end so further typing replaces the suggestion —
+    or None when nothing applies.
+    """
+    text = str(text)
+    if cursor != len(text):
+        return None  # only complete while typing at the end
+    head, _sep, segment = text.rpartition(',')
+    typed = segment.lstrip()
+    if not typed:
+        return None
+    typed_key = typed.casefold()
+    existing = {t.strip().casefold() for t in head.split(',') if t.strip()}
+    for tag in known_tags:
+        tag = str(tag)
+        key = tag.casefold()
+        if key.startswith(typed_key) and key != typed_key and key not in existing:
+            return text + tag[len(typed):], len(text)
+    return None
 
 
 def tag_group_id(tag: str) -> str:
