@@ -55,6 +55,12 @@ def _install_sidebar_color_css():
         .accent-purple { background-color: #d6a2ff; }
         .accent-cyan { background-color: #5be7ff; }
         .accent-gray { background-color: #d3d7db; }
+
+        /* Virtual tag group rows use the osd style; the default row hover
+           replaces the background with a near-transparent overlay, leaving
+           osd's white text unreadable in light mode. Keep it dark. */
+        row.osd:hover:not(:selected) { background-color: rgba(0, 0, 0, 0.8); }
+        row.osd:active:not(:selected) { background-color: rgba(0, 0, 0, 0.85); }
         """
         provider.load_from_data(css.encode("utf-8"))
         Gtk.StyleContext.add_provider_for_display(
@@ -608,6 +614,10 @@ class TagGroupRow(GroupRow):
     def __init__(self, group_info: Dict, group_manager: GroupManager, connections_dict=None):
         super().__init__(group_info, group_manager, connections_dict)
         self.is_tag_group = True
+        # Replace the card style instead of stacking: osd's white foreground
+        # over card's light background is unreadable in light mode.
+        self.remove_css_class("card")
+        self.add_css_class("osd")
         self.icon.set_from_icon_name("tag-symbolic")
         # The edit button renames the tag (across all tagged connections);
         # the split-view button works as inherited — the action only reads
@@ -682,6 +692,13 @@ class ConnectionRow(Gtk.ListBoxRow):
         self.config = config
         self._group_id = display_group_id
         self._in_tag_section = in_tag_section
+        if in_tag_section:
+            # Virtual tag groups render their whole section in OSD style.
+            # Replace the card style instead of stacking: osd's white
+            # foreground over card's light background is unreadable in
+            # light mode.
+            self.remove_css_class("card")
+            self.add_css_class("osd")
         self._file_manager_callback = file_manager_callback
         self._tint_provider = None
         self._color_badge_provider = None
