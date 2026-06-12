@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:5.2.9}
+Version:        %{?version}%{!?version:5.3.0}
 Release:        1%{?dist}
 Summary:        Manage your servers with ease
 
@@ -92,6 +92,15 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/io.github.mfat.sshpil
 %{_datadir}/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg
 
 %changelog
+* Fri Jun 12 2026 mFat <newmfat@gmail.com> - 5.3.0
+- New "Tags" feature: add tags to connections
+- Search now supports tags
+- New tags view for the connection list
+- Drag and drop a connection on a tag group to apply tag
+- Added inline autocompletion for tags
+- Added inline autocompletion for jump hosts
+- Added support for selecting connections with space key
+
 * Thu Jun 11 2026 mFat <newmfat@gmail.com> - 5.2.9
 - Bug fixes
 
