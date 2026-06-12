@@ -2489,15 +2489,20 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
                 previous_row = getattr(self, '_context_menu_row', None)
                 previous_connection = getattr(self, '_context_menu_connection', None)
+                previous_connections = getattr(self, '_context_menu_connections', None)
 
                 try:
                     self._context_menu_row = row
                     self._context_menu_connection = row.connection
+                    # Middle-click targets only the clicked row; a multi-select
+                    # snapshot from a still-open context menu must not win.
+                    self._context_menu_connections = None
                     self.on_open_new_connection_action(None, None)
                     gesture.set_state(Gtk.EventSequenceState.CLAIMED)
                 finally:
                     self._context_menu_row = previous_row
                     self._context_menu_connection = previous_connection
+                    self._context_menu_connections = previous_connections
 
             middle_click.connect('pressed', _on_middle_click)
             self.connection_list.add_controller(middle_click)
