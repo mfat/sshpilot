@@ -267,6 +267,13 @@ class WindowActions:
             if connection is None:
                 return
 
+            from .plugins.api import Capability
+            from .plugins.registry import capabilities_for
+            if Capability.KEY_DEPLOYMENT not in capabilities_for(connection):
+                logger.debug("ssh-copy-id unavailable: protocol %r has no key deployment",
+                             getattr(connection, 'protocol', 'ssh'))
+                return
+
             # Open the copy key window directly
             from .sshcopyid_window import SshCopyIdWindow
             win = SshCopyIdWindow(self, connection, self.key_manager, self.connection_manager)

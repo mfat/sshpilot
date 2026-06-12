@@ -58,3 +58,14 @@ def protocol_registry() -> ProtocolRegistry:
     if _registry is None:
         _registry = ProtocolRegistry()
     return _registry
+
+
+def capabilities_for(connection) -> frozenset:
+    """Capabilities of the backend handling this connection.
+
+    UI code gates protocol-specific actions (SFTP, ssh-copy-id, port
+    forwarding, ...) on these instead of checking ``protocol == 'ssh'``.
+    Unknown protocol -> empty set, so SSH-only UI hides rather than breaks."""
+    backend = protocol_registry().get_or_none(
+        getattr(connection, "protocol", "ssh"))
+    return backend.capabilities() if backend is not None else frozenset()
