@@ -2568,10 +2568,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             
             def _on_ctrl_enter(widget, *args):
                 try:
-                    selected_row = self.connection_list.get_selected_row()
-                    if selected_row and hasattr(selected_row, 'connection'):
-                        connection = selected_row.connection
-                        self.terminal_manager.connect_to_host(connection, force_new=True)
+                    self._open_new_connection_tabs(
+                        self._connections_from_rows(
+                            self._get_selected_connection_rows()
+                        )
+                    )
                 except Exception as e:
                     logger.error(
                         f"Failed to open new connection with {get_primary_modifier_label()}+Enter: {e}"
@@ -7142,25 +7143,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             if app is not None:
                 app.release()
 
-
-    def on_open_new_connection_tab_action(self, action, param=None):
-        """Open a new tab for the selected connection via global shortcut (Ctrl/⌘+Alt+N)."""
-        try:
-            # Get the currently selected connection
-            row = self.connection_list.get_selected_row()
-            if row and hasattr(row, 'connection'):
-                connection = row.connection
-                self.terminal_manager.connect_to_host(connection, force_new=True)
-            else:
-                # If no connection is selected, show a message or fall back to new connection dialog
-                logger.debug(
-                    f"No connection selected for {get_primary_modifier_label()}+Alt+N, opening new connection dialog"
-                )
-                self.show_connection_dialog()
-        except Exception as e:
-            logger.error(
-                f"Failed to open new connection tab with {get_primary_modifier_label()}+Alt+N: {e}"
-            )
 
     def on_manage_files_action(self, action, param=None):
         """Handle manage files action from context menu"""

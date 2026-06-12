@@ -97,20 +97,24 @@ class WindowActions:
                     row = self.connection_list.get_selected_row()
                     connection = getattr(row, 'connection', None) if row else None
                 connections = [connection] if connection else []
-            if not connections:
-                return
-            if hasattr(self, '_return_to_tab_view_if_welcome'):
-                self._return_to_tab_view_if_welcome()
-            for connection in connections:
-                try:
-                    self.terminal_manager.connect_to_host(connection, force_new=True)
-                except Exception as e:
-                    logger.error(
-                        "Failed to open tab for %s: %s",
-                        getattr(connection, 'nickname', '?'), e,
-                    )
+            self._open_new_connection_tabs(connections)
         except Exception as e:
             logger.error(f"Failed to open new connection tab: {e}")
+
+    def _open_new_connection_tabs(self, connections):
+        """Open a new tab per connection, isolating per-connection failures."""
+        if not connections:
+            return
+        if hasattr(self, '_return_to_tab_view_if_welcome'):
+            self._return_to_tab_view_if_welcome()
+        for connection in connections:
+            try:
+                self.terminal_manager.connect_to_host(connection, force_new=True)
+            except Exception as e:
+                logger.error(
+                    "Failed to open tab for %s: %s",
+                    getattr(connection, 'nickname', '?'), e,
+                )
 
     def on_duplicate_connection_action(self, action, param=None):
         """Duplicate the currently selected connection."""
@@ -127,17 +131,17 @@ class WindowActions:
             logger.error(f"Failed to duplicate connection: {e}")
 
     def on_open_new_connection_tab_action(self, action, param=None):
-        """Open a new tab for the selected connection via global shortcut (Ctrl/⌘+Alt+N)."""
+        """Open a tab for each selected connection via global shortcut (Ctrl/⌘+Alt+N)."""
         try:
-            # Get the currently selected connection
-            row = self.connection_list.get_selected_row()
-            if row and hasattr(row, 'connection'):
-                connection = row.connection
-                if hasattr(self, '_return_to_tab_view_if_welcome'):
-                    self._return_to_tab_view_if_welcome()
-                self.terminal_manager.connect_to_host(connection, force_new=True)
+            # Live selection only: a global shortcut should not inherit
+            # context-menu targets.
+            connections = self._connections_from_rows(
+                self._get_selected_connection_rows()
+            )
+            if connections:
+                self._open_new_connection_tabs(connections)
             else:
-                # If no connection is selected, show a message or fall back to new connection dialog
+                # If no connection is selected, fall back to the new connection dialog
                 logger.debug(
                     "No connection selected for %s+Alt+N, opening new connection dialog",
                     get_primary_modifier_label(),
