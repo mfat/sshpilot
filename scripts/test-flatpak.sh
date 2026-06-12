@@ -4,6 +4,9 @@
 
 set -e
 
+# Work from the repo root regardless of invocation directory
+cd "$(dirname "$0")/.."
+
 echo "=== Test Flatpak Build ==="
 
 # Copy all 3 files from flatpak/ directory to current directory

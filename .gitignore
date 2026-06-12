@@ -1,33 +1,48 @@
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
 
-/sshpilot/__pycache__
-/.history
-/sshpilot/__pycache__
-.history/
-.DS_Store
-/dist
-/build
-/packaging/macos/build
+# Virtual environments
+venv/
+.venv*/
 /.venv-system
 /.venv-system-python
+.venv-homebrew/
+
+# Build output
+/dist
+/build
+builddir/
+/artifacts
+/packaging/macos/build
+
+# Flatpak build
 /.flatpak-builder
 /repo
-/__pycache__
-/tests/__pycache__
+/flatpak
 io.github.mfat.sshpilot.yaml
 python3-deps.yml
 sshpilot-launcher.sh
-scripts/generate_github_url.sh
-scripts/screenshot_url.sh
-/flatpak
-flatpak/io.github.mfat.sshpilot.yaml
-/flatpak
-*.pyc
-whip.md
-sshpilot/vendor/pyxtermjs/index.html
-/artifacts
+
+# Debian build
 build-deb-local.sh
 /debian
-/sshpilot/vendor/__pycache__
-/sshpilot/vendor/__pycache__
-*.pyc
+
+# Test output
+/test_*.log
+.pytest_cache/
+
+# Editors / tools
+.history/
+.vscode/
+.claude/
+.DS_Store
+whip.md
+scripts/generate_github_url.sh
+scripts/screenshot_url.sh
 gnome-settings/gnome-control-center/
+
+# Generated files
+documentation/function-reference.md
+sshpilot/vendor/pyxtermjs/index.html

@@ -7,9 +7,9 @@ set -e  # Exit on any error
 
 echo "🚀 Building SSHPilot PyInstaller bundle..."
 
-# Check if we're in the right directory
-if [ ! -f "sshpilot.spec" ]; then
-    echo "❌ Error: sshpilot.spec not found. Please run this script from the project root directory."
+# Must be run from the project root (paths below are root-relative)
+if [ ! -f "packaging/pyinstaller/sshpilot.spec" ]; then
+    echo "❌ Error: packaging/pyinstaller/sshpilot.spec not found. Please run this script from the project root directory."
     exit 1
 fi
 
@@ -55,7 +55,7 @@ else
 fi
 
 echo "🔨 Running PyInstaller..."
-python -m PyInstaller --clean --noconfirm sshpilot.spec
+python -m PyInstaller --clean --noconfirm packaging/pyinstaller/sshpilot.spec
 
 # Check if build was successful
 if [ -d "dist/SSHPilot.app" ]; then

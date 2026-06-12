@@ -63,8 +63,8 @@ jobs:
           export DYLD_LIBRARY_PATH="$BREW_PREFIX/lib:$DYLD_LIBRARY_PATH"
           export PKG_CONFIG_PATH="$BREW_PREFIX/lib/pkgconfig:$PKG_CONFIG_PATH"
           export XDG_DATA_DIRS="$BREW_PREFIX/share:$XDG_DATA_DIRS"
-          chmod +x pyinstaller.sh
-          ./pyinstaller.sh
+          chmod +x packaging/pyinstaller/pyinstaller.sh
+          ./packaging/pyinstaller/pyinstaller.sh
 
       - name: Verify sshpass bundled correctly
         run: |
