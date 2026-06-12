@@ -2325,14 +2325,15 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 except Exception:
                     self.port_row.set_text("22")
 
-            # Load proxy settings
+            # Load proxy settings (without triggering inline completion)
             if hasattr(self.connection, 'proxy_jump'):
                 try:
-                    self.proxy_jump_row.set_text(
-                        ",".join(self.connection.proxy_jump or [])
+                    self._set_text_without_completion(
+                        self.proxy_jump_row,
+                        ",".join(self.connection.proxy_jump or []),
                     )
                 except Exception:
-                    self.proxy_jump_row.set_text("")
+                    self._set_text_without_completion(self.proxy_jump_row, "")
             if hasattr(self.connection, 'forward_agent'):
                 try:
                     self.forward_agent_row.set_active(bool(self.connection.forward_agent))
@@ -2365,12 +2366,10 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                     nickname = getattr(self.connection, 'nickname', '').strip()
                     if cfg and nickname:
                         # Suppress inline autocompletion while loading.
-                        self._tags_autocompleting = True
-                        try:
-                            self.tags_row.set_text(', '.join(cfg.get_connection_tags(nickname)))
-                            self._tags_prev_len = len(self.tags_row.get_text())
-                        finally:
-                            self._tags_autocompleting = False
+                        self._set_text_without_completion(
+                            self.tags_row,
+                            ', '.join(cfg.get_connection_tags(nickname)),
+                        )
                 except Exception as e:
                     logger.debug("Load tags meta: %s", e)
 
@@ -3080,16 +3079,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         self.tags_row.add_suffix(tag_pick_btn)
         # Inline autocompletion from existing tags (GtkEntryCompletion is
         # deprecated and never supported Adw.EntryRow, so done by hand).
-        self._tags_autocompleting = False
-        self._tags_prev_len = 0
-        self._tags_suggestion_active = False
-        self.tags_row.connect('changed', self._on_tags_entry_changed)
-        # Tab accepts the selected suggestion and starts the next tag
-        # (capture phase, so it wins over the focus chain).
-        tags_key_ctrl = Gtk.EventControllerKey()
-        tags_key_ctrl.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
-        tags_key_ctrl.connect('key-pressed', self._on_tags_key_pressed)
-        self.tags_row.add_controller(tags_key_ctrl)
+        self._setup_comma_autocomplete(self.tags_row, self._tag_candidates)
         basic_group.add(self.tags_row)
 
         # Wake-on-LAN Group
@@ -3134,6 +3124,11 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         # Adw.EntryRow has no subtitle/placeholder, so the hint lives in the title.
         self.proxy_jump_row = Adw.EntryRow(title=_("Jump hosts (comma-separated)"))
         self.proxy_jump_row.set_tooltip_text(_("Comma-separated ProxyJump chain, e.g. bastion1, bastion2"))
+        # Inline autocompletion from saved connection nicknames. Bare-comma
+        # separator to match the loaded format (",".join of proxy_jump).
+        self._setup_comma_autocomplete(
+            self.proxy_jump_row, self._jump_host_candidates, separator=","
+        )
 
         # Inventory picker button — lets the user pick a host from the saved inventory.
         if self.connection_manager and self.connection_manager.connections:
@@ -3975,9 +3970,11 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             jump_target = conn.nickname
             current = self.proxy_jump_row.get_text().strip()
             if current:
-                self.proxy_jump_row.set_text(current.rstrip(',') + ',' + jump_target)
+                self._set_text_without_completion(
+                    self.proxy_jump_row, current.rstrip(',') + ',' + jump_target
+                )
             else:
-                self.proxy_jump_row.set_text(jump_target)
+                self._set_text_without_completion(self.proxy_jump_row, jump_target)
             popover.popdown()
 
         list_box.connect('row-activated', _on_row_activated)
@@ -3987,69 +3984,115 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         popover.popup()
         search_entry.grab_focus()
 
-    def _on_tags_entry_changed(self, _editable):
-        """Inline-complete the tag segment being typed from existing tags."""
-        if getattr(self, '_tags_autocompleting', False):
-            return
-        self._tags_suggestion_active = False
-        text = self.tags_row.get_text()
-        prev_len = getattr(self, '_tags_prev_len', 0)
-        self._tags_prev_len = len(text)
-        if len(text) <= prev_len:
-            return  # deletion (e.g. backspacing a suggestion) — don't re-complete
-        try:
-            cursor = self.tags_row.get_position()
-        except Exception:
-            return
+    def _tag_candidates(self):
+        """Known tags for inline completion in the tags row."""
         cfg = getattr(self.parent_window, 'config', None)
         if cfg is None or not hasattr(cfg, 'get_all_tags'):
-            return
-        from .tag_groups import complete_tag_text
-        try:
-            known = [t for t, _n in cfg.get_all_tags()]
-            result = complete_tag_text(text, cursor, known)
-        except Exception:
-            result = None
-        if result is None:
-            return
-        completed, select_start = result
-        self._tags_autocompleting = True
-        try:
-            self.tags_row.set_text(completed)
-            # Keep prev_len at the typed text's length so deleting the
-            # selected suggestion doesn't immediately re-trigger completion.
-            self._tags_prev_len = select_start
-            self.tags_row.select_region(select_start, -1)
-            self._tags_suggestion_active = True
-        except Exception:
-            pass
-        finally:
-            self._tags_autocompleting = False
+            return []
+        return [t for t, _n in cfg.get_all_tags()]
 
-    def _on_tags_key_pressed(self, _controller, keyval, _keycode, _state):
-        """Tab accepts the inline suggestion and appends ', ' for the next tag."""
-        if keyval not in (Gdk.KEY_Tab, Gdk.KEY_KP_Tab):
-            return False
-        if not getattr(self, '_tags_suggestion_active', False):
-            return False
-        bounds = self.tags_row.get_selection_bounds()
-        text = self.tags_row.get_text()
-        # Only act while the suggestion (selection reaching the end) is live.
-        if not bounds or bounds[1] != len(text):
-            self._tags_suggestion_active = False
-            return False
-        self._tags_autocompleting = True
+    def _jump_host_candidates(self):
+        """Saved connection nicknames for inline completion in the jump hosts row."""
+        if not self.connection_manager:
+            return []
+        current = getattr(self.connection, 'nickname', '') if self.connection else ''
+        return sorted(
+            (c.nickname for c in self.connection_manager.connections
+             if c.nickname and c.nickname != current),
+            key=str.casefold,
+        )
+
+    def _setup_comma_autocomplete(self, row, get_candidates, separator=", "):
+        """Install inline completion + Tab-accept on a comma-separated EntryRow.
+
+        Completes the segment being typed at the end of the entry with the
+        first candidate (case-insensitive prefix match, already-listed values
+        skipped); the suggested suffix is selected so typing replaces it.
+        Tab accepts the suggestion and appends *separator* for the next value.
+        State lives on the row (row._ac_state); programmatic set_text should
+        go through _set_text_without_completion.
+        """
+        state = {'busy': False, 'prev_len': 0, 'active': False}
+        row._ac_state = state
+
+        def on_changed(_editable):
+            if state['busy']:
+                return
+            state['active'] = False
+            text = row.get_text()
+            prev_len = state['prev_len']
+            state['prev_len'] = len(text)
+            if len(text) <= prev_len:
+                return  # deletion (e.g. backspacing a suggestion) — don't re-complete
+            try:
+                cursor = row.get_position()
+            except Exception:
+                return
+            from .tag_groups import complete_tag_text
+            try:
+                result = complete_tag_text(text, cursor, get_candidates())
+            except Exception:
+                result = None
+            if result is None:
+                return
+            completed, select_start = result
+            state['busy'] = True
+            try:
+                row.set_text(completed)
+                # Keep prev_len at the typed text's length so deleting the
+                # selected suggestion doesn't immediately re-trigger completion.
+                state['prev_len'] = select_start
+                row.select_region(select_start, -1)
+                state['active'] = True
+            except Exception:
+                pass
+            finally:
+                state['busy'] = False
+
+        def on_key_pressed(_controller, keyval, _keycode, _modifier):
+            if keyval not in (Gdk.KEY_Tab, Gdk.KEY_KP_Tab):
+                return False
+            if not state['active']:
+                return False
+            bounds = row.get_selection_bounds()
+            text = row.get_text()
+            # Only act while the suggestion (selection reaching the end) is live.
+            if not bounds or bounds[1] != len(text):
+                state['active'] = False
+                return False
+            state['busy'] = True
+            try:
+                new_text = text + separator
+                row.set_text(new_text)
+                state['prev_len'] = len(new_text)
+                row.set_position(len(new_text))
+            except Exception:
+                return False
+            finally:
+                state['busy'] = False
+            state['active'] = False
+            return True
+
+        row.connect('changed', on_changed)
+        # Capture phase so Tab wins over the focus chain only when handled.
+        key_ctrl = Gtk.EventControllerKey()
+        key_ctrl.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        key_ctrl.connect('key-pressed', on_key_pressed)
+        row.add_controller(key_ctrl)
+
+    def _set_text_without_completion(self, row, text):
+        """Set a row's text without triggering its inline completion."""
+        state = getattr(row, '_ac_state', None)
+        if state:
+            state['busy'] = True
         try:
-            new_text = text + ", "
-            self.tags_row.set_text(new_text)
-            self._tags_prev_len = len(new_text)
-            self.tags_row.set_position(len(new_text))
-        except Exception:
-            return False
+            row.set_text(text)
+            if state:
+                state['prev_len'] = len(text)
+                state['active'] = False
         finally:
-            self._tags_autocompleting = False
-        self._tags_suggestion_active = False
-        return True
+            if state:
+                state['busy'] = False
 
     def _show_tag_picker_popover(self, button):
         """Show a popover to pick from the tags already used by other connections."""
@@ -4130,7 +4173,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             current = [t.strip() for t in self.tags_row.get_text().split(',') if t.strip()]
             tags, changed = add_tag_to_list(current, tag)
             if changed:
-                self.tags_row.set_text(', '.join(tags))
+                self._set_text_without_completion(self.tags_row, ', '.join(tags))
             popover.popdown()
 
         list_box.connect('row-activated', _on_row_activated)

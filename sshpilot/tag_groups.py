@@ -12,13 +12,16 @@ TAG_GROUP_ID_PREFIX = "tag::"
 
 
 def complete_tag_text(text: str, cursor: int, known_tags: Sequence[str]) -> Optional[Tuple[str, int]]:
-    """Inline completion for a comma-separated tag entry.
+    """Inline completion for a comma-separated value entry.
 
     Completes the segment being typed at the end of *text* with the first
-    known tag (case-insensitive prefix match) not already present. Returns
-    (completed_text, selection_start) — the caller selects from
-    selection_start to the end so further typing replaces the suggestion —
-    or None when nothing applies.
+    candidate (case-insensitive prefix match) not already present. The typed
+    prefix is replaced by the candidate's canonical casing — values may be
+    ssh Host aliases, whose config matching is case-sensitive, so the
+    candidate's casing must win (typing "us" against "USA" yields "USA",
+    never "usA"). Returns (completed_text, selection_start) — the caller
+    selects from selection_start to the end so further typing replaces the
+    suggestion — or None when nothing applies.
     """
     text = str(text)
     if cursor != len(text):
@@ -32,8 +35,10 @@ def complete_tag_text(text: str, cursor: int, known_tags: Sequence[str]) -> Opti
     for tag in known_tags:
         tag = str(tag)
         key = tag.casefold()
-        if key.startswith(typed_key) and key != typed_key and key not in existing:
-            return text + tag[len(typed):], len(text)
+        # Slice-compare so the prefix alignment is exact at len(typed) chars.
+        if (tag[:len(typed)].casefold() == typed_key
+                and key != typed_key and key not in existing):
+            return text[:len(text) - len(typed)] + tag, len(text)
     return None
 
 

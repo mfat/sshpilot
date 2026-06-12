@@ -82,14 +82,18 @@ class TestCompleteTagText:
     KNOWN = ["db", "Prod", "production", "web"]
 
     def test_completes_first_match(self):
-        assert complete_tag_text("pr", 2, self.KNOWN) == ("prod", 2)
+        # "Prod" is the first candidate matching "pr"; its canonical casing wins
+        assert complete_tag_text("pr", 2, self.KNOWN) == ("Prod", 2)
 
     def test_completes_last_segment_only(self):
-        assert complete_tag_text("web, pr", 7, self.KNOWN) == ("web, prod", 7)
+        assert complete_tag_text("web, pr", 7, self.KNOWN) == ("web, Prod", 7)
 
-    def test_case_insensitive_keeps_typed_casing(self):
-        # typed "PR" + remainder of "Prod" -> "PRod"
-        assert complete_tag_text("PR", 2, self.KNOWN) == ("PRod", 2)
+    def test_candidate_canonical_casing_wins(self):
+        # The candidate's casing replaces the typed prefix: ssh Host aliases
+        # are case-sensitive, so "usA"-style hybrids would break ProxyJump.
+        assert complete_tag_text("PR", 2, self.KNOWN) == ("Prod", 2)
+        assert complete_tag_text("us", 2, ["USA"]) == ("USA", 2)
+        assert complete_tag_text("bastion1, us", 12, ["USA"]) == ("bastion1, USA", 12)
 
     def test_no_completion_mid_text(self):
         assert complete_tag_text("pr", 1, self.KNOWN) is None
