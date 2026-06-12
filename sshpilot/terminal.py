@@ -25,6 +25,8 @@ from .port_utils import get_port_checker
 from .platform_utils import is_flatpak, is_macos, get_sshpass_path
 from .terminal_backends import BaseTerminalBackend, VTETerminalBackend, PyXtermTerminalBackend
 from .ssh_connection_builder import build_ssh_connection, ConnectionContext
+from .plugins.api import PluginContext, ProtocolError
+from .plugins.registry import protocol_registry
 
 gi.require_version('Gtk', '4.0')
 gi.require_version('Vte', '3.91')
@@ -1084,14 +1086,40 @@ class TerminalWidget(Gtk.Box):
     def _setup_ssh_terminal(self):
         """Set up terminal with direct SSH command using ssh_connection_builder (called from main thread)"""
         try:
-            # The connection's SSH command, environment, and authentication were
-            # all prepared by the unified builder (build_ssh_connection), invoked
-            # from Connection.native_connect()/connect(). The terminal simply
-            # consumes that result and handles the runtime mechanics that cannot
-            # live in a pure command builder: the sshpass FIFO, askpass log
+            # The spawn command comes from the connection's protocol backend
+            # (sshpilot.plugins). For SSH ("plugin zero") this is a pure
+            # indirection over the same prepared build_ssh_connection() result
+            # that Connection.native_connect()/connect() produced, so argv/env
+            # are identical to consuming connection.ssh_connection_cmd directly.
+            # The terminal handles only the runtime mechanics that cannot live
+            # in a pure command builder: the sshpass FIFO, askpass log
             # forwarding, terminal env tweaks, and the PTY/spawn.
-            ssh_conn_cmd = getattr(self.connection, 'ssh_connection_cmd', None)
-            if ssh_conn_cmd is not None:
+            # NOTE: self.backend is the *terminal* backend (VTE vs fallback);
+            # protocol backends are a different axis.
+            protocol_backend = protocol_registry().get_or_none(
+                getattr(self.connection, 'protocol', 'ssh'))
+            if protocol_backend is not None:
+                plugin_ctx = PluginContext(
+                    app_config=self.config,
+                    connection_manager=self.connection_manager,
+                    protocol_registry=protocol_registry(),
+                )
+                try:
+                    spec = protocol_backend.build_spawn(self.connection, plugin_ctx)
+                except ProtocolError as e:
+                    GLib.idle_add(self._on_connection_failed, str(e))
+                    return
+                ssh_cmd = list(spec.argv)
+                env = dict(spec.env)
+                use_askpass = bool(spec.extras.get('use_askpass'))
+                password_value = (
+                    spec.extras.get('password')
+                    if spec.extras.get('use_sshpass')
+                    else None
+                )
+            elif (ssh_conn_cmd := getattr(self.connection, 'ssh_connection_cmd', None)) is not None:
+                # No backend registered (plugin system unavailable): consume the
+                # prepared command directly, exactly as before the plugin seam.
                 ssh_cmd = list(ssh_conn_cmd.command)
                 env = dict(ssh_conn_cmd.env)
                 use_askpass = bool(getattr(ssh_conn_cmd, 'use_askpass', False))

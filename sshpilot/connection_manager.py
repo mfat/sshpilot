@@ -205,6 +205,9 @@ class Connection:
 
         self.username = data.get('username', '')
         self.port = data.get('port', 22)
+        # Protocol backend handling this connection ('ssh' for every existing
+        # saved/ssh_config-derived connection; see sshpilot.plugins).
+        self.protocol = data.get('protocol', 'ssh')
         # previously: self.keyfile = data.get('keyfile', '')
         self.keyfile = data.get('keyfile') or data.get('private_key', '') or ''
         # Full list of IdentityFile/CertificateFile entries (ssh_config(5) allows
@@ -708,6 +711,7 @@ class Connection:
 
         self.username = data.get('username', '')
         self.port = data.get('port', 22)
+        self.protocol = data.get('protocol', getattr(self, 'protocol', 'ssh'))
         self.keyfile = data.get('keyfile') or data.get('private_key', '') or ''
         self.identity_files = list(data.get('identity_files') or ([self.keyfile] if self.keyfile else []))
         self.identity_file_none = bool(data.get('identity_file_none', False))

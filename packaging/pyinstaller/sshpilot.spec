@@ -1,7 +1,7 @@
 # sshpilot.spec — build with: pyinstaller --clean sshpilot.spec
 import os, sys, glob, platform, sysconfig
 from pathlib import Path
-from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import collect_submodules, collect_data_files
 
 # Resolve the current Python site-packages directory dynamically
 site_packages_dir = Path(sysconfig.get_path("platlib"))
@@ -163,6 +163,10 @@ hiddenimports += ["gi._gi_cairo", "gi.repository.cairo", "cairo"]
 hiddenimports += ["keyring"]
 # Add all keyring backends
 hiddenimports += ["keyring.backends", "keyring.backends.macOS", "keyring.backends.libsecret", "keyring.backends.SecretService"]
+# Built-in plugins are imported dynamically by the plugin loader, and their
+# plugin.json manifests are read from disk.
+hiddenimports += collect_submodules("sshpilot.plugins.builtin")
+datas += collect_data_files("sshpilot.plugins", includes=["**/plugin.json"])
 
 block_cipher = None
 

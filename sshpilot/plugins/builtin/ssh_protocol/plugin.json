@@ -1,0 +1,7 @@
+{
+  "id": "ssh",
+  "name": "SSH protocol",
+  "api_version": 1,
+  "builtin": true,
+  "required": true
+}

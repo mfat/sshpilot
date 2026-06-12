@@ -609,6 +609,24 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         effective_isolated = isolated or bool(self.config.get_setting('ssh.use_isolated_config', False))
         key_dir = Path(get_config_dir()) if effective_isolated else None
         self.connection_manager = ConnectionManager(self.config, isolated_mode=effective_isolated)
+
+        # Load plugins once per process (cached on the application object so a
+        # second window doesn't re-activate them) before any terminal can spawn.
+        try:
+            from .plugins.loader import load_plugins
+            loaded_plugins = getattr(app, 'loaded_plugins', None) if app else None
+            if loaded_plugins is None:
+                loaded_plugins = load_plugins(
+                    app_config=self.config,
+                    connection_manager=self.connection_manager,
+                )
+                if app is not None:
+                    setattr(app, 'loaded_plugins', loaded_plugins)
+            self.loaded_plugins = loaded_plugins
+        except Exception:
+            logger.exception("Plugin loading failed")
+            self.loaded_plugins = []
+
         self.key_manager = KeyManager(key_dir)
         self.group_manager = GroupManager(self.config)
         self.session_manager = SessionManager(self.config)

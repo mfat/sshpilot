@@ -1,3 +1,4 @@
 include sshpilot/vendor/pyxtermjs/*.html
 include sshpilot/vendor/pyxtermjs/LICENSE
+recursive-include sshpilot/plugins/builtin *.json
 

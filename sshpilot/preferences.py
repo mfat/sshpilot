@@ -2094,6 +2094,8 @@ class PreferencesWindow(Adw.Window):
             self.add_page_to_layout("Groups", "folder-open-symbolic", groups_page)
             self.add_page_to_layout("SSH Options", "network-workgroup-symbolic", ssh_settings_page)
             self.add_page_to_layout("Updates", "software-update-available-symbolic", updates_page)
+            plugins_page = self._create_plugins_page()
+            self.add_page_to_layout("Plugins", "application-x-addon-symbolic", plugins_page)
             command_blocks_page = self._create_command_blocks_page()
             self.add_page_to_layout("Command Blocks", "view-list-symbolic", command_blocks_page)
             self.add_page_to_layout("Advanced", "applications-system-symbolic", advanced_page)
@@ -2376,6 +2378,94 @@ class PreferencesWindow(Adw.Window):
             logger.debug(
                 "Failed to restyle terminals after preference change: %s", exc
             )
+
+    def _create_plugins_page(self):
+        """Build the Plugins preferences page (enable/disable, restart required)."""
+        from .plugins.loader import discover_plugins, _user_plugin_dir
+
+        page = Adw.PreferencesPage()
+
+        try:
+            infos = discover_plugins()
+        except Exception:
+            logger.exception("Plugin discovery failed")
+            infos = []
+        loaded_ids = {
+            getattr(p, 'plugin_id', None)
+            for p in getattr(self.parent_window, 'loaded_plugins', []) or []
+        }
+        disabled = set(self.config.get_setting('plugins.disabled', []) or [])
+        enabled = set(self.config.get_setting('plugins.enabled', []) or [])
+
+        def _subtitle(info):
+            if not info.api_compatible:
+                return _("Incompatible (targets API v{})").format(info.api_version)
+            if info.required:
+                return _("Required — always enabled")
+            if info.plugin_id in loaded_ids:
+                return _("Active")
+            return _("Inactive")
+
+        builtin_group = Adw.PreferencesGroup(title=_("Built-in Plugins"))
+        builtin_group.set_description(_("Changes take effect after restarting sshPilot"))
+        for info in [i for i in infos if i.builtin]:
+            row = Adw.SwitchRow()
+            row.set_title(info.name)
+            row.set_subtitle(_subtitle(info))
+            row.set_active(info.required or info.plugin_id not in disabled)
+            if info.required or not info.api_compatible:
+                row.set_sensitive(False)
+            else:
+                row.connect(
+                    'notify::active',
+                    lambda r, _p, pid=info.plugin_id: self._on_builtin_plugin_toggled(pid, r.get_active()),
+                )
+            builtin_group.add(row)
+        page.add(builtin_group)
+
+        user_group = Adw.PreferencesGroup(title=_("User Plugins"))
+        user_group.set_description(
+            _("Third-party plugins run with full application privileges; "
+              "only enable plugins you trust. Restart required."))
+        user_infos = [i for i in infos if not i.builtin]
+        if user_infos:
+            for info in user_infos:
+                row = Adw.SwitchRow()
+                row.set_title(info.name)
+                row.set_subtitle(_subtitle(info))
+                row.set_active(info.plugin_id in enabled)
+                if not info.api_compatible:
+                    row.set_sensitive(False)
+                else:
+                    row.connect(
+                        'notify::active',
+                        lambda r, _p, pid=info.plugin_id: self._on_user_plugin_toggled(pid, r.get_active()),
+                    )
+                user_group.add(row)
+        else:
+            empty_row = Adw.ActionRow()
+            empty_row.set_title(_("No user plugins installed"))
+            empty_row.set_subtitle(str(_user_plugin_dir()))
+            user_group.add(empty_row)
+        page.add(user_group)
+
+        return page
+
+    def _on_builtin_plugin_toggled(self, plugin_id, active):
+        disabled = set(self.config.get_setting('plugins.disabled', []) or [])
+        if active:
+            disabled.discard(plugin_id)
+        else:
+            disabled.add(plugin_id)
+        self.config.set_setting('plugins.disabled', sorted(disabled))
+
+    def _on_user_plugin_toggled(self, plugin_id, active):
+        enabled = set(self.config.get_setting('plugins.enabled', []) or [])
+        if active:
+            enabled.add(plugin_id)
+        else:
+            enabled.discard(plugin_id)
+        self.config.set_setting('plugins.enabled', sorted(enabled))
 
     def _create_command_blocks_page(self):
         """Build the Command Blocks preferences page."""
