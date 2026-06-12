@@ -39,6 +39,14 @@ class WindowActions:
         if not app:
             return
 
+        # Delegate to the app's shortcut registry so config overrides from
+        # the shortcut editor are respected (it also clears accels while
+        # accelerators are suspended, e.g. terminal pass-through mode).
+        if hasattr(app, '_apply_shortcut_for_action'):
+            app._apply_shortcut_for_action('toggle_sidebar')
+            return
+
+        # Fallback for app objects without the registry (tests/fakes).
         shortcuts = ['F9']
         if is_macos():
             shortcuts.append('<Meta>b')
