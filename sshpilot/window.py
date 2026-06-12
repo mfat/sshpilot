@@ -9554,9 +9554,21 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 
 
 
-                # Update UI
+                # Update UI. Tag group rows are derived during rebuilds, so a
+                # tag change needs a full rebuild when tag groups are shown —
+                # update_display() alone leaves them stale.
+                tags_changed = False
+                try:
+                    fresh_tags = self.config.get_connection_tags(old_connection.nickname)
+                    if list(getattr(old_connection, 'tags', None) or []) != fresh_tags:
+                        tags_changed = True
+                    old_connection.tags = fresh_tags
+                except Exception:
+                    pass
                 rows = self._rows_for_connection(old_connection)
-                if rows:
+                if tags_changed and bool(self.config.get_setting('ui.show_tag_groups', False)):
+                    self.rebuild_connection_list()
+                elif rows:
                     # Update the display for every row representing this connection
                     for row in rows:
                         row.update_display()
