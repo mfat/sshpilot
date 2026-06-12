@@ -3611,9 +3611,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     conn = connections_dict.get(nick)
                     if conn is None:
                         continue
-                    row = self.add_connection_row(conn, 1, display_group_id=None)
+                    row = self.add_connection_row(
+                        conn, 1, display_group_id=None, in_tag_section=True,
+                    )
                     if row is not None:
-                        row._in_tag_section = True
                         row.set_visible(expanded or filter_text is not None)
                         member_rows.append(row)
                     if displayed_connections is not None:
@@ -3666,6 +3667,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         connection: Connection,
         indent_level: int = 0,
         display_group_id: Optional[str] = None,
+        in_tag_section: bool = False,
     ):
         """Add a connection row to the list with optional indentation"""
         row = ConnectionRow(
@@ -3674,6 +3676,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             self.config,
             file_manager_callback=self._open_manage_files_for_connection,
             display_group_id=display_group_id,
+            in_tag_section=in_tag_section,
         )
         
         # Apply indentation preference for grouped connections

@@ -671,6 +671,7 @@ class ConnectionRow(Gtk.ListBoxRow):
         config,
         file_manager_callback=None,
         display_group_id: Optional[str] = None,
+        in_tag_section: bool = False,
     ):
         super().__init__()
         _install_sidebar_color_css()
@@ -680,6 +681,7 @@ class ConnectionRow(Gtk.ListBoxRow):
         self.group_manager = group_manager
         self.config = config
         self._group_id = display_group_id
+        self._in_tag_section = in_tag_section
         self._file_manager_callback = file_manager_callback
         self._tint_provider = None
         self._color_badge_provider = None
@@ -974,6 +976,10 @@ class ConnectionRow(Gtk.ListBoxRow):
             content.set_margin_start(self._content_margin_base)
 
     def _resolve_group_color(self) -> Optional[Gdk.RGBA]:
+        # Rows listed under a virtual tag group are colorless: the color
+        # belongs to the real-group context, not the tag listing.
+        if getattr(self, '_in_tag_section', False):
+            return None
         manager = getattr(self, 'group_manager', None)
         if not manager:
             return None
