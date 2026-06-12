@@ -44,6 +44,21 @@ def compute_tag_groups(tag_map: Mapping[str, Sequence[str]]) -> List[Tuple[str, 
     return result
 
 
+def add_tag_to_list(tags: Sequence[str], new_tag: str) -> Tuple[List[str], bool]:
+    """Append *new_tag* unless already present (case-insensitive).
+
+    Returns (new_list, changed).
+    """
+    new_tag = str(new_tag).strip()
+    result = [str(t).strip() for t in (tags or []) if str(t).strip()]
+    if not new_tag:
+        return result, False
+    if any(t.casefold() == new_tag.casefold() for t in result):
+        return result, False
+    result.append(new_tag)
+    return result, True
+
+
 def rename_tag_in_list(tags: Sequence[str], old_key: str, new_name: str) -> Tuple[List[str], bool]:
     """Replace tags matching *old_key* (casefold) with *new_name*.
 

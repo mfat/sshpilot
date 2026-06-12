@@ -7,6 +7,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 from sshpilot.tag_groups import (
     TAG_GROUP_ID_PREFIX,
+    add_tag_to_list,
     compute_tag_groups,
     is_tag_group_id,
     make_tag_group_info,
@@ -74,6 +75,21 @@ class TestMakeTagGroupInfo:
         # connections is a copy — mutating it must not affect the input
         info["connections"].append("c")
         assert nicks == ["a", "b"]
+
+
+class TestAddTagToList:
+    def test_appends_new_tag(self):
+        assert add_tag_to_list(["web"], "prod") == (["web", "prod"], True)
+
+    def test_no_duplicate_case_insensitive(self):
+        assert add_tag_to_list(["Prod"], "prod") == (["Prod"], False)
+
+    def test_empty_tag_ignored(self):
+        assert add_tag_to_list(["web"], "  ") == (["web"], False)
+
+    def test_empty_or_none_list(self):
+        assert add_tag_to_list([], "prod") == (["prod"], True)
+        assert add_tag_to_list(None, "prod") == (["prod"], True)
 
 
 class TestRenameTagInList:

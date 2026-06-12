@@ -1502,8 +1502,9 @@ def _on_connection_list_motion(window, target, x, y):
                 # Dragging group over connection - show indicator
                 _show_drop_indicator(window, row, position)
             elif (hasattr(row, "group_id")
-                  and not getattr(row, "is_tag_group", False)
                   and getattr(window, "_dragged_connections", None)):
+                # Includes tag group rows: dropping a connection there adds
+                # the tag, so the add-to-group highlight applies.
                 _show_drop_indicator_on_group(window, row)
             else:
                 _clear_drop_indicator(window)
@@ -1713,11 +1714,23 @@ def _on_connection_list_drop(window, target, value, x, y):
                     relative_y = y - row_y
                     position = "above" if relative_y < row_height / 2 else "below"
 
-                    if hasattr(target_row, "group_id"):
-                        # Virtual tag groups never accept drops — a synthetic
-                        # id reaching move_connection would corrupt GroupManager.
-                        if getattr(target_row, "is_tag_group", False):
+                    if getattr(target_row, "is_tag_group", False):
+                        # Dropping onto a tag group adds the tag to the dragged
+                        # connections (copy semantics — GroupManager untouched;
+                        # its synthetic id must never reach move_connection).
+                        from .tag_groups import add_tag_to_list
+                        tag_name = str(target_row.group_info.get("name", ""))
+                        cfg = getattr(window, "config", None)
+                        if not tag_name or cfg is None:
                             return False
+                        for nickname in connection_nicknames:
+                            tags, changed = add_tag_to_list(
+                                cfg.get_connection_tags(nickname), tag_name
+                            )
+                            if changed:
+                                cfg.set_connection_tags(nickname, tags)
+                                changes_made = True
+                    elif hasattr(target_row, "group_id"):
                         target_group_id = target_row.group_id
 
                         if position == "above":
