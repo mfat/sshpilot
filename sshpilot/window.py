@@ -76,7 +76,8 @@ from .sshcopyid_window import SshCopyIdWindow, SshCopyIdRunner
 from .scp_window import ScpWindowController, SCPConnectionProfile
 from .groups import GroupManager
 from .session_manager import SessionManager
-from .sidebar import GroupRow, ConnectionRow, build_sidebar
+from .sidebar import GroupRow, TagGroupRow, ConnectionRow, build_sidebar
+from .tag_groups import compute_tag_groups, make_tag_group_info
 
 from .welcome_page import WelcomePage
 from .actions import WindowActions, register_window_actions
@@ -2171,6 +2172,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             context_click.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
 
             def _build_and_show_menu(row):
+                # Virtual tag groups are read-only: no context menu.
+                if getattr(row, 'is_tag_group', False):
+                    return
                 # Build a Gtk.PopoverMenu from the shared sidebar context menu helper.
                 menu = IconContextMenu()
 
@@ -2364,7 +2368,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     # Set context menu data
                     self._context_menu_row = row
                     self._context_menu_connection = getattr(row, 'connection', None)
-                    self._context_menu_group_row = row if hasattr(row, 'group_id') else None
+                    self._context_menu_group_row = row if (
+                        hasattr(row, 'group_id') and not getattr(row, 'is_tag_group', False)
+                    ) else None
 
                     _build_and_show_menu(row)
 
@@ -3427,6 +3433,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         )
                         displayed_connections.add(conn_nickname)
 
+            self._append_tag_group_rows(
+                connections,
+                connections_dict,
+                filter_text=search_text,
+                displayed_connections=displayed_connections,
+            )
+
             matches = [
                 c for c in connections
                 if connection_matches(c, search_text)
@@ -3449,6 +3462,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
         # Build the list with groups
         self._build_grouped_list(hierarchy, connections_dict, 0)
+
+        # Virtual tag groups (derived from connection tags) after the real
+        # hierarchy, before ungrouped connections.
+        self._append_tag_group_rows(connections, connections_dict)
 
         # Add ungrouped connections at the end. A connection is only ungrouped
         # when it does not belong to any group (it may belong to several).
@@ -3490,6 +3507,50 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             vadj = self.connection_scrolled.get_vadjustment()
             if vadj:
                 GLib.idle_add(lambda: vadj.set_value(scroll_position))
+    def _append_tag_group_rows(self, connections, connections_dict,
+                               filter_text=None, displayed_connections=None):
+        """Render virtual tag group rows (derived from tags; never stored).
+
+        With filter_text set (search), only tag groups whose name matches are
+        shown, listing all members regardless of expansion — mirroring how
+        matched real groups behave in the search branch.
+
+        Disabled unless Preferences ▸ Groups ▸ "Show tags as groups in
+        connection list" is on.
+        """
+        try:
+            if not bool(self.config.get_setting('ui.show_tag_groups', False)):
+                return
+            tag_map = {c.nickname: (getattr(c, 'tags', None) or []) for c in connections}
+            tag_groups = compute_tag_groups(tag_map)
+            if filter_text is not None:
+                tag_groups = [(t, n) for t, n in tag_groups if filter_text in t.lower()]
+            if not tag_groups:
+                return
+            expanded_state = self.config.get_setting('ui.tag_groups_expanded', {}) or {}
+            for display_tag, nicknames in tag_groups:
+                expanded = bool(expanded_state.get(display_tag.casefold(), True))
+                info = make_tag_group_info(display_tag, nicknames, expanded)
+                tag_row = TagGroupRow(info, self.group_manager, connections_dict)
+                self.connection_list.append(tag_row)
+                # Member rows are always created; collapse hides them in place
+                # (no full rebuild on toggle, so no flicker).
+                member_rows = []
+                for nick in nicknames:
+                    conn = connections_dict.get(nick)
+                    if conn is None:
+                        continue
+                    row = self.add_connection_row(conn, 1, display_group_id=None)
+                    if row is not None:
+                        row._in_tag_section = True
+                        row.set_visible(expanded or filter_text is not None)
+                        member_rows.append(row)
+                    if displayed_connections is not None:
+                        displayed_connections.add(nick)
+                tag_row._member_rows = member_rows
+        except Exception:
+            logger.error("Failed to render tag groups", exc_info=True)
+
     def _build_grouped_list(self, hierarchy, connections_dict, level):
         """Recursively build the grouped connection list"""
         for group_info in hierarchy:
@@ -5521,7 +5582,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             self.connection_toolbar.set_visible(False)
             self.group_toolbar.set_visible(True)
 
-            allow_single_group = len(group_rows) == 1
+            allow_single_group = (
+                len(group_rows) == 1
+                and not getattr(group_rows[0], 'is_tag_group', False)
+            )
             self.delete_button.set_sensitive(False)
             if hasattr(self, 'copy_key_button'):
                 self.copy_key_button.set_sensitive(False)

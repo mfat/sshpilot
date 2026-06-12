@@ -1054,6 +1054,24 @@ class PreferencesWindow(Adw.Window):
             )
             group_appearance_group.add(self.terminal_group_color_row)
 
+            # Toggle for showing virtual tag groups in the sidebar
+            self.show_tag_groups_row = Adw.SwitchRow()
+            self.show_tag_groups_row.set_title("Show tags as groups in connection list")
+            self.show_tag_groups_row.set_subtitle(
+                "List tagged connections under a read-only group per tag"
+            )
+            try:
+                tag_groups_pref = bool(
+                    self.config.get_setting('ui.show_tag_groups', False)
+                )
+            except Exception:
+                tag_groups_pref = False
+            self.show_tag_groups_row.set_active(tag_groups_pref)
+            self.show_tag_groups_row.connect(
+                'notify::active', self.on_show_tag_groups_toggled
+            )
+            group_appearance_group.add(self.show_tag_groups_row)
+
             groups_page.add(group_appearance_group)
 
             # Group display layout section (shown after appearance options)
@@ -3764,6 +3782,18 @@ class PreferencesWindow(Adw.Window):
                 self.parent_window.update_sidebar_display()
         except Exception as exc:
             logger.error("Failed to update sidebar show group count preference: %s", exc)
+
+    def on_show_tag_groups_toggled(self, switch, *args):
+        """Persist the preference for showing virtual tag groups in the sidebar."""
+        try:
+            active = bool(switch.get_active())
+            self.config.set_setting('ui.show_tag_groups', active)
+            # Tag group rows are added/removed during list rebuilds, so a
+            # display-only refresh is not enough here.
+            if self.parent_window and hasattr(self.parent_window, 'rebuild_connection_list'):
+                self.parent_window.rebuild_connection_list()
+        except Exception as exc:
+            logger.error("Failed to update show tag groups preference: %s", exc)
 
     def on_sidebar_show_connection_status_changed(self, switch, *args):
         """Persist the preference for showing connection status in sidebar."""

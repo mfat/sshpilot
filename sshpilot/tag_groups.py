@@ -1,0 +1,63 @@
+"""Derive virtual tag groups from per-connection tags.
+
+Kept GTK-free (no ``gi`` imports) so the grouping logic is unit-testable under
+the test suite's stubbed ``gi`` environment. Tag groups are synthesized at
+sidebar render time and are never stored in GroupManager — the tags in
+``connections_meta`` remain the single source of truth.
+"""
+
+from typing import Dict, List, Mapping, Sequence, Tuple
+
+TAG_GROUP_ID_PREFIX = "tag::"
+
+
+def tag_group_id(tag: str) -> str:
+    """Synthetic, stable id for a tag group (never a real GroupManager id)."""
+    return TAG_GROUP_ID_PREFIX + str(tag).casefold()
+
+
+def is_tag_group_id(group_id) -> bool:
+    return isinstance(group_id, str) and group_id.startswith(TAG_GROUP_ID_PREFIX)
+
+
+def compute_tag_groups(tag_map: Mapping[str, Sequence[str]]) -> List[Tuple[str, List[str]]]:
+    """Group connections by tag.
+
+    tag_map: nickname -> list of tags.
+    Returns [(display_tag, [nicknames])] sorted case-insensitively by tag.
+    Tags differing only by case merge; first-seen casing wins for display.
+    Member nicknames are sorted case-insensitively and de-duplicated.
+    """
+    merged: Dict[str, Tuple[str, List[str]]] = {}  # casefold -> (display, members)
+    for nickname, tags in tag_map.items():
+        for raw in (tags or []):
+            tag = str(raw).strip()
+            if not tag:
+                continue
+            display, members = merged.setdefault(tag.casefold(), (tag, []))
+            if nickname not in members:
+                members.append(nickname)
+    result = []
+    for key in sorted(merged):
+        display, members = merged[key]
+        result.append((display, sorted(members, key=str.casefold)))
+    return result
+
+
+def make_tag_group_info(display_tag: str, nicknames: Sequence[str], expanded: bool) -> dict:
+    """Synthetic group_info dict consumable by GroupRow/TagGroupRow.
+
+    Shaped like a GroupManager group but flagged with ``is_tag`` and never
+    persisted.
+    """
+    return {
+        "id": tag_group_id(display_tag),
+        "name": display_tag,
+        "tag_key": str(display_tag).casefold(),
+        "parent_id": None,
+        "children": [],
+        "connections": list(nicknames),
+        "expanded": bool(expanded),
+        "color": None,
+        "is_tag": True,
+    }

@@ -253,6 +253,7 @@ class GroupRow(Gtk.ListBoxRow):
         icon.set_icon_size(Gtk.IconSize.NORMAL)
         icon.set_valign(Gtk.Align.CENTER)  # Center vertically relative to text
         content.append(icon)
+        self.icon = icon
 
         info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         info_box.set_hexpand(True)
@@ -379,7 +380,7 @@ class GroupRow(Gtk.ListBoxRow):
             if c in self.connections_dict
         ]
         count = len(actual_connections)
-        group_name = self.group_info['name']
+        group_name = GLib.markup_escape_text(str(self.group_info['name']))
         self.name_label.set_markup(f"<b>{group_name}</b>")
         self.count_label.set_text(f"{count} connections")
         self._apply_group_color_style()
@@ -593,6 +594,60 @@ class GroupRow(Gtk.ListBoxRow):
         else:
             self.remove_css_class("drop-target-group")
             self.drop_target_indicator.set_visible(False)
+
+
+class TagGroupRow(GroupRow):
+    """Virtual, read-only group row derived from connection tags.
+
+    Synthesized from a ``make_tag_group_info`` dict at sidebar rebuild time;
+    supports expand/collapse only and never mutates GroupManager.
+    """
+
+    EXPANDED_SETTING = "ui.tag_groups_expanded"
+
+    def __init__(self, group_info: Dict, group_manager: GroupManager, connections_dict=None):
+        super().__init__(group_info, group_manager, connections_dict)
+        self.is_tag_group = True
+        self.icon.set_from_icon_name("tag-symbolic")
+        # Read-only v1: no edit / split affordances.
+        self.split_view_button.set_visible(False)
+        self.edit_button.set_visible(False)
+
+    def _setup_drag_source(self):
+        # Tag groups cannot be dragged or reordered.
+        self._drag_source = None
+
+    def _setup_double_click_gesture(self):
+        # Double-click already toggles via the ListBox row-activated path
+        # (on_connection_activated -> _toggle_expand). The base class's own
+        # click gesture would make it toggle twice — for real groups that
+        # second toggle is masked by the full rebuild destroying the row, but
+        # tag rows survive their in-place toggle, so the gesture must go.
+        pass
+
+    def _update_display(self):
+        super()._update_display()
+        name = GLib.markup_escape_text(str(self.group_info.get("name", "")))
+        self.name_label.set_markup(f"<b>#{name}</b>")
+
+    def _toggle_expand(self):
+        # Persist to config, not GroupManager — the group only exists here.
+        expanded = not self.group_info.get("expanded", True)
+        self.group_info["expanded"] = expanded
+        config = getattr(self.group_manager, "config", None)
+        if config is not None:
+            try:
+                state = dict(config.get_setting(self.EXPANDED_SETTING, {}) or {})
+                state[self.group_info.get("tag_key", "")] = expanded
+                config.set_setting(self.EXPANDED_SETTING, state)
+            except Exception:
+                logger.debug("Failed to persist tag group state", exc_info=True)
+        self._update_display()
+        # Show/hide member rows in place instead of emitting group-toggled:
+        # a full sidebar rebuild resets the scroll position for a frame, which
+        # reads as flicker (tag groups sit near the bottom of the list).
+        for row in getattr(self, "_member_rows", None) or []:
+            row.set_visible(expanded)
 
 
 class ConnectionRow(Gtk.ListBoxRow):
@@ -1407,6 +1462,10 @@ def _on_connection_list_motion(window, target, x, y):
             
             # Handle connection rows
             if hasattr(row, "connection"):
+                # Member rows under virtual tag groups are not drop targets.
+                if getattr(row, "_in_tag_section", False):
+                    _clear_drop_indicator(window)
+                    return Gdk.DragAction.MOVE
                 dragged = set(getattr(window, "_dragged_connections", []) or [])
                 nickname = getattr(getattr(row, "connection", None), "nickname", None)
                 if dragged and nickname in dragged:
@@ -1414,9 +1473,11 @@ def _on_connection_list_motion(window, target, x, y):
                     return Gdk.DragAction.MOVE
 
                 _show_drop_indicator(window, row, position)
-            
+
             # Handle group rows
-            elif (hasattr(row, "group_id") and hasattr(window, "_dragged_group_id")):
+            elif (hasattr(row, "group_id")
+                  and not getattr(row, "is_tag_group", False)
+                  and hasattr(window, "_dragged_group_id")):
                 # Don't show indicators on the group being dragged
                 if row.group_id == window._dragged_group_id:
                     _clear_drop_indicator(window)
@@ -1429,7 +1490,9 @@ def _on_connection_list_motion(window, target, x, y):
             elif (hasattr(row, "connection") and hasattr(window, "_dragged_group_id")):
                 # Dragging group over connection - show indicator
                 _show_drop_indicator(window, row, position)
-            elif (hasattr(row, "group_id") and getattr(window, "_dragged_connections", None)):
+            elif (hasattr(row, "group_id")
+                  and not getattr(row, "is_tag_group", False)
+                  and getattr(window, "_dragged_connections", None)):
                 _show_drop_indicator_on_group(window, row)
             else:
                 _clear_drop_indicator(window)
@@ -1640,6 +1703,10 @@ def _on_connection_list_drop(window, target, value, x, y):
                     position = "above" if relative_y < row_height / 2 else "below"
 
                     if hasattr(target_row, "group_id"):
+                        # Virtual tag groups never accept drops — a synthetic
+                        # id reaching move_connection would corrupt GroupManager.
+                        if getattr(target_row, "is_tag_group", False):
+                            return False
                         target_group_id = target_row.group_id
 
                         if position == "above":
@@ -1675,6 +1742,12 @@ def _on_connection_list_drop(window, target, value, x, y):
                                     window.group_manager.move_connection(nickname, target_group_id)
                                     changes_made = True
                     else:
+                        # Member rows under virtual tag groups are not drop
+                        # targets (a drop here would move the connection into
+                        # the reference row's real group, which reads as
+                        # "dropped into the tag group").
+                        if getattr(target_row, "_in_tag_section", False):
+                            return False
                         target_connection = getattr(target_row, "connection", None)
                         if target_connection:
                             reference_nickname = target_connection.nickname
@@ -1711,7 +1784,8 @@ def _on_connection_list_drop(window, target, value, x, y):
             group_id = value.get("group_id")
             if group_id:
                 target_row = window.connection_list.get_row_at_y(int(y))
-                if target_row and hasattr(target_row, "group_id"):
+                if (target_row and hasattr(target_row, "group_id")
+                        and not getattr(target_row, "is_tag_group", False)):
                     target_group_id = target_row.group_id
                     if target_group_id != group_id:
                         # Validate that the target group exists
