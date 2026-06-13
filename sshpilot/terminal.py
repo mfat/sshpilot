@@ -1107,10 +1107,15 @@ class TerminalWidget(Gtk.Box):
             # forwarding, terminal env tweaks, and the PTY/spawn.
             # NOTE: self.backend is the *terminal* backend (VTE vs fallback);
             # protocol backends are a different axis.
-            protocol_backend = protocol_registry().get_or_none(
-                getattr(self.connection, 'protocol', 'ssh'))
+            proto = getattr(self.connection, 'protocol', 'ssh')
+            protocol_backend = protocol_registry().get_or_none(proto)
             if protocol_backend is not None:
-                plugin_ctx = PluginContext(
+                # Scope the spawn context to the plugin that registered the
+                # protocol so a backend's ctx.settings/secrets resolve to its
+                # own namespace. host=None: build_spawn must not use ui/events.
+                pid = protocol_registry().plugin_id_for(proto) or 'core'
+                plugin_ctx = PluginContext.for_spawn(
+                    plugin_id=pid,
                     app_config=self.config,
                     connection_manager=self.connection_manager,
                     protocol_registry=protocol_registry(),

@@ -19,8 +19,12 @@ logger = logging.getLogger(__name__)
 class ProtocolRegistry:
     def __init__(self) -> None:
         self._backends: Dict[str, ProtocolBackend] = {}
+        # protocol_id -> id of the plugin that registered it (for scoping the
+        # PluginContext the terminal builds at spawn time).
+        self._plugin_ids: Dict[str, Optional[str]] = {}
 
-    def register(self, backend: ProtocolBackend) -> None:
+    def register(self, backend: ProtocolBackend, *,
+                 plugin_id: Optional[str] = None) -> None:
         pid = backend.protocol_id
         if not pid:
             raise ValueError(f"{backend!r} has an empty protocol_id")
@@ -31,8 +35,14 @@ class ProtocolRegistry:
                            pid, type(backend).__name__)
             return
         self._backends[pid] = backend
-        logger.debug("Registered protocol backend %r (%s)",
-                     pid, backend.display_name)
+        self._plugin_ids[pid] = plugin_id
+        logger.debug("Registered protocol backend %r (%s) from plugin %r",
+                     pid, backend.display_name, plugin_id)
+
+    def plugin_id_for(self, protocol_id: str) -> Optional[str]:
+        """Id of the plugin that registered ``protocol_id`` (None if unknown
+        or registered without one)."""
+        return self._plugin_ids.get(protocol_id)
 
     def get(self, protocol_id: str) -> ProtocolBackend:
         try:

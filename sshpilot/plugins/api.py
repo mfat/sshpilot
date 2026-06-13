@@ -115,6 +115,12 @@ class ProtocolBackend(abc.ABC):
         Must not block on network I/O: anything slow belongs in the child
         process itself. May raise ``ProtocolError`` with a user-presentable
         message.
+
+        Must be **stateless per connection**: derive everything from
+        ``connection.data`` and the environment. ``ctx`` here is a host-less
+        spawn context (see ``PluginContext.for_spawn``) — ``ctx.secrets`` and
+        ``ctx.settings`` are available and correctly scoped, but ``ctx.ui`` and
+        ``ctx.events`` are ``None`` and must not be used.
         """
 
     def connection_fields(self) -> List[FieldSpec]:
@@ -268,9 +274,23 @@ class PluginContext:
         self.secrets = _SecretStore(connection_manager, plugin_id)
         self.settings = _SettingStore(app_config, plugin_id)
 
+    @classmethod
+    def for_spawn(cls, *, plugin_id: str, app_config: Any,
+                  connection_manager: Any, protocol_registry: Any) -> "PluginContext":
+        """Build a host-less context for ProtocolBackend.build_spawn().
+
+        Created by the terminal at spawn time, scoped to the plugin that
+        registered the protocol. ``events``/``ui`` are None (build_spawn must
+        not touch them); ``secrets``/``settings`` work and are correctly
+        scoped, so a backend may read its own stored config when assembling
+        argv/env."""
+        return cls(plugin_id=plugin_id, app_config=app_config,
+                   connection_manager=connection_manager,
+                   protocol_registry=protocol_registry, host=None)
+
     # --- registration -------------------------------------------------
     def register_protocol(self, backend: ProtocolBackend) -> None:
-        self._protocols.register(backend)
+        self._protocols.register(backend, plugin_id=self.plugin_id)
 
     # --- connections --------------------------------------------------
     def add_connection(self, data: Dict[str, Any]) -> "ConnectionInfo":
