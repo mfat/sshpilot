@@ -284,6 +284,15 @@ class SshPilotApplication(Adw.Application):
             self.window = MainWindow(application=app, isolated=self.isolated_mode)
             self.window.present()
 
+            # The window UI is built and presented and plugins are bound, so
+            # it is now safe for plugins to do live UI/terminal work.
+            try:
+                host = getattr(self.window, 'plugin_host', None)
+                if host is not None:
+                    host.dispatch_app_started()
+            except Exception:
+                logger.exception("Plugin app_started dispatch failed")
+
         # Start the in-process passphrase-prompt server so SSH askpass prompts
         # render as modal children of the main window instead of stray helper
         # windows that can hide behind it on Wayland. start() is idempotent.
@@ -298,6 +307,29 @@ class SshPilotApplication(Adw.Application):
     def on_shutdown(self, app):
         """Clean up all resources when application is shutting down"""
         logger.info("Application shutdown initiated, cleaning up...")
+
+        # Notify plugins first (before any teardown), then best-effort
+        # deactivate them.
+        try:
+            host = getattr(self, 'plugin_host', None)
+            if host is None and self.window is not None:
+                host = getattr(self.window, 'plugin_host', None)
+            if host is not None:
+                host.dispatch_app_shutdown()
+        except Exception:
+            logger.exception("Plugin app_shutdown dispatch failed")
+        try:
+            for lp in (getattr(self, 'loaded_plugins', None)
+                       or (getattr(self.window, 'loaded_plugins', None)
+                           if self.window is not None else None)
+                       or []):
+                try:
+                    lp.instance.deactivate()
+                except Exception:
+                    logger.exception("Plugin %r deactivate failed",
+                                     getattr(lp, 'plugin_id', '?'))
+        except Exception:
+            pass
 
         # Stop the askpass prompt server and unlink its socket.
         try:

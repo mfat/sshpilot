@@ -773,6 +773,15 @@ class TerminalManager:
             logger.debug(
                 f"Terminal reconnected after settings update: {terminal.connection.nickname}")
 
+        # Notify plugins (session_opened). The host dedupes reconnects by
+        # terminal identity, so this is safe to call on every connect.
+        try:
+            host = getattr(self.window, 'plugin_host', None)
+            if host is not None:
+                host.dispatch_session_opened(terminal)
+        except Exception:
+            logger.exception("Plugin session_opened dispatch failed")
+
     def on_terminal_disconnected(self, terminal):
         # The just-disconnected terminal has already flipped its own
         # is_connected flag; recompute the connection's aggregate state so a
@@ -789,6 +798,14 @@ class TerminalManager:
         logger.info(
             f"Terminal disconnected: {terminal.connection.nickname} ({terminal.connection.username}@{host_value})"
         )
+
+        # Notify plugins (session_closed).
+        try:
+            host = getattr(self.window, 'plugin_host', None)
+            if host is not None:
+                host.dispatch_session_closed(terminal)
+        except Exception:
+            logger.exception("Plugin session_closed dispatch failed")
 
     def on_terminal_title_changed(self, terminal, title):
         page = self.window._page_for_child(terminal)

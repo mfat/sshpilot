@@ -612,15 +612,31 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         key_dir = Path(get_config_dir()) if effective_isolated else None
         self.connection_manager = ConnectionManager(self.config, isolated_mode=effective_isolated)
 
+        # Menu section that plugin pages append to (built before create_menu
+        # runs during setup_ui; the host mutates it on bind).
+        self._plugins_menu_section = Gio.Menu()
+
         # Load plugins once per process (cached on the application object so a
         # second window doesn't re-activate them) before any terminal can spawn.
+        # The PluginHost (event bus + UI host) is likewise process-wide; it is
+        # bound to the first window's live UI at the end of setup_ui.
         try:
             from .plugins.loader import load_plugins
+            from .plugins.host import PluginHost
+            host = getattr(app, 'plugin_host', None) if app else None
+            if host is None:
+                host = PluginHost(connection_manager=self.connection_manager)
+                if app is not None:
+                    setattr(app, 'plugin_host', host)
+            self.plugin_host = host
+            if app is not None:
+                setattr(app, 'plugin_host', host)
             loaded_plugins = getattr(app, 'loaded_plugins', None) if app else None
             if loaded_plugins is None:
                 loaded_plugins = load_plugins(
                     app_config=self.config,
                     connection_manager=self.connection_manager,
+                    plugin_host=host,
                 )
                 if app is not None:
                     setattr(app, 'loaded_plugins', loaded_plugins)
@@ -628,6 +644,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception:
             logger.exception("Plugin loading failed")
             self.loaded_plugins = []
+            self.plugin_host = None
 
         self.key_manager = KeyManager(key_dir)
         self.group_manager = GroupManager(self.config)
@@ -1673,6 +1690,15 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.toast_overlay = Adw.ToastOverlay()
         self.toast_overlay.set_child(main_box)
         self.set_content(self.toast_overlay)
+
+        # The window UI now exists (tab_view, toast_overlay, the plugins menu
+        # section). Bind the plugin host so plugin pages, toasts, events, and
+        # terminal control go live. Idempotent: only the first window binds.
+        try:
+            if getattr(self, 'plugin_host', None) is not None:
+                self.plugin_host.bind_window(self)
+        except Exception:
+            logger.exception("Plugin host bind_window failed")
 
     def _set_sidebar_widget(self, widget: Gtk.Widget) -> None:
         if HAS_OVERLAY_SPLIT:
@@ -3557,6 +3583,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
         menu.append('About', 'app.about')
         menu.append('Quit', 'app.quit')
+
+        # Plugin-contributed pages land here under a "Tools" section. The
+        # section object is shared/mutable, so items the plugin host appends
+        # after this menu is built still appear.
+        section = getattr(self, '_plugins_menu_section', None)
+        if section is not None:
+            menu.append_section('Tools', section)
 
         return menu
 
