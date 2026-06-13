@@ -39,6 +39,7 @@ exclude = ["packaging*", "screenshots*"]
 # Built-in plugin manifests are read from disk by the plugin loader.
 # setuptools does not glob package names here: add a key per built-in plugin.
 "sshpilot.plugins.builtin.ssh_protocol" = ["plugin.json"]
+"sshpilot.plugins.builtin.telnet_protocol" = ["plugin.json"]
 
 [project.urls]
 Homepage = "https://github.com/mfat/sshpilot"

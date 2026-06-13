@@ -164,7 +164,8 @@ class TerminalManager:
                         app = None
                 # sshPilot connects in native mode only; connect() delegates to
                 # native_connect(), so either entry point prepares a native command.
-                if not getattr(connection, 'ssh_cmd', None):
+                if (getattr(connection, 'protocol', 'ssh') == 'ssh'
+                        and not getattr(connection, 'ssh_cmd', None)):
                     prepare = (
                         connection.native_connect()
                         if hasattr(connection, 'native_connect')
@@ -242,7 +243,8 @@ class TerminalManager:
                     except Exception:
                         app = None
                 # Native-only connection (connect() delegates to native_connect()).
-                if not getattr(connection, 'ssh_cmd', None):
+                if (getattr(connection, 'protocol', 'ssh') == 'ssh'
+                        and not getattr(connection, 'ssh_cmd', None)):
                     prepare = (
                         connection.native_connect()
                         if hasattr(connection, 'native_connect')

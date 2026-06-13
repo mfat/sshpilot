@@ -215,6 +215,8 @@ _SSH_FAILURE_MARKERS = (
     'connection reset',
     'connection closed',
     'broken pipe',
+    # telnet's connect failure ("telnet: Unable to connect to remote host")
+    'unable to connect',
 )
 
 # Positive login evidence — appears in ssh -v output or login banners once the
@@ -238,6 +240,8 @@ _SSH_NOISE_PREFIXES = (
     'authenticated',
     'connecting to',
     'pledge',
+    # telnet's pre-connect chatter ("Trying 10.0.0.5...")
+    'trying ',
 )
 
 
@@ -965,6 +969,11 @@ class TerminalWidget(Gtk.Box):
             logger.error('Reconnect requested without an active connection')
             return False
 
+        if getattr(connection, 'protocol', 'ssh') != 'ssh':
+            # Plugin protocols rebuild their command statelessly in
+            # build_spawn(); there is no prepared SSH command to refresh.
+            return True
+
         try:
             if hasattr(connection, 'ssh_cmd'):
                 connection.ssh_cmd = []
@@ -1071,12 +1080,14 @@ class TerminalWidget(Gtk.Box):
             # (the agent is never disabled). Done here, on the connect worker
             # thread, so the GLib main loop stays free and OUR askpass dialog can
             # render for a not-stored passphrase. Best-effort; never blocks spawn.
-            try:
-                preload = getattr(self.connection, '_preload_keys_into_agent', None)
-                if callable(preload):
-                    preload(self.config)
-            except Exception as preload_exc:
-                logger.debug(f"Key preload skipped/failed: {preload_exc}")
+            # SSH-only: plugin protocols have no agent/keys.
+            if getattr(self.connection, 'protocol', 'ssh') == 'ssh':
+                try:
+                    preload = getattr(self.connection, '_preload_keys_into_agent', None)
+                    if callable(preload):
+                        preload(self.config)
+                except Exception as preload_exc:
+                    logger.debug(f"Key preload skipped/failed: {preload_exc}")
 
             GLib.idle_add(self._setup_ssh_terminal)
         except Exception as e:
@@ -1402,11 +1413,10 @@ class TerminalWidget(Gtk.Box):
             # Store process info for cleanup
             with process_manager.lock:
                 # Determine command type based on connection type
-                command_type = (
-                    'bash'
-                    if hasattr(self.connection, 'hostname') and self.connection.hostname == 'localhost'
-                    else 'ssh'
-                )
+                if hasattr(self.connection, 'hostname') and self.connection.hostname == 'localhost':
+                    command_type = 'bash'
+                else:
+                    command_type = getattr(self.connection, 'protocol', 'ssh') or 'ssh'
                 process_manager.processes[pid] = {
                     'terminal': weakref.ref(self),
                     'start_time': datetime.now(),
@@ -1683,8 +1693,11 @@ class TerminalWidget(Gtk.Box):
                 return ConnectionState.DISCONNECTED, 'Connection lost'
             return ConnectionState.FAILED, 'Connection timed out'
 
-        # ssh's own fatal errors exit with 255.
-        if exit_code == 255:
+        # ssh's own fatal errors exit with 255. Plugin protocols don't reserve
+        # an exit code: any non-zero exit before a session was established is
+        # a failed connection.
+        is_ssh = getattr(getattr(self, 'connection', None), 'protocol', 'ssh') == 'ssh'
+        if (exit_code == 255 and is_ssh) or (exit_code and not is_ssh):
             if was_connected:
                 return ConnectionState.DISCONNECTED, 'Connection lost'
             return ConnectionState.FAILED, (self.last_error_message or 'Connection failed')

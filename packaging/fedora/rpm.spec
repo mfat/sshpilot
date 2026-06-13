@@ -35,6 +35,8 @@ Requires:       libsecret
 Requires:       sshpass
 Requires:       openssh-askpass
 Requires:       webkitgtk6.0
+# For the built-in telnet protocol plugin (degrades gracefully if absent)
+Recommends:     telnet
 
 %description
 SSH Pilot is a user-friendly SSH connection manager featuring built-in tabbed terminal, remote file management, key transfer, port forwarding and more. It's an alternative to Putty, Termius and Mobaxterm.

@@ -8,6 +8,8 @@ url='https://github.com/mfat/sshpilot'
 license=('GPL-3.0-only')
 depends=('python')
 makedepends=()
+# For the built-in telnet protocol plugin (degrades gracefully if absent)
+optdepends=('inetutils: telnet protocol support')
 arch=('any')
 sha256sums=('28d8caf38558a0f50bb052a259358c49fdb26a3ade902e9ad3de16353a5b55f5')
 source=("${pkgname}-${pkgver}.tar.gz::${url}/archive/refs/tags/v${pkgver}.tar.gz")
