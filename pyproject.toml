@@ -40,8 +40,9 @@ exclude = ["packaging*", "screenshots*"]
 # setuptools does not glob package names here: add a key per built-in plugin.
 "sshpilot.plugins.builtin.ssh_protocol" = ["plugin.json"]
 "sshpilot.plugins.builtin.telnet_protocol" = ["plugin.json"]
-# Example plugin shipped for reference (not auto-loaded).
+# Example plugins shipped for reference (not auto-loaded).
 "sshpilot.plugins.examples.mock_vps" = ["plugin.json"]
+"sshpilot.plugins.examples.easyenv_workspaces" = ["plugin.json", "README.md", "stub/easyenv"]
 
 [project.urls]
 Homepage = "https://github.com/mfat/sshpilot"

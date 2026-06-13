@@ -8,7 +8,9 @@ change without notice.
 
 - **The only import you need:** `sshpilot.plugins.api`.
 - **Current API version:** `1.2` (see [Versioning](#versioning)).
-- **Worked example:** [`sshpilot/plugins/examples/mock_vps/`](sshpilot/plugins/examples/mock_vps/) — a complete mock VPS provider exercising every capability below.
+- **Worked examples** — two provider archetypes:
+  - [`examples/mock_vps/`](sshpilot/plugins/examples/mock_vps/) — an **IP/SSH** provider: provision → get an IP → `add_connection` a normal SSH connection.
+  - [`examples/easyenv_workspaces/`](sshpilot/plugins/examples/easyenv_workspaces/) — a **CLI/mesh** provider (real partner [easyenv.io](https://easyenv.io/cli)): a protocol backend whose connection *is* a CLI command, plus a management page. See [CLI-driven plugins](#11-cli-driven-plugins).
 
 ---
 
@@ -270,3 +272,48 @@ must be made on the UI thread.
 
 See the full [`mock_vps`](sshpilot/plugins/examples/mock_vps/) example for all of
 the above wired together.
+
+---
+
+## 11. CLI-driven plugins
+
+Many providers ship a CLI that already does the work (provision, list, status,
+connect). You don't need an HTTP SDK — shell out to the CLI. Two patterns:
+
+**A. The connection *is* a CLI command (mesh / no raw SSH params).** Some
+providers (e.g. [easyenv.io](https://easyenv.io/cli): `easyenv workspace ssh <id>`)
+connect over their own mesh and never expose host/port/user/key. Model this as
+a **protocol backend** whose `build_spawn` returns the CLI command as argv —
+exactly like the built-in telnet backend:
+
+```python
+class EasyEnvBackend(ProtocolBackend):
+    protocol_id = "easyenv"
+    display_name = "EasyEnv Workspace"
+    def capabilities(self): return frozenset()   # mesh: no SFTP/forward/copy-key
+    def connection_fields(self):
+        return [FieldSpec(key="workspace_id", label="Workspace ID", required=True)]
+    def build_spawn(self, connection, ctx):
+        wsid = (connection.data or {}).get("workspace_id")
+        if not wsid: raise ProtocolError("No workspace id.")
+        return SpawnSpec(argv=["easyenv", "workspace", "ssh", str(wsid)], env=dict(os.environ))
+```
+
+Register it in `activate`, then create connections from your page with
+`ctx.add_connection({"protocol": "easyenv", "nickname": name, "workspace_id": id})`
+and open them with `ctx.open_connection(name)`. `capabilities() == frozenset()`
+hides the SSH-only UI (SFTP, port-forward, ssh-copy-id, system terminal) that
+doesn't apply.
+
+**B. Provision, then make a normal SSH connection (IP-based).** If the provider
+gives you an IP/host, just `ctx.add_connection({...,"protocol":"ssh","host":ip})`
+(see `mock_vps`).
+
+**Rules for both:**
+- **Run the CLI off the UI thread** (`threading.Thread` + `subprocess.run(..., timeout=…)`), then marshal results back with `ctx.run_on_ui_thread`. `build_spawn` itself must not block — it only assembles argv.
+- **Parse defensively.** Prefer `--output json` / `--json`, but tolerate missing/renamed fields; don't hard-assert a schema.
+- **Flatpak:** inside the sandbox the host CLI isn't on `PATH`. Detect `os.path.exists("/.flatpak-info")` and prefix calls with `["flatpak-spawn", "--host"]` — both your page's `subprocess` calls **and** the `build_spawn` argv (the terminal child is sandboxed too). sshPilot's manifest already grants `--talk-name=org.freedesktop.Flatpak`.
+- **Let the CLI own its credentials.** If the tool keychains its own token (e.g. `easyenv auth login`), detect state (`auth whoami`) and optionally drive login; don't duplicate the token in `ctx.secrets`.
+
+See [`easyenv_workspaces`](sshpilot/plugins/examples/easyenv_workspaces/) for the
+complete pattern (it bundles a local stub so it runs with no account).
