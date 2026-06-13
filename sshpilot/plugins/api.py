@@ -21,7 +21,8 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 # (major, minor). Bump minor for additive changes, major for breaking ones.
-API_VERSION: Tuple[int, int] = (1, 0)
+# 1.1: PluginContext.delete_secret; get_secret/set_secret wired to the keyring.
+API_VERSION: Tuple[int, int] = (1, 1)
 
 
 class Capability(enum.Enum):
@@ -147,16 +148,31 @@ class PluginContext:
     # --- data access (narrow, stable wrappers) -------------------------
     def add_connection(self, data: Dict[str, Any]) -> Any:
         """Create and persist a new connection (used by provider plugins,
-        e.g. VPS provisioning). Returns the Connection object."""
-        return self.connection_manager.add_connection_from_data(data)  # thin
-        # wrapper you expose on ConnectionManager; raises if invalid.
+        e.g. VPS provisioning). Returns the Connection object; raises
+        ValueError if the data is invalid."""
+        return self.connection_manager.add_connection_from_data(data)
+
+    @staticmethod
+    def _check_secret_args(plugin_id: str, key: str) -> None:
+        if not plugin_id or '/' in plugin_id:
+            raise ValueError(f"Invalid plugin id {plugin_id!r}")
+        if not key:
+            raise ValueError("Secret key must be non-empty")
 
     def get_secret(self, plugin_id: str, key: str) -> Optional[str]:
-        """Namespaced keyring read: secrets live under sshpilot/plugin/<id>."""
-        raise NotImplementedError("wire to your keyring layer in phase 3")
+        """Namespaced keyring read: secrets live under sshpilot-plugin/<id>."""
+        self._check_secret_args(plugin_id, key)
+        return self.connection_manager.get_plugin_secret(plugin_id, key)
 
     def set_secret(self, plugin_id: str, key: str, value: str) -> None:
-        raise NotImplementedError("wire to your keyring layer in phase 3")
+        self._check_secret_args(plugin_id, key)
+        if not self.connection_manager.store_plugin_secret(plugin_id, key, value):
+            raise RuntimeError("No secure storage backend available")
+
+    def delete_secret(self, plugin_id: str, key: str) -> bool:
+        """Added in API 1.1."""
+        self._check_secret_args(plugin_id, key)
+        return bool(self.connection_manager.delete_plugin_secret(plugin_id, key))
 
 
 class SshPilotPlugin(abc.ABC):

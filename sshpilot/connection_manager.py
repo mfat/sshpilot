@@ -1895,6 +1895,26 @@ class ConnectionManager(GObject.Object):
             logger.debug(f"Deleted stored password for {username}@{host}")
         return removed_any
 
+    # --- Plugin secrets ----------------------------------------------------
+    #
+    # Namespaced per plugin id so a plugin can never read another plugin's
+    # (or a connection's) secrets. Reuses the store_password() dual-backend
+    # path with a reserved host identifier: real SSH hosts are stored under
+    # their hostname, plugin secrets under 'sshpilot-plugin/<id>'.
+
+    @staticmethod
+    def _plugin_secret_host(plugin_id: str) -> str:
+        return f"sshpilot-plugin/{plugin_id}"
+
+    def store_plugin_secret(self, plugin_id: str, key: str, value: str) -> bool:
+        return bool(self.store_password(self._plugin_secret_host(plugin_id), key, value))
+
+    def get_plugin_secret(self, plugin_id: str, key: str) -> Optional[str]:
+        return self.get_password(self._plugin_secret_host(plugin_id), key)
+
+    def delete_plugin_secret(self, plugin_id: str, key: str) -> bool:
+        return self.delete_password(self._plugin_secret_host(plugin_id), key)
+
     def store_key_passphrase(self, key_path: str, passphrase: str) -> bool:
         """Store key passphrase securely in system keyring"""
         # Use the unified passphrase storage from askpass_utils
@@ -2496,6 +2516,56 @@ class ConnectionManager(GObject.Object):
 
         _reconcile('identity_files', 'keyfile')
         _reconcile('certificate_files', 'certificate')
+
+    def add_connection_from_data(self, data: Dict[str, Any]) -> Connection:
+        """Create, persist, and announce a new connection from a data dict.
+
+        The programmatic counterpart of the connection dialog's save path,
+        exposed to plugins via PluginContext.add_connection (e.g. a VPS
+        provider provisioning hosts). Raises ValueError on invalid data."""
+        data = dict(data)
+        data.setdefault('protocol', 'ssh')
+
+        # Validate via the protocol backend (late import: plugins.api/registry
+        # never import connection_manager, so there is no cycle).
+        from .plugins.registry import protocol_registry
+        backend = protocol_registry().get_or_none(data['protocol'])
+        if backend is None:
+            raise ValueError(f"Unknown protocol {data['protocol']!r}")
+
+        errors = list(backend.validate(data) or [])
+        nickname = (data.get('nickname') or data.get('host')
+                    or data.get('hostname') or '').strip()
+        if not nickname:
+            errors.append("A nickname or host is required.")
+        elif self.find_connection_by_nickname(nickname):
+            errors.append(f"A connection named {nickname!r} already exists.")
+        if errors:
+            raise ValueError('; '.join(errors))
+        data['nickname'] = nickname
+
+        connection = Connection(dict(data))
+        if self.isolated_mode:
+            connection.isolated_config = True
+            connection.config_root = self.ssh_config_path
+            connection.data['isolated_mode'] = True
+            if self.ssh_config_path:
+                connection.data['config_root'] = self.ssh_config_path
+
+        self._register_connection(connection)
+        # update_connection persists to the protocol's store (ssh_config for
+        # SSH — including password keyring handling — or the non-SSH JSON
+        # store) and emits 'connection-updated'.
+        if not self.update_connection(connection, dict(data)):
+            try:
+                self.connections.remove(connection)
+            except ValueError:
+                pass
+            raise RuntimeError("Failed to persist connection")
+
+        # Announce on the main loop: provider plugins may call from workers.
+        GLib.idle_add(self.emit, 'connection-added', connection)
+        return connection
 
     def update_connection(self, connection: Connection, new_data: Dict[str, Any]) -> bool:
         """Update an existing connection"""
