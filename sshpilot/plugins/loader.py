@@ -111,7 +111,7 @@ def _instantiate(module, meta: dict) -> Optional[SshPilotPlugin]:
     return cls()
 
 
-def _load_builtin(ctx: PluginContext,
+def _load_builtin(make_ctx,
                   disabled: frozenset) -> List[LoadedPlugin]:
     loaded: List[LoadedPlugin] = []
     try:
@@ -134,7 +134,7 @@ def _load_builtin(ctx: PluginContext,
             instance = _instantiate(module, meta)
             if instance is None:
                 continue
-            instance.activate(ctx)
+            instance.activate(make_ctx(pid))
             loaded.append(LoadedPlugin(pid, meta.get("name", pid),
                                        instance, True, str(child)))
         except Exception:
@@ -142,7 +142,7 @@ def _load_builtin(ctx: PluginContext,
     return loaded
 
 
-def _load_user(ctx: PluginContext,
+def _load_user(make_ctx,
                enabled: frozenset) -> List[LoadedPlugin]:
     """User plugins are opt-in: only ids the user enabled in preferences
     are imported at all (arbitrary code execution should be a deliberate
@@ -172,7 +172,7 @@ def _load_user(ctx: PluginContext,
             instance = _instantiate(module, meta)
             if instance is None:
                 continue
-            instance.activate(ctx)
+            instance.activate(make_ctx(pid))
             loaded.append(LoadedPlugin(pid, meta.get("name", pid),
                                        instance, False, str(child)))
         except Exception:
@@ -180,14 +180,26 @@ def _load_user(ctx: PluginContext,
     return loaded
 
 
-def load_plugins(*, app_config, connection_manager) -> List[LoadedPlugin]:
+def load_plugins(*, app_config, connection_manager,
+                 plugin_host=None) -> List[LoadedPlugin]:
     """Call once at startup, after ConnectionManager exists but before the
-    main window spawns any terminals. Returns descriptors for a future
+    main window spawns any terminals. Returns descriptors for the Plugins
     preferences page. Never raises: a broken plugin must not take the app
-    down."""
-    ctx = PluginContext(app_config=app_config,
-                        connection_manager=connection_manager,
-                        protocol_registry=protocol_registry())
+    down.
+
+    ``plugin_host`` is the process-wide PluginHost (event bus + UI host); it
+    may be None in headless contexts (the protocol backends don't need it)."""
+    registry = protocol_registry()
+
+    def make_ctx(plugin_id: str) -> PluginContext:
+        # One context per plugin so ctx.plugin_id is known and the scoped
+        # secrets/settings/events/ui facades work without the plugin passing
+        # its id around.
+        return PluginContext(plugin_id=plugin_id,
+                             app_config=app_config,
+                             connection_manager=connection_manager,
+                             protocol_registry=registry,
+                             host=plugin_host)
 
     def _id_set(key: str) -> frozenset:
         try:
@@ -195,8 +207,8 @@ def load_plugins(*, app_config, connection_manager) -> List[LoadedPlugin]:
         except Exception:
             return frozenset()
 
-    loaded = _load_builtin(ctx, disabled=_id_set("plugins.disabled"))
-    loaded += _load_user(ctx, enabled=_id_set("plugins.enabled"))
+    loaded = _load_builtin(make_ctx, disabled=_id_set("plugins.disabled"))
+    loaded += _load_user(make_ctx, enabled=_id_set("plugins.enabled"))
 
     if protocol_registry().get_or_none("ssh") is None:
         # Plugin zero failed — the app is useless without it, so this is
