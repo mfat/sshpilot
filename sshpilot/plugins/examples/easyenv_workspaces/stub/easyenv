@@ -1,0 +1,186 @@
+#!/usr/bin/env python3
+"""Local stand-in for the easyenv CLI (github.com/donedeploy/easyenv-cli).
+
+It mirrors the documented command surface so the EasyEnv Workspaces plugin can
+be demoed end to end with NO easyenv account, network, or real binary. The
+SAME plugin drives this stub or the real `easyenv` depending on which is first
+on PATH — pointing at the real binary (plus `easyenv auth login`) is a drop-in.
+
+State lives in a local JSON file (never touches the real ~/.config/easyenv/).
+`workspace ssh <id>` execs a real interactive shell, so the sshPilot terminal
+tab opens a genuinely working session — exactly how the real mesh shell feels.
+
+Supported: --version; auth whoami|login|logout; account list|use;
+workspace list|create|get|stop|resume|delete (… --output json); workspace ssh.
+"""
+
+import json
+import os
+import sys
+import time
+
+VERSION = "0.5.0-stub"
+
+
+def _state_path():
+    base = os.environ.get("XDG_STATE_HOME") or os.path.join(
+        os.path.expanduser("~"), ".local", "state")
+    return os.path.join(base, "easyenv-stub.json")
+
+
+def _load():
+    try:
+        with open(_state_path(), "r", encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        # Seed with a logged-in account and one running workspace so the
+        # plugin shows something immediately.
+        return {
+            "account": "demo@easyenv.io",
+            "logged_in": True,
+            "next_id": 2,
+            "workspaces": [
+                {"id": "ws-001", "name": "demo-sandbox", "status": "running",
+                 "template": "python_devenv", "ttl": "8h"},
+            ],
+        }
+
+
+def _save(state):
+    path = _state_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(state, fh, indent=2)
+
+
+def _opt(args, name):
+    """Return the value following --name, or None."""
+    if name in args:
+        i = args.index(name)
+        if i + 1 < len(args):
+            return args[i + 1]
+    return None
+
+
+def _has(args, name):
+    return name in args
+
+
+def _emit(state, args, payload, human):
+    """Print JSON when --output json was requested, else a human line."""
+    if _opt(args, "--output") == "json":
+        print(json.dumps(payload, indent=2))
+    else:
+        print(human)
+
+
+def main(argv):
+    args = argv[1:]
+    if not args or args[0] in ("--version", "version"):
+        print(VERSION)
+        return 0
+
+    state = _load()
+    group = args[0]
+    rest = args[1:]
+
+    if group == "auth":
+        sub = rest[0] if rest else ""
+        if sub == "whoami":
+            if state.get("logged_in"):
+                print(f"Logged in as {state.get('account')}")
+                return 0
+            print("Not logged in", file=sys.stderr)
+            return 1
+        if sub == "login":
+            state["logged_in"] = True
+            token = _opt(rest, "--token")
+            if token:
+                state["account"] = state.get("account") or "demo@easyenv.io"
+            _save(state)
+            print(f"Saved token for {state.get('account')}")
+            return 0
+        if sub == "logout":
+            state["logged_in"] = False
+            _save(state)
+            print("Logged out")
+            return 0
+        if sub == "token":
+            print("stub-token-xxxxxxxx")
+            return 0
+
+    if group == "account":
+        sub = rest[0] if rest else ""
+        if sub == "list":
+            _emit(state, rest, [{"id": "acct-1", "name": state.get("account")}],
+                  state.get("account", ""))
+            return 0
+        if sub == "use":
+            print(f"Using account {rest[1] if len(rest) > 1 else ''}")
+            return 0
+
+    if group == "workspace":
+        sub = rest[0] if rest else ""
+        wss = state["workspaces"]
+
+        if sub == "list":
+            _emit(state, rest, wss,
+                  "\n".join(f"{w['id']}  {w['name']}  {w['status']}" for w in wss))
+            return 0
+
+        if sub == "get":
+            wsid = rest[1] if len(rest) > 1 else ""
+            ws = next((w for w in wss if w["id"] == wsid or w["name"] == wsid), None)
+            if ws is None:
+                print(f"workspace {wsid!r} not found", file=sys.stderr)
+                return 1
+            detail = dict(ws, machines=[{"name": "main", "status": ws["status"]}])
+            _emit(state, rest, detail, json.dumps(detail))
+            return 0
+
+        if sub == "create":
+            name = _opt(rest, "--name") or f"ws-{int(time.time())}"
+            wsid = f"ws-{state['next_id']:03d}"
+            state["next_id"] += 1
+            ws = {"id": wsid, "name": name, "status": "running",
+                  "template": _opt(rest, "--template") or "custom",
+                  "ttl": _opt(rest, "--ttl") or "8h"}
+            wss.append(ws)
+            _save(state)
+            _emit(state, rest, ws, f"Created {wsid} ({name}). 1 machine, 12s boot.")
+            return 0
+
+        if sub in ("stop", "resume", "delete"):
+            wsid = rest[1] if len(rest) > 1 else ""
+            ws = next((w for w in wss if w["id"] == wsid or w["name"] == wsid), None)
+            if ws is None:
+                print(f"workspace {wsid!r} not found", file=sys.stderr)
+                return 1
+            if sub == "delete":
+                wss.remove(ws)
+            else:
+                ws["status"] = "stopped" if sub == "stop" else "running"
+            _save(state)
+            print(f"{sub} {wsid}: ok")
+            return 0
+
+        if sub == "ssh":
+            wsid = rest[1] if len(rest) > 1 else ""
+            machine = _opt(rest, "--machine") or "main"
+            ws = next((w for w in wss if w["id"] == wsid or w["name"] == wsid), None)
+            label = ws["name"] if ws else wsid
+            sys.stdout.write(
+                f"[easyenv-stub] connected to workspace {label} "
+                f"(machine: {machine}) over mesh. Ctrl-D to exit.\n")
+            sys.stdout.flush()
+            # Replace this process with a real interactive shell so the
+            # terminal tab is a genuinely usable session.
+            shell = os.environ.get("SHELL", "/bin/bash")
+            os.execvp(shell, [shell, "-i"])
+
+    print(f"easyenv-stub: unsupported command: {' '.join(args)}", file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
