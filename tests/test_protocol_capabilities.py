@@ -32,7 +32,7 @@ def fresh_registry(monkeypatch):
 def _load_ssh_backend():
     from sshpilot.plugins.builtin.ssh_protocol import Plugin
     from sshpilot.plugins.api import PluginContext
-    ctx = PluginContext(app_config=None, connection_manager=None,
+    ctx = PluginContext(plugin_id="ssh", app_config=None, connection_manager=None,
                         protocol_registry=registry_mod.protocol_registry())
     Plugin().activate(ctx)
 

@@ -27,7 +27,7 @@ def fresh_registry(monkeypatch, tmp_path):
 
 
 def _ctx():
-    return PluginContext(app_config=None, connection_manager=None,
+    return PluginContext(plugin_id="telnet", app_config=None, connection_manager=None,
                          protocol_registry=registry_mod.protocol_registry())
 
 

@@ -28,7 +28,7 @@ class FakeConfig:
 def fresh_registry(monkeypatch):
     monkeypatch.setattr(registry_mod, "_registry", None)
     from sshpilot.plugins.builtin.ssh_protocol import Plugin
-    ctx = PluginContext(app_config=None, connection_manager=None,
+    ctx = PluginContext(plugin_id="ssh", app_config=None, connection_manager=None,
                         protocol_registry=registry_mod.protocol_registry())
     Plugin().activate(ctx)
 
@@ -101,7 +101,10 @@ def test_unknown_protocol_rejected(manager):
 
 
 def test_plugin_context_add_connection_delegates(manager):
-    ctx = PluginContext(app_config=manager.config, connection_manager=manager,
+    ctx = PluginContext(plugin_id="mock-vps", app_config=manager.config,
+                        connection_manager=manager,
                         protocol_registry=registry_mod.protocol_registry())
-    conn = ctx.add_connection({'nickname': 'viactx', 'hostname': 'ctx.example.com'})
-    assert conn in manager.connections
+    info = ctx.add_connection({'nickname': 'viactx', 'hostname': 'ctx.example.com'})
+    # add_connection returns a stable ConnectionInfo, not the internal object.
+    assert info.nickname == 'viactx'
+    assert any(c.nickname == 'viactx' for c in manager.connections)

@@ -19,6 +19,7 @@ from sshpilot.ssh_connection_builder import SSHConnectionCommand
 
 def _ctx(config=None, connection_manager=None):
     return PluginContext(
+        plugin_id="ssh",
         app_config=config,
         connection_manager=connection_manager,
         protocol_registry=ProtocolRegistry(),

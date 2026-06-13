@@ -40,7 +40,8 @@ class FakeStoreManager:
 
 
 def _ctx(manager):
-    return PluginContext(app_config=None, connection_manager=manager,
+    return PluginContext(plugin_id="test-plugin", app_config=None,
+                         connection_manager=manager,
                          protocol_registry=ProtocolRegistry())
 
 
