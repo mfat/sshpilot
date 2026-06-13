@@ -1,0 +1,5 @@
+{
+  "id": "mock-vps",
+  "name": "Mock VPS Provider",
+  "api_version": 1
+}
