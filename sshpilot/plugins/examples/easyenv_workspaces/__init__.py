@@ -250,16 +250,21 @@ def _looks_routable(addr):
 _AVATAR_PALETTE = ("#e95420", "#3776ab", "#3c873a", "#76b900",
                    "#336791", "#00add8", "#8250df", "#d83b01")
 _CARD_CSS = """
-.ee-pill { border-radius: 99px; padding: 2px 10px; font-weight: 700;
+.ee-pill { border-radius: 99px; padding: 3px 11px 3px 9px; font-weight: 700;
            background-color: alpha(currentColor, 0.15); }
+.ee-dot { border-radius: 99px; background-color: currentColor;
+          min-width: 7px; min-height: 7px; }
 .ee-terminated { color: #a07be0; }
 .ee-mono { font-family: monospace; }
-.ee-avatar { border-radius: 6px; color: #ffffff; font-weight: 700;
+.ee-avatar { border-radius: 7px; color: #ffffff; font-weight: 700;
              min-width: 22px; min-height: 22px; }
 .ee-c0{background:#e95420;} .ee-c1{background:#3776ab;} .ee-c2{background:#3c873a;}
 .ee-c3{background:#76b900;} .ee-c4{background:#336791;} .ee-c5{background:#00add8;}
 .ee-c6{background:#8250df;} .ee-c7{background:#d83b01;}
-.ee-logo { border-radius: 14px; background: alpha(@accent_bg_color, 1.0); }
+.ee-logo { border-radius: 16px; background: @accent_bg_color; color: #ffffff; }
+.ee-card { transition: box-shadow 160ms ease, border-color 160ms ease; }
+.ee-card:hover { box-shadow: 0 10px 26px -14px rgba(0,0,0,0.65);
+                 border-color: alpha(@accent_color, 0.55); }
 """
 _css_loaded = False
 
@@ -1103,11 +1108,22 @@ class Plugin(SshPilotPlugin):
     # --- card --------------------------------------------------------
     @staticmethod
     def _status_pill(cv):
-        p = Gtk.Label(label=cv["status_label"])
-        p.add_css_class("ee-pill")
-        p.add_css_class(cv["status_class"])
-        p.set_halign(Gtk.Align.START)
-        return p
+        cls = cv["status_class"]
+        pill = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        pill.add_css_class("ee-pill")
+        pill.add_css_class(cls)
+        pill.set_halign(Gtk.Align.START)
+        pill.set_valign(Gtk.Align.CENTER)
+        dot = Gtk.Box()
+        dot.add_css_class("ee-dot")
+        dot.add_css_class(cls)
+        dot.set_valign(Gtk.Align.CENTER)
+        dot.set_size_request(7, 7)
+        lbl = Gtk.Label(label=cv["status_label"])
+        lbl.add_css_class(cls)
+        pill.append(dot)
+        pill.append(lbl)
+        return pill
 
     @staticmethod
     def _avatar(name):
@@ -1138,6 +1154,7 @@ class Plugin(SshPilotPlugin):
     def _build_card(self, cv):
         card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         card.add_css_class("card")
+        card.add_css_class("ee-card")
         # Fixed width so cards form a tidy grid and pack left instead of
         # stretching to the full row width when there are only a few.
         card.set_size_request(330, -1)
