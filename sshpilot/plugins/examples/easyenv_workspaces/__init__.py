@@ -32,6 +32,7 @@ import json
 import logging
 import threading
 import time
+from datetime import datetime, timezone
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -178,6 +179,51 @@ def _display_status(status):
     key = str(status or "").lower()
     return _STATUS_LABELS.get(
         key, (str(status or "unknown")).replace("_", " ").title())
+
+
+# --- time / detail formatting (for the per-workspace details dialog) -------
+
+def _parse_iso(s):
+    if not s:
+        return None
+    try:
+        return datetime.fromisoformat(str(s).replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+
+
+def _humanize_delta(seconds):
+    """A coarse '1m 33s' / '1h' / '2d 3h' rendering of a duration in seconds."""
+    seconds = int(abs(seconds))
+    if seconds < 60:
+        return f"{seconds}s"
+    m, s = divmod(seconds, 60)
+    if m < 60:
+        return f"{m}m {s}s" if s else f"{m}m"
+    h, m = divmod(m, 60)
+    if h < 24:
+        return f"{h}h {m}m" if m else f"{h}h"
+    d, h = divmod(h, 24)
+    return f"{d}d {h}h" if h else f"{d}d"
+
+
+def _relative(iso, now):
+    """'7 hours ago' / 'in 5m' / 'just now' for an ISO timestamp."""
+    dt = _parse_iso(iso)
+    if dt is None:
+        return None
+    delta = (now - dt).total_seconds()
+    if -60 < delta < 60:
+        return "just now"
+    human = _humanize_delta(delta)
+    return f"{human} ago" if delta >= 0 else f"in {human}"
+
+
+def _span(a_iso, b_iso):
+    a, b = _parse_iso(a_iso), _parse_iso(b_iso)
+    if a is None or b is None:
+        return None
+    return _humanize_delta((b - a).total_seconds())
 
 
 def _friendly(exc):
@@ -659,6 +705,37 @@ class Plugin(SshPilotPlugin):
             return (("Open", "open"), ("Stop", "stop"), ("Delete", "delete"))
         return (("Start", "start"), ("Delete", "delete"))  # transitional
 
+    @staticmethod
+    def _detail_rows(ws, now=None):
+        """Ordered (label, value) pairs mirroring the easyenv dashboard's
+        workspace detail panel. Rows with no data are omitted. ``now`` is
+        injectable for tests; defaults to current UTC."""
+        if now is None:
+            now = datetime.now(timezone.utc)
+        rows = []
+
+        def add(label, value):
+            if value not in (None, "", []):
+                rows.append((label, str(value)))
+
+        started = ws.get("start_time")
+        add("Started", _relative(started, now))
+        add("Startup time", _span(ws.get("starting_at"), started))
+        if ws.get("duration"):
+            add("Total time", f"{ws.get('duration')} {ws.get('duration_unit') or ''}".strip())
+        start_dt = _parse_iso(started)
+        if start_dt is not None:
+            end_dt = _parse_iso(ws.get("stop_time")) or now
+            add("Used time", _humanize_delta((end_dt - start_dt).total_seconds()))
+        add("Terminated", _relative(ws.get("stop_time"), now))
+        add("Account", (ws.get("account") or {}).get("title"))
+        add("Created", _relative(ws.get("created_at"), now))
+        prov = ws.get("virtualization_backend")
+        add("Provider", prov.title() if isinstance(prov, str) else prov)
+        add("ID", ws.get("id"))
+        add("UUID", ws.get("uuid"))
+        return rows
+
     def _workspace_row(self, ws):
         row = Gtk.ListBoxRow()
         hb = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
@@ -675,6 +752,10 @@ class Plugin(SshPilotPlugin):
                     "Ends the workspace; it can't be restarted afterwards")
             btn.connect("clicked", self._on_row_action, verb, ws)
             hb.append(btn)
+        details_btn = Gtk.Button(label="Details")
+        details_btn.add_css_class("flat")
+        details_btn.connect("clicked", self._on_row_action, "details", ws)
+        hb.append(details_btn)
         row.set_child(hb)
         return row
 
@@ -686,7 +767,94 @@ class Plugin(SshPilotPlugin):
         if verb == "recreate":
             self._recreate_async(ws)
             return
+        if verb == "details":
+            self._show_details_async(ws, _btn.get_root())
+            return
         self._do_action_async(verb, ws)
+
+    # --- details dialog ----------------------------------------------
+    def _show_details_async(self, ws_view, parent):
+        self._set_status(f"Loading {ws_view['title']}…")
+
+        def worker():
+            c = self._client()
+            try:
+                full = c.workspace(ws_view["uuid"]) or {}
+            except Exception as exc:
+                self.ctx.run_on_ui_thread(self._set_status, f"Details failed: {exc}")
+                return
+            self.ctx.run_on_ui_thread(self._present_details, full, parent)
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _present_details(self, ws, parent):
+        self._set_status("")
+        win = Gtk.Window()
+        win.set_title(ws.get("title") or "Workspace")
+        win.set_modal(True)
+        if parent is not None:
+            win.set_transient_for(parent)
+        win.set_default_size(420, -1)
+        # keep a reference so it isn't garbage-collected while shown
+        self._details_window = win
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        for m in ("set_margin_top", "set_margin_bottom", "set_margin_start", "set_margin_end"):
+            getattr(box, m)(18)
+
+        head = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        title = Gtk.Label(label=ws.get("title") or "")
+        title.add_css_class("title-3")
+        title.set_halign(Gtk.Align.START)
+        head.append(title)
+        badge = Gtk.Label(label=_display_status(ws.get("status")))
+        badge.add_css_class("pill")
+        badge.add_css_class("accent" if _is_running(ws.get("status")) else "dim-label")
+        head.append(badge)
+        box.append(head)
+
+        boxes = ws.get("boxes") or []
+        prov = ws.get("virtualization_backend")
+        prov = prov.title() if isinstance(prov, str) else (prov or "")
+        sub = Gtk.Label(label=f"{len(boxes)} box{'es' if len(boxes) != 1 else ''}"
+                        + (f"  ·  {prov}" if prov else ""))
+        sub.add_css_class("dim-label")
+        sub.set_halign(Gtk.Align.START)
+        box.append(sub)
+
+        progress = ws.get("progress")
+        if isinstance(progress, (int, float)):
+            usage = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            bar = Gtk.ProgressBar()
+            bar.set_fraction(max(0.0, min(1.0, float(progress) / 100.0)))
+            bar.set_hexpand(True)
+            bar.set_valign(Gtk.Align.CENTER)
+            usage.append(bar)
+            usage.append(Gtk.Label(label=f"{int(progress)}%"))
+            box.append(usage)
+
+        grid = Gtk.Grid()
+        grid.set_row_spacing(6)
+        grid.set_column_spacing(18)
+        for i, (label, value) in enumerate(self._detail_rows(ws)):
+            key = Gtk.Label(label=label)
+            key.add_css_class("dim-label")
+            key.set_halign(Gtk.Align.START)
+            val = Gtk.Label(label=value)
+            val.set_halign(Gtk.Align.END)
+            val.set_hexpand(True)
+            val.set_selectable(True)
+            grid.attach(key, 0, i, 1, 1)
+            grid.attach(val, 1, i, 1, 1)
+        box.append(grid)
+
+        close = Gtk.Button(label="Close")
+        close.add_css_class("suggested-action")
+        close.set_halign(Gtk.Align.END)
+        close.connect("clicked", lambda _b: win.close())
+        box.append(close)
+
+        win.set_child(box)
+        win.present()
 
 
 def _recipe_view(r):

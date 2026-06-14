@@ -225,6 +225,49 @@ def test_display_status_labels(env):
     assert mod._display_status("") == "Unknown"
 
 
+def test_detail_rows_mirror_dashboard(env):
+    """The details panel maps API fields the same way the web dashboard does
+    (startup = start_time - starting_at, used = stop_time - start_time, etc.)."""
+    from datetime import datetime, timezone
+    _cm, _host, plugin, _fake, _mod = env
+    ws = {
+        "id": 11759, "uuid": "2WlwgMnZ", "title": "test4", "status": "stopped",
+        "starting_at": "2026-06-14T12:02:36.437115Z",
+        "start_time": "2026-06-14T12:04:10.228538Z",
+        "stop_time": "2026-06-14T13:04:12.350146Z",
+        "created_at": "2026-06-14T12:02:35.702605Z",
+        "duration": 1, "duration_unit": "hours",
+        "progress": 100.0, "virtualization_backend": "scaleway",
+        "account": {"title": "newmfat@gmail.com"},
+        "boxes": [{"uuid": "cT02boRg"}],
+    }
+    now = datetime(2026, 6, 14, 19, 4, 0, tzinfo=timezone.utc)
+    d = dict(plugin._detail_rows(ws, now=now))
+    assert d["Startup time"] == "1m 33s"
+    assert d["Total time"] == "1 hours"
+    assert d["Used time"] == "1h"
+    assert d["Account"] == "newmfat@gmail.com"
+    assert d["Provider"] == "Scaleway"
+    assert d["ID"] == "11759" and d["UUID"] == "2WlwgMnZ"
+    for k in ("Started", "Terminated", "Created"):
+        assert d[k].endswith("ago")
+
+
+def test_detail_rows_running_omits_terminated(env):
+    from datetime import datetime, timezone
+    _cm, _host, plugin, _fake, _mod = env
+    now = datetime(2026, 6, 14, 19, 0, 0, tzinfo=timezone.utc)
+    ws = {"id": 1, "uuid": "u", "title": "t", "status": "active",
+          "start_time": "2026-06-14T18:00:00Z",
+          "created_at": "2026-06-14T17:59:00Z",
+          "duration": 2, "duration_unit": "hours",
+          "account": {"title": "a@b"}, "virtualization_backend": "scaleway",
+          "boxes": []}
+    d = dict(plugin._detail_rows(ws, now=now))
+    assert "Terminated" not in d        # no stop_time yet
+    assert d["Used time"] == "1h"       # now - start_time
+
+
 def test_friendly_collapses_cannot_be_started(env):
     _cm, _host, _plugin, _fake, mod = env
     exc = mod.EasyEnvError(
