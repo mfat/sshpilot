@@ -42,7 +42,7 @@ exclude = ["packaging*", "screenshots*"]
 "sshpilot.plugins.builtin.telnet_protocol" = ["plugin.json"]
 # Example plugins shipped for reference (not auto-loaded).
 "sshpilot.plugins.examples.mock_vps" = ["plugin.json"]
-"sshpilot.plugins.examples.easyenv_workspaces" = ["plugin.json", "README.md", "stub/easyenv"]
+"sshpilot.plugins.examples.easyenv_workspaces" = ["plugin.json", "README.md"]
 
 [project.urls]
 Homepage = "https://github.com/mfat/sshpilot"

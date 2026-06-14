@@ -1,236 +1,147 @@
 """EasyEnv Workspaces — a real-partner example plugin for sshPilot.
 
-Integrates the easyenv.io CLI (github.com/donedeploy/easyenv-cli), which manages
-ephemeral cloud dev "workspaces". Unlike an IP-based VPS provider, easyenv is
-**mesh-based**: `easyenv workspace ssh <id>` drops you into a shell over the
-easyenv mesh and never exposes a host/port/user/key. So the integration has two
-halves, both on the public ``sshpilot.plugins.api`` surface:
+Integrates easyenv.io entirely through its **REST API** and connects via
+**standard SSH to public-IP boxes** — no `easyenv` CLI binary and no NetBird
+mesh. Provisioning a workspace with ``settings.public_ip_requested = true``
+gives each box a routable public IP plus ``host_address`` / ``ssh_username`` /
+``ssh_port`` / ``vm_password``; the plugin turns those into normal sshPilot SSH
+connections (single box → one connection; multi-VM template → a sidebar group
+of per-node connections). Opening one is just sshPilot's native SSH (the
+``vm_password`` is stored in the keyring and fed via sshpass), so it works from
+anywhere.
 
-1. A **protocol backend** ``easyenv`` whose ``build_spawn`` runs
-   ``easyenv workspace ssh <workspace-id>`` in the terminal (same shape as the
-   built-in telnet backend). No SSH-only capabilities — SFTP/forwarding/
-   copy-key UI stays hidden, since none of it applies to the mesh.
-2. A **management page** ("EasyEnv Workspaces", under the Tools menu) that
-   drives the CLI for auth, listing, creating, and lifecycle, then uses
-   ``ctx.add_connection`` + ``ctx.open_connection`` to open a terminal.
+Auth is the partner's header scheme: ``X-Service-Token`` + ``Account-ID``. The
+user pastes a service token from
+https://dashboard.easyenv.io/auth/login?redirect=/dashboard/profile ; the
+plugin stores it in the keyring (``ctx.secrets``) and the active account uuid in
+``ctx.settings``.
 
-All CLI calls run on a background thread and marshal UI updates back via
-``ctx.run_on_ui_thread``. The only sshPilot import is ``sshpilot.plugins.api``.
-
-The same plugin drives the real ``easyenv`` binary or the bundled local stub,
-depending on which ``easyenv`` is first on PATH. See the README.
+Only stdlib (urllib/json/threading) + gi + ``sshpilot.plugins.api`` are
+imported — no third-party deps, no CLI.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-import os
-import shutil
-import subprocess
 import threading
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
 
 import gi
 gi.require_version("Gtk", "4.0")
 from gi.repository import Gtk  # noqa: E402
 
-from sshpilot.plugins.api import (  # noqa: E402
-    Events,
-    FieldSpec,
-    PluginContext,
-    ProtocolBackend,
-    ProtocolError,
-    SpawnSpec,
-    SshPilotPlugin,
-)
+from sshpilot.plugins.api import Events, PluginContext, SshPilotPlugin  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
-INSTALL_HINT = "The 'easyenv' CLI was not found on PATH. Install it from https://easyenv.io/cli"
-NETBIRD_HINT = ("Connecting to a workspace needs the 'netbird' CLI — EasyEnv "
-                "reaches boxes over a NetBird mesh. Install it from "
-                "https://netbird.io/docs/ , then retry.")
+DEFAULT_BASE_URL = "https://api.easyenv.io"
+DASHBOARD_URL = "https://dashboard.easyenv.io/auth/login?redirect=/dashboard/profile"
+HTTP_TIMEOUT = 30
+POLL_INTERVAL = 10
+POLL_TIMEOUT = 600
+
+# Forced into each provisioned connection's ssh config: accept the ephemeral
+# host key, and use the vm_password (don't let the user's agent keys trip
+# "Too many authentication failures" before password auth is tried).
+EASYENV_SSH_OPTIONS = (
+    "StrictHostKeyChecking accept-new\n"
+    "UserKnownHostsFile /dev/null\n"
+    "PreferredAuthentications password\n"
+    "PubkeyAuthentication no\n"
+    "IdentitiesOnly yes"
+)
 
 
-class _EasyEnvNotFound(RuntimeError):
+class EasyEnvError(RuntimeError):
     pass
 
 
-def _is_flatpak() -> bool:
-    return os.path.exists("/.flatpak-info")
+# --- REST client (stdlib urllib) ------------------------------------------
+
+def _api(method, path, token, account, base_url=DEFAULT_BASE_URL, body=None,
+         timeout=HTTP_TIMEOUT):
+    url = base_url.rstrip("/") + path
+    data = json.dumps(body).encode("utf-8") if body is not None else None
+    req = urllib.request.Request(url, data=data, method=method)
+    req.add_header("X-Service-Token", token or "")
+    req.add_header("Account-ID", account or "")
+    req.add_header("Content-Type", "application/json")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read()
+    except urllib.error.HTTPError as exc:
+        detail = ""
+        try:
+            detail = exc.read().decode("utf-8", "replace")[:300]
+        except Exception:
+            pass
+        raise EasyEnvError(f"{method} {path} -> HTTP {exc.code}: {detail}") from exc
+    except urllib.error.URLError as exc:
+        raise EasyEnvError(f"{method} {path} failed: {exc.reason}") from exc
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except ValueError:
+        return None
 
 
-def _netbird_available() -> bool:
-    """easyenv brings the mesh VPN up via the netbird CLI when you connect to a
-    box (auto-VPN). Listing/creating workspaces only hits the API and does not
-    need it; connecting does."""
-    return shutil.which("netbird") is not None
+def _results(payload):
+    if isinstance(payload, dict):
+        return payload.get("results") or payload.get("items") or []
+    return payload if isinstance(payload, list) else []
 
 
-def easyenv_argv(args, binary_path=None):
-    """Full argv to invoke easyenv with ``args``.
+class EasyEnvClient:
+    def __init__(self, token, account, base_url=DEFAULT_BASE_URL):
+        self.token = token
+        self.account = account
+        self.base_url = base_url or DEFAULT_BASE_URL
 
-    Honors an explicitly configured ``binary_path``; otherwise resolves
-    ``easyenv`` on PATH. Inside a Flatpak sandbox the host binary isn't on the
-    sandbox PATH, so the call is routed through ``flatpak-spawn --host`` (the
-    app manifest already grants ``--talk-name=org.freedesktop.Flatpak``)."""
-    exe = binary_path or shutil.which("easyenv")
-    prefix = []
-    if _is_flatpak():
-        prefix = ["flatpak-spawn", "--host"]
-        exe = binary_path or "easyenv"  # resolved on the host, not sandbox PATH
-    if not exe:
-        raise _EasyEnvNotFound(INSTALL_HINT)
-    return prefix + [exe] + list(args)
+    def _call(self, method, path, body=None):
+        return _api(method, path, self.token, self.account, self.base_url, body)
+
+    def accounts(self):
+        # account not known yet -> empty Account-ID
+        return _results(_api("GET", "/v1/accounts/", self.token, "", self.base_url))
+
+    def templates(self):
+        return _results(self._call("GET", "/v1/workspace_templates/"))
+
+    def workspaces(self):
+        return _results(self._call("GET", "/v1/workspaces/"))
+
+    def workspace(self, uuid):
+        return self._call("GET", f"/v1/workspaces/{uuid}/")
+
+    def create_workspace(self, body):
+        return self._call("POST", "/v1/workspaces/", body)
+
+    def start(self, uuid):
+        return self._call("POST", f"/v1/workspaces/{uuid}/start/")
+
+    def stop(self, uuid):
+        return self._call("POST", f"/v1/workspaces/{uuid}/stop/")
+
+    def delete(self, uuid):
+        return self._call("DELETE", f"/v1/workspaces/{uuid}/")
 
 
-def _one_workspace(w):
-    """Normalize one workspace object from the EasyEnv API/CLI JSON.
-
-    Field names follow the EasyEnv API (WorkspaceList): ``uuid`` is the stable
-    id used by `workspace ssh`, ``title`` is the display name, ``status`` is one
-    of active/not_started/stopped/in_progress/failed. Alternatives are
-    tolerated in case the CLI reshapes the payload."""
+def _ws_view(w):
     if not isinstance(w, dict):
         return None
-    wid = str(w.get("uuid") or w.get("workspace_id") or w.get("id") or "")
-    name = str(w.get("title") or w.get("name") or wid)
-    status = str(w.get("status") or w.get("state") or "unknown")
-    if wid or name:
-        return {"id": wid, "name": name, "status": status}
-    return None
+    uuid = str(w.get("uuid") or w.get("id") or "")
+    title = str(w.get("title") or uuid)
+    status = str(w.get("status") or "unknown")
+    return {"uuid": uuid, "title": title, "status": status} if uuid else None
 
 
-def _parse_workspaces(text):
-    """Parse `workspace list --output json` (list, or a paginated/wrapped dict)."""
-    try:
-        data = json.loads(text)
-    except (ValueError, TypeError):
-        return []
-    if isinstance(data, dict):
-        # EasyEnv list endpoints are paginated (PaginatedWorkspaceListList:
-        # {"results": [...]}); also tolerate workspaces/items or a bare object.
-        data = (data.get("results") or data.get("workspaces")
-                or data.get("items") or [data])
-    out = []
-    for w in data if isinstance(data, list) else []:
-        ws = _one_workspace(w)
-        if ws is not None:
-            out.append(ws)
-    return out
-
-
-def _parse_one(text):
-    try:
-        return _one_workspace(json.loads(text))
-    except (ValueError, TypeError):
-        return None
-
-
-def _one_machine(m):
-    """Normalize one machine/box object. Real shape (machine list / workspace
-    .boxes): {uuid, title, status, host_address, recipe{…}}."""
-    if not isinstance(m, dict):
-        return None
-    mid = str(m.get("uuid") or m.get("id") or "")
-    name = str(m.get("title") or m.get("name") or mid)
-    status = str(m.get("status") or m.get("state") or "unknown")
-    if mid:
-        return {"id": mid, "name": name, "status": status}
-    return None
-
-
-def _parse_machines(text):
-    """Parse `machine list -w <ws> --output json` (a list), or a `workspace
-    get` object whose machines live under `boxes` (or `machines`)."""
-    try:
-        data = json.loads(text)
-    except (ValueError, TypeError):
-        return []
-    if isinstance(data, dict):
-        data = data.get("boxes") or data.get("machines") or data.get("results") or []
-    out = []
-    for m in data if isinstance(data, list) else []:
-        mm = _one_machine(m)
-        if mm is not None:
-            out.append(mm)
-    return out
-
-
-def _one_template(t):
-    """Normalize one template object: {uuid|id, title|name}."""
-    if not isinstance(t, dict):
-        return None
-    tid = str(t.get("uuid") or t.get("id") or "")
-    name = str(t.get("title") or t.get("name") or tid)
-    if tid or name:
-        # `workspace create --template` accepts the uuid or the title.
-        return {"id": tid or name, "name": name}
-    return None
-
-
-def _parse_templates(text):
-    """Parse `template list --output json` (list, or wrapped dict)."""
-    try:
-        data = json.loads(text)
-    except (ValueError, TypeError):
-        return []
-    if isinstance(data, dict):
-        data = (data.get("results") or data.get("templates")
-                or data.get("items") or [data])
-    out = []
-    for t in data if isinstance(data, list) else []:
-        tt = _one_template(t)
-        if tt is not None:
-            out.append(tt)
-    return out
-
-
-class EasyEnvBackend(ProtocolBackend):
-    """Protocol backend: the connection IS `easyenv workspace ssh <id>`."""
-
-    protocol_id = "easyenv"
-    display_name = "EasyEnv Workspace"
-    default_port = None
-
-    def capabilities(self):
-        # Mesh-mediated: none of sshPilot's SSH-only features (SFTP,
-        # port-forwarding, ssh-copy-id, system terminal) apply.
-        return frozenset()
-
-    def connection_fields(self):
-        return [
-            FieldSpec(key="workspace_id", label="Workspace UUID", kind="text",
-                      required=True,
-                      placeholder="existing workspace — to create one, use Tools ▸ EasyEnv Workspaces"),
-            FieldSpec(key="machine_id", label="Machine UUID (optional)", kind="text",
-                      placeholder="machine uuid; empty = first machine"),
-            FieldSpec(key="machine_name", label="Machine name (display)", kind="text",
-                      placeholder="optional label"),
-        ]
-
-    def validate(self, data):
-        if not (data.get("workspace_id") or data.get("host") or data.get("nickname")):
-            return ["A workspace id is required."]
-        return []
-
-    def build_spawn(self, connection, ctx):
-        data = getattr(connection, "data", None) or {}
-        wsid = data.get("workspace_id") or data.get("host") or getattr(connection, "nickname", "")
-        if not wsid:
-            raise ProtocolError("No workspace id configured for this connection.")
-        machine = data.get("machine_id") or data.get("machine")
-        if machine:
-            # Connect to a specific node: easyenv machine ssh <m> -w <ws>
-            args = ["machine", "ssh", str(machine), "-w", str(wsid)]
-        else:
-            # No machine pinned: easyenv workspace ssh <ws> (first machine)
-            args = ["workspace", "ssh", str(wsid)]
-        try:
-            argv = easyenv_argv(args, data.get("binary_path"))
-        except _EasyEnvNotFound as exc:
-            raise ProtocolError(str(exc)) from exc
-        return SpawnSpec(argv=argv, env=dict(os.environ))
+def _is_running(status):
+    return str(status or "").lower() in ("active", "started", "running")
 
 
 class Plugin(SshPilotPlugin):
@@ -239,281 +150,167 @@ class Plugin(SshPilotPlugin):
         self._status_label = None
         self._list_box = None
         self._auth_label = None
+        self._token_entry = None
+        self._name_entry = None
         self._template_dropdown = None
-        self._template_values = []  # parallel to the dropdown's labels
+        self._template_values = []  # parallel to dropdown labels (uuid or title)
 
-        ctx.register_protocol(EasyEnvBackend())
         ctx.ui.register_page("workspaces", "EasyEnv Workspaces",
                              "network-server-symbolic", self._build_page)
         ctx.events.subscribe(Events.APP_STARTED, self._on_app_started)
-        ctx.events.subscribe(Events.SESSION_OPENED, self._on_session_opened)
-        ctx.events.subscribe(Events.CONNECTION_DELETED, self._on_connection_deleted)
 
-    # --- CLI plumbing (blocking; call from a worker thread) -----------
-    def _binary_path(self):
+    # --- config / client ---------------------------------------------
+    def _token(self):
         try:
-            return self.ctx.settings.get("binary_path") if self.ctx.settings else None
+            return self.ctx.secrets.get("service_token")
         except Exception:
             return None
 
-    def _run(self, args, timeout=30):
-        argv = easyenv_argv(args, self._binary_path())
-        return subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+    def _account(self):
+        return self.ctx.settings.get("account_uuid")
 
-    # --- testable, widget-free operations -----------------------------
-    def _do_whoami(self):
-        try:
-            out = self._run(["auth", "whoami"], timeout=15)
-            return out.stdout.strip() if out.returncode == 0 else None
-        except (_EasyEnvNotFound, OSError, subprocess.SubprocessError):
-            return None
+    def _base_url(self):
+        return self.ctx.settings.get("base_url", DEFAULT_BASE_URL)
 
-    def _do_login(self, token):
-        out = self._run(["auth", "login", "--token", token], timeout=20)
-        return out.returncode == 0
-
-    def _do_list(self):
-        out = self._run(["workspace", "list", "--output", "json"], timeout=30)
-        return _parse_workspaces(out.stdout) if out.returncode == 0 else []
-
-    def _do_create(self, name, template="python_devenv", ttl="8h"):
-        args = ["workspace", "create", "--name", name, "--output", "json"]
-        if template:
-            args += ["--template", template]
-        if ttl:
-            args += ["--ttl", ttl]
-        out = self._run(args, timeout=120)
-        if out.returncode != 0:
-            raise RuntimeError(out.stderr.strip() or "workspace create failed")
-        ws = _parse_one(out.stdout)
-        if ws is None:
-            raise RuntimeError("could not parse created workspace")
-        return ws
-
-    def _do_action(self, verb, wsid):
-        args = ["workspace", verb, wsid]
-        if verb == "delete":
-            args.append("--force")
-        out = self._run(args, timeout=60)
-        return out.returncode == 0
-
-    def _do_machines(self, wsid):
-        """List a workspace's machines/nodes via `machine list -w <ws>`."""
-        out = self._run(["machine", "list", "-w", wsid, "--output", "json"], timeout=30)
-        return _parse_machines(out.stdout) if out.returncode == 0 else []
-
-    def _do_templates(self):
-        """List available templates via `template list -o json`."""
-        out = self._run(["template", "list", "--output", "json"], timeout=30)
-        return _parse_templates(out.stdout) if out.returncode == 0 else []
-
-    def _refresh_templates_async(self):
-        """Fetch templates off-thread and fill the create-form dropdown."""
-        def worker():
-            try:
-                tpls = self._do_templates()
-            except Exception:
-                logger.exception("easyenv template list failed")
-                tpls = []
-            self.ctx.run_on_ui_thread(self._populate_templates, tpls)
-        threading.Thread(target=worker, daemon=True).start()
-
-    def _populate_templates(self, tpls):
-        """Update the cache + dropdown model from a fetched template list."""
-        self._template_values = [t["id"] or t["name"] for t in tpls if (t.get("id") or t.get("name"))]
-        labels = [t["name"] for t in tpls] or ["(no templates — sign in first)"]
-        if self._template_dropdown is not None:
-            try:
-                self._template_dropdown.set_model(Gtk.StringList.new(labels))
-            except Exception:
-                logger.debug("could not update template dropdown model")
-
-    @staticmethod
-    def _node_nicknames(ws_title, machines):
-        """Map machines -> globally-unique, stable, readable nicknames.
-
-        Machine titles repeat within a workspace (e.g. 3x "Ubuntu 24.04 LTS"),
-        so duplicates get a 1-based index assigned in stable uuid order. The
-        workspace title prefix disambiguates across workspaces."""
-        from collections import Counter
-        counts = Counter(m["name"] for m in machines)
-        seen = {}
-        result = []
-        for m in sorted(machines, key=lambda x: x["id"]):
-            label = m["name"]
-            if counts[label] > 1:
-                seen[label] = seen.get(label, 0) + 1
-                label = f"{label} {seen[label]}"
-            result.append((m, f"{ws_title} / {label}"))
-        return result
-
-    @staticmethod
-    def _is_running(status):
-        return str(status or "").lower() in ("started", "active", "running")
-
-    def _open_if_running(self, nickname, machine):
-        """Open a node only if it's running; otherwise tell the user why
-        (connecting to a stopped/expired box makes easyenv error)."""
-        if self._is_running(machine.get("status")):
-            self.ctx.open_connection(nickname)
-        else:
-            self.ctx.ui.notify(
-                f"{nickname} is {machine.get('status', 'not running')} — "
-                f"Start the workspace first (expired workspaces must be recreated).")
-
-    def _provision_workspace(self, ws_title, wsid, machines, open_first=False):
-        """Materialize a workspace in sshPilot (UI thread). One machine -> a
-        single connection; multiple -> a group with one connection per node.
-        Idempotent (find-or-create group, reuse existing connections)."""
-        if not machines:
-            machines = [{"id": "", "name": ws_title, "status": "unknown"}]
-
-        if len(machines) == 1:
-            m = machines[0]
-            data = {"protocol": "easyenv", "nickname": ws_title, "host": ws_title,
-                    "workspace_id": wsid, "machine_id": m["id"],
-                    "machine_name": m["name"]}
-            try:
-                self.ctx.add_connection(data)
-            except ValueError:
-                pass
-            self.ctx.ui.notify(f"EasyEnv: {ws_title} ready")
-            if open_first:
-                self._open_if_running(ws_title, m)
-            return ws_title
-
-        node_data = []
-        first = None  # (nickname, machine)
-        for m, nick in self._node_nicknames(ws_title, machines):
-            node_data.append({"protocol": "easyenv", "nickname": nick, "host": nick,
-                              "workspace_id": wsid, "machine_id": m["id"],
-                              "machine_name": m["name"]})
-            if first is None:
-                first = (nick, m)
-        self.ctx.add_connection_group(f"EasyEnv: {ws_title}", node_data)
-        self.ctx.ui.notify(f"EasyEnv: {ws_title} — {len(machines)} nodes ready")
-        if open_first and first:
-            self._open_if_running(first[0], first[1])
-        return first[0] if first else None
-
-    def _open_workspace_async(self, ws, open_first=False):
-        """Enumerate a workspace's machines off-thread, then provision."""
-        def worker():
-            try:
-                machines = self._do_machines(ws["id"])
-            except Exception:
-                logger.exception("easyenv machine list failed")
-                machines = []
-            self.ctx.run_on_ui_thread(self._provision_workspace, ws["name"],
-                                      ws["id"], machines, open_first)
-        threading.Thread(target=worker, daemon=True).start()
-
-    # --- events -------------------------------------------------------
-    def _on_app_started(self, _payload):
-        self._refresh_templates_async()
-        self._refresh_async()
-
-    def _on_session_opened(self, info):
-        logger.info("easyenv: session opened for %s", info.connection.nickname)
-
-    def _on_connection_deleted(self, info):
-        logger.info("easyenv: connection %s removed from sshPilot", info.nickname)
-
-    # --- UI -----------------------------------------------------------
-    def _build_page(self):
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        for m in ("set_margin_top", "set_margin_bottom", "set_margin_start", "set_margin_end"):
-            getattr(box, m)(18)
-
-        title = Gtk.Label(label="EasyEnv Workspaces")
-        title.add_css_class("title-2")
-        title.set_halign(Gtk.Align.START)
-        box.append(title)
-
-        # Prerequisite: netbird is needed to connect (mesh VPN), not to list.
-        if not _netbird_available():
-            warn = Gtk.Label(label="⚠ " + NETBIRD_HINT)
-            warn.set_halign(Gtk.Align.START)
-            warn.set_wrap(True)
-            warn.add_css_class("warning")
-            box.append(warn)
-
-        # Auth row
-        self._auth_label = Gtk.Label(label="Checking sign-in…")
-        self._auth_label.set_halign(Gtk.Align.START)
-        box.append(self._auth_label)
-
-        login_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        self._token_entry = Gtk.Entry()
-        self._token_entry.set_visibility(False)
-        self._token_entry.set_placeholder_text("service token from easyenv.io")
-        self._token_entry.set_hexpand(True)
-        login_btn = Gtk.Button(label="Log in")
-        login_btn.connect("clicked", self._on_login_clicked)
-        login_row.append(self._token_entry)
-        login_row.append(login_btn)
-        box.append(login_row)
-
-        # Create row
-        create_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        self._name_entry = Gtk.Entry()
-        self._name_entry.set_placeholder_text("workspace name")
-        self._name_entry.set_hexpand(True)
-        # Live template dropdown (filled from `easyenv template list`).
-        self._template_dropdown = Gtk.DropDown.new_from_strings(["(loading templates…)"])
-        create_btn = Gtk.Button(label="Create")
-        create_btn.add_css_class("suggested-action")
-        create_btn.connect("clicked", self._on_create_clicked)
-        create_row.append(self._name_entry)
-        create_row.append(self._template_dropdown)
-        create_row.append(create_btn)
-        box.append(create_row)
-        # Fill the dropdown now (covers opening the page before app_started's fetch).
-        self._refresh_templates_async()
-
-        refresh_btn = Gtk.Button(label="Refresh")
-        refresh_btn.set_halign(Gtk.Align.START)
-        refresh_btn.connect("clicked", lambda _b: self._refresh_async())
-        box.append(refresh_btn)
-
-        self._list_box = Gtk.ListBox()
-        self._list_box.add_css_class("boxed-list")
-        box.append(self._list_box)
-
-        self._status_label = Gtk.Label(label="")
-        self._status_label.set_halign(Gtk.Align.START)
-        box.append(self._status_label)
-
-        self._refresh_async()
-        return box
-
-    def _set_status(self, text):
-        if self._status_label is not None:
-            self._status_label.set_text(text)
-
-    def _on_login_clicked(self, _btn):
-        token = self._token_entry.get_text().strip()
+    def _client(self):
+        token = self._token()
         if not token:
+            return None
+        return EasyEnvClient(token, self._account(), self._base_url())
+
+    # --- events ------------------------------------------------------
+    def _on_app_started(self, _payload):
+        self._refresh_async()
+
+    # --- auth --------------------------------------------------------
+    def _on_signin_clicked(self, _btn):
+        token = self._token_entry.get_text().strip() if self._token_entry else ""
+        if not token:
+            self._set_status("Paste a service token first.")
             return
         self._set_status("Signing in…")
 
         def worker():
-            ok = False
             try:
-                ok = self._do_login(token)
-            except Exception:
-                logger.exception("easyenv login failed")
-            self.ctx.run_on_ui_thread(self._after_login, ok)
+                self.ctx.secrets.set("service_token", token)
+                accounts = EasyEnvClient(token, None, self._base_url()).accounts()
+            except Exception as exc:
+                self.ctx.run_on_ui_thread(self._set_status, f"Sign-in failed: {exc}")
+                return
+            self.ctx.run_on_ui_thread(self._after_signin, accounts)
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _after_login(self, ok):
-        self._token_entry.set_text("")
-        self._set_status("Signed in." if ok else "Sign-in failed.")
+    def _after_signin(self, accounts):
+        if not accounts:
+            self._set_status("No accounts for this token.")
+            return
+        # Auto-select when there's only one; otherwise keep the first (a fuller
+        # picker is straightforward to add, but most tokens map to one account).
+        acct = accounts[0]
+        self.ctx.settings.set("account_uuid", acct.get("uuid"))
+        if self._token_entry is not None:
+            self._token_entry.set_text("")
+        self._set_status(f"Signed in as {acct.get('title')}")
+        self._refresh_templates_async()
         self._refresh_async()
 
+    # --- REST operations (blocking; call from a worker) --------------
+    def _do_templates(self):
+        c = self._client()
+        if c is None:
+            return []
+        return [t for t in (_ws_view_t(x) for x in c.templates()) if t]
+
+    def _do_list(self):
+        c = self._client()
+        if c is None:
+            return []
+        return [v for v in (_ws_view(w) for w in c.workspaces()) if v]
+
+    def _poll_active(self, c, uuid):
+        deadline = time.time() + POLL_TIMEOUT
+        while time.time() < deadline:
+            ws = c.workspace(uuid)
+            status = (ws or {}).get("status")
+            self.ctx.run_on_ui_thread(
+                self._set_status, f"{(ws or {}).get('title', uuid)}: {status}")
+            if _is_running(status):
+                return ws
+            if str(status).lower() in ("failed", "stopped"):
+                raise EasyEnvError(f"workspace entered {status!r}")
+            time.sleep(POLL_INTERVAL)
+        raise EasyEnvError("timed out waiting for the workspace to become active")
+
+    # --- connection materialization (UI thread) ----------------------
+    @staticmethod
+    def _box_to_data(nickname, box):
+        return {
+            "protocol": "ssh",
+            "nickname": nickname,
+            "hostname": box.get("host_address"),
+            "host": box.get("host_address"),
+            "username": box.get("ssh_username") or "root",
+            "port": int(box.get("ssh_port") or 22),
+            "password": box.get("vm_password") or "",
+            "auth_method": 1,  # password mode -> sshPilot feeds vm_password via sshpass
+            "extra_ssh_config": EASYENV_SSH_OPTIONS,
+        }
+
+    @staticmethod
+    def _node_nicknames(ws_title, boxes):
+        """Globally-unique, stable, readable nicknames; index duplicate box
+        titles (e.g. several 'Ubuntu 24.04 LTS') in stable uuid order."""
+        from collections import Counter
+        titles = [str(b.get("title") or b.get("uuid") or "node") for b in boxes]
+        counts = Counter(titles)
+        seen = {}
+        pairs = []
+        for b in sorted(boxes, key=lambda x: str(x.get("uuid") or "")):
+            label = str(b.get("title") or b.get("uuid") or "node")
+            if counts[label] > 1:
+                seen[label] = seen.get(label, 0) + 1
+                label = f"{label} {seen[label]}"
+            pairs.append((b, f"{ws_title} / {label}"))
+        return pairs
+
+    def _upsert_connection(self, data):
+        try:
+            self.ctx.add_connection(data)
+        except ValueError:
+            # Exists already — refresh host/password (workspace may have been
+            # stopped and restarted with a new IP/credentials).
+            self.ctx.update_connection(data["nickname"], data)
+
+    def _materialize(self, ws, open_after=False):
+        boxes = [b for b in (ws.get("boxes") or []) if b.get("host_address")]
+        title = ws.get("title") or ws.get("uuid")
+        if not boxes:
+            self.ctx.ui.notify(f"EasyEnv: {title} has no reachable boxes yet")
+            return
+        if len(boxes) == 1:
+            nick = title
+            self._upsert_connection(self._box_to_data(nick, boxes[0]))
+            self.ctx.ui.notify(f"EasyEnv: {title} ready")
+            if open_after:
+                self.ctx.open_connection(nick)
+            return
+
+        group_id = self.ctx.create_group(f"EasyEnv: {title}")
+        first_nick = None
+        for box, nick in self._node_nicknames(title, boxes):
+            self._upsert_connection(self._box_to_data(nick, box))
+            if group_id:
+                self.ctx.add_connection_to_group(nick, group_id)
+            if first_nick is None:
+                first_nick = nick
+        self.ctx.ui.notify(f"EasyEnv: {title} — {len(boxes)} nodes ready")
+        if open_after and first_nick:
+            self.ctx.open_connection(first_nick)
+
+    # --- provisioning / lifecycle (off-thread workers) ---------------
     def _on_create_clicked(self, _btn):
-        name = self._name_entry.get_text().strip()
+        name = self._name_entry.get_text().strip() if self._name_entry else ""
         if not name:
             return
         idx = self._template_dropdown.get_selected() if self._template_dropdown else -1
@@ -524,8 +321,14 @@ class Plugin(SshPilotPlugin):
         self._set_status(f"Creating {name}…")
 
         def worker():
+            c = self._client()
             try:
-                ws = self._do_create(name, template)
+                body = {"title": name, "duration": 1, "duration_unit": "hours",
+                        "workspace_template": template,
+                        "settings": {"public_ip_requested": True}}
+                ws = c.create_workspace(body)
+                c.start(ws["uuid"])
+                ws = self._poll_active(c, ws["uuid"])
             except Exception as exc:
                 self.ctx.run_on_ui_thread(self._set_status, f"Create failed: {exc}")
                 return
@@ -534,26 +337,145 @@ class Plugin(SshPilotPlugin):
         threading.Thread(target=worker, daemon=True).start()
 
     def _after_create(self, ws):
-        self._name_entry.set_text("")
-        self._set_status(f"Created {ws['name']}.")
-        self.ctx.ui.notify(f"Workspace {ws['name']} created")
-        # Materialize the workspace (group of nodes if multi-VM); don't
-        # auto-open every node — let the user expand and pick one.
-        self._open_workspace_async(ws, open_first=False)
+        if self._name_entry is not None:
+            self._name_entry.set_text("")
+        self._materialize(ws, open_after=False)
         self._refresh_async()
 
+    def _open_workspace_async(self, ws_view, open_after=True):
+        """Ensure the workspace is active (start + poll if needed), then
+        materialize its connections and optionally open the first node."""
+        def worker():
+            c = self._client()
+            try:
+                ws = c.workspace(ws_view["uuid"])
+                if not _is_running((ws or {}).get("status")):
+                    self.ctx.run_on_ui_thread(self._set_status,
+                                              f"Starting {ws_view['title']}…")
+                    c.start(ws_view["uuid"])
+                    ws = self._poll_active(c, ws_view["uuid"])
+            except Exception as exc:
+                self.ctx.run_on_ui_thread(self._set_status, f"Open failed: {exc}")
+                return
+            self.ctx.run_on_ui_thread(self._materialize, ws, open_after)
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _do_action_async(self, verb, ws_view):
+        self._set_status(f"{verb} {ws_view['title']}…")
+
+        def worker():
+            c = self._client()
+            ok = True
+            try:
+                if verb == "start":
+                    c.start(ws_view["uuid"])
+                elif verb == "stop":
+                    c.stop(ws_view["uuid"])
+                elif verb == "delete":
+                    c.delete(ws_view["uuid"])
+            except Exception:
+                logger.exception("easyenv %s failed", verb)
+                ok = False
+            self.ctx.run_on_ui_thread(self._after_action, verb, ws_view, ok)
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _after_action(self, verb, ws_view, ok):
+        self._set_status(f"{verb} {ws_view['title']}: {'ok' if ok else 'failed'}")
+        self._refresh_async()
+
+    # --- UI ----------------------------------------------------------
     def _refresh_async(self):
         def worker():
-            account = self._do_whoami()
-            items = self._do_list() if account else []
+            account = self._account() if self._token() else None
+            items = self._do_list() if (self._token() and account) else []
             self.ctx.run_on_ui_thread(self._render, account, items)
-
         threading.Thread(target=worker, daemon=True).start()
+
+    def _refresh_templates_async(self):
+        def worker():
+            try:
+                tpls = self._do_templates()
+            except Exception:
+                logger.exception("easyenv templates failed")
+                tpls = []
+            self.ctx.run_on_ui_thread(self._populate_templates, tpls)
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _populate_templates(self, tpls):
+        self._template_values = [t["id"] for t in tpls if t.get("id")]
+        labels = [t["name"] for t in tpls] or ["(sign in to load templates)"]
+        if self._template_dropdown is not None:
+            try:
+                self._template_dropdown.set_model(Gtk.StringList.new(labels))
+            except Exception:
+                logger.debug("could not update template dropdown")
+
+    def _build_page(self):
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        for m in ("set_margin_top", "set_margin_bottom", "set_margin_start", "set_margin_end"):
+            getattr(box, m)(18)
+
+        title = Gtk.Label(label="EasyEnv Workspaces")
+        title.add_css_class("title-2")
+        title.set_halign(Gtk.Align.START)
+        box.append(title)
+
+        self._auth_label = Gtk.Label(label="Checking sign-in…")
+        self._auth_label.set_halign(Gtk.Align.START)
+        box.append(self._auth_label)
+
+        login_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self._token_entry = Gtk.Entry()
+        self._token_entry.set_visibility(False)
+        self._token_entry.set_placeholder_text("paste service token")
+        self._token_entry.set_hexpand(True)
+        get_token = Gtk.LinkButton.new_with_label(DASHBOARD_URL, "Get token")
+        signin = Gtk.Button(label="Sign in")
+        signin.connect("clicked", self._on_signin_clicked)
+        login_row.append(self._token_entry)
+        login_row.append(get_token)
+        login_row.append(signin)
+        box.append(login_row)
+
+        create_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self._name_entry = Gtk.Entry()
+        self._name_entry.set_placeholder_text("workspace name")
+        self._name_entry.set_hexpand(True)
+        self._template_dropdown = Gtk.DropDown.new_from_strings(["(sign in to load templates)"])
+        create_btn = Gtk.Button(label="Create")
+        create_btn.add_css_class("suggested-action")
+        create_btn.connect("clicked", self._on_create_clicked)
+        create_row.append(self._name_entry)
+        create_row.append(self._template_dropdown)
+        create_row.append(create_btn)
+        box.append(create_row)
+
+        refresh_btn = Gtk.Button(label="Refresh")
+        refresh_btn.set_halign(Gtk.Align.START)
+        refresh_btn.connect("clicked", lambda _b: (self._refresh_templates_async(), self._refresh_async()))
+        box.append(refresh_btn)
+
+        self._list_box = Gtk.ListBox()
+        self._list_box.add_css_class("boxed-list")
+        box.append(self._list_box)
+
+        self._status_label = Gtk.Label(label="")
+        self._status_label.set_halign(Gtk.Align.START)
+        box.append(self._status_label)
+
+        self._refresh_templates_async()
+        self._refresh_async()
+        return box
+
+    def _set_status(self, text):
+        if self._status_label is not None:
+            self._status_label.set_text(text)
 
     def _render(self, account, items):
         if self._auth_label is not None:
             self._auth_label.set_text(
-                f"Signed in as {account}" if account else "Not signed in — paste a token below")
+                f"Signed in as {account}" if account
+                else "Not signed in — paste a service token below")
         if self._list_box is None:
             return
         child = self._list_box.get_first_child()
@@ -569,7 +491,7 @@ class Plugin(SshPilotPlugin):
         hb = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         for m in ("set_margin_top", "set_margin_bottom", "set_margin_start", "set_margin_end"):
             getattr(hb, m)(6)
-        label = Gtk.Label(label=f"{ws['name']}  ·  {ws['status']}")
+        label = Gtk.Label(label=f"{ws['title']}  ·  {ws['status']}")
         label.set_halign(Gtk.Align.START)
         label.set_hexpand(True)
         hb.append(label)
@@ -582,22 +504,17 @@ class Plugin(SshPilotPlugin):
         return row
 
     def _on_row_action(self, _btn, verb, ws):
-        if verb is None:  # Open in sshPilot (group of nodes; open first)
-            self._set_status(f"Opening {ws['name']}…")
-            self._open_workspace_async(ws, open_first=True)
+        if verb is None:  # Open in sshPilot
+            self._set_status(f"Opening {ws['title']}…")
+            self._open_workspace_async(ws, open_after=True)
             return
-        self._set_status(f"{verb} {ws['name']}…")
+        self._do_action_async(verb, ws)
 
-        def worker():
-            ok = False
-            try:
-                ok = self._do_action(verb, ws["id"])
-            except Exception:
-                logger.exception("easyenv %s failed", verb)
-            self.ctx.run_on_ui_thread(self._after_action, verb, ws, ok)
 
-        threading.Thread(target=worker, daemon=True).start()
-
-    def _after_action(self, verb, ws, ok):
-        self._set_status(f"{verb} {ws['name']}: {'ok' if ok else 'failed'}")
-        self._refresh_async()
+def _ws_view_t(t):
+    """Normalize a template object -> {id, name} (id = uuid for create)."""
+    if not isinstance(t, dict):
+        return None
+    tid = str(t.get("uuid") or t.get("id") or "")
+    name = str(t.get("title") or t.get("name") or tid)
+    return {"id": tid, "name": name} if tid else None

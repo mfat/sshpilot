@@ -1,11 +1,9 @@
-"""End-to-end: load the EasyEnv example via the REAL loader + REAL PluginHost,
-drive its page logic against the bundled stub `easyenv` on PATH, and assert the
-full flow (whoami → list → create → add_connection → open_connection) works
-through the public API."""
+"""End-to-end (no network): load the EasyEnv example with a fake REST client and
+assert it provisions public-IP boxes into standard sshPilot SSH connections
+(single -> one connection; multi -> a group), via the public SDK."""
 
-import json
+import importlib.util
 import os
-import shutil
 import sys
 import types
 
@@ -13,20 +11,19 @@ import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from sshpilot.connection_manager import Connection, ConnectionManager
+from sshpilot.connection_manager import ConnectionManager
 from sshpilot.groups import GroupManager
 from sshpilot.plugins import registry as registry_mod
 from sshpilot.plugins.api import PluginContext
 from sshpilot.plugins.host import PluginHost
 
-REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-EXAMPLE_DIR = os.path.join(REPO, 'sshpilot', 'plugins', 'examples', 'easyenv_workspaces')
-STUB_DIR = os.path.join(EXAMPLE_DIR, 'stub')
+EXAMPLE = os.path.join(os.path.dirname(__file__), '..', 'sshpilot', 'plugins',
+                       'examples', 'easyenv_workspaces', '__init__.py')
 
 
 class FakeConfig:
-    def __init__(self, settings=None):
-        self.settings = dict(settings or {})
+    def __init__(self):
+        self.settings = {}
 
     def get_setting(self, key, default=None):
         return self.settings.get(key, default)
@@ -35,25 +32,15 @@ class FakeConfig:
         self.settings[key] = value
 
 
-class FakeTabPage:
-    def set_title(self, t): self.title = t
-    def set_icon(self, i): self.icon = i
-
-
-class FakeTabView:
-    def __init__(self): self.pages = []
-    def append(self, w): p = FakeTabPage(); self.pages.append(p); return p
-    def get_pages(self): return list(self.pages)
-    def set_selected_page(self, p): self.selected = p
-
-
 class FakeWindow:
     def __init__(self, cm):
-        self.tab_view = FakeTabView()
-        self.toast_overlay = types.SimpleNamespace(toasts=[],
-            add_toast=lambda t: self.toast_overlay.toasts.append(t))
-        self._plugins_menu_section = types.SimpleNamespace(items=[],
-            append=lambda label, action: self._plugins_menu_section.items.append((label, action)))
+        self.tab_view = types.SimpleNamespace(
+            pages=[], append=lambda w: None, get_pages=lambda: [],
+            set_selected_page=lambda p: None)
+        self.toast_overlay = types.SimpleNamespace(
+            toasts=[], add_toast=lambda t: self.toast_overlay.toasts.append(t))
+        self._plugins_menu_section = types.SimpleNamespace(
+            items=[], append=lambda label, action: None)
         self.opened = []
         self.terminal_manager = types.SimpleNamespace(
             connect_to_host=lambda conn: self.opened.append(conn))
@@ -78,175 +65,171 @@ def _make_cm(tmp_path):
     cm.ssh_config_path = str(tmp_path / 'ssh_config')
     cm.known_hosts_path = str(tmp_path / 'known_hosts')
     open(cm.ssh_config_path, 'w').write("# empty\n")
-    cm.emitted = []
-    cm.emit = lambda *a: cm.emitted.append(a)
-    cm.store_password = lambda *a, **k: True
+    cm.emit = lambda *a: None
+    cm.stored_passwords = []
+    cm.store_password = lambda host, user, pw: cm.stored_passwords.append((host, user, pw)) or True
     cm.delete_password = lambda *a, **k: True
-    # connect_after is what PluginHost uses to subscribe to CM signals.
     cm.connect_after = lambda *a, **k: 0
+    # keyring-backed plugin secrets used by ctx.secrets:
+    cm._sec = {}
+    cm.store_plugin_secret = lambda pid, k, v: cm._sec.__setitem__((pid, k), v) or True
+    cm.get_plugin_secret = lambda pid, k: cm._sec.get((pid, k))
+    cm.delete_plugin_secret = lambda pid, k: cm._sec.pop((pid, k), None) is not None
     return cm
+
+
+class FakeClient:
+    """Stands in for EasyEnvClient — no network."""
+    def __init__(self):
+        self._accounts = [{"uuid": "acct-1", "title": "demo@easyenv.io"}]
+        self._templates = [{"uuid": "ubuntu-26-04", "title": "Ubuntu 26.04 LTS"},
+                           {"uuid": "ansible-cluster", "title": "Ansible Cluster"}]
+        self._ws = {}  # uuid -> workspace dict (with boxes)
+
+    def accounts(self): return self._accounts
+    def templates(self): return self._templates
+    def workspaces(self): return [{"uuid": u, "title": w["title"], "status": w["status"]}
+                                  for u, w in self._ws.items()]
+    def workspace(self, uuid): return self._ws.get(uuid)
+    def start(self, uuid):
+        if uuid in self._ws:
+            self._ws[uuid]["status"] = "active"
+    def stop(self, uuid):
+        if uuid in self._ws:
+            self._ws[uuid]["status"] = "stopped"
+    def delete(self, uuid): self._ws.pop(uuid, None)
+
+    def add_ws(self, uuid, title, boxes, status="active"):
+        self._ws[uuid] = {"uuid": uuid, "title": title, "status": status, "boxes": boxes}
+
+
+def _box(uuid, title, ip, user="easyenv", port=22, pw="secret"):
+    return {"uuid": uuid, "title": title, "host_address": ip,
+            "ssh_username": user, "ssh_port": port, "vm_password": pw, "status": "started"}
 
 
 @pytest.fixture
 def env(tmp_path, monkeypatch):
-    # Put the stub first on PATH and give it an isolated state dir.
-    monkeypatch.setenv("PATH", STUB_DIR + os.pathsep + os.environ.get("PATH", ""))
-    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
-    # Make sure the stub is executable (git keeps the bit, but be safe).
-    os.chmod(os.path.join(STUB_DIR, "easyenv"), 0o755)
-    assert shutil.which("easyenv") == os.path.join(STUB_DIR, "easyenv")
-
-    # Fresh registry + ssh plugin-zero so the registry is valid.
     monkeypatch.setattr(registry_mod, "_registry", None)
     from sshpilot.plugins.builtin.ssh_protocol import Plugin as SshPlugin
     SshPlugin().activate(PluginContext(plugin_id="ssh", app_config=None,
                                        connection_manager=None,
                                        protocol_registry=registry_mod.protocol_registry()))
-
     cm = _make_cm(tmp_path)
     host = PluginHost(connection_manager=cm)
     host.bind_window(FakeWindow(cm))
     host.dispatch_app_started()
-    return cm, host
 
-
-def _load_plugin(cm, host):
-    """Instantiate the example plugin against a real per-plugin context."""
-    import importlib.util
-    spec = importlib.util.spec_from_file_location(
-        "easyenv_e2e", os.path.join(EXAMPLE_DIR, "__init__.py"))
+    spec = importlib.util.spec_from_file_location("easyenv_e2e", EXAMPLE)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     ctx = PluginContext(plugin_id="easyenv-workspaces", app_config=cm.config,
                         connection_manager=cm,
-                        protocol_registry=registry_mod.protocol_registry(),
-                        host=host)
+                        protocol_registry=registry_mod.protocol_registry(), host=host)
     plugin = mod.Plugin()
     plugin.activate(ctx)
-    return mod, plugin
+    fake = FakeClient()
+    plugin._client = lambda: fake          # inject the fake REST client
+    ctx.settings.set("account_uuid", "acct-1")
+    return cm, host, plugin, fake, mod
 
 
-def test_backend_registered_via_user_plugin(env):
-    cm, host = env
-    _load_plugin(cm, host)
-    assert registry_mod.protocol_registry().get_or_none("easyenv") is not None
-    assert registry_mod.protocol_registry().plugin_id_for("easyenv") == "easyenv-workspaces"
+def _ssh_conns(cm):
+    return [c for c in cm.connections if getattr(c, "protocol", "ssh") == "ssh"]
 
 
-def test_whoami_and_list_against_stub(env):
-    cm, host = env
-    _mod, plugin = _load_plugin(cm, host)
-    assert plugin._do_whoami()  # stub seeds a logged-in account
-    items = plugin._do_list()
-    assert any(w["name"] == "ansible-cluster" for w in items)  # stub's seed workspace
+def test_single_box_makes_ssh_connection(env):
+    cm, host, plugin, _fake, _mod = env
+    ws = {"uuid": "w1", "title": "scratch", "status": "active",
+          "boxes": [_box("b1", "Ubuntu", "51.15.0.1")]}
+    plugin._materialize(ws, open_after=True)
+
+    conn = cm.find_connection_by_nickname("scratch")
+    assert conn is not None and conn.protocol == "ssh"
+    assert conn.data["hostname"] == "51.15.0.1"
+    assert conn.data["username"] == "easyenv"
+    assert conn.data["auth_method"] == 1
+    # password stored in the keyring for (host, user)
+    assert ("51.15.0.1", "easyenv", "secret") in cm.stored_passwords
+    # written to ~/.ssh/config with the forced-password ssh options
+    cfg = open(cm.ssh_config_path).read()
+    assert "Host scratch" in cfg and "51.15.0.1" in cfg
+    assert "StrictHostKeyChecking accept-new" in cfg
+    assert "PreferredAuthentications password" in cfg
+    # opened a terminal for it
+    assert any(c.nickname == "scratch" for c in host._window.opened)
 
 
-def _provision(plugin, host, name, template, open_first=False):
-    """Run the real off-thread enumerate+provision flow synchronously."""
-    ws = plugin._do_create(name, template=template)
-    machines = plugin._do_machines(ws["id"])
-    plugin._provision_workspace(ws["name"], ws["id"], machines, open_first=open_first)
-    return ws, machines
+def test_multi_box_makes_group(env):
+    cm, host, plugin, _fake, _mod = env
+    boxes = [_box("b0", "control", "10.0.0.1"),
+             _box("b1", "Ubuntu 24.04 LTS", "10.0.0.2"),
+             _box("b2", "Ubuntu 24.04 LTS", "10.0.0.3"),
+             _box("b3", "Ubuntu 24.04 LTS", "10.0.0.4")]
+    ws = {"uuid": "w2", "title": "ansible", "status": "active", "boxes": boxes}
+    plugin._materialize(ws, open_after=False)
 
-
-def test_create_cluster_makes_group_of_nodes(env):
-    cm, host = env
-    _mod, plugin = _load_plugin(cm, host)
     gm = host._window.group_manager
-
-    ws, machines = _provision(plugin, host, "ansible-stack", "ansible-ubuntu-cluster")
-    assert len(machines) == 4  # control + 3 ubuntu (stub mirrors the real template)
-
-    # A group exists named after the workspace, with one member per node.
-    groups = [g for g in gm.get_all_groups() if g["name"] == "EasyEnv: ansible-stack"]
+    groups = [g for g in gm.get_all_groups() if g["name"] == "EasyEnv: ansible"]
     assert len(groups) == 1
-    gid = groups[0]["id"]
-    assert len(gm.groups[gid]["connections"]) == 4
-
-    # Each node is a persisted non-SSH 'easyenv' connection with a machine_id.
-    easyenv_conns = [c for c in cm.connections if c.protocol == "easyenv"]
-    assert len(easyenv_conns) == 4
-    assert all(c.data.get("machine_id") for c in easyenv_conns)
-    stored = cm.config.settings.get("connections.non_ssh", [])
-    assert sum(1 for e in stored if e.get("workspace_id") == ws["id"]) == 4
-    # ~/.ssh/config untouched (mesh connections are non-SSH).
-    assert open(cm.ssh_config_path).read() == "# empty\n"
+    assert len(gm.groups[groups[0]["id"]]["connections"]) == 4
+    sshs = _ssh_conns(cm)
+    assert len(sshs) == 4
+    # duplicate box titles deduped into unique nicknames
+    assert len({c.nickname for c in sshs}) == 4
 
 
-def test_open_node_routes_to_terminal(env):
-    cm, host = env
-    _mod, plugin = _load_plugin(cm, host)
-    window = host._window
-    _ws, _machines = _provision(plugin, host, "ansible-stack", "ansible-ubuntu-cluster")
-    # Open one node by its group-member nickname.
-    nick = gm_first_member(host._window.group_manager, "EasyEnv: ansible-stack")
-    assert plugin.ctx.open_connection(nick) is True
-    assert any(c.nickname == nick for c in window.opened)
+def test_update_on_restart_refreshes_host_and_password(env):
+    cm, host, plugin, _fake, _mod = env
+    ws_a = {"uuid": "w3", "title": "box", "status": "active",
+            "boxes": [_box("b1", "Ubuntu", "1.1.1.1", pw="oldpw")]}
+    plugin._materialize(ws_a)
+    ws_b = {"uuid": "w3", "title": "box", "status": "active",
+            "boxes": [_box("b1", "Ubuntu", "2.2.2.2", pw="newpw")]}
+    plugin._materialize(ws_b)
+
+    assert len([c for c in cm.connections if c.nickname == "box"]) == 1  # no dup
+    conn = cm.find_connection_by_nickname("box")
+    assert conn.data["hostname"] == "2.2.2.2"  # refreshed
+    assert ("2.2.2.2", "easyenv", "newpw") in cm.stored_passwords
 
 
-def gm_first_member(gm, group_name):
-    gid = next(g["id"] for g in gm.get_all_groups() if g["name"] == group_name)
-    return gm.groups[gid]["connections"][0]
+def test_signin_selects_account_and_stores_token(env):
+    cm, host, plugin, fake, _mod = env
+    plugin._after_signin(fake.accounts())
+    assert cm.config.get_setting("plugins.easyenv-workspaces.account_uuid") == "acct-1"
 
 
-def test_reprovision_is_idempotent(env):
-    cm, host = env
-    _mod, plugin = _load_plugin(cm, host)
-    gm = host._window.group_manager
-    ws = plugin._do_create("ansible-stack", template="ansible-ubuntu-cluster")
-    machines = plugin._do_machines(ws["id"])
-    plugin._provision_workspace(ws["name"], ws["id"], machines)
-    plugin._provision_workspace(ws["name"], ws["id"], machines)  # again
-    groups = [g for g in gm.get_all_groups() if g["name"] == "EasyEnv: ansible-stack"]
-    assert len(groups) == 1  # no duplicate group
-    assert len(gm.groups[groups[0]["id"]]["connections"]) == 4  # no duplicate members
-    assert len([c for c in cm.connections if c.protocol == "easyenv"]) == 4
+def test_open_starts_stopped_workspace_then_materializes(env):
+    cm, host, plugin, fake, _mod = env
+    fake.add_ws("w4", "lab", [_box("b1", "Ubuntu", "3.3.3.3")], status="stopped")
+    # _open_workspace_async runs a daemon thread; drive the logic synchronously:
+    ws = fake.workspace("w4")
+    if ws["status"] != "active":
+        fake.start("w4")
+        ws = plugin._poll_active(fake, "w4")
+    plugin._materialize(ws, open_after=True)
+    assert fake.workspace("w4")["status"] == "active"
+    assert cm.find_connection_by_nickname("lab") is not None
+    assert any(c.nickname == "lab" for c in host._window.opened)
 
 
-def test_template_list_from_stub(env):
-    cm, host = env
-    _mod, plugin = _load_plugin(cm, host)
+def test_ctx_update_connection(env):
+    cm, _host, plugin, _fake, _mod = env
+    ctx = plugin.ctx
+    ctx.add_connection({"protocol": "ssh", "nickname": "u1", "hostname": "1.1.1.1",
+                        "username": "x", "port": 22, "password": "p", "auth_method": 1})
+    assert ctx.update_connection("u1", {
+        "protocol": "ssh", "nickname": "u1", "hostname": "9.9.9.9",
+        "username": "x", "port": 22, "password": "p2", "auth_method": 1}) is True
+    assert cm.find_connection_by_nickname("u1").data["hostname"] == "9.9.9.9"
+    assert ctx.update_connection("missing", {"nickname": "missing"}) is False
+
+
+def test_templates_parsed(env):
+    cm, host, plugin, _fake, _mod = env
     tpls = plugin._do_templates()
     names = {t["name"] for t in tpls}
-    assert "ansible-ubuntu-cluster" in names  # multi-node template
-    assert "ubuntu-26-04" in names            # single-node template
-    # cache population (what the dropdown reads)
+    assert "Ubuntu 26.04 LTS" in names and "Ansible Cluster" in names
     plugin._populate_templates(tpls)
-    assert "tpl-ansible-cluster" in plugin._template_values
-
-
-def test_provision_from_selected_template_makes_group(env):
-    cm, host = env
-    _mod, plugin = _load_plugin(cm, host)
-    gm = host._window.group_manager
-    # Simulate: user typed a name and picked the cluster template -> create.
-    ws, machines = _provision(plugin, host, "tpl-stack", "ansible-ubuntu-cluster")
-    assert len(machines) == 4
-    assert any(g["name"] == "EasyEnv: tpl-stack" for g in gm.get_all_groups())
-
-
-def test_single_machine_no_group(env):
-    cm, host = env
-    _mod, plugin = _load_plugin(cm, host)
-    gm = host._window.group_manager
-    ws, machines = _provision(plugin, host, "scratch", "python-dev-single")
-    assert len(machines) == 1
-    assert not any(g["name"] == "EasyEnv: scratch" for g in gm.get_all_groups())
-    conn = next(c for c in cm.connections if c.nickname == "scratch")
-    assert conn.protocol == "easyenv" and conn.data.get("machine_id")
-
-
-def test_build_spawn_argv_per_node(env):
-    cm, host = env
-    mod, plugin = _load_plugin(cm, host)
-    ws, machines = _provision(plugin, host, "ansible-stack", "ansible-ubuntu-cluster")
-    nick = gm_first_member(host._window.group_manager, "EasyEnv: ansible-stack")
-    conn = cm.find_connection_by_nickname(nick)
-    ctx = PluginContext.for_spawn(plugin_id="easyenv-workspaces", app_config=cm.config,
-                                  connection_manager=cm,
-                                  protocol_registry=registry_mod.protocol_registry())
-    spec = mod.EasyEnvBackend().build_spawn(conn, ctx)
-    # easyenv machine ssh <machine_id> -w <ws_id>
-    assert spec.argv[-5:-3] == ["machine", "ssh"]
-    assert spec.argv[-2:] == ["-w", ws["id"]]
-    assert spec.argv[0].endswith("easyenv")
+    assert "ubuntu-26-04" in plugin._template_values

@@ -1,80 +1,50 @@
 # EasyEnv Workspaces — sshPilot plugin example
 
-Integrates the [easyenv.io](https://easyenv.io/cli) CLI (`easyenv`,
-[github.com/donedeploy/easyenv-cli](https://github.com/donedeploy/easyenv-cli))
-as a sshPilot plugin. It demonstrates the **CLI-driven, mesh-protocol**
-integration archetype (contrast with `examples/mock_vps`, which is an
-IP/SSH provider).
+Provisions [easyenv.io](https://easyenv.io) dev workspaces over their **REST
+API** and connects to them as **standard SSH connections** — no `easyenv` CLI
+binary and no NetBird mesh. It demonstrates the provider-plugin archetype:
+sign in, list/create workspaces, and turn them into sshPilot connections (a
+single VM → one connection; a multi-VM template → a sidebar group of per-node
+connections).
 
-easyenv is mesh-based: `easyenv workspace ssh <id>` opens a shell over the
-easyenv mesh and does **not** expose a host/port/user/key. So the plugin:
+The plugin imports only the public SDK (`sshpilot.plugins.api`) plus the Python
+standard library (`urllib`/`json`/`threading`) and GTK — no third-party deps.
 
-1. Registers a **protocol backend** `easyenv` whose `build_spawn` runs
-   `easyenv workspace ssh <workspace-id>` in a sshPilot terminal tab.
-2. Adds an **EasyEnv Workspaces** page (Tools menu) to sign in, list, create,
-   and manage workspaces, then opens a terminal via the public
-   `ctx.add_connection` + `ctx.open_connection`.
+## How it works
 
-Only `sshpilot.plugins.api` is imported.
+- **Auth:** REST headers `X-Service-Token: <token>` + `Account-ID: <uuid>`. You
+  paste a service token from
+  https://dashboard.easyenv.io/auth/login?redirect=/dashboard/profile ; the
+  plugin stores it in the OS keyring (`ctx.secrets`) and the active account uuid
+  in `ctx.settings`.
+- **Provision:** `POST /v1/workspaces/` with `workspace_template` +
+  `settings.public_ip_requested = true`, then `…/start/`, then poll
+  `GET /v1/workspaces/{uuid}/` until `active`.
+- **Connect:** each box comes back with a **public IP** (`host_address`) plus
+  `ssh_username` / `ssh_port` / `vm_password`. The plugin creates ordinary
+  sshPilot SSH connections from those (password stored in the keyring, fed via
+  sshpass). Opening one is normal SSH — it works from anywhere, no VPN.
 
-## Prerequisites
+## Install
 
-- **`easyenv` CLI** — provisioning + connecting (https://easyenv.io/cli).
-- **`netbird` CLI** — *required to connect to a workspace.* EasyEnv reaches
-  boxes over a NetBird mesh and brings the VPN up for you (auto-VPN), but the
-  `netbird` binary must be installed: https://netbird.io/docs/ . Listing and
-  creating workspaces only call the API and work without it. The plugin shows a
-  warning on the page when `netbird` is missing.
-
-## Install (real easyenv)
-
-1. Install the CLI and sign in (the account + service token are created on
-   easyenv.io — the CLI "does everything but signup"):
-   ```sh
-   # see https://easyenv.io/cli for your platform
-   easyenv auth login --token <paste-from-easyenv.io>
-   ```
+1. Get a service token: https://dashboard.easyenv.io/auth/login?redirect=/dashboard/profile
 2. Copy this plugin into the user plugin dir and enable it:
    ```sh
    cp -r easyenv_workspaces ~/.local/share/sshpilot/plugins/easyenv-workspaces
    ```
-   Open sshPilot ▸ Preferences ▸ Plugins, enable **EasyEnv Workspaces**, restart.
-3. Tools ▸ **EasyEnv Workspaces** → create/list/connect.
+   sshPilot ▸ Preferences ▸ Plugins → enable **EasyEnv Workspaces** → restart.
+3. Tools ▸ **EasyEnv Workspaces** → paste the token → Sign in → pick a template → Create.
 
-## Try it with no account (bundled stub)
+## Notes
 
-A self-contained `stub/easyenv` mirrors the real CLI's command surface (state
-in `~/.local/state/easyenv-stub.json`, never touching `~/.config/easyenv/`).
-Its `workspace ssh` drops into a real local shell, so the terminal tab is a
-genuinely working session. Put the stub first on `PATH`:
-
-```sh
-mkdir -p ~/.local/bin
-cp easyenv_workspaces/stub/easyenv ~/.local/bin/easyenv
-chmod +x ~/.local/bin/easyenv          # if the executable bit was lost on copy
-```
-
-The same plugin then drives the stub. Swapping to the real binary is just
-installing it ahead of the stub on `PATH` and running `easyenv auth login`.
-
-## Flatpak
-
-Inside the Flatpak sandbox the host `easyenv` isn't on the sandbox `PATH`, so
-the plugin routes calls through `flatpak-spawn --host` (the sshPilot manifest
-grants `--talk-name=org.freedesktop.Flatpak`). Both the page's CLI calls and
-the terminal child use the prefix. This applies to any CLI-driven plugin.
-
-## Notes / to confirm with the partner
-
-- The exact `workspace ssh` subcommand (`workspace ssh <id>` vs `machine ssh -w`)
-  — change one argv list in `EasyEnvBackend.build_spawn` if it differs.
-- Per the EasyEnv API (OpenAPI `WorkspaceList`), a workspace's stable id is
-  `uuid`, its display name is `title`, and `status` is one of
-  active/not_started/stopped/in_progress/failed; list responses are paginated
-  (`results: [...]`). The plugin parses these (and tolerates `id`/`name`/`state`
-  in case the CLI reshapes the payload). Confirm the CLI's actual `--output
-  json` shape with the partner.
-- A workspace may auto-stop after its TTL; resume before connecting if needed.
-- Mesh = no SFTP/port-forward/ssh-copy-id via sshPilot (capabilities are empty).
-- The easyenv token is owned by the CLI (OS keychain); the plugin never stores
-  it in sshPilot's keyring.
+- Connections are written to `~/.ssh/config` like any other SSH host. Each
+  provisioned host gets `StrictHostKeyChecking accept-new`,
+  `UserKnownHostsFile /dev/null` (boxes are ephemeral and recycle IPs), and
+  `PreferredAuthentications password` / `PubkeyAuthentication no` (so a loaded
+  ssh-agent with many keys doesn't trip "Too many authentication failures"
+  before the password is tried).
+- **Public IP** is always requested (it's what makes direct SSH possible);
+  depending on your easyenv plan this may have cost/availability implications.
+- Stopped/expired workspaces are restarted on **Open** (start + wait), and the
+  connection's IP/password are refreshed if they changed.
+- The token lives only in the OS keyring — never written to the repo or logs.
