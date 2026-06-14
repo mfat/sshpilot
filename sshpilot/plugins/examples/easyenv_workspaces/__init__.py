@@ -74,39 +74,47 @@ def easyenv_argv(args, binary_path=None):
     return prefix + [exe] + list(args)
 
 
+def _one_workspace(w):
+    """Normalize one workspace object from the EasyEnv API/CLI JSON.
+
+    Field names follow the EasyEnv API (WorkspaceList): ``uuid`` is the stable
+    id used by `workspace ssh`, ``title`` is the display name, ``status`` is one
+    of active/not_started/stopped/in_progress/failed. Alternatives are
+    tolerated in case the CLI reshapes the payload."""
+    if not isinstance(w, dict):
+        return None
+    wid = str(w.get("uuid") or w.get("workspace_id") or w.get("id") or "")
+    name = str(w.get("title") or w.get("name") or wid)
+    status = str(w.get("status") or w.get("state") or "unknown")
+    if wid or name:
+        return {"id": wid, "name": name, "status": status}
+    return None
+
+
 def _parse_workspaces(text):
-    """Defensively parse `workspace list --output json`. The exact schema is
-    not documented, so tolerate dict-or-list shapes and several field names."""
+    """Parse `workspace list --output json` (list, or a paginated/wrapped dict)."""
     try:
         data = json.loads(text)
     except (ValueError, TypeError):
         return []
     if isinstance(data, dict):
-        data = data.get("workspaces") or data.get("items") or [data]
+        # EasyEnv list endpoints are paginated (PaginatedWorkspaceListList:
+        # {"results": [...]}); also tolerate workspaces/items or a bare object.
+        data = (data.get("results") or data.get("workspaces")
+                or data.get("items") or [data])
     out = []
     for w in data if isinstance(data, list) else []:
-        if not isinstance(w, dict):
-            continue
-        wid = str(w.get("id") or w.get("uuid") or w.get("workspace_id") or "")
-        name = str(w.get("name") or wid)
-        status = str(w.get("status") or w.get("state") or "unknown")
-        if wid or name:
-            out.append({"id": wid, "name": name, "status": status})
+        ws = _one_workspace(w)
+        if ws is not None:
+            out.append(ws)
     return out
 
 
 def _parse_one(text):
     try:
-        w = json.loads(text)
+        return _one_workspace(json.loads(text))
     except (ValueError, TypeError):
         return None
-    if isinstance(w, dict):
-        wid = str(w.get("id") or w.get("uuid") or w.get("workspace_id") or "")
-        name = str(w.get("name") or wid)
-        if wid or name:
-            return {"id": wid, "name": name,
-                    "status": str(w.get("status") or "unknown")}
-    return None
 
 
 class EasyEnvBackend(ProtocolBackend):
@@ -123,8 +131,8 @@ class EasyEnvBackend(ProtocolBackend):
 
     def connection_fields(self):
         return [
-            FieldSpec(key="workspace_id", label="Workspace ID", kind="text",
-                      required=True, placeholder="ws-001 or workspace name"),
+            FieldSpec(key="workspace_id", label="Workspace UUID", kind="text",
+                      required=True, placeholder="workspace uuid (or title)"),
             FieldSpec(key="machine", label="Machine (optional)", kind="text",
                       placeholder="leave empty for the first machine"),
         ]

@@ -85,11 +85,14 @@ def test_fields_and_validate():
 
 
 def test_parse_workspaces_tolerates_shapes():
-    # list form
-    assert mod._parse_workspaces('[{"id":"a","name":"x","status":"running"}]') == \
-        [{"id": "a", "name": "x", "status": "running"}]
-    # dict-wrapped + alternate field names
-    out = mod._parse_workspaces('{"workspaces":[{"uuid":"b","state":"stopped"}]}')
-    assert out == [{"id": "b", "name": "b", "status": "stopped"}]
+    # EasyEnv API shape: uuid + title + status
+    assert mod._parse_workspaces('[{"uuid":"ws-1","title":"x","status":"active"}]') == \
+        [{"id": "ws-1", "name": "x", "status": "active"}]
+    # paginated wrapper (PaginatedWorkspaceListList -> results)
+    out = mod._parse_workspaces('{"results":[{"uuid":"ws-2","title":"y","status":"stopped"}]}')
+    assert out == [{"id": "ws-2", "name": "y", "status": "stopped"}]
+    # alternate field names still tolerated (id/name/state)
+    assert mod._parse_workspaces('[{"id":7,"name":"z","state":"running"}]') == \
+        [{"id": "7", "name": "z", "status": "running"}]
     # garbage
     assert mod._parse_workspaces("not json") == []

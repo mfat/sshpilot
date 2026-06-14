@@ -59,8 +59,12 @@ the terminal child use the prefix. This applies to any CLI-driven plugin.
 
 - The exact `workspace ssh` subcommand (`workspace ssh <id>` vs `machine ssh -w`)
   — change one argv list in `EasyEnvBackend.build_spawn` if it differs.
-- `workspace list/get --output json` field names aren't documented; the plugin
-  parses defensively (`id`/`uuid`/`workspace_id`, `name`, `status`/`state`).
+- Per the EasyEnv API (OpenAPI `WorkspaceList`), a workspace's stable id is
+  `uuid`, its display name is `title`, and `status` is one of
+  active/not_started/stopped/in_progress/failed; list responses are paginated
+  (`results: [...]`). The plugin parses these (and tolerates `id`/`name`/`state`
+  in case the CLI reshapes the payload). Confirm the CLI's actual `--output
+  json` shape with the partner.
 - A workspace may auto-stop after its TTL; resume before connecting if needed.
 - Mesh = no SFTP/port-forward/ssh-copy-id via sshPilot (capabilities are empty).
 - The easyenv token is owned by the CLI (OS keychain); the plugin never stores

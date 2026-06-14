@@ -39,11 +39,18 @@ def _load():
             "account": "demo@easyenv.io",
             "logged_in": True,
             "next_id": 2,
+            # Shape mirrors the EasyEnv API (WorkspaceList): uuid + title +
+            # status (active/not_started/stopped/in_progress/failed).
             "workspaces": [
-                {"id": "ws-001", "name": "demo-sandbox", "status": "running",
-                 "template": "python_devenv", "ttl": "8h"},
+                {"id": 1, "uuid": "ws-001", "title": "demo-sandbox",
+                 "status": "active", "template": "python_devenv"},
             ],
         }
+
+
+def _match(wss, arg):
+    return next((w for w in wss
+                 if arg in (w.get("uuid"), w.get("title"), str(w.get("id")))), None)
 
 
 def _save(state):
@@ -125,26 +132,28 @@ def main(argv):
 
         if sub == "list":
             _emit(state, rest, wss,
-                  "\n".join(f"{w['id']}  {w['name']}  {w['status']}" for w in wss))
+                  "\n".join(f"{w['uuid']}  {w['title']}  {w['status']}" for w in wss))
             return 0
 
         if sub == "get":
             wsid = rest[1] if len(rest) > 1 else ""
-            ws = next((w for w in wss if w["id"] == wsid or w["name"] == wsid), None)
+            ws = _match(wss, wsid)
             if ws is None:
                 print(f"workspace {wsid!r} not found", file=sys.stderr)
                 return 1
-            detail = dict(ws, machines=[{"name": "main", "status": ws["status"]}])
+            detail = dict(ws, boxes=[{"uuid": "box-1", "title": "main",
+                                      "status": ws["status"],
+                                      "host_address": "10.42.0.1"}])
             _emit(state, rest, detail, json.dumps(detail))
             return 0
 
         if sub == "create":
             name = _opt(rest, "--name") or f"ws-{int(time.time())}"
             wsid = f"ws-{state['next_id']:03d}"
+            ws = {"id": state["next_id"], "uuid": wsid, "title": name,
+                  "status": "active",
+                  "template": _opt(rest, "--template") or "custom"}
             state["next_id"] += 1
-            ws = {"id": wsid, "name": name, "status": "running",
-                  "template": _opt(rest, "--template") or "custom",
-                  "ttl": _opt(rest, "--ttl") or "8h"}
             wss.append(ws)
             _save(state)
             _emit(state, rest, ws, f"Created {wsid} ({name}). 1 machine, 12s boot.")
@@ -152,14 +161,14 @@ def main(argv):
 
         if sub in ("stop", "resume", "delete"):
             wsid = rest[1] if len(rest) > 1 else ""
-            ws = next((w for w in wss if w["id"] == wsid or w["name"] == wsid), None)
+            ws = _match(wss, wsid)
             if ws is None:
                 print(f"workspace {wsid!r} not found", file=sys.stderr)
                 return 1
             if sub == "delete":
                 wss.remove(ws)
             else:
-                ws["status"] = "stopped" if sub == "stop" else "running"
+                ws["status"] = "stopped" if sub == "stop" else "active"
             _save(state)
             print(f"{sub} {wsid}: ok")
             return 0
@@ -167,8 +176,8 @@ def main(argv):
         if sub == "ssh":
             wsid = rest[1] if len(rest) > 1 else ""
             machine = _opt(rest, "--machine") or "main"
-            ws = next((w for w in wss if w["id"] == wsid or w["name"] == wsid), None)
-            label = ws["name"] if ws else wsid
+            ws = _match(wss, wsid)
+            label = ws["title"] if ws else wsid
             sys.stdout.write(
                 f"[easyenv-stub] connected to workspace {label} "
                 f"(machine: {machine}) over mesh. Ctrl-D to exit.\n")
