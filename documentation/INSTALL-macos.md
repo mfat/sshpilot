@@ -10,16 +10,20 @@ This guide provides simple step-by-step instructions to install and run sshPilot
 
 ### Quick Start (Recommended)
 
-Use the launcher script for automatic setup:
+Use the one-shot installer for automatic setup:
 
 ```bash
 git clone https://github.com/mfat/sshpilot.git
 cd sshpilot
-chmod +x sshpilot-mac.sh
-./sshpilot-mac.sh
+./scripts/install-run-macos.sh
 ```
 
-The launcher handles all dependencies and launches the app automatically.
+It installs Homebrew (if missing), the GTK stack, and Python dependencies,
+then launches the app. For subsequent runs use:
+
+```bash
+./scripts/run-macos.sh
+```
 
 ---
 

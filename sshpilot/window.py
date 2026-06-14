@@ -1520,9 +1520,20 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
         from sshpilot import icon_utils
         icon_utils.set_button_icon(self.sidebar_toggle_button, 'sidebar-show-symbolic')
-        self.sidebar_toggle_button.set_tooltip_text(
-            f'Hide Sidebar (F9, {get_primary_modifier_label()}+B)'
-        )
+        # Show the effective (possibly user-customized) shortcut in the tooltip.
+        sidebar_accels = self._get_safe_current_shortcuts().get('toggle_sidebar') or ['F9']
+
+        def _accel_label(accel):
+            try:
+                ok, keyval, mods = Gtk.accelerator_parse(accel)
+                if ok and keyval:
+                    return Gtk.accelerator_get_label(keyval, mods)
+            except Exception:
+                pass
+            return accel
+
+        accel_labels = ', '.join(_accel_label(a) for a in sidebar_accels)
+        self.sidebar_toggle_button.set_tooltip_text(f'Hide Sidebar ({accel_labels})')
         # Button should not appear pressed when sidebar is visible
         self.sidebar_toggle_button.set_active(False)
         self.sidebar_toggle_button.connect('toggled', self.on_sidebar_toggle)
@@ -5080,11 +5091,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
         # General shortcuts group
         group_general = Gtk.ShortcutsGroup()
-        group_general.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Toggle Sidebar'), accelerator='F9'))
-        
+
         # Add general shortcuts with current values
         general_actions = [
+            ('toggle_sidebar', _('Toggle Sidebar')),
             ('quit', _('Quit')),
             ('preferences', _('Settings')),
             ('help', _('Documentation')),

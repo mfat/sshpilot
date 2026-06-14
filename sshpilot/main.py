@@ -197,6 +197,12 @@ class SshPilotApplication(Adw.Application):
                 self.create_action('manage-files', self.on_manage_files, ['<primary><shift>o'])
             logger.debug("Using Linux/Windows shortcuts (Primary key = Ctrl key)")
 
+        # Sidebar toggle is a window action; register its default accels so
+        # it shows up in the shortcut editor and respects overrides.
+        self.register_window_shortcut(
+            'toggle_sidebar', ['F9', '<Meta>b'] if mac else ['F9']
+        )
+
         # Detailed shortcut list is verbose noise at INFO. Help → Keyboard
         # Shortcuts already shows this to users.
         if logger.isEnabledFor(logging.DEBUG):
@@ -597,6 +603,16 @@ class SshPilotApplication(Adw.Application):
         action = Gio.SimpleAction.new(name, None)
         action.connect("activate", callback)
         self.add_action(action)
+        if name not in self._action_order:
+            self._action_order.append(name)
+        self._default_shortcuts[name] = list(shortcuts) if shortcuts else None
+        self._apply_shortcut_for_action(name)
+
+    def register_window_shortcut(self, name, shortcuts):
+        """Register default accels for a win.* action (created on the window,
+        not the app) so it appears in the shortcut editor and respects
+        config overrides. ``set_accels_for_action`` does not require the
+        action to exist yet."""
         if name not in self._action_order:
             self._action_order.append(name)
         self._default_shortcuts[name] = list(shortcuts) if shortcuts else None

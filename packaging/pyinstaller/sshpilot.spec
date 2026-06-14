@@ -6,9 +6,12 @@ from PyInstaller.utils.hooks import collect_submodules
 # Resolve the current Python site-packages directory dynamically
 site_packages_dir = Path(sysconfig.get_path("platlib"))
 
+# This spec lives in packaging/pyinstaller/; anchor paths to the repo root.
+ROOT = os.path.abspath(os.path.join(SPECPATH, os.pardir, os.pardir))
+
 app_name = "SSHPilot"
-entry_py = "run.py"
-icon_file = "packaging/macos/sshpilot.icns"
+entry_py = os.path.join(ROOT, "run.py")
+icon_file = os.path.join(ROOT, "packaging", "macos", "sshpilot.icns")
 
 # Detect architecture and set Homebrew path
 arch = platform.machine()
@@ -71,9 +74,9 @@ datas += [
     (os.path.join(hb_share, "glib-2.0", "schemas"), "Resources/share/glib-2.0/schemas"),
     (os.path.join(hb_share, "icons", "Adwaita"),    "Resources/share/icons/Adwaita"),
     (os.path.join(hb_share, "gtk-4.0"),               "Resources/share/gtk-4.0"),
-    ("sshpilot", "sshpilot"),
-    ("sshpilot/resources/sshpilot.gresource", "Resources/sshpilot"),
-    ("sshpilot/io.github.mfat.sshpilot.svg", "share/icons"),
+    (os.path.join(ROOT, "sshpilot"), "sshpilot"),
+    (os.path.join(ROOT, "sshpilot", "resources", "sshpilot.gresource"), "Resources/sshpilot"),
+    (os.path.join(ROOT, "sshpilot", "io.github.mfat.sshpilot.svg"), "share/icons"),
 ]
 
 # Find libadwaita share data in Cellar if not in standard share location
@@ -169,8 +172,8 @@ a = Analysis(
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
-    hookspath=["."],
-                runtime_hooks=["hook-gtk_runtime.py"],
+    hookspath=[SPECPATH],
+    runtime_hooks=[os.path.join(SPECPATH, "hook-gtk_runtime.py")],
     noarchive=False,
 )
 
