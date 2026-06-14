@@ -19,7 +19,7 @@ from typing import List, Tuple, Optional
 from concurrent.futures import Future
 
 # Add the project root to the path
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
 import gi
 gi.require_version('Gtk', '4.0')
