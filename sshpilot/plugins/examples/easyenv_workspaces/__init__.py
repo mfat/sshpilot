@@ -1183,6 +1183,7 @@ class Plugin(SshPilotPlugin):
         title.set_halign(Gtk.Align.START)
         title.set_xalign(0)
         title.set_ellipsize(Pango.EllipsizeMode.END)
+        title.set_max_width_chars(24)   # bound natural width so it can't widen the card
         card.append(title)
         meta = Gtk.Label(label=cv["meta_line"])
         meta.add_css_class("dim-label")
@@ -1191,6 +1192,7 @@ class Plugin(SshPilotPlugin):
         meta.set_xalign(0)
         meta.set_wrap(False)
         meta.set_ellipsize(Pango.EllipsizeMode.END)
+        meta.set_max_width_chars(36)
         card.append(meta)
 
         if cv["is_provisioning"]:
@@ -1213,6 +1215,7 @@ class Plugin(SshPilotPlugin):
             sshl.set_xalign(0)
             sshl.set_hexpand(True)
             sshl.set_ellipsize(Pango.EllipsizeMode.END)
+            sshl.set_max_width_chars(28)
             sshl.set_selectable(True)
             row.append(sshl)
             cp = Gtk.Button.new_from_icon_name("edit-copy-symbolic")
@@ -1224,16 +1227,16 @@ class Plugin(SshPilotPlugin):
 
         card.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
         footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
-        footer.append(self._avatar(cv["recipe_name"]))
-        rn = Gtk.Label(label=cv["recipe_name"])
-        rn.add_css_class("dim-label")
-        rn.add_css_class("caption")
-        rn.set_ellipsize(Pango.EllipsizeMode.END)
-        rn.set_xalign(0)
-        rn.set_halign(Gtk.Align.START)
-        rn.set_hexpand(True)        # absorbs slack so the buttons stay in-bounds
-        rn.set_margin_end(4)
-        footer.append(rn)
+        # Recipe is already shown in the meta line; here just a colour chip
+        # (with the recipe in its tooltip) so the footer can't be widened by a
+        # long recipe name.
+        av = self._avatar(cv["recipe_name"])
+        av.set_tooltip_text(cv["recipe_name"])
+        av.set_valign(Gtk.Align.CENTER)
+        footer.append(av)
+        gap = Gtk.Box()
+        gap.set_hexpand(True)
+        footer.append(gap)
 
         info = Gtk.Button.new_from_icon_name("dialog-information-symbolic")
         info.add_css_class("flat")
