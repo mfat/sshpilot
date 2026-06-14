@@ -70,6 +70,9 @@ def _api(method, path, token, account, base_url=DEFAULT_BASE_URL, body=None,
     req.add_header("X-Service-Token", token or "")
     req.add_header("Account-ID", account or "")
     req.add_header("Content-Type", "application/json")
+    # Cloudflare in front of the API rejects the default "Python-urllib/x.y"
+    # user agent (403 / error 1010); send an explicit one.
+    req.add_header("User-Agent", "sshpilot-easyenv-plugin/1.0")
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             raw = resp.read()
