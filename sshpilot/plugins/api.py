@@ -298,9 +298,20 @@ class PluginContext:
     def add_connection(self, data: Dict[str, Any]) -> "ConnectionInfo":
         """Create and persist a new connection (used by provider plugins,
         e.g. VPS provisioning). Returns a read-only ``ConnectionInfo``; raises
-        ValueError if the data is invalid."""
+        ValueError if the data is invalid (including a duplicate nickname)."""
         conn = self.connection_manager.add_connection_from_data(data)
         return ConnectionInfo.from_connection(conn)
+
+    def update_connection(self, nickname: str, data: Dict[str, Any]) -> bool:
+        """Update an existing connection (by nickname) in place — rewrites its
+        stored settings and re-stores its password. Returns False if no
+        connection with that nickname exists. Use together with
+        ``add_connection`` to refresh a provisioned host whose address or
+        credentials changed (e.g. a workspace was stopped and restarted)."""
+        conn = self.connection_manager.find_connection_by_nickname(nickname)
+        if conn is None:
+            return False
+        return bool(self.connection_manager.update_connection(conn, dict(data)))
 
     def open_connection(self, nickname: str) -> bool:
         """Open a terminal tab for an existing connection (by nickname).
