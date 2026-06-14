@@ -84,10 +84,10 @@ jobs:
           echo "PKG_CONFIG_PATH: $PKG_CONFIG_PATH"
           echo "XDG_DATA_DIRS: $XDG_DATA_DIRS"
           echo "=== DEBUG: Checking pyinstaller.sh script ==="
-          ls -la pyinstaller.sh
-          chmod +x pyinstaller.sh
+          ls -la packaging/pyinstaller/pyinstaller.sh
+          chmod +x packaging/pyinstaller/pyinstaller.sh
           echo "=== DEBUG: Running PyInstaller build ==="
-          ./pyinstaller.sh
+          ./packaging/pyinstaller/pyinstaller.sh
           echo "=== DEBUG: PyInstaller build completed ==="
 
       - name: Verify sshpass bundled correctly

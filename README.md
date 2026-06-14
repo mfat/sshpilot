@@ -255,7 +255,8 @@ python3 run.py --verbose
 ```
 
 ## Documentation
-https://github.com/mfat/sshpilot/wiki
+- User guide and FAQ: https://github.com/mfat/sshpilot/wiki
+- In-repo developer and platform docs: [documentation/](documentation/)
 
 ## Telegram Channel
 https://t.me/sshpilot
