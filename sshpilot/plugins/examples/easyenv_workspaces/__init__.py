@@ -154,6 +154,28 @@ def _is_running(status):
     return str(status or "").lower() in ("active", "started", "running")
 
 
+# EasyEnv workspaces are ephemeral: once their duration expires (or they're
+# stopped) they become terminal — the VM is gone and the API rejects start with
+# "Stopped workspace cannot be started." A terminal workspace can't be resumed,
+# only recreated.
+_TERMINAL_STATUSES = (
+    "stopped", "failed", "expired", "terminated", "archived", "deleted", "error",
+)
+
+
+def _is_terminal(status):
+    return str(status or "").lower() in _TERMINAL_STATUSES
+
+
+def _friendly(exc):
+    """A user-facing message for an EasyEnvError; collapses the known
+    'cannot be started' 400 into a plain, actionable sentence."""
+    text = str(exc)
+    if "cannot be started" in text.lower():
+        return "stopped/expired and can't be restarted — use Recreate to make a fresh one"
+    return text
+
+
 def _looks_routable(addr):
     """True if ``addr`` is something plain SSH can reach: a literal IP, or a
     DNS name with a dot. EasyEnv's NetBird mesh boxes use unroutable names like
@@ -388,29 +410,95 @@ class Plugin(SshPilotPlugin):
         self._refresh_async()
 
     def _open_workspace_async(self, ws_view, open_after=True):
-        """Ensure the workspace is active (start + poll if needed), then
-        materialize its connections and optionally open the first node."""
+        """Open the workspace: materialize if running, start+poll if it's in a
+        transitional state, or refuse (with a clear message) if it's terminal —
+        a stopped/expired workspace cannot be restarted."""
         def worker():
             c = self._client()
             try:
                 ws = c.workspace(ws_view["uuid"])
-                if not _is_running((ws or {}).get("status")):
+                status = (ws or {}).get("status")
+                if _is_terminal(status):
+                    self.ctx.run_on_ui_thread(
+                        self.ctx.ui.notify,
+                        f"EasyEnv: {ws_view['title']} is {status} and can't be "
+                        f"reopened — use Recreate to make a fresh one")
+                    return
+                if not _is_running(status):
                     self.ctx.run_on_ui_thread(self._set_status,
                                               f"Starting {ws_view['title']}…")
                     c.start(ws_view["uuid"])
                     ws = self._poll_active(c, ws_view["uuid"])
+            except EasyEnvError as exc:
+                logger.warning("easyenv open %s failed: %s", ws_view["title"], exc)
+                self.ctx.run_on_ui_thread(
+                    self._set_status, f"{ws_view['title']}: {_friendly(exc)}")
+                return
             except Exception as exc:
                 self.ctx.run_on_ui_thread(self._set_status, f"Open failed: {exc}")
                 return
             self.ctx.run_on_ui_thread(self._materialize, ws, open_after)
         threading.Thread(target=worker, daemon=True).start()
 
+    def _recreate_async(self, ws_view):
+        """A terminal workspace can't be restarted, but it remembers its boxes'
+        recipes — provision a fresh workspace from the same recipe(s)."""
+        self._set_status(f"Recreating {ws_view['title']}…")
+
+        def worker():
+            c = self._client()
+            try:
+                old = c.workspace(ws_view["uuid"]) or {}
+                specs = self._recreate_specs(old, ws_view["title"])
+                if not specs:
+                    self.ctx.run_on_ui_thread(
+                        self._set_status,
+                        f"{ws_view['title']}: can't recreate — no recipe on its boxes")
+                    return
+                title = f"{ws_view['title']}-new"
+                body = {"title": title,
+                        "duration": old.get("duration") or 1,
+                        "duration_unit": old.get("duration_unit") or "hours",
+                        "boxes": specs,
+                        "settings": {"public_ip_requested": True}}
+                ws = c.create_workspace(body)
+                c.start(ws["uuid"])
+                ws = self._poll_active(c, ws["uuid"])
+            except EasyEnvError as exc:
+                logger.warning("easyenv recreate %s failed: %s", ws_view["title"], exc)
+                self.ctx.run_on_ui_thread(
+                    self._set_status, f"Recreate failed: {_friendly(exc)}")
+                return
+            except Exception as exc:
+                self.ctx.run_on_ui_thread(self._set_status, f"Recreate failed: {exc}")
+                return
+            self.ctx.run_on_ui_thread(self._after_recreate, ws)
+        threading.Thread(target=worker, daemon=True).start()
+
+    @staticmethod
+    def _recreate_specs(old, fallback_title):
+        """Build a create-body ``boxes`` list from a (terminal) workspace's
+        existing boxes, reusing each box's recipe uuid. Boxes without a recipe
+        (e.g. legacy mesh-only ones) are skipped."""
+        specs = []
+        for i, b in enumerate(old.get("boxes") or []):
+            rid = (b.get("recipe") or {}).get("uuid")
+            if not rid:
+                continue
+            specs.append({"title": b.get("title") or fallback_title,
+                          "recipe": rid, "position": i})
+        return specs
+
+    def _after_recreate(self, ws):
+        self._materialize(ws, open_after=True)
+        self._refresh_async()
+
     def _do_action_async(self, verb, ws_view):
         self._set_status(f"{verb} {ws_view['title']}…")
 
         def worker():
             c = self._client()
-            ok = True
+            msg = None
             try:
                 if verb == "start":
                     c.start(ws_view["uuid"])
@@ -418,14 +506,22 @@ class Plugin(SshPilotPlugin):
                     c.stop(ws_view["uuid"])
                 elif verb == "delete":
                     c.delete(ws_view["uuid"])
-            except Exception:
+            except EasyEnvError as exc:
+                # Expected API rejections (e.g. starting a terminal workspace) —
+                # no traceback, just a clear message.
+                logger.warning("easyenv %s %s failed: %s", verb, ws_view["title"], exc)
+                msg = _friendly(exc)
+            except Exception as exc:
                 logger.exception("easyenv %s failed", verb)
-                ok = False
-            self.ctx.run_on_ui_thread(self._after_action, verb, ws_view, ok)
+                msg = str(exc)
+            self.ctx.run_on_ui_thread(self._after_action, verb, ws_view, msg)
         threading.Thread(target=worker, daemon=True).start()
 
-    def _after_action(self, verb, ws_view, ok):
-        self._set_status(f"{verb} {ws_view['title']}: {'ok' if ok else 'failed'}")
+    def _after_action(self, verb, ws_view, msg):
+        if msg:
+            self._set_status(f"{verb} {ws_view['title']}: {msg}")
+        else:
+            self._set_status(f"{verb} {ws_view['title']}: ok")
         self._refresh_async()
 
     # --- UI ----------------------------------------------------------
@@ -539,6 +635,17 @@ class Plugin(SshPilotPlugin):
         for ws in items:
             self._list_box.append(self._workspace_row(ws))
 
+    @staticmethod
+    def _row_actions(status):
+        """Offer only the actions that make sense for the current state: a
+        terminal (stopped/expired) workspace can't be opened or started, only
+        recreated or deleted."""
+        if _is_terminal(status):
+            return (("Recreate", "recreate"), ("Delete", "delete"))
+        if _is_running(status):
+            return (("Open", "open"), ("Stop", "stop"), ("Delete", "delete"))
+        return (("Start", "start"), ("Delete", "delete"))  # transitional
+
     def _workspace_row(self, ws):
         row = Gtk.ListBoxRow()
         hb = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
@@ -548,18 +655,23 @@ class Plugin(SshPilotPlugin):
         label.set_halign(Gtk.Align.START)
         label.set_hexpand(True)
         hb.append(label)
-        for text, verb in (("Open", None), ("Start", "start"),
-                           ("Stop", "stop"), ("Delete", "delete")):
+        for text, verb in self._row_actions(ws["status"]):
             btn = Gtk.Button(label=text)
+            if verb == "stop":
+                btn.set_tooltip_text(
+                    "Ends the workspace; it can't be restarted afterwards")
             btn.connect("clicked", self._on_row_action, verb, ws)
             hb.append(btn)
         row.set_child(hb)
         return row
 
     def _on_row_action(self, _btn, verb, ws):
-        if verb is None:  # Open in sshPilot
+        if verb == "open":
             self._set_status(f"Opening {ws['title']}…")
             self._open_workspace_async(ws, open_after=True)
+            return
+        if verb == "recreate":
+            self._recreate_async(ws)
             return
         self._do_action_async(verb, ws)
 

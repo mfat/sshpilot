@@ -202,6 +202,40 @@ def test_mixed_boxes_keep_only_routable(env):
     assert sshs[0].data["hostname"] == "51.15.0.9"
 
 
+def test_row_actions_gated_by_status(env):
+    """A terminal (stopped/expired) workspace must not offer Open/Start — only
+    Recreate/Delete; running offers Open/Stop/Delete."""
+    _cm, _host, plugin, _fake, _mod = env
+    assert plugin._row_actions("stopped") == (("Recreate", "recreate"), ("Delete", "delete"))
+    assert plugin._row_actions("expired") == (("Recreate", "recreate"), ("Delete", "delete"))
+    assert plugin._row_actions("active") == (("Open", "open"), ("Stop", "stop"), ("Delete", "delete"))
+    assert plugin._row_actions("provisioning") == (("Start", "start"), ("Delete", "delete"))
+
+
+def test_friendly_collapses_cannot_be_started(env):
+    _cm, _host, _plugin, _fake, mod = env
+    exc = mod.EasyEnvError(
+        'POST /v1/workspaces/x/start/ -> HTTP 400: '
+        '{"errors":[{"message":["Stopped workspace cannot be started."]}]}')
+    assert "can't be restarted" in mod._friendly(exc)
+    assert mod._is_terminal("stopped") and not mod._is_terminal("active")
+
+
+def test_recreate_specs_reuse_box_recipes(env):
+    """Recreate rebuilds a create body from a terminal workspace's box recipes,
+    skipping boxes that have no recipe (legacy mesh-only)."""
+    _cm, _host, plugin, _fake, _mod = env
+    old = {"title": "lab", "boxes": [
+        {"title": "node-a", "recipe": {"uuid": "ubuntu_24_04"}},
+        {"title": "node-b", "recipe": {"uuid": "python_dev"}},
+        {"title": "legacy", "recipe": None}]}
+    specs = plugin._recreate_specs(old, "lab")
+    assert specs == [
+        {"title": "node-a", "recipe": "ubuntu_24_04", "position": 0},
+        {"title": "node-b", "recipe": "python_dev", "position": 1}]
+    assert plugin._recreate_specs({"boxes": []}, "lab") == []
+
+
 def test_update_on_restart_refreshes_host_and_password(env):
     cm, host, plugin, _fake, _mod = env
     ws_a = {"uuid": "w3", "title": "box", "status": "active",
