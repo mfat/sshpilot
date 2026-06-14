@@ -117,6 +117,36 @@ def _parse_one(text):
         return None
 
 
+def _one_machine(m):
+    """Normalize one machine/box object. Real shape (machine list / workspace
+    .boxes): {uuid, title, status, host_address, recipe{…}}."""
+    if not isinstance(m, dict):
+        return None
+    mid = str(m.get("uuid") or m.get("id") or "")
+    name = str(m.get("title") or m.get("name") or mid)
+    status = str(m.get("status") or m.get("state") or "unknown")
+    if mid:
+        return {"id": mid, "name": name, "status": status}
+    return None
+
+
+def _parse_machines(text):
+    """Parse `machine list -w <ws> --output json` (a list), or a `workspace
+    get` object whose machines live under `boxes` (or `machines`)."""
+    try:
+        data = json.loads(text)
+    except (ValueError, TypeError):
+        return []
+    if isinstance(data, dict):
+        data = data.get("boxes") or data.get("machines") or data.get("results") or []
+    out = []
+    for m in data if isinstance(data, list) else []:
+        mm = _one_machine(m)
+        if mm is not None:
+            out.append(mm)
+    return out
+
+
 class EasyEnvBackend(ProtocolBackend):
     """Protocol backend: the connection IS `easyenv workspace ssh <id>`."""
 
@@ -132,9 +162,11 @@ class EasyEnvBackend(ProtocolBackend):
     def connection_fields(self):
         return [
             FieldSpec(key="workspace_id", label="Workspace UUID", kind="text",
-                      required=True, placeholder="workspace uuid (or title)"),
-            FieldSpec(key="machine", label="Machine (optional)", kind="text",
-                      placeholder="leave empty for the first machine"),
+                      required=True, placeholder="workspace uuid"),
+            FieldSpec(key="machine_id", label="Machine UUID (optional)", kind="text",
+                      placeholder="machine uuid; empty = first machine"),
+            FieldSpec(key="machine_name", label="Machine name (display)", kind="text",
+                      placeholder="optional label"),
         ]
 
     def validate(self, data):
@@ -147,10 +179,13 @@ class EasyEnvBackend(ProtocolBackend):
         wsid = data.get("workspace_id") or data.get("host") or getattr(connection, "nickname", "")
         if not wsid:
             raise ProtocolError("No workspace id configured for this connection.")
-        args = ["workspace", "ssh", str(wsid)]
-        machine = data.get("machine")
+        machine = data.get("machine_id") or data.get("machine")
         if machine:
-            args += ["--machine", str(machine)]
+            # Connect to a specific node: easyenv machine ssh <m> -w <ws>
+            args = ["machine", "ssh", str(machine), "-w", str(wsid)]
+        else:
+            # No machine pinned: easyenv workspace ssh <ws> (first machine)
+            args = ["workspace", "ssh", str(wsid)]
         try:
             argv = easyenv_argv(args, data.get("binary_path"))
         except _EasyEnvNotFound as exc:
@@ -216,28 +251,80 @@ class Plugin(SshPilotPlugin):
     def _do_action(self, verb, wsid):
         args = ["workspace", verb, wsid]
         if verb == "delete":
-            args.append("--yes")
+            args.append("--force")
         out = self._run(args, timeout=60)
         return out.returncode == 0
 
-    def _connect_workspace(self, name, wsid):
-        """Ensure a sshPilot connection for the workspace exists, then open a
-        terminal tab for it. Runs on the UI thread."""
-        data = {"protocol": "easyenv", "nickname": name, "host": name,
-                "workspace_id": wsid}
-        existing = None
-        try:
-            existing = self.ctx.connection_manager.find_connection_by_nickname(name)
-        except Exception:
-            existing = None
-        if existing is None:
+    def _do_machines(self, wsid):
+        """List a workspace's machines/nodes via `machine list -w <ws>`."""
+        out = self._run(["machine", "list", "-w", wsid, "--output", "json"], timeout=30)
+        return _parse_machines(out.stdout) if out.returncode == 0 else []
+
+    @staticmethod
+    def _node_nicknames(ws_title, machines):
+        """Map machines -> globally-unique, stable, readable nicknames.
+
+        Machine titles repeat within a workspace (e.g. 3x "Ubuntu 24.04 LTS"),
+        so duplicates get a 1-based index assigned in stable uuid order. The
+        workspace title prefix disambiguates across workspaces."""
+        from collections import Counter
+        counts = Counter(m["name"] for m in machines)
+        seen = {}
+        result = []
+        for m in sorted(machines, key=lambda x: x["id"]):
+            label = m["name"]
+            if counts[label] > 1:
+                seen[label] = seen.get(label, 0) + 1
+                label = f"{label} {seen[label]}"
+            result.append((m, f"{ws_title} / {label}"))
+        return result
+
+    def _provision_workspace(self, ws_title, wsid, machines, open_first=False):
+        """Materialize a workspace in sshPilot (UI thread). One machine -> a
+        single connection; multiple -> a group with one connection per node.
+        Idempotent (find-or-create group, reuse existing connections)."""
+        if not machines:
+            machines = [{"id": "", "name": ws_title, "status": "unknown"}]
+
+        if len(machines) == 1:
+            m = machines[0]
+            data = {"protocol": "easyenv", "nickname": ws_title, "host": ws_title,
+                    "workspace_id": wsid, "machine_id": m["id"],
+                    "machine_name": m["name"]}
             try:
                 self.ctx.add_connection(data)
             except ValueError:
-                # Nickname already taken by a different connection — fall
-                # through and just try to open it.
                 pass
-        return self.ctx.open_connection(name)
+            self.ctx.ui.notify(f"EasyEnv: {ws_title} ready")
+            if open_first:
+                self.ctx.open_connection(ws_title)
+            return ws_title
+
+        node_data = []
+        first_nick = None
+        for m, nick in self._node_nicknames(ws_title, machines):
+            node_data.append({"protocol": "easyenv", "nickname": nick, "host": nick,
+                              "workspace_id": wsid, "machine_id": m["id"],
+                              "machine_name": m["name"]})
+            if first_nick is None:
+                first_nick = nick
+        self.ctx.add_connection_group(f"EasyEnv: {ws_title}", node_data)
+        self.ctx.ui.notify(f"EasyEnv: {ws_title} — {len(machines)} nodes ready")
+        if open_first and first_nick:
+            self.ctx.open_connection(first_nick)
+        return first_nick
+
+    def _open_workspace_async(self, ws, open_first=False):
+        """Enumerate a workspace's machines off-thread, then provision."""
+        def worker():
+            try:
+                machines = self._do_machines(ws["id"])
+            except Exception:
+                logger.exception("easyenv machine list failed")
+                machines = []
+            self.ctx.run_on_ui_thread(self._provision_workspace, ws["name"],
+                                      ws["id"], machines, open_first)
+        threading.Thread(target=worker, daemon=True).start()
 
     # --- events -------------------------------------------------------
     def _on_app_started(self, _payload):
@@ -352,8 +439,10 @@ class Plugin(SshPilotPlugin):
     def _after_create(self, ws):
         self._name_entry.set_text("")
         self._set_status(f"Created {ws['name']}.")
-        self.ctx.ui.notify(f"Workspace {ws['name']} ready")
-        self._connect_workspace(ws["name"], ws["id"])
+        self.ctx.ui.notify(f"Workspace {ws['name']} created")
+        # Materialize the workspace (group of nodes if multi-VM); don't
+        # auto-open every node — let the user expand and pick one.
+        self._open_workspace_async(ws, open_first=False)
         self._refresh_async()
 
     def _refresh_async(self):
@@ -387,8 +476,8 @@ class Plugin(SshPilotPlugin):
         label.set_halign(Gtk.Align.START)
         label.set_hexpand(True)
         hb.append(label)
-        for text, verb in (("Connect", None), ("Stop", "stop"),
-                           ("Resume", "resume"), ("Delete", "delete")):
+        for text, verb in (("Open", None), ("Start", "start"),
+                           ("Stop", "stop"), ("Delete", "delete")):
             btn = Gtk.Button(label=text)
             btn.connect("clicked", self._on_row_action, verb, ws)
             hb.append(btn)
@@ -396,9 +485,9 @@ class Plugin(SshPilotPlugin):
         return row
 
     def _on_row_action(self, _btn, verb, ws):
-        if verb is None:  # Connect
-            self._set_status(f"Connecting to {ws['name']}…")
-            self._connect_workspace(ws["name"], ws["id"])
+        if verb is None:  # Open in sshPilot (group of nodes; open first)
+            self._set_status(f"Opening {ws['name']}…")
+            self._open_workspace_async(ws, open_first=True)
             return
         self._set_status(f"{verb} {ws['name']}…")
 

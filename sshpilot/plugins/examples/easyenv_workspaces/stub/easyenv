@@ -1,17 +1,20 @@
 #!/usr/bin/env python3
 """Local stand-in for the easyenv CLI (github.com/donedeploy/easyenv-cli).
 
-It mirrors the documented command surface so the EasyEnv Workspaces plugin can
-be demoed end to end with NO easyenv account, network, or real binary. The
-SAME plugin drives this stub or the real `easyenv` depending on which is first
-on PATH — pointing at the real binary (plus `easyenv auth login`) is a drop-in.
+Mirrors the real command surface and JSON shapes so the EasyEnv Workspaces
+plugin can be demoed end to end with NO easyenv account, network, or real
+binary. The SAME plugin drives this stub or the real `easyenv` depending on
+which is first on PATH — pointing at the real binary (plus `easyenv auth
+login`) is a drop-in.
 
 State lives in a local JSON file (never touches the real ~/.config/easyenv/).
-`workspace ssh <id>` execs a real interactive shell, so the sshPilot terminal
-tab opens a genuinely working session — exactly how the real mesh shell feels.
+`machine ssh <m> -w <ws>` (and `workspace ssh <ws>`) exec a real interactive
+shell, so the sshPilot terminal tab opens a genuinely working session.
 
-Supported: --version; auth whoami|login|logout; account list|use;
-workspace list|create|get|stop|resume|delete (… --output json); workspace ssh.
+Shapes match the real CLI: workspaces have uuid/title/status; a workspace's
+machines come from `machine list -w <ws>` (and `workspace get` nests them under
+`boxes`), each {uuid,title,status,host_address}. Templates may create multiple
+machines (e.g. ansible-ubuntu-cluster -> control + 3 Ubuntu nodes).
 """
 
 import json
@@ -20,6 +23,26 @@ import sys
 import time
 
 VERSION = "0.5.0-stub"
+
+
+def _machines_for(template, n_start):
+    """Build a machine list for a template. cluster/ansible/kube templates
+    create multiple nodes (with repeating titles, like the real API)."""
+    t = (template or "").lower()
+    if "ansible" in t:
+        specs = [("Ansible Dev Env", "ubuntu"), ("Ubuntu 24.04 LTS", "ubuntu"),
+                 ("Ubuntu 24.04 LTS", "ubuntu"), ("Ubuntu 24.04 LTS", "ubuntu")]
+    elif "cluster" in t or "kube" in t:
+        specs = [("Control Plane", "ubuntu"), ("Worker Node", "ubuntu"),
+                 ("Worker Node", "ubuntu")]
+    else:
+        specs = [("Ubuntu 24.04 LTS", "ubuntu")]
+    out = []
+    for i, (title, recipe) in enumerate(specs):
+        mid = f"m-{n_start:03d}{i}"
+        out.append({"uuid": mid, "title": title, "status": "active",
+                    "host_address": f"box-{mid}", "recipe": {"image_type": recipe}})
+    return out
 
 
 def _state_path():
@@ -33,17 +56,16 @@ def _load():
         with open(_state_path(), "r", encoding="utf-8") as fh:
             return json.load(fh)
     except (OSError, ValueError):
-        # Seed with a logged-in account and one running workspace so the
-        # plugin shows something immediately.
+        # Seed a logged-in account and a multi-node workspace so the plugin
+        # shows a group immediately.
         return {
             "account": "demo@easyenv.io",
             "logged_in": True,
             "next_id": 2,
-            # Shape mirrors the EasyEnv API (WorkspaceList): uuid + title +
-            # status (active/not_started/stopped/in_progress/failed).
             "workspaces": [
-                {"id": 1, "uuid": "ws-001", "title": "demo-sandbox",
-                 "status": "active", "template": "python_devenv"},
+                {"id": 1, "uuid": "ws-001", "title": "ansible-cluster",
+                 "status": "active", "template": "ansible-ubuntu-cluster",
+                 "machines": _machines_for("ansible-ubuntu-cluster", 1)},
             ],
         }
 
@@ -60,25 +82,35 @@ def _save(state):
         json.dump(state, fh, indent=2)
 
 
-def _opt(args, name):
-    """Return the value following --name, or None."""
-    if name in args:
-        i = args.index(name)
-        if i + 1 < len(args):
-            return args[i + 1]
+def _opt(args, *names):
+    for name in names:
+        if name in args:
+            i = args.index(name)
+            if i + 1 < len(args):
+                return args[i + 1]
     return None
 
 
-def _has(args, name):
-    return name in args
+def _has(args, *names):
+    return any(n in args for n in names)
 
 
-def _emit(state, args, payload, human):
-    """Print JSON when --output json was requested, else a human line."""
-    if _opt(args, "--output") == "json":
+def _json_requested(args):
+    return _opt(args, "--output", "-o") == "json"
+
+
+def _emit(args, payload, human):
+    if _json_requested(args):
         print(json.dumps(payload, indent=2))
     else:
         print(human)
+
+
+def _exec_shell(banner):
+    sys.stdout.write(banner)
+    sys.stdout.flush()
+    shell = os.environ.get("SHELL", "/bin/bash")
+    os.execvp(shell, [shell, "-i"])
 
 
 def main(argv):
@@ -90,20 +122,19 @@ def main(argv):
     state = _load()
     group = args[0]
     rest = args[1:]
+    wss = state["workspaces"]
 
     if group == "auth":
         sub = rest[0] if rest else ""
         if sub == "whoami":
             if state.get("logged_in"):
-                print(f"Logged in as {state.get('account')}")
+                print(f"User: {state.get('account')}")
                 return 0
             print("Not logged in", file=sys.stderr)
             return 1
         if sub == "login":
             state["logged_in"] = True
-            token = _opt(rest, "--token")
-            if token:
-                state["account"] = state.get("account") or "demo@easyenv.io"
+            state["account"] = state.get("account") or "demo@easyenv.io"
             _save(state)
             print(f"Saved token for {state.get('account')}")
             return 0
@@ -118,74 +149,93 @@ def main(argv):
 
     if group == "account":
         sub = rest[0] if rest else ""
-        if sub == "list":
-            _emit(state, rest, [{"id": "acct-1", "name": state.get("account")}],
+        if sub in ("list", "ls"):
+            _emit(rest, [{"uuid": "acct-1", "title": state.get("account")}],
                   state.get("account", ""))
             return 0
         if sub == "use":
             print(f"Using account {rest[1] if len(rest) > 1 else ''}")
             return 0
+        if sub == "current":
+            print("acct-1")
+            return 0
 
-    if group == "workspace":
+    if group in ("workspace", "ws", "w"):
         sub = rest[0] if rest else ""
-        wss = state["workspaces"]
 
-        if sub == "list":
-            _emit(state, rest, wss,
+        if sub in ("list", "ls"):
+            view = [{"uuid": w["uuid"], "title": w["title"], "status": w["status"]}
+                    for w in wss]
+            _emit(rest, view,
                   "\n".join(f"{w['uuid']}  {w['title']}  {w['status']}" for w in wss))
             return 0
 
-        if sub == "get":
-            wsid = rest[1] if len(rest) > 1 else ""
-            ws = _match(wss, wsid)
+        if sub in ("get", "describe"):
+            ws = _match(wss, rest[1] if len(rest) > 1 else "")
             if ws is None:
-                print(f"workspace {wsid!r} not found", file=sys.stderr)
+                print("workspace not found", file=sys.stderr)
                 return 1
-            detail = dict(ws, boxes=[{"uuid": "box-1", "title": "main",
-                                      "status": ws["status"],
-                                      "host_address": "10.42.0.1"}])
-            _emit(state, rest, detail, json.dumps(detail))
+            detail = {"uuid": ws["uuid"], "title": ws["title"], "status": ws["status"],
+                      "boxes": ws.get("machines", [])}
+            _emit(rest, detail, json.dumps(detail))
             return 0
 
         if sub == "create":
             name = _opt(rest, "--name") or f"ws-{int(time.time())}"
+            template = _opt(rest, "--template") or _opt(rest, "--base") or "custom"
             wsid = f"ws-{state['next_id']:03d}"
             ws = {"id": state["next_id"], "uuid": wsid, "title": name,
-                  "status": "active",
-                  "template": _opt(rest, "--template") or "custom"}
+                  "status": "active", "template": template,
+                  "machines": _machines_for(template, state["next_id"])}
             state["next_id"] += 1
             wss.append(ws)
             _save(state)
-            _emit(state, rest, ws, f"Created {wsid} ({name}). 1 machine, 12s boot.")
+            _emit(rest, {"uuid": wsid, "title": name, "status": "active"},
+                  f"Created {wsid} ({name}). {len(ws['machines'])} machine(s).")
             return 0
 
-        if sub in ("stop", "resume", "delete"):
-            wsid = rest[1] if len(rest) > 1 else ""
-            ws = _match(wss, wsid)
+        if sub in ("start", "stop", "restart", "delete", "rm"):
+            ws = _match(wss, rest[1] if len(rest) > 1 else "")
             if ws is None:
-                print(f"workspace {wsid!r} not found", file=sys.stderr)
+                print("workspace not found", file=sys.stderr)
                 return 1
-            if sub == "delete":
+            if sub in ("delete", "rm"):
                 wss.remove(ws)
+            elif sub == "stop":
+                ws["status"] = "stopped"
             else:
-                ws["status"] = "stopped" if sub == "stop" else "active"
+                ws["status"] = "active"
             _save(state)
-            print(f"{sub} {wsid}: ok")
+            print(f"{sub} {ws['uuid']}: ok")
+            return 0
+
+        if sub == "ssh":  # workspace ssh <ws> -> first machine
+            ws = _match(wss, rest[1] if len(rest) > 1 else "")
+            label = ws["title"] if ws else (rest[1] if len(rest) > 1 else "?")
+            _exec_shell(f"[easyenv-stub] connected to {label} (first machine) "
+                        f"over mesh. Ctrl-D to exit.\n")
+
+    if group in ("machine", "m"):
+        sub = rest[0] if rest else ""
+        ws = _match(wss, _opt(rest, "-w", "--workspace") or "")
+        machines = ws.get("machines", []) if ws else []
+
+        if sub in ("list", "ls"):
+            _emit(rest, machines,
+                  "\n".join(f"{m['uuid']}  {m['title']}  {m['status']}" for m in machines))
             return 0
 
         if sub == "ssh":
-            wsid = rest[1] if len(rest) > 1 else ""
-            machine = _opt(rest, "--machine") or "main"
-            ws = _match(wss, wsid)
-            label = ws["title"] if ws else wsid
-            sys.stdout.write(
-                f"[easyenv-stub] connected to workspace {label} "
-                f"(machine: {machine}) over mesh. Ctrl-D to exit.\n")
-            sys.stdout.flush()
-            # Replace this process with a real interactive shell so the
-            # terminal tab is a genuinely usable session.
-            shell = os.environ.get("SHELL", "/bin/bash")
-            os.execvp(shell, [shell, "-i"])
+            marg = rest[1] if len(rest) > 1 else ""
+            m = next((x for x in machines
+                      if marg in (x.get("uuid"), x.get("title"))), None)
+            label = (m["title"] if m else marg)
+            if _has(rest, "--dry-run"):
+                print(f"would ssh to {label} on workspace {ws['title'] if ws else '?'}")
+                return 0
+            _exec_shell(f"[easyenv-stub] connected to node '{label}' "
+                        f"(workspace {ws['title'] if ws else '?'}) over mesh. "
+                        f"Ctrl-D to exit.\n")
 
     print(f"easyenv-stub: unsupported command: {' '.join(args)}", file=sys.stderr)
     return 2
