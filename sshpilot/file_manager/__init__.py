@@ -14,6 +14,7 @@ in ``sshpilot.file_manager_window`` and will move in 4c.
 from .exceptions import TransferCancelledException
 from .format_utils import _human_size, _human_time, _mode_to_octal, _mode_to_str
 from .pane_controls import PaneControls, PaneToolbar, PathEntry
+from .sftp_manager import AsyncSFTPManager, FileEntry, _MainThreadDispatcher
 from .portal_docs import (
     DOCS_JSON,
     _ensure_cfg_dir,
@@ -37,7 +38,9 @@ from .properties_dialog import PropertiesDialog
 from .remote_walk import _sftp_path_exists, stat_isdir, walk_remote
 
 __all__ = [
+    "AsyncSFTPManager",
     "DOCS_JSON",
+    "FileEntry",
     "PaneControls",
     "PaneToolbar",
     "PathEntry",
@@ -45,6 +48,7 @@ __all__ = [
     "SFTPProgressDialog",
     "TransferCancelledException",
     "_HAS_ALERT_DIALOG",
+    "_MainThreadDispatcher",
     "_PROGRESS_DIALOG_BASE",
     "_ensure_cfg_dir",
     "_get_docs_json_path",
