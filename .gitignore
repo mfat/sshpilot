@@ -30,4 +30,5 @@ build-deb-local.sh
 /sshpilot/vendor/__pycache__
 /sshpilot/vendor/__pycache__
 *.pyc
+*.log
 gnome-settings/gnome-control-center/
