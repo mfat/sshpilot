@@ -263,9 +263,18 @@ _CARD_CSS = """
 .ee-c6{background:#8250df;} .ee-c7{background:#d83b01;}
 .ee-logo { border-radius: 16px; background: @accent_bg_color; color: #ffffff; }
 .ee-card { transition: box-shadow 160ms ease, border-color 160ms ease; }
-.ee-card:hover { box-shadow: 0 10px 26px -14px rgba(0,0,0,0.65);
-                 border-color: alpha(@accent_color, 0.55); }
+.ee-card:hover { box-shadow: 0 10px 26px -14px rgba(0,0,0,0.65); }
+.ee-edge-running { border-left: 4px solid @success_color; }
+.ee-edge-provisioning { border-left: 4px solid @warning_color; }
+.ee-edge-failed { border-left: 4px solid @error_color; }
+.ee-edge-terminated { border-left: 4px solid #a07be0; }
+.ee-edge-dimmed { border-left: 4px solid alpha(@window_fg_color, 0.25); }
 """
+
+# status colour class -> card left-accent class
+_EDGE_CLASS = {"success": "ee-edge-running", "warning": "ee-edge-provisioning",
+               "error": "ee-edge-failed", "ee-terminated": "ee-edge-terminated",
+               "dimmed": "ee-edge-dimmed"}
 _css_loaded = False
 
 
@@ -1155,9 +1164,10 @@ class Plugin(SshPilotPlugin):
         card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         card.add_css_class("card")
         card.add_css_class("ee-card")
+        card.add_css_class(_EDGE_CLASS.get(cv["status_class"], "ee-edge-dimmed"))
         # Fixed width so cards form a tidy grid and pack left instead of
         # stretching to the full row width when there are only a few.
-        card.set_size_request(330, -1)
+        card.set_size_request(286, -1)
         card.set_hexpand(False)
         card.set_halign(Gtk.Align.START)
         card.set_valign(Gtk.Align.START)
@@ -1183,7 +1193,7 @@ class Plugin(SshPilotPlugin):
         title.set_halign(Gtk.Align.START)
         title.set_xalign(0)
         title.set_ellipsize(Pango.EllipsizeMode.END)
-        title.set_max_width_chars(24)   # bound natural width so it can't widen the card
+        title.set_max_width_chars(20)   # bound natural width so it can't widen the card
         card.append(title)
         meta = Gtk.Label(label=cv["meta_line"])
         meta.add_css_class("dim-label")
@@ -1192,7 +1202,7 @@ class Plugin(SshPilotPlugin):
         meta.set_xalign(0)
         meta.set_wrap(False)
         meta.set_ellipsize(Pango.EllipsizeMode.END)
-        meta.set_max_width_chars(36)
+        meta.set_max_width_chars(30)
         card.append(meta)
 
         if cv["is_provisioning"]:
@@ -1215,7 +1225,7 @@ class Plugin(SshPilotPlugin):
             sshl.set_xalign(0)
             sshl.set_hexpand(True)
             sshl.set_ellipsize(Pango.EllipsizeMode.END)
-            sshl.set_max_width_chars(28)
+            sshl.set_max_width_chars(24)
             sshl.set_selectable(True)
             row.append(sshl)
             cp = Gtk.Button.new_from_icon_name("edit-copy-symbolic")
