@@ -2,13 +2,18 @@
 
 Integrates easyenv.io entirely through its **REST API** and connects via
 **standard SSH to public-IP boxes** — no `easyenv` CLI binary and no NetBird
-mesh. Provisioning a workspace with ``settings.public_ip_requested = true``
-gives each box a routable public IP plus ``host_address`` / ``ssh_username`` /
-``ssh_port`` / ``vm_password``; the plugin turns those into normal sshPilot SSH
-connections (single box → one connection; multi-VM template → a sidebar group
-of per-node connections). Opening one is just sshPilot's native SSH (the
-``vm_password`` is stored in the keyring and fed via sshpass), so it works from
-anywhere.
+mesh. Provisioning a workspace from a **recipe** with
+``settings.public_ip_requested = true`` gives each box a routable public IP plus
+``host_address`` / ``ssh_username`` / ``ssh_port`` / ``vm_password``; the plugin
+turns those into normal sshPilot SSH connections (one node → one connection;
+several nodes → a sidebar group of per-node connections). Opening one is just
+sshPilot's native SSH (the ``vm_password`` is stored in the keyring and fed via
+sshpass), so it works from anywhere.
+
+Recipes are used rather than the pre-baked multi-VM *templates* because only
+recipe-built boxes can be given a public IP over REST; template workspaces come
+back on the NetBird mesh (unroutable ``box-…`` host names) and can't be reached
+by plain SSH. Boxes without a routable address are skipped with a warning.
 
 Auth is the partner's header scheme: ``X-Service-Token`` + ``Account-ID``. The
 user pastes a service token from
@@ -22,6 +27,7 @@ imported — no third-party deps, no CLI.
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import logging
 import threading
@@ -112,8 +118,9 @@ class EasyEnvClient:
         # account not known yet -> empty Account-ID
         return _results(_api("GET", "/v1/accounts/", self.token, "", self.base_url))
 
-    def templates(self):
-        return _results(self._call("GET", "/v1/workspace_templates/"))
+    def recipes(self, term=""):
+        q = "?search=" + urllib.parse.quote(term) if term else ""
+        return _results(self._call("GET", f"/v1/recipes/{q}"))
 
     def workspaces(self):
         return _results(self._call("GET", "/v1/workspaces/"))
@@ -147,6 +154,21 @@ def _is_running(status):
     return str(status or "").lower() in ("active", "started", "running")
 
 
+def _looks_routable(addr):
+    """True if ``addr`` is something plain SSH can reach: a literal IP, or a
+    DNS name with a dot. EasyEnv's NetBird mesh boxes use unroutable names like
+    ``box-3VZo6G4A-hAm88YxD`` (no dots) — those are not reachable without the
+    mesh, so we treat them as non-routable and skip them."""
+    if not addr:
+        return False
+    try:
+        ipaddress.ip_address(addr)
+        return True
+    except ValueError:
+        pass
+    return "." in addr and not addr.lower().startswith("box-")
+
+
 class Plugin(SshPilotPlugin):
     def activate(self, ctx: PluginContext) -> None:
         self.ctx = ctx
@@ -155,8 +177,9 @@ class Plugin(SshPilotPlugin):
         self._auth_label = None
         self._token_entry = None
         self._name_entry = None
-        self._template_dropdown = None
-        self._template_values = []  # parallel to dropdown labels (uuid or title)
+        self._recipe_dropdown = None
+        self._recipe_values = []  # parallel to dropdown labels (recipe uuid)
+        self._nodes_spin = None
 
         ctx.ui.register_page("workspaces", "EasyEnv Workspaces",
                              "network-server-symbolic", self._build_page)
@@ -215,15 +238,15 @@ class Plugin(SshPilotPlugin):
         if self._token_entry is not None:
             self._token_entry.set_text("")
         self._set_status(f"Signed in as {acct.get('title')}")
-        self._refresh_templates_async()
+        self._refresh_recipes_async()
         self._refresh_async()
 
     # --- REST operations (blocking; call from a worker) --------------
-    def _do_templates(self):
+    def _do_recipes(self):
         c = self._client()
         if c is None:
             return []
-        return [t for t in (_ws_view_t(x) for x in c.templates()) if t]
+        return [r for r in (_recipe_view(x) for x in c.recipes()) if r]
 
     def _do_list(self):
         c = self._client()
@@ -286,11 +309,23 @@ class Plugin(SshPilotPlugin):
             self.ctx.update_connection(data["nickname"], data)
 
     def _materialize(self, ws, open_after=False):
-        boxes = [b for b in (ws.get("boxes") or []) if b.get("host_address")]
+        all_boxes = ws.get("boxes") or []
         title = ws.get("title") or ws.get("uuid")
+        boxes = [b for b in all_boxes if _looks_routable(b.get("host_address"))]
+        mesh = [b for b in all_boxes
+                if b.get("host_address") and not _looks_routable(b.get("host_address"))]
         if not boxes:
-            self.ctx.ui.notify(f"EasyEnv: {title} has no reachable boxes yet")
+            if mesh:
+                self.ctx.ui.notify(
+                    f"EasyEnv: {title} is mesh-only (no public IP) — recreate it "
+                    f"from a recipe with public IP to reach it over SSH")
+            else:
+                self.ctx.ui.notify(f"EasyEnv: {title} has no reachable boxes yet")
             return
+        if mesh:
+            self.ctx.ui.notify(
+                f"EasyEnv: {title} — skipped {len(mesh)} mesh-only node(s) "
+                f"without a public IP")
         if len(boxes) == 1:
             nick = title
             self._upsert_connection(self._box_to_data(nick, boxes[0]))
@@ -316,18 +351,25 @@ class Plugin(SshPilotPlugin):
         name = self._name_entry.get_text().strip() if self._name_entry else ""
         if not name:
             return
-        idx = self._template_dropdown.get_selected() if self._template_dropdown else -1
-        if not self._template_values or not (0 <= idx < len(self._template_values)):
-            self._set_status("Pick a template (sign in to load templates).")
+        idx = self._recipe_dropdown.get_selected() if self._recipe_dropdown else -1
+        if not self._recipe_values or not (0 <= idx < len(self._recipe_values)):
+            self._set_status("Pick a recipe (sign in to load recipes).")
             return
-        template = self._template_values[idx]
+        recipe = self._recipe_values[idx]
+        nodes = int(self._nodes_spin.get_value()) if self._nodes_spin else 1
+        nodes = max(1, nodes)
         self._set_status(f"Creating {name}…")
 
         def worker():
             c = self._client()
             try:
+                if nodes == 1:
+                    box_specs = [{"title": name, "recipe": recipe, "position": 0}]
+                else:
+                    box_specs = [{"title": f"{name}-{i + 1}", "recipe": recipe,
+                                  "position": i} for i in range(nodes)]
                 body = {"title": name, "duration": 1, "duration_unit": "hours",
-                        "workspace_template": template,
+                        "boxes": box_specs,
                         "settings": {"public_ip_requested": True}}
                 ws = c.create_workspace(body)
                 c.start(ws["uuid"])
@@ -394,24 +436,24 @@ class Plugin(SshPilotPlugin):
             self.ctx.run_on_ui_thread(self._render, account, items)
         threading.Thread(target=worker, daemon=True).start()
 
-    def _refresh_templates_async(self):
+    def _refresh_recipes_async(self):
         def worker():
             try:
-                tpls = self._do_templates()
+                recipes = self._do_recipes()
             except Exception:
-                logger.exception("easyenv templates failed")
-                tpls = []
-            self.ctx.run_on_ui_thread(self._populate_templates, tpls)
+                logger.exception("easyenv recipes failed")
+                recipes = []
+            self.ctx.run_on_ui_thread(self._populate_recipes, recipes)
         threading.Thread(target=worker, daemon=True).start()
 
-    def _populate_templates(self, tpls):
-        self._template_values = [t["id"] for t in tpls if t.get("id")]
-        labels = [t["name"] for t in tpls] or ["(sign in to load templates)"]
-        if self._template_dropdown is not None:
+    def _populate_recipes(self, recipes):
+        self._recipe_values = [r["id"] for r in recipes if r.get("id")]
+        labels = [r["name"] for r in recipes] or ["(sign in to load recipes)"]
+        if self._recipe_dropdown is not None:
             try:
-                self._template_dropdown.set_model(Gtk.StringList.new(labels))
+                self._recipe_dropdown.set_model(Gtk.StringList.new(labels))
             except Exception:
-                logger.debug("could not update template dropdown")
+                logger.debug("could not update recipe dropdown")
 
     def _build_page(self):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
@@ -444,18 +486,26 @@ class Plugin(SshPilotPlugin):
         self._name_entry = Gtk.Entry()
         self._name_entry.set_placeholder_text("workspace name")
         self._name_entry.set_hexpand(True)
-        self._template_dropdown = Gtk.DropDown.new_from_strings(["(sign in to load templates)"])
+        self._recipe_dropdown = Gtk.DropDown.new_from_strings(["(sign in to load recipes)"])
+        nodes_label = Gtk.Label(label="nodes")
+        nodes_label.add_css_class("dim-label")
+        self._nodes_spin = Gtk.SpinButton.new_with_range(1, 16, 1)
+        self._nodes_spin.set_value(1)
+        self._nodes_spin.set_tooltip_text(
+            "More than one node creates a sidebar group of per-node connections")
         create_btn = Gtk.Button(label="Create")
         create_btn.add_css_class("suggested-action")
         create_btn.connect("clicked", self._on_create_clicked)
         create_row.append(self._name_entry)
-        create_row.append(self._template_dropdown)
+        create_row.append(self._recipe_dropdown)
+        create_row.append(nodes_label)
+        create_row.append(self._nodes_spin)
         create_row.append(create_btn)
         box.append(create_row)
 
         refresh_btn = Gtk.Button(label="Refresh")
         refresh_btn.set_halign(Gtk.Align.START)
-        refresh_btn.connect("clicked", lambda _b: (self._refresh_templates_async(), self._refresh_async()))
+        refresh_btn.connect("clicked", lambda _b: (self._refresh_recipes_async(), self._refresh_async()))
         box.append(refresh_btn)
 
         self._list_box = Gtk.ListBox()
@@ -466,7 +516,7 @@ class Plugin(SshPilotPlugin):
         self._status_label.set_halign(Gtk.Align.START)
         box.append(self._status_label)
 
-        self._refresh_templates_async()
+        self._refresh_recipes_async()
         self._refresh_async()
         return box
 
@@ -514,10 +564,10 @@ class Plugin(SshPilotPlugin):
         self._do_action_async(verb, ws)
 
 
-def _ws_view_t(t):
-    """Normalize a template object -> {id, name} (id = uuid for create)."""
-    if not isinstance(t, dict):
+def _recipe_view(r):
+    """Normalize a recipe object -> {id, name} (id = uuid for create)."""
+    if not isinstance(r, dict):
         return None
-    tid = str(t.get("uuid") or t.get("id") or "")
-    name = str(t.get("title") or t.get("name") or tid)
-    return {"id": tid, "name": name} if tid else None
+    rid = str(r.get("uuid") or r.get("id") or "")
+    name = str(r.get("title") or r.get("name") or rid)
+    return {"id": rid, "name": name} if rid else None

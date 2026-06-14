@@ -82,12 +82,12 @@ class FakeClient:
     """Stands in for EasyEnvClient — no network."""
     def __init__(self):
         self._accounts = [{"uuid": "acct-1", "title": "demo@easyenv.io"}]
-        self._templates = [{"uuid": "ubuntu-26-04", "title": "Ubuntu 26.04 LTS"},
-                           {"uuid": "ansible-cluster", "title": "Ansible Cluster"}]
+        self._recipes = [{"uuid": "ubuntu-24-04", "title": "Ubuntu 24.04 LTS"},
+                         {"uuid": "python-dev", "title": "Python Dev Env"}]
         self._ws = {}  # uuid -> workspace dict (with boxes)
 
     def accounts(self): return self._accounts
-    def templates(self): return self._templates
+    def recipes(self, term=""): return self._recipes
     def workspaces(self): return [{"uuid": u, "title": w["title"], "status": w["status"]}
                                   for u, w in self._ws.items()]
     def workspace(self, uuid): return self._ws.get(uuid)
@@ -179,6 +179,29 @@ def test_multi_box_makes_group(env):
     assert len({c.nickname for c in sshs}) == 4
 
 
+def test_mesh_only_box_is_skipped_not_connected(env):
+    """A NetBird-mesh box (unroutable 'box-…' host) must NOT become a dead SSH
+    connection — regression for 'Could not resolve hostname box-…'."""
+    cm, host, plugin, _fake, _mod = env
+    ws = {"uuid": "w-mesh", "title": "test3", "status": "active",
+          "boxes": [_box("b1", "Ubuntu", "box-3VZo6G4A-hAm88YxD")]}
+    plugin._materialize(ws, open_after=True)
+    assert cm.find_connection_by_nickname("test3") is None
+    assert len(_ssh_conns(cm)) == 0
+    assert not host._window.opened
+
+
+def test_mixed_boxes_keep_only_routable(env):
+    cm, host, plugin, _fake, _mod = env
+    ws = {"uuid": "w-mix", "title": "mixed", "status": "active",
+          "boxes": [_box("b1", "public", "51.15.0.9"),
+                    _box("b2", "mesh", "box-deadbeef-cafef00d")]}
+    plugin._materialize(ws, open_after=False)
+    sshs = _ssh_conns(cm)
+    assert len(sshs) == 1
+    assert sshs[0].data["hostname"] == "51.15.0.9"
+
+
 def test_update_on_restart_refreshes_host_and_password(env):
     cm, host, plugin, _fake, _mod = env
     ws_a = {"uuid": "w3", "title": "box", "status": "active",
@@ -226,10 +249,10 @@ def test_ctx_update_connection(env):
     assert ctx.update_connection("missing", {"nickname": "missing"}) is False
 
 
-def test_templates_parsed(env):
+def test_recipes_parsed(env):
     cm, host, plugin, _fake, _mod = env
-    tpls = plugin._do_templates()
-    names = {t["name"] for t in tpls}
-    assert "Ubuntu 26.04 LTS" in names and "Ansible Cluster" in names
-    plugin._populate_templates(tpls)
-    assert "ubuntu-26-04" in plugin._template_values
+    recipes = plugin._do_recipes()
+    names = {r["name"] for r in recipes}
+    assert "Ubuntu 24.04 LTS" in names and "Python Dev Env" in names
+    plugin._populate_recipes(recipes)
+    assert "ubuntu-24-04" in plugin._recipe_values
