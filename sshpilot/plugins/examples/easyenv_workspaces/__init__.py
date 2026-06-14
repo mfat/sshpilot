@@ -47,6 +47,9 @@ from sshpilot.plugins.api import (  # noqa: E402
 logger = logging.getLogger(__name__)
 
 INSTALL_HINT = "The 'easyenv' CLI was not found on PATH. Install it from https://easyenv.io/cli"
+NETBIRD_HINT = ("Connecting to a workspace needs the 'netbird' CLI — EasyEnv "
+                "reaches boxes over a NetBird mesh. Install it from "
+                "https://netbird.io/docs/ , then retry.")
 
 
 class _EasyEnvNotFound(RuntimeError):
@@ -55,6 +58,13 @@ class _EasyEnvNotFound(RuntimeError):
 
 def _is_flatpak() -> bool:
     return os.path.exists("/.flatpak-info")
+
+
+def _netbird_available() -> bool:
+    """easyenv brings the mesh VPN up via the netbird CLI when you connect to a
+    box (auto-VPN). Listing/creating workspaces only hits the API and does not
+    need it; connecting does."""
+    return shutil.which("netbird") is not None
 
 
 def easyenv_argv(args, binary_path=None):
@@ -346,6 +356,14 @@ class Plugin(SshPilotPlugin):
         title.add_css_class("title-2")
         title.set_halign(Gtk.Align.START)
         box.append(title)
+
+        # Prerequisite: netbird is needed to connect (mesh VPN), not to list.
+        if not _netbird_available():
+            warn = Gtk.Label(label="⚠ " + NETBIRD_HINT)
+            warn.set_halign(Gtk.Align.START)
+            warn.set_wrap(True)
+            warn.add_css_class("warning")
+            box.append(warn)
 
         # Auth row
         self._auth_label = Gtk.Label(label="Checking sign-in…")

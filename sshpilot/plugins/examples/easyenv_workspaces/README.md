@@ -17,6 +17,15 @@ easyenv mesh and does **not** expose a host/port/user/key. So the plugin:
 
 Only `sshpilot.plugins.api` is imported.
 
+## Prerequisites
+
+- **`easyenv` CLI** — provisioning + connecting (https://easyenv.io/cli).
+- **`netbird` CLI** — *required to connect to a workspace.* EasyEnv reaches
+  boxes over a NetBird mesh and brings the VPN up for you (auto-VPN), but the
+  `netbird` binary must be installed: https://netbird.io/docs/ . Listing and
+  creating workspaces only call the API and work without it. The plugin shows a
+  warning on the page when `netbird` is missing.
+
 ## Install (real easyenv)
 
 1. Install the CLI and sign in (the account + service token are created on
