@@ -980,14 +980,16 @@ class Plugin(SshPilotPlugin):
         tb.append(self._count_label)
         body.append(tb)
 
-        # card grid
+        # card grid — fixed-width cards that pack from the left (not stretched
+        # to fill the row when there are only a few).
         self._flowbox = Gtk.FlowBox()
         self._flowbox.set_selection_mode(Gtk.SelectionMode.NONE)
-        self._flowbox.set_homogeneous(True)
+        self._flowbox.set_homogeneous(False)
         self._flowbox.set_column_spacing(16)
         self._flowbox.set_row_spacing(16)
         self._flowbox.set_min_children_per_line(1)
-        self._flowbox.set_max_children_per_line(3)
+        self._flowbox.set_max_children_per_line(4)
+        self._flowbox.set_halign(Gtk.Align.START)
         self._flowbox.set_valign(Gtk.Align.START)
         body.append(self._flowbox)
 
@@ -1134,11 +1136,16 @@ class Plugin(SshPilotPlugin):
         return b
 
     def _build_card(self, cv):
-        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         card.add_css_class("card")
-        card.set_size_request(320, -1)
+        # Fixed width so cards form a tidy grid and pack left instead of
+        # stretching to the full row width when there are only a few.
+        card.set_size_request(330, -1)
+        card.set_hexpand(False)
+        card.set_halign(Gtk.Align.START)
+        card.set_valign(Gtk.Align.START)
         for m in ("set_margin_top", "set_margin_bottom", "set_margin_start", "set_margin_end"):
-            getattr(card, m)(14)
+            getattr(card, m)(16)
         ws_view = {"uuid": cv["uuid"], "title": cv["title"], "status": cv["status"]}
 
         head = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
@@ -1165,7 +1172,7 @@ class Plugin(SshPilotPlugin):
         meta.add_css_class("caption")
         meta.set_halign(Gtk.Align.START)
         meta.set_xalign(0)
-        meta.set_wrap(True)
+        meta.set_wrap(False)
         meta.set_ellipsize(Pango.EllipsizeMode.END)
         card.append(meta)
 
@@ -1199,16 +1206,17 @@ class Plugin(SshPilotPlugin):
             card.append(row)
 
         card.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
-        footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
         footer.append(self._avatar(cv["recipe_name"]))
         rn = Gtk.Label(label=cv["recipe_name"])
         rn.add_css_class("dim-label")
         rn.add_css_class("caption")
         rn.set_ellipsize(Pango.EllipsizeMode.END)
+        rn.set_xalign(0)
+        rn.set_halign(Gtk.Align.START)
+        rn.set_hexpand(True)        # absorbs slack so the buttons stay in-bounds
+        rn.set_margin_end(4)
         footer.append(rn)
-        gap = Gtk.Box()
-        gap.set_hexpand(True)
-        footer.append(gap)
 
         info = Gtk.Button.new_from_icon_name("dialog-information-symbolic")
         info.add_css_class("flat")
