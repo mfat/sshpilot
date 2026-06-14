@@ -27,6 +27,7 @@ imported — no third-party deps, no CLI.
 
 from __future__ import annotations
 
+import hashlib
 import ipaddress
 import json
 import logging
@@ -39,7 +40,8 @@ import urllib.request
 
 import gi
 gi.require_version("Gtk", "4.0")
-from gi.repository import Gtk  # noqa: E402
+gi.require_version("Adw", "1")
+from gi.repository import Adw, Gdk, GLib, Gtk, Pango  # noqa: E402
 
 from sshpilot.plugins.api import Events, PluginContext, SshPilotPlugin  # noqa: E402
 
@@ -142,15 +144,6 @@ class EasyEnvClient:
         return self._call("DELETE", f"/v1/workspaces/{uuid}/")
 
 
-def _ws_view(w):
-    if not isinstance(w, dict):
-        return None
-    uuid = str(w.get("uuid") or w.get("id") or "")
-    title = str(w.get("title") or uuid)
-    status = str(w.get("status") or "unknown")
-    return {"uuid": uuid, "title": title, "status": status} if uuid else None
-
-
 def _is_running(status):
     return str(status or "").lower() in ("active", "started", "running")
 
@@ -250,17 +243,139 @@ def _looks_routable(addr):
     return "." in addr and not addr.lower().startswith("box-")
 
 
+# --- styling (scoped, theme-aware) ----------------------------------------
+# Only .ee-* classes; status pills tint their background from the libadwaita
+# semantic text colour (.success/.warning/.error) via alpha(currentColor,…) so
+# the page follows the user's light/dark theme. Recipe-avatar palette is fixed.
+_AVATAR_PALETTE = ("#e95420", "#3776ab", "#3c873a", "#76b900",
+                   "#336791", "#00add8", "#8250df", "#d83b01")
+_CARD_CSS = """
+.ee-pill { border-radius: 99px; padding: 2px 10px; font-weight: 700;
+           background-color: alpha(currentColor, 0.15); }
+.ee-terminated { color: #a07be0; }
+.ee-mono { font-family: monospace; }
+.ee-avatar { border-radius: 6px; color: #ffffff; font-weight: 700;
+             min-width: 22px; min-height: 22px; }
+.ee-c0{background:#e95420;} .ee-c1{background:#3776ab;} .ee-c2{background:#3c873a;}
+.ee-c3{background:#76b900;} .ee-c4{background:#336791;} .ee-c5{background:#00add8;}
+.ee-c6{background:#8250df;} .ee-c7{background:#d83b01;}
+.ee-logo { border-radius: 14px; background: alpha(@accent_bg_color, 1.0); }
+"""
+_css_loaded = False
+
+
+def _ensure_css():
+    global _css_loaded
+    if _css_loaded:
+        return
+    try:
+        provider = Gtk.CssProvider()
+        provider.load_from_data(_CARD_CSS.encode("utf-8"))
+        Gtk.StyleContext.add_provider_for_display(
+            Gdk.Display.get_default(), provider,
+            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        _css_loaded = True
+    except Exception:
+        logger.debug("could not install EasyEnv CSS", exc_info=True)
+
+
+def _status_meta(status):
+    """(display label, css colour class) for a workspace status. Reconciles the
+    design taxonomy with the real API: 'stopped' is terminal -> Terminated."""
+    s = str(status or "").lower()
+    if _is_running(status):
+        return ("Running", "success")
+    if s in ("in_progress", "not_started", "provisioning", "starting", "pending"):
+        return ("Provisioning", "warning")
+    if s == "failed":
+        return ("Failed", "error")
+    if _is_terminal(status):
+        return ("Terminated", "ee-terminated")
+    return (_display_status(status), "dimmed")
+
+
+def _recipe_color_class(name):
+    h = int(hashlib.md5((name or "").encode("utf-8")).hexdigest(), 16)
+    return "ee-c%d" % (h % len(_AVATAR_PALETTE))
+
+
+def _account_view(a):
+    """Pull the header fields out of a /v1/accounts/ item."""
+    if not isinstance(a, dict):
+        return {}
+    email = a.get("title") or (a.get("owner") or {}).get("email") or ""
+    plan = (((a.get("current_plan") or {}).get("plan") or {}).get("abbreviation")
+            or (a.get("type") or "").title() or "")
+    rt = (a.get("current_plan") or {}).get("remaining_time_seconds")
+    hours = int(rt // 3600) if isinstance(rt, (int, float)) else None
+    local = (email.split("@")[0] if email else "") or "ee"
+    return {"email": email, "plan": plan, "hours": hours,
+            "initials": local[:2].upper(), "type": (a.get("type") or "").title()}
+
+
+def _duration_mult(unit):
+    return {"minutes": 60, "hours": 3600, "days": 86400}.get(
+        str(unit or "hours").lower(), 3600)
+
+
+def _remaining_seconds(ws, now):
+    """Seconds left for a running workspace, from start_time + duration."""
+    start = _parse_iso(ws.get("start_time"))
+    if start is None:
+        return None
+    dur = ws.get("duration") or 0
+    end = start.timestamp() + dur * _duration_mult(ws.get("duration_unit"))
+    return int(end - now.timestamp())
+
+
+def _visible_cards(cards, search="", filt="all", sort="name"):
+    """Apply search / status-filter / sort to card-view dicts (pure)."""
+    q = (search or "").strip().lower()
+    out = [c for c in cards
+           if not q or q in c["title"].lower() or q in c["recipe_name"].lower()]
+    if filt and filt != "all":
+        out = [c for c in out if c["status_label"].lower() == filt.lower()]
+    if sort == "newest":
+        out = sorted(out, key=lambda c: c.get("created_at", ""), reverse=True)
+    elif sort == "status":
+        out = sorted(out, key=lambda c: (c["status_label"], c["title"].lower()))
+    else:
+        out = sorted(out, key=lambda c: c["title"].lower())
+    return out
+
+
+# Create-dialog duration choices -> (label, n, unit)
+_DURATIONS = (("1 hour", 1, "hours"), ("3 hours", 3, "hours"),
+              ("8 hours", 8, "hours"), ("24 hours", 24, "hours"))
+
+
 class Plugin(SshPilotPlugin):
     def activate(self, ctx: PluginContext) -> None:
         self.ctx = ctx
-        self._status_label = None
-        self._list_box = None
-        self._auth_label = None
+        # widgets / state
+        self._stack = None            # gate <-> dashboard
         self._token_entry = None
-        self._name_entry = None
-        self._recipe_dropdown = None
-        self._recipe_values = []  # parallel to dropdown labels (recipe uuid)
-        self._nodes_spin = None
+        self._signin_btn = None
+        self._signin_btn_label = None
+        self._signin_spinner = None
+        self._status_label = None
+        self._flowbox = None
+        self._empty = None
+        self._search_entry = None
+        self._filter_dd = None
+        self._sort_dd = None
+        self._count_label = None
+        self._account_box = None
+        self._cards = []              # current card-view dicts
+        self._account_info = None
+        self._recipes = []            # [{id,name}]
+        self._recipe_values = []
+        self._recipe_names = []
+        self._timer_labels = []       # (Gtk.Label, card_view) for the 1s tick
+        self._prov_bars = []          # provisioning Gtk.ProgressBars to pulse
+        self._tick_id = None
+        self._tick_n = 0
+        self._details_window = None
 
         ctx.ui.register_page("workspaces", "EasyEnv Workspaces",
                              "network-server-symbolic", self._build_page)
@@ -293,24 +408,29 @@ class Plugin(SshPilotPlugin):
     def _on_signin_clicked(self, _btn):
         token = self._token_entry.get_text().strip() if self._token_entry else ""
         if not token:
-            self._set_status("Paste a service token first.")
+            self.ctx.ui.notify("Paste a service token first")
             return
-        self._set_status("Signing in…")
+        self._set_signing(True)
 
         def worker():
             try:
                 self.ctx.secrets.set("service_token", token)
                 accounts = EasyEnvClient(token, None, self._base_url()).accounts()
             except Exception as exc:
-                self.ctx.run_on_ui_thread(self._set_status, f"Sign-in failed: {exc}")
+                self.ctx.run_on_ui_thread(self._signin_failed, str(exc))
                 return
             self.ctx.run_on_ui_thread(self._after_signin, accounts)
 
         threading.Thread(target=worker, daemon=True).start()
 
+    def _signin_failed(self, msg):
+        self._set_signing(False)
+        self.ctx.ui.notify(f"Sign-in failed: {msg}")
+
     def _after_signin(self, accounts):
+        self._set_signing(False)
         if not accounts:
-            self._set_status("No accounts for this token.")
+            self.ctx.ui.notify("No accounts for this token")
             return
         # Auto-select when there's only one; otherwise keep the first (a fuller
         # picker is straightforward to add, but most tokens map to one account).
@@ -318,9 +438,18 @@ class Plugin(SshPilotPlugin):
         self.ctx.settings.set("account_uuid", acct.get("uuid"))
         if self._token_entry is not None:
             self._token_entry.set_text("")
-        self._set_status(f"Signed in as {acct.get('title')}")
+        self.ctx.ui.notify(f"Signed in as {acct.get('title')}")
         self._refresh_recipes_async()
         self._refresh_async()
+
+    def _set_signing(self, on):
+        if self._signin_btn_label is not None:
+            self._signin_btn_label.set_text("Signing in…" if on else "Sign in")
+        if self._signin_btn is not None:
+            self._signin_btn.set_sensitive(not on)
+        if self._signin_spinner is not None:
+            self._signin_spinner.set_visible(on)
+            (self._signin_spinner.start if on else self._signin_spinner.stop)()
 
     # --- REST operations (blocking; call from a worker) --------------
     def _do_recipes(self):
@@ -329,11 +458,58 @@ class Plugin(SshPilotPlugin):
             return []
         return [r for r in (_recipe_view(x) for x in c.recipes()) if r]
 
-    def _do_list(self):
+    def _do_account(self):
         c = self._client()
         if c is None:
-            return []
-        return [v for v in (_ws_view(w) for w in c.workspaces()) if v]
+            return None
+        accts = c.accounts()
+        want = self._account()
+        a = next((x for x in accts if x.get("uuid") == want),
+                 (accts[0] if accts else None))
+        return _account_view(a) if a else None
+
+    @staticmethod
+    def _card_view(ws, now=None):
+        """Flatten a workspace object into the fields a card needs (pure)."""
+        if now is None:
+            now = datetime.now(timezone.utc)
+        boxes = ws.get("boxes") or []
+        status = ws.get("status")
+        label, cls = _status_meta(status)
+        rec = (boxes[0].get("recipe") if boxes else None) or {}
+        recipe_name = rec.get("title") or rec.get("uuid") or "—"
+        nodes = len(boxes) or 1
+        creator = ws.get("creator") or {}
+        owner = (f"{creator.get('first_name', '')} {creator.get('last_name', '')}".strip()
+                 or creator.get("email") or "you")
+        ago = _relative(ws.get("start_time") or ws.get("created_at"), now) or ""
+        box0 = boxes[0] if boxes else {}
+        ip = box0.get("host_address")
+        user = box0.get("ssh_username") or "root"
+        port = box0.get("ssh_port") or 22
+        ssh_line = f"{user}@{ip}:{port}" if (ip and _looks_routable(ip)) else ""
+        running = _is_running(status)
+        is_prov = label == "Provisioning"
+        if running:
+            secs = _remaining_seconds(ws, now)
+            timer = (_humanize_delta(secs) + " left") if (secs and secs > 0) else "expiring"
+        elif is_prov:
+            timer = "Provisioning…"
+        else:
+            timer = _span(ws.get("start_time"), ws.get("stop_time")) or "—"
+        node_text = f"{nodes} nodes" if nodes > 1 else "1 node"
+        meta = f"{node_text} · {recipe_name} · by {owner}" + (f" · {ago}" if ago else "")
+        return {
+            "uuid": str(ws.get("uuid") or ""), "title": ws.get("title") or "",
+            "status": status, "status_label": label, "status_class": cls,
+            "recipe_name": recipe_name, "nodes": nodes, "node_text": node_text,
+            "owner": owner, "ago": ago, "meta_line": meta,
+            "ssh_line": ssh_line, "ip": ip, "user": user, "port": port,
+            "timer": timer, "running": running, "is_provisioning": is_prov,
+            "terminal": _is_terminal(status),
+            "created_at": ws.get("created_at") or "",
+            "start_time": ws.get("start_time") or "", "raw": ws,
+        }
 
     def _poll_active(self, c, uuid):
         deadline = time.time() + POLL_TIMEOUT
@@ -428,43 +604,35 @@ class Plugin(SshPilotPlugin):
             self.ctx.open_connection(first_nick)
 
     # --- provisioning / lifecycle (off-thread workers) ---------------
-    def _on_create_clicked(self, _btn):
-        name = self._name_entry.get_text().strip() if self._name_entry else ""
-        if not name:
-            return
-        idx = self._recipe_dropdown.get_selected() if self._recipe_dropdown else -1
-        if not self._recipe_values or not (0 <= idx < len(self._recipe_values)):
-            self._set_status("Pick a recipe (sign in to load recipes).")
-            return
-        recipe = self._recipe_values[idx]
-        nodes = int(self._nodes_spin.get_value()) if self._nodes_spin else 1
-        nodes = max(1, nodes)
-        self._set_status(f"Creating {name}…")
+    @staticmethod
+    def _create_body(name, recipe, nodes, dur_n=1, dur_unit="hours"):
+        """Build the POST /v1/workspaces/ body (pure, testable)."""
+        nodes = max(1, int(nodes))
+        if nodes == 1:
+            specs = [{"title": name, "recipe": recipe, "position": 0}]
+        else:
+            specs = [{"title": f"{name}-{i + 1}", "recipe": recipe, "position": i}
+                     for i in range(nodes)]
+        return {"title": name, "duration": dur_n, "duration_unit": dur_unit,
+                "boxes": specs, "settings": {"public_ip_requested": True}}
+
+    def _create_async(self, name, recipe, nodes, dur_n, dur_unit):
+        self.ctx.ui.notify(f"Provisioning {name}…")
+        body = self._create_body(name, recipe, nodes, dur_n, dur_unit)
 
         def worker():
             c = self._client()
             try:
-                if nodes == 1:
-                    box_specs = [{"title": name, "recipe": recipe, "position": 0}]
-                else:
-                    box_specs = [{"title": f"{name}-{i + 1}", "recipe": recipe,
-                                  "position": i} for i in range(nodes)]
-                body = {"title": name, "duration": 1, "duration_unit": "hours",
-                        "boxes": box_specs,
-                        "settings": {"public_ip_requested": True}}
                 ws = c.create_workspace(body)
                 c.start(ws["uuid"])
-                ws = self._poll_active(c, ws["uuid"])
             except Exception as exc:
-                self.ctx.run_on_ui_thread(self._set_status, f"Create failed: {exc}")
+                self.ctx.run_on_ui_thread(self.ctx.ui.notify, f"Create failed: {exc}")
                 return
-            self.ctx.run_on_ui_thread(self._after_create, ws)
-
+            # Show the Provisioning card immediately; the tick polls it to Running.
+            self.ctx.run_on_ui_thread(self._refresh_async)
         threading.Thread(target=worker, daemon=True).start()
 
     def _after_create(self, ws):
-        if self._name_entry is not None:
-            self._name_entry.set_text("")
         self._materialize(ws, open_after=False)
         self._refresh_async()
 
@@ -552,6 +720,46 @@ class Plugin(SshPilotPlugin):
         self._materialize(ws, open_after=True)
         self._refresh_async()
 
+    def _clone_async(self, ws_view):
+        """Provision a copy of a workspace from the same recipe(s)."""
+        self.ctx.ui.notify(f"Cloning {ws_view['title']}…")
+
+        def worker():
+            c = self._client()
+            try:
+                old = c.workspace(ws_view["uuid"]) or {}
+                specs = self._recreate_specs(old, ws_view["title"])
+                if not specs:
+                    self.ctx.run_on_ui_thread(
+                        self.ctx.ui.notify,
+                        f"{ws_view['title']}: can't clone — no recipe on its boxes")
+                    return
+                body = {"title": f"{ws_view['title']}-clone",
+                        "duration": old.get("duration") or 1,
+                        "duration_unit": old.get("duration_unit") or "hours",
+                        "boxes": specs, "settings": {"public_ip_requested": True}}
+                ws = c.create_workspace(body)
+                c.start(ws["uuid"])
+            except Exception as exc:
+                self.ctx.run_on_ui_thread(self.ctx.ui.notify, f"Clone failed: {exc}")
+                return
+            self.ctx.run_on_ui_thread(self._on_clone_done, ws_view["title"])
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_clone_done(self, title):
+        self.ctx.ui.notify(f"Cloned {title}")
+        self._refresh_async()
+
+    def _copy_ssh(self, cv, widget):
+        if not cv.get("ip"):
+            return
+        cmd = f"ssh {cv['user']}@{cv['ip']} -p {cv['port']}"
+        try:
+            widget.get_clipboard().set(cmd)
+        except Exception:
+            logger.debug("clipboard set failed", exc_info=True)
+        self.ctx.ui.notify(f"Copied: {cmd}")
+
     def _do_action_async(self, verb, ws_view):
         self._set_status(f"{verb} {ws_view['title']}…")
 
@@ -586,9 +794,34 @@ class Plugin(SshPilotPlugin):
     # --- UI ----------------------------------------------------------
     def _refresh_async(self):
         def worker():
-            account = self._account() if self._token() else None
-            items = self._do_list() if (self._token() and account) else []
-            self.ctx.run_on_ui_thread(self._render, account, items)
+            if not (self._token() and self._account()):
+                self.ctx.run_on_ui_thread(self._render, None, [])
+                return
+            c = self._client()
+            account = None
+            try:
+                account = self._do_account()
+            except Exception:
+                logger.exception("easyenv account fetch failed")
+            cards = []
+            try:
+                now = datetime.now(timezone.utc)
+                wss = [w for w in c.workspaces() if w.get("uuid")]
+                # The list omits host_address; fill it for running workspaces
+                # (the plan caps parallel running at ~2, so this is bounded).
+                for w in wss:
+                    b0 = (w.get("boxes") or [{}])[0]
+                    if _is_running(w.get("status")) and not b0.get("host_address"):
+                        try:
+                            full = c.workspace(w.get("uuid"))
+                            if full and full.get("boxes"):
+                                w["boxes"] = full["boxes"]
+                        except Exception:
+                            logger.debug("host fill failed for %s", w.get("uuid"))
+                cards = [self._card_view(w, now) for w in wss]
+            except Exception:
+                logger.exception("easyenv workspace list failed")
+            self.ctx.run_on_ui_thread(self._render, account, cards)
         threading.Thread(target=worker, daemon=True).start()
 
     def _refresh_recipes_async(self):
@@ -602,97 +835,506 @@ class Plugin(SshPilotPlugin):
         threading.Thread(target=worker, daemon=True).start()
 
     def _populate_recipes(self, recipes):
-        self._recipe_values = [r["id"] for r in recipes if r.get("id")]
-        labels = [r["name"] for r in recipes] or ["(sign in to load recipes)"]
-        if self._recipe_dropdown is not None:
-            try:
-                self._recipe_dropdown.set_model(Gtk.StringList.new(labels))
-            except Exception:
-                logger.debug("could not update recipe dropdown")
+        self._recipes = [r for r in recipes if r.get("id")]
+        self._recipe_values = [r["id"] for r in self._recipes]
+        self._recipe_names = [r["name"] for r in self._recipes]
 
     def _build_page(self):
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        for m in ("set_margin_top", "set_margin_bottom", "set_margin_start", "set_margin_end"):
-            getattr(box, m)(18)
-
-        title = Gtk.Label(label="EasyEnv Workspaces")
-        title.add_css_class("title-2")
-        title.set_halign(Gtk.Align.START)
-        box.append(title)
-
-        self._auth_label = Gtk.Label(label="Checking sign-in…")
-        self._auth_label.set_halign(Gtk.Align.START)
-        box.append(self._auth_label)
-
-        login_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        self._token_entry = Gtk.Entry()
-        self._token_entry.set_visibility(False)
-        self._token_entry.set_placeholder_text("paste service token")
-        self._token_entry.set_hexpand(True)
-        get_token = Gtk.LinkButton.new_with_label(DASHBOARD_URL, "Get token")
-        signin = Gtk.Button(label="Sign in")
-        signin.connect("clicked", self._on_signin_clicked)
-        login_row.append(self._token_entry)
-        login_row.append(get_token)
-        login_row.append(signin)
-        box.append(login_row)
-
-        create_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        self._name_entry = Gtk.Entry()
-        self._name_entry.set_placeholder_text("workspace name")
-        self._name_entry.set_hexpand(True)
-        self._recipe_dropdown = Gtk.DropDown.new_from_strings(["(sign in to load recipes)"])
-        nodes_label = Gtk.Label(label="nodes")
-        nodes_label.add_css_class("dim-label")
-        self._nodes_spin = Gtk.SpinButton.new_with_range(1, 16, 1)
-        self._nodes_spin.set_value(1)
-        self._nodes_spin.set_tooltip_text(
-            "More than one node creates a sidebar group of per-node connections")
-        create_btn = Gtk.Button(label="Create")
-        create_btn.add_css_class("suggested-action")
-        create_btn.connect("clicked", self._on_create_clicked)
-        create_row.append(self._name_entry)
-        create_row.append(self._recipe_dropdown)
-        create_row.append(nodes_label)
-        create_row.append(self._nodes_spin)
-        create_row.append(create_btn)
-        box.append(create_row)
-
-        refresh_btn = Gtk.Button(label="Refresh")
-        refresh_btn.set_halign(Gtk.Align.START)
-        refresh_btn.connect("clicked", lambda _b: (self._refresh_recipes_async(), self._refresh_async()))
-        box.append(refresh_btn)
-
-        self._list_box = Gtk.ListBox()
-        self._list_box.add_css_class("boxed-list")
-        box.append(self._list_box)
-
-        self._status_label = Gtk.Label(label="")
-        self._status_label.set_halign(Gtk.Align.START)
-        box.append(self._status_label)
-
+        _ensure_css()
+        self._stack = Gtk.Stack()
+        self._stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
+        self._stack.add_named(self._build_gate(), "gate")
+        self._stack.add_named(self._build_dashboard(), "dashboard")
+        self._stack.set_visible_child_name("gate")
+        self._stack.connect("unrealize", lambda *_a: self._stop_tick())
         self._refresh_recipes_async()
         self._refresh_async()
-        return box
+        return self._stack
+
+    # --- sign-in gate ------------------------------------------------
+    def _build_gate(self):
+        clamp = Adw.Clamp(maximum_size=430)
+        clamp.set_valign(Gtk.Align.CENTER)
+        col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        col.set_halign(Gtk.Align.CENTER)
+        for m in ("set_margin_top", "set_margin_bottom", "set_margin_start", "set_margin_end"):
+            getattr(col, m)(40)
+
+        logo = Gtk.Image.new_from_icon_name("network-server-symbolic")
+        logo.set_pixel_size(28)
+        logo.add_css_class("ee-logo")
+        logo.set_size_request(58, 58)
+        logo.set_halign(Gtk.Align.CENTER)
+        col.append(logo)
+
+        h1 = Gtk.Label(label="Connect your EasyEnv account")
+        h1.add_css_class("title-1")
+        h1.set_margin_top(12)
+        h1.set_wrap(True)
+        h1.set_justify(Gtk.Justification.CENTER)
+        col.append(h1)
+
+        sub = Gtk.Label(label="Provision dev workspaces on easyenv.io and open them "
+                              "as native SSH connections — right from sshPilot.")
+        sub.add_css_class("dim-label")
+        sub.set_wrap(True)
+        sub.set_justify(Gtk.Justification.CENTER)
+        sub.set_max_width_chars(46)
+        sub.set_margin_bottom(8)
+        col.append(sub)
+
+        lbl = Gtk.Label(label="Service token")
+        lbl.add_css_class("caption-heading")
+        lbl.set_halign(Gtk.Align.START)
+        col.append(lbl)
+
+        self._token_entry = Gtk.PasswordEntry()
+        self._token_entry.set_show_peek_icon(True)
+        self._token_entry.set_property("placeholder-text", "ee_sk_…")
+        self._token_entry.set_hexpand(True)
+        self._token_entry.connect("activate", self._on_signin_clicked)
+        col.append(self._token_entry)
+
+        note = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        note.append(Gtk.Image.new_from_icon_name("channel-secure-symbolic"))
+        note_lbl = Gtk.Label(label="Stored only in your OS keyring — never written to disk or logs.")
+        note_lbl.add_css_class("dim-label")
+        note_lbl.add_css_class("caption")
+        note_lbl.set_wrap(True)
+        note.append(note_lbl)
+        col.append(note)
+
+        self._signin_btn = Gtk.Button()
+        self._signin_btn.add_css_class("suggested-action")
+        self._signin_btn.add_css_class("pill")
+        self._signin_btn.set_margin_top(8)
+        sb = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        sb.set_halign(Gtk.Align.CENTER)
+        self._signin_spinner = Gtk.Spinner()
+        self._signin_spinner.set_visible(False)
+        self._signin_btn_label = Gtk.Label(label="Sign in")
+        sb.append(self._signin_spinner)
+        sb.append(self._signin_btn_label)
+        self._signin_btn.set_child(sb)
+        self._signin_btn.connect("clicked", self._on_signin_clicked)
+        col.append(self._signin_btn)
+
+        link = Gtk.LinkButton.new_with_label(
+            DASHBOARD_URL, "Get a token from the EasyEnv dashboard ↗")
+        link.set_halign(Gtk.Align.CENTER)
+        col.append(link)
+
+        clamp.set_child(col)
+        return clamp
+
+    # --- dashboard ---------------------------------------------------
+    def _build_dashboard(self):
+        scroller = Gtk.ScrolledWindow()
+        scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroller.set_vexpand(True)
+        clamp = Adw.Clamp(maximum_size=1100)
+        body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18)
+        for m in ("set_margin_top", "set_margin_bottom", "set_margin_start", "set_margin_end"):
+            getattr(body, m)(24)
+
+        # header: title + account row | New Workspace
+        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        left = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        left.set_hexpand(True)
+        h1 = Gtk.Label(label="All workspaces")
+        h1.add_css_class("title-1")
+        h1.set_halign(Gtk.Align.START)
+        left.append(h1)
+        self._account_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self._account_box.set_halign(Gtk.Align.START)
+        left.append(self._account_box)
+        header.append(left)
+        new_btn = Gtk.Button()
+        new_btn.add_css_class("suggested-action")
+        new_btn.add_css_class("pill")
+        new_btn.set_valign(Gtk.Align.CENTER)
+        nb = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        nb.append(Gtk.Image.new_from_icon_name("list-add-symbolic"))
+        nb.append(Gtk.Label(label="New Workspace"))
+        new_btn.set_child(nb)
+        new_btn.connect("clicked", lambda _b: self._open_create_dialog())
+        header.append(new_btn)
+        body.append(header)
+
+        # toolbar: search / filter / sort / count
+        tb = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        self._search_entry = Gtk.SearchEntry()
+        self._search_entry.set_placeholder_text("Search workspaces…")
+        self._search_entry.set_hexpand(True)
+        self._search_entry.connect("search-changed", lambda _e: self._repopulate())
+        tb.append(self._search_entry)
+        self._filter_dd = Gtk.DropDown.new_from_strings(
+            ["All statuses", "Running", "Provisioning", "Terminated"])
+        self._filter_dd.connect("notify::selected", lambda *_a: self._repopulate())
+        tb.append(self._filter_dd)
+        self._sort_dd = Gtk.DropDown.new_from_strings(["Name", "Newest", "Status"])
+        self._sort_dd.connect("notify::selected", lambda *_a: self._repopulate())
+        tb.append(self._sort_dd)
+        self._count_label = Gtk.Label(label="")
+        self._count_label.add_css_class("dim-label")
+        tb.append(self._count_label)
+        body.append(tb)
+
+        # card grid
+        self._flowbox = Gtk.FlowBox()
+        self._flowbox.set_selection_mode(Gtk.SelectionMode.NONE)
+        self._flowbox.set_homogeneous(True)
+        self._flowbox.set_column_spacing(16)
+        self._flowbox.set_row_spacing(16)
+        self._flowbox.set_min_children_per_line(1)
+        self._flowbox.set_max_children_per_line(3)
+        self._flowbox.set_valign(Gtk.Align.START)
+        body.append(self._flowbox)
+
+        self._empty = self._build_empty()
+        self._empty.set_visible(False)
+        body.append(self._empty)
+
+        self._status_label = Gtk.Label(label="")
+        self._status_label.add_css_class("dim-label")
+        self._status_label.add_css_class("caption")
+        self._status_label.set_halign(Gtk.Align.START)
+        body.append(self._status_label)
+
+        clamp.set_child(body)
+        scroller.set_child(clamp)
+        return scroller
+
+    def _build_empty(self):
+        b = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        b.set_halign(Gtk.Align.CENTER)
+        b.set_margin_top(70)
+        b.set_margin_bottom(70)
+        img = Gtk.Image.new_from_icon_name("network-server-symbolic")
+        img.set_pixel_size(44)
+        img.add_css_class("dim-label")
+        t = Gtk.Label(label="No workspaces match")
+        t.add_css_class("title-4")
+        s = Gtk.Label(label="Try a different search, or spin up a new workspace.")
+        s.add_css_class("dim-label")
+        b.append(img)
+        b.append(t)
+        b.append(s)
+        return b
 
     def _set_status(self, text):
         if self._status_label is not None:
             self._status_label.set_text(text)
 
-    def _render(self, account, items):
-        if self._auth_label is not None:
-            self._auth_label.set_text(
-                f"Signed in as {account}" if account
-                else "Not signed in — paste a service token below")
-        if self._list_box is None:
+    def _render(self, account, cards):
+        self._cards = cards or []
+        self._account_info = account
+        signed = bool(self._token() and self._account())
+        if self._stack is not None:
+            self._stack.set_visible_child_name("dashboard" if signed else "gate")
+        self._update_account_header(account)
+        self._repopulate()
+        self._ensure_tick()
+
+    def _update_account_header(self, account):
+        box = self._account_box
+        if box is None:
             return
-        child = self._list_box.get_first_child()
+        child = box.get_first_child()
         while child is not None:
             nxt = child.get_next_sibling()
-            self._list_box.remove(child)
+            box.remove(child)
             child = nxt
-        for ws in items:
-            self._list_box.append(self._workspace_row(ws))
+        if not account:
+            return
+        av = Gtk.Label(label=account.get("initials") or "EE")
+        av.add_css_class("ee-avatar")
+        av.add_css_class("ee-c1")
+        av.set_size_request(30, 30)
+        box.append(av)
+        info = Gtk.Label(label=f"{account.get('email', '')} · "
+                               f"{account.get('type') or account.get('plan') or ''}")
+        info.add_css_class("dim-label")
+        box.append(info)
+        if account.get("plan"):
+            badge = Gtk.Label(label=str(account["plan"]).upper())
+            badge.add_css_class("ee-pill")
+            badge.add_css_class("warning")
+            box.append(badge)
+        if account.get("hours") is not None:
+            hrs = Gtk.Label(label=f"{account['hours']} h left")
+            hrs.add_css_class("ee-pill")
+            hrs.add_css_class("accent")
+            box.append(hrs)
+
+    def _filter_value(self):
+        idx = self._filter_dd.get_selected() if self._filter_dd else 0
+        opts = ("all", "running", "provisioning", "terminated")
+        return opts[idx] if 0 <= idx < len(opts) else "all"
+
+    def _sort_value(self):
+        idx = self._sort_dd.get_selected() if self._sort_dd else 0
+        opts = ("name", "newest", "status")
+        return opts[idx] if 0 <= idx < len(opts) else "name"
+
+    def _repopulate(self):
+        if self._flowbox is None:
+            return
+        child = self._flowbox.get_first_child()
+        while child is not None:
+            nxt = child.get_next_sibling()
+            self._flowbox.remove(child)
+            child = nxt
+        self._timer_labels = []
+        self._prov_bars = []
+        search = self._search_entry.get_text() if self._search_entry else ""
+        vis = _visible_cards(self._cards, search, self._filter_value(), self._sort_value())
+        if self._count_label is not None:
+            self._count_label.set_text(
+                f"{len(vis)} workspace" + ("" if len(vis) == 1 else "s"))
+        self._flowbox.set_visible(bool(vis))
+        if self._empty is not None:
+            self._empty.set_visible(not vis)
+        for cv in vis:
+            self._flowbox.append(self._build_card(cv))
+
+    # --- card --------------------------------------------------------
+    @staticmethod
+    def _status_pill(cv):
+        p = Gtk.Label(label=cv["status_label"])
+        p.add_css_class("ee-pill")
+        p.add_css_class(cv["status_class"])
+        p.set_halign(Gtk.Align.START)
+        return p
+
+    @staticmethod
+    def _avatar(name):
+        a = Gtk.Label(label=(name[:1] or "?").upper())
+        a.add_css_class("ee-avatar")
+        a.add_css_class(_recipe_color_class(name))
+        a.set_size_request(22, 22)
+        return a
+
+    @staticmethod
+    def _icon_btn(icon, tip, cb, danger=False):
+        b = Gtk.Button.new_from_icon_name(icon)
+        b.add_css_class("flat")
+        b.set_tooltip_text(tip)
+        if danger:
+            b.add_css_class("error")
+        b.connect("clicked", lambda _b: cb())
+        return b
+
+    @staticmethod
+    def _primary_btn(label, cb):
+        b = Gtk.Button(label=label)
+        b.add_css_class("suggested-action")
+        if cb is not None:
+            b.connect("clicked", lambda _b: cb())
+        return b
+
+    def _build_card(self, cv):
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        card.add_css_class("card")
+        card.set_size_request(320, -1)
+        for m in ("set_margin_top", "set_margin_bottom", "set_margin_start", "set_margin_end"):
+            getattr(card, m)(14)
+        ws_view = {"uuid": cv["uuid"], "title": cv["title"], "status": cv["status"]}
+
+        head = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        head.append(self._status_pill(cv))
+        spacer = Gtk.Box()
+        spacer.set_hexpand(True)
+        head.append(spacer)
+        timer = Gtk.Label(label=cv["timer"])
+        timer.add_css_class("dim-label")
+        timer.add_css_class("caption")
+        head.append(timer)
+        card.append(head)
+        if cv["running"] or cv["is_provisioning"]:
+            self._timer_labels.append((timer, cv))
+
+        title = Gtk.Label(label=cv["title"])
+        title.add_css_class("title-4")
+        title.set_halign(Gtk.Align.START)
+        title.set_xalign(0)
+        title.set_ellipsize(Pango.EllipsizeMode.END)
+        card.append(title)
+        meta = Gtk.Label(label=cv["meta_line"])
+        meta.add_css_class("dim-label")
+        meta.add_css_class("caption")
+        meta.set_halign(Gtk.Align.START)
+        meta.set_xalign(0)
+        meta.set_wrap(True)
+        meta.set_ellipsize(Pango.EllipsizeMode.END)
+        card.append(meta)
+
+        if cv["is_provisioning"]:
+            bar = Gtk.ProgressBar()
+            bar.set_fraction(0.25)
+            card.append(bar)
+            self._prov_bars.append(bar)
+            cap = Gtk.Label(label="Allocating public IP & booting box…")
+            cap.add_css_class("dim-label")
+            cap.add_css_class("caption")
+            cap.set_halign(Gtk.Align.START)
+            card.append(cap)
+
+        if cv["ssh_line"]:
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            sshl = Gtk.Label(label=cv["ssh_line"])
+            sshl.add_css_class("ee-mono")
+            sshl.add_css_class("caption")
+            sshl.set_halign(Gtk.Align.START)
+            sshl.set_xalign(0)
+            sshl.set_hexpand(True)
+            sshl.set_ellipsize(Pango.EllipsizeMode.END)
+            sshl.set_selectable(True)
+            row.append(sshl)
+            cp = Gtk.Button.new_from_icon_name("edit-copy-symbolic")
+            cp.add_css_class("flat")
+            cp.set_tooltip_text("Copy SSH command")
+            cp.connect("clicked", lambda _b, c=cv: self._copy_ssh(c, _b))
+            row.append(cp)
+            card.append(row)
+
+        card.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
+        footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        footer.append(self._avatar(cv["recipe_name"]))
+        rn = Gtk.Label(label=cv["recipe_name"])
+        rn.add_css_class("dim-label")
+        rn.add_css_class("caption")
+        rn.set_ellipsize(Pango.EllipsizeMode.END)
+        footer.append(rn)
+        gap = Gtk.Box()
+        gap.set_hexpand(True)
+        footer.append(gap)
+
+        info = Gtk.Button.new_from_icon_name("dialog-information-symbolic")
+        info.add_css_class("flat")
+        info.set_tooltip_text("Details")
+        info.connect("clicked", lambda _b, v=ws_view: self._show_details_async(v, _b.get_root()))
+        footer.append(info)
+
+        if cv["terminal"]:
+            footer.append(self._icon_btn("edit-copy-symbolic", "Clone",
+                                         lambda v=ws_view: self._clone_async(v)))
+            footer.append(self._icon_btn("user-trash-symbolic", "Delete",
+                                         lambda v=ws_view: self._do_action_async("delete", v), danger=True))
+            footer.append(self._primary_btn("Recreate", lambda v=ws_view: self._recreate_async(v)))
+        elif cv["running"]:
+            footer.append(self._icon_btn("media-playback-stop-symbolic", "Stop",
+                                         lambda v=ws_view: self._do_action_async("stop", v)))
+            footer.append(self._icon_btn("edit-copy-symbolic", "Clone",
+                                         lambda v=ws_view: self._clone_async(v)))
+            footer.append(self._icon_btn("user-trash-symbolic", "Delete",
+                                         lambda v=ws_view: self._do_action_async("delete", v), danger=True))
+            footer.append(self._primary_btn("Open", lambda v=ws_view: self._open_workspace_async(v, True)))
+        elif cv["is_provisioning"]:
+            footer.append(self._icon_btn("user-trash-symbolic", "Delete",
+                                         lambda v=ws_view: self._do_action_async("delete", v), danger=True))
+            disabled = self._primary_btn("Open", None)
+            disabled.set_sensitive(False)
+            footer.append(disabled)
+        else:  # not_started / other transitional
+            footer.append(self._icon_btn("edit-copy-symbolic", "Clone",
+                                         lambda v=ws_view: self._clone_async(v)))
+            footer.append(self._icon_btn("user-trash-symbolic", "Delete",
+                                         lambda v=ws_view: self._do_action_async("delete", v), danger=True))
+            footer.append(self._primary_btn("Start & open",
+                                            lambda v=ws_view: self._open_workspace_async(v, True)))
+        card.append(footer)
+        return card
+
+    # --- create dialog ----------------------------------------------
+    def _open_create_dialog(self):
+        dialog = Adw.Dialog()
+        dialog.set_title("New workspace")
+        dialog.set_content_width(460)
+        tv = Adw.ToolbarView()
+        hb = Adw.HeaderBar()
+        cancel = Gtk.Button(label="Cancel")
+        cancel.connect("clicked", lambda _b: dialog.close())
+        create = Gtk.Button(label="Create & provision")
+        create.add_css_class("suggested-action")
+        hb.pack_start(cancel)
+        hb.pack_end(create)
+        tv.add_top_bar(hb)
+
+        page = Adw.PreferencesPage()
+        grp = Adw.PreferencesGroup()
+        name_row = Adw.EntryRow()
+        name_row.set_title("Name")
+        recipe_row = Adw.ComboRow()
+        recipe_row.set_title("Recipe")
+        recipe_row.set_model(Gtk.StringList.new(self._recipe_names or ["(sign in to load recipes)"]))
+        nodes_row = Adw.SpinRow.new_with_range(1, 16, 1)
+        nodes_row.set_title("Nodes")
+        nodes_row.set_subtitle("More than one node creates a sidebar group")
+        dur_row = Adw.ComboRow()
+        dur_row.set_title("Duration")
+        dur_row.set_model(Gtk.StringList.new([d[0] for d in _DURATIONS]))
+        grp.add(name_row)
+        grp.add(recipe_row)
+        grp.add(nodes_row)
+        grp.add(dur_row)
+        page.add(grp)
+        hint = Adw.PreferencesGroup()
+        hint.set_description("Public IP is always requested so the box is reachable "
+                             "over plain SSH; it auto-stops when the duration ends.")
+        page.add(hint)
+        tv.set_content(page)
+        dialog.set_child(tv)
+
+        def on_create(_b):
+            name = name_row.get_text().strip()
+            if not name:
+                self.ctx.ui.notify("Name the workspace first")
+                return
+            ridx = recipe_row.get_selected()
+            if not self._recipe_values or not (0 <= ridx < len(self._recipe_values)):
+                self.ctx.ui.notify("Pick a recipe (sign in to load recipes)")
+                return
+            recipe = self._recipe_values[ridx]
+            didx = dur_row.get_selected()
+            dur = _DURATIONS[didx] if 0 <= didx < len(_DURATIONS) else _DURATIONS[0]
+            dialog.close()
+            self._create_async(name, recipe, int(nodes_row.get_value()), dur[1], dur[2])
+
+        create.connect("clicked", on_create)
+        dialog.present(self._stack)
+
+    # --- live tick ---------------------------------------------------
+    def _ensure_tick(self):
+        dynamic = any(c["running"] or c["is_provisioning"] for c in self._cards)
+        if dynamic and self._tick_id is None:
+            self._tick_id = GLib.timeout_add_seconds(1, self._tick)
+        elif not dynamic:
+            self._stop_tick()
+
+    def _stop_tick(self):
+        if self._tick_id is not None:
+            try:
+                GLib.source_remove(self._tick_id)
+            except Exception:
+                pass
+            self._tick_id = None
+
+    def _tick(self):
+        now = datetime.now(timezone.utc)
+        for lbl, cv in self._timer_labels:
+            if cv["running"]:
+                secs = _remaining_seconds(cv["raw"], now)
+                lbl.set_text((_humanize_delta(secs) + " left") if (secs and secs > 0) else "expiring")
+        for bar in self._prov_bars:
+            try:
+                bar.pulse()
+            except Exception:
+                pass
+        self._tick_n = (self._tick_n + 1) % 5
+        if self._tick_n == 0 and any(c["is_provisioning"] for c in self._cards):
+            self._refresh_async()
+        return True
 
     @staticmethod
     def _row_actions(status):
@@ -736,42 +1378,6 @@ class Plugin(SshPilotPlugin):
         add("UUID", ws.get("uuid"))
         return rows
 
-    def _workspace_row(self, ws):
-        row = Gtk.ListBoxRow()
-        hb = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        for m in ("set_margin_top", "set_margin_bottom", "set_margin_start", "set_margin_end"):
-            getattr(hb, m)(6)
-        label = Gtk.Label(label=f"{ws['title']}  ·  {_display_status(ws['status'])}")
-        label.set_halign(Gtk.Align.START)
-        label.set_hexpand(True)
-        hb.append(label)
-        for text, verb in self._row_actions(ws["status"]):
-            btn = Gtk.Button(label=text)
-            if verb == "stop":
-                btn.set_tooltip_text(
-                    "Ends the workspace; it can't be restarted afterwards")
-            btn.connect("clicked", self._on_row_action, verb, ws)
-            hb.append(btn)
-        details_btn = Gtk.Button(label="Details")
-        details_btn.add_css_class("flat")
-        details_btn.connect("clicked", self._on_row_action, "details", ws)
-        hb.append(details_btn)
-        row.set_child(hb)
-        return row
-
-    def _on_row_action(self, _btn, verb, ws):
-        if verb == "open":
-            self._set_status(f"Opening {ws['title']}…")
-            self._open_workspace_async(ws, open_after=True)
-            return
-        if verb == "recreate":
-            self._recreate_async(ws)
-            return
-        if verb == "details":
-            self._show_details_async(ws, _btn.get_root())
-            return
-        self._do_action_async(verb, ws)
-
     # --- details dialog ----------------------------------------------
     def _show_details_async(self, ws_view, parent):
         self._set_status(f"Loading {ws_view['title']}…")
@@ -806,9 +1412,10 @@ class Plugin(SshPilotPlugin):
         title.add_css_class("title-3")
         title.set_halign(Gtk.Align.START)
         head.append(title)
-        badge = Gtk.Label(label=_display_status(ws.get("status")))
-        badge.add_css_class("pill")
-        badge.add_css_class("accent" if _is_running(ws.get("status")) else "dim-label")
+        _slabel, _scls = _status_meta(ws.get("status"))
+        badge = Gtk.Label(label=_slabel)
+        badge.add_css_class("ee-pill")
+        badge.add_css_class(_scls)
         head.append(badge)
         box.append(head)
 

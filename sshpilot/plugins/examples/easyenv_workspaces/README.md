@@ -15,7 +15,25 @@ without a routable address are skipped with a warning rather than turned into
 dead connections.
 
 The plugin imports only the public SDK (`sshpilot.plugins.api`) plus the Python
-standard library (`urllib`/`json`/`threading`) and GTK — no third-party deps.
+standard library (`urllib`/`json`/`threading`) and GTK/libadwaita — no
+third-party deps.
+
+## The page
+
+A native GTK4/libadwaita dashboard (follows the app's light/dark theme):
+
+- **Sign-in hero** — branded card with a service-token field, a keyring note,
+  and a "Get a token" link.
+- **Account header** — initials avatar, `email · plan`, a plan badge, and the
+  remaining compute-hours pill (from the account's `remaining_time_seconds`).
+- **Workspace cards** — a responsive grid. Each card shows a theme-aware status
+  pill (Running / Provisioning / Terminated / Failed), a live countdown timer,
+  the `ssh user@ip:port` line with a copy button, the recipe (coloured avatar),
+  and actions: **Open** (or **Recreate** when terminal), **Stop**, **Clone**,
+  **Delete**, and an info button (full details dialog). Provisioning cards show a
+  pulsing progress bar and auto-flip to Running.
+- **Search / Filter / Sort** and a **New Workspace** dialog (name, recipe, node
+  count, duration).
 
 ## How it works
 
@@ -41,8 +59,8 @@ standard library (`urllib`/`json`/`threading`) and GTK — no third-party deps.
    cp -r easyenv_workspaces ~/.local/share/sshpilot/plugins/easyenv-workspaces
    ```
    sshPilot ▸ Preferences ▸ Plugins → enable **EasyEnv Workspaces** → restart.
-3. Tools ▸ **EasyEnv Workspaces** → paste the token → Sign in → pick a recipe,
-   set the node count → Create.
+3. Tools ▸ **EasyEnv Workspaces** → paste the token → Sign in → **New
+   Workspace** → choose a recipe, node count and duration → Create & provision.
 
 ## Notes
 
@@ -58,6 +76,8 @@ standard library (`urllib`/`json`/`threading`) and GTK — no third-party deps.
   (a NetBird `box-…` mesh name, e.g. an older template-built workspace), the
   plugin warns and skips it instead of writing a connection that would fail with
   "Could not resolve hostname".
-- Stopped/expired workspaces are restarted on **Open** (start + wait), and the
-  connection's IP/password are refreshed if they changed.
+- **Stopped = terminal.** EasyEnv workspaces are ephemeral; once a workspace's
+  duration ends it becomes `stopped`, which the API can't restart ("Stopped
+  workspace cannot be started"). Such workspaces show as **Terminated** and offer
+  **Recreate** (a fresh workspace from the same recipe[s]) instead of Open.
 - The token lives only in the OS keyring — never written to the repo or logs.

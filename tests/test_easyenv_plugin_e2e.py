@@ -346,3 +346,82 @@ def test_recipes_parsed(env):
     assert "Ubuntu 24.04 LTS" in names and "Python Dev Env" in names
     plugin._populate_recipes(recipes)
     assert "ubuntu-24-04" in plugin._recipe_values
+    assert plugin._recipe_names  # labels stored for the create dialog
+
+
+# --- redesign (Cards dashboard) pure helpers -----------------------------
+
+def test_status_meta_taxonomy(env):
+    _cm, _host, _plugin, _fake, mod = env
+    assert mod._status_meta("active") == ("Running", "success")
+    assert mod._status_meta("in_progress") == ("Provisioning", "warning")
+    assert mod._status_meta("not_started") == ("Provisioning", "warning")
+    assert mod._status_meta("failed") == ("Failed", "error")
+    assert mod._status_meta("stopped") == ("Terminated", "ee-terminated")
+
+
+def test_account_view_maps_header_fields(env):
+    _cm, _host, _plugin, _fake, mod = env
+    a = {"title": "newmfat@gmail.com", "type": "personal",
+         "current_plan": {"plan": {"abbreviation": "Standard"},
+                          "remaining_time_seconds": 1753760}}
+    v = mod._account_view(a)
+    assert v["email"] == "newmfat@gmail.com"
+    assert v["plan"] == "Standard"
+    assert v["hours"] == 487           # 1753760 // 3600
+    assert v["initials"] == "NE"
+
+
+def test_create_body_duration_and_nodes(env):
+    _cm, _host, plugin, _fake, _mod = env
+    b = plugin._create_body("ws", "rec-uuid", 1, 3, "hours")
+    assert b["title"] == "ws" and b["duration"] == 3 and b["duration_unit"] == "hours"
+    assert b["settings"] == {"public_ip_requested": True}
+    assert b["boxes"] == [{"title": "ws", "recipe": "rec-uuid", "position": 0}]
+    b3 = plugin._create_body("ws", "r", 3, 1, "hours")
+    assert len(b3["boxes"]) == 3
+    assert b3["boxes"][2] == {"title": "ws-3", "recipe": "r", "position": 2}
+
+
+def test_remaining_seconds_and_recipe_color(env):
+    from datetime import datetime, timezone
+    _cm, _host, _plugin, _fake, mod = env
+    now = datetime(2026, 6, 15, 12, 0, 0, tzinfo=timezone.utc)
+    ws = {"start_time": "2026-06-15T11:30:00Z", "duration": 1, "duration_unit": "hours"}
+    assert mod._remaining_seconds(ws, now) == 1800     # 30 min left
+    assert mod._recipe_color_class("Ubuntu") == mod._recipe_color_class("Ubuntu")
+    assert mod._recipe_color_class("Ubuntu").startswith("ee-c")
+
+
+def _cv(mod, title, status, recipe, ip=None):
+    from datetime import datetime, timezone
+    box = {"recipe": {"title": recipe}}
+    if ip:
+        box.update(host_address=ip, ssh_username="root", ssh_port=22)
+    ws = {"uuid": title, "title": title, "status": status, "boxes": [box],
+          "duration": 1, "duration_unit": "hours",
+          "start_time": "2026-06-15T11:30:00Z", "created_at": "2026-06-15T11:29:00Z",
+          "creator": {"first_name": "Mehdi", "last_name": "mFat"}}
+    return mod.Plugin._card_view(ws, datetime(2026, 6, 15, 12, 0, 0, tzinfo=timezone.utc))
+
+
+def test_card_view_maps_fields(env):
+    _cm, _host, _plugin, _fake, mod = env
+    cv = _cv(mod, "api", "active", "Python Dev Env", ip="203.0.113.5")
+    assert cv["recipe_name"] == "Python Dev Env" and cv["nodes"] == 1
+    assert cv["ssh_line"] == "root@203.0.113.5:22"
+    assert cv["status_label"] == "Running" and cv["running"]
+    assert "Python Dev Env" in cv["meta_line"] and "Mehdi" in cv["meta_line"]
+
+
+def test_visible_cards_search_filter_sort(env):
+    _cm, _host, _plugin, _fake, mod = env
+    cards = [_cv(mod, "zeta", "active", "Ubuntu"),
+             _cv(mod, "api", "active", "Python Dev Env"),
+             _cv(mod, "mid", "stopped", "Go")]
+    assert [c["title"] for c in mod._visible_cards(cards, "", "all", "name")] == ["api", "mid", "zeta"]
+    running = mod._visible_cards(cards, "", "running", "name")
+    assert [c["title"] for c in running] == ["api", "zeta"]
+    assert [c["title"] for c in mod._visible_cards(cards, "python", "all", "name")] == ["api"]
+    term = mod._visible_cards(cards, "", "terminated", "name")
+    assert [c["title"] for c in term] == ["mid"]   # stopped -> Terminated
