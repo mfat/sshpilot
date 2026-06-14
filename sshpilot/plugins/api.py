@@ -25,7 +25,9 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 # 1.2: Event system (ctx.events), UI extension (ctx.ui), terminal control
 #      (ctx.open_connection), key generation (ctx.generate_key), per-plugin
 #      scoped ctx.secrets/ctx.settings, ctx.run_on_ui_thread, ctx.plugin_id.
-API_VERSION: Tuple[int, int] = (1, 2)
+# 1.3: Connection groups — ctx.create_group / add_connection_to_group /
+#      add_connection_group (for multi-node provisioning).
+API_VERSION: Tuple[int, int] = (1, 3)
 
 # Stable event names and event payload types live in host.py; re-exported here
 # so plugins import everything from sshpilot.plugins.api. (host.py imports
@@ -305,6 +307,43 @@ class PluginContext:
         Returns False if unknown or the UI isn't ready. Valid after
         ``app_started``."""
         return self._host.open_connection(nickname) if self._host is not None else False
+
+    # --- groups -------------------------------------------------------
+    def create_group(self, name: str, color: Optional[str] = None) -> Optional[str]:
+        """Find-or-create a sidebar group by display name; return its id
+        (None if the UI isn't ready). Idempotent — safe to call on every
+        provision. Valid after ``app_started``."""
+        return self._host.ensure_group(name, color) if self._host is not None else None
+
+    def add_connection_to_group(self, nickname: str, group_id: str) -> bool:
+        """Add an existing connection to a group and refresh the sidebar.
+        Returns False if unknown / UI not ready. Valid after ``app_started``."""
+        return (self._host.add_connection_to_group(nickname, group_id)
+                if self._host is not None else False)
+
+    def add_connection_group(self, group_name: str,
+                             connections: List[Dict[str, Any]],
+                             color: Optional[str] = None):
+        """Convenience for multi-node provisioning: ensure a group, create
+        each connection (reusing any that already exist by nickname), assign
+        them to the group, and refresh the sidebar ONCE. Returns
+        ``(group_id, [ConnectionInfo])`` (group_id is None if the UI isn't
+        ready). Valid after ``app_started``."""
+        group_id = self.create_group(group_name, color)
+        infos: List["ConnectionInfo"] = []
+        for data in connections:
+            nickname = (data.get("nickname") or data.get("host") or "").strip()
+            try:
+                infos.append(self.add_connection(data))
+            except ValueError:
+                existing = self.connection_manager.find_connection_by_nickname(nickname)
+                if existing is not None:
+                    infos.append(ConnectionInfo.from_connection(existing))
+            if group_id and nickname and self._host is not None:
+                self._host.add_connection_to_group(nickname, group_id, rebuild=False)
+        if group_id and self._host is not None:
+            self._host.rebuild_sidebar()
+        return group_id, infos
 
     # --- keys ---------------------------------------------------------
     def generate_key(self, name: str, **kwargs) -> Optional[str]:

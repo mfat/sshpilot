@@ -356,6 +356,54 @@ class PluginHost:
             logger.exception("open_connection(%r) failed", nickname)
             return False
 
+    # --- connection groups -------------------------------------------
+    def ensure_group(self, name: str, color: Optional[str] = None) -> Optional[str]:
+        """Find-or-create a connection group by display name; return its id.
+
+        Idempotent: re-provisioning the same workspace reuses the existing
+        group instead of erroring on a duplicate name. None if no window."""
+        window = self._window
+        gm = getattr(window, "group_manager", None) if window is not None else None
+        if gm is None:
+            logger.warning("ensure_group(%r) before window is ready", name)
+            return None
+        try:
+            target = str(name).strip().lower()
+            for g in gm.get_all_groups():
+                if str(g.get("name", "")).strip().lower() == target:
+                    return g.get("id")
+            return gm.create_group(name, color=color)
+        except Exception:
+            logger.exception("ensure_group(%r) failed", name)
+            return None
+
+    def add_connection_to_group(self, nickname: str, group_id: str,
+                                rebuild: bool = True) -> bool:
+        """Move a connection (by nickname) into a group. Returns False if no
+        window or the group does not exist (guarding the move's silent
+        drop-to-root)."""
+        window = self._window
+        gm = getattr(window, "group_manager", None) if window is not None else None
+        if gm is None or group_id not in getattr(gm, "groups", {}):
+            return False
+        try:
+            gm.move_connection(nickname, group_id)
+        except Exception:
+            logger.exception("add_connection_to_group(%r, %r) failed",
+                             nickname, group_id)
+            return False
+        if rebuild:
+            self.rebuild_sidebar()
+        return True
+
+    def rebuild_sidebar(self) -> None:
+        window = self._window
+        if window is None or not hasattr(window, "rebuild_connection_list"):
+            return
+        # run_on_ui_thread runs inline on the main thread (group ops happen
+        # there) and marshals from a worker; also works under the test stub.
+        self.run_on_ui_thread(window.rebuild_connection_list)
+
     def generate_key(self, name: str, **kwargs) -> Optional[str]:
         """Generate an SSH key via the app's KeyManager. Returns the private
         key path, or None on failure. Valid after app_started."""
