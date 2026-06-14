@@ -30,7 +30,7 @@ build-deb-local.sh
 /debian
 
 # Test output
-/test_*.log
+*.log
 .pytest_cache/
 
 # Editors / tools
