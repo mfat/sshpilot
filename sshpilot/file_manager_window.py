@@ -6370,7 +6370,7 @@ class FileManagerWindow(Adw.Window):
             self._manager.connect("operation-error", self._on_operation_error)
             self._manager.connect("directory-loaded", self._on_directory_loaded)
         except Exception as exc:
-            print(f"Error connecting signals: {exc}")
+            logger.exception("Error connecting signals: %s", exc)
         
         # Connect close-request and destroy handlers to clean up resources
         self.connect("close-request", self._on_close_request)
@@ -6380,7 +6380,7 @@ class FileManagerWindow(Adw.Window):
         try:
             self._show_progress(0.1, "Connecting…")
         except Exception as exc:
-            print(f"Error showing progress: {exc}")
+            logger.exception("Error showing progress: %s", exc)
         
         # Show loading toast in remote pane (infinite timeout until manually dismissed)
         try:
@@ -6414,7 +6414,7 @@ class FileManagerWindow(Adw.Window):
         try:
             self._manager.connect_to_server()
         except Exception as exc:
-            print(f"Error connecting to server: {exc}")
+            logger.exception("Error connecting to server: %s", exc)
     
     def _on_connected(self, _manager) -> None:
         """Handle successful connection - reset password dialog state."""
@@ -7296,12 +7296,12 @@ class FileManagerWindow(Adw.Window):
             operation_type: "upload" or "download"
             callback: Function to call with resolved file list
         """
-        print(f"=== CHECKING FILE CONFLICTS ===")
-        print(f"Operation type: {operation_type}")
-        print(f"Files to transfer: {files_to_transfer}")
+        logger.debug("=== CHECKING FILE CONFLICTS ===")
+        logger.debug("Operation type: %s", operation_type)
+        logger.debug("Files to transfer: %s", files_to_transfer)
 
         def _finalize_conflicts(conflicts: List[Tuple[str, str]]) -> None:
-            print(f"Total conflicts found: {len(conflicts)}")
+            logger.debug("Total conflicts found: %d", len(conflicts))
 
             if not conflicts:
                 # No conflicts, proceed with all transfers
@@ -7328,7 +7328,7 @@ class FileManagerWindow(Adw.Window):
                             self._right_pane.show_toast(f"Connection error: {str(e)}")
                         return
                 
-                print("No conflicts, proceeding with transfers")
+                logger.debug("No conflicts, proceeding with transfers")
                 callback(files_to_transfer)
                 return
 
@@ -7417,12 +7417,12 @@ class FileManagerWindow(Adw.Window):
         if operation_type == "download":
             conflicts: List[Tuple[str, str]] = []
             for source, dest in files_to_transfer:
-                print(f"Checking: {source} -> {dest}")
+                logger.debug("Checking: %s -> %s", source, dest)
                 exists = os.path.exists(dest)
-                print(f"  Local file exists: {exists}")
+                logger.debug("  Local file exists: %s", exists)
                 if exists:
                     conflicts.append((source, dest))
-                    print(f"  CONFLICT DETECTED: {dest}")
+                    logger.debug("  CONFLICT DETECTED: %s", dest)
 
             _finalize_conflicts(conflicts)
             return
@@ -7441,7 +7441,7 @@ class FileManagerWindow(Adw.Window):
             conflicts: List[Tuple[str, str]] = []
 
             for source, dest in files_to_transfer:
-                print(f"Checking: {source} -> {dest}")
+                logger.debug("Checking: %s -> %s", source, dest)
 
                 def _on_result(fut: Future, pair: Tuple[str, str] = (source, dest)) -> None:
                     try:
@@ -7462,10 +7462,10 @@ class FileManagerWindow(Adw.Window):
                             logger.warning("Failed to check remote path %s: %s", pair[1], exc)
                         exists = False
 
-                    print(f"  Remote file exists: {exists}")
+                    logger.debug("  Remote file exists: %s", exists)
                     if exists:
                         conflicts.append(pair)
-                        print(f"  CONFLICT DETECTED: {pair[1]}")
+                        logger.debug("  CONFLICT DETECTED: %s", pair[1])
 
                     pending["remaining"] -= 1
                     if pending["remaining"] == 0:
@@ -7968,8 +7968,8 @@ class FileManagerWindow(Adw.Window):
 
             self._check_file_conflicts(files_to_transfer, "upload", _proceed_with_upload)
         elif action == "download" and isinstance(payload, dict):
-            print(f"=== DOWNLOAD OPERATION CALLED ===")
-            print(f"Payload: {payload}")
+            logger.debug("=== DOWNLOAD OPERATION CALLED ===")
+            logger.debug("Payload: %s", payload)
 
             if pane is self._left_pane and payload.get("entries"):
                 remote_pane = getattr(self, "_right_pane", None)
@@ -7985,8 +7985,8 @@ class FileManagerWindow(Adw.Window):
 
             entries = payload.get("entries") or []
             directory = payload.get("directory")
-            print(f"Entries to download: {[e.name for e in entries]}")
-            print(f"Directory: {directory}")
+            logger.debug("Entries to download: %s", [e.name for e in entries])
+            logger.debug("Directory: %s", directory)
             if not directory:
                 if pane is self._right_pane:
                     directory = pane.toolbar.path_entry.get_text() or "/"
