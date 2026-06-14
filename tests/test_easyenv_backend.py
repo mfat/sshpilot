@@ -123,6 +123,18 @@ def test_node_nicknames_dedupes_repeated_titles():
     assert "ansible-cluster / Ubuntu 24.04 LTS 3" in nicks
 
 
+def test_parse_templates():
+    out = mod._parse_templates(
+        '[{"uuid":"tpl-1","title":"Ubuntu 26.04 LTS"},'
+        '{"uuid":"tpl-2","title":"ansible-ubuntu-cluster"}]')
+    assert out == [{"id": "tpl-1", "name": "Ubuntu 26.04 LTS"},
+                   {"id": "tpl-2", "name": "ansible-ubuntu-cluster"}]
+    # wrapped + alternate keys
+    assert mod._parse_templates('{"results":[{"id":"x","name":"y"}]}') == \
+        [{"id": "x", "name": "y"}]
+    assert mod._parse_templates("not json") == []
+
+
 def test_parse_workspaces_tolerates_shapes():
     # EasyEnv API shape: uuid + title + status
     assert mod._parse_workspaces('[{"uuid":"ws-1","title":"x","status":"active"}]') == \

@@ -203,6 +203,28 @@ def test_reprovision_is_idempotent(env):
     assert len([c for c in cm.connections if c.protocol == "easyenv"]) == 4
 
 
+def test_template_list_from_stub(env):
+    cm, host = env
+    _mod, plugin = _load_plugin(cm, host)
+    tpls = plugin._do_templates()
+    names = {t["name"] for t in tpls}
+    assert "ansible-ubuntu-cluster" in names  # multi-node template
+    assert "ubuntu-26-04" in names            # single-node template
+    # cache population (what the dropdown reads)
+    plugin._populate_templates(tpls)
+    assert "tpl-ansible-cluster" in plugin._template_values
+
+
+def test_provision_from_selected_template_makes_group(env):
+    cm, host = env
+    _mod, plugin = _load_plugin(cm, host)
+    gm = host._window.group_manager
+    # Simulate: user typed a name and picked the cluster template -> create.
+    ws, machines = _provision(plugin, host, "tpl-stack", "ansible-ubuntu-cluster")
+    assert len(machines) == 4
+    assert any(g["name"] == "EasyEnv: tpl-stack" for g in gm.get_all_groups())
+
+
 def test_single_machine_no_group(env):
     cm, host = env
     _mod, plugin = _load_plugin(cm, host)

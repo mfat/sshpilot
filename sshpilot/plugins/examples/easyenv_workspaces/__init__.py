@@ -157,6 +157,35 @@ def _parse_machines(text):
     return out
 
 
+def _one_template(t):
+    """Normalize one template object: {uuid|id, title|name}."""
+    if not isinstance(t, dict):
+        return None
+    tid = str(t.get("uuid") or t.get("id") or "")
+    name = str(t.get("title") or t.get("name") or tid)
+    if tid or name:
+        # `workspace create --template` accepts the uuid or the title.
+        return {"id": tid or name, "name": name}
+    return None
+
+
+def _parse_templates(text):
+    """Parse `template list --output json` (list, or wrapped dict)."""
+    try:
+        data = json.loads(text)
+    except (ValueError, TypeError):
+        return []
+    if isinstance(data, dict):
+        data = (data.get("results") or data.get("templates")
+                or data.get("items") or [data])
+    out = []
+    for t in data if isinstance(data, list) else []:
+        tt = _one_template(t)
+        if tt is not None:
+            out.append(tt)
+    return out
+
+
 class EasyEnvBackend(ProtocolBackend):
     """Protocol backend: the connection IS `easyenv workspace ssh <id>`."""
 
@@ -172,7 +201,8 @@ class EasyEnvBackend(ProtocolBackend):
     def connection_fields(self):
         return [
             FieldSpec(key="workspace_id", label="Workspace UUID", kind="text",
-                      required=True, placeholder="workspace uuid"),
+                      required=True,
+                      placeholder="existing workspace — to create one, use Tools ▸ EasyEnv Workspaces"),
             FieldSpec(key="machine_id", label="Machine UUID (optional)", kind="text",
                       placeholder="machine uuid; empty = first machine"),
             FieldSpec(key="machine_name", label="Machine name (display)", kind="text",
@@ -209,6 +239,8 @@ class Plugin(SshPilotPlugin):
         self._status_label = None
         self._list_box = None
         self._auth_label = None
+        self._template_dropdown = None
+        self._template_values = []  # parallel to the dropdown's labels
 
         ctx.register_protocol(EasyEnvBackend())
         ctx.ui.register_page("workspaces", "EasyEnv Workspaces",
@@ -269,6 +301,32 @@ class Plugin(SshPilotPlugin):
         """List a workspace's machines/nodes via `machine list -w <ws>`."""
         out = self._run(["machine", "list", "-w", wsid, "--output", "json"], timeout=30)
         return _parse_machines(out.stdout) if out.returncode == 0 else []
+
+    def _do_templates(self):
+        """List available templates via `template list -o json`."""
+        out = self._run(["template", "list", "--output", "json"], timeout=30)
+        return _parse_templates(out.stdout) if out.returncode == 0 else []
+
+    def _refresh_templates_async(self):
+        """Fetch templates off-thread and fill the create-form dropdown."""
+        def worker():
+            try:
+                tpls = self._do_templates()
+            except Exception:
+                logger.exception("easyenv template list failed")
+                tpls = []
+            self.ctx.run_on_ui_thread(self._populate_templates, tpls)
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _populate_templates(self, tpls):
+        """Update the cache + dropdown model from a fetched template list."""
+        self._template_values = [t["id"] or t["name"] for t in tpls if (t.get("id") or t.get("name"))]
+        labels = [t["name"] for t in tpls] or ["(no templates — sign in first)"]
+        if self._template_dropdown is not None:
+            try:
+                self._template_dropdown.set_model(Gtk.StringList.new(labels))
+            except Exception:
+                logger.debug("could not update template dropdown model")
 
     @staticmethod
     def _node_nicknames(ws_title, machines):
@@ -352,6 +410,7 @@ class Plugin(SshPilotPlugin):
 
     # --- events -------------------------------------------------------
     def _on_app_started(self, _payload):
+        self._refresh_templates_async()
         self._refresh_async()
 
     def _on_session_opened(self, info):
@@ -400,15 +459,17 @@ class Plugin(SshPilotPlugin):
         self._name_entry = Gtk.Entry()
         self._name_entry.set_placeholder_text("workspace name")
         self._name_entry.set_hexpand(True)
-        self._template_entry = Gtk.Entry()
-        self._template_entry.set_placeholder_text("template (e.g. python_devenv)")
+        # Live template dropdown (filled from `easyenv template list`).
+        self._template_dropdown = Gtk.DropDown.new_from_strings(["(loading templates…)"])
         create_btn = Gtk.Button(label="Create")
         create_btn.add_css_class("suggested-action")
         create_btn.connect("clicked", self._on_create_clicked)
         create_row.append(self._name_entry)
-        create_row.append(self._template_entry)
+        create_row.append(self._template_dropdown)
         create_row.append(create_btn)
         box.append(create_row)
+        # Fill the dropdown now (covers opening the page before app_started's fetch).
+        self._refresh_templates_async()
 
         refresh_btn = Gtk.Button(label="Refresh")
         refresh_btn.set_halign(Gtk.Align.START)
@@ -455,7 +516,11 @@ class Plugin(SshPilotPlugin):
         name = self._name_entry.get_text().strip()
         if not name:
             return
-        template = self._template_entry.get_text().strip() or "python_devenv"
+        idx = self._template_dropdown.get_selected() if self._template_dropdown else -1
+        if not self._template_values or not (0 <= idx < len(self._template_values)):
+            self._set_status("Pick a template (sign in to load templates).")
+            return
+        template = self._template_values[idx]
         self._set_status(f"Creating {name}…")
 
         def worker():

@@ -237,6 +237,19 @@ def main(argv):
                         f"(workspace {ws['title'] if ws else '?'}) over mesh. "
                         f"Ctrl-D to exit.\n")
 
+    if group in ("template", "templates", "t"):
+        sub = rest[0] if rest else ""
+        if sub in ("list", "ls"):
+            # Titles drive _machines_for: 'ansible-ubuntu-cluster' -> multi-node
+            # group; 'ubuntu-26-04' -> single connection.
+            tpls = [
+                {"uuid": "tpl-ansible-cluster", "title": "ansible-ubuntu-cluster"},
+                {"uuid": "tpl-ubuntu-2604", "title": "ubuntu-26-04"},
+                {"uuid": "tpl-python-single", "title": "python-dev-single"},
+            ]
+            _emit(rest, tpls, "\n".join(f"{t['uuid']}  {t['title']}" for t in tpls))
+            return 0
+
     print(f"easyenv-stub: unsupported command: {' '.join(args)}", file=sys.stderr)
     return 2
 
