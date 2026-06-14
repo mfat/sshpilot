@@ -289,6 +289,20 @@ class Plugin(SshPilotPlugin):
             result.append((m, f"{ws_title} / {label}"))
         return result
 
+    @staticmethod
+    def _is_running(status):
+        return str(status or "").lower() in ("started", "active", "running")
+
+    def _open_if_running(self, nickname, machine):
+        """Open a node only if it's running; otherwise tell the user why
+        (connecting to a stopped/expired box makes easyenv error)."""
+        if self._is_running(machine.get("status")):
+            self.ctx.open_connection(nickname)
+        else:
+            self.ctx.ui.notify(
+                f"{nickname} is {machine.get('status', 'not running')} — "
+                f"Start the workspace first (expired workspaces must be recreated).")
+
     def _provision_workspace(self, ws_title, wsid, machines, open_first=False):
         """Materialize a workspace in sshPilot (UI thread). One machine -> a
         single connection; multiple -> a group with one connection per node.
@@ -307,22 +321,22 @@ class Plugin(SshPilotPlugin):
                 pass
             self.ctx.ui.notify(f"EasyEnv: {ws_title} ready")
             if open_first:
-                self.ctx.open_connection(ws_title)
+                self._open_if_running(ws_title, m)
             return ws_title
 
         node_data = []
-        first_nick = None
+        first = None  # (nickname, machine)
         for m, nick in self._node_nicknames(ws_title, machines):
             node_data.append({"protocol": "easyenv", "nickname": nick, "host": nick,
                               "workspace_id": wsid, "machine_id": m["id"],
                               "machine_name": m["name"]})
-            if first_nick is None:
-                first_nick = nick
+            if first is None:
+                first = (nick, m)
         self.ctx.add_connection_group(f"EasyEnv: {ws_title}", node_data)
         self.ctx.ui.notify(f"EasyEnv: {ws_title} — {len(machines)} nodes ready")
-        if open_first and first_nick:
-            self.ctx.open_connection(first_nick)
-        return first_nick
+        if open_first and first:
+            self._open_if_running(first[0], first[1])
+        return first[0] if first else None
 
     def _open_workspace_async(self, ws, open_first=False):
         """Enumerate a workspace's machines off-thread, then provision."""
