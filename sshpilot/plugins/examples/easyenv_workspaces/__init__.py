@@ -167,6 +167,19 @@ def _is_terminal(status):
     return str(status or "").lower() in _TERMINAL_STATUSES
 
 
+# The workspace API (Status7f5Enum) emits only: active, not_started, stopped,
+# in_progress, failed. 'stopped' is terminal — the VM is gone and it can't be
+# restarted — so show it as "Terminated". Everything else is title-cased from
+# the raw value.
+_STATUS_LABELS = {"stopped": "Terminated"}
+
+
+def _display_status(status):
+    key = str(status or "").lower()
+    return _STATUS_LABELS.get(
+        key, (str(status or "unknown")).replace("_", " ").title())
+
+
 def _friendly(exc):
     """A user-facing message for an EasyEnvError; collapses the known
     'cannot be started' 400 into a plain, actionable sentence."""
@@ -651,7 +664,7 @@ class Plugin(SshPilotPlugin):
         hb = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         for m in ("set_margin_top", "set_margin_bottom", "set_margin_start", "set_margin_end"):
             getattr(hb, m)(6)
-        label = Gtk.Label(label=f"{ws['title']}  ·  {ws['status']}")
+        label = Gtk.Label(label=f"{ws['title']}  ·  {_display_status(ws['status'])}")
         label.set_halign(Gtk.Align.START)
         label.set_hexpand(True)
         hb.append(label)

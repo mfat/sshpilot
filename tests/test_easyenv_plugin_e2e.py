@@ -212,6 +212,19 @@ def test_row_actions_gated_by_status(env):
     assert plugin._row_actions("provisioning") == (("Start", "start"), ("Delete", "delete"))
 
 
+def test_display_status_labels(env):
+    """'stopped' (the API's terminal state) shows as 'Terminated'; the other
+    Status7f5Enum values title-case cleanly."""
+    _cm, _host, _plugin, _fake, mod = env
+    assert mod._display_status("stopped") == "Terminated"
+    assert mod._display_status("active") == "Active"
+    assert mod._display_status("in_progress") == "In Progress"
+    assert mod._display_status("not_started") == "Not Started"
+    assert mod._display_status("failed") == "Failed"
+    assert mod._display_status("weird") == "Weird"
+    assert mod._display_status("") == "Unknown"
+
+
 def test_friendly_collapses_cannot_be_started(env):
     _cm, _host, _plugin, _fake, mod = env
     exc = mod.EasyEnvError(
