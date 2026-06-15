@@ -1161,18 +1161,23 @@ class Plugin(SshPilotPlugin):
         return b
 
     def _build_card(self, cv):
-        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         card.add_css_class("card")
         card.add_css_class("ee-card")
         card.add_css_class(_EDGE_CLASS.get(cv["status_class"], "ee-edge-dimmed"))
         # Fixed width so cards form a tidy grid and pack left instead of
         # stretching to the full row width when there are only a few.
-        card.set_size_request(286, -1)
+        card.set_size_request(300, -1)
         card.set_hexpand(False)
         card.set_halign(Gtk.Align.START)
         card.set_valign(Gtk.Align.START)
+        # Content lives in an inner box whose margins create the internal padding
+        # — margins on the .card box itself would sit OUTSIDE its border, and
+        # .card has no padding of its own. Inter-card gaps come from FlowBox.
+        inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        inner.set_hexpand(True)
         for m in ("set_margin_top", "set_margin_bottom", "set_margin_start", "set_margin_end"):
-            getattr(card, m)(16)
+            getattr(inner, m)(16)
         ws_view = {"uuid": cv["uuid"], "title": cv["title"], "status": cv["status"]}
 
         head = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
@@ -1184,7 +1189,7 @@ class Plugin(SshPilotPlugin):
         timer.add_css_class("dim-label")
         timer.add_css_class("caption")
         head.append(timer)
-        card.append(head)
+        inner.append(head)
         if cv["running"] or cv["is_provisioning"]:
             self._timer_labels.append((timer, cv))
 
@@ -1194,7 +1199,7 @@ class Plugin(SshPilotPlugin):
         title.set_xalign(0)
         title.set_ellipsize(Pango.EllipsizeMode.END)
         title.set_max_width_chars(20)   # bound natural width so it can't widen the card
-        card.append(title)
+        inner.append(title)
         meta = Gtk.Label(label=cv["meta_line"])
         meta.add_css_class("dim-label")
         meta.add_css_class("caption")
@@ -1203,18 +1208,18 @@ class Plugin(SshPilotPlugin):
         meta.set_wrap(False)
         meta.set_ellipsize(Pango.EllipsizeMode.END)
         meta.set_max_width_chars(30)
-        card.append(meta)
+        inner.append(meta)
 
         if cv["is_provisioning"]:
             bar = Gtk.ProgressBar()
             bar.set_fraction(0.25)
-            card.append(bar)
+            inner.append(bar)
             self._prov_bars.append(bar)
             cap = Gtk.Label(label="Allocating public IP & booting box…")
             cap.add_css_class("dim-label")
             cap.add_css_class("caption")
             cap.set_halign(Gtk.Align.START)
-            card.append(cap)
+            inner.append(cap)
 
         if cv["ssh_line"]:
             row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
@@ -1233,9 +1238,9 @@ class Plugin(SshPilotPlugin):
             cp.set_tooltip_text("Copy SSH command")
             cp.connect("clicked", lambda _b, c=cv: self._copy_ssh(c, _b))
             row.append(cp)
-            card.append(row)
+            inner.append(row)
 
-        card.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
+        inner.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
         footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
         # Recipe is already shown in the meta line; here just a colour chip
         # (with the recipe in its tooltip) so the footer can't be widened by a
@@ -1281,7 +1286,8 @@ class Plugin(SshPilotPlugin):
                                          lambda v=ws_view: self._do_action_async("delete", v), danger=True))
             footer.append(self._primary_btn("Start & open",
                                             lambda v=ws_view: self._open_workspace_async(v, True)))
-        card.append(footer)
+        inner.append(footer)
+        card.append(inner)
         return card
 
     # --- create dialog ----------------------------------------------
