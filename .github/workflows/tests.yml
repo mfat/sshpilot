@@ -26,22 +26,20 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
 
-      # Tests don't drive a real GTK display (conftest.py stubs gi.repository),
-      # but PyGObject still needs glib / girepository headers at install time.
-      - name: Install system build deps for PyGObject and pycairo
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libgirepository1.0-dev \
-            libcairo2-dev \
-            pkg-config \
-            python3-dev
-
-      - name: Install project (editable) and test deps
+      # Tests stub gi.repository in tests/conftest.py and never load real GTK,
+      # so we skip PyGObject / pycairo entirely (--no-deps) and install only
+      # the runtime libs the test suite actually exercises through sshpilot.
+      - name: Install project (no GTK) and test deps
         run: |
           python -m pip install --upgrade pip
-          pip install -e .
-          pip install pytest pytest-cov
+          pip install --no-deps -e .
+          pip install \
+            paramiko \
+            cryptography \
+            keyring \
+            psutil \
+            pytest \
+            pytest-cov
 
       - name: Run pytest
         run: pytest -ra
