@@ -39,14 +39,13 @@ if TYPE_CHECKING:
     from ..file_manager_window import FileManagerWindow
 
 
-# Icon size steps for the SFTP file manager. Both tuples are indexed by the
-# same level; level 0 = smallest, len-1 = largest. Defaults match the GNOME
-# Files / Adwaita HIG for rich list rows (24 px) and grid cells (72 px).
-_LIST_ICON_SIZES = (16, 24, 32, 48, 64)
-_GRID_ICON_SIZES = (48, 72, 96, 128, 192)
-_DEFAULT_ICON_LEVEL = 1
-_MIN_ICON_LEVEL = 0
-_MAX_ICON_LEVEL = len(_LIST_ICON_SIZES) - 1
+from .icon_levels import (
+    _DEFAULT_ICON_LEVEL,
+    _GRID_ICON_SIZES,
+    _LIST_ICON_SIZES,
+    _MAX_ICON_LEVEL,
+    _MIN_ICON_LEVEL,
+)
 
 
 def _file_manager_window_cls():
