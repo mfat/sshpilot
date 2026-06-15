@@ -141,44 +141,36 @@ class DummyPango:
         def get_size(self):
             return self._size
 
-# Setup mocks properly
-gi_mod = types.ModuleType('gi')
-gi_mod.require_version = Mock()
+# Copy concrete dummies as attributes onto the conftest-provided gi.repository
+# submodules rather than replacing them — replacing the submodule slots would
+# clobber the auto-creating _DummyGIModule that later-collected tests rely on
+# (see #985).
+from gi.repository import GObject as _GObject
+from gi.repository import GLib as _GLib
+from gi.repository import Gtk as _Gtk
+from gi.repository import Pango as _Pango
+from gi.repository import Vte as _Vte
+from gi.repository import Gdk as _Gdk
+from gi.repository import Adw as _Adw
 
-gi_repo = types.ModuleType('gi.repository')
-gi_repo.GObject = DummyGObject()
-gi_repo.GLib = DummyGLib()
-gi_repo.Gtk = DummyGtk()
-gi_repo.Pango = DummyPango()
-gi_repo.Vte = types.SimpleNamespace(
-    Terminal=DummyVte,
-    PtyFlags=types.SimpleNamespace(DEFAULT=0),
-)
-gi_repo.Gdk = types.SimpleNamespace(
-    BUTTON_SECONDARY=3,
-    Rectangle=Mock,
-)
-gi_repo.Adw = types.SimpleNamespace(
-    Application=types.SimpleNamespace(get_default=lambda: None),
-)
 
-sys.modules['gi'] = gi_mod
-sys.modules['gi.repository'] = gi_repo
-sys.modules['gi.repository'].GObject = DummyGObject()
-sys.modules['gi.repository'].GLib = DummyGLib()
-sys.modules['gi.repository'].Gtk = DummyGtk()
-sys.modules['gi.repository'].Pango = DummyPango()
-sys.modules['gi.repository'].Vte = types.SimpleNamespace(
-    Terminal=DummyVte,
-    PtyFlags=types.SimpleNamespace(DEFAULT=0),
-)
-sys.modules['gi.repository'].Gdk = types.SimpleNamespace(
-    BUTTON_SECONDARY=3,
-    Rectangle=Mock,
-)
-sys.modules['gi.repository'].Adw = types.SimpleNamespace(
-    Application=types.SimpleNamespace(get_default=lambda: None),
-)
+def _attach(target, source):
+    """Set every non-dunder attribute of *source* onto *target*."""
+    for name in dir(source):
+        if name.startswith("__"):
+            continue
+        setattr(target, name, getattr(source, name))
+
+
+_attach(_GObject, DummyGObject)
+_attach(_GLib, DummyGLib)
+_attach(_Gtk, DummyGtk)
+_attach(_Pango, DummyPango)
+_Vte.Terminal = DummyVte
+_Vte.PtyFlags = types.SimpleNamespace(DEFAULT=0)
+_Gdk.BUTTON_SECONDARY = 3
+_Gdk.Rectangle = Mock
+_Adw.Application = types.SimpleNamespace(get_default=lambda: None)
 
 # Now import the modules we want to test
 from sshpilot.terminal_backends import VTETerminalBackend, PyXtermTerminalBackend

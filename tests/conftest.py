@@ -74,7 +74,7 @@ if 'gi' not in sys.modules:
     setattr(repository, 'Secret', secret_module)
     sys.modules['gi.repository.Secret'] = secret_module
 
-    for name in ['Gtk', 'Adw', 'Gio', 'Gdk', 'Pango', 'PangoFT2']:
+    for name in ['Gtk', 'Adw', 'Gio', 'Gdk', 'GdkPixbuf', 'Pango', 'PangoFT2', 'Vte', 'GtkSource']:
         submodule = _DummyGIModule(f'gi.repository.{name}')
         setattr(repository, name, submodule)
         sys.modules[f'gi.repository.{name}'] = submodule
