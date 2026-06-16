@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from gi.repository import Adw, Gio, GLib, GObject, Gtk
 
+from .icon_levels import _DEFAULT_ICON_LEVEL, _MAX_ICON_LEVEL, _MIN_ICON_LEVEL
+
 
 class PathEntry(Gtk.Entry):
     """Simple entry used for the editable pathbar."""
