@@ -7891,7 +7891,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         ssh_config=ssh_config,
                     )
                 except Exception as exc:  # pragma: no cover - defensive
-                    logger.error("Embedded file manager failed: %s", exc)
+                    logger.error("Embedded file manager failed: %s", exc, exc_info=True)
                     self._handle_file_manager_placeholder_error(
                         placeholder_info,
                         str(nickname or host_value or _('Remote Host')),
@@ -7924,7 +7924,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     ssh_config=ssh_config,
                 )
             except Exception as exc:
-                logger.error("Embedded file manager failed: %s", exc)
+                logger.error("Embedded file manager failed: %s", exc, exc_info=True)
                 self._handle_file_manager_placeholder_error(
                     fallback_placeholder,
                     str(nickname or host_value or _('Remote Host')),

@@ -47,3 +47,22 @@ exclude = ["packaging*", "screenshots*"]
 [project.urls]
 Homepage = "https://github.com/mfat/sshpilot"
 Issues = "https://github.com/mfat/sshpilot/issues"
+
+[tool.ruff]
+target-version = "py39"
+line-length = 100
+extend-exclude = [
+    "src",
+    "sshpilot/vendor",
+    "tests/manual",
+    "tests_e2e",
+    "build",
+    "dist",
+    "packaging",
+]
+
+[tool.ruff.lint]
+# Conservative initial rule set: syntax errors, misused comparisons, and the
+# pyflakes checks that almost always flag runtime bugs. Broader rules can be
+# enabled incrementally as the tree is cleaned up.
+select = ["E9", "F63", "F7"]
