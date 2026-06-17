@@ -163,6 +163,9 @@ hiddenimports += ["gi._gi_cairo", "gi.repository.cairo", "cairo"]
 hiddenimports += ["keyring"]
 # Add all keyring backends
 hiddenimports += ["keyring.backends", "keyring.backends.macOS", "keyring.backends.libsecret", "keyring.backends.SecretService"]
+# Ship certifi so the HTTPS update check can verify TLS certs inside the bundle
+# (PyInstaller's certifi hook collects cacert.pem once certifi is importable).
+hiddenimports += ["certifi"]
 
 block_cipher = None
 

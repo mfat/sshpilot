@@ -22,6 +22,7 @@ dependencies = [
     "cryptography>=42.0",
     "keyring>=24.3",
     "psutil>=5.9.0",
+    "certifi>=2023.7.22",
 ]
 # Note: This package also requires system dependencies that must be installed separately:
 # - GTK4, libadwaita, VTE (for terminal backend)
