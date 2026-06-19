@@ -776,6 +776,10 @@ class PreferencesWindow(Adw.Window):
             color_schemes.append("Rosé Pine")
             color_schemes.append("Rosé Pine Moon")
             color_schemes.append("Rosé Pine Dawn")
+            color_schemes.append("Catppuccin Latte")
+            color_schemes.append("Catppuccin Frappé")
+            color_schemes.append("Catppuccin Macchiato")
+            color_schemes.append("Catppuccin Mocha")
             self.color_scheme_row.set_model(color_schemes)
             
             # Set current color scheme from config
@@ -791,7 +795,8 @@ class PreferencesWindow(Adw.Window):
                 "Default", "Black on White", "Solarized Dark", "Solarized Light",
                 "Monokai", "Dracula", "Nord",
                 "Gruvbox Dark", "One Dark", "Tomorrow Night", "Material Dark",
-                "Rosé Pine", "Rosé Pine Moon", "Rosé Pine Dawn"
+                "Rosé Pine", "Rosé Pine Moon", "Rosé Pine Dawn",
+                "Catppuccin Latte", "Catppuccin Frappé", "Catppuccin Macchiato", "Catppuccin Mocha"
             ]
             try:
                 current_index = scheme_names.index(current_scheme_display)
@@ -3052,6 +3057,10 @@ class PreferencesWindow(Adw.Window):
             "Rosé Pine": "rose_pine",
             "Rosé Pine Moon": "rose_pine_moon",
             "Rosé Pine Dawn": "rose_pine_dawn",
+            "Catppuccin Latte": "catppuccin_latte",
+            "Catppuccin Frappé": "catppuccin_frappe",
+            "Catppuccin Macchiato": "catppuccin_macchiato",
+            "Catppuccin Mocha": "catppuccin_mocha",
         }
     
     def get_reverse_theme_mapping(self):
@@ -3466,7 +3475,8 @@ class PreferencesWindow(Adw.Window):
             "Default", "Black on White", "Solarized Dark", "Solarized Light",
             "Monokai", "Dracula", "Nord",
             "Gruvbox Dark", "One Dark", "Tomorrow Night", "Material Dark",
-            "Rosé Pine", "Rosé Pine Moon", "Rosé Pine Dawn"
+            "Rosé Pine", "Rosé Pine Moon", "Rosé Pine Dawn",
+            "Catppuccin Latte", "Catppuccin Frappé", "Catppuccin Macchiato", "Catppuccin Mocha"
         ]
         selected_scheme = scheme_names[selected] if selected < len(scheme_names) else "Default"
         
@@ -3689,6 +3699,46 @@ class PreferencesWindow(Adw.Window):
                 'yellow': '#ea9d34',
                 'magenta': '#907aa9',
                 'cyan': '#d7827e'
+            },
+            'catppuccin_latte': {
+                'background': '#eff1f5',
+                'foreground': '#4c4f69',
+                'blue': '#1e66f5',
+                'green': '#40a02b',
+                'red': '#d20f39',
+                'yellow': '#df8e1d',
+                'magenta': '#8839ef',
+                'cyan': '#179299'
+            },
+            'catppuccin_frappe': {
+                'background': '#303446',
+                'foreground': '#c6d0f5',
+                'blue': '#8caaee',
+                'green': '#a6d189',
+                'red': '#e78284',
+                'yellow': '#e5c890',
+                'magenta': '#ca9ee6',
+                'cyan': '#81c8be'
+            },
+            'catppuccin_macchiato': {
+                'background': '#24273a',
+                'foreground': '#cad3f5',
+                'blue': '#8aadf4',
+                'green': '#a6da95',
+                'red': '#ed8796',
+                'yellow': '#eed49f',
+                'magenta': '#c6a0f6',
+                'cyan': '#8bd5ca'
+            },
+            'catppuccin_mocha': {
+                'background': '#1e1e2e',
+                'foreground': '#cdd6f4',
+                'blue': '#89b4fa',
+                'green': '#a6e3a1',
+                'red': '#f38ba8',
+                'yellow': '#f9e2af',
+                'magenta': '#cba6f7',
+                'cyan': '#94e2d5'
             }
         }
         return schemes.get(scheme_key, schemes['default'])
