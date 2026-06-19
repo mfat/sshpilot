@@ -2,5 +2,8 @@
   "id": "telnet",
   "name": "Telnet protocol",
   "api_version": 1,
-  "builtin": true
+  "builtin": true,
+  "permissions": [
+    "process"
+  ]
 }

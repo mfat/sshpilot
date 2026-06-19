@@ -37,7 +37,7 @@ import importlib.util
 import json
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
 
@@ -72,6 +72,7 @@ class PluginInfo:
     path: str
     api_compatible: bool
     api_version: Optional[int] = None
+    permissions: List[str] = field(default_factory=list)
 
 
 def _user_plugin_dir() -> Path:
@@ -249,6 +250,8 @@ def discover_plugins() -> List[PluginInfo]:
                 path=str(child),
                 api_compatible=declared == API_VERSION[0],
                 api_version=declared,
+                permissions=[str(p) for p in (meta.get("permissions") or [])
+                             if isinstance(p, str)],
             ))
 
     _scan(_builtin_plugin_dir(), builtin=True)

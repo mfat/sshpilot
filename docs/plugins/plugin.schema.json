@@ -33,6 +33,15 @@
       "type": "string",
       "deprecated": true,
       "description": "Reserved/ignored. The loader always instantiates a class named 'Plugin' in the package's __init__.py."
+    },
+    "permissions": {
+      "type": "array",
+      "uniqueItems": true,
+      "description": "Capabilities the plugin uses. Shown to the user before they enable/install it (informed consent; not yet enforced). Declare every capability you use.",
+      "items": {
+        "type": "string",
+        "enum": ["network", "filesystem", "keyring", "connections", "process", "ui", "settings"]
+      }
     }
   }
 }

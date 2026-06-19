@@ -2,5 +2,8 @@
   "id": "k8s",
   "name": "Kubernetes protocol",
   "api_version": 1,
-  "builtin": true
+  "builtin": true,
+  "permissions": [
+    "process"
+  ]
 }

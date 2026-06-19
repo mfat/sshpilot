@@ -58,9 +58,33 @@ Fields (schema: [`plugin.schema.json`](plugin.schema.json)):
   The app loads the plugin only if this equals its `API_VERSION[0]`; otherwise it
   is skipped and shown as *Incompatible* in Preferences.
 - `name` — shown in Preferences ▸ Plugins.
+- `permissions` — capabilities your plugin uses (see below). Declare every one;
+  they're shown to the user before they enable/install your plugin.
 - `builtin` / `required` — for in-app built-ins only (don't set these in a
   third-party plugin). `entry` is accepted but **ignored** — the loader always
   instantiates the class named `Plugin`.
+
+### Permissions
+
+Declare what your plugin does so users give informed consent (plugins are
+unsandboxed — see [Security](#security--trust)). These are **displayed** in
+Preferences and at install/enable today; enforcement may come later. Declare
+every capability you actually use:
+
+| Permission | Used when your plugin… |
+|------------|------------------------|
+| `network` | opens network connections (HTTP, sockets) |
+| `filesystem` | reads/writes files outside its own directory |
+| `keyring` | stores/reads secrets via `ctx.secrets` |
+| `connections` | creates/updates/opens sshPilot connections or reads `~/.ssh/config` |
+| `process` | spawns external processes / terminal commands (e.g. `build_spawn`) |
+| `ui` | adds pages or other UI via `ctx.ui` |
+| `settings` | reads/writes app or plugin settings via `ctx.settings` |
+
+```json
+{ "id": "my-plugin", "name": "My Plugin", "api_version": 1,
+  "permissions": ["network", "keyring"] }
+```
 
 ### `__init__.py`
 

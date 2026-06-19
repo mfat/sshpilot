@@ -3,5 +3,8 @@
   "name": "SSH protocol",
   "api_version": 1,
   "builtin": true,
-  "required": true
+  "required": true,
+  "permissions": [
+    "process"
+  ]
 }
