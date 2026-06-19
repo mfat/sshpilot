@@ -3032,6 +3032,16 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         self.protocol_row.set_visible(len(self._protocol_backends) > 1)
         if self.is_editing:
             self.protocol_row.set_sensitive(False)
+        else:
+            # New connections default to SSH regardless of registry order
+            # (registry.all() is alphabetical, so index 0 is not SSH).
+            try:
+                for i, backend in enumerate(self._protocol_backends):
+                    if getattr(backend, 'protocol_id', '') == 'ssh':
+                        self.protocol_row.set_selected(i)
+                        break
+            except Exception:
+                pass
         self.protocol_row.connect('notify::selected', self._on_protocol_changed)
         basic_group.add(self.protocol_row)
 
@@ -4203,9 +4213,13 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         try:
             index = int(self.protocol_row.get_selected())
         except Exception:
-            index = 0
+            index = -1
         if 0 <= index < len(backends):
             return backends[index]
+        # Unselected / out of range -> prefer SSH (registry order is not SSH-first).
+        for backend in backends:
+            if getattr(backend, 'protocol_id', '') == 'ssh':
+                return backend
         return backends[0]
 
     def _selected_protocol_id(self) -> str:
