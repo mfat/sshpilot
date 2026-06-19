@@ -7,7 +7,11 @@ the app menu), using a stable, versioned API.
 
 This guide covers what a plugin is, how to write and install one, the API
 surface, versioning, and the security model. For a ready-to-fork starting point
-see [`template/`](template/); for worked examples read the built-in
+use the [**sshpilot-plugin-template**](https://github.com/mfat/sshpilot-plugin-template)
+repo ("Use this template") — also mirrored at [`template/`](template/); publish
+via the [discovery index](registry.md)
+([mfat/sshpilot-plugins](https://github.com/mfat/sshpilot-plugins)). For worked
+examples read the built-in
 `sshpilot/plugins/builtin/telnet_protocol/` (a tiny protocol) and the shipped
 examples `sshpilot/plugins/examples/mock_vps/` and `easyenv_workspaces/`.
 

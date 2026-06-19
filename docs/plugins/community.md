@@ -8,8 +8,12 @@ the user plugin dir (`~/.local/share/sshpilot/plugins/<id>/`, Flatpak:
 > These are not maintained or vetted by the sshPilot maintainers. Plugins run
 > in-process with full privileges — **install only what you trust.**
 
-To list yours, open a PR adding a row below (keep it alphabetical). Use the
-[template](template/) to scaffold a repo with tests + CI.
+To list yours, scaffold from the
+[**sshpilot-plugin-template**](https://github.com/mfat/sshpilot-plugin-template)
+("Use this template"), publish a release, then add an entry to the discovery
+index at [**mfat/sshpilot-plugins**](https://github.com/mfat/sshpilot-plugins)
+(see the [registry format](registry.md)) — and optionally add a row below
+(keep it alphabetical).
 
 | Plugin | Author | Repository | Description |
 |--------|--------|------------|-------------|
