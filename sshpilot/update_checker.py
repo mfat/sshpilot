@@ -5,6 +5,7 @@ Checks GitHub releases for newer versions
 
 import logging
 import json
+import ssl
 from typing import Optional, Tuple
 from urllib.request import urlopen, Request
 from urllib.error import URLError, HTTPError
@@ -18,6 +19,21 @@ logger = logging.getLogger(__name__)
 GITHUB_API_URL = "https://api.github.com/repos/mfat/sshpilot/releases/latest"
 GITHUB_RELEASES_URL = "https://github.com/mfat/sshpilot/releases"
 FLATHUB_URL = "https://flathub.org/apps/io.github.mfat.sshpilot"
+
+
+def _ssl_context() -> ssl.SSLContext:
+    """Build an SSL context for HTTPS requests.
+
+    Prefers certifi's CA bundle when available so that frozen/relocated
+    builds (notably the macOS PyInstaller bundle, which ships no system CA
+    store) can verify TLS certificates. Falls back to the stdlib default
+    context, which is correct on Linux/system-Python installs.
+    """
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        return ssl.create_default_context()
 
 
 def parse_version(version_str: str) -> Tuple[int, ...]:
@@ -71,7 +87,7 @@ def get_latest_version() -> Optional[str]:
         
         request = Request(GITHUB_API_URL, headers=headers)
         
-        with urlopen(request, timeout=5) as response:
+        with urlopen(request, timeout=5, context=_ssl_context()) as response:
             data = json.loads(response.read().decode('utf-8'))
             
             # Get tag_name (e.g., "v4.4.1")
@@ -84,10 +100,12 @@ def get_latest_version() -> Optional[str]:
             return version
             
     except (URLError, HTTPError, json.JSONDecodeError, KeyError) as e:
-        logger.warning(f"Failed to check for updates: {e}")
+        # Include the exception type: some errors (e.g. a URLError wrapping an
+        # SSL failure with no reason text) render as a blank string otherwise.
+        logger.warning(f"Failed to check for updates: {type(e).__name__}: {e}")
         return None
     except Exception as e:
-        logger.error(f"Unexpected error checking for updates: {e}")
+        logger.error(f"Unexpected error checking for updates: {type(e).__name__}: {e}")
         return None
 
 
