@@ -1742,6 +1742,7 @@ class ConnectionDialog(Adw.Window):
         switcher_card.set_margin_end(12)
         switcher_card.set_margin_top(12)
         switcher_card.append(switcher)
+        self._switcher_card = switcher_card
 
         def _relayout_switcher(*_args):
             try:
@@ -4257,6 +4258,26 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         except Exception as e:
             logger.debug("Notebook page visibility failed: %s", e)
 
+    def _update_switcher_visibility(self):
+        """Hide the tab switcher when only one page is visible (e.g. a non-SSH
+        protocol leaves just 'Connection') so there's no orphan full-width tab."""
+        pages = getattr(self, '_stack_pages', None)
+        if pages:
+            try:
+                visible = sum(1 for p in pages.values() if p.get_visible())
+            except Exception:
+                visible = 2
+            card = getattr(self, '_switcher_card', None)
+            if card is not None:
+                card.set_visible(visible > 1)
+            return
+        notebook = getattr(self, '_notebook', None)
+        if notebook is not None:
+            try:
+                notebook.set_show_tabs(notebook.get_n_pages() > 1)
+            except Exception:
+                pass
+
     def _on_protocol_changed(self, *_args):
         self._apply_protocol_to_ui()
 
@@ -4280,6 +4301,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 pass
         for page_name in self._SSH_ONLY_PAGES:
             self._set_page_visible(page_name, is_ssh)
+        # A single remaining page (non-SSH protocols) shouldn't show a lone tab.
+        self._update_switcher_visibility()
 
         box = getattr(self, '_plugin_fields_box', None)
         if box is None:
