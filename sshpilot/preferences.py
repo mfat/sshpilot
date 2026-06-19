@@ -4,8 +4,12 @@ import os
 import logging
 import subprocess
 import shutil
+import json
+import zipfile
+import tempfile
 import importlib
 import importlib.util
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 from gettext import gettext as _
 
@@ -22,7 +26,7 @@ gi.require_version('Gtk', '4.0')
 gi.require_version('Gdk', '4.0')
 gi.require_version('Adw', '1')
 gi.require_version('Vte', '3.91')
-from gi.repository import Gtk, Gdk, Adw, Pango, PangoFT2, Vte, GLib
+from gi.repository import Gtk, Gdk, Adw, Pango, PangoFT2, Vte, GLib, Gio
 
 logger = logging.getLogger(__name__)
 
@@ -2380,11 +2384,29 @@ class PreferencesWindow(Adw.Window):
             )
 
     def _create_plugins_page(self):
-        """Build the Plugins preferences page (enable/disable, restart required)."""
+        """Build the Plugins preferences page (enable/disable, install/remove)."""
+        self._plugins_page = Adw.PreferencesPage()
+        self._plugin_groups = []
+        self._populate_plugins_page()
+        return self._plugins_page
+
+    def _rebuild_plugins_page(self):
+        """Re-render the page in place after an install/remove."""
+        page = getattr(self, '_plugins_page', None)
+        if page is None:
+            return
+        for group in getattr(self, '_plugin_groups', []):
+            try:
+                page.remove(group)
+            except Exception:
+                pass
+        self._plugin_groups = []
+        self._populate_plugins_page()
+
+    def _populate_plugins_page(self):
         from .plugins.loader import discover_plugins, _user_plugin_dir
 
-        page = Adw.PreferencesPage()
-
+        page = self._plugins_page
         try:
             infos = discover_plugins()
         except Exception:
@@ -2423,11 +2445,13 @@ class PreferencesWindow(Adw.Window):
             self._add_plugin_page_gear(row, info.plugin_id)
             builtin_group.add(row)
         page.add(builtin_group)
+        self._plugin_groups.append(builtin_group)
 
         user_group = Adw.PreferencesGroup(title=_("User Plugins"))
         user_group.set_description(
             _("Third-party plugins run with full application privileges; "
               "only enable plugins you trust. Restart required."))
+        user_group.set_header_suffix(self._make_install_button())
         user_infos = [i for i in infos if not i.builtin]
         if user_infos:
             for info in user_infos:
@@ -2443,6 +2467,15 @@ class PreferencesWindow(Adw.Window):
                         lambda r, _p, pid=info.plugin_id: self._on_user_plugin_toggled(pid, r.get_active()),
                     )
                 self._add_plugin_page_gear(row, info.plugin_id)
+                remove = Gtk.Button()
+                remove.set_icon_name('user-trash-symbolic')
+                remove.add_css_class('flat')
+                remove.add_css_class('error')
+                remove.set_valign(Gtk.Align.CENTER)
+                remove.set_tooltip_text(_("Remove plugin"))
+                remove.connect('clicked',
+                               lambda _b, i=info: self._confirm_remove_plugin(i))
+                row.add_suffix(remove)
                 user_group.add(row)
         else:
             empty_row = Adw.ActionRow()
@@ -2450,8 +2483,210 @@ class PreferencesWindow(Adw.Window):
             empty_row.set_subtitle(str(_user_plugin_dir()))
             user_group.add(empty_row)
         page.add(user_group)
+        self._plugin_groups.append(user_group)
 
-        return page
+    # --- plugin install / remove -------------------------------------
+    def _make_install_button(self):
+        button = Gtk.MenuButton()
+        button.set_icon_name('list-add-symbolic')
+        button.set_tooltip_text(_("Install a plugin"))
+        button.add_css_class('flat')
+        popover = Gtk.Popover()
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        box.set_margin_top(6)
+        box.set_margin_bottom(6)
+        box.set_margin_start(6)
+        box.set_margin_end(6)
+        for label, handler in ((_("From folder…"), self._install_from_folder),
+                               (_("From ZIP file…"), self._install_from_zip)):
+            b = Gtk.Button(label=label)
+            b.add_css_class('flat')
+            b.set_halign(Gtk.Align.FILL)
+            b.get_child().set_halign(Gtk.Align.START)
+            b.connect('clicked', lambda _b, h=handler: (popover.popdown(), h()))
+            box.append(b)
+        popover.set_child(box)
+        button.set_popover(popover)
+        return button
+
+    def _alert(self, heading, body):
+        dlg = Adw.AlertDialog(heading=heading, body=body)
+        dlg.add_response('ok', _("OK"))
+        dlg.present(self)
+
+    def _install_from_folder(self):
+        dialog = Gtk.FileDialog()
+        dialog.set_title(_("Select plugin folder"))
+
+        def _done(dlg, result):
+            try:
+                gfile = dlg.select_folder_finish(result)
+            except Exception:
+                return
+            if gfile and gfile.get_path():
+                self._install_plugin_from_dir(Path(gfile.get_path()))
+        dialog.select_folder(self, None, _done)
+
+    def _install_from_zip(self):
+        dialog = Gtk.FileDialog()
+        dialog.set_title(_("Select plugin ZIP"))
+        try:
+            filt = Gtk.FileFilter()
+            filt.set_name(_("ZIP archives"))
+            filt.add_pattern('*.zip')
+            filters = Gio.ListStore.new(Gtk.FileFilter)
+            filters.append(filt)
+            dialog.set_filters(filters)
+        except Exception:
+            pass
+
+        def _done(dlg, result):
+            try:
+                gfile = dlg.open_finish(result)
+            except Exception:
+                return
+            if gfile and gfile.get_path():
+                self._install_plugin_from_zip(Path(gfile.get_path()))
+        dialog.open(self, None, _done)
+
+    @staticmethod
+    def _locate_manifest_dir(root: Path):
+        """The directory containing plugin.json: root itself, or its single
+        plugin subdirectory (handles zips that wrap the plugin in a folder)."""
+        if (root / 'plugin.json').is_file():
+            return root
+        candidates = [d for d in root.iterdir()
+                      if d.is_dir() and (d / 'plugin.json').is_file()]
+        return candidates[0] if len(candidates) == 1 else None
+
+    def _install_plugin_from_zip(self, zip_path: Path):
+        try:
+            tmp = Path(tempfile.mkdtemp(prefix='sshpilot-plugin-'))
+            with zipfile.ZipFile(zip_path) as zf:
+                for member in zf.namelist():
+                    # zip-slip guard: refuse paths escaping the temp dir.
+                    dest = (tmp / member).resolve()
+                    if not str(dest).startswith(str(tmp.resolve()) + os.sep) and dest != tmp.resolve():
+                        self._alert(_("Install failed"),
+                                    _("The archive contains an unsafe path."))
+                        shutil.rmtree(tmp, ignore_errors=True)
+                        return
+                zf.extractall(tmp)
+            self._install_plugin_from_dir(tmp, _cleanup=tmp)
+        except Exception as exc:
+            logger.exception("plugin zip install failed")
+            self._alert(_("Install failed"), str(exc))
+
+    def _install_plugin_from_dir(self, src: Path, _cleanup: Optional[Path] = None):
+        from .plugins.loader import _user_plugin_dir, discover_plugins
+        from .plugins.api import API_VERSION
+
+        def _cleanup_tmp():
+            if _cleanup is not None:
+                shutil.rmtree(_cleanup, ignore_errors=True)
+
+        mdir = self._locate_manifest_dir(src)
+        if mdir is None:
+            _cleanup_tmp()
+            self._alert(_("Install failed"), _("No plugin.json found."))
+            return
+        try:
+            meta = json.loads((mdir / 'plugin.json').read_text(encoding='utf-8'))
+        except Exception as exc:
+            _cleanup_tmp()
+            self._alert(_("Install failed"), _("Invalid plugin.json: {}").format(exc))
+            return
+        pid = meta.get('id')
+        if not pid:
+            _cleanup_tmp()
+            self._alert(_("Install failed"), _("plugin.json has no 'id'."))
+            return
+        if meta.get('api_version') != API_VERSION[0]:
+            _cleanup_tmp()
+            self._alert(_("Incompatible plugin"),
+                        _("This plugin targets API v{}, but this app provides v{}.").format(
+                            meta.get('api_version'), API_VERSION[0]))
+            return
+        if not (mdir / '__init__.py').is_file():
+            _cleanup_tmp()
+            self._alert(_("Install failed"), _("The plugin has no __init__.py."))
+            return
+        builtin_ids = {i.plugin_id for i in discover_plugins() if i.builtin}
+        if pid in builtin_ids:
+            _cleanup_tmp()
+            self._alert(_("Install failed"),
+                        _("'{}' conflicts with a built-in plugin.").format(pid))
+            return
+
+        dest = _user_plugin_dir() / pid
+        if dest.exists():
+            confirm = Adw.AlertDialog(
+                heading=_("Replace plugin?"),
+                body=_("A plugin '{}' is already installed. Replace it?").format(pid))
+            confirm.add_response('cancel', _("Cancel"))
+            confirm.add_response('replace', _("Replace"))
+            confirm.set_response_appearance('replace', Adw.ResponseAppearance.DESTRUCTIVE)
+
+            def _resp(dlg, response):
+                if response == 'replace':
+                    self._finish_install(mdir, dest, meta, _cleanup)
+                else:
+                    _cleanup_tmp()
+            confirm.connect('response', _resp)
+            confirm.present(self)
+            return
+        self._finish_install(mdir, dest, meta, _cleanup)
+
+    def _finish_install(self, mdir: Path, dest: Path, meta: dict,
+                        cleanup: Optional[Path]):
+        try:
+            if dest.exists():
+                shutil.rmtree(dest)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(mdir, dest)
+        except Exception as exc:
+            logger.exception("plugin copy failed")
+            self._alert(_("Install failed"), str(exc))
+            return
+        finally:
+            if cleanup is not None:
+                shutil.rmtree(cleanup, ignore_errors=True)
+        pid = meta['id']
+        enabled = set(self.config.get_setting('plugins.enabled', []) or [])
+        enabled.add(pid)
+        self.config.set_setting('plugins.enabled', sorted(enabled))
+        self._rebuild_plugins_page()
+        self._alert(_("Plugin installed"),
+                    _("Installed '{}'. Restart sshPilot to load it.").format(
+                        meta.get('name', pid)))
+
+    def _confirm_remove_plugin(self, info):
+        confirm = Adw.AlertDialog(
+            heading=_("Remove plugin?"),
+            body=_("Delete '{}' from disk? This cannot be undone.").format(info.name))
+        confirm.add_response('cancel', _("Cancel"))
+        confirm.add_response('remove', _("Remove"))
+        confirm.set_response_appearance('remove', Adw.ResponseAppearance.DESTRUCTIVE)
+        confirm.connect('response',
+                        lambda _d, r, i=info: self._remove_plugin(i) if r == 'remove' else None)
+        confirm.present(self)
+
+    def _remove_plugin(self, info):
+        try:
+            shutil.rmtree(info.path)
+        except Exception as exc:
+            logger.exception("plugin remove failed")
+            self._alert(_("Remove failed"), str(exc))
+            return
+        for key in ('plugins.enabled', 'plugins.disabled'):
+            ids = set(self.config.get_setting(key, []) or [])
+            if info.plugin_id in ids:
+                ids.discard(info.plugin_id)
+                self.config.set_setting(key, sorted(ids))
+        self._rebuild_plugins_page()
+        self._alert(_("Plugin removed"),
+                    _("Removed '{}'. Restart sshPilot to unload it if it was active.").format(
+                        info.name))
 
     def _add_plugin_page_gear(self, row, plugin_id):
         """If an *active* plugin has registered a UI page, add a gear button to
