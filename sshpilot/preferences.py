@@ -2420,6 +2420,7 @@ class PreferencesWindow(Adw.Window):
                     'notify::active',
                     lambda r, _p, pid=info.plugin_id: self._on_builtin_plugin_toggled(pid, r.get_active()),
                 )
+            self._add_plugin_page_gear(row, info.plugin_id)
             builtin_group.add(row)
         page.add(builtin_group)
 
@@ -2441,6 +2442,7 @@ class PreferencesWindow(Adw.Window):
                         'notify::active',
                         lambda r, _p, pid=info.plugin_id: self._on_user_plugin_toggled(pid, r.get_active()),
                     )
+                self._add_plugin_page_gear(row, info.plugin_id)
                 user_group.add(row)
         else:
             empty_row = Adw.ActionRow()
@@ -2450,6 +2452,30 @@ class PreferencesWindow(Adw.Window):
         page.add(user_group)
 
         return page
+
+    def _add_plugin_page_gear(self, row, plugin_id):
+        """If an *active* plugin has registered a UI page, add a gear button to
+        its row that opens that page (and closes Preferences)."""
+        host = getattr(self.parent_window, 'plugin_host', None)
+        ui = getattr(host, 'ui', None) if host else None
+        pages = ui.page_ids_for_plugin(plugin_id) if ui else []
+        if not pages:
+            return
+        from sshpilot import icon_utils
+        gear = Gtk.Button()
+        icon_utils.set_button_icon(gear, 'settings-symbolic')
+        gear.add_css_class('flat')
+        gear.set_valign(Gtk.Align.CENTER)
+        gear.set_tooltip_text(_("Open plugin page"))
+        gear.connect('clicked', lambda _b, fid=pages[0]: self._open_plugin_page(fid))
+        row.add_suffix(gear)
+
+    def _open_plugin_page(self, full_id):
+        host = getattr(self.parent_window, 'plugin_host', None)
+        ui = getattr(host, 'ui', None) if host else None
+        if ui is not None:
+            ui.open_page(full_id)
+        self.close()
 
     def _on_builtin_plugin_toggled(self, plugin_id, active):
         disabled = set(self.config.get_setting('plugins.disabled', []) or [])

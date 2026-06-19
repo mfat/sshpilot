@@ -261,6 +261,16 @@ def test_ui_host_defers_then_drains_on_bind():
     assert len(window.toast_overlay.toasts) == 1  # queued toast drained
 
 
+def test_ui_host_page_ids_for_plugin():
+    ui = UiHost()
+    ui.register_page("p:deploy", "Deploy", "icon", lambda: "W", plugin_id="p")
+    ui.register_page("p:logs", "Logs", "icon", lambda: "W", plugin_id="p")
+    ui.register_page("q:home", "Home", "icon", lambda: "W", plugin_id="q")
+    assert set(ui.page_ids_for_plugin("p")) == {"p:deploy", "p:logs"}
+    assert ui.page_ids_for_plugin("q") == ["q:home"]
+    assert ui.page_ids_for_plugin("missing") == []
+
+
 def test_ui_host_reopen_focuses_without_rebuilding():
     ui = UiHost()
     built = []

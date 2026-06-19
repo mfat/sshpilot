@@ -159,6 +159,11 @@ class UiHost:
         if self._window is not None:
             self._install_menu_item(self._pages[full_id])
 
+    def page_ids_for_plugin(self, plugin_id: str) -> List[str]:
+        """Full ids of pages registered by ``plugin_id`` (empty if none / the
+        plugin isn't active). Used by Preferences to offer an 'open page' gear."""
+        return [fid for fid, reg in self._pages.items() if reg.plugin_id == plugin_id]
+
     # --- live calls ---------------------------------------------------
     def open_page(self, full_id: str) -> None:
         if full_id not in self._pages:
