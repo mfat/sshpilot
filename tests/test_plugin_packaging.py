@@ -53,3 +53,14 @@ def test_found_at_least_the_known_builtins():
     keys = {k for k, _ in _plugin_dirs()}
     for proto in ("ssh", "telnet", "serial", "docker", "kubernetes", "mosh"):
         assert f"sshpilot.plugins.builtin.{proto}_protocol" in keys
+
+
+def test_shipped_manifests_match_schema():
+    import json
+    jsonschema = pytest.importorskip("jsonschema")
+    with open(os.path.join(ROOT, "docs", "plugins", "plugin.schema.json")) as fh:
+        schema = json.load(fh)
+    for _key, d in _plugin_dirs():
+        with open(os.path.join(d, "plugin.json")) as fh:
+            manifest = json.load(fh)
+        jsonschema.validate(manifest, schema)  # raises on mismatch

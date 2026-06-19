@@ -257,6 +257,7 @@ python3 run.py --verbose
 ## Documentation
 - User guide and FAQ: https://github.com/mfat/sshpilot/wiki
 - In-repo developer and platform docs: [documentation/](documentation/)
+- Writing plugins (protocols & UI pages): [docs/plugins/](docs/plugins/writing-plugins.md)
 
 ## Telegram Channel
 https://t.me/sshpilot
