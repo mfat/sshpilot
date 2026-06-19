@@ -389,6 +389,7 @@ class Plugin(SshPilotPlugin):
         self._prov_bars = []          # provisioning Gtk.ProgressBars to pulse
         self._tick_id = None
         self._tick_n = 0
+        self._loaded = False          # first workspace list has arrived
         self._details_window = None
 
         ctx.ui.register_page("workspaces", "EasyEnv Workspaces",
@@ -859,7 +860,10 @@ class Plugin(SshPilotPlugin):
         self._stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
         self._stack.add_named(self._build_gate(), "gate")
         self._stack.add_named(self._build_dashboard(), "dashboard")
-        self._stack.set_visible_child_name("gate")
+        # Start on the dashboard if we're already signed in, so logged-in users
+        # don't see the sign-in hero flash before the first refresh lands.
+        signed = bool(self._token() and self._account())
+        self._stack.set_visible_child_name("dashboard" if signed else "gate")
         self._stack.connect("unrealize", lambda *_a: self._stop_tick())
         self._refresh_recipes_async()
         self._refresh_async()
@@ -1045,6 +1049,7 @@ class Plugin(SshPilotPlugin):
     def _render(self, account, cards):
         self._cards = cards or []
         self._account_info = account
+        self._loaded = True
         signed = bool(self._token() and self._account())
         if self._stack is not None:
             self._stack.set_visible_child_name("dashboard" if signed else "gate")
@@ -1110,7 +1115,9 @@ class Plugin(SshPilotPlugin):
                 f"{len(vis)} workspace" + ("" if len(vis) == 1 else "s"))
         self._flowbox.set_visible(bool(vis))
         if self._empty is not None:
-            self._empty.set_visible(not vis)
+            # Only show the empty state after the first load, so signed-in users
+            # don't briefly see "No workspaces match" before cards arrive.
+            self._empty.set_visible((not vis) and self._loaded)
         for cv in vis:
             self._flowbox.append(self._build_card(cv))
 
