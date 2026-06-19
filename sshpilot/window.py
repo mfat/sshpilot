@@ -3584,12 +3584,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         menu.append('About', 'app.about')
         menu.append('Quit', 'app.quit')
 
-        # Plugin-contributed pages land here under a "Tools" section. The
-        # section object is shared/mutable, so items the plugin host appends
-        # after this menu is built still appear.
+        # Plugin-contributed pages land here in their own section, shown as a
+        # plain separator (no header). The section object is shared/mutable, so
+        # items the plugin host appends after this menu is built still appear.
         section = getattr(self, '_plugins_menu_section', None)
         if section is not None:
-            menu.append_section('Tools', section)
+            menu.append_section(None, section)
 
         return menu
 
