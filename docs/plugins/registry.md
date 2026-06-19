@@ -6,9 +6,12 @@ discoverable, sshPilot uses a curated index — a single `plugins.json` — at
 sshPilot equivalent of jottr's `Jottrhq/plugins`). Authors open a PR adding an
 entry; users browse/install from it.
 
-> Status: the index format and repo are live; an **in-app browser** that fetches
-> the index and installs from it is planned. Today you install plugins manually
-> or via **Preferences ▸ Plugins ▸ Install plugin…** (folder or `.zip`).
+> **In-app:** sshPilot auto-indexes this registry — **Preferences ▸ Plugins**
+> lists not-yet-installed plugins under *Available Plugins*. Toggling one on
+> downloads it, **verifies its SHA-256** against the `checksumUrl`, shows a
+> permissions/trust prompt, then installs and enables it (restart to load).
+> Manual install (**Install plugin… ▸ folder/`.zip`**) is still available. The
+> index URL is configurable via the `plugins.registry_url` setting.
 
 ## `plugins.json` format
 

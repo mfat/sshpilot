@@ -17,4 +17,5 @@ index at [**mfat/sshpilot-plugins**](https://github.com/mfat/sshpilot-plugins)
 
 | Plugin | Author | Repository | Description |
 |--------|--------|------------|-------------|
+| EasyEnv Workspaces | mfat | [sshpilot-easyenv](https://github.com/mfat/sshpilot-easyenv) | Provision easyenv.io dev workspaces and open them as SSH connections. |
 | _Your plugin here_ | | | |

@@ -160,10 +160,13 @@ create, open connections).
 
 ## Installing a plugin (as a user)
 
-1. Copy the plugin directory into the user plugin dir (paths above), **or** use
-   **Preferences ▸ Plugins ▸ Install plugin…** (pick a folder or `.zip`).
-2. Enable it in **Preferences ▸ Plugins**.
-3. Restart sshPilot.
+- **From the registry (easiest):** open **Preferences ▸ Plugins**; registry
+  plugins appear under *Available Plugins*. Toggle one on — sshPilot downloads it,
+  verifies its SHA-256, shows the permissions/trust prompt, installs and enables
+  it. Restart to load. (See [registry.md](registry.md).)
+- **Manually:** copy the plugin directory into the user plugin dir (paths above)
+  or use **Preferences ▸ Plugins ▸ Install plugin…** (folder or `.zip`), enable
+  it, and restart.
 
 ## API versioning & stability
 
