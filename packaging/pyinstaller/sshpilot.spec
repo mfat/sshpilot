@@ -1,7 +1,7 @@
 # sshpilot.spec — build with: pyinstaller --clean sshpilot.spec
 import os, sys, glob, platform, sysconfig
 from pathlib import Path
-from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import collect_submodules, collect_data_files
 
 # Resolve the current Python site-packages directory dynamically
 site_packages_dir = Path(sysconfig.get_path("platlib"))
@@ -159,6 +159,12 @@ if gi_site_packages.exists():
 
 hiddenimports = collect_submodules("gi")
 hiddenimports += ["gi._gi_cairo", "gi.repository.cairo", "cairo"]
+# Built-in plugins are imported dynamically (the loader scans the dir), so
+# PyInstaller can't see them by following imports — collect them explicitly,
+# and bundle their plugin.json manifests (read from disk at runtime).
+hiddenimports += collect_submodules("sshpilot.plugins.builtin")
+datas += collect_data_files("sshpilot.plugins",
+                            includes=["**/plugin.json", "**/*.md"])
 # Add keyring for askpass functionality
 hiddenimports += ["keyring"]
 # Add all keyring backends

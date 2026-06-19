@@ -59,6 +59,10 @@ install -D -m 755 run.py %{buildroot}%{_bindir}/sshpilot
 install -d %{buildroot}%{python3_sitelib}/sshpilot
 cp -a sshpilot/*.py %{buildroot}%{python3_sitelib}/sshpilot/
 
+# Plugin subpackage (loader, registry, built-in protocols + their plugin.json)
+cp -a sshpilot/plugins %{buildroot}%{python3_sitelib}/sshpilot/
+find %{buildroot}%{python3_sitelib}/sshpilot/plugins -name __pycache__ -type d -prune -exec rm -rf {} +
+
 # Install resources
 install -d %{buildroot}%{python3_sitelib}/sshpilot/resources
 cp -a sshpilot/resources/* %{buildroot}%{python3_sitelib}/sshpilot/resources/
