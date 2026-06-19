@@ -5,6 +5,7 @@ import logging
 import subprocess
 import shutil
 import json
+import hashlib
 import zipfile
 import tempfile
 import importlib
@@ -2442,6 +2443,7 @@ class PreferencesWindow(Adw.Window):
                     'notify::active',
                     lambda r, _p, pid=info.plugin_id: self._on_builtin_plugin_toggled(pid, r.get_active()),
                 )
+            self._add_permissions_info(row, info.permissions)
             self._add_plugin_page_gear(row, info.plugin_id)
             builtin_group.add(row)
         page.add(builtin_group)
@@ -2464,8 +2466,10 @@ class PreferencesWindow(Adw.Window):
                 else:
                     row.connect(
                         'notify::active',
-                        lambda r, _p, pid=info.plugin_id: self._on_user_plugin_toggled(pid, r.get_active()),
+                        lambda r, _p, pid=info.plugin_id, perms=info.permissions:
+                            self._on_user_plugin_toggled(pid, r.get_active(), r, perms),
                     )
+                self._add_permissions_info(row, info.permissions)
                 self._add_plugin_page_gear(row, info.plugin_id)
                 remove = Gtk.Button()
                 remove.set_icon_name('user-trash-symbolic')
@@ -2514,6 +2518,92 @@ class PreferencesWindow(Adw.Window):
         dlg.add_response('ok', _("OK"))
         dlg.present(self)
 
+    def _add_permissions_info(self, row, permissions):
+        """Add an info button to a plugin row listing its declared permissions."""
+        if not permissions:
+            return
+        btn = Gtk.MenuButton()
+        btn.set_icon_name('dialog-information-symbolic')
+        btn.add_css_class('flat')
+        btn.set_valign(Gtk.Align.CENTER)
+        btn.set_tooltip_text(_("Permissions"))
+        pop = Gtk.Popover()
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        for m in ('set_margin_top', 'set_margin_bottom', 'set_margin_start', 'set_margin_end'):
+            getattr(box, m)(8)
+        head = Gtk.Label(label=_("Declared permissions"))
+        head.add_css_class('heading')
+        head.set_halign(Gtk.Align.START)
+        box.append(head)
+        for p in permissions:
+            lbl = Gtk.Label(label="• " + str(p))
+            lbl.set_halign(Gtk.Align.START)
+            box.append(lbl)
+        pop.set_child(box)
+        btn.set_popover(pop)
+        row.add_suffix(btn)
+
+    def _plugin_consent(self, *, name, permissions, action, on_accept,
+                        on_decline=None, sha256=None):
+        """Trust dialog shown before enabling/installing third-party code:
+        lists declared permissions and (for a .zip) the archive's SHA-256, with
+        an optional expected-hash check."""
+        dlg = Adw.AlertDialog(
+            heading=_("{action} “{name}”?").format(action=action, name=name),
+            body=_("Plugins run with full application privileges and are not "
+                   "sandboxed. Only continue if you trust the source."))
+        body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        head = Gtk.Label(label=_("Requested permissions:") if permissions
+                         else _("No special permissions declared."))
+        head.add_css_class('heading')
+        head.set_halign(Gtk.Align.START)
+        head.set_wrap(True)
+        body.append(head)
+        if permissions:
+            lbl = Gtk.Label(label="\n".join("• " + str(p) for p in permissions))
+            lbl.set_halign(Gtk.Align.START)
+            lbl.set_xalign(0)
+            body.append(lbl)
+        expected_entry = None
+        if sha256 is not None:
+            sha_head = Gtk.Label(label=_("SHA-256"))
+            sha_head.add_css_class('heading')
+            sha_head.set_halign(Gtk.Align.START)
+            sha_val = Gtk.Label(label=sha256)
+            sha_val.add_css_class('caption')
+            sha_val.set_selectable(True)
+            sha_val.set_wrap(True)
+            sha_val.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+            sha_val.set_xalign(0)
+            sha_val.set_halign(Gtk.Align.START)
+            expected_entry = Gtk.Entry()
+            expected_entry.set_placeholder_text(_("Expected SHA-256 (optional)"))
+            body.append(sha_head)
+            body.append(sha_val)
+            body.append(expected_entry)
+        dlg.set_extra_child(body)
+        dlg.add_response('cancel', _("Cancel"))
+        dlg.add_response('ok', action)
+        dlg.set_response_appearance('ok', Adw.ResponseAppearance.SUGGESTED)
+
+        def _resp(_d, response):
+            if response != 'ok':
+                if on_decline:
+                    on_decline()
+                return
+            if sha256 is not None and expected_entry is not None:
+                want = expected_entry.get_text().strip()
+                if want and want.lower() != sha256.lower():
+                    self._alert(_("Checksum mismatch"),
+                                _("The archive's SHA-256 doesn't match the "
+                                  "expected value; install cancelled."))
+                    if on_decline:
+                        on_decline()
+                    return
+            on_accept()
+        dlg.connect('response', _resp)
+        dlg.present(self)
+
     def _install_from_folder(self):
         dialog = Gtk.FileDialog()
         dialog.set_title(_("Select plugin folder"))
@@ -2559,8 +2649,25 @@ class PreferencesWindow(Adw.Window):
                       if d.is_dir() and (d / 'plugin.json').is_file()]
         return candidates[0] if len(candidates) == 1 else None
 
+    @staticmethod
+    def _sha256_file(path) -> str:
+        h = hashlib.sha256()
+        with open(path, 'rb') as fh:
+            for chunk in iter(lambda: fh.read(65536), b''):
+                h.update(chunk)
+        return h.hexdigest()
+
+    @classmethod
+    def _verify_sha256(cls, path, expected):
+        """True/False if an expected hash is given, else None (nothing to check)."""
+        expected = (expected or '').strip().lower()
+        if not expected:
+            return None
+        return cls._sha256_file(path) == expected
+
     def _install_plugin_from_zip(self, zip_path: Path):
         try:
+            sha256 = self._sha256_file(zip_path)
             tmp = Path(tempfile.mkdtemp(prefix='sshpilot-plugin-'))
             with zipfile.ZipFile(zip_path) as zf:
                 for member in zf.namelist():
@@ -2572,12 +2679,13 @@ class PreferencesWindow(Adw.Window):
                         shutil.rmtree(tmp, ignore_errors=True)
                         return
                 zf.extractall(tmp)
-            self._install_plugin_from_dir(tmp, _cleanup=tmp)
+            self._install_plugin_from_dir(tmp, _cleanup=tmp, sha256=sha256)
         except Exception as exc:
             logger.exception("plugin zip install failed")
             self._alert(_("Install failed"), str(exc))
 
-    def _install_plugin_from_dir(self, src: Path, _cleanup: Optional[Path] = None):
+    def _install_plugin_from_dir(self, src: Path, _cleanup: Optional[Path] = None,
+                                 sha256: Optional[str] = None):
         from .plugins.loader import _user_plugin_dir, discover_plugins
         from .plugins.api import API_VERSION
 
@@ -2619,23 +2727,31 @@ class PreferencesWindow(Adw.Window):
             return
 
         dest = _user_plugin_dir() / pid
-        if dest.exists():
-            confirm = Adw.AlertDialog(
-                heading=_("Replace plugin?"),
-                body=_("A plugin '{}' is already installed. Replace it?").format(pid))
-            confirm.add_response('cancel', _("Cancel"))
-            confirm.add_response('replace', _("Replace"))
-            confirm.set_response_appearance('replace', Adw.ResponseAppearance.DESTRUCTIVE)
+        permissions = [str(p) for p in (meta.get('permissions') or []) if isinstance(p, str)]
 
-            def _resp(dlg, response):
-                if response == 'replace':
-                    self._finish_install(mdir, dest, meta, _cleanup)
-                else:
-                    _cleanup_tmp()
-            confirm.connect('response', _resp)
-            confirm.present(self)
-            return
-        self._finish_install(mdir, dest, meta, _cleanup)
+        def _proceed():
+            if dest.exists():
+                confirm = Adw.AlertDialog(
+                    heading=_("Replace plugin?"),
+                    body=_("A plugin '{}' is already installed. Replace it?").format(pid))
+                confirm.add_response('cancel', _("Cancel"))
+                confirm.add_response('replace', _("Replace"))
+                confirm.set_response_appearance('replace', Adw.ResponseAppearance.DESTRUCTIVE)
+
+                def _resp(dlg, response):
+                    if response == 'replace':
+                        self._finish_install(mdir, dest, meta, _cleanup)
+                    else:
+                        _cleanup_tmp()
+                confirm.connect('response', _resp)
+                confirm.present(self)
+                return
+            self._finish_install(mdir, dest, meta, _cleanup)
+
+        # Trust gate: show permissions + the archive's SHA-256 before installing.
+        self._plugin_consent(name=meta.get('name', pid), permissions=permissions,
+                             sha256=sha256, action=_("Install"),
+                             on_accept=_proceed, on_decline=_cleanup_tmp)
 
     def _finish_install(self, mdir: Path, dest: Path, meta: dict,
                         cleanup: Optional[Path]):
@@ -2720,13 +2836,33 @@ class PreferencesWindow(Adw.Window):
             disabled.add(plugin_id)
         self.config.set_setting('plugins.disabled', sorted(disabled))
 
-    def _on_user_plugin_toggled(self, plugin_id, active):
+    def _set_user_plugin_enabled(self, plugin_id, on):
         enabled = set(self.config.get_setting('plugins.enabled', []) or [])
-        if active:
+        if on:
             enabled.add(plugin_id)
         else:
             enabled.discard(plugin_id)
         self.config.set_setting('plugins.enabled', sorted(enabled))
+
+    def _on_user_plugin_toggled(self, plugin_id, active, row=None, permissions=None):
+        if getattr(self, '_suppress_toggle', False):
+            return
+        if not active:
+            self._set_user_plugin_enabled(plugin_id, False)
+            return
+
+        # Enabling runs third-party code with full privileges — get consent first.
+        def _accept():
+            self._set_user_plugin_enabled(plugin_id, True)
+
+        def _decline():
+            if row is not None:
+                self._suppress_toggle = True
+                row.set_active(False)
+                self._suppress_toggle = False
+
+        self._plugin_consent(name=plugin_id, permissions=permissions or [],
+                             action=_("Enable"), on_accept=_accept, on_decline=_decline)
 
     def _create_command_blocks_page(self):
         """Build the Command Blocks preferences page."""
