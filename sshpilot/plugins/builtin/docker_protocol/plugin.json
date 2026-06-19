@@ -1,0 +1,6 @@
+{
+  "id": "docker",
+  "name": "Docker/Podman protocol",
+  "api_version": 1,
+  "builtin": true
+}

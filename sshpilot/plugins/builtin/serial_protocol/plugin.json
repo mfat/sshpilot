@@ -1,0 +1,6 @@
+{
+  "id": "serial",
+  "name": "Serial protocol",
+  "api_version": 1,
+  "builtin": true
+}
