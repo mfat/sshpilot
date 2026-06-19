@@ -34,7 +34,9 @@ dependencies = [
 [tool.setuptools.packages.find]
 where = [""]
 include = ["sshpilot*"]
-exclude = ["packaging*", "screenshots*"]
+# Example plugins are developer references only — never shipped. Users get them
+# from the plugin registry instead.
+exclude = ["packaging*", "screenshots*", "sshpilot.plugins.examples*"]
 
 [tool.setuptools.package-data]
 # Built-in plugin manifests are read from disk by the plugin loader.
@@ -45,9 +47,6 @@ exclude = ["packaging*", "screenshots*"]
 "sshpilot.plugins.builtin.docker_protocol" = ["plugin.json"]
 "sshpilot.plugins.builtin.kubernetes_protocol" = ["plugin.json"]
 "sshpilot.plugins.builtin.mosh_protocol" = ["plugin.json"]
-# Example plugins shipped for reference (not auto-loaded).
-"sshpilot.plugins.examples.mock_vps" = ["plugin.json"]
-"sshpilot.plugins.examples.easyenv_workspaces" = ["plugin.json", "README.md"]
 
 [project.urls]
 Homepage = "https://github.com/mfat/sshpilot"

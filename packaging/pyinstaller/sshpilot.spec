@@ -163,8 +163,8 @@ hiddenimports += ["gi._gi_cairo", "gi.repository.cairo", "cairo"]
 # PyInstaller can't see them by following imports — collect them explicitly,
 # and bundle their plugin.json manifests (read from disk at runtime).
 hiddenimports += collect_submodules("sshpilot.plugins.builtin")
-datas += collect_data_files("sshpilot.plugins",
-                            includes=["**/plugin.json", "**/*.md"])
+# Built-in manifests only — example plugins are dev references, never shipped.
+datas += collect_data_files("sshpilot.plugins.builtin", includes=["**/plugin.json"])
 # Add keyring for askpass functionality
 hiddenimports += ["keyring"]
 # Add all keyring backends

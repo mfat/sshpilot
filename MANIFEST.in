@@ -1,5 +1,6 @@
 include sshpilot/vendor/pyxtermjs/*.html
 include sshpilot/vendor/pyxtermjs/LICENSE
 recursive-include sshpilot/plugins/builtin *.json
-recursive-include sshpilot/plugins/examples *.json *.md
+# Example plugins are dev references only — keep them out of the sdist/wheel.
+prune sshpilot/plugins/examples
 

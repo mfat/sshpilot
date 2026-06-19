@@ -37,16 +37,28 @@ def _plugin_dirs():
     return out
 
 
-def test_every_plugin_is_declared_in_package_data():
+def _pyproject():
+    with open(os.path.join(ROOT, "pyproject.toml"), "rb") as fh:
+        return tomllib.load(fh)
+
+
+def test_builtin_plugins_declared_examples_not():
     pkg_data = _package_data()
-    missing = []
-    for key, _d in _plugin_dirs():
-        entries = pkg_data.get(key)
-        if not entries or "plugin.json" not in entries:
-            missing.append(key)
-    assert not missing, (
-        "plugin.json not declared in [tool.setuptools.package-data] for: "
-        + ", ".join(missing))
+    missing, shipped_examples = [], []
+    for key, d in _plugin_dirs():
+        is_example = ".examples." in key
+        declared = bool(pkg_data.get(key)) and "plugin.json" in pkg_data[key]
+        if is_example and declared:
+            shipped_examples.append(key)          # examples must NOT be packaged
+        if not is_example and not declared:
+            missing.append(key)                   # built-ins MUST be packaged
+    assert not missing, "built-in plugin.json not in package-data: " + ", ".join(missing)
+    assert not shipped_examples, "example plugins must not ship: " + ", ".join(shipped_examples)
+
+
+def test_examples_excluded_from_wheel():
+    exclude = _pyproject()["tool"]["setuptools"]["packages"]["find"].get("exclude", [])
+    assert "sshpilot.plugins.examples*" in exclude
 
 
 def test_found_at_least_the_known_builtins():
