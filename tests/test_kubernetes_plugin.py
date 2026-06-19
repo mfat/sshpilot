@@ -64,6 +64,16 @@ def test_build_spawn_full(monkeypatch):
                          'exec', '-it', 'api-1', '-c', 'app', '--', 'bash']
 
 
+def test_build_spawn_kubeconfig(monkeypatch):
+    import sshpilot.plugins.builtin.kubernetes_protocol as mod
+    monkeypatch.setattr(mod.shutil, 'which', lambda name: '/usr/bin/kubectl')
+    conn = Connection({'nickname': 'k', 'protocol': 'k8s', 'pod': 'web-0',
+                       'kubeconfig': '/tmp/kc'})
+    spec = KubernetesProtocolBackend().build_spawn(conn, _ctx())
+    assert spec.argv == ['/usr/bin/kubectl', '--kubeconfig', '/tmp/kc',
+                         'exec', '-it', 'web-0', '--', 'sh']
+
+
 def test_build_spawn_missing_binary(monkeypatch):
     import sshpilot.plugins.builtin.kubernetes_protocol as mod
     monkeypatch.setattr(mod.shutil, 'which', lambda name: None)

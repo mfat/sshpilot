@@ -41,6 +41,10 @@ class DockerProtocolBackend(ProtocolBackend):
                       choices=[("docker", "Docker"), ("podman", "Podman")]),
             FieldSpec(key="docker_host", label="Daemon host", kind="text",
                       placeholder="ssh://user@host or tcp://host:2375", group="advanced"),
+            FieldSpec(key="user", label="User", kind="text",
+                      placeholder="user or UID", group="advanced"),
+            FieldSpec(key="workdir", label="Working directory", kind="text",
+                      placeholder="/path/in/container", group="advanced"),
         ]
 
     def validate(self, data: Dict[str, Any]) -> List[str]:
@@ -71,7 +75,14 @@ class DockerProtocolBackend(ProtocolBackend):
         argv = [binary]
         if host:
             argv += ["-H", host]
-        argv += ["exec", "-it", container]
+        argv += ["exec", "-it"]
+        user = (data.get("user") or "").strip()
+        if user:
+            argv += ["-u", user]
+        workdir = (data.get("workdir") or "").strip()
+        if workdir:
+            argv += ["-w", workdir]
+        argv.append(container)
         argv += shlex.split(command)
         return SpawnSpec(argv=argv, env=dict(os.environ))
 

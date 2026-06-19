@@ -48,6 +48,12 @@ class MoshProtocolBackend(ProtocolBackend):
             FieldSpec(key="keyfile", label="Key file", kind="file", group="advanced"),
             FieldSpec(key="extra_ssh_opts", label="Extra SSH options", kind="text",
                       placeholder="-o Compression=yes", group="advanced"),
+            FieldSpec(key="predict", label="Local echo (predict)", kind="choice",
+                      default="adaptive", group="advanced",
+                      choices=[("adaptive", "Adaptive (default)"), ("always", "Always"),
+                               ("never", "Never"), ("experimental", "Experimental")]),
+            FieldSpec(key="mosh_port", label="UDP port / range", kind="text",
+                      placeholder="60000:60010", group="advanced"),
         ]
 
     def validate(self, data: Dict[str, Any]) -> List[str]:
@@ -116,7 +122,14 @@ class MoshProtocolBackend(ProtocolBackend):
 
         env = dict(os.environ)
         env.update(auth.env or {})
-        argv = [mosh, "--ssh=" + shlex.join(ssh_prefix), host]
+        argv = [mosh]
+        predict = (data.get("predict") or "adaptive").strip()
+        if predict and predict != "adaptive":
+            argv.append("--predict=" + predict)
+        mosh_port = (data.get("mosh_port") or "").strip()
+        if mosh_port:
+            argv += ["--port", mosh_port]
+        argv += ["--ssh=" + shlex.join(ssh_prefix), host]
         return SpawnSpec(argv=argv, env=env)
 
 

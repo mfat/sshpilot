@@ -40,6 +40,8 @@ class KubernetesProtocolBackend(ProtocolBackend):
                       placeholder="default"),
             FieldSpec(key="kube_context", label="Context", kind="text",
                       placeholder="(current context)", group="advanced"),
+            FieldSpec(key="kubeconfig", label="Kubeconfig", kind="file",
+                      group="advanced"),
             FieldSpec(key="command", label="Command", kind="text", default="sh",
                       placeholder="sh"),
         ]
@@ -62,6 +64,9 @@ class KubernetesProtocolBackend(ProtocolBackend):
 
         command = (data.get("command") or "sh").strip() or "sh"
         argv = [kubectl]
+        kubeconfig = (data.get("kubeconfig") or "").strip()
+        if kubeconfig:
+            argv += ["--kubeconfig", os.path.expanduser(kubeconfig)]
         context = (data.get("kube_context") or "").strip()
         if context:
             argv += ["--context", context]

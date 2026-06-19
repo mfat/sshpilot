@@ -88,6 +88,31 @@ def test_build_spawn_threads_port_key_user(monkeypatch):
     assert spec.argv[-1] == 'myhost'
 
 
+def test_build_spawn_predict_and_port(monkeypatch):
+    import sshpilot.plugins.builtin.mosh_protocol as mod
+    monkeypatch.setattr(mod.shutil, 'which', lambda name: '/usr/bin/mosh')
+    _stub_ssh_builders(monkeypatch)
+    conn = Connection({'nickname': 'm', 'protocol': 'mosh', 'host': 'myhost',
+                       'predict': 'always', 'mosh_port': '60000:60010'})
+    spec = MoshProtocolBackend().build_spawn(conn, _ctx())
+    assert spec.argv[0] == '/usr/bin/mosh'
+    assert '--predict=always' in spec.argv
+    assert spec.argv[spec.argv.index('--port') + 1] == '60000:60010'
+    assert spec.argv[-1] == 'myhost'
+    assert any(a.startswith('--ssh=') for a in spec.argv)
+
+
+def test_build_spawn_omits_default_predict(monkeypatch):
+    import sshpilot.plugins.builtin.mosh_protocol as mod
+    monkeypatch.setattr(mod.shutil, 'which', lambda name: '/usr/bin/mosh')
+    _stub_ssh_builders(monkeypatch)
+    conn = Connection({'nickname': 'm', 'protocol': 'mosh', 'host': 'myhost',
+                       'predict': 'adaptive'})
+    spec = MoshProtocolBackend().build_spawn(conn, _ctx())
+    assert not any(a.startswith('--predict') for a in spec.argv)
+    assert '--port' not in spec.argv
+
+
 def test_build_spawn_missing_binary(monkeypatch):
     import sshpilot.plugins.builtin.mosh_protocol as mod
     monkeypatch.setattr(mod.shutil, 'which', lambda name: None)

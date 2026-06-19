@@ -64,6 +64,30 @@ def test_build_spawn_prefers_picocom(monkeypatch):
     assert spec.argv == ['/usr/bin/picocom', '-b', '57600', '-f', 'h', '/dev/ttyUSB0']
 
 
+def test_build_spawn_line_params_when_non_default(monkeypatch):
+    import sshpilot.plugins.builtin.serial_protocol as mod
+    monkeypatch.setattr(mod.shutil, 'which',
+                        lambda name: '/usr/bin/picocom' if name == 'picocom' else None)
+    conn = Connection({'nickname': 's', 'protocol': 'serial', 'device': '/dev/ttyUSB0',
+                       'baud': '9600', 'flow': 'none', 'databits': '7',
+                       'parity': 'even', 'stopbits': '2'})
+    spec = SerialProtocolBackend().build_spawn(conn, _ctx())
+    assert spec.argv == ['/usr/bin/picocom', '-b', '9600', '-f', 'n',
+                         '--databits', '7', '--parity', 'e', '--stopbits', '2',
+                         '/dev/ttyUSB0']
+
+
+def test_build_spawn_omits_default_line_params(monkeypatch):
+    import sshpilot.plugins.builtin.serial_protocol as mod
+    monkeypatch.setattr(mod.shutil, 'which',
+                        lambda name: '/usr/bin/picocom' if name == 'picocom' else None)
+    conn = Connection({'nickname': 's', 'protocol': 'serial', 'device': '/dev/ttyUSB0',
+                       'baud': '9600', 'databits': '8', 'parity': 'none', 'stopbits': '1'})
+    spec = SerialProtocolBackend().build_spawn(conn, _ctx())
+    assert '--databits' not in spec.argv and '--parity' not in spec.argv
+    assert '--stopbits' not in spec.argv
+
+
 def test_build_spawn_falls_back_to_screen(monkeypatch):
     import sshpilot.plugins.builtin.serial_protocol as mod
     monkeypatch.setattr(mod.shutil, 'which',

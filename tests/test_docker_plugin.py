@@ -66,6 +66,16 @@ def test_build_spawn_podman_host_and_command(monkeypatch):
                          'exec', '-it', 'api', 'bash', '-l']
 
 
+def test_build_spawn_user_and_workdir(monkeypatch):
+    import sshpilot.plugins.builtin.docker_protocol as mod
+    monkeypatch.setattr(mod.shutil, 'which', lambda name: '/usr/bin/' + name)
+    conn = Connection({'nickname': 'd', 'protocol': 'docker', 'container': 'web',
+                       'user': 'app', 'workdir': '/srv'})
+    spec = DockerProtocolBackend().build_spawn(conn, _ctx())
+    assert spec.argv == ['/usr/bin/docker', 'exec', '-it', '-u', 'app',
+                         '-w', '/srv', 'web', 'sh']
+
+
 def test_build_spawn_missing_binary(monkeypatch):
     import sshpilot.plugins.builtin.docker_protocol as mod
     monkeypatch.setattr(mod.shutil, 'which', lambda name: None)
