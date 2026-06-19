@@ -8,6 +8,7 @@ import json
 import hashlib
 import zipfile
 import tempfile
+import threading
 import importlib
 import importlib.util
 from pathlib import Path
@@ -2489,6 +2490,134 @@ class PreferencesWindow(Adw.Window):
         page.add(user_group)
         self._plugin_groups.append(user_group)
 
+        # Available plugins fetched from the discovery registry. Installed/builtin
+        # ids are filtered out; toggling one on downloads + verifies + installs it.
+        self._installed_ids = {i.plugin_id for i in infos}
+        self._available_group = Adw.PreferencesGroup(title=_("Available Plugins"))
+        self._available_group.set_description(
+            _("From the sshPilot plugin registry. Toggling one on downloads, "
+              "verifies, and installs it (restart to load)."))
+        self._available_loading = Adw.ActionRow(title=_("Checking the plugin registry…"))
+        spinner = Gtk.Spinner()
+        spinner.start()
+        self._available_loading.add_prefix(spinner)
+        self._available_group.add(self._available_loading)
+        page.add(self._available_group)
+        self._plugin_groups.append(self._available_group)
+        self._load_registry_async()
+
+    # --- available plugins (discovery registry) ----------------------
+    def _registry_url(self):
+        from .plugins.registry_client import DEFAULT_REGISTRY_URL
+        return self.config.get_setting('plugins.registry_url', DEFAULT_REGISTRY_URL) \
+            or DEFAULT_REGISTRY_URL
+
+    def _load_registry_async(self):
+        url = self._registry_url()
+        group = self._available_group
+
+        def worker():
+            from .plugins import registry_client
+            try:
+                entries = registry_client.list_entries(registry_client.fetch_index(url))
+            except Exception as exc:
+                GLib.idle_add(self._on_registry_loaded, group, None, str(exc))
+                return
+            GLib.idle_add(self._on_registry_loaded, group, entries, None)
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_registry_loaded(self, group, entries, error):
+        if group is not getattr(self, '_available_group', None):
+            return  # page was rebuilt; ignore a stale fetch
+        if self._available_loading is not None:
+            try:
+                group.remove(self._available_loading)
+            except Exception:
+                pass
+            self._available_loading = None
+        self._available_rows = []  # _build_available_row appends here
+
+        def _note(title, subtitle=None):
+            row = Adw.ActionRow(title=title)
+            if subtitle:
+                row.set_subtitle(subtitle)
+            group.add(row)
+            self._available_rows.append(row)
+
+        if error is not None:
+            _note(_("Couldn't reach the plugin registry"), error)
+            return
+        shown = 0
+        for entry in entries or []:
+            if entry['id'] in getattr(self, '_installed_ids', set()):
+                continue  # already installed or a built-in
+            group.add(self._build_available_row(entry))
+            shown += 1
+        if shown == 0:
+            _note(_("No new plugins available"))
+
+    def _available_subtitle(self, entry):
+        bits = [b for b in (entry.get('description'),
+                            (_("by {}").format(entry['author']) if entry.get('author') else None),
+                            ("v" + entry['version']) if entry.get('version') else None) if b]
+        return " · ".join(bits)
+
+    def _build_available_row(self, entry):
+        row = Adw.SwitchRow()
+        row.set_title(entry['name'])
+        row.set_subtitle(self._available_subtitle(entry))
+        row.set_active(False)
+        self._add_permissions_info(row, entry.get('permissions'))
+        if not entry.get('compatible', True):
+            row.set_sensitive(False)
+            row.set_subtitle(_("Incompatible (targets API v{})").format(entry.get('api_version')))
+        else:
+            row.connect('notify::active',
+                        lambda r, _p, e=entry: self._on_available_plugin_toggled(e, r))
+        # keep a handle so _on_registry_loaded can clear it on refresh
+        self._available_rows = getattr(self, '_available_rows', [])
+        self._available_rows.append(row)
+        return row
+
+    def _on_available_plugin_toggled(self, entry, row):
+        if getattr(self, '_suppress_toggle', False) or not row.get_active():
+            return
+
+        def revert():
+            self._suppress_toggle = True
+            row.set_active(False)
+            self._suppress_toggle = False
+            row.set_sensitive(True)
+            row.set_subtitle(self._available_subtitle(entry))
+
+        row.set_sensitive(False)
+        row.set_subtitle(_("Fetching…"))
+
+        def worker():
+            from .plugins.registry_client import download_package
+            try:
+                tmpdir = tempfile.mkdtemp(prefix='sshpilot-reg-')
+                dest = os.path.join(tmpdir, 'package.zip')
+                download_package(entry['download_url'], entry['checksum_url'], dest)
+            except Exception as exc:
+                GLib.idle_add(self._registry_fetch_failed, str(exc), revert)
+                return
+            GLib.idle_add(self._registry_fetch_done, dest, tmpdir, revert)
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _registry_fetch_failed(self, msg, revert):
+        revert()
+        self._alert(_("Download failed"), msg)
+
+    def _registry_fetch_done(self, dest, tmpdir, revert):
+        try:
+            # _install_plugin_from_zip extracts synchronously, so the downloaded
+            # zip is no longer needed once it returns (consent runs off the
+            # extracted copy).
+            self._install_plugin_from_zip(Path(dest), verified=True, on_abort=revert)
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
     # --- plugin install / remove -------------------------------------
     def _make_install_button(self):
         button = Gtk.MenuButton()
@@ -2544,7 +2673,7 @@ class PreferencesWindow(Adw.Window):
         row.add_suffix(btn)
 
     def _plugin_consent(self, *, name, permissions, action, on_accept,
-                        on_decline=None, sha256=None):
+                        on_decline=None, sha256=None, verified=False):
         """Trust dialog shown before enabling/installing third-party code:
         lists declared permissions and (for a .zip) the archive's SHA-256, with
         an optional expected-hash check."""
@@ -2576,11 +2705,18 @@ class PreferencesWindow(Adw.Window):
             sha_val.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
             sha_val.set_xalign(0)
             sha_val.set_halign(Gtk.Align.START)
-            expected_entry = Gtk.Entry()
-            expected_entry.set_placeholder_text(_("Expected SHA-256 (optional)"))
             body.append(sha_head)
             body.append(sha_val)
-            body.append(expected_entry)
+            if verified:
+                ok = Gtk.Label(label=_("✓ Verified against the registry checksum"))
+                ok.add_css_class('success')
+                ok.add_css_class('caption')
+                ok.set_halign(Gtk.Align.START)
+                body.append(ok)
+            else:
+                expected_entry = Gtk.Entry()
+                expected_entry.set_placeholder_text(_("Expected SHA-256 (optional)"))
+                body.append(expected_entry)
         dlg.set_extra_child(body)
         dlg.add_response('cancel', _("Cancel"))
         dlg.add_response('ok', action)
@@ -2665,7 +2801,8 @@ class PreferencesWindow(Adw.Window):
             return None
         return cls._sha256_file(path) == expected
 
-    def _install_plugin_from_zip(self, zip_path: Path):
+    def _install_plugin_from_zip(self, zip_path: Path, verified: bool = False,
+                                 on_abort=None):
         try:
             sha256 = self._sha256_file(zip_path)
             tmp = Path(tempfile.mkdtemp(prefix='sshpilot-plugin-'))
@@ -2677,54 +2814,52 @@ class PreferencesWindow(Adw.Window):
                         self._alert(_("Install failed"),
                                     _("The archive contains an unsafe path."))
                         shutil.rmtree(tmp, ignore_errors=True)
+                        if on_abort:
+                            on_abort()
                         return
                 zf.extractall(tmp)
-            self._install_plugin_from_dir(tmp, _cleanup=tmp, sha256=sha256)
+            self._install_plugin_from_dir(tmp, _cleanup=tmp, sha256=sha256,
+                                          verified=verified, on_abort=on_abort)
         except Exception as exc:
             logger.exception("plugin zip install failed")
             self._alert(_("Install failed"), str(exc))
+            if on_abort:
+                on_abort()
 
     def _install_plugin_from_dir(self, src: Path, _cleanup: Optional[Path] = None,
-                                 sha256: Optional[str] = None):
+                                 sha256: Optional[str] = None, verified: bool = False,
+                                 on_abort=None):
         from .plugins.loader import _user_plugin_dir, discover_plugins
         from .plugins.api import API_VERSION
 
-        def _cleanup_tmp():
+        def _abort(heading=None, body=None):
             if _cleanup is not None:
                 shutil.rmtree(_cleanup, ignore_errors=True)
+            if heading is not None:
+                self._alert(heading, body)
+            if on_abort:
+                on_abort()
 
         mdir = self._locate_manifest_dir(src)
         if mdir is None:
-            _cleanup_tmp()
-            self._alert(_("Install failed"), _("No plugin.json found."))
-            return
+            return _abort(_("Install failed"), _("No plugin.json found."))
         try:
             meta = json.loads((mdir / 'plugin.json').read_text(encoding='utf-8'))
         except Exception as exc:
-            _cleanup_tmp()
-            self._alert(_("Install failed"), _("Invalid plugin.json: {}").format(exc))
-            return
+            return _abort(_("Install failed"), _("Invalid plugin.json: {}").format(exc))
         pid = meta.get('id')
         if not pid:
-            _cleanup_tmp()
-            self._alert(_("Install failed"), _("plugin.json has no 'id'."))
-            return
+            return _abort(_("Install failed"), _("plugin.json has no 'id'."))
         if meta.get('api_version') != API_VERSION[0]:
-            _cleanup_tmp()
-            self._alert(_("Incompatible plugin"),
-                        _("This plugin targets API v{}, but this app provides v{}.").format(
-                            meta.get('api_version'), API_VERSION[0]))
-            return
+            return _abort(_("Incompatible plugin"),
+                          _("This plugin targets API v{}, but this app provides v{}.").format(
+                              meta.get('api_version'), API_VERSION[0]))
         if not (mdir / '__init__.py').is_file():
-            _cleanup_tmp()
-            self._alert(_("Install failed"), _("The plugin has no __init__.py."))
-            return
+            return _abort(_("Install failed"), _("The plugin has no __init__.py."))
         builtin_ids = {i.plugin_id for i in discover_plugins() if i.builtin}
         if pid in builtin_ids:
-            _cleanup_tmp()
-            self._alert(_("Install failed"),
-                        _("'{}' conflicts with a built-in plugin.").format(pid))
-            return
+            return _abort(_("Install failed"),
+                          _("'{}' conflicts with a built-in plugin.").format(pid))
 
         dest = _user_plugin_dir() / pid
         permissions = [str(p) for p in (meta.get('permissions') or []) if isinstance(p, str)]
@@ -2742,7 +2877,7 @@ class PreferencesWindow(Adw.Window):
                     if response == 'replace':
                         self._finish_install(mdir, dest, meta, _cleanup)
                     else:
-                        _cleanup_tmp()
+                        _abort()
                 confirm.connect('response', _resp)
                 confirm.present(self)
                 return
@@ -2750,8 +2885,8 @@ class PreferencesWindow(Adw.Window):
 
         # Trust gate: show permissions + the archive's SHA-256 before installing.
         self._plugin_consent(name=meta.get('name', pid), permissions=permissions,
-                             sha256=sha256, action=_("Install"),
-                             on_accept=_proceed, on_decline=_cleanup_tmp)
+                             sha256=sha256, verified=verified, action=_("Install"),
+                             on_accept=_proceed, on_decline=lambda: _abort())
 
     def _finish_install(self, mdir: Path, dest: Path, meta: dict,
                         cleanup: Optional[Path]):
