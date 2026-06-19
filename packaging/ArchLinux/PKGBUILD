@@ -7,31 +7,46 @@ pkgdesc='SSH connection manager with integrated terminal, tunneling, tabbed inte
 url='https://github.com/mfat/sshpilot'
 license=('GPL-3.0-only')
 depends=('python')
-makedepends=()
-# For the built-in telnet protocol plugin (degrades gracefully if absent)
-optdepends=('inetutils: telnet protocol support')
+makedepends=('python-build' 'python-installer' 'python-wheel' 'python-setuptools')
+# Built-in protocol plugins shell out to these; all degrade gracefully if absent.
+optdepends=('inetutils: Telnet protocol support'
+            'mosh: Mosh protocol support'
+            'kubectl: Kubernetes protocol support'
+            'docker: Docker/Podman protocol support'
+            'picocom: Serial console protocol support')
 arch=('any')
 sha256sums=('28d8caf38558a0f50bb052a259358c49fdb26a3ade902e9ad3de16353a5b55f5')
 source=("${pkgname}-${pkgver}.tar.gz::${url}/archive/refs/tags/v${pkgver}.tar.gz")
 
 _srcdir="${pkgname}-${pkgver}"
 
+build() {
+	cd "${_srcdir}"
+	# The wheel includes the plugin system + built-in protocol plugins (and their
+	# plugin.json) and excludes the example plugins — see pyproject.toml.
+	python -m build --wheel --no-isolation
+}
+
 package() {
-        depends+=(
-                'python-gobject' 'python-cairo' 'python-paramiko' 'python-cryptography' 'python-matplotlib'
-                'libsecret' 'libadwaita' 'vte4' 'gtksourceview5' 'sshpass' 'webkitgtk-6.0' 'python-flask' 'python-flask-socketio')
+	depends+=(
+		'python-gobject' 'python-cairo' 'python-paramiko' 'python-cryptography' 'python-matplotlib'
+		'libsecret' 'libadwaita' 'vte4' 'gtksourceview5' 'sshpass' 'webkitgtk-6.0' 'python-flask' 'python-flask-socketio')
 
 	cd "${_srcdir}"
 
-	local site_packages="$(python -c "import site; print(site.getsitepackages()[0])")"
+	python -m installer --destdir="${pkgdir}" dist/*.whl
+
+	local site_packages
+	site_packages="$(python -c "import site; print(site.getsitepackages()[0])")"
+
+	# Resources (incl. the compiled GResource main.py loads from
+	# <package>/resources/) are not shipped in the wheel — install them alongside
+	# the package so the app starts.
+	install -d "${pkgdir}${site_packages}/sshpilot/resources"
+	cp -a 'sshpilot/resources'/* "${pkgdir}${site_packages}/sshpilot/resources/"
 
 	# Install the main executable (runner)
 	install -D -m 755 'run.py' "${pkgdir}/usr/bin/sshpilot"
-	# Install resources into site-packages so app can import
-	install -d "${pkgdir}${site_packages}/sshpilot"
-	cp -a 'sshpilot'/*.py "${pkgdir}${site_packages}/sshpilot/"
-	install -d "${pkgdir}${site_packages}/sshpilot/resources" "${pkgdir}${site_packages}/sshpilot/ui"
-	cp -a 'sshpilot/resources'/* "${pkgdir}${site_packages}/sshpilot/resources/"
 	# Install desktop file and icon
 	install -D -m 644 'io.github.mfat.sshpilot.desktop' -t "${pkgdir}/usr/share/applications"
 	install -D -m 644 'sshpilot/resources/sshpilot.svg' "${pkgdir}/usr/share/pixmaps/io.github.mfat.sshpilot.svg"
