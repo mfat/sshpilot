@@ -39,7 +39,8 @@ jobs:
             keyring \
             psutil \
             pytest \
-            pytest-cov
+            pytest-cov \
+            jsonschema
 
       # Unit suite only — the `integration` tests run the real tool binaries and
       # live in the containerized "Test environment" workflow.

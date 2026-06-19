@@ -46,7 +46,7 @@ RUN set -eux; \
 # omitted on purpose — gi is stubbed by the test suite.
 RUN pip3 install \
         paramiko cryptography keyring psutil certifi \
-        pytest pytest-cov pexpect wakeonlan
+        pytest pytest-cov pexpect wakeonlan jsonschema
 
 WORKDIR /work
 CMD ["pytest", "-ra"]

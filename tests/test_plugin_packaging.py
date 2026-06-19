@@ -55,6 +55,13 @@ def test_found_at_least_the_known_builtins():
         assert f"sshpilot.plugins.builtin.{proto}_protocol" in keys
 
 
+def test_loader_parses_permissions():
+    from sshpilot.plugins.loader import discover_plugins
+    infos = {i.plugin_id: i for i in discover_plugins()}
+    assert infos["ssh"].permissions == ["process"]
+    assert infos["mosh"].permissions == ["process", "network"]
+
+
 def test_shipped_manifests_match_schema():
     import json
     jsonschema = pytest.importorskip("jsonschema")
