@@ -41,5 +41,7 @@ jobs:
             pytest \
             pytest-cov
 
+      # Unit suite only — the `integration` tests run the real tool binaries and
+      # live in the containerized "Test environment" workflow.
       - name: Run pytest
-        run: pytest -ra
+        run: pytest -ra -m "not integration"

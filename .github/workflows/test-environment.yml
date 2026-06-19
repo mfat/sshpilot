@@ -1,0 +1,35 @@
+name: Test environment
+
+# Builds the test-environment image (real mosh/kubectl/kind/docker/socat/picocom)
+# and runs the FULL pytest suite inside it on every PR — including the
+# `integration` tests that actually invoke those binaries. Catches regressions in
+# how protocol backends parse/pass arguments to the PTY before a user hits them.
+
+on:
+  pull_request:
+  push:
+    branches: [main, dev]
+
+concurrency:
+  group: test-env-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  containerized-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build test environment image
+        run: docker build -f test-environment.Dockerfile -t sshpilot-test-env .
+
+      - name: Run pytest (incl. real-tool integration) in the container
+        # Mount the repo at /work and the host docker socket so the docker-exec
+        # integration test can talk to the runner's daemon.
+        run: |
+          docker run --rm \
+            -v "$PWD":/work -w /work \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            sshpilot-test-env \
+            pytest -ra
