@@ -1686,12 +1686,17 @@ class ConnectionDialog(Adw.Window):
         advanced_group.add(self.advanced_tab)
         advanced_page.append(advanced_group)
 
+        # Wake on LAN on its own page (built by build_connection_groups above).
+        wol_page = _page_box()
+        wol_page.append(self._wol_group)
+
         return [
             ("connection", _("Connection"), general_page),
             ("authentication", _("Authentication"), authentication_page),
             ("forwarding", _("Port Forwarding"), forwarding_page),
             ("commands", _("Commands"), commands_page),
             ("advanced", _("Advanced"), advanced_page),
+            ("wol", _("Wake on LAN"), wol_page),
         ]
 
     @staticmethod
@@ -3163,7 +3168,9 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         self._routing_group = proxy_group
         self._wol_group = wol_group
 
-        return [basic_group, proxy_group, wol_group]
+        # Wake on LAN lives on its own (SSH-only) tab — see
+        # _build_connection_tab_pages — so it isn't shown for non-SSH protocols.
+        return [basic_group, proxy_group]
     
     def build_port_forwarding_groups(self):
         """Build PreferencesGroups for the Advanced page (Port Forwarding first, X11 last)"""
@@ -4204,7 +4211,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
     
     # --- Protocol selector / plugin protocol support ----------------------
 
-    _SSH_ONLY_PAGES = ("authentication", "forwarding", "commands", "advanced")
+    _SSH_ONLY_PAGES = ("authentication", "forwarding", "commands", "advanced", "wol")
 
     def _selected_protocol_backend(self):
         """The ProtocolBackend chosen in the selector (None -> SSH default)."""
