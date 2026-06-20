@@ -207,6 +207,15 @@ distribution's packages.
 > ships. Install them as system packages (Step 1) and create the venv with
 > `--system-site-packages` so it can see them (Step 2).
 
+> **Aligned with upstream:** PyGObject's official
+> [*Getting Started*](https://pygobject.gnome.org/getting_started.html) guide
+> lists "system provided PyGObject" (`apt install python3-gi python3-gi-cairo
+> gir1.2-gtk-4.0`, `dnf install python3-gobject gtk4`) as the first install
+> option — the approach used here. Its alternative "from PyPI with pip" route
+> builds PyGObject/pycairo from source and additionally needs `gcc`,
+> `pkg-config`, `python3-dev`, `libgirepository-2.0-dev`, and `libcairo2-dev`,
+> which is why this project uses the distribution packages instead.
+
 #### Step 1 — Install system prerequisites (required)
 
 These provide PyGObject, the GObject-Introspection (GI) typelibs, and the native
