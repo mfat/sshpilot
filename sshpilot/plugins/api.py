@@ -27,7 +27,8 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 #      scoped ctx.secrets/ctx.settings, ctx.run_on_ui_thread, ctx.plugin_id.
 # 1.3: Connection groups — ctx.create_group / add_connection_to_group /
 #      add_connection_group (for multi-node provisioning).
-API_VERSION: Tuple[int, int] = (1, 3)
+# 1.4: ctx.list_connections() — read-only snapshot of all saved connections.
+API_VERSION: Tuple[int, int] = (1, 4)
 
 # Stable event names and event payload types live in host.py; re-exported here
 # so plugins import everything from sshpilot.plugins.api. (host.py imports
@@ -308,6 +309,15 @@ class PluginContext:
         if conn is None:
             return False
         return bool(self.connection_manager.update_connection(conn, dict(data)))
+
+    def list_connections(self) -> List["ConnectionInfo"]:
+        """Return a read-only snapshot of every saved connection as
+        ``ConnectionInfo`` objects. Safe to call any time after load (it reads
+        the persisted list, not live UI). Use it to drive a dashboard, an
+        export, or a 'apply to existing' action; subscribe to the
+        ``connection_*`` events to keep a derived view fresh."""
+        conns = getattr(self.connection_manager, "connections", None) or []
+        return [ConnectionInfo.from_connection(c) for c in conns]
 
     def open_connection(self, nickname: str) -> bool:
         """Open a terminal tab for an existing connection (by nickname).
