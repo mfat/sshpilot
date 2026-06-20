@@ -1,0 +1,10 @@
+{
+  "id": "notes",
+  "name": "Connection Notes",
+  "api_version": 1,
+  "permissions": [
+    "connections",
+    "ui",
+    "settings"
+  ]
+}

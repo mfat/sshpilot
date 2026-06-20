@@ -4,8 +4,14 @@ import os
 import logging
 import subprocess
 import shutil
+import json
+import hashlib
+import zipfile
+import tempfile
+import threading
 import importlib
 import importlib.util
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 from gettext import gettext as _
 
@@ -22,7 +28,7 @@ gi.require_version('Gtk', '4.0')
 gi.require_version('Gdk', '4.0')
 gi.require_version('Adw', '1')
 gi.require_version('Vte', '3.91')
-from gi.repository import Gtk, Gdk, Adw, Pango, PangoFT2, Vte, GLib
+from gi.repository import Gtk, Gdk, Adw, Pango, PangoFT2, Vte, GLib, Gio
 
 logger = logging.getLogger(__name__)
 
@@ -2099,6 +2105,8 @@ class PreferencesWindow(Adw.Window):
             self.add_page_to_layout("Groups", "folder-open-symbolic", groups_page)
             self.add_page_to_layout("SSH Options", "network-workgroup-symbolic", ssh_settings_page)
             self.add_page_to_layout("Updates", "software-update-available-symbolic", updates_page)
+            plugins_page = self._create_plugins_page()
+            self.add_page_to_layout("Plugins", "application-x-addon-symbolic", plugins_page)
             command_blocks_page = self._create_command_blocks_page()
             self.add_page_to_layout("Command Blocks", "view-list-symbolic", command_blocks_page)
             self.add_page_to_layout("Advanced", "applications-system-symbolic", advanced_page)
@@ -2381,6 +2389,635 @@ class PreferencesWindow(Adw.Window):
             logger.debug(
                 "Failed to restyle terminals after preference change: %s", exc
             )
+
+    def _create_plugins_page(self):
+        """Build the Plugins preferences page (enable/disable, install/remove)."""
+        self._plugins_page = Adw.PreferencesPage()
+        self._plugin_groups = []
+        self._populate_plugins_page()
+        return self._plugins_page
+
+    def _rebuild_plugins_page(self):
+        """Re-render the page in place after an install/remove."""
+        page = getattr(self, '_plugins_page', None)
+        if page is None:
+            return
+        for group in getattr(self, '_plugin_groups', []):
+            try:
+                page.remove(group)
+            except Exception:
+                pass
+        self._plugin_groups = []
+        self._populate_plugins_page()
+
+    def _populate_plugins_page(self):
+        from .plugins.loader import discover_plugins, _user_plugin_dir
+
+        page = self._plugins_page
+        try:
+            infos = discover_plugins()
+        except Exception:
+            logger.exception("Plugin discovery failed")
+            infos = []
+        loaded_ids = {
+            getattr(p, 'plugin_id', None)
+            for p in getattr(self.parent_window, 'loaded_plugins', []) or []
+        }
+        disabled = set(self.config.get_setting('plugins.disabled', []) or [])
+        enabled = set(self.config.get_setting('plugins.enabled', []) or [])
+
+        def _subtitle(info):
+            if not info.api_compatible:
+                return _("Incompatible (targets API v{})").format(info.api_version)
+            if info.required:
+                return _("Required — always enabled")
+            if info.plugin_id in loaded_ids:
+                return _("Active")
+            return _("Inactive")
+
+        builtin_group = Adw.PreferencesGroup(title=_("Built-in Plugins"))
+        builtin_group.set_description(_("Changes take effect after restarting sshPilot"))
+        for info in [i for i in infos if i.builtin]:
+            row = Adw.SwitchRow()
+            row.set_title(info.name)
+            row.set_subtitle(_subtitle(info))
+            row.set_active(info.required or info.plugin_id not in disabled)
+            if info.required or not info.api_compatible:
+                row.set_sensitive(False)
+            else:
+                row.connect(
+                    'notify::active',
+                    lambda r, _p, pid=info.plugin_id: self._on_builtin_plugin_toggled(pid, r.get_active(), r),
+                )
+            self._add_permissions_info(row, info.permissions)
+            self._add_plugin_page_gear(row, info.plugin_id)
+            builtin_group.add(row)
+        page.add(builtin_group)
+        self._plugin_groups.append(builtin_group)
+
+        user_group = Adw.PreferencesGroup(title=_("User Plugins"))
+        user_group.set_description(
+            _("Third-party plugins run with full application privileges; "
+              "only enable plugins you trust. Restart required."))
+        user_group.set_header_suffix(self._make_install_button())
+        user_infos = [i for i in infos if not i.builtin]
+        if user_infos:
+            for info in user_infos:
+                row = Adw.SwitchRow()
+                row.set_title(info.name)
+                row.set_subtitle(_subtitle(info))
+                row.set_active(info.plugin_id in enabled)
+                if not info.api_compatible:
+                    row.set_sensitive(False)
+                else:
+                    row.connect(
+                        'notify::active',
+                        lambda r, _p, pid=info.plugin_id, perms=info.permissions:
+                            self._on_user_plugin_toggled(pid, r.get_active(), r, perms),
+                    )
+                self._add_permissions_info(row, info.permissions)
+                self._add_plugin_page_gear(row, info.plugin_id)
+                remove = Gtk.Button()
+                remove.set_icon_name('user-trash-symbolic')
+                remove.add_css_class('flat')
+                remove.add_css_class('error')
+                remove.set_valign(Gtk.Align.CENTER)
+                remove.set_tooltip_text(_("Remove plugin"))
+                remove.connect('clicked',
+                               lambda _b, i=info: self._confirm_remove_plugin(i))
+                row.add_suffix(remove)
+                user_group.add(row)
+        else:
+            empty_row = Adw.ActionRow()
+            empty_row.set_title(_("No user plugins installed"))
+            empty_row.set_subtitle(str(_user_plugin_dir()))
+            user_group.add(empty_row)
+        page.add(user_group)
+        self._plugin_groups.append(user_group)
+
+        # Available plugins fetched from the discovery registry. Installed/builtin
+        # ids are filtered out; toggling one on downloads + verifies + installs it.
+        self._installed_ids = {i.plugin_id for i in infos}
+        self._available_group = Adw.PreferencesGroup(title=_("Available Plugins"))
+        self._available_group.set_description(
+            _("From the sshPilot plugin registry. Toggling one on downloads, "
+              "verifies, and installs it (restart to load)."))
+        self._available_loading = Adw.ActionRow(title=_("Checking the plugin registry…"))
+        spinner = Gtk.Spinner()
+        spinner.start()
+        self._available_loading.add_prefix(spinner)
+        self._available_group.add(self._available_loading)
+        page.add(self._available_group)
+        self._plugin_groups.append(self._available_group)
+        self._load_registry_async()
+
+    # --- available plugins (discovery registry) ----------------------
+    def _registry_url(self):
+        from .plugins.registry_client import DEFAULT_REGISTRY_URL
+        return self.config.get_setting('plugins.registry_url', DEFAULT_REGISTRY_URL) \
+            or DEFAULT_REGISTRY_URL
+
+    def _load_registry_async(self):
+        url = self._registry_url()
+        group = self._available_group
+
+        def worker():
+            from .plugins import registry_client
+            try:
+                entries = registry_client.list_entries(registry_client.fetch_index(url))
+            except Exception as exc:
+                GLib.idle_add(self._on_registry_loaded, group, None, str(exc))
+                return
+            GLib.idle_add(self._on_registry_loaded, group, entries, None)
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_registry_loaded(self, group, entries, error):
+        if group is not getattr(self, '_available_group', None):
+            return  # page was rebuilt; ignore a stale fetch
+        if self._available_loading is not None:
+            try:
+                group.remove(self._available_loading)
+            except Exception:
+                pass
+            self._available_loading = None
+        self._available_rows = []  # _build_available_row appends here
+
+        def _note(title, subtitle=None):
+            row = Adw.ActionRow(title=title)
+            if subtitle:
+                row.set_subtitle(subtitle)
+            group.add(row)
+            self._available_rows.append(row)
+
+        if error is not None:
+            _note(_("Couldn't reach the plugin registry"), error)
+            return
+        shown = 0
+        for entry in entries or []:
+            if entry['id'] in getattr(self, '_installed_ids', set()):
+                continue  # already installed or a built-in
+            group.add(self._build_available_row(entry))
+            shown += 1
+        if shown == 0:
+            _note(_("No new plugins available"))
+
+    def _available_subtitle(self, entry):
+        bits = [b for b in (entry.get('description'),
+                            (_("by {}").format(entry['author']) if entry.get('author') else None),
+                            ("v" + entry['version']) if entry.get('version') else None) if b]
+        return " · ".join(bits)
+
+    def _build_available_row(self, entry):
+        row = Adw.SwitchRow()
+        row.set_title(entry['name'])
+        row.set_subtitle(self._available_subtitle(entry))
+        row.set_active(False)
+        self._add_permissions_info(row, entry.get('permissions'))
+        if not entry.get('compatible', True):
+            row.set_sensitive(False)
+            row.set_subtitle(_("Incompatible (targets API v{})").format(entry.get('api_version')))
+        else:
+            row.connect('notify::active',
+                        lambda r, _p, e=entry: self._on_available_plugin_toggled(e, r))
+        # keep a handle so _on_registry_loaded can clear it on refresh
+        self._available_rows = getattr(self, '_available_rows', [])
+        self._available_rows.append(row)
+        return row
+
+    def _on_available_plugin_toggled(self, entry, row):
+        if getattr(self, '_suppress_toggle', False) or not row.get_active():
+            return
+
+        def revert():
+            self._suppress_toggle = True
+            row.set_active(False)
+            self._suppress_toggle = False
+            row.set_sensitive(True)
+            row.set_subtitle(self._available_subtitle(entry))
+
+        row.set_sensitive(False)
+        row.set_subtitle(_("Fetching…"))
+
+        def worker():
+            from .plugins.registry_client import download_package
+            try:
+                tmpdir = tempfile.mkdtemp(prefix='sshpilot-reg-')
+                dest = os.path.join(tmpdir, 'package.zip')
+                download_package(entry['download_url'], entry['checksum_url'], dest)
+            except Exception as exc:
+                GLib.idle_add(self._registry_fetch_failed, str(exc), revert)
+                return
+            GLib.idle_add(self._registry_fetch_done, dest, tmpdir, revert)
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _registry_fetch_failed(self, msg, revert):
+        revert()
+        self._alert(_("Download failed"), msg)
+
+    def _registry_fetch_done(self, dest, tmpdir, revert):
+        try:
+            # _install_plugin_from_zip extracts synchronously, so the downloaded
+            # zip is no longer needed once it returns (consent runs off the
+            # extracted copy).
+            self._install_plugin_from_zip(Path(dest), verified=True, on_abort=revert)
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+    # --- plugin install / remove -------------------------------------
+    def _make_install_button(self):
+        button = Gtk.MenuButton()
+        button.set_icon_name('list-add-symbolic')
+        button.set_tooltip_text(_("Install a plugin"))
+        button.add_css_class('flat')
+        popover = Gtk.Popover()
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        box.set_margin_top(6)
+        box.set_margin_bottom(6)
+        box.set_margin_start(6)
+        box.set_margin_end(6)
+        for label, handler in ((_("From folder…"), self._install_from_folder),
+                               (_("From ZIP file…"), self._install_from_zip)):
+            b = Gtk.Button(label=label)
+            b.add_css_class('flat')
+            b.set_halign(Gtk.Align.FILL)
+            b.get_child().set_halign(Gtk.Align.START)
+            b.connect('clicked', lambda _b, h=handler: (popover.popdown(), h()))
+            box.append(b)
+        popover.set_child(box)
+        button.set_popover(popover)
+        return button
+
+    def _alert(self, heading, body):
+        dlg = Adw.AlertDialog(heading=heading, body=body)
+        dlg.add_response('ok', _("OK"))
+        dlg.present(self)
+
+    def _add_permissions_info(self, row, permissions):
+        """Add an info button to a plugin row listing its declared permissions."""
+        if not permissions:
+            return
+        btn = Gtk.MenuButton()
+        btn.set_icon_name('dialog-information-symbolic')
+        btn.add_css_class('flat')
+        btn.set_valign(Gtk.Align.CENTER)
+        btn.set_tooltip_text(_("Permissions"))
+        pop = Gtk.Popover()
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        for m in ('set_margin_top', 'set_margin_bottom', 'set_margin_start', 'set_margin_end'):
+            getattr(box, m)(8)
+        head = Gtk.Label(label=_("Declared permissions"))
+        head.add_css_class('heading')
+        head.set_halign(Gtk.Align.START)
+        box.append(head)
+        for p in permissions:
+            lbl = Gtk.Label(label="• " + str(p))
+            lbl.set_halign(Gtk.Align.START)
+            box.append(lbl)
+        pop.set_child(box)
+        btn.set_popover(pop)
+        row.add_suffix(btn)
+
+    def _plugin_consent(self, *, name, permissions, action, on_accept,
+                        on_decline=None, sha256=None, verified=False):
+        """Trust dialog shown before enabling/installing third-party code:
+        lists declared permissions and (for a .zip) the archive's SHA-256, with
+        an optional expected-hash check."""
+        dlg = Adw.AlertDialog(
+            heading=_("{action} “{name}”?").format(action=action, name=name),
+            body=_("Plugins run with full application privileges and are not "
+                   "sandboxed. Only continue if you trust the source."))
+        body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        head = Gtk.Label(label=_("Requested permissions:") if permissions
+                         else _("No special permissions declared."))
+        head.add_css_class('heading')
+        head.set_halign(Gtk.Align.START)
+        head.set_wrap(True)
+        body.append(head)
+        if permissions:
+            lbl = Gtk.Label(label="\n".join("• " + str(p) for p in permissions))
+            lbl.set_halign(Gtk.Align.START)
+            lbl.set_xalign(0)
+            body.append(lbl)
+        note = Gtk.Label(label=_("Permissions are declared by the author for "
+                                 "transparency; they are not enforced. Changes "
+                                 "take effect after restarting sshPilot."))
+        note.add_css_class('dim-label')
+        note.add_css_class('caption')
+        note.set_halign(Gtk.Align.START)
+        note.set_xalign(0)
+        note.set_wrap(True)
+        body.append(note)
+        expected_entry = None
+        if sha256 is not None:
+            sha_head = Gtk.Label(label=_("SHA-256"))
+            sha_head.add_css_class('heading')
+            sha_head.set_halign(Gtk.Align.START)
+            sha_val = Gtk.Label(label=sha256)
+            sha_val.add_css_class('caption')
+            sha_val.set_selectable(True)
+            sha_val.set_wrap(True)
+            sha_val.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+            sha_val.set_xalign(0)
+            sha_val.set_halign(Gtk.Align.START)
+            body.append(sha_head)
+            body.append(sha_val)
+            if verified:
+                ok = Gtk.Label(label=_("✓ Verified against the registry checksum"))
+                ok.add_css_class('success')
+                ok.add_css_class('caption')
+                ok.set_halign(Gtk.Align.START)
+                body.append(ok)
+            else:
+                expected_entry = Gtk.Entry()
+                expected_entry.set_placeholder_text(_("Expected SHA-256 (optional)"))
+                body.append(expected_entry)
+        dlg.set_extra_child(body)
+        dlg.add_response('cancel', _("Cancel"))
+        dlg.add_response('ok', action)
+        dlg.set_response_appearance('ok', Adw.ResponseAppearance.SUGGESTED)
+
+        def _resp(_d, response):
+            if response != 'ok':
+                if on_decline:
+                    on_decline()
+                return
+            if sha256 is not None and expected_entry is not None:
+                want = expected_entry.get_text().strip()
+                if want and want.lower() != sha256.lower():
+                    self._alert(_("Checksum mismatch"),
+                                _("The archive's SHA-256 doesn't match the "
+                                  "expected value; install cancelled."))
+                    if on_decline:
+                        on_decline()
+                    return
+            on_accept()
+        dlg.connect('response', _resp)
+        dlg.present(self)
+
+    def _install_from_folder(self):
+        dialog = Gtk.FileDialog()
+        dialog.set_title(_("Select plugin folder"))
+
+        def _done(dlg, result):
+            try:
+                gfile = dlg.select_folder_finish(result)
+            except Exception:
+                return
+            if gfile and gfile.get_path():
+                self._install_plugin_from_dir(Path(gfile.get_path()))
+        dialog.select_folder(self, None, _done)
+
+    def _install_from_zip(self):
+        dialog = Gtk.FileDialog()
+        dialog.set_title(_("Select plugin ZIP"))
+        try:
+            filt = Gtk.FileFilter()
+            filt.set_name(_("ZIP archives"))
+            filt.add_pattern('*.zip')
+            filters = Gio.ListStore.new(Gtk.FileFilter)
+            filters.append(filt)
+            dialog.set_filters(filters)
+        except Exception:
+            pass
+
+        def _done(dlg, result):
+            try:
+                gfile = dlg.open_finish(result)
+            except Exception:
+                return
+            if gfile and gfile.get_path():
+                self._install_plugin_from_zip(Path(gfile.get_path()))
+        dialog.open(self, None, _done)
+
+    @staticmethod
+    def _locate_manifest_dir(root: Path):
+        """The directory containing plugin.json: root itself, or its single
+        plugin subdirectory (handles zips that wrap the plugin in a folder)."""
+        if (root / 'plugin.json').is_file():
+            return root
+        candidates = [d for d in root.iterdir()
+                      if d.is_dir() and (d / 'plugin.json').is_file()]
+        return candidates[0] if len(candidates) == 1 else None
+
+    @staticmethod
+    def _sha256_file(path) -> str:
+        h = hashlib.sha256()
+        with open(path, 'rb') as fh:
+            for chunk in iter(lambda: fh.read(65536), b''):
+                h.update(chunk)
+        return h.hexdigest()
+
+    @classmethod
+    def _verify_sha256(cls, path, expected):
+        """True/False if an expected hash is given, else None (nothing to check)."""
+        expected = (expected or '').strip().lower()
+        if not expected:
+            return None
+        return cls._sha256_file(path) == expected
+
+    def _install_plugin_from_zip(self, zip_path: Path, verified: bool = False,
+                                 on_abort=None):
+        try:
+            sha256 = self._sha256_file(zip_path)
+            tmp = Path(tempfile.mkdtemp(prefix='sshpilot-plugin-'))
+            with zipfile.ZipFile(zip_path) as zf:
+                for member in zf.namelist():
+                    # zip-slip guard: refuse paths escaping the temp dir.
+                    dest = (tmp / member).resolve()
+                    if not str(dest).startswith(str(tmp.resolve()) + os.sep) and dest != tmp.resolve():
+                        self._alert(_("Install failed"),
+                                    _("The archive contains an unsafe path."))
+                        shutil.rmtree(tmp, ignore_errors=True)
+                        if on_abort:
+                            on_abort()
+                        return
+                zf.extractall(tmp)
+            self._install_plugin_from_dir(tmp, _cleanup=tmp, sha256=sha256,
+                                          verified=verified, on_abort=on_abort)
+        except Exception as exc:
+            logger.exception("plugin zip install failed")
+            self._alert(_("Install failed"), str(exc))
+            if on_abort:
+                on_abort()
+
+    def _install_plugin_from_dir(self, src: Path, _cleanup: Optional[Path] = None,
+                                 sha256: Optional[str] = None, verified: bool = False,
+                                 on_abort=None):
+        from .plugins.loader import _user_plugin_dir, discover_plugins
+        from .plugins.api import API_VERSION
+
+        def _abort(heading=None, body=None):
+            if _cleanup is not None:
+                shutil.rmtree(_cleanup, ignore_errors=True)
+            if heading is not None:
+                self._alert(heading, body)
+            if on_abort:
+                on_abort()
+
+        mdir = self._locate_manifest_dir(src)
+        if mdir is None:
+            return _abort(_("Install failed"), _("No plugin.json found."))
+        try:
+            meta = json.loads((mdir / 'plugin.json').read_text(encoding='utf-8'))
+        except Exception as exc:
+            return _abort(_("Install failed"), _("Invalid plugin.json: {}").format(exc))
+        pid = meta.get('id')
+        if not pid:
+            return _abort(_("Install failed"), _("plugin.json has no 'id'."))
+        if meta.get('api_version') != API_VERSION[0]:
+            return _abort(_("Incompatible plugin"),
+                          _("This plugin targets API v{}, but this app provides v{}.").format(
+                              meta.get('api_version'), API_VERSION[0]))
+        if not (mdir / '__init__.py').is_file():
+            return _abort(_("Install failed"), _("The plugin has no __init__.py."))
+        builtin_ids = {i.plugin_id for i in discover_plugins() if i.builtin}
+        if pid in builtin_ids:
+            return _abort(_("Install failed"),
+                          _("'{}' conflicts with a built-in plugin.").format(pid))
+
+        dest = _user_plugin_dir() / pid
+        permissions = [str(p) for p in (meta.get('permissions') or []) if isinstance(p, str)]
+
+        def _proceed():
+            if dest.exists():
+                confirm = Adw.AlertDialog(
+                    heading=_("Replace plugin?"),
+                    body=_("A plugin '{}' is already installed. Replace it?").format(pid))
+                confirm.add_response('cancel', _("Cancel"))
+                confirm.add_response('replace', _("Replace"))
+                confirm.set_response_appearance('replace', Adw.ResponseAppearance.DESTRUCTIVE)
+
+                def _resp(dlg, response):
+                    if response == 'replace':
+                        self._finish_install(mdir, dest, meta, _cleanup)
+                    else:
+                        _abort()
+                confirm.connect('response', _resp)
+                confirm.present(self)
+                return
+            self._finish_install(mdir, dest, meta, _cleanup)
+
+        # Trust gate: show permissions + the archive's SHA-256 before installing.
+        self._plugin_consent(name=meta.get('name', pid), permissions=permissions,
+                             sha256=sha256, verified=verified, action=_("Install"),
+                             on_accept=_proceed, on_decline=lambda: _abort())
+
+    def _finish_install(self, mdir: Path, dest: Path, meta: dict,
+                        cleanup: Optional[Path]):
+        try:
+            if dest.exists():
+                shutil.rmtree(dest)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(mdir, dest)
+        except Exception as exc:
+            logger.exception("plugin copy failed")
+            self._alert(_("Install failed"), str(exc))
+            return
+        finally:
+            if cleanup is not None:
+                shutil.rmtree(cleanup, ignore_errors=True)
+        pid = meta['id']
+        enabled = set(self.config.get_setting('plugins.enabled', []) or [])
+        enabled.add(pid)
+        self.config.set_setting('plugins.enabled', sorted(enabled))
+        self._rebuild_plugins_page()
+        self._alert(_("Plugin installed"),
+                    _("Installed '{}'. Restart sshPilot to load it.").format(
+                        meta.get('name', pid)))
+
+    def _confirm_remove_plugin(self, info):
+        confirm = Adw.AlertDialog(
+            heading=_("Remove plugin?"),
+            body=_("Delete '{}' from disk? This cannot be undone.").format(info.name))
+        confirm.add_response('cancel', _("Cancel"))
+        confirm.add_response('remove', _("Remove"))
+        confirm.set_response_appearance('remove', Adw.ResponseAppearance.DESTRUCTIVE)
+        confirm.connect('response',
+                        lambda _d, r, i=info: self._remove_plugin(i) if r == 'remove' else None)
+        confirm.present(self)
+
+    def _remove_plugin(self, info):
+        try:
+            shutil.rmtree(info.path)
+        except Exception as exc:
+            logger.exception("plugin remove failed")
+            self._alert(_("Remove failed"), str(exc))
+            return
+        for key in ('plugins.enabled', 'plugins.disabled'):
+            ids = set(self.config.get_setting(key, []) or [])
+            if info.plugin_id in ids:
+                ids.discard(info.plugin_id)
+                self.config.set_setting(key, sorted(ids))
+        self._rebuild_plugins_page()
+        self._alert(_("Plugin removed"),
+                    _("Removed '{}'. Restart sshPilot to unload it if it was active.").format(
+                        info.name))
+
+    def _add_plugin_page_gear(self, row, plugin_id):
+        """If an *active* plugin has registered a UI page, add a gear button to
+        its row that opens that page (and closes Preferences)."""
+        host = getattr(self.parent_window, 'plugin_host', None)
+        ui = getattr(host, 'ui', None) if host else None
+        pages = ui.page_ids_for_plugin(plugin_id) if ui else []
+        if not pages:
+            return
+        from sshpilot import icon_utils
+        gear = Gtk.Button()
+        icon_utils.set_button_icon(gear, 'settings-symbolic')
+        gear.add_css_class('flat')
+        gear.set_valign(Gtk.Align.CENTER)
+        gear.set_tooltip_text(_("Open plugin page"))
+        gear.connect('clicked', lambda _b, fid=pages[0]: self._open_plugin_page(fid))
+        row.add_suffix(gear)
+
+    def _open_plugin_page(self, full_id):
+        host = getattr(self.parent_window, 'plugin_host', None)
+        ui = getattr(host, 'ui', None) if host else None
+        if ui is not None:
+            ui.open_page(full_id)
+        self.close()
+
+    def _on_builtin_plugin_toggled(self, plugin_id, active, row=None):
+        disabled = set(self.config.get_setting('plugins.disabled', []) or [])
+        if active:
+            disabled.discard(plugin_id)
+        else:
+            disabled.add(plugin_id)
+        self.config.set_setting('plugins.disabled', sorted(disabled))
+        if row is not None:
+            row.set_subtitle(_("Restart sshPilot to apply"))
+
+    def _set_user_plugin_enabled(self, plugin_id, on):
+        enabled = set(self.config.get_setting('plugins.enabled', []) or [])
+        if on:
+            enabled.add(plugin_id)
+        else:
+            enabled.discard(plugin_id)
+        self.config.set_setting('plugins.enabled', sorted(enabled))
+
+    def _on_user_plugin_toggled(self, plugin_id, active, row=None, permissions=None):
+        if getattr(self, '_suppress_toggle', False):
+            return
+        if not active:
+            self._set_user_plugin_enabled(plugin_id, False)
+            if row is not None:
+                row.set_subtitle(_("Restart sshPilot to apply"))
+            return
+
+        # Enabling runs third-party code with full privileges — get consent first.
+        def _accept():
+            self._set_user_plugin_enabled(plugin_id, True)
+            if row is not None:
+                row.set_subtitle(_("Restart sshPilot to apply"))
+
+        def _decline():
+            if row is not None:
+                self._suppress_toggle = True
+                row.set_active(False)
+                self._suppress_toggle = False
+
+        self._plugin_consent(name=plugin_id, permissions=permissions or [],
+                             action=_("Enable"), on_accept=_accept, on_decline=_decline)
 
     def _create_command_blocks_page(self):
         """Build the Command Blocks preferences page."""

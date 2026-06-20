@@ -1,0 +1,10 @@
+{
+  "id": "auto-group",
+  "name": "Smart Auto-Grouping",
+  "api_version": 1,
+  "permissions": [
+    "connections",
+    "ui",
+    "settings"
+  ]
+}

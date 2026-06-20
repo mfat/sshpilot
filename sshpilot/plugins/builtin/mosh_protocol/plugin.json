@@ -1,0 +1,10 @@
+{
+  "id": "mosh",
+  "name": "Mosh protocol",
+  "api_version": 1,
+  "builtin": true,
+  "permissions": [
+    "process",
+    "network"
+  ]
+}

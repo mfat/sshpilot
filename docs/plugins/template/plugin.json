@@ -1,0 +1,8 @@
+{
+  "id": "example-plugin",
+  "name": "Example Plugin",
+  "api_version": 1,
+  "permissions": [
+    "process"
+  ]
+}

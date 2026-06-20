@@ -1294,6 +1294,12 @@ class ConnectionRow(Gtk.ListBoxRow):
         if not show_port_forwarding:
             return
 
+        # Forwarding badges only make sense for protocols that support it.
+        from .plugins.api import Capability
+        from .plugins.registry import capabilities_for
+        if Capability.PORT_FORWARDING not in capabilities_for(self.connection):
+            return
+
         # Group the connection's forwarding rules by type. The rule schema and
         # the formatting/grouping helpers live in port_utils so they can be
         # reused (e.g. a future port-mapping viewer) without pulling in GTK.

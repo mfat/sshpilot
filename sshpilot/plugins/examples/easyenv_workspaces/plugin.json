@@ -1,0 +1,12 @@
+{
+  "id": "easyenv-workspaces",
+  "name": "EasyEnv Workspaces",
+  "api_version": 1,
+  "entry": "plugin",
+  "permissions": [
+    "network",
+    "keyring",
+    "connections",
+    "ui"
+  ]
+}

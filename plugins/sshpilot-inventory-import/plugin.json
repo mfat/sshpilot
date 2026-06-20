@@ -1,0 +1,11 @@
+{
+  "id": "inventory-import",
+  "name": "Inventory Import",
+  "api_version": 1,
+  "permissions": [
+    "connections",
+    "ui",
+    "settings",
+    "filesystem"
+  ]
+}

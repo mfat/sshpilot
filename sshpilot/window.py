@@ -93,6 +93,8 @@ from .shortcut_utils import get_primary_modifier_label
 from .platform_utils import is_macos, get_config_dir, get_ssh_dir
 from .command_blocks import CommandBlocksPanel, CommandBlockStore
 from .context_menu import IconContextMenu
+from .plugins.api import Capability
+from .plugins.registry import capabilities_for
 from .ssh_utils import ensure_writable_ssh_home
 from .scp_utils import assemble_scp_transfer_args, classify_sftp_error, download_file, upload_file
 from .ssh_password_exec import run_ssh_with_password, run_scp_with_password
@@ -609,6 +611,41 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         effective_isolated = isolated or bool(self.config.get_setting('ssh.use_isolated_config', False))
         key_dir = Path(get_config_dir()) if effective_isolated else None
         self.connection_manager = ConnectionManager(self.config, isolated_mode=effective_isolated)
+
+        # Menu section that plugin pages append to (built before create_menu
+        # runs during setup_ui; the host mutates it on bind).
+        self._plugins_menu_section = Gio.Menu()
+
+        # Load plugins once per process (cached on the application object so a
+        # second window doesn't re-activate them) before any terminal can spawn.
+        # The PluginHost (event bus + UI host) is likewise process-wide; it is
+        # bound to the first window's live UI at the end of setup_ui.
+        try:
+            from .plugins.loader import load_plugins
+            from .plugins.host import PluginHost
+            host = getattr(app, 'plugin_host', None) if app else None
+            if host is None:
+                host = PluginHost(connection_manager=self.connection_manager)
+                if app is not None:
+                    setattr(app, 'plugin_host', host)
+            self.plugin_host = host
+            if app is not None:
+                setattr(app, 'plugin_host', host)
+            loaded_plugins = getattr(app, 'loaded_plugins', None) if app else None
+            if loaded_plugins is None:
+                loaded_plugins = load_plugins(
+                    app_config=self.config,
+                    connection_manager=self.connection_manager,
+                    plugin_host=host,
+                )
+                if app is not None:
+                    setattr(app, 'loaded_plugins', loaded_plugins)
+            self.loaded_plugins = loaded_plugins
+        except Exception:
+            logger.exception("Plugin loading failed")
+            self.loaded_plugins = []
+            self.plugin_host = None
+
         self.key_manager = KeyManager(key_dir)
         self.group_manager = GroupManager(self.config)
         self.session_manager = SessionManager(self.config)
@@ -1654,6 +1691,15 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.toast_overlay.set_child(main_box)
         self.set_content(self.toast_overlay)
 
+        # The window UI now exists (tab_view, toast_overlay, the plugins menu
+        # section). Bind the plugin host so plugin pages, toasts, events, and
+        # terminal control go live. Idempotent: only the first window binds.
+        try:
+            if getattr(self, 'plugin_host', None) is not None:
+                self.plugin_host.bind_window(self)
+        except Exception:
+            logger.exception("Plugin host bind_window failed")
+
     def _set_sidebar_widget(self, widget: Gtk.Widget) -> None:
         if HAS_OVERLAY_SPLIT:
             try:
@@ -1868,6 +1914,22 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
             new_nickname = self._generate_duplicate_nickname(getattr(connection, 'nickname', ''))
             new_data['nickname'] = new_nickname
+
+            # Plugin protocols: the data dict is authoritative (no ssh_config
+            # attribute fixups apply); persist through the non-SSH store.
+            if getattr(connection, 'protocol', 'ssh') != 'ssh':
+                new_connection = Connection(new_data)
+                if not self.connection_manager.update_connection(new_connection, dict(new_data)):
+                    raise RuntimeError(_('Failed to save duplicated connection.'))
+                original_groups = self.group_manager.get_connection_groups(connection.nickname)
+                original_group_id = original_groups[0] if original_groups else None
+                if original_group_id and original_group_id in getattr(self.group_manager, 'groups', {}):
+                    try:
+                        self.group_manager.move_connection(new_nickname, original_group_id)
+                    except Exception:
+                        pass
+                self.rebuild_connection_list()
+                return new_connection
 
             host_value = (
                 getattr(connection, 'hostname', '')
@@ -2310,20 +2372,28 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     # the item callback runs.
                     self._context_menu_connections = list(selected_conns) if multi else None
 
+                    # Protocol capabilities decide which per-host actions make
+                    # sense (all-capable for SSH, narrower for plugin protocols).
+                    conn_caps = capabilities_for(conn) if conn else frozenset()
+                    all_remote_command = bool(selected_conns) and all(
+                        Capability.REMOTE_COMMAND in capabilities_for(c)
+                        for c in selected_conns
+                    )
+
                     if multi:
                         # Multi-selection: only actions that operate on all
                         # selected connections; per-host dialogs are hidden.
                         menu.add_section(
                             menu.add_item('list-add-symbolic', _('Open New Connections'), lambda: self.on_open_new_connection_action(None, None)),
                             menu.add_item('view-grid-symbolic', _('Open in Split View'), lambda: self.on_open_in_split_view_action(None, None)),
-                            menu.add_item('utilities-terminal-symbolic', _('Run Command on Hosts…'), lambda: self.on_run_command_action()),
+                            menu.add_item('utilities-terminal-symbolic', _('Run Command on Hosts…'), lambda: self.on_run_command_action()) if all_remote_command else None,
                         )
                     else:
                         menu.add_section(
                             menu.add_item('list-add-symbolic', _('Open New Connection'), lambda: self.on_open_new_connection_action(None, None)),
                             menu.add_item('document-edit-symbolic', _('Edit Connection'), lambda: self.on_edit_connection_action(None, None)),
                             menu.add_item('view-grid-symbolic', _('Open in Split View'), lambda: self.on_open_in_split_view_action(None, None)),
-                            menu.add_item('utilities-terminal-symbolic', _('Run Command on Host…'), lambda: self.on_run_command_action()),
+                            menu.add_item('utilities-terminal-symbolic', _('Run Command on Host…'), lambda: self.on_run_command_action()) if Capability.REMOTE_COMMAND in conn_caps else None,
                             menu.add_item('edit-copy-symbolic', _('Duplicate Connection'), lambda: self.on_duplicate_connection_action(None, None)),
                             menu.add_item('edit-copy-symbolic', _('Copy Address'), lambda: self._copy_connection_address()),
                         )
@@ -2342,11 +2412,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         menu.add_section(wol_item)
                     else:
                         menu.add_section(
-                            menu.add_item('folder-symbolic', _('Manage Files'), lambda: self.on_manage_files_action(None, None)) if not should_hide_file_manager_options() else None,
-                            menu.add_item('dialog-password-symbolic', _('Copy Key to Server'), lambda: self.on_copy_key_to_server_action(None, None)),
-                            menu.add_item('dialog-password-symbolic', _('Manage authorized_keys…'), lambda: self.on_manage_authorized_keys_action(None, None)),
+                            menu.add_item('folder-symbolic', _('Manage Files'), lambda: self.on_manage_files_action(None, None)) if (Capability.FILE_TRANSFER in conn_caps and not should_hide_file_manager_options()) else None,
+                            menu.add_item('dialog-password-symbolic', _('Copy Key to Server'), lambda: self.on_copy_key_to_server_action(None, None)) if Capability.KEY_DEPLOYMENT in conn_caps else None,
+                            menu.add_item('dialog-password-symbolic', _('Manage authorized_keys…'), lambda: self.on_manage_authorized_keys_action(None, None)) if Capability.KEY_DEPLOYMENT in conn_caps else None,
                             wol_item,
-                            menu.add_item('utilities-terminal-symbolic', _('Open in System Terminal'), lambda: self.on_open_in_system_terminal_action(None, None)) if not should_hide_external_terminal_options() else None,
+                            # System terminal rides build_native_command(), an SSH-only path.
+                            menu.add_item('utilities-terminal-symbolic', _('Open in System Terminal'), lambda: self.on_open_in_system_terminal_action(None, None)) if (getattr(conn, 'protocol', 'ssh') == 'ssh' and not should_hide_external_terminal_options()) else None,
                         )
 
                     def _conn_groups(c):
@@ -3512,6 +3583,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
         menu.append('About', 'app.about')
         menu.append('Quit', 'app.quit')
+
+        # Plugin-contributed pages land here in their own section, shown as a
+        # plain separator (no header). The section object is shared/mutable, so
+        # items the plugin host appends after this menu is built still appear.
+        section = getattr(self, '_plugins_menu_section', None)
+        if section is not None:
+            menu.append_section(None, section)
 
         return menu
 
@@ -4682,6 +4760,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 logger.error(f"Failed to show error dialog: {e}")
             return
         connection = selected_row.connection
+        if Capability.KEY_DEPLOYMENT not in capabilities_for(connection):
+            logger.debug("ssh-copy-id unavailable: protocol %r has no key deployment",
+                         getattr(connection, 'protocol', 'ssh'))
+            return
         logger.info(f"Main window: Selected connection: {getattr(connection, 'nickname', 'unknown')}")
         logger.debug(f"Main window: Connection details - host: {getattr(connection, 'hostname', getattr(connection, 'host', 'unknown'))}, "
                     f"username: {getattr(connection, 'username', 'unknown')}, "
@@ -5744,17 +5826,29 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             self.group_toolbar.set_visible(False)
 
             multiple_connections = len(connection_rows) > 1
+            selected_conn = getattr(connection_rows[0], 'connection', None)
+            caps = capabilities_for(selected_conn) if (not multiple_connections and selected_conn) else frozenset()
             self.edit_button.set_sensitive(not multiple_connections)
             if hasattr(self, 'copy_key_button'):
-                self.copy_key_button.set_sensitive(not multiple_connections)
+                self.copy_key_button.set_sensitive(
+                    not multiple_connections and Capability.KEY_DEPLOYMENT in caps
+                )
             if hasattr(self, 'scp_button'):
-                self.scp_button.set_sensitive(not multiple_connections)
+                self.scp_button.set_sensitive(
+                    not multiple_connections and Capability.FILE_TRANSFER in caps
+                )
             self.manage_files_button.set_sensitive(
-                not multiple_connections and not should_hide_file_manager_options()
+                not multiple_connections
+                and Capability.FILE_TRANSFER in caps
+                and not should_hide_file_manager_options()
             )
             self.manage_files_button.set_visible(not should_hide_file_manager_options())
             if hasattr(self, 'system_terminal_button') and self.system_terminal_button:
-                self.system_terminal_button.set_sensitive(not multiple_connections)
+                # System terminal rides build_native_command(), an SSH-only path.
+                self.system_terminal_button.set_sensitive(
+                    not multiple_connections
+                    and getattr(selected_conn, 'protocol', 'ssh') == 'ssh'
+                )
             self.delete_button.set_sensitive(True)
             self.rename_group_button.set_sensitive(False)
             self.delete_group_button.set_sensitive(False)
@@ -7209,6 +7303,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         if not (hasattr(self, '_context_menu_connection') and self._context_menu_connection):
             return
         connection = self._context_menu_connection
+        if Capability.KEY_DEPLOYMENT not in capabilities_for(connection):
+            logger.debug("authorized_keys editor unavailable: protocol %r has no key deployment",
+                         getattr(connection, 'protocol', 'ssh'))
+            return
         try:
             from .authorized_keys_window import AuthorizedKeysWindow
             from .file_manager_window import AsyncSFTPManager
@@ -7274,6 +7372,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         prompt the user once and remember their pick. Subsequent calls go
         straight to the open flow.
         """
+        if Capability.FILE_TRANSFER not in capabilities_for(connection):
+            logger.debug("Manage Files unavailable: protocol %r has no file transfer",
+                         getattr(connection, 'protocol', 'ssh'))
+            return
         if self._should_prompt_file_manager_choice():
             self._show_file_manager_first_run_dialog(
                 lambda choice: self._continue_open_manage_files_after_choice(connection, choice)
@@ -8242,6 +8344,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         connection = getattr(self, '_context_menu_connection', None)
         group_row = getattr(self, '_context_menu_group_row', None)
 
+        # Only target connections whose protocol can run remote commands.
+        connections = [
+            c for c in connections
+            if Capability.REMOTE_COMMAND in capabilities_for(c)
+        ]
+        if connection is not None and Capability.REMOTE_COMMAND not in capabilities_for(connection):
+            connection = None
+
         if len(connections) > 1:
             panel.show_command_picker_for_target(anchor, connections=connections)
         elif connection is not None:
@@ -8971,6 +9081,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
     def open_in_system_terminal(self, connection):
         """Open the connection in the system's default terminal using ssh_connection_builder"""
+        if getattr(connection, 'protocol', 'ssh') != 'ssh':
+            # build_native_command() is an SSH-only path.
+            logger.debug("System terminal unavailable for protocol %r",
+                         getattr(connection, 'protocol', 'ssh'))
+            return
         try:
             from .ssh_connection_builder import build_native_command
 
@@ -9490,9 +9605,56 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             if hasattr(child, 'connection'):
                 page.set_title(child.connection.nickname)
     
+    def _on_plugin_connection_saved(self, dialog, connection_data):
+        """Persist a plugin-protocol connection (JSON store, no ssh_config)."""
+        if dialog.is_editing and dialog.connection is not None:
+            old_connection = dialog.connection
+            original_nickname = old_connection.nickname
+            if not self.connection_manager.update_connection(old_connection, connection_data):
+                logger.error("Failed to update plugin connection")
+                return
+            new_nickname = connection_data.get('nickname') or original_nickname
+            if original_nickname != new_nickname:
+                try:
+                    self.group_manager.rename_connection(original_nickname, new_nickname)
+                except Exception:
+                    pass
+                try:
+                    old_meta = self.config.get_connection_meta(original_nickname)
+                    if old_meta:
+                        new_meta = self.config.get_connection_meta(new_nickname)
+                        merged = {**old_meta, **new_meta}
+                        meta_all = self.config.get_setting('connections_meta', {}) or {}
+                        meta_all.pop(original_nickname, None)
+                        self.config.set_setting('connections_meta', meta_all)
+                        self.config.set_connection_meta(new_nickname, merged)
+                except Exception:
+                    logger.debug("Failed to migrate connection meta on rename", exc_info=True)
+            try:
+                old_connection.tags = self.config.get_connection_tags(old_connection.nickname)
+            except Exception:
+                pass
+            rows = self._rows_for_connection(old_connection)
+            if rows:
+                for row in rows:
+                    row.update_display()
+            else:
+                self.rebuild_connection_list()
+            logger.info(f"Updated plugin connection: {old_connection.nickname}")
+        else:
+            connection = Connection(connection_data)
+            if self.connection_manager.update_connection(connection, connection_data):
+                self.rebuild_connection_list()
+                logger.info(f"Created new plugin connection: {connection_data['nickname']}")
+            else:
+                logger.error("Failed to save plugin connection")
+
     def on_connection_saved(self, dialog, connection_data):
         """Handle connection saved from dialog"""
         try:
+            if connection_data.get('protocol', 'ssh') != 'ssh':
+                self._on_plugin_connection_saved(dialog, connection_data)
+                return
             if dialog.is_editing:
                 # Update existing connection
                 old_connection = dialog.connection
@@ -9922,25 +10084,27 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
             # Rebuild the SSH command using the latest configuration so that
             # options resolved via ssh -G are honored for the reconnect.
-            try:
-                loop = asyncio.get_event_loop()
-                # Native-only (connect() delegates to native_connect()).
-                if hasattr(connection, 'native_connect'):
-                    connect_coro = connection.native_connect()
-                else:
-                    connect_coro = connection.connect()
-                if loop.is_running():
-                    future = asyncio.run_coroutine_threadsafe(connect_coro, loop)
-                    future.result()
-                else:
-                    loop.run_until_complete(connect_coro)
-            except Exception as prep_err:
-                logger.error(
-                    "Failed to prepare SSH command before reconnect: %s",
-                    prep_err,
-                )
-                GLib.idle_add(self._show_reconnect_error, connection, str(prep_err))
-                return False
+            # Plugin protocols rebuild statelessly in build_spawn() instead.
+            if getattr(connection, 'protocol', 'ssh') == 'ssh':
+                try:
+                    loop = asyncio.get_event_loop()
+                    # Native-only (connect() delegates to native_connect()).
+                    if hasattr(connection, 'native_connect'):
+                        connect_coro = connection.native_connect()
+                    else:
+                        connect_coro = connection.connect()
+                    if loop.is_running():
+                        future = asyncio.run_coroutine_threadsafe(connect_coro, loop)
+                        future.result()
+                    else:
+                        loop.run_until_complete(connect_coro)
+                except Exception as prep_err:
+                    logger.error(
+                        "Failed to prepare SSH command before reconnect: %s",
+                        prep_err,
+                    )
+                    GLib.idle_add(self._show_reconnect_error, connection, str(prep_err))
+                    return False
 
             # Reconnect with new settings
             if not terminal._connect_ssh():

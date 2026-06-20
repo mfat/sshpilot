@@ -1,0 +1,10 @@
+{
+  "id": "runbook",
+  "name": "Runbook Snippets",
+  "api_version": 1,
+  "permissions": [
+    "connections",
+    "ui",
+    "settings"
+  ]
+}

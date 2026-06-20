@@ -27,7 +27,6 @@
   - [macOS](#-macos-aarch64)
 - [Minimum Requirements](#minimum-requirements)
 - [Run from Source](#-run-from-source)
-- [Runtime Dependencies](#runtime-dependencies)
 - [Documentation](#documentation)
 - [Telegram Channel](#telegram-channel)
 - [Third-Party Libraries](#third-party-libraries)
@@ -191,30 +190,54 @@ brew install gtk4 libadwaita pygobject3 py3cairo vte3 gobject-introspection adwa
 ---
 
 ### 💻 Run from Source
-You can also run the app from source. Install the modules listed in requirements.txt and a fairly recent version of GNOME and it should run.
 
-`
-python3 run.py
-`
+sshPilot is run from source in a **Python virtual environment (venv) + pip**, on
+top of the GTK stack. Two setups are supported (both mirror PyGObject's official
+[Getting Started](https://pygobject.gnome.org/getting_started.html) guide):
 
-To enable verbose debugging output, run the app with the `--verbose` flag:
+- **Hybrid (recommended):** install the GTK stack *and* PyGObject from your
+  distribution, then use a `--system-site-packages` venv for the pure-Python
+  deps. No compiler needed — the quick-start below uses this.
+- **Pure venv:** build PyGObject/pycairo from PyPI into a plain venv (needs a C
+  toolchain + GTK `-dev` headers).
 
-`
-python3 run.py --verbose
-`
+📖 **Full guide to both approaches, dev/test setup, and troubleshooting:**
+[documentation/running-from-source.md](documentation/running-from-source.md).
 
+#### ⚡ Quick install (automated)
 
+One command — detects your distro (Debian/Ubuntu, Fedora/RHEL, Arch, openSUSE),
+installs the system GTK stack via `sudo`, sets up the venv, and launches:
 
-## Runtime Dependencies
-
-Install system GTK/libadwaita/VTE GI bindings (do not use pip for these).
-
-Debian/Ubuntu (minimum versions)
-
+```bash
+git clone https://github.com/mfat/sshpilot.git && cd sshpilot && ./scripts/install-run-linux.sh
 ```
+
+(Flags: `--no-run`, `--with-webkit`, `-y`. On an unsupported distro, follow the
+manual steps below.) Prefer to set things up yourself? Continue with Step 1.
+
+> **Why a venv?** Modern Linux distributions ship an *externally-managed* system
+> Python (PEP 668) that refuses `pip install`. A venv keeps sshPilot's Python
+> dependencies isolated.
+
+> **Why system packages for the GTK stack (hybrid)?** PyGObject, pycairo, and
+> the GTK4/libadwaita/VTE runtime are provided by your distribution. **Do not
+> install PyGObject or pycairo via pip** in this setup — pip would build them
+> from source, requiring a C toolchain and `-dev` headers. Install them as system
+> packages (Step 1) and create the venv with `--system-site-packages` so it can
+> see them (Step 2).
+
+#### Step 1 — Install system prerequisites (required)
+
+These provide PyGObject, the GObject-Introspection (GI) typelibs, and the native
+GTK4/libadwaita/VTE runtime. Install them **before** creating the venv.
+
+**Debian/Ubuntu**
+
+```bash
 sudo apt update
 sudo apt install \
-  python3 python3-gi python3-gi-cairo \
+  python3 python3-venv python3-gi python3-gi-cairo \
   libgtk-4-1 gir1.2-gtk-4.0 \
   libadwaita-1-0 gir1.2-adw-1 \
   libvte-2.91-gtk4-0 gir1.2-vte-3.91 \
@@ -222,13 +245,11 @@ sudo apt install \
   libsecret-1-0 gir1.2-secret-1 \
   python3-paramiko python3-cryptography sshpass ssh-askpass \
   gir1.2-webkit-6.0
-
 ```
 
-Fedora / RHEL / CentOS
+**Fedora / RHEL / CentOS**
 
-
-```
+```bash
 sudo dnf install \
   python3 python3-gobject \
   gtk4 libadwaita \
@@ -239,24 +260,93 @@ sudo dnf install \
   webkitgtk6
 ```
 
-libsecret handles secure credential storage on Linux via the Secret Service API.
+**Arch Linux**
 
-Run from source
-
-
+```bash
+sudo pacman -S --needed \
+  python python-gobject python-cairo \
+  gtk4 libadwaita vte4 gtksourceview5 libsecret \
+  python-paramiko python-cryptography sshpass
 ```
+
+**openSUSE (Tumbleweed)**
+
+```bash
+sudo zypper install \
+  python3 python3-gobject \
+  typelib-1_0-Gtk-4_0 \
+  gtk4 libadwaita \
+  typelib-1_0-Adw-1 \
+  typelib-1_0-Vte-3_91 \
+  typelib-1_0-GtkSource-5 \
+  typelib-1_0-Secret-1 \
+  python3-paramiko python3-cryptography \
+  sshpass openssh-askpass-gnome
+```
+
+Other distributions work too — install the equivalent GTK4 / libadwaita / VTE
+(GTK4) / GtkSourceView 5 / libsecret packages plus PyGObject. The optional
+**WebKit 6.0** package (`gir1.2-webkit-6.0` / `webkitgtk6` / `webkitgtk-6.0` /
+`typelib-1_0-WebKit-6_0`) is only needed for the PyXterm.js terminal backend; the
+default VTE backend works without it. Full per-distro detail (and the pure-venv
+approach) is in
+[documentation/running-from-source.md](documentation/running-from-source.md).
+
+`libsecret` handles secure credential storage on Linux via the Secret Service
+API. macOS contributors should follow
+[documentation/INSTALL-macos.md](documentation/INSTALL-macos.md) for the
+Homebrew GTK stack instead.
+
+#### Step 2 — Create and activate a virtual environment
+
+Create the venv **with `--system-site-packages`** so it can use the
+distribution's PyGObject/pycairo and GI bindings from Step 1:
+
+```bash
+git clone https://github.com/mfat/sshpilot.git
+cd sshpilot
+python3 -m venv --system-site-packages .venv
+source .venv/bin/activate
+```
+
+(Run `deactivate` to leave the environment later.)
+
+#### Step 3 — Install the Python dependencies (pip, inside the venv)
+
+```bash
+pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+This installs only the pure-Python dependencies (Paramiko, cryptography,
+keyring, psutil, …). PyGObject and pycairo are intentionally **not** installed
+here — they come from the system packages in Step 1.
+
+#### Step 4 — Run
+
+```bash
 python3 run.py
 ```
 
-Enable verbose debugging with:
+Enable verbose debugging output with the `--verbose` flag:
 
-```
+```bash
 python3 run.py --verbose
 ```
+
+Prefer to keep PyGObject out of system packages? The **pure-venv** approach
+(pip-built PyGObject/pycairo in a plain venv) is documented in the
+[full source-install guide](documentation/running-from-source.md#approach-b--pure-venv-pip-built-pygobject).
+
+> **Alternative (not for development):** if you only want to *use* sshPilot, the
+> distribution packages, Flatpak, Homebrew, and AUR builds in
+> [Download](#download) are the easiest route. The venv workflow above is the
+> recommended path for running the latest source and for contributing.
 
 ## Documentation
 - User guide and FAQ: https://github.com/mfat/sshpilot/wiki
 - In-repo developer and platform docs: [documentation/](documentation/)
+- Writing plugins (protocols & UI pages): [docs/plugins/](docs/plugins/writing-plugins.md)
 
 ## Telegram Channel
 https://t.me/sshpilot

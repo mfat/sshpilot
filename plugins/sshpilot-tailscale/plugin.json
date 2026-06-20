@@ -1,0 +1,11 @@
+{
+  "id": "tailscale",
+  "name": "Tailscale Sync",
+  "api_version": 1,
+  "permissions": [
+    "connections",
+    "process",
+    "ui",
+    "settings"
+  ]
+}

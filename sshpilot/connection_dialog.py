@@ -48,6 +48,7 @@ from .port_utils import get_port_checker
 from .platform_utils import is_macos, get_ssh_dir, get_config_dir
 from .path_list import PathList
 from . import wol
+from .plugins.registry import protocol_registry
 
 # Initialize gettext
 try:
@@ -1662,6 +1663,11 @@ class ConnectionDialog(Adw.Window):
         general_page = _page_box()
         for group in self.build_connection_groups():
             general_page.append(group)
+        # Container for declarative FieldSpec rows rendered when a plugin
+        # protocol is selected; empty and hidden for SSH.
+        self._plugin_fields_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        self._plugin_fields_box.set_visible(False)
+        general_page.append(self._plugin_fields_box)
 
         authentication_page = _page_box()
         for group in self.build_authentication_groups():
@@ -1680,12 +1686,17 @@ class ConnectionDialog(Adw.Window):
         advanced_group.add(self.advanced_tab)
         advanced_page.append(advanced_group)
 
+        # Wake on LAN on its own page (built by build_connection_groups above).
+        wol_page = _page_box()
+        wol_page.append(self._wol_group)
+
         return [
             ("connection", _("Connection"), general_page),
             ("authentication", _("Authentication"), authentication_page),
             ("forwarding", _("Port Forwarding"), forwarding_page),
             ("commands", _("Commands"), commands_page),
             ("advanced", _("Advanced"), advanced_page),
+            ("wol", _("Wake on LAN"), wol_page),
         ]
 
     @staticmethod
@@ -1701,8 +1712,14 @@ class ConnectionDialog(Adw.Window):
         """Card-style tabs via Adw.ViewStack + Adw.InlineViewSwitcher (libadwaita 1.7+)."""
         stack = Adw.ViewStack()
         stack.set_vexpand(True)
+        self._stack_pages = {}
         for name, title, widget in pages:
-            stack.add_titled(self._wrap_page_scrolled(widget), name, title)
+            scrolled = self._wrap_page_scrolled(widget)
+            stack.add_titled(scrolled, name, title)
+            try:
+                self._stack_pages[name] = stack.get_page(scrolled)
+            except Exception:
+                pass
 
         switcher = Adw.InlineViewSwitcher()
         switcher.set_stack(stack)
@@ -1730,6 +1747,7 @@ class ConnectionDialog(Adw.Window):
         switcher_card.set_margin_end(12)
         switcher_card.set_margin_top(12)
         switcher_card.append(switcher)
+        self._switcher_card = switcher_card
 
         def _relayout_switcher(*_args):
             try:
@@ -1752,8 +1770,14 @@ class ConnectionDialog(Adw.Window):
         notebook.set_show_tabs(True)
         notebook.set_show_border(False)
         notebook.set_vexpand(True)
-        for _name, title, widget in pages:
-            notebook.append_page(self._wrap_page_scrolled(widget), Gtk.Label(label=title))
+        self._notebook_pages = {}
+        self._notebook_order = []
+        for name, title, widget in pages:
+            scrolled = self._wrap_page_scrolled(widget)
+            notebook.append_page(scrolled, Gtk.Label(label=title))
+            self._notebook_pages[name] = scrolled
+            self._notebook_order.append((name, scrolled, title))
+        self._notebook = notebook
         return notebook
 
     def create_preferences_content(self):
@@ -2280,6 +2304,26 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
 
         self._loading_connection_data = True
 
+        # Plugin-protocol connections: select the protocol (which renders the
+        # declarative rows), load the shared rows + plugin fields, and skip
+        # all SSH-specific loads below.
+        protocol = getattr(self.connection, 'protocol', 'ssh') or 'ssh'
+        if protocol != 'ssh':
+            try:
+                backends = getattr(self, '_protocol_backends', None) or []
+                for index, backend in enumerate(backends):
+                    if backend.protocol_id == protocol:
+                        self.protocol_row.set_selected(index)
+                        break
+                self._apply_protocol_to_ui()
+                if hasattr(self.connection, 'nickname'):
+                    self.nickname_row.set_text(self.connection.nickname or "")
+                self._load_shared_meta_rows()
+                self._load_plugin_field_values()
+            finally:
+                self._loading_connection_data = False
+            return
+
         try:
             keyfile_path = None
             # Load basic connection data
@@ -2310,38 +2354,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 except Exception:
                     self.forward_agent_row.set_active(False)
 
-            # Load Wake-on-LAN metadata from connections_meta
-            if hasattr(self, 'wol_mac_row'):
-                try:
-                    cfg = getattr(self.parent_window, 'config', None)
-                    nickname = getattr(self.connection, 'nickname', '').strip()
-                    if cfg and nickname:
-                        meta = cfg.get_connection_meta(nickname)
-                        if meta:
-                            self.wol_mac_row.set_text((meta.get('wol_mac') or '').strip())
-                            self.wol_broadcast_row.set_text((meta.get('wol_broadcast_ip') or '').strip())
-                            port_val = meta.get('wol_port')
-                            if port_val is not None:
-                                try:
-                                    self.wol_port_row.set_text(str(int(port_val)))
-                                except Exception:
-                                    self.wol_port_row.set_text("9")
-                except Exception as e:
-                    logger.debug("Load WoL meta: %s", e)
-
-            # Load tags from connections_meta
-            if hasattr(self, 'tags_row'):
-                try:
-                    cfg = getattr(self.parent_window, 'config', None)
-                    nickname = getattr(self.connection, 'nickname', '').strip()
-                    if cfg and nickname:
-                        # Suppress inline autocompletion while loading.
-                        self._set_text_without_completion(
-                            self.tags_row,
-                            ', '.join(cfg.get_connection_tags(nickname)),
-                        )
-                except Exception as e:
-                    logger.debug("Load tags meta: %s", e)
+            # Load Wake-on-LAN and tags metadata from connections_meta
+            self._load_shared_meta_rows()
 
             # Set authentication method (ToggleGroup: 0 key-based, 1 password)
             auth_method = getattr(self.connection, 'auth_method', 0)
@@ -3006,7 +3020,41 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             title=_("Host"),
             description=_nickname_hint,
         )
-        
+
+        # Protocol selector. Invisible while SSH is the only registered
+        # backend; insensitive when editing (no cross-store migration).
+        try:
+            self._protocol_backends = list(protocol_registry().all())
+        except Exception:
+            self._protocol_backends = []
+        self.protocol_row = Adw.ComboRow(title=_("Protocol"))
+        try:
+            names = Gtk.StringList()
+            for backend in self._protocol_backends:
+                names.append(backend.display_name or backend.protocol_id)
+            self.protocol_row.set_model(names)
+        except Exception:
+            pass
+        self.protocol_row.set_visible(len(self._protocol_backends) > 1)
+        if self.is_editing:
+            self.protocol_row.set_sensitive(False)
+        # Reflect the right protocol in the dropdown: the connection's own when
+        # editing, otherwise SSH. registry.all() is alphabetical, so index 0 is
+        # not SSH — without this an edited SSH connection would show the first
+        # listed protocol (e.g. Docker/Podman).
+        target_protocol = 'ssh'
+        if self.is_editing:
+            target_protocol = getattr(self.connection, 'protocol', 'ssh') or 'ssh'
+        try:
+            for i, backend in enumerate(self._protocol_backends):
+                if getattr(backend, 'protocol_id', '') == target_protocol:
+                    self.protocol_row.set_selected(i)
+                    break
+        except Exception:
+            pass
+        self.protocol_row.connect('notify::selected', self._on_protocol_changed)
+        basic_group.add(self.protocol_row)
+
         # Nickname
         self.nickname_row = Adw.EntryRow(title=_("Nickname"))
         try:
@@ -3118,7 +3166,15 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         self.forward_agent_row.set_active(False)
         proxy_group.add(self.forward_agent_row)
 
-        return [basic_group, proxy_group, wol_group]
+        # Kept as attributes so _on_protocol_changed can hide the SSH-specific
+        # parts when a plugin protocol is selected.
+        self._host_group = basic_group
+        self._routing_group = proxy_group
+        self._wol_group = wol_group
+
+        # Wake on LAN lives on its own (SSH-only) tab — see
+        # _build_connection_tab_pages — so it isn't shown for non-SSH protocols.
+        return [basic_group, proxy_group]
     
     def build_port_forwarding_groups(self):
         """Build PreferencesGroups for the Advanced page (Port Forwarding first, X11 last)"""
@@ -4157,8 +4213,373 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         """Handle cancel button click"""
         self.close()
     
+    # --- Protocol selector / plugin protocol support ----------------------
+
+    _SSH_ONLY_PAGES = ("authentication", "forwarding", "commands", "advanced", "wol")
+
+    def _selected_protocol_backend(self):
+        """The ProtocolBackend chosen in the selector (None -> SSH default)."""
+        backends = getattr(self, '_protocol_backends', None) or []
+        if not backends:
+            return None
+        try:
+            index = int(self.protocol_row.get_selected())
+        except Exception:
+            index = -1
+        if 0 <= index < len(backends):
+            return backends[index]
+        # Unselected / out of range -> prefer SSH (registry order is not SSH-first).
+        for backend in backends:
+            if getattr(backend, 'protocol_id', '') == 'ssh':
+                return backend
+        return backends[0]
+
+    def _selected_protocol_id(self) -> str:
+        backend = self._selected_protocol_backend()
+        return getattr(backend, 'protocol_id', 'ssh') or 'ssh'
+
+    def _set_page_visible(self, name: str, visible: bool):
+        page = (getattr(self, '_stack_pages', None) or {}).get(name)
+        if page is not None:
+            try:
+                page.set_visible(visible)
+            except Exception:
+                pass
+            return
+        # Gtk.Notebook fallback (libadwaita < 1.7): remove/re-insert the page,
+        # keeping the original tab order.
+        notebook = getattr(self, '_notebook', None)
+        order = getattr(self, '_notebook_order', None)
+        if notebook is None or not order:
+            return
+        try:
+            for index, (page_name, scrolled, title) in enumerate(order):
+                if page_name != name:
+                    continue
+                current = notebook.page_num(scrolled)
+                if visible and current == -1:
+                    insert_at = sum(
+                        1 for n, s, _t in order[:index]
+                        if notebook.page_num(s) != -1
+                    )
+                    notebook.insert_page(scrolled, Gtk.Label(label=title), insert_at)
+                elif not visible and current != -1:
+                    notebook.remove_page(current)
+                return
+        except Exception as e:
+            logger.debug("Notebook page visibility failed: %s", e)
+
+    def _update_switcher_visibility(self):
+        """Hide the tab switcher when only one page is visible (e.g. a non-SSH
+        protocol leaves just 'Connection') so there's no orphan full-width tab."""
+        pages = getattr(self, '_stack_pages', None)
+        if pages:
+            try:
+                visible = sum(1 for p in pages.values() if p.get_visible())
+            except Exception:
+                visible = 2
+            card = getattr(self, '_switcher_card', None)
+            if card is not None:
+                card.set_visible(visible > 1)
+            return
+        notebook = getattr(self, '_notebook', None)
+        if notebook is not None:
+            try:
+                notebook.set_show_tabs(notebook.get_n_pages() > 1)
+            except Exception:
+                pass
+
+    def _on_protocol_changed(self, *_args):
+        self._apply_protocol_to_ui()
+
+    def _apply_protocol_to_ui(self):
+        """Show/hide SSH-specific UI according to the selected protocol."""
+        backend = self._selected_protocol_backend()
+        is_ssh = self._selected_protocol_id() == 'ssh'
+
+        for row_name in ('hostname_row', 'username_row', 'port_row'):
+            row = getattr(self, row_name, None)
+            if row is not None:
+                try:
+                    row.set_visible(is_ssh)
+                except Exception:
+                    pass
+        routing = getattr(self, '_routing_group', None)
+        if routing is not None:
+            try:
+                routing.set_visible(is_ssh)
+            except Exception:
+                pass
+        for page_name in self._SSH_ONLY_PAGES:
+            self._set_page_visible(page_name, is_ssh)
+        # A single remaining page (non-SSH protocols) shouldn't show a lone tab.
+        self._update_switcher_visibility()
+
+        box = getattr(self, '_plugin_fields_box', None)
+        if box is None:
+            return
+        try:
+            while box.get_first_child():
+                box.remove(box.get_first_child())
+        except Exception:
+            pass
+        self._plugin_field_widgets = {}
+        if not is_ssh and backend is not None:
+            for group in self._build_plugin_field_rows(backend):
+                box.append(group)
+        box.set_visible(not is_ssh)
+
+    def _build_plugin_field_rows(self, backend):
+        """Render the backend's FieldSpec list as Adw rows, grouped by
+        FieldSpec.group. Returns a list of Adw.PreferencesGroup."""
+        try:
+            specs = list(backend.connection_fields() or [])
+        except Exception:
+            logger.exception("connection_fields() failed for %r",
+                             getattr(backend, 'protocol_id', '?'))
+            specs = []
+
+        groups: Dict[str, Any] = {}
+        ordered_groups = []
+        self._plugin_field_widgets = {}
+
+        for spec in specs:
+            group_key = getattr(spec, 'group', 'general') or 'general'
+            if group_key not in groups:
+                title = (backend.display_name or backend.protocol_id) \
+                    if group_key == 'general' else group_key.replace('_', ' ').title()
+                group = Adw.PreferencesGroup(title=title)
+                groups[group_key] = group
+                ordered_groups.append(group)
+            group = groups[group_key]
+
+            kind = getattr(spec, 'kind', 'text') or 'text'
+            default = spec.default
+            if kind == 'int':
+                row = Adw.SpinRow.new_with_range(0, 2 ** 31 - 1, 1)
+                row.set_title(spec.label)
+                initial = default
+                if initial is None and spec.key == 'port':
+                    initial = getattr(backend, 'default_port', None)
+                try:
+                    row.set_value(int(initial))
+                except (TypeError, ValueError):
+                    pass
+                getter = lambda r=row: int(r.get_value())
+                setter = lambda v, r=row: r.set_value(int(v))
+            elif kind == 'password':
+                row = Adw.PasswordEntryRow(title=spec.label)
+                if default:
+                    row.set_text(str(default))
+                getter = lambda r=row: r.get_text()
+                setter = lambda v, r=row: r.set_text(str(v or ''))
+            elif kind == 'choice':
+                row = Adw.ComboRow(title=spec.label)
+                choices = list(spec.choices or [])
+                values = [value for value, _label in choices]
+                names = Gtk.StringList()
+                for _value, label in choices:
+                    names.append(label)
+                row.set_model(names)
+                if default in values:
+                    row.set_selected(values.index(default))
+
+                def _choice_getter(r=row, vals=values):
+                    index = int(r.get_selected())
+                    return vals[index] if 0 <= index < len(vals) else None
+
+                def _choice_setter(v, r=row, vals=values):
+                    if v in vals:
+                        r.set_selected(vals.index(v))
+
+                getter, setter = _choice_getter, _choice_setter
+            elif kind == 'switch':
+                row = Adw.SwitchRow()
+                row.set_title(spec.label)
+                row.set_active(bool(default))
+                getter = lambda r=row: bool(r.get_active())
+                setter = lambda v, r=row: r.set_active(bool(v))
+            elif kind == 'file':
+                row = Adw.ActionRow(title=spec.label)
+                row.set_activatable(False)
+                holder = [str(default) if default else '']
+                if holder[0]:
+                    row.set_subtitle(holder[0])
+                browse_btn = Gtk.Button()
+                browse_btn.set_icon_name('document-open-symbolic')
+                browse_btn.add_css_class('flat')
+                browse_btn.set_valign(Gtk.Align.CENTER)
+
+                def _on_browse(_btn, r=row, h=holder, title=spec.label):
+                    dialog = Gtk.FileDialog()
+                    dialog.set_title(title)
+
+                    def _done(dlg, result):
+                        try:
+                            gfile = dlg.open_finish(result)
+                            if gfile and gfile.get_path():
+                                h[0] = gfile.get_path()
+                                r.set_subtitle(h[0])
+                        except Exception:
+                            pass
+
+                    dialog.open(self, None, _done)
+
+                browse_btn.connect('clicked', _on_browse)
+                row.add_suffix(browse_btn)
+                getter = lambda h=holder: h[0]
+
+                def _file_setter(v, r=row, h=holder):
+                    h[0] = str(v or '')
+                    r.set_subtitle(h[0])
+
+                setter = _file_setter
+            else:  # text
+                row = Adw.EntryRow(title=spec.label)
+                if default:
+                    row.set_text(str(default))
+                if getattr(spec, 'placeholder', ''):
+                    entry = row.get_child()
+                    if entry and hasattr(entry, 'set_placeholder_text'):
+                        entry.set_placeholder_text(spec.placeholder)
+                getter = lambda r=row: r.get_text().strip()
+                setter = lambda v, r=row: r.set_text(str(v or ''))
+
+            group.add(row)
+            self._plugin_field_widgets[spec.key] = (spec, row, getter, setter)
+
+        return ordered_groups
+
+    def _load_shared_meta_rows(self):
+        """Load protocol-agnostic app metadata (Wake-on-LAN, tags) into rows."""
+        if hasattr(self, 'wol_mac_row'):
+            try:
+                cfg = getattr(self.parent_window, 'config', None)
+                nickname = getattr(self.connection, 'nickname', '').strip()
+                if cfg and nickname:
+                    meta = cfg.get_connection_meta(nickname)
+                    if meta:
+                        self.wol_mac_row.set_text((meta.get('wol_mac') or '').strip())
+                        self.wol_broadcast_row.set_text((meta.get('wol_broadcast_ip') or '').strip())
+                        port_val = meta.get('wol_port')
+                        if port_val is not None:
+                            try:
+                                self.wol_port_row.set_text(str(int(port_val)))
+                            except Exception:
+                                self.wol_port_row.set_text("9")
+            except Exception as e:
+                logger.debug("Load WoL meta: %s", e)
+
+        if hasattr(self, 'tags_row'):
+            try:
+                cfg = getattr(self.parent_window, 'config', None)
+                nickname = getattr(self.connection, 'nickname', '').strip()
+                if cfg and nickname:
+                    # Suppress inline autocompletion while loading.
+                    self._set_text_without_completion(
+                        self.tags_row,
+                        ', '.join(cfg.get_connection_tags(nickname)),
+                    )
+            except Exception as e:
+                logger.debug("Load tags meta: %s", e)
+
+    def _load_plugin_field_values(self):
+        """Populate rendered plugin rows from the connection's data dict."""
+        data = getattr(self.connection, 'data', None) or {}
+        for key, (spec, _row, _getter, setter) in (
+                getattr(self, '_plugin_field_widgets', None) or {}).items():
+            value = data.get(key, spec.default)
+            if value is None:
+                continue
+            try:
+                setter(value)
+            except Exception as e:
+                logger.debug("Failed to load plugin field %r: %s", key, e)
+
+    def _save_plugin_connection(self, backend):
+        """Collect, validate, and emit connection data for a plugin protocol."""
+        nickname = self.nickname_row.get_text().strip()
+        if not nickname:
+            self.show_error(_("Please enter a nickname for this connection"))
+            return
+
+        data = {
+            'nickname': nickname,
+            'protocol': backend.protocol_id,
+        }
+        for key, (spec, row, getter, _setter) in (
+                getattr(self, '_plugin_field_widgets', None) or {}).items():
+            try:
+                data[key] = getter()
+            except Exception as e:
+                logger.debug("Failed to read plugin field %r: %s", key, e)
+                data[key] = spec.default
+            if getattr(spec, 'required', False) and not data[key]:
+                self.show_error(_("{} is required").format(spec.label))
+                try:
+                    self._focus_row(row)
+                except Exception:
+                    pass
+                return
+
+        try:
+            errors = list(backend.validate(data) or [])
+        except Exception as e:
+            errors = [str(e)]
+        if errors:
+            self.show_error("\n".join(errors))
+            return
+
+        self._persist_connection_meta(nickname)
+
+        if self.is_editing and self.connection:
+            try:
+                self.connection.data.update(data)
+            except Exception:
+                pass
+
+        self.emit('connection-saved', data)
+        self.close()
+
+    def _persist_connection_meta(self, nickname_for_meta):
+        """Persist Wake-on-LAN and tags metadata (protocol-agnostic app meta)."""
+        if nickname_for_meta and hasattr(self, 'wol_mac_row'):
+            try:
+                cfg = getattr(self.parent_window, 'config', None)
+                if cfg:
+                    meta = cfg.get_connection_meta(nickname_for_meta)
+                    wol_mac = (self.wol_mac_row.get_text() or '').strip()
+                    wol_broadcast = (self.wol_broadcast_row.get_text() or '').strip()
+                    try:
+                        wol_port = int((self.wol_port_row.get_text() or '9').strip() or '9')
+                    except ValueError:
+                        wol_port = 9
+                    meta['wol_mac'] = wol_mac
+                    meta['wol_broadcast_ip'] = wol_broadcast
+                    meta['wol_port'] = wol_port
+                    cfg.set_connection_meta(nickname_for_meta, meta)
+            except Exception as e:
+                logger.debug("Save WoL meta: %s", e)
+
+        # Tags are keyed by the new nickname, so renames carry them forward.
+        if nickname_for_meta and hasattr(self, 'tags_row'):
+            try:
+                cfg = getattr(self.parent_window, 'config', None)
+                if cfg:
+                    tags_raw = (self.tags_row.get_text() or '').strip()
+                    tags = [t.strip() for t in tags_raw.split(',') if t.strip()] if tags_raw else []
+                    cfg.set_connection_tags(nickname_for_meta, tags)
+            except Exception as e:
+                logger.debug("Save tags meta: %s", e)
+
     def on_save_clicked(self, *_args):
         """Handle save button click or dialog save response"""
+        # Plugin protocols collect their own (declarative) fields; the rest of
+        # this method is the SSH path, which serializes to ~/.ssh/config.
+        backend = self._selected_protocol_backend()
+        if backend is not None and backend.protocol_id != 'ssh':
+            self._save_plugin_connection(backend)
+            return
         # Block save and focus the first invalid field if any inline validation fails
         invalid_row = None
         try:
@@ -4258,37 +4679,9 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             if getattr(self, 'split_original_nickname', None):
                 connection_data['__split_original_nickname'] = self.split_original_nickname
 
-        # Persist Wake-on-LAN metadata to connections_meta
+        # Persist Wake-on-LAN and tags metadata to connections_meta
         nickname_for_meta = connection_data.get('nickname', '').strip()
-        if nickname_for_meta and hasattr(self, 'wol_mac_row'):
-            try:
-                cfg = getattr(self.parent_window, 'config', None)
-                if cfg:
-                    meta = cfg.get_connection_meta(nickname_for_meta)
-                    wol_mac = (self.wol_mac_row.get_text() or '').strip()
-                    wol_broadcast = (self.wol_broadcast_row.get_text() or '').strip()
-                    try:
-                        wol_port = int((self.wol_port_row.get_text() or '9').strip() or '9')
-                    except ValueError:
-                        wol_port = 9
-                    meta['wol_mac'] = wol_mac
-                    meta['wol_broadcast_ip'] = wol_broadcast
-                    meta['wol_port'] = wol_port
-                    cfg.set_connection_meta(nickname_for_meta, meta)
-            except Exception as e:
-                logger.debug("Save WoL meta: %s", e)
-
-        # Persist tags to connections_meta (keyed by the new nickname, so
-        # renames carry the tags forward)
-        if nickname_for_meta and hasattr(self, 'tags_row'):
-            try:
-                cfg = getattr(self.parent_window, 'config', None)
-                if cfg:
-                    tags_raw = (self.tags_row.get_text() or '').strip()
-                    tags = [t.strip() for t in tags_raw.split(',') if t.strip()] if tags_raw else []
-                    cfg.set_connection_tags(nickname_for_meta, tags)
-            except Exception as e:
-                logger.debug("Save tags meta: %s", e)
+        self._persist_connection_meta(nickname_for_meta)
 
         # Update the connection object locally when editing (do not persist here; window handles persistence)
         if self.is_editing and self.connection:

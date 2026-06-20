@@ -35,6 +35,8 @@ Requires:       libsecret
 Requires:       sshpass
 Requires:       openssh-askpass
 Requires:       webkitgtk6.0
+# For the built-in telnet protocol plugin (degrades gracefully if absent)
+Recommends:     telnet
 
 %description
 SSH Pilot is a user-friendly SSH connection manager featuring built-in tabbed terminal, remote file management, key transfer, port forwarding and more. It's an alternative to Putty, Termius and Mobaxterm.
@@ -56,6 +58,12 @@ install -D -m 755 run.py %{buildroot}%{_bindir}/sshpilot
 # Install Python modules
 install -d %{buildroot}%{python3_sitelib}/sshpilot
 cp -a sshpilot/*.py %{buildroot}%{python3_sitelib}/sshpilot/
+
+# Plugin subpackage (loader, registry, built-in protocols + their plugin.json).
+# Example plugins are dev references only — never shipped.
+cp -a sshpilot/plugins %{buildroot}%{python3_sitelib}/sshpilot/
+rm -rf %{buildroot}%{python3_sitelib}/sshpilot/plugins/examples
+find %{buildroot}%{python3_sitelib}/sshpilot/plugins -name __pycache__ -type d -prune -exec rm -rf {} +
 
 # Install resources
 install -d %{buildroot}%{python3_sitelib}/sshpilot/resources
