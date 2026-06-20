@@ -29,7 +29,8 @@ run unsandboxed with full app privileges. Only install plugins you trust.
 ## Develop / test
 
 ```sh
-pip install pytest "sshpilot @ git+https://github.com/mfat/sshpilot" --no-deps
+pip install pytest
+pip install "sshpilot @ git+https://github.com/mfat/sshpilot" --no-deps
 pytest -ra
 ```
 

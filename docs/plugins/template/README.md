@@ -44,7 +44,8 @@ enable it in **Preferences ▸ Plugins**, and restart sshPilot.
 ## Test it
 
 ```sh
-pip install pytest "sshpilot @ git+https://github.com/mfat/sshpilot" --no-deps
+pip install pytest
+pip install "sshpilot @ git+https://github.com/mfat/sshpilot" --no-deps
 pytest -ra
 ```
 
