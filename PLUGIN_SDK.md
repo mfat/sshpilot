@@ -6,8 +6,12 @@ API. This guide is the contract: everything documented here is stable within
 an API major version; everything else under `sshpilot.*` is private and may
 change without notice.
 
+> The canonical, maintained guide is **[docs/plugins/writing-plugins.md](docs/plugins/writing-plugins.md)**
+> (plus [registry.md](docs/plugins/registry.md) and the
+> [template](docs/plugins/template/)). This file is the deeper API reference.
+
 - **The only import you need:** `sshpilot.plugins.api`.
-- **Current API version:** `1.2` (see [Versioning](#versioning)).
+- **Current API version:** `1.3` (see [Versioning](#versioning)).
 - **Worked examples** — two provider archetypes:
   - [`examples/mock_vps/`](sshpilot/plugins/examples/mock_vps/) — an **IP/SSH** provider: provision → get an IP → `add_connection` a normal SSH connection.
   - [`examples/easyenv_workspaces/`](sshpilot/plugins/examples/easyenv_workspaces/) — a **CLI/mesh** provider (real partner [easyenv.io](https://easyenv.io/cli)): a protocol backend whose connection *is* a CLI command, plus a management page. See [CLI-driven plugins](#11-cli-driven-plugins).
@@ -252,12 +256,15 @@ must be made on the UI thread.
 
 ## 9. Versioning
 
-- `API_VERSION = (major, minor)`, currently `(1, 2)`. Your manifest declares the
+- `API_VERSION = (major, minor)`, currently `(1, 3)`. Your manifest declares the
   **major** you target; the loader skips plugins whose major doesn't match.
-- Minor bumps are additive (new methods/events); your plugin keeps working.
+- Minor bumps are additive (new methods/events); your plugin keeps working. Note
+  the loader checks only the **major**, so a plugin using a newer minor's API on
+  an older app build fails at call time, not at load — target the minor you test.
 - New since `1.0`: `1.1` plugin secrets; `1.2` events, UI extension,
   `open_connection`, `generate_key`, scoped `ctx.secrets`/`ctx.settings`,
-  `ctx.run_on_ui_thread`, `ctx.plugin_id`.
+  `ctx.run_on_ui_thread`, `ctx.plugin_id`; `1.3` connection groups
+  (`create_group`/`add_connection_to_group`/`add_connection_group`).
 
 ---
 

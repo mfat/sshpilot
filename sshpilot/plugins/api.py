@@ -63,11 +63,7 @@ class SpawnSpec:
 
     argv: List[str]
     env: Dict[str, str] = field(default_factory=dict)
-    working_directory: Optional[str] = None
-    # Called with the child PID after a successful spawn (e.g. to start a
-    # watchdog), and on child exit (for cleanup of FIFOs, temp files, ...).
-    on_spawned: Optional[Callable[[int], None]] = None
-    on_exited: Optional[Callable[[int], None]] = None
+    working_directory: Optional[str] = None  # spawn cwd; defaults to ~ if None
     # Transitional, protocol-private data. See docstring.
     extras: Dict[str, Any] = field(default_factory=dict)
 

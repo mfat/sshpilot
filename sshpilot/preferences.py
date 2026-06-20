@@ -2693,6 +2693,15 @@ class PreferencesWindow(Adw.Window):
             lbl.set_halign(Gtk.Align.START)
             lbl.set_xalign(0)
             body.append(lbl)
+        note = Gtk.Label(label=_("Permissions are declared by the author for "
+                                 "transparency; they are not enforced. Changes "
+                                 "take effect after restarting sshPilot."))
+        note.add_css_class('dim-label')
+        note.add_css_class('caption')
+        note.set_halign(Gtk.Align.START)
+        note.set_xalign(0)
+        note.set_wrap(True)
+        body.append(note)
         expected_entry = None
         if sha256 is not None:
             sha_head = Gtk.Label(label=_("SHA-256"))

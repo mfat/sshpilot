@@ -1109,6 +1109,17 @@ class TerminalWidget(Gtk.Box):
             # protocol backends are a different axis.
             proto = getattr(self.connection, 'protocol', 'ssh')
             protocol_backend = protocol_registry().get_or_none(proto)
+            working_dir = None
+            # Fail closed: a non-SSH connection whose backend isn't registered
+            # (plugin disabled / failed to load / API mismatch) must not silently
+            # fall back to an ssh invocation.
+            if (protocol_backend is None and proto != 'ssh'
+                    and getattr(self.connection, 'ssh_connection_cmd', None) is None):
+                GLib.idle_add(
+                    self._on_connection_failed,
+                    _("No backend for protocol '{}'. The plugin may be disabled, "
+                      "failed to load, or targets a different API version.").format(proto))
+                return
             if protocol_backend is not None:
                 # Scope the spawn context to the plugin that registered the
                 # protocol so a backend's ctx.settings/secrets resolve to its
@@ -1127,6 +1138,7 @@ class TerminalWidget(Gtk.Box):
                     return
                 ssh_cmd = list(spec.argv)
                 env = dict(spec.env)
+                working_dir = spec.working_directory
                 use_askpass = bool(spec.extras.get('use_askpass'))
                 password_value = (
                     spec.extras.get('password')
@@ -1257,7 +1269,7 @@ class TerminalWidget(Gtk.Box):
                 self.backend.spawn_async(
                     argv=ssh_cmd,
                     env=env_dict if env_dict else None,
-                    cwd=os.path.expanduser('~') or '/',
+                    cwd=working_dir or os.path.expanduser('~') or '/',
                     flags=0,
                     child_setup=None,
                     callback=self._on_spawn_complete,
@@ -1335,7 +1347,7 @@ class TerminalWidget(Gtk.Box):
             self.backend.spawn_async(
                 argv=ssh_cmd,
                 env=env_dict if env_dict else None,
-                cwd=os.path.expanduser('~') or '/',
+                cwd=working_dir or os.path.expanduser('~') or '/',
                 flags=0,
                 child_setup=None,
                 callback=self._on_spawn_complete,
