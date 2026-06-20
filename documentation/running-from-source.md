@@ -60,6 +60,37 @@ sudo dnf install \
   webkitgtk6
 ```
 
+**Arch Linux**
+
+```bash
+sudo pacman -S --needed \
+  python python-gobject python-cairo \
+  gtk4 libadwaita vte4 gtksourceview5 libsecret \
+  python-paramiko python-cryptography sshpass
+```
+
+On Arch the GObject-Introspection typelibs ship inside the library packages, so
+there are no separate `gir`/`typelib` packages to install.
+
+**openSUSE (Tumbleweed)**
+
+```bash
+sudo zypper install \
+  python3 python3-gobject python3-gobject-Gdk \
+  typelib-1_0-Gtk-4_0 typelib-1_0-Adw-1 typelib-1_0-Vte-3_91 \
+  typelib-1_0-GtkSource-5 typelib-1_0-Secret-1 \
+  python3-paramiko python3-cryptography sshpass openssh-askpass-gnome
+```
+
+Installing the `typelib-1_0-*` packages automatically pulls in the matching
+runtime libraries (`libgtk-4-1`, `libadwaita-1-0`, …).
+
+> **WebKit is optional.** The GTK4 WebKit 6.0 package (`gir1.2-webkit-6.0` on
+> Debian/Ubuntu, `webkitgtk6` on Fedora, `webkitgtk-6.0` on Arch,
+> `typelib-1_0-WebKit-6_0` on openSUSE) is only needed for the optional
+> **PyXterm.js** terminal backend. The default **VTE** backend runs without it,
+> so you can leave it out unless you specifically want that backend.
+
 ### 2. Create a venv that can see the system bindings
 
 The `--system-site-packages` flag is **required** so the venv can import the
@@ -124,6 +155,28 @@ sudo dnf install \
   gtk4 libadwaita vte291-gtk4 gtksourceview5 libsecret \
   sshpass openssh-askpass webkitgtk6
 ```
+
+**Arch Linux**
+
+```bash
+sudo pacman -S --needed \
+  python cairo pkgconf gobject-introspection gcc \
+  gtk4 libadwaita vte4 gtksourceview5 libsecret sshpass
+```
+
+**openSUSE (Tumbleweed)**
+
+```bash
+sudo zypper install \
+  python3 python3-devel gcc pkg-config \
+  gobject-introspection-devel cairo-devel \
+  typelib-1_0-Gtk-4_0 typelib-1_0-Adw-1 typelib-1_0-Vte-3_91 \
+  typelib-1_0-GtkSource-5 typelib-1_0-Secret-1 \
+  sshpass openssh-askpass-gnome
+```
+
+(WebKit 6.0 is optional here too — add `webkitgtk-6.0` on Arch /
+`typelib-1_0-WebKit-6_0` on openSUSE only if you want the PyXterm.js backend.)
 
 ### 2. Create a plain venv
 

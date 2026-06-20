@@ -248,6 +248,33 @@ sudo dnf install \
   webkitgtk6
 ```
 
+**Arch Linux**
+
+```bash
+sudo pacman -S --needed \
+  python python-gobject python-cairo \
+  gtk4 libadwaita vte4 gtksourceview5 libsecret \
+  python-paramiko python-cryptography sshpass
+```
+
+**openSUSE (Tumbleweed)**
+
+```bash
+sudo zypper install \
+  python3 python3-gobject python3-gobject-Gdk \
+  typelib-1_0-Gtk-4_0 typelib-1_0-Adw-1 typelib-1_0-Vte-3_91 \
+  typelib-1_0-GtkSource-5 typelib-1_0-Secret-1 \
+  python3-paramiko python3-cryptography sshpass openssh-askpass-gnome
+```
+
+Other distributions work too — install the equivalent GTK4 / libadwaita / VTE
+(GTK4) / GtkSourceView 5 / libsecret packages plus PyGObject. The optional
+**WebKit 6.0** package (`gir1.2-webkit-6.0` / `webkitgtk6` / `webkitgtk-6.0` /
+`typelib-1_0-WebKit-6_0`) is only needed for the PyXterm.js terminal backend; the
+default VTE backend works without it. Full per-distro detail (and the pure-venv
+approach) is in
+[documentation/running-from-source.md](documentation/running-from-source.md).
+
 `libsecret` handles secure credential storage on Linux via the Secret Service
 API. macOS contributors should follow
 [documentation/INSTALL-macos.md](documentation/INSTALL-macos.md) for the
