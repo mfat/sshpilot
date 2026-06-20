@@ -1,0 +1,8 @@
+{
+  "id": "aws-ssm",
+  "name": "AWS SSM",
+  "api_version": 1,
+  "permissions": [
+    "process"
+  ]
+}

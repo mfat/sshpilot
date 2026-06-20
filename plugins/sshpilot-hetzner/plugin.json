@@ -1,0 +1,12 @@
+{
+  "id": "hetzner",
+  "name": "Hetzner Cloud",
+  "api_version": 1,
+  "permissions": [
+    "connections",
+    "keyring",
+    "network",
+    "ui",
+    "settings"
+  ]
+}

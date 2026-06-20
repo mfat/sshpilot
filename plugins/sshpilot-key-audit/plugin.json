@@ -1,0 +1,11 @@
+{
+  "id": "key-audit",
+  "name": "SSH Key Audit",
+  "api_version": 1,
+  "permissions": [
+    "filesystem",
+    "process",
+    "ui",
+    "settings"
+  ]
+}
