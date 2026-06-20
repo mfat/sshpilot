@@ -96,8 +96,10 @@ class Plugin(SshPilotPlugin):
         rule = match_group(info.nickname, info.host, self._rules)
         if rule is None:
             return
-        self._assign(info.nickname, rule)
-        self.ctx.ui.notify(f"Added {info.nickname} to {rule['group']}")
+        # Only announce success — _assign returns False if the group couldn't be
+        # created/assigned (e.g. UI not ready), and a false toast is misleading.
+        if self._assign(info.nickname, rule):
+            self.ctx.ui.notify(f"Added {info.nickname} to {rule['group']}")
 
     def _assign(self, nickname: str, rule: Dict[str, Any]) -> bool:
         group_id = self.ctx.create_group(rule["group"], rule.get("color"))

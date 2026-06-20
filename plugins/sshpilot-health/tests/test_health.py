@@ -22,6 +22,7 @@ class _Ctx:
         self.pages = []
         self.ui = self
         self.events = self
+        self.settings = _Settings()
 
     def register_page(self, page_id, title, icon, factory):
         self.pages.append(page_id)
@@ -31,6 +32,17 @@ class _Ctx:
 
     def list_connections(self):
         return []
+
+
+class _Settings:
+    def __init__(self, data=None):
+        self._data = dict(data or {})
+
+    def get(self, key, default=None):
+        return self._data.get(key, default)
+
+    def set(self, key, value):
+        self._data[key] = value
 
 
 def test_tcp_check_up(monkeypatch):
@@ -111,6 +123,7 @@ def test_supported_flag_false_without_list_connections():
             self.pages = []
             self.ui = self
             self.events = self
+            self.settings = _Settings()
 
         def register_page(self, *a): self.pages.append(a[0])
         def subscribe(self, event, cb): self.subscribed[event] = cb

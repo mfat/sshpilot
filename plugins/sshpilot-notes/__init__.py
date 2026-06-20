@@ -81,10 +81,12 @@ class Plugin(SshPilotPlugin):
         self._buffer = None
         self._dropdown = None
         self._status_label = None
+        self._reloading = False
 
         ctx.ui.register_page(
             "notes", "Notes", "text-editor-symbolic", self._build_page)
         ctx.events.subscribe(Events.CONNECTION_DELETED, self._on_connection_deleted)
+        ctx.events.subscribe(Events.CONNECTION_CREATED, self._on_connection_created)
 
     def deactivate(self) -> None:
         logger.info("notes: deactivate")
@@ -97,6 +99,25 @@ class Plugin(SshPilotPlugin):
     def _on_connection_deleted(self, info) -> None:
         if self._notes.prune(info.nickname):
             self._persist()
+        self._reload_connections()
+
+    def _on_connection_created(self, info) -> None:
+        # Keep the picker current without needing the page reopened.
+        self._reload_connections()
+
+    def _reload_connections(self) -> None:
+        if self._dropdown is None:
+            return  # page not built yet
+        Gtk = self._Gtk
+        self._nicknames = [c.nickname for c in self.ctx.list_connections()]
+        self._reloading = True
+        self._dropdown.set_model(
+            Gtk.StringList.new(self._nicknames or ["(no connections)"]))
+        if self._current in self._nicknames:
+            self._dropdown.set_selected(self._nicknames.index(self._current))
+        self._reloading = False
+        if self._current is None and self._nicknames:
+            self._load_into_editor(self._nicknames[0])
 
     # --- UI (gi imported lazily; only runs inside the app) ----------------
     def _build_page(self):
@@ -171,6 +192,8 @@ class Plugin(SshPilotPlugin):
         self._buffer.set_text(self._notes.get(nickname))
 
     def _on_selection_changed(self, _dropdown, _param) -> None:
+        if self._reloading:
+            return  # model swap during a connection-list refresh, not a user pick
         # Save the note we're leaving, then load the newly selected one.
         self._save_current()
         nickname = self._selected_nickname()

@@ -420,8 +420,10 @@ class Plugin(SshPilotPlugin):
         self._default_user = ctx.settings.get("default_user", "")
         self._default_group = ctx.settings.get("default_group", "")
         self._last_path = ctx.settings.get("last_path", "")
+        self._select_changed = bool(ctx.settings.get("select_changed", False))
         self._diff_rows: List[DiffRow] = []
         self._selected: set = set()
+        self._select_changed_row = None
         self._list_box = None
         self._status_label = None
         self._parse_btn = None
@@ -491,6 +493,13 @@ class Plugin(SshPilotPlugin):
         self._group_entry = Adw.EntryRow(title="Sidebar group (optional)")
         self._group_entry.set_text(self._default_group)
         opts.add(self._group_entry)
+
+        self._select_changed_row = Adw.SwitchRow(
+            title="Also select changed hosts",
+            subtitle="Pre-select hosts whose saved address differs (overwrites on import)")
+        self._select_changed_row.set_active(self._select_changed)
+        self._select_changed_row.connect("notify::active", self._on_select_changed_toggled)
+        opts.add(self._select_changed_row)
         box.append(opts)
 
         file_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
@@ -591,9 +600,12 @@ class Plugin(SshPilotPlugin):
             self._set_status(f"Failed to read file: {error}")
             return
         self._diff_rows = diff_rows
+        wanted = {STATUS_NEW}
+        if self._select_changed:
+            wanted.add(STATUS_CHANGED)
         self._selected = {
             index for index, item in enumerate(diff_rows)
-            if item.status == STATUS_NEW
+            if item.status in wanted
         }
         self._rebuild_preview()
         new_count = sum(1 for d in diff_rows if d.status == STATUS_NEW)
@@ -654,7 +666,22 @@ class Plugin(SshPilotPlugin):
             self._selected.discard(index)
         self._import_btn.set_sensitive(bool(self._selected))
 
-    def _on_import_clicked(self, _btn) -> None:
+    def _on_select_changed_toggled(self, row, _param) -> None:
+        self._select_changed = row.get_active()
+        self.ctx.settings.set("select_changed", self._select_changed)
+        if not self._diff_rows:
+            return
+        wanted = {STATUS_NEW}
+        if self._select_changed:
+            wanted.add(STATUS_CHANGED)
+        self._selected = {
+            index for index, item in enumerate(self._diff_rows)
+            if item.status in wanted
+        }
+        self._rebuild_preview()
+        self._import_btn.set_sensitive(bool(self._selected))
+
+    def _on_import_clicked(self, button) -> None:
         if not self._selected:
             return
         default_user = self._user_entry.get_text().strip()
@@ -663,6 +690,32 @@ class Plugin(SshPilotPlugin):
             self._diff_rows, self._selected,
             default_user=default_user, default_group=default_group)
 
+        # CHANGED rows overwrite an existing connection in place — confirm first.
+        if plan.changed:
+            import gi
+            gi.require_version("Adw", "1")
+            from gi.repository import Adw
+            names = ", ".join(n for n, _d, _g in plan.changed[:5])
+            extra = "" if len(plan.changed) <= 5 else f" (+{len(plan.changed) - 5} more)"
+            dialog = Adw.MessageDialog(
+                transient_for=button.get_root(),
+                heading="Overwrite existing connections?",
+                body=(f"{len(plan.changed)} selected host(s) already exist with a "
+                      f"different address and will be updated in place: "
+                      f"{names}{extra}."))
+            dialog.add_response("cancel", "Cancel")
+            dialog.add_response("apply", "Update & import")
+            dialog.set_response_appearance("apply", Adw.ResponseAppearance.DESTRUCTIVE)
+            dialog.set_default_response("cancel")
+            dialog.set_close_response("cancel")
+            dialog.connect(
+                "response",
+                lambda _d, resp: self._apply_plan(plan) if resp == "apply" else None)
+            dialog.present()
+            return
+        self._apply_plan(plan)
+
+    def _apply_plan(self, plan) -> None:
         imported = 0
         errors: List[str] = []
 
@@ -715,9 +768,12 @@ class Plugin(SshPilotPlugin):
                     if hasattr(self.ctx, "list_connections") else [])
         self._diff_rows = diff_inventory(
             rows, existing, default_user=self._default_user)
+        wanted = {STATUS_NEW}
+        if self._select_changed:
+            wanted.add(STATUS_CHANGED)
         self._selected = {
             index for index, item in enumerate(self._diff_rows)
-            if item.status == STATUS_NEW
+            if item.status in wanted
         }
         self._rebuild_preview()
         self._import_btn.set_sensitive(bool(self._selected))

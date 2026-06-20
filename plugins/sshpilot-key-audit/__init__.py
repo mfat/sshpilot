@@ -127,16 +127,20 @@ class Plugin(SshPilotPlugin):
     def activate(self, ctx: PluginContext) -> None:
         self.ctx = ctx
         self._threshold = self._read_threshold()
+        self._stop = threading.Event()
         self._list_box = None
         self._status_label = None
         self._threshold_entry = None
+        self._warn_row = None
 
         ctx.ui.register_page(
             "keyaudit", "Key Audit", "channel-secure-symbolic", self._build_page)
-        if ctx.settings.get("warn_on_start", True):
-            ctx.events.subscribe(Events.APP_STARTED, self._on_app_started)
+        # Always subscribe; whether to actually warn is checked at event time so
+        # the UI toggle takes effect without needing a re-subscribe.
+        ctx.events.subscribe(Events.APP_STARTED, self._on_app_started)
 
     def deactivate(self) -> None:
+        self._stop.set()
         logger.info("key-audit: deactivate")
 
     def _read_threshold(self) -> int:
@@ -148,10 +152,13 @@ class Plugin(SshPilotPlugin):
 
     # --- startup warning --------------------------------------------------
     def _on_app_started(self, _payload) -> None:
+        if not self.ctx.settings.get("warn_on_start", True):
+            return
+
         def worker():
             keys = self._scan()
             old = [k for k in keys if k.get("status") == "old"]
-            if old:
+            if old and not self._stop.is_set():
                 self.ctx.run_on_ui_thread(
                     self.ctx.ui.notify,
                     f"{len(old)} SSH key(s) older than {self._threshold} days")
@@ -263,6 +270,15 @@ class Plugin(SshPilotPlugin):
         controls.append(refresh)
         box.append(controls)
 
+        warn_group = Adw.PreferencesGroup()
+        self._warn_row = Adw.SwitchRow(
+            title="Warn at startup",
+            subtitle="Show a toast on launch if any key is past the threshold")
+        self._warn_row.set_active(bool(self.ctx.settings.get("warn_on_start", True)))
+        self._warn_row.connect("notify::active", self._on_warn_toggled)
+        warn_group.add(self._warn_row)
+        box.append(warn_group)
+
         self._list_box = Gtk.ListBox()
         self._list_box.set_selection_mode(Gtk.SelectionMode.NONE)
         self._list_box.add_css_class("boxed-list")
@@ -275,6 +291,9 @@ class Plugin(SshPilotPlugin):
 
         self._refresh()
         return outer
+
+    def _on_warn_toggled(self, row, _param) -> None:
+        self.ctx.settings.set("warn_on_start", bool(row.get_active()))
 
     def _on_threshold_changed(self, _entry) -> None:
         try:
@@ -291,7 +310,8 @@ class Plugin(SshPilotPlugin):
 
         def worker():
             keys = self._scan()
-            self.ctx.run_on_ui_thread(self._render, keys)
+            if not self._stop.is_set():
+                self.ctx.run_on_ui_thread(self._render, keys)
         threading.Thread(target=worker, daemon=True).start()
 
     def _render(self, keys: List[Dict[str, Any]]) -> None:

@@ -121,10 +121,12 @@ class Plugin(SshPilotPlugin):
         self._label_entry = None
         self._command_entry = None
         self._status_label = None
+        self._reloading = False
 
         ctx.ui.register_page(
             "runbook", "Runbook", "utilities-terminal-symbolic", self._build_page)
         ctx.events.subscribe(Events.CONNECTION_DELETED, self._on_connection_deleted)
+        ctx.events.subscribe(Events.CONNECTION_CREATED, self._on_connection_created)
 
     def deactivate(self) -> None:
         logger.info("runbook: deactivate")
@@ -136,6 +138,26 @@ class Plugin(SshPilotPlugin):
     def _on_connection_deleted(self, info) -> None:
         if self._store.prune(info.nickname):
             self._persist()
+        self._reload_connections()
+
+    def _on_connection_created(self, info) -> None:
+        self._reload_connections()
+
+    def _reload_connections(self) -> None:
+        if self._dropdown is None:
+            return  # page not built yet
+        Gtk = self._Gtk
+        self._infos = {c.nickname: c for c in self.ctx.list_connections()}
+        self._nicknames = list(self._infos.keys())
+        self._reloading = True
+        self._dropdown.set_model(
+            Gtk.StringList.new(self._nicknames or ["(no connections)"]))
+        if self._current in self._nicknames:
+            self._dropdown.set_selected(self._nicknames.index(self._current))
+        self._reloading = False
+        if self._current is None and self._nicknames:
+            self._current = self._nicknames[0]
+        self._rebuild_snippets()
 
     # --- UI (gi imported lazily) ------------------------------------------
     def _build_page(self):
@@ -219,6 +241,8 @@ class Plugin(SshPilotPlugin):
         return None
 
     def _on_selection_changed(self, _dropdown, _param) -> None:
+        if self._reloading:
+            return  # model swap during a connection-list refresh, not a user pick
         self._current = self._selected_nickname()
         self._rebuild_snippets()
 

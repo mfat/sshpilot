@@ -64,6 +64,18 @@ def test_parse_excludes_self_by_default():
     assert "tag:prod" in web["tags"]
 
 
+def test_parse_dedupes_colliding_short_names():
+    mod = _load()
+    status = {"Peer": {
+        "a": {"DNSName": "web.prod.tail.ts.net.", "TailscaleIPs": ["100.64.0.10"]},
+        "b": {"DNSName": "web.staging.tail.ts.net.", "TailscaleIPs": ["100.64.0.11"]},
+    }}
+    rows = mod.parse_tailscale_status(status)
+    names = sorted(r["name"] for r in rows)
+    assert names == ["web", "web-2"]              # no collision
+    assert len({r["name"] for r in rows}) == 2
+
+
 def test_parse_include_self():
     mod = _load()
     rows = mod.parse_tailscale_status(STATUS, include_self=True)

@@ -195,7 +195,9 @@ class SessionLogStore:
 class Plugin(SshPilotPlugin):
     def activate(self, ctx: PluginContext) -> None:
         self.ctx = ctx
-        self._store = SessionLogStore(ctx.settings.get("log", {}))
+        self._max_entries = self._read_max_entries()
+        self._store = SessionLogStore(ctx.settings.get("log", {}),
+                                      max_entries=self._max_entries)
         self._list_box = None
         self._filter_entry = None
         self._status_label = None
@@ -207,6 +209,12 @@ class Plugin(SshPilotPlugin):
 
     def deactivate(self) -> None:
         logger.info("session-log: deactivate")
+
+    def _read_max_entries(self) -> int:
+        try:
+            return max(1, int(self.ctx.settings.get("max_entries", MAX_ENTRIES)))
+        except (TypeError, ValueError):
+            return MAX_ENTRIES
 
     def _persist(self) -> None:
         self.ctx.settings.set("log", self._store.as_dict())
@@ -264,8 +272,18 @@ class Plugin(SshPilotPlugin):
 
         filter_group = Adw.PreferencesGroup(title="Filter")
         self._filter_entry = Adw.EntryRow(title="Nickname or host contains…")
+        self._filter_entry.set_text(self.ctx.settings.get("filter", "") or "")
         self._filter_entry.connect("changed", self._on_filter_changed)
         filter_group.add(self._filter_entry)
+        self._max_entry = Adw.EntryRow(title="Keep last N sessions")
+        self._max_entry.set_text(str(self._max_entries))
+        self._max_entry.connect("apply", self._on_max_changed)
+        self._max_entry.connect("entry-activated", self._on_max_changed)
+        try:
+            self._max_entry.set_show_apply_button(True)
+        except Exception:
+            pass
+        filter_group.add(self._max_entry)
         box.append(filter_group)
 
         actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
@@ -315,7 +333,23 @@ class Plugin(SshPilotPlugin):
         return self._store.filter_entries(nickname=query, host=query)
 
     def _on_filter_changed(self, *_args) -> None:
+        self.ctx.settings.set("filter", self._filter_entry.get_text().strip())
         self._refresh_list()
+
+    def _on_max_changed(self, *_args) -> None:
+        try:
+            value = max(1, int(self._max_entry.get_text().strip()))
+        except (TypeError, ValueError):
+            self._set_status("Keep-last must be a whole number.")
+            self._max_entry.set_text(str(self._max_entries))
+            return
+        self._max_entries = value
+        self.ctx.settings.set("max_entries", value)
+        # Re-cap the existing log to the new size.
+        self._store = SessionLogStore(self._store.as_dict(), max_entries=value)
+        self._persist()
+        self._refresh_list()
+        self._set_status(f"Keeping the last {value} sessions.")
 
     def _refresh_list(self) -> None:
         if self._list_box is None:
@@ -415,8 +449,27 @@ class Plugin(SshPilotPlugin):
         self._set_status("CSV copied to clipboard.")
         self.ctx.ui.notify("Session log copied to clipboard")
 
-    def _on_clear_clicked(self, _btn) -> None:
-        self._store = SessionLogStore()
+    def _on_clear_clicked(self, button) -> None:
+        import gi
+        gi.require_version("Adw", "1")
+        from gi.repository import Adw
+
+        dialog = Adw.MessageDialog(
+            transient_for=button.get_root(),
+            heading="Clear session log?",
+            body="This permanently deletes the recorded session history.")
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("clear", "Clear")
+        dialog.set_response_appearance("clear", Adw.ResponseAppearance.DESTRUCTIVE)
+        dialog.set_default_response("cancel")
+        dialog.set_close_response("cancel")
+        dialog.connect("response", self._on_clear_response)
+        dialog.present()
+
+    def _on_clear_response(self, _dialog, response: str) -> None:
+        if response != "clear":
+            return
+        self._store = SessionLogStore(max_entries=self._max_entries)
         self._persist()
         self._refresh_list()
         self._set_status("Log cleared.")

@@ -161,6 +161,7 @@ class Plugin(SshPilotPlugin):
         self.ctx = ctx
         self._default_user = ctx.settings.get("default_user", "root")
         self._group_name = ctx.settings.get("group_name", "")
+        self._stop = threading.Event()
         self._rows: List[Dict[str, Any]] = []
         self._error = ""
         self._stack = None
@@ -169,11 +170,13 @@ class Plugin(SshPilotPlugin):
         self._group_entry = None
         self._list_box = None
         self._status_label = None
+        self._gate_status = None
 
         ctx.ui.register_page(
             "hetzner", "Hetzner", "network-server-symbolic", self._build_page)
 
     def deactivate(self) -> None:
+        self._stop.set()
         logger.info("hetzner: deactivate")
 
     def _token(self) -> str:
@@ -218,11 +221,17 @@ class Plugin(SshPilotPlugin):
         self._token_entry = Adw.PasswordEntryRow(title="API token")
         group.add(self._token_entry)
         box.append(group)
-        btn = Gtk.Button(label="Save token & connect")
-        btn.add_css_class("suggested-action")
-        btn.set_halign(Gtk.Align.START)
-        btn.connect("clicked", self._on_save_token)
-        box.append(btn)
+        self._save_btn = Gtk.Button(label="Save token & connect")
+        self._save_btn.add_css_class("suggested-action")
+        self._save_btn.set_halign(Gtk.Align.START)
+        self._save_btn.connect("clicked", self._on_save_token)
+        box.append(self._save_btn)
+        self._gate_status = Gtk.Label(label="")
+        self._gate_status.add_css_class("dim-label")
+        self._gate_status.set_halign(Gtk.Align.START)
+        self._gate_status.set_wrap(True)
+        self._gate_status.set_xalign(0)
+        box.append(self._gate_status)
         return box
 
     def _build_dashboard(self):
@@ -280,13 +289,34 @@ class Plugin(SshPilotPlugin):
         token = self._token_entry.get_text().strip()
         if not token:
             return
+        # Validate against the API before committing the token, so a bad token
+        # is reported here instead of silently failing on the dashboard.
+        self._save_btn.set_sensitive(False)
+        self._set_gate_status("Validating token…")
+
+        def worker():
+            try:
+                rows = servers_from_response(fetch_servers(token))
+                error = ""
+            except Exception as exc:
+                rows, error = [], str(exc)
+            if not self._stop.is_set():
+                self.ctx.run_on_ui_thread(self._on_token_validated, token, rows, error)
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_token_validated(self, token, rows, error) -> None:
+        self._save_btn.set_sensitive(True)
+        if error:
+            self._set_gate_status(f"Token rejected: {error}")
+            return
         try:
             self.ctx.secrets.set("api_token", token)
         except Exception as exc:
-            self.ctx.ui.notify(f"Could not store token: {exc}")
+            self._set_gate_status(f"Could not store token: {exc}")
             return
+        self._set_gate_status("")
         self._stack.set_visible_child_name("dashboard")
-        self._refresh()
+        self._on_fetched(rows, "")
 
     def _on_sign_out(self, _btn) -> None:
         try:
@@ -318,8 +348,13 @@ class Plugin(SshPilotPlugin):
                 error = ""
             except Exception as exc:
                 rows, error = [], str(exc)
-            self.ctx.run_on_ui_thread(self._on_fetched, rows, error)
+            if not self._stop.is_set():
+                self.ctx.run_on_ui_thread(self._on_fetched, rows, error)
         threading.Thread(target=worker, daemon=True).start()
+
+    def _set_gate_status(self, text: str) -> None:
+        if self._gate_status is not None:
+            self._gate_status.set_text(text)
 
     def _on_fetched(self, rows: List[Dict[str, Any]], error: str) -> None:
         self._error = error

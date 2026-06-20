@@ -60,6 +60,21 @@ def _safe_name(raw: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]", "-", short) or short
 
 
+def _unique_nickname(base: str, used: set) -> str:
+    """Disambiguate colliding short names (web.prod / web.staging both -> web)
+    by appending -2, -3, … so each connection gets a distinct nickname."""
+    nick = base or "host"
+    if nick not in used:
+        used.add(nick)
+        return nick
+    index = 2
+    while f"{nick}-{index}" in used:
+        index += 1
+    candidate = f"{nick}-{index}"
+    used.add(candidate)
+    return candidate
+
+
 def parse_tailscale_status(status: Any, *, include_self: bool = False) -> List[Dict[str, Any]]:
     """Parse the dict from ``tailscale status --json`` into peer rows.
 
@@ -68,6 +83,7 @@ def parse_tailscale_status(status: Any, *, include_self: bool = False) -> List[D
     if not isinstance(status, dict):
         return []
     rows: List[Dict[str, Any]] = []
+    used: set = set()
 
     def add(node: Any) -> None:
         if not isinstance(node, dict):
@@ -85,8 +101,9 @@ def parse_tailscale_status(status: Any, *, include_self: bool = False) -> List[D
         name = _safe_name(dns_name or host_name)
         if not name and not ip:
             return
+        name = _unique_nickname(name or ip, used)
         rows.append({
-            "name": name or ip,
+            "name": name,
             "dns_name": dns_name,
             "ip": ip,
             "online": bool(node.get("Online")),
@@ -156,17 +173,21 @@ class Plugin(SshPilotPlugin):
     def activate(self, ctx: PluginContext) -> None:
         self.ctx = ctx
         self._default_user = ctx.settings.get("default_user", "")
+        self._include_self = bool(ctx.settings.get("include_self", False))
+        self._stop = threading.Event()
         self._rows: List[Dict[str, Any]] = []
         self._error = ""
         self._list_box = None
         self._filter_entry = None
         self._user_entry = None
+        self._self_row = None
         self._status_label = None
 
         ctx.ui.register_page(
             "tailscale", "Tailscale", "network-wireless-symbolic", self._build_page)
 
     def deactivate(self) -> None:
+        self._stop.set()
         logger.info("tailscale: deactivate")
 
     # --- status fetch (subprocess; impure) --------------------------------
@@ -216,8 +237,15 @@ class Plugin(SshPilotPlugin):
         self._user_entry.connect("changed", self._on_user_changed)
         opts.add(self._user_entry)
         self._filter_entry = Adw.EntryRow(title="Filter (name/ip, or tag:foo)")
-        self._filter_entry.connect("changed", lambda *_a: self._repopulate())
+        self._filter_entry.set_text(self.ctx.settings.get("filter", "") or "")
+        self._filter_entry.connect("changed", self._on_filter_changed)
         opts.add(self._filter_entry)
+        self._self_row = Adw.SwitchRow(
+            title="Include this machine",
+            subtitle="Show your own node in the peer list")
+        self._self_row.set_active(self._include_self)
+        self._self_row.connect("notify::active", self._on_self_toggled)
+        opts.add(self._self_row)
         box.append(opts)
 
         actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
@@ -247,17 +275,28 @@ class Plugin(SshPilotPlugin):
         self._default_user = entry.get_text().strip()
         self.ctx.settings.set("default_user", self._default_user)
 
+    def _on_filter_changed(self, entry) -> None:
+        self.ctx.settings.set("filter", entry.get_text().strip())
+        self._repopulate()
+
+    def _on_self_toggled(self, row, _param) -> None:
+        self._include_self = row.get_active()
+        self.ctx.settings.set("include_self", self._include_self)
+        self._refresh()
+
     def _refresh(self) -> None:
         self._set_status("Querying tailscale…")
+        include_self = self._include_self
 
         def worker():
             try:
                 status = self._fetch_status()
-                rows = parse_tailscale_status(status)
+                rows = parse_tailscale_status(status, include_self=include_self)
                 error = ""
             except Exception as exc:  # surfaced to the user
                 rows, error = [], str(exc)
-            self.ctx.run_on_ui_thread(self._on_fetched, rows, error)
+            if not self._stop.is_set():
+                self.ctx.run_on_ui_thread(self._on_fetched, rows, error)
         threading.Thread(target=worker, daemon=True).start()
 
     def _on_fetched(self, rows: List[Dict[str, Any]], error: str) -> None:

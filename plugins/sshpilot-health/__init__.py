@@ -63,6 +63,10 @@ class Plugin(SshPilotPlugin):
         self._rows = {}            # nickname -> status Gtk.Label
         self._list_box = None
         self._supported = hasattr(ctx, "list_connections")
+        self._timeout = self._read_float("timeout", CHECK_TIMEOUT)
+        self._interval = self._read_float("interval", REFRESH_INTERVAL)
+        self._pause_when_hidden = bool(ctx.settings.get("pause_when_hidden", True))
+        self._page_visible = True
 
         ctx.ui.register_page(
             "health", "Health", "network-transmit-receive-symbolic",
@@ -71,6 +75,12 @@ class Plugin(SshPilotPlugin):
 
     def deactivate(self) -> None:
         self._shutdown()
+
+    def _read_float(self, key: str, default: float) -> float:
+        try:
+            return max(0.5, float(self.ctx.settings.get(key, default)))
+        except (TypeError, ValueError):
+            return default
 
     # --- lifecycle --------------------------------------------------------
     def _on_app_shutdown(self, _payload) -> None:
@@ -90,9 +100,11 @@ class Plugin(SshPilotPlugin):
     def _build_page(self):
         import gi
         gi.require_version("Gtk", "4.0")
-        from gi.repository import Gtk
+        gi.require_version("Adw", "1")
+        from gi.repository import Adw, Gtk
 
         self._Gtk = Gtk
+        self._Adw = Adw
 
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         for fn in (box.set_margin_top, box.set_margin_bottom,
@@ -118,10 +130,35 @@ class Plugin(SshPilotPlugin):
         refresh = Gtk.Button(label="Refresh now")
         refresh.connect("clicked", lambda _b: self._tick())
         controls.append(refresh)
-        hint = Gtk.Label(label=f"Auto-refresh every {int(REFRESH_INTERVAL)}s")
-        hint.add_css_class("dim-label")
-        controls.append(hint)
         box.append(controls)
+
+        settings = Adw.PreferencesGroup(title="Settings")
+        self._timeout_row = Adw.EntryRow(title="Probe timeout (seconds)")
+        self._timeout_row.set_text(str(self._timeout))
+        self._timeout_row.connect("apply", self._on_timeout_changed)
+        self._timeout_row.connect("entry-activated", self._on_timeout_changed)
+        self._interval_row = Adw.EntryRow(title="Auto-refresh interval (seconds)")
+        self._interval_row.set_text(str(self._interval))
+        self._interval_row.connect("apply", self._on_interval_changed)
+        self._interval_row.connect("entry-activated", self._on_interval_changed)
+        for r in (self._timeout_row, self._interval_row):
+            try:
+                r.set_show_apply_button(True)
+            except Exception:
+                pass
+        self._pause_row = Adw.SwitchRow(
+            title="Pause when page is hidden",
+            subtitle="Stop probing while the Health tab isn't visible")
+        self._pause_row.set_active(self._pause_when_hidden)
+        self._pause_row.connect("notify::active", self._on_pause_toggled)
+        settings.add(self._timeout_row)
+        settings.add(self._interval_row)
+        settings.add(self._pause_row)
+        box.append(settings)
+
+        # Track tab visibility for pause-when-hidden (best-effort).
+        box.connect("map", lambda *_a: self._set_visible(True))
+        box.connect("unmap", lambda *_a: self._set_visible(False))
 
         scroller = Gtk.ScrolledWindow()
         scroller.set_vexpand(True)
@@ -148,8 +185,36 @@ class Plugin(SshPilotPlugin):
 
     def _monitor(self) -> None:
         # Sleep first via wait(); the initial paint already happened in _tick().
-        while not self._stop.wait(REFRESH_INTERVAL):
+        while not self._stop.wait(self._interval):
+            if self._pause_when_hidden and not self._page_visible:
+                continue  # tab hidden — skip the auto-probe
             self.ctx.run_on_ui_thread(self._tick)
+
+    # --- settings handlers ------------------------------------------------
+    def _set_visible(self, visible: bool) -> None:
+        self._page_visible = visible
+
+    def _on_timeout_changed(self, *_a) -> None:
+        try:
+            value = max(0.5, float(self._timeout_row.get_text().strip()))
+        except (TypeError, ValueError):
+            self._timeout_row.set_text(str(self._timeout))
+            return
+        self._timeout = value
+        self.ctx.settings.set("timeout", value)
+
+    def _on_interval_changed(self, *_a) -> None:
+        try:
+            value = max(0.5, float(self._interval_row.get_text().strip()))
+        except (TypeError, ValueError):
+            self._interval_row.set_text(str(self._interval))
+            return
+        self._interval = value
+        self.ctx.settings.set("interval", value)
+
+    def _on_pause_toggled(self, row, _param) -> None:
+        self._pause_when_hidden = row.get_active()
+        self.ctx.settings.set("pause_when_hidden", self._pause_when_hidden)
 
     # --- UI thread work ---------------------------------------------------
     def _tick(self) -> None:
@@ -199,7 +264,7 @@ class Plugin(SshPilotPlugin):
 
     def _check_one(self, nickname: str, host: str, port: int) -> None:
         """Runs on a worker thread."""
-        up = tcp_check(host, port, CHECK_TIMEOUT)
+        up = tcp_check(host, port, self._timeout)
         if not self._stop.is_set():
             self.ctx.run_on_ui_thread(self._update_row, nickname, up)
 
