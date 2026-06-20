@@ -144,5 +144,29 @@ def test_apply_to_existing_backfills(monkeypatch):
                connections=conns)
     plugin = mod.Plugin()
     plugin.activate(ctx)
-    plugin._on_apply_existing_clicked(None)
+    plugin._on_apply_existing()
     assert [a[0] for a in ctx.assignments] == ["web", "db"]
+
+
+def test_rgba_to_hex():
+    mod = _load()
+    assert mod.rgba_to_hex(0.0, 0.0, 0.0) == "#000000"
+    assert mod.rgba_to_hex(1.0, 1.0, 1.0) == "#ffffff"
+    # Adwaita blue 0x3584e4 → components 53/132/228 over 255.
+    assert mod.rgba_to_hex(53 / 255, 132 / 255, 228 / 255) == "#3584e4"
+    # Out-of-range values are clamped, not wrapped.
+    assert mod.rgba_to_hex(-0.5, 2.0, 0.5) == "#00ff80"
+
+
+def test_move_rule_reorders_and_clamps():
+    mod = _load()
+    rules = [{"pattern": "a", "group": "A"},
+             {"pattern": "b", "group": "B"},
+             {"pattern": "c", "group": "C"}]
+    assert mod.move_rule(rules, 2, -1) == 1          # c moves up
+    assert [r["pattern"] for r in rules] == ["a", "c", "b"]
+    assert mod.move_rule(rules, 0, -1) == 0          # already at top — no-op
+    assert [r["pattern"] for r in rules] == ["a", "c", "b"]
+    assert mod.move_rule(rules, 1, 99) == 2          # clamp to last
+    assert [r["pattern"] for r in rules] == ["a", "b", "c"]
+    assert mod.move_rule(rules, 5, -1) == 5          # out-of-range — no-op
