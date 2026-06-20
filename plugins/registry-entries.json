@@ -12,7 +12,11 @@
         {
           "version": "1.0.0",
           "api_version": 1,
-          "permissions": ["connections", "ui", "settings"],
+          "permissions": [
+            "connections",
+            "ui",
+            "settings"
+          ],
           "package": {
             "downloadUrl": "https://github.com/mfat/sshpilot-auto-group/releases/download/v1.0.0/auto-group.zip",
             "checksumUrl": "https://github.com/mfat/sshpilot-auto-group/releases/download/v1.0.0/auto-group.zip.sha256"
@@ -31,7 +35,11 @@
         {
           "version": "1.0.0",
           "api_version": 1,
-          "permissions": ["connections", "ui", "settings"],
+          "permissions": [
+            "connections",
+            "ui",
+            "settings"
+          ],
           "package": {
             "downloadUrl": "https://github.com/mfat/sshpilot-notes/releases/download/v1.0.0/notes.zip",
             "checksumUrl": "https://github.com/mfat/sshpilot-notes/releases/download/v1.0.0/notes.zip.sha256"
@@ -50,7 +58,11 @@
         {
           "version": "1.0.0",
           "api_version": 1,
-          "permissions": ["connections", "network", "ui"],
+          "permissions": [
+            "connections",
+            "network",
+            "ui"
+          ],
           "package": {
             "downloadUrl": "https://github.com/mfat/sshpilot-health/releases/download/v1.0.0/health.zip",
             "checksumUrl": "https://github.com/mfat/sshpilot-health/releases/download/v1.0.0/health.zip.sha256"
@@ -69,7 +81,12 @@
         {
           "version": "1.0.0",
           "api_version": 1,
-          "permissions": ["connections", "ui", "settings", "filesystem"],
+          "permissions": [
+            "connections",
+            "ui",
+            "settings",
+            "filesystem"
+          ],
           "package": {
             "downloadUrl": "https://github.com/mfat/sshpilot-inventory-import/releases/download/v1.0.0/inventory-import.zip",
             "checksumUrl": "https://github.com/mfat/sshpilot-inventory-import/releases/download/v1.0.0/inventory-import.zip.sha256"
@@ -88,10 +105,131 @@
         {
           "version": "1.0.0",
           "api_version": 1,
-          "permissions": ["ui", "settings", "filesystem"],
+          "permissions": [
+            "ui",
+            "settings",
+            "filesystem"
+          ],
           "package": {
             "downloadUrl": "https://github.com/mfat/sshpilot-session-log/releases/download/v1.0.0/session-log.zip",
             "checksumUrl": "https://github.com/mfat/sshpilot-session-log/releases/download/v1.0.0/session-log.zip.sha256"
+          }
+        }
+      ]
+    },
+    {
+      "id": "aws-ssm",
+      "name": "AWS SSM",
+      "description": "Open AWS Session Manager shells as a protocol (no inbound SSH needed).",
+      "author": "mfat",
+      "homepage": "https://github.com/mfat/sshpilot-aws-ssm",
+      "latestVersion": "1.0.0",
+      "versions": [
+        {
+          "version": "1.0.0",
+          "api_version": 1,
+          "permissions": [
+            "process"
+          ],
+          "package": {
+            "downloadUrl": "https://github.com/mfat/sshpilot-aws-ssm/releases/download/v1.0.0/aws-ssm.zip",
+            "checksumUrl": "https://github.com/mfat/sshpilot-aws-ssm/releases/download/v1.0.0/aws-ssm.zip.sha256"
+          }
+        }
+      ]
+    },
+    {
+      "id": "runbook",
+      "name": "Runbook Snippets",
+      "description": "Per-connection command snippets, copy-to-clipboard.",
+      "author": "mfat",
+      "homepage": "https://github.com/mfat/sshpilot-runbook",
+      "latestVersion": "1.0.0",
+      "versions": [
+        {
+          "version": "1.0.0",
+          "api_version": 1,
+          "permissions": [
+            "connections",
+            "ui",
+            "settings"
+          ],
+          "package": {
+            "downloadUrl": "https://github.com/mfat/sshpilot-runbook/releases/download/v1.0.0/runbook.zip",
+            "checksumUrl": "https://github.com/mfat/sshpilot-runbook/releases/download/v1.0.0/runbook.zip.sha256"
+          }
+        }
+      ]
+    },
+    {
+      "id": "key-audit",
+      "name": "SSH Key Audit",
+      "description": "Key age and certificate-expiry dashboard for ~/.ssh.",
+      "author": "mfat",
+      "homepage": "https://github.com/mfat/sshpilot-key-audit",
+      "latestVersion": "1.0.0",
+      "versions": [
+        {
+          "version": "1.0.0",
+          "api_version": 1,
+          "permissions": [
+            "filesystem",
+            "process",
+            "ui",
+            "settings"
+          ],
+          "package": {
+            "downloadUrl": "https://github.com/mfat/sshpilot-key-audit/releases/download/v1.0.0/key-audit.zip",
+            "checksumUrl": "https://github.com/mfat/sshpilot-key-audit/releases/download/v1.0.0/key-audit.zip.sha256"
+          }
+        }
+      ]
+    },
+    {
+      "id": "tailscale",
+      "name": "Tailscale Sync",
+      "description": "Add Tailscale tailnet peers as SSH connections.",
+      "author": "mfat",
+      "homepage": "https://github.com/mfat/sshpilot-tailscale",
+      "latestVersion": "1.0.0",
+      "versions": [
+        {
+          "version": "1.0.0",
+          "api_version": 1,
+          "permissions": [
+            "connections",
+            "process",
+            "ui",
+            "settings"
+          ],
+          "package": {
+            "downloadUrl": "https://github.com/mfat/sshpilot-tailscale/releases/download/v1.0.0/tailscale.zip",
+            "checksumUrl": "https://github.com/mfat/sshpilot-tailscale/releases/download/v1.0.0/tailscale.zip.sha256"
+          }
+        }
+      ]
+    },
+    {
+      "id": "hetzner",
+      "name": "Hetzner Cloud",
+      "description": "Browse Hetzner Cloud servers and add them as SSH connections.",
+      "author": "mfat",
+      "homepage": "https://github.com/mfat/sshpilot-hetzner",
+      "latestVersion": "1.0.0",
+      "versions": [
+        {
+          "version": "1.0.0",
+          "api_version": 1,
+          "permissions": [
+            "connections",
+            "keyring",
+            "network",
+            "ui",
+            "settings"
+          ],
+          "package": {
+            "downloadUrl": "https://github.com/mfat/sshpilot-hetzner/releases/download/v1.0.0/hetzner.zip",
+            "checksumUrl": "https://github.com/mfat/sshpilot-hetzner/releases/download/v1.0.0/hetzner.zip.sha256"
           }
         }
       ]

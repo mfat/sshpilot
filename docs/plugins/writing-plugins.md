@@ -165,8 +165,8 @@ create, open connections).
 ## Event-driven & UI plugins
 
 A plugin doesn't have to add a protocol. It can react to what happens in the app
-and contribute pages. The three official non-protocol plugins in
-[`plugins/`](../../plugins/) are the worked examples for this section:
+and contribute pages. The official plugins in [`plugins/`](../../plugins/) are the
+worked examples for this section:
 
 | Plugin | Shows |
 |--------|-------|
@@ -175,6 +175,15 @@ and contribute pages. The three official non-protocol plugins in
 | `notes` | structured `ctx.settings`; pruning on `CONNECTION_DELETED` |
 | `health` | background workers + `run_on_ui_thread`; clean shutdown |
 | `session-log` | `SESSION_OPENED`/`SESSION_CLOSED` bookkeeping; CSV export |
+| `runbook` | per-connection settings; clipboard copy; rename reconcile (copy-only — no terminal-input API) |
+| `key-audit` | `~/.ssh` scan + `ssh-keygen` subprocess parsing; startup warning toast |
+| `tailscale` | CLI subprocess (`tailscale status --json`, Flatpak host-spawn); add/dedup connections |
+| `hetzner` | stdlib `urllib` HTTPS API; token in `ctx.secrets`; sign-in → list → add |
+
+For a **protocol** plugin (not event/UI), see `aws-ssm` in
+[`plugins/`](../../plugins/) (a `ProtocolBackend` that runs `aws ssm
+start-session`) alongside the built-in `telnet_protocol` and the protocol
+[`template/`](template/).
 
 ### Lifecycle: register in `activate`, act in callbacks
 
