@@ -19,6 +19,28 @@ setups are supported on Linux, mirroring the two paths in PyGObject's official
 > system Python (PEP 668) that refuses `pip install`. A venv keeps sshPilot's
 > Python dependencies isolated and is the recommended development model.
 
+## Quick install (automated)
+
+The script below detects your distribution (Debian/Ubuntu, Fedora/RHEL, Arch,
+openSUSE), installs the system GTK stack with your package manager (via `sudo`),
+sets up the `--system-site-packages` venv, installs the Python deps, and launches
+the app — Approach A, done for you:
+
+```bash
+git clone https://github.com/mfat/sshpilot.git && cd sshpilot && ./scripts/install-run-linux.sh
+```
+
+Or pipe it directly (it clones into `./sshpilot` itself):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/mfat/sshpilot/main/scripts/install-run-linux.sh | bash
+```
+
+Useful flags: `--no-run` (set up but don't launch), `--with-webkit` (also install
+the optional WebKit 6.0 backend), `-y` (don't prompt). Set `SSHPILOT_DRYRUN=1` to
+print the package command without changing anything. Prefer to do it by hand, or
+on an unsupported distro? Follow the manual steps below.
+
 macOS: see [INSTALL-macos.md](INSTALL-macos.md).
 
 Supported/tested Python versions: **3.12** and **3.13** (CI matrix).

@@ -204,6 +204,18 @@ top of the GTK stack. Two setups are supported (both mirror PyGObject's official
 📖 **Full guide to both approaches, dev/test setup, and troubleshooting:**
 [documentation/running-from-source.md](documentation/running-from-source.md).
 
+#### ⚡ Quick install (automated)
+
+One command — detects your distro (Debian/Ubuntu, Fedora/RHEL, Arch, openSUSE),
+installs the system GTK stack via `sudo`, sets up the venv, and launches:
+
+```bash
+git clone https://github.com/mfat/sshpilot.git && cd sshpilot && ./scripts/install-run-linux.sh
+```
+
+(Flags: `--no-run`, `--with-webkit`, `-y`. On an unsupported distro, follow the
+manual steps below.) Prefer to set things up yourself? Continue with Step 1.
+
 > **Why a venv?** Modern Linux distributions ship an *externally-managed* system
 > Python (PEP 668) that refuses `pip install`. A venv keeps sshPilot's Python
 > dependencies isolated.
