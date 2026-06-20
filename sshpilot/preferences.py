@@ -2442,7 +2442,7 @@ class PreferencesWindow(Adw.Window):
             else:
                 row.connect(
                     'notify::active',
-                    lambda r, _p, pid=info.plugin_id: self._on_builtin_plugin_toggled(pid, r.get_active()),
+                    lambda r, _p, pid=info.plugin_id: self._on_builtin_plugin_toggled(pid, r.get_active(), r),
                 )
             self._add_permissions_info(row, info.permissions)
             self._add_plugin_page_gear(row, info.plugin_id)
@@ -2972,13 +2972,15 @@ class PreferencesWindow(Adw.Window):
             ui.open_page(full_id)
         self.close()
 
-    def _on_builtin_plugin_toggled(self, plugin_id, active):
+    def _on_builtin_plugin_toggled(self, plugin_id, active, row=None):
         disabled = set(self.config.get_setting('plugins.disabled', []) or [])
         if active:
             disabled.discard(plugin_id)
         else:
             disabled.add(plugin_id)
         self.config.set_setting('plugins.disabled', sorted(disabled))
+        if row is not None:
+            row.set_subtitle(_("Restart sshPilot to apply"))
 
     def _set_user_plugin_enabled(self, plugin_id, on):
         enabled = set(self.config.get_setting('plugins.enabled', []) or [])
@@ -2993,11 +2995,15 @@ class PreferencesWindow(Adw.Window):
             return
         if not active:
             self._set_user_plugin_enabled(plugin_id, False)
+            if row is not None:
+                row.set_subtitle(_("Restart sshPilot to apply"))
             return
 
         # Enabling runs third-party code with full privileges — get consent first.
         def _accept():
             self._set_user_plugin_enabled(plugin_id, True)
+            if row is not None:
+                row.set_subtitle(_("Restart sshPilot to apply"))
 
         def _decline():
             if row is not None:

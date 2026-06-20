@@ -164,6 +164,39 @@ class UiHost:
         plugin isn't active). Used by Preferences to offer an 'open page' gear."""
         return [fid for fid, reg in self._pages.items() if reg.plugin_id == plugin_id]
 
+    def remove_plugin_pages(self, plugin_id: str) -> None:
+        """Drop every page a plugin registered (used on deactivate): close its
+        open tab, remove its window action, and forget the registration.
+        Best-effort — a failure on one page never blocks the others."""
+        for full_id in [fid for fid, reg in self._pages.items()
+                        if reg.plugin_id == plugin_id]:
+            reg = self._pages.pop(full_id, None)
+            if reg is None:
+                continue
+            try:
+                self._pending_open.remove(full_id)
+            except ValueError:
+                pass
+            window = self._window
+            if window is None:
+                continue
+            # Close the tab if it's still attached.
+            if reg.tab_page is not None:
+                try:
+                    if reg.tab_page in list(window.tab_view.get_pages()):
+                        window.tab_view.close_page(reg.tab_page)
+                except Exception:
+                    logger.exception("Failed to close plugin page %r", full_id)
+                reg.tab_page = None
+            # Remove the menu action so it can't be re-invoked.
+            try:
+                from gi.repository import Gio  # noqa: F401
+                action_name = self._action_name(reg)
+                if window.lookup_action(action_name) is not None:
+                    window.remove_action(action_name)
+            except Exception:
+                logger.exception("Failed to remove action for page %r", full_id)
+
     # --- live calls ---------------------------------------------------
     def open_page(self, full_id: str) -> None:
         if full_id not in self._pages:

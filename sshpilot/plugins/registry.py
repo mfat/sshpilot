@@ -44,6 +44,18 @@ class ProtocolRegistry:
         or registered without one)."""
         return self._plugin_ids.get(protocol_id)
 
+    def unregister_plugin(self, plugin_id: str) -> List[str]:
+        """Drop every protocol registered by ``plugin_id`` (used on deactivate).
+        Returns the removed protocol ids."""
+        removed = [pid for pid, owner in self._plugin_ids.items()
+                   if owner == plugin_id]
+        for pid in removed:
+            self._backends.pop(pid, None)
+            self._plugin_ids.pop(pid, None)
+        if removed:
+            logger.debug("Unregistered protocols %r from plugin %r", removed, plugin_id)
+        return removed
+
     def get(self, protocol_id: str) -> ProtocolBackend:
         try:
             return self._backends[protocol_id]

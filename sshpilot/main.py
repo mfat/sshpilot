@@ -323,11 +323,25 @@ class SshPilotApplication(Adw.Application):
                        or (getattr(self.window, 'loaded_plugins', None)
                            if self.window is not None else None)
                        or []):
+                pid = getattr(lp, 'plugin_id', None)
                 try:
                     lp.instance.deactivate()
                 except Exception:
-                    logger.exception("Plugin %r deactivate failed",
-                                     getattr(lp, 'plugin_id', '?'))
+                    logger.exception("Plugin %r deactivate failed", pid or '?')
+                # Unwind everything the plugin registered so deactivate is
+                # actually a teardown (events, protocols, UI pages).
+                if pid:
+                    try:
+                        if host is not None:
+                            host.events.unsubscribe_plugin(pid)
+                            host.ui.remove_plugin_pages(pid)
+                    except Exception:
+                        logger.exception("Plugin %r host unwind failed", pid)
+                    try:
+                        from .plugins.registry import protocol_registry
+                        protocol_registry().unregister_plugin(pid)
+                    except Exception:
+                        logger.exception("Plugin %r protocol unwind failed", pid)
         except Exception:
             pass
 

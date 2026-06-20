@@ -26,6 +26,11 @@ class _Shadow(_Backend):
     display_name = "Shadow"
 
 
+class _OtherBackend(_Backend):
+    protocol_id = "other"
+    display_name = "Other"
+
+
 @pytest.fixture(autouse=True)
 def fresh_registry(monkeypatch):
     monkeypatch.setattr(registry_mod, "_registry", None)
@@ -66,3 +71,26 @@ def test_empty_protocol_id_rejected():
     backend.protocol_id = ""
     with pytest.raises(ValueError):
         reg.register(backend)
+
+
+def test_unregister_plugin_drops_its_protocols_only():
+    reg = registry_mod.protocol_registry()
+    mine = _Backend()
+    theirs = _OtherBackend()
+    reg.register(mine, plugin_id="mine")
+    reg.register(theirs, plugin_id="theirs")
+
+    removed = reg.unregister_plugin("mine")
+    assert removed == ["dummy"]
+    assert reg.get_or_none("dummy") is None
+    assert reg.plugin_id_for("dummy") is None
+    # The other plugin's backend is untouched.
+    assert reg.get("other") is theirs
+    assert reg.plugin_id_for("other") == "theirs"
+
+
+def test_unregister_unknown_plugin_is_noop():
+    reg = registry_mod.protocol_registry()
+    reg.register(_Backend(), plugin_id="mine")
+    assert reg.unregister_plugin("ghost") == []
+    assert reg.get_or_none("dummy") is not None
