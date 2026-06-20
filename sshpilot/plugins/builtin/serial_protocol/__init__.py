@@ -74,9 +74,10 @@ class SerialProtocolBackend(ProtocolBackend):
         baud = str(data.get("baud") or "115200")
         flow = str(data.get("flow") or "none")
 
-        picocom = shutil.which("picocom")
+        from .._flatpak import resolve_host_binary  # noqa: PLC0415
+        picocom = resolve_host_binary("picocom")
         if picocom:
-            argv = [picocom, "-b", baud]
+            argv = [*picocom, "-b", baud]
             argv += ["-f", _PICOCOM_FLOW.get(flow, "n")]
             # Line params: only emit when they differ from picocom's 8N1 default,
             # so the common case stays a short command.
@@ -92,10 +93,10 @@ class SerialProtocolBackend(ProtocolBackend):
             argv.append(device)
             return SpawnSpec(argv=argv, env=dict(os.environ))
 
-        screen = shutil.which("screen")
+        screen = resolve_host_binary("screen")
         if screen:
             # screen handles only the basic device+baud form.
-            return SpawnSpec(argv=[screen, device, baud], env=dict(os.environ))
+            return SpawnSpec(argv=[*screen, device, baud], env=dict(os.environ))
 
         raise ProtocolError(
             "Neither 'picocom' nor 'screen' is installed. Install one to use "

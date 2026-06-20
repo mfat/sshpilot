@@ -54,8 +54,9 @@ class TelnetProtocolBackend(ProtocolBackend):
         return errors
 
     def build_spawn(self, connection: Any, ctx: PluginContext) -> SpawnSpec:
-        telnet = shutil.which("telnet")
-        if not telnet:
+        from .._flatpak import resolve_host_binary  # noqa: PLC0415
+        telnet_argv = resolve_host_binary("telnet")
+        if telnet_argv is None:
             raise ProtocolError(
                 "The 'telnet' program is not installed. Install it to use "
                 "telnet connections.")
@@ -73,7 +74,7 @@ class TelnetProtocolBackend(ProtocolBackend):
         except (TypeError, ValueError):
             port = self.default_port
 
-        argv = [telnet, str(host)]
+        argv = [*telnet_argv, str(host)]
         if port != self.default_port:
             argv.append(str(port))
         return SpawnSpec(argv=argv, env=dict(os.environ))

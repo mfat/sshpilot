@@ -70,6 +70,12 @@ class MoshProtocolBackend(ProtocolBackend):
         return errors
 
     def build_spawn(self, connection: Any, ctx: PluginContext) -> SpawnSpec:
+        # NOTE: unlike telnet/docker/kubernetes/serial, mosh is intentionally
+        # NOT routed through flatpak-spawn --host. It carries the resolved SSH
+        # auth env (askpass/sshpass helpers from resolve_native_auth) whose paths
+        # live inside the sandbox and can't be forwarded to a host process
+        # unchanged — host-spawning mosh would break the single auth path. A
+        # Flatpak that needs mosh should include it in the runtime.
         mosh = shutil.which("mosh")
         if not mosh:
             raise ProtocolError(

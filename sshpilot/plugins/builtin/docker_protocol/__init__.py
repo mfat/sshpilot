@@ -64,15 +64,16 @@ class DockerProtocolBackend(ProtocolBackend):
         runtime = (data.get("runtime") or "docker")
         if runtime not in ("docker", "podman"):
             runtime = "docker"
-        binary = shutil.which(runtime)
-        if not binary:
+        from .._flatpak import resolve_host_binary  # noqa: PLC0415
+        binary_argv = resolve_host_binary(runtime)
+        if binary_argv is None:
             raise ProtocolError(
                 f"The '{runtime}' program is not installed. Install it to use "
                 f"container connections.")
 
         command = (data.get("command") or "sh").strip() or "sh"
         host = (data.get("docker_host") or "").strip()
-        argv = [binary]
+        argv = list(binary_argv)
         if host:
             argv += ["-H", host]
         argv += ["exec", "-it"]

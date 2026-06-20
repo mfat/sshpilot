@@ -56,14 +56,15 @@ class KubernetesProtocolBackend(ProtocolBackend):
         pod = (data.get("pod") or "").strip()
         if not pod:
             raise ProtocolError("No pod configured for this connection.")
-        kubectl = shutil.which("kubectl")
-        if not kubectl:
+        from .._flatpak import resolve_host_binary  # noqa: PLC0415
+        kubectl_argv = resolve_host_binary("kubectl")
+        if kubectl_argv is None:
             raise ProtocolError(
                 "The 'kubectl' program is not installed. Install it to use "
                 "Kubernetes connections.")
 
         command = (data.get("command") or "sh").strip() or "sh"
-        argv = [kubectl]
+        argv = list(kubectl_argv)
         kubeconfig = (data.get("kubeconfig") or "").strip()
         if kubeconfig:
             argv += ["--kubeconfig", os.path.expanduser(kubeconfig)]
