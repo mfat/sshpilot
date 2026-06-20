@@ -76,14 +76,19 @@ there are no separate `gir`/`typelib` packages to install.
 
 ```bash
 sudo zypper install \
-  python3 python3-gobject python3-gobject-Gdk \
-  typelib-1_0-Gtk-4_0 typelib-1_0-Adw-1 typelib-1_0-Vte-3_91 \
-  typelib-1_0-GtkSource-5 typelib-1_0-Secret-1 \
-  python3-paramiko python3-cryptography sshpass openssh-askpass-gnome
+  python3 python3-gobject \
+  typelib-1_0-Gtk-4_0 \
+  gtk4 libadwaita \
+  typelib-1_0-Adw-1 \
+  typelib-1_0-Vte-3_91 \
+  typelib-1_0-GtkSource-5 \
+  typelib-1_0-Secret-1 \
+  python3-paramiko python3-cryptography \
+  sshpass openssh-askpass-gnome
 ```
 
-Installing the `typelib-1_0-*` packages automatically pulls in the matching
-runtime libraries (`libgtk-4-1`, `libadwaita-1-0`, …).
+The `typelib-1_0-*` packages provide the GObject-Introspection bindings and pull
+in their runtime libraries.
 
 > **WebKit is optional.** The GTK4 WebKit 6.0 package (`gir1.2-webkit-6.0` on
 > Debian/Ubuntu, `webkitgtk6` on Fedora, `webkitgtk-6.0` on Arch,
@@ -170,6 +175,7 @@ sudo pacman -S --needed \
 sudo zypper install \
   python3 python3-devel gcc pkg-config \
   gobject-introspection-devel cairo-devel \
+  gtk4 libadwaita \
   typelib-1_0-Gtk-4_0 typelib-1_0-Adw-1 typelib-1_0-Vte-3_91 \
   typelib-1_0-GtkSource-5 typelib-1_0-Secret-1 \
   sshpass openssh-askpass-gnome

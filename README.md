@@ -261,10 +261,15 @@ sudo pacman -S --needed \
 
 ```bash
 sudo zypper install \
-  python3 python3-gobject python3-gobject-Gdk \
-  typelib-1_0-Gtk-4_0 typelib-1_0-Adw-1 typelib-1_0-Vte-3_91 \
-  typelib-1_0-GtkSource-5 typelib-1_0-Secret-1 \
-  python3-paramiko python3-cryptography sshpass openssh-askpass-gnome
+  python3 python3-gobject \
+  typelib-1_0-Gtk-4_0 \
+  gtk4 libadwaita \
+  typelib-1_0-Adw-1 \
+  typelib-1_0-Vte-3_91 \
+  typelib-1_0-GtkSource-5 \
+  typelib-1_0-Secret-1 \
+  python3-paramiko python3-cryptography \
+  sshpass openssh-askpass-gnome
 ```
 
 Other distributions work too — install the equivalent GTK4 / libadwaita / VTE
