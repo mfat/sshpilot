@@ -57,6 +57,44 @@
           }
         }
       ]
+    },
+    {
+      "id": "inventory-import",
+      "name": "Inventory Import",
+      "description": "Bulk-import hosts from Ansible, CSV, or plain host lists.",
+      "author": "mfat",
+      "homepage": "https://github.com/mfat/sshpilot-inventory-import",
+      "latestVersion": "1.0.0",
+      "versions": [
+        {
+          "version": "1.0.0",
+          "api_version": 1,
+          "permissions": ["connections", "ui", "settings", "filesystem"],
+          "package": {
+            "downloadUrl": "https://github.com/mfat/sshpilot-inventory-import/releases/download/v1.0.0/inventory-import.zip",
+            "checksumUrl": "https://github.com/mfat/sshpilot-inventory-import/releases/download/v1.0.0/inventory-import.zip.sha256"
+          }
+        }
+      ]
+    },
+    {
+      "id": "session-log",
+      "name": "Session Log",
+      "description": "Session open/close history with CSV export for billing and incident review.",
+      "author": "mfat",
+      "homepage": "https://github.com/mfat/sshpilot-session-log",
+      "latestVersion": "1.0.0",
+      "versions": [
+        {
+          "version": "1.0.0",
+          "api_version": 1,
+          "permissions": ["ui", "settings", "filesystem"],
+          "package": {
+            "downloadUrl": "https://github.com/mfat/sshpilot-session-log/releases/download/v1.0.0/session-log.zip",
+            "checksumUrl": "https://github.com/mfat/sshpilot-session-log/releases/download/v1.0.0/session-log.zip.sha256"
+          }
+        }
+      ]
     }
   ]
 }

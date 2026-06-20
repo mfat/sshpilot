@@ -171,8 +171,10 @@ and contribute pages. The three official non-protocol plugins in
 | Plugin | Shows |
 |--------|-------|
 | `auto-group` | reacting to `CONNECTION_CREATED`; creating/assigning groups; `list_connections()` backfill |
+| `inventory-import` | parsing inventory files off-thread; diff vs `list_connections()`; bulk `add_connection` / groups |
 | `notes` | structured `ctx.settings`; pruning on `CONNECTION_DELETED` |
 | `health` | background workers + `run_on_ui_thread`; clean shutdown |
+| `session-log` | `SESSION_OPENED`/`SESSION_CLOSED` bookkeeping; CSV export |
 
 ### Lifecycle: register in `activate`, act in callbacks
 

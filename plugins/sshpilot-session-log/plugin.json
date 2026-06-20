@@ -1,0 +1,10 @@
+{
+  "id": "session-log",
+  "name": "Session Log",
+  "api_version": 1,
+  "permissions": [
+    "ui",
+    "settings",
+    "filesystem"
+  ]
+}

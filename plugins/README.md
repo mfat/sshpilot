@@ -9,8 +9,10 @@ plugin** published to the discovery registry
 | Directory | id | What it does |
 |-----------|----|--------------|
 | `sshpilot-auto-group/` | `auto-group` | Sort new connections into sidebar groups by glob rule. |
+| `sshpilot-inventory-import/` | `inventory-import` | Bulk-import hosts from Ansible, CSV, or plain host lists. |
 | `sshpilot-notes/` | `notes` | A freeform note per connection. |
 | `sshpilot-health/` | `health` | Live up/down TCP status for every saved host. |
+| `sshpilot-session-log/` | `session-log` | Session open/close history with CSV export. |
 
 All three need sshPilot plugin **API ≥ 1.4** (`ctx.list_connections()`).
 

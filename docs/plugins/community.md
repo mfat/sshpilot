@@ -20,5 +20,7 @@ index at [**mfat/sshpilot-plugins**](https://github.com/mfat/sshpilot-plugins)
 | Connection Notes | mfat | [sshpilot-notes](https://github.com/mfat/sshpilot-notes) | A freeform note per connection, pruned when a connection is deleted. |
 | EasyEnv Workspaces | mfat | [sshpilot-easyenv](https://github.com/mfat/sshpilot-easyenv) | Provision easyenv.io dev workspaces and open them as SSH connections. |
 | Host Health Dashboard | mfat | [sshpilot-health](https://github.com/mfat/sshpilot-health) | Live up/down TCP status for every saved host. |
+| Inventory Import | mfat | [sshpilot-inventory-import](https://github.com/mfat/sshpilot-inventory-import) | Bulk-import hosts from Ansible, CSV, or plain host lists. |
 | Smart Auto-Grouping | mfat | [sshpilot-auto-group](https://github.com/mfat/sshpilot-auto-group) | Sort new connections into sidebar groups by glob rule. |
+| Session Log | mfat | [sshpilot-session-log](https://github.com/mfat/sshpilot-session-log) | Session open/close history with CSV export. |
 | _Your plugin here_ | | | |
