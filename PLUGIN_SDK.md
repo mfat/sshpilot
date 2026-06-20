@@ -11,7 +11,7 @@ change without notice.
 > [template](docs/plugins/template/)). This file is the deeper API reference.
 
 - **The only import you need:** `sshpilot.plugins.api`.
-- **Current API version:** `1.3` (see [Versioning](#versioning)).
+- **Current API version:** `1.4` (see [Versioning](#versioning)).
 - **Worked examples** — two provider archetypes:
   - [`examples/mock_vps/`](sshpilot/plugins/examples/mock_vps/) — an **IP/SSH** provider: provision → get an IP → `add_connection` a normal SSH connection.
   - [`examples/easyenv_workspaces/`](sshpilot/plugins/examples/easyenv_workspaces/) — a **CLI/mesh** provider (real partner [easyenv.io](https://easyenv.io/cli)): a protocol backend whose connection *is* a CLI command, plus a management page. See [CLI-driven plugins](#11-cli-driven-plugins).
@@ -123,6 +123,7 @@ Passed to `activate`. One context per plugin; `ctx.plugin_id` is your manifest i
 - `register_protocol(backend)` — register a `ProtocolBackend` (see protocol plugins).
 - `add_connection(data: dict) -> ConnectionInfo` — create + persist a connection. Validated; raises `ValueError` on bad/duplicate data. SSH connections go to `~/.ssh/config`; non-SSH protocols persist internally. Returns a read-only [`ConnectionInfo`](#payloads).
 - `open_connection(nickname: str) -> bool` — open a terminal tab for an existing connection. Returns `False` if unknown / UI not ready. *(after `app_started`)*
+- `list_connections() -> list[ConnectionInfo]` — read-only snapshot of every saved connection. Safe any time after load. *(API ≥ 1.4)*
 - `generate_key(name: str, *, key_type="ed25519", key_size=3072, comment=None, passphrase=None) -> str | None` — generate an SSH key; returns the private-key path or `None`. *(after `app_started`)*
 
 ### UI — `ctx.ui`
@@ -256,7 +257,7 @@ must be made on the UI thread.
 
 ## 9. Versioning
 
-- `API_VERSION = (major, minor)`, currently `(1, 3)`. Your manifest declares the
+- `API_VERSION = (major, minor)`, currently `(1, 4)`. Your manifest declares the
   **major** you target; the loader skips plugins whose major doesn't match.
 - Minor bumps are additive (new methods/events); your plugin keeps working. Note
   the loader checks only the **major**, so a plugin using a newer minor's API on
@@ -264,7 +265,8 @@ must be made on the UI thread.
 - New since `1.0`: `1.1` plugin secrets; `1.2` events, UI extension,
   `open_connection`, `generate_key`, scoped `ctx.secrets`/`ctx.settings`,
   `ctx.run_on_ui_thread`, `ctx.plugin_id`; `1.3` connection groups
-  (`create_group`/`add_connection_to_group`/`add_connection_group`).
+  (`create_group`/`add_connection_to_group`/`add_connection_group`); `1.4`
+  `list_connections`.
 
 ---
 

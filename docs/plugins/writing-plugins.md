@@ -8,12 +8,15 @@ the app menu), using a stable, versioned API.
 This guide covers what a plugin is, how to write and install one, the API
 surface, versioning, and the security model. For a ready-to-fork starting point
 use the [**sshpilot-plugin-template**](https://github.com/mfat/sshpilot-plugin-template)
-repo ("Use this template") — also mirrored at [`template/`](template/); publish
-via the [discovery index](registry.md)
+repo ("Use this template") — also mirrored at [`template/`](template/) for a
+**protocol** backend and [`template-ui/`](template-ui/) for an **event/UI**
+plugin; publish via the [discovery index](registry.md)
 ([mfat/sshpilot-plugins](https://github.com/mfat/sshpilot-plugins)). For worked
 examples read the built-in
-`sshpilot/plugins/builtin/telnet_protocol/` (a tiny protocol) and the shipped
-examples `sshpilot/plugins/examples/mock_vps/` and `easyenv_workspaces/`.
+`sshpilot/plugins/builtin/telnet_protocol/` (a tiny protocol), the shipped
+examples `sshpilot/plugins/examples/mock_vps/` and `easyenv_workspaces/`, and the
+official non-protocol plugins in [`plugins/`](../../plugins/) (auto-group, notes,
+health).
 
 ## The two tiers
 
@@ -112,7 +115,8 @@ the authoritative reference; this is the practical map.
 - `ctx.plugin_id` — your id.
 - `ctx.register_protocol(backend)` — register a `ProtocolBackend`.
 - **Connections:** `ctx.add_connection(data)`, `ctx.update_connection(nickname, data)`,
-  `ctx.open_connection(nickname)`.
+  `ctx.open_connection(nickname)`, `ctx.list_connections()` → a read-only
+  `ConnectionInfo` snapshot of every saved connection (API ≥ 1.4).
 - **Groups:** `ctx.create_group(name)`, `ctx.add_connection_to_group(nickname, group_id)`,
   `ctx.add_connection_group(...)`.
 - **Secrets/settings (per-plugin, namespaced):** `ctx.secrets.get/set/delete`
@@ -157,6 +161,84 @@ ctx.ui.register_page("dashboard", "My Dashboard",
 ```
 `examples/easyenv_workspaces/` is a full page-based plugin (sign-in, list,
 create, open connections).
+
+## Event-driven & UI plugins
+
+A plugin doesn't have to add a protocol. It can react to what happens in the app
+and contribute pages. The three official non-protocol plugins in
+[`plugins/`](../../plugins/) are the worked examples for this section:
+
+| Plugin | Shows |
+|--------|-------|
+| `auto-group` | reacting to `CONNECTION_CREATED`; creating/assigning groups; `list_connections()` backfill |
+| `notes` | structured `ctx.settings`; pruning on `CONNECTION_DELETED` |
+| `health` | background workers + `run_on_ui_thread`; clean shutdown |
+
+### Lifecycle: register in `activate`, act in callbacks
+
+`activate(ctx)` runs **before the main window exists** — do registration only
+(subscribe to events, `register_page`, read settings). Anything that touches live
+UI, connections, or keys (`ui.open_page`/`notify`, `open_connection`,
+`generate_key`, groups) is valid only **after the `APP_STARTED` event**; early
+`ctx.ui.*` calls are queued for you, but don't, say, open a connection from
+`activate`. Event callbacks and page factories always run after the window is up,
+so they're the right place for real work.
+
+### Events and their payloads
+
+`ctx.events.subscribe(Events.X, callback)`; subscriptions are removed for you on
+unload. Callbacks run **synchronously on the UI thread** and are isolated (one
+plugin raising won't break others). Payloads are frozen snapshots:
+
+| Event | Payload |
+|-------|---------|
+| `APP_STARTED` / `APP_SHUTDOWN` | `None` |
+| `CONNECTION_CREATED` / `CONNECTION_UPDATED` / `CONNECTION_DELETED` | `ConnectionInfo` (`nickname`, `host`, `username`, `protocol`, `port`) |
+| `SESSION_OPENED` / `SESSION_CLOSED` | `SessionInfo` (`.connection`, `.session_id`) |
+
+> **Rename caveat:** `CONNECTION_UPDATED` carries only the connection's *current*
+> nickname — there's no "previous nickname". If you key data by nickname (like
+> `notes` does), you can't migrate it automatically on rename; reconcile against
+> `list_connections()` instead (e.g. drop entries whose nickname no longer
+> exists). `notes` does this when its page opens.
+
+### Keeping a page fresh
+
+A registered page's widget is **built once** (the factory is called on first
+open) and cached. To reflect changes, update the widget from event callbacks or a
+timer rather than rebuilding the page — hold references to the labels/rows you
+need to mutate. `health` rebuilds its list rows on each tick; `auto-group`
+rebuilds only its rules list when you add/remove a rule.
+
+### Settings & secrets storage
+
+`ctx.settings.get(key, default)` / `set(key, value)` persist under
+`plugins.<id>.<key>` in the app config and must be **JSON-serializable** — plain
+`dict`/`list`/`str`/`int`/`bool`/`None`. Store structured state as one value
+(`notes` keeps a `{nickname: text}` dict) and treat what you read back
+defensively (it round-tripped through JSON). `ctx.secrets` is the OS keyring for
+sensitive strings (tokens, passwords); never put secrets in `settings`.
+
+### Background work & clean shutdown
+
+Do network or other slow work **off the UI thread**, then marshal results back
+with `ctx.run_on_ui_thread(fn, *args)` (it runs inline if already on the main
+thread). Any thread you start must stop when the plugin goes away: keep a
+`threading.Event` stop flag, set it in **both** `deactivate()` and an
+`APP_SHUTDOWN` handler (either may fire first — make stop idempotent), and use
+`stop.wait(interval)` instead of `time.sleep` so the loop exits promptly. `health`
+is the reference: a `ThreadPoolExecutor` for probes, a monitor thread that wakes
+on `stop`, and `_shutdown()` wired to both teardown paths.
+
+### Debugging
+
+Use the stdlib `logging` module (`logger = logging.getLogger(__name__)`); output
+goes to sshPilot's log (run the app from a terminal to see it; raise verbosity in
+**Preferences ▸ Advanced**). A plugin that raises in `activate` is logged and
+skipped without taking the app down, so check the log if your plugin doesn't
+appear. Keep the pure logic in module-level functions/classes with no `gi`
+import and import `gi` lazily inside the page factory — then you can unit-test the
+logic without a display (see each plugin's `tests/`).
 
 ## Installing a plugin (as a user)
 

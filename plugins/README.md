@@ -30,4 +30,6 @@ plugins/build.sh        # writes plugins/dist/<id>.zip + .zip.sha256
 
 Then, per [docs/plugins/registry.md](../docs/plugins/registry.md): create a
 GitHub release per plugin (attach the `.zip` and `.zip.sha256`), and PR an entry
-into the registry's `plugins.json`.
+into the registry's `plugins.json`. Ready-to-PR entries for all three are in
+[`registry-entries.json`](registry-entries.json) — copy the objects from its
+`plugins` array (adjust versions/URLs if you tag something other than `v1.0.0`).

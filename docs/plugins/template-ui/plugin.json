@@ -1,0 +1,9 @@
+{
+  "id": "ui-template",
+  "name": "UI Template Plugin",
+  "api_version": 1,
+  "permissions": [
+    "ui",
+    "settings"
+  ]
+}

@@ -1,0 +1,62 @@
+{
+  "_comment": "Ready-to-PR entries for mfat/sshpilot-plugins' plugins.json. After publishing each plugin's GitHub release (with <id>.zip + <id>.zip.sha256 from build.sh), copy these objects into the registry's top-level `plugins` array. Update versions/URLs if you tag something other than v1.0.0.",
+  "plugins": [
+    {
+      "id": "auto-group",
+      "name": "Smart Auto-Grouping",
+      "description": "Sort new connections into sidebar groups by glob rule.",
+      "author": "mfat",
+      "homepage": "https://github.com/mfat/sshpilot-auto-group",
+      "latestVersion": "1.0.0",
+      "versions": [
+        {
+          "version": "1.0.0",
+          "api_version": 1,
+          "permissions": ["connections", "ui", "settings"],
+          "package": {
+            "downloadUrl": "https://github.com/mfat/sshpilot-auto-group/releases/download/v1.0.0/auto-group.zip",
+            "checksumUrl": "https://github.com/mfat/sshpilot-auto-group/releases/download/v1.0.0/auto-group.zip.sha256"
+          }
+        }
+      ]
+    },
+    {
+      "id": "notes",
+      "name": "Connection Notes",
+      "description": "A freeform note per connection, pruned when a connection is deleted.",
+      "author": "mfat",
+      "homepage": "https://github.com/mfat/sshpilot-notes",
+      "latestVersion": "1.0.0",
+      "versions": [
+        {
+          "version": "1.0.0",
+          "api_version": 1,
+          "permissions": ["connections", "ui", "settings"],
+          "package": {
+            "downloadUrl": "https://github.com/mfat/sshpilot-notes/releases/download/v1.0.0/notes.zip",
+            "checksumUrl": "https://github.com/mfat/sshpilot-notes/releases/download/v1.0.0/notes.zip.sha256"
+          }
+        }
+      ]
+    },
+    {
+      "id": "health",
+      "name": "Host Health Dashboard",
+      "description": "Live up/down TCP status for every saved host.",
+      "author": "mfat",
+      "homepage": "https://github.com/mfat/sshpilot-health",
+      "latestVersion": "1.0.0",
+      "versions": [
+        {
+          "version": "1.0.0",
+          "api_version": 1,
+          "permissions": ["connections", "network", "ui"],
+          "package": {
+            "downloadUrl": "https://github.com/mfat/sshpilot-health/releases/download/v1.0.0/health.zip",
+            "checksumUrl": "https://github.com/mfat/sshpilot-health/releases/download/v1.0.0/health.zip.sha256"
+          }
+        }
+      ]
+    }
+  ]
+}
