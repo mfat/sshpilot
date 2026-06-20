@@ -860,13 +860,19 @@ class ConnectionManager(GObject.Object):
 
     @staticmethod
     def _non_ssh_password_host(connection_or_data) -> str:
-        """Keyring host identifier for a non-SSH connection."""
+        """Keyring host identifier for a non-SSH connection.
+
+        Scoped by ``protocol:nickname`` so two connections to the same host (or
+        with empty usernames) can't collide on one keyring slot; the nickname is
+        unique within the app."""
         if isinstance(connection_or_data, dict):
             data = connection_or_data
         else:
             data = getattr(connection_or_data, 'data', None) or {}
-        return (data.get('host') or data.get('hostname')
-                or data.get('nickname') or '')
+        protocol = data.get('protocol') or 'plugin'
+        ident = (data.get('nickname') or data.get('host')
+                 or data.get('hostname') or '')
+        return f"{protocol}:{ident}" if ident else ''
 
     def _load_non_ssh_connections(self, existing_by_nickname: Dict[str, 'Connection']) -> None:
         """Append persisted plugin-protocol connections to self.connections.

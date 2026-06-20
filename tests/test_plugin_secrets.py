@@ -1,5 +1,9 @@
 """PluginContext secrets are namespaced per plugin id and ride the existing
-ConnectionManager keyring path (no raw keyring access from plugins)."""
+ConnectionManager keyring path (no raw keyring access from plugins).
+
+Two surfaces are tested: the preferred scoped ``ctx.secrets`` (auto-scoped to
+the plugin) and the legacy explicit-id ``ctx.get_secret/set_secret/delete_secret``
+which now refuses any id other than the context's own plugin."""
 
 import os
 import sys
@@ -39,45 +43,67 @@ class FakeStoreManager:
         return self.secrets.pop((host, username), None) is not None
 
 
-def _ctx(manager):
-    return PluginContext(plugin_id="test-plugin", app_config=None,
+def _ctx(manager, plugin_id="test-plugin"):
+    return PluginContext(plugin_id=plugin_id, app_config=None,
                          connection_manager=manager,
                          protocol_registry=ProtocolRegistry())
 
 
-def test_round_trip_and_namespacing():
+def test_scoped_store_round_trip_and_namespacing():
     manager = FakeStoreManager()
     ctx = _ctx(manager)
 
-    ctx.set_secret('vps', 'api_token', 's3cret')
-    assert ctx.get_secret('vps', 'api_token') == 's3cret'
-    # Stored under the reserved plugin namespace, not as an SSH password.
-    assert manager.secrets == {('sshpilot-plugin/vps', 'api_token'): 's3cret'}
+    ctx.secrets.set('api_token', 's3cret')
+    assert ctx.secrets.get('api_token') == 's3cret'
+    # Stored under the reserved per-plugin namespace, not as an SSH password.
+    assert manager.secrets == {('sshpilot-plugin/test-plugin', 'api_token'): 's3cret'}
 
-    # Another plugin cannot see it; same key under another id is separate.
-    assert ctx.get_secret('other', 'api_token') is None
-    ctx.set_secret('other', 'api_token', 'different')
-    assert ctx.get_secret('vps', 'api_token') == 's3cret'
+    # A different plugin's scoped store cannot see it.
+    other = _ctx(manager, plugin_id="other-plugin")
+    assert other.secrets.get('api_token') is None
+    other.secrets.set('api_token', 'different')
+    assert ctx.secrets.get('api_token') == 's3cret'
 
-    assert ctx.delete_secret('vps', 'api_token') is True
-    assert ctx.get_secret('vps', 'api_token') is None
-    assert ctx.delete_secret('vps', 'api_token') is False
+    assert ctx.secrets.delete('api_token') is True
+    assert ctx.secrets.get('api_token') is None
+    assert ctx.secrets.delete('api_token') is False
+
+
+def test_legacy_api_allows_only_own_id():
+    manager = FakeStoreManager()
+    ctx = _ctx(manager, plugin_id="vps-tool")
+
+    # Same id (the plugin's own) works exactly like the scoped store.
+    ctx.set_secret('vps-tool', 'api_token', 's3cret')
+    assert ctx.get_secret('vps-tool', 'api_token') == 's3cret'
+    assert manager.secrets == {('sshpilot-plugin/vps-tool', 'api_token'): 's3cret'}
+    assert ctx.delete_secret('vps-tool', 'api_token') is True
+
+
+def test_legacy_api_rejects_foreign_id():
+    ctx = _ctx(FakeStoreManager(), plugin_id="vps-tool")
+    with pytest.raises(ValueError):
+        ctx.get_secret('someone-else', 'api_token')
+    with pytest.raises(ValueError):
+        ctx.set_secret('someone-else', 'api_token', 'v')
+    with pytest.raises(ValueError):
+        ctx.delete_secret('someone-else', 'api_token')
 
 
 def test_invalid_arguments_rejected():
-    ctx = _ctx(FakeStoreManager())
+    ctx = _ctx(FakeStoreManager(), plugin_id="test-plugin")
     with pytest.raises(ValueError):
         ctx.set_secret('', 'k', 'v')
     with pytest.raises(ValueError):
         ctx.set_secret('has/slash', 'k', 'v')
     with pytest.raises(ValueError):
-        ctx.get_secret('vps', '')
+        ctx.get_secret('test-plugin', '')
 
 
 def test_storage_unavailable_raises():
     ctx = _ctx(FakeStoreManager(available=False))
     with pytest.raises(RuntimeError):
-        ctx.set_secret('vps', 'api_token', 's3cret')
+        ctx.secrets.set('api_token', 's3cret')
 
 
 def test_plugin_namespace_cannot_collide_with_ssh_hosts():

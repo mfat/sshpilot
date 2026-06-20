@@ -82,7 +82,9 @@ def test_password_goes_to_keyring_not_json(manager):
 
     entry = manager.config.settings['connections.non_ssh'][0]
     assert 'password' not in entry
-    assert stored_pw == [('10.0.0.5', '', 'hunter2')]
+    # Keyed by protocol:nickname so it can't collide with another connection
+    # to the same host or with an empty username.
+    assert stored_pw == [('telnet:lab-switch', '', 'hunter2')]
 
 
 def test_reload_preserves_object_identity(manager):

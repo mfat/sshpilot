@@ -371,10 +371,15 @@ class PluginContext:
             fn(*args)
 
     # --- secrets (legacy explicit-id API; prefer ctx.secrets) ----------
-    @staticmethod
-    def _check_secret_args(plugin_id: str, key: str) -> None:
+    def _check_secret_args(self, plugin_id: str, key: str) -> None:
         if not plugin_id or '/' in plugin_id:
             raise ValueError(f"Invalid plugin id {plugin_id!r}")
+        # A plugin may only touch its own namespace — the explicit id can't be
+        # used to read/write another plugin's secrets. Use the scoped
+        # ``ctx.secrets`` (auto-scoped) instead.
+        if plugin_id != self.plugin_id:
+            raise ValueError(
+                "A plugin may only access its own secrets; use ctx.secrets")
         if not key:
             raise ValueError("Secret key must be non-empty")
 
