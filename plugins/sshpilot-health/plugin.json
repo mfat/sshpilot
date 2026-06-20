@@ -1,0 +1,10 @@
+{
+  "id": "health",
+  "name": "Host Health Dashboard",
+  "api_version": 1,
+  "permissions": [
+    "connections",
+    "network",
+    "ui"
+  ]
+}
