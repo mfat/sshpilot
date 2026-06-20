@@ -1,6 +1,7 @@
 {
   "id": "runbook",
   "name": "Runbook Snippets",
+  "version": "1.1.1",
   "api_version": 1,
   "permissions": [
     "connections",
