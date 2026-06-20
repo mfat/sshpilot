@@ -7,10 +7,10 @@
       "description": "Sort new connections into sidebar groups by glob rule.",
       "author": "mfat",
       "homepage": "https://github.com/mfat/sshpilot-auto-group",
-      "latestVersion": "1.1.0",
+      "latestVersion": "1.1.1",
       "versions": [
         {
-          "version": "1.1.0",
+          "version": "1.1.1",
           "api_version": 1,
           "permissions": [
             "connections",
@@ -18,8 +18,8 @@
             "settings"
           ],
           "package": {
-            "downloadUrl": "https://github.com/mfat/sshpilot-auto-group/releases/download/v1.1.0/auto-group.zip",
-            "checksumUrl": "https://github.com/mfat/sshpilot-auto-group/releases/download/v1.1.0/auto-group.zip.sha256"
+            "downloadUrl": "https://github.com/mfat/sshpilot-auto-group/releases/download/v1.1.1/auto-group.zip",
+            "checksumUrl": "https://github.com/mfat/sshpilot-auto-group/releases/download/v1.1.1/auto-group.zip.sha256"
           }
         }
       ]
