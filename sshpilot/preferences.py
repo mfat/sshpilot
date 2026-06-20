@@ -2456,6 +2456,9 @@ class PreferencesWindow(Adw.Window):
               "only enable plugins you trust. Restart required."))
         user_group.set_header_suffix(self._make_install_button())
         user_infos = [i for i in infos if not i.builtin]
+        # pid -> (row, info, update_button); the update button is built hidden and
+        # revealed by the async registry load when a newer version is available.
+        self._user_plugin_rows = {}
         if user_infos:
             for info in user_infos:
                 row = Adw.SwitchRow()
@@ -2472,6 +2475,14 @@ class PreferencesWindow(Adw.Window):
                     )
                 self._add_permissions_info(row, info.permissions)
                 self._add_plugin_page_gear(row, info.plugin_id)
+                update_btn = Gtk.Button()
+                update_btn.set_icon_name('software-update-available-symbolic')
+                update_btn.add_css_class('flat')
+                update_btn.add_css_class('accent')
+                update_btn.set_valign(Gtk.Align.CENTER)
+                update_btn.set_visible(False)
+                row.add_suffix(update_btn)
+                self._user_plugin_rows[info.plugin_id] = (row, info, update_btn)
                 remove = Gtk.Button()
                 remove.set_icon_name('user-trash-symbolic')
                 remove.add_css_class('flat')
@@ -2555,6 +2566,41 @@ class PreferencesWindow(Adw.Window):
             shown += 1
         if shown == 0:
             _note(_("No new plugins available"))
+        # Flag installed user plugins that have a newer version in the registry.
+        self._apply_plugin_updates(entries)
+
+    def _apply_plugin_updates(self, entries):
+        """Reveal the per-row update button when the registry has a newer,
+        compatible version than the installed plugin's manifest version."""
+        from .update_checker import compare_versions
+        rows = getattr(self, '_user_plugin_rows', {})
+        by_id = {e['id']: e for e in (entries or [])}
+        for pid, (row, info, update_btn) in rows.items():
+            entry = by_id.get(pid)
+            installed = getattr(info, 'version', None)
+            latest = entry.get('version') if entry else None
+            if (entry is None or not entry.get('compatible', True)
+                    or not installed or not latest):
+                continue
+            if not compare_versions(installed, latest):
+                continue  # up to date (latest not greater)
+            update_btn.set_tooltip_text(
+                _("Update available (v{} → v{})").format(installed, latest))
+            if not getattr(update_btn, '_wired', False):
+                update_btn.connect(
+                    'clicked', lambda b, e=entry: self._on_update_clicked(b, e))
+                update_btn._wired = True
+            update_btn.set_visible(True)
+
+    def _on_update_clicked(self, button, entry):
+        button.set_sensitive(False)
+        button.set_tooltip_text(_("Updating…"))
+
+        def on_fail():
+            button.set_sensitive(True)
+            button.set_tooltip_text(_("Update available"))
+
+        self._start_registry_install(entry, on_fail)
 
     def _available_subtitle(self, entry):
         bits = [b for b in (entry.get('description'),
@@ -2592,7 +2638,12 @@ class PreferencesWindow(Adw.Window):
 
         row.set_sensitive(False)
         row.set_subtitle(_("Fetching…"))
+        self._start_registry_install(entry, revert)
 
+    def _start_registry_install(self, entry, on_fail):
+        """Download + verify a registry package off-thread, then install it.
+        Shared by the Available-Plugins toggle and the per-row update button.
+        ``on_fail`` re-enables/reverts the triggering widget."""
         def worker():
             from .plugins.registry_client import download_package
             try:
@@ -2600,9 +2651,9 @@ class PreferencesWindow(Adw.Window):
                 dest = os.path.join(tmpdir, 'package.zip')
                 download_package(entry['download_url'], entry['checksum_url'], dest)
             except Exception as exc:
-                GLib.idle_add(self._registry_fetch_failed, str(exc), revert)
+                GLib.idle_add(self._registry_fetch_failed, str(exc), on_fail)
                 return
-            GLib.idle_add(self._registry_fetch_done, dest, tmpdir, revert)
+            GLib.idle_add(self._registry_fetch_done, dest, tmpdir, on_fail)
         threading.Thread(target=worker, daemon=True).start()
 
     def _registry_fetch_failed(self, msg, revert):

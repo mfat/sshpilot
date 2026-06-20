@@ -107,6 +107,10 @@ Fields (schema: [`plugin.schema.json`](plugin.schema.json)):
   The app loads the plugin only if this equals its `API_VERSION[0]`; otherwise it
   is skipped and shown as *Incompatible* in Preferences.
 - `name` — shown in Preferences ▸ Plugins.
+- `version` — your plugin's version, e.g. `"1.2.0"` (dotted integers; match your
+  release tag). **Recommended:** it drives the in-app **update button** — sshPilot
+  compares it against the registry's latest version and offers an update when
+  yours is newer. Omit it and the plugin simply never shows an update prompt.
 - `permissions` — capabilities your plugin uses (see below). Declare every one;
   they're shown to the user before they enable/install your plugin.
 - `builtin` / `required` — for in-app built-ins only (don't set these in a

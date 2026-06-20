@@ -74,6 +74,7 @@ class PluginInfo:
     api_compatible: bool
     api_version: Optional[int] = None
     permissions: List[str] = field(default_factory=list)
+    version: Optional[str] = None  # plugin's own version (drives update checks)
 
 
 def _user_plugin_dir() -> Path:
@@ -263,6 +264,7 @@ def discover_plugins() -> List[PluginInfo]:
                 api_version=declared,
                 permissions=[str(p) for p in (meta.get("permissions") or [])
                              if isinstance(p, str)],
+                version=(str(meta["version"]) if meta.get("version") else None),
             ))
 
     _scan(_builtin_plugin_dir(), builtin=True)
