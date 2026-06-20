@@ -1,6 +1,14 @@
 # Core GTK and bindings
-PyGObject>=3.42
-pycairo>=1.20.0
+#
+# IMPORTANT: Do NOT install PyGObject or pycairo via pip. They are provided by
+# your distribution's system packages (e.g. python3-gi, python3-gi-cairo on
+# Debian/Ubuntu; python3-gobject on Fedora). pip would build them from source
+# and require a C toolchain + GTK -dev headers. See README "Run from Source":
+# install the system packages, then create the venv with --system-site-packages
+# so it can use them. These lines are kept (commented) only to document the
+# minimum versions.
+#   PyGObject>=3.42
+#   pycairo>=1.20.0
 
 # Terminal widget (GTK4 VTE bindings; available via gi on most distros, leave as hint)
 # If your distro packages this via gi (python3-gi + gir1.2-vte-3.91), you may not need a pip package.
