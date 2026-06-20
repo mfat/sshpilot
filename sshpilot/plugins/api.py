@@ -26,7 +26,8 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 #      (ctx.open_connection), key generation (ctx.generate_key), per-plugin
 #      scoped ctx.secrets/ctx.settings, ctx.run_on_ui_thread, ctx.plugin_id.
 # 1.3: Connection groups — ctx.create_group / add_connection_to_group /
-#      add_connection_group (for multi-node provisioning).
+#      add_connection_group (for multi-node provisioning); ctx.update_connection
+#      (refresh an existing connection in place).
 # 1.4: ctx.list_connections() — read-only snapshot of all saved connections.
 API_VERSION: Tuple[int, int] = (1, 4)
 

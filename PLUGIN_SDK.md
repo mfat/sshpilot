@@ -8,7 +8,8 @@ change without notice.
 
 > The canonical, maintained guide is **[docs/plugins/writing-plugins.md](docs/plugins/writing-plugins.md)**
 > (plus [registry.md](docs/plugins/registry.md) and the
-> [template](docs/plugins/template/)). This file is the deeper API reference.
+> [template](docs/plugins/template/)). Start there for the **6-step Quickstart**
+> and the iterate loop; this file is the deeper API reference.
 
 - **The only import you need:** `sshpilot.plugins.api`.
 - **Current API version:** `1.4` (see [Versioning](#versioning)).
@@ -59,6 +60,12 @@ my-plugin/
 - `id` — unique, stable; used for secret/setting namespacing and the enable list. No `/`.
 - `name` — shown in Preferences ▸ Plugins.
 - `api_version` — the API **major** version you target (currently `1`). The loader refuses plugins whose major version doesn't match the running app.
+- `permissions` — optional list declaring the capabilities you use
+  (`network`, `filesystem`, `keyring`, `connections`, `process`, `ui`,
+  `settings`). They are **shown to the user at install/enable for informed
+  consent but are NOT enforced** — plugins run in-process with full privileges.
+  Declare every capability you actually use. Full table + the manifest schema in
+  the [canonical guide](docs/plugins/writing-plugins.md#permissions).
 
 **`__init__.py`**
 
@@ -122,6 +129,7 @@ Passed to `activate`. One context per plugin; `ctx.plugin_id` is your manifest i
 ### Registration & data
 - `register_protocol(backend)` — register a `ProtocolBackend` (see protocol plugins).
 - `add_connection(data: dict) -> ConnectionInfo` — create + persist a connection. Validated; raises `ValueError` on bad/duplicate data. SSH connections go to `~/.ssh/config`; non-SSH protocols persist internally. Returns a read-only [`ConnectionInfo`](#payloads).
+- `update_connection(nickname: str, data: dict) -> bool` — update an existing connection in place (rewrites its stored settings and re-stores its password). Returns `False` if no connection with that nickname exists. Pair with `add_connection` to refresh a provisioned host whose address/credentials changed. *(API ≥ 1.3)*
 - `open_connection(nickname: str) -> bool` — open a terminal tab for an existing connection. Returns `False` if unknown / UI not ready. *(after `app_started`)*
 - `list_connections() -> list[ConnectionInfo]` — read-only snapshot of every saved connection. Safe any time after load. *(API ≥ 1.4)*
 - `generate_key(name: str, *, key_type="ed25519", key_size=3072, comment=None, passphrase=None) -> str | None` — generate an SSH key; returns the private-key path or `None`. *(after `app_started`)*
@@ -176,6 +184,12 @@ def _on_created(self, info):   # info: ConnectionInfo
 > only care about new connections, subscribe to `CONNECTION_CREATED`.
 >
 > `SESSION_OPENED` does not re-fire on an automatic reconnect of the same tab.
+>
+> **Rename caveat:** `CONNECTION_UPDATED` carries only the connection's *current*
+> nickname — there is no "previous nickname". If you key plugin data by nickname
+> (notes, snippets, …) you can't migrate it automatically on rename; instead
+> reconcile against `list_connections()` (drop entries whose nickname no longer
+> exists), as the `notes` plugin does.
 
 ### Payloads
 
@@ -265,8 +279,8 @@ must be made on the UI thread.
 - New since `1.0`: `1.1` plugin secrets; `1.2` events, UI extension,
   `open_connection`, `generate_key`, scoped `ctx.secrets`/`ctx.settings`,
   `ctx.run_on_ui_thread`, `ctx.plugin_id`; `1.3` connection groups
-  (`create_group`/`add_connection_to_group`/`add_connection_group`); `1.4`
-  `list_connections`.
+  (`create_group`/`add_connection_to_group`/`add_connection_group`) and
+  `update_connection`; `1.4` `list_connections`.
 
 ---
 
@@ -319,6 +333,10 @@ gives you an IP/host, just `ctx.add_connection({...,"protocol":"ssh","host":ip})
 (see `mock_vps`).
 
 **Rules for both:**
+- **The `ctx` in `build_spawn` is a host-less spawn context** (built via
+  `PluginContext.for_spawn`): `ctx.secrets` / `ctx.settings` work and are scoped
+  to your plugin, but `ctx.ui` and `ctx.events` are `None` — `build_spawn` must be
+  stateless, deriving everything from `connection.data` + the environment.
 - **Run the CLI off the UI thread** (`threading.Thread` + `subprocess.run(..., timeout=…)`), then marshal results back with `ctx.run_on_ui_thread`. `build_spawn` itself must not block — it only assembles argv.
 - **Parse defensively.** Prefer `--output json` / `--json`, but tolerate missing/renamed fields; don't hard-assert a schema.
 - **Flatpak:** inside the sandbox the host CLI isn't on `PATH`. Detect `os.path.exists("/.flatpak-info")` and prefix calls with `["flatpak-spawn", "--host"]` — both your page's `subprocess` calls **and** the `build_spawn` argv (the terminal child is sandboxed too). sshPilot's manifest already grants `--talk-name=org.freedesktop.Flatpak`.

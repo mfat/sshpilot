@@ -18,6 +18,48 @@ examples `sshpilot/plugins/examples/mock_vps/` and `easyenv_workspaces/`, and th
 official non-protocol plugins in [`plugins/`](../../plugins/) (auto-group, notes,
 health).
 
+## Quickstart
+
+Zero to a loaded plugin in six steps. Start from the template that matches what
+you're building — [`template/`](template/) for a **protocol** (a command run in
+the terminal, e.g. a new transport) or [`template-ui/`](template-ui/) for an
+**event/UI** plugin (a page, reacting to connections/sessions).
+
+```sh
+# 1. Scaffold from a template (pick one).
+cp -r docs/plugins/template-ui ~/my-plugin        # or docs/plugins/template
+
+# 2. Edit my-plugin/plugin.json — set a unique "id" (also the install dir name)
+#    and "name". Edit my-plugin/__init__.py — keep `class Plugin(SshPilotPlugin)`
+#    and replace the body with your page/protocol.
+
+# 3. Install it into the user plugin dir (the dir name MUST equal the id).
+cp -r ~/my-plugin ~/.local/share/sshpilot/plugins/my-plugin
+#    Flatpak: ~/.var/app/io.github.mfat.sshpilot/data/sshpilot/plugins/my-plugin
+
+# 4. Run the tests (no GTK needed — logic is plain Python).
+cd ~/my-plugin && pip install pytest \
+  && pip install "sshpilot @ git+https://github.com/mfat/sshpilot" --no-deps \
+  && pytest -ra
+```
+
+5. Launch sshPilot, open **Preferences ▸ Plugins**, toggle your plugin on
+   (accept the permissions prompt), and **restart** — user plugins load at
+   startup.
+6. Your protocol appears in the connection dialog's protocol dropdown, or your
+   page appears in the main menu. That's it.
+
+### Developing & iterating
+
+There is **no hot-reload**: the loader imports enabled user plugins once at
+startup ([loader.py](../../sshpilot/plugins/loader.py)). The dev loop is therefore
+**edit → copy into the plugin dir → restart sshPilot**. Keep your pure logic in
+module-level functions/classes (no `gi` import there) and import `gi` lazily
+inside the page factory — then `pytest` covers most changes without a restart, and
+you only restart to exercise the live UI. If your plugin doesn't appear, run the
+app from a terminal: a plugin that raises during import/activate is logged and
+skipped (it won't crash the app).
+
 ## The two tiers
 
 | | Built-in | User / third-party |
