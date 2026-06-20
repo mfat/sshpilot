@@ -8,13 +8,14 @@ to it.
 ## Running from source
 
 sshPilot is developed in a Python **virtual environment (venv) + pip** on top of
-the GTK stack installed from your distribution. PyGObject, pycairo, GTK4,
-libadwaita, and VTE must come from system packages — **not** pip. The full
-step-by-step guide (system prerequisites, why pip must not build PyGObject, and
-the `--system-site-packages` venv) is in the README:
-[Run from Source](README.md#-run-from-source).
+the GTK stack. Two setups are supported — a **hybrid** one (system PyGObject +
+`--system-site-packages` venv; recommended) and a **pure venv** one (pip-built
+PyGObject). Both are covered step by step, with system prerequisites and
+troubleshooting, in
+[documentation/running-from-source.md](documentation/running-from-source.md).
 
-In short, once the system prerequisites are installed:
+In short, for the recommended hybrid setup once the system prerequisites are
+installed:
 
 ```bash
 python3 -m venv --system-site-packages .venv

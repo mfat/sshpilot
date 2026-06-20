@@ -191,30 +191,29 @@ brew install gtk4 libadwaita pygobject3 py3cairo vte3 gobject-introspection adwa
 
 ### 💻 Run from Source
 
-The supported way to run and develop sshPilot from source is a **Python virtual
-environment (venv) + pip**, on top of the GTK stack installed from your
-distribution's packages.
+sshPilot is run from source in a **Python virtual environment (venv) + pip**, on
+top of the GTK stack. Two setups are supported (both mirror PyGObject's official
+[Getting Started](https://pygobject.gnome.org/getting_started.html) guide):
+
+- **Hybrid (recommended):** install the GTK stack *and* PyGObject from your
+  distribution, then use a `--system-site-packages` venv for the pure-Python
+  deps. No compiler needed — the quick-start below uses this.
+- **Pure venv:** build PyGObject/pycairo from PyPI into a plain venv (needs a C
+  toolchain + GTK `-dev` headers).
+
+📖 **Full guide to both approaches, dev/test setup, and troubleshooting:**
+[documentation/running-from-source.md](documentation/running-from-source.md).
 
 > **Why a venv?** Modern Linux distributions ship an *externally-managed* system
 > Python (PEP 668) that refuses `pip install`. A venv keeps sshPilot's Python
-> dependencies isolated and is the recommended development model.
+> dependencies isolated.
 
-> **Why system packages for the GTK stack?** PyGObject, pycairo, and the
-> GTK4/libadwaita/VTE runtime are provided by your distribution. **Do not install
-> PyGObject or pycairo via pip** unless you really know what you're doing — pip
-> builds them from source, which forces you to set up a C toolchain, pkg-config,
-> and a long list of `-dev` headers just to compile wheels your distro already
-> ships. Install them as system packages (Step 1) and create the venv with
-> `--system-site-packages` so it can see them (Step 2).
-
-> **Aligned with upstream:** PyGObject's official
-> [*Getting Started*](https://pygobject.gnome.org/getting_started.html) guide
-> lists "system provided PyGObject" (`apt install python3-gi python3-gi-cairo
-> gir1.2-gtk-4.0`, `dnf install python3-gobject gtk4`) as the first install
-> option — the approach used here. Its alternative "from PyPI with pip" route
-> builds PyGObject/pycairo from source and additionally needs `gcc`,
-> `pkg-config`, `python3-dev`, `libgirepository-2.0-dev`, and `libcairo2-dev`,
-> which is why this project uses the distribution packages instead.
+> **Why system packages for the GTK stack (hybrid)?** PyGObject, pycairo, and
+> the GTK4/libadwaita/VTE runtime are provided by your distribution. **Do not
+> install PyGObject or pycairo via pip** in this setup — pip would build them
+> from source, requiring a C toolchain and `-dev` headers. Install them as system
+> packages (Step 1) and create the venv with `--system-site-packages` so it can
+> see them (Step 2).
 
 #### Step 1 — Install system prerequisites (required)
 
@@ -290,6 +289,10 @@ Enable verbose debugging output with the `--verbose` flag:
 ```bash
 python3 run.py --verbose
 ```
+
+Prefer to keep PyGObject out of system packages? The **pure-venv** approach
+(pip-built PyGObject/pycairo in a plain venv) is documented in the
+[full source-install guide](documentation/running-from-source.md#approach-b--pure-venv-pip-built-pygobject).
 
 > **Alternative (not for development):** if you only want to *use* sshPilot, the
 > distribution packages, Flatpak, Homebrew, and AUR builds in
