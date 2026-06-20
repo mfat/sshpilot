@@ -31,7 +31,8 @@ logger = logging.getLogger(__name__)
 
 CHECK_TIMEOUT = 3.0        # seconds per TCP probe
 REFRESH_INTERVAL = 30.0    # seconds between automatic refreshes
-MAX_WORKERS = 8
+MAX_WORKERS = 64  # cap; the pool is sized to min(this, host count) so probes
+                  # run concurrently and results stream in as each returns
 
 
 # --- pure logic (no GTK) ----------------------------------------------------
@@ -178,7 +179,8 @@ class Plugin(SshPilotPlugin):
     def _start_monitor(self) -> None:
         if self._monitor_thread is not None:
             return
-        self._executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
+        # The worker pool is created lazily in _tick (sized to the host count);
+        # this only starts the periodic re-check thread.
         self._monitor_thread = threading.Thread(
             target=self._monitor, name="health-monitor", daemon=True)
         self._monitor_thread.start()
@@ -239,6 +241,12 @@ class Plugin(SshPilotPlugin):
             self._list_box.append(row)
             return
 
+        # Create the pool lazily (sized to the work) so the very first paint
+        # dispatches probes immediately — and concurrently — rather than waiting
+        # for the next auto-refresh.
+        if self._executor is None and not self._stop.is_set():
+            self._executor = ThreadPoolExecutor(
+                max_workers=min(MAX_WORKERS, max(8, len(connections))))
         executor = self._executor
         for info in connections:
             row = Gtk.ListBoxRow()
