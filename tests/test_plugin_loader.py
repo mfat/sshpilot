@@ -105,6 +105,31 @@ def test_broken_user_plugin_does_not_break_loading(tmp_path):
     assert not any(p.plugin_id == "broken" for p in loaded)
 
 
+def test_user_plugin_with_dataclass_loads(tmp_path):
+    # A user plugin using @dataclass + `from __future__ import annotations`
+    # must load. On Python 3.14 @dataclass resolves annotations via
+    # sys.modules[cls.__module__], so the loader has to register the module
+    # before exec_module — otherwise this raises AttributeError on import.
+    body = textwrap.dedent("""
+        from __future__ import annotations
+        from dataclasses import dataclass
+        from sshpilot.plugins.api import SshPilotPlugin
+
+        @dataclass
+        class Row:
+            name: str
+            port: int = 22
+
+        class Plugin(SshPilotPlugin):
+            def activate(self, ctx):
+                self.row = Row("x")
+    """)
+    _write_user_plugin(tmp_path, "dataclassy", body=body)
+    cfg = FakeConfig({"plugins.enabled": ["dataclassy"]})
+    loaded = load_plugins(app_config=cfg, connection_manager=None)
+    assert any(p.plugin_id == "dataclassy" and not p.builtin for p in loaded)
+
+
 def test_discover_plugins_lists_without_importing(tmp_path):
     plugin_dir = _write_user_plugin(
         tmp_path, "lazy",

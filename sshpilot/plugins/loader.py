@@ -37,6 +37,7 @@ import importlib.util
 import json
 import logging
 import os
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
@@ -165,11 +166,21 @@ def _load_user(make_ctx,
             logger.error("User plugin %r has no __init__.py", pid)
             continue
         try:
+            module_name = f"sshpilot_user_plugin_{pid}"
             spec = importlib.util.spec_from_file_location(
-                f"sshpilot_user_plugin_{pid}", init_py,
+                module_name, init_py,
                 submodule_search_locations=[str(child)])
             module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)  # type: ignore[union-attr]
+            # Register before exec: the standard importlib pattern. Without it,
+            # anything that looks the module up by name during import fails —
+            # e.g. @dataclass on Python 3.14 resolves annotations via
+            # sys.modules[cls.__module__], which would otherwise be missing.
+            sys.modules[module_name] = module
+            try:
+                spec.loader.exec_module(module)  # type: ignore[union-attr]
+            except Exception:
+                sys.modules.pop(module_name, None)
+                raise
             instance = _instantiate(module, meta)
             if instance is None:
                 continue
