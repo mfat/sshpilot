@@ -1,0 +1,17 @@
+# Development and test dependencies for sshPilot.
+#
+# Install inside the venv created per the README "Run from Source" guide:
+#   pip install -r requirements-dev.txt
+#
+# This pulls in the runtime dependencies plus the tooling CI uses for tests and
+# linting. As with requirements.txt, PyGObject/pycairo are NOT listed here —
+# they come from system packages (see README).
+-r requirements.txt
+
+# Tests (CI runs: pytest -ra -m "not integration")
+pytest>=7.0
+pytest-cov
+jsonschema
+
+# Lint (pinned to match the CI Ruff version)
+ruff==0.15.17

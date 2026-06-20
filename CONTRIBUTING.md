@@ -7,18 +7,45 @@ to it.
 
 ## Running from source
 
-```
+sshPilot is developed in a Python **virtual environment (venv) + pip** on top of
+the GTK stack. Two setups are supported — a **hybrid** one (system PyGObject +
+`--system-site-packages` venv; recommended) and a **pure venv** one (pip-built
+PyGObject). Both are covered step by step, with system prerequisites and
+troubleshooting, in
+[documentation/running-from-source.md](documentation/running-from-source.md).
+
+In short, for the recommended hybrid setup once the system prerequisites are
+installed:
+
+```bash
+python3 -m venv --system-site-packages .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 python3 run.py
 ```
 
-GTK4, libadwaita, and VTE must be installed from your distribution (see the
-README for the full list of system dependencies).
+Supported/tested Python versions are 3.12 and 3.13 (CI matrix).
 
 ## Running the tests
 
+Install the development/test dependencies in the same venv, then run the suite
+the way CI does:
+
+```bash
+pip install -r requirements-dev.txt
+pytest -ra -m "not integration"
 ```
-python3 -m pytest tests/
+
+`integration`-marked tests run real tool binaries and are exercised separately
+in CI. Some unit tests are marked `xfail` (see `tests/conftest.py`) — that is
+expected.
+
+## Linting
+
+CI runs [Ruff](https://docs.astral.sh/ruff/). Match it locally before pushing:
+
+```bash
+ruff check sshpilot/ tests/
 ```
 
 ## Plugins
