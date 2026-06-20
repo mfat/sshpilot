@@ -16,6 +16,11 @@
       "type": "string",
       "description": "Human-readable name shown in Preferences ▸ Plugins."
     },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+(\\.[0-9]+)*$",
+      "description": "Plugin version, e.g. \"1.2.0\" (dotted integers). Should match the published release tag. Drives the in-app 'update available' button: the app compares it against the registry's latest version."
+    },
     "api_version": {
       "type": "integer",
       "minimum": 1,

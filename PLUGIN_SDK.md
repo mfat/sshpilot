@@ -59,6 +59,7 @@ my-plugin/
 
 - `id` — unique, stable; used for secret/setting namespacing and the enable list. No `/`.
 - `name` — shown in Preferences ▸ Plugins.
+- `version` — your plugin's version, e.g. `"1.2.0"` (dotted integers, matching your release tag). Recommended: it drives the in-app **update button** (sshPilot compares it to the registry's latest version).
 - `api_version` — the API **major** version you target (currently `1`). The loader refuses plugins whose major version doesn't match the running app.
 - `permissions` — optional list declaring the capabilities you use
   (`network`, `filesystem`, `keyring`, `connections`, `process`, `ui`,

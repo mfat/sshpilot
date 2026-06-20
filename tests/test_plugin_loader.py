@@ -105,6 +105,23 @@ def test_broken_user_plugin_does_not_break_loading(tmp_path):
     assert not any(p.plugin_id == "broken" for p in loaded)
 
 
+def test_discover_reads_manifest_version(tmp_path):
+    # A `version` in plugin.json populates PluginInfo.version (drives update
+    # detection); its absence leaves it None.
+    versioned = (tmp_path / "xdg-data" / "sshpilot" / "plugins" / "versioned")
+    versioned.mkdir(parents=True)
+    (versioned / "plugin.json").write_text(json.dumps({
+        "id": "versioned", "name": "Versioned", "api_version": 1,
+        "version": "1.2.3",
+    }))
+    (versioned / "__init__.py").write_text("")
+    _write_user_plugin(tmp_path, "nover")  # no version field
+
+    by_id = {i.plugin_id: i for i in discover_plugins()}
+    assert by_id["versioned"].version == "1.2.3"
+    assert by_id["nover"].version is None
+
+
 def test_user_plugin_with_dataclass_loads(tmp_path):
     # A user plugin using @dataclass + `from __future__ import annotations`
     # must load. On Python 3.14 @dataclass resolves annotations via
