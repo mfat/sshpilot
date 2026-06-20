@@ -3038,16 +3038,20 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         self.protocol_row.set_visible(len(self._protocol_backends) > 1)
         if self.is_editing:
             self.protocol_row.set_sensitive(False)
-        else:
-            # New connections default to SSH regardless of registry order
-            # (registry.all() is alphabetical, so index 0 is not SSH).
-            try:
-                for i, backend in enumerate(self._protocol_backends):
-                    if getattr(backend, 'protocol_id', '') == 'ssh':
-                        self.protocol_row.set_selected(i)
-                        break
-            except Exception:
-                pass
+        # Reflect the right protocol in the dropdown: the connection's own when
+        # editing, otherwise SSH. registry.all() is alphabetical, so index 0 is
+        # not SSH — without this an edited SSH connection would show the first
+        # listed protocol (e.g. Docker/Podman).
+        target_protocol = 'ssh'
+        if self.is_editing:
+            target_protocol = getattr(self.connection, 'protocol', 'ssh') or 'ssh'
+        try:
+            for i, backend in enumerate(self._protocol_backends):
+                if getattr(backend, 'protocol_id', '') == target_protocol:
+                    self.protocol_row.set_selected(i)
+                    break
+        except Exception:
+            pass
         self.protocol_row.connect('notify::selected', self._on_protocol_changed)
         basic_group.add(self.protocol_row)
 
