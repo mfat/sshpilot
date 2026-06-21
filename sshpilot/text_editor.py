@@ -132,8 +132,15 @@ class RemoteFileEditorWindow(Adw.Window):
         self._language_id = language_id
         self._show_outline = show_outline
         self._outline_listbox = None
+        self._outline_scroller = None
         self._outline_rows = []  # parallel list of (line_index, kind, label)
         self._outline_refresh_id = 0
+        # Style-scheme selector + sidebar toggle state (lazy app config).
+        self._app_config = None
+        self._scheme_button = None
+        self._scheme_chooser = None
+        self._sidebar_toggle = None
+        self._dark_handler_id = 0
         self._temp_file: Optional[pathlib.Path] = None
         self._file_monitor: Optional[Gio.FileMonitor] = None
         self._file_modified_time: float = 0.0
@@ -199,8 +206,20 @@ class RemoteFileEditorWindow(Adw.Window):
         self._save_button.connect("clicked", self._on_save_clicked)
         header_bar.pack_end(self._save_button)
         
-        # Undo/Redo buttons
         from sshpilot import icon_utils
+
+        # Sidebar show/hide toggle — leftmost, before undo/redo (only for
+        # editors that have an outline).
+        if self._show_outline:
+            self._sidebar_toggle = Gtk.ToggleButton()
+            self._sidebar_toggle.set_icon_name("sidebar-show-symbolic")
+            self._sidebar_toggle.set_tooltip_text("Show/Hide sidebar")
+            self._sidebar_toggle.set_active(
+                bool(self._pref("editor.show_outline_sidebar", True)))
+            self._sidebar_toggle.connect("toggled", self._on_sidebar_toggled)
+            header_bar.pack_start(self._sidebar_toggle)
+
+        # Undo/Redo buttons
         self._undo_button = icon_utils.new_button_from_icon_name("edit-undo-symbolic")
         self._undo_button.set_tooltip_text("Undo")
         self._undo_button.set_sensitive(False)
@@ -242,7 +261,24 @@ class RemoteFileEditorWindow(Adw.Window):
         zoom_box.append(self._zoom_in_button)
         
         header_bar.pack_start(zoom_box)
-        
+
+        # Color-scheme chooser — icon-only button on the right, just before Save.
+        # Only meaningful with GtkSource.
+        if self._gtksource_enabled and hasattr(GtkSource, "StyleSchemeChooserWidget"):
+            self._scheme_button = Gtk.MenuButton()
+            self._scheme_button.set_child(icon_utils.new_image_from_icon_name("color-symbolic"))
+            self._scheme_button.set_tooltip_text("Editor color scheme")
+            chooser_scroller = Gtk.ScrolledWindow()
+            chooser_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+            chooser_scroller.set_min_content_width(240)
+            chooser_scroller.set_min_content_height(320)
+            self._scheme_chooser = GtkSource.StyleSchemeChooserWidget()
+            chooser_scroller.set_child(self._scheme_chooser)
+            popover = Gtk.Popover()
+            popover.set_child(chooser_scroller)
+            self._scheme_button.set_popover(popover)
+            header_bar.pack_end(self._scheme_button)
+
         toolbar_view.add_top_bar(header_bar)
         
         # Toolbar for search/replace (only if GtkSource is available)
@@ -336,6 +372,10 @@ class RemoteFileEditorWindow(Adw.Window):
             # Host/Match navigation sidebar (SSH config editor only).
             outline_scroller = Gtk.ScrolledWindow()
             outline_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+            self._outline_scroller = outline_scroller
+            # Honour the persisted show/hide preference.
+            outline_scroller.set_visible(
+                bool(self._pref("editor.show_outline_sidebar", True)))
             self._outline_listbox = Gtk.ListBox()
             self._outline_listbox.add_css_class("navigation-sidebar")
             self._outline_listbox.set_selection_mode(Gtk.SelectionMode.SINGLE)
@@ -407,6 +447,13 @@ class RemoteFileEditorWindow(Adw.Window):
                 self._buffer = GtkSource.Buffer()
             self._source_view.set_buffer(self._buffer)
 
+            # Apply the saved/auto color scheme, then start listening for changes
+            # (connect after the initial apply so it doesn't fire spuriously).
+            self._apply_style_scheme()
+            if self._scheme_chooser is not None:
+                self._scheme_chooser.connect("notify::style-scheme", self._on_scheme_changed)
+            self._connect_dark_follow()
+
             self._search_settings = GtkSource.SearchSettings()
             self._search_context = GtkSource.SearchContext.new(self._buffer, self._search_settings)
             self._search_context.set_highlight(True)
@@ -429,7 +476,92 @@ class RemoteFileEditorWindow(Adw.Window):
         self._search_settings = None
         self._search_context = None
         self._gtksource_enabled = False
-    
+
+    # ---------- color scheme + sidebar preferences ----------
+
+    def _get_app_config(self):
+        """Lazily obtain the shared app Config (reads/writes the same store)."""
+        if self._app_config is None:
+            try:
+                from .config import Config
+                self._app_config = Config()
+            except Exception as e:  # noqa: BLE001
+                logger.debug("Editor could not load app config: %s", e)
+        return self._app_config
+
+    def _pref(self, key: str, default):
+        cfg = self._get_app_config()
+        try:
+            return cfg.get_setting(key, default) if cfg else default
+        except Exception:
+            return default
+
+    def _resolve_scheme_id(self) -> str:
+        """Saved scheme id, or the theme-appropriate default when 'auto'."""
+        pref = self._pref("editor.style_scheme", "auto")
+        if pref and pref != "auto":
+            return pref
+        try:
+            dark = Adw.StyleManager.get_default().get_dark()
+        except Exception:
+            dark = False
+        return "Adwaita-dark" if dark else "Adwaita"
+
+    def _apply_style_scheme(self) -> None:
+        """Set the GtkSourceView style scheme on the buffer (per the docs, a
+        scheme should always be set) and reflect it on the chooser button."""
+        if not (self._gtksource_enabled and isinstance(self._buffer, GtkSource.Buffer)):
+            return
+        sm = GtkSource.StyleSchemeManager.get_default()
+        scheme = sm.get_scheme(self._resolve_scheme_id()) or sm.get_scheme("Adwaita")
+        if scheme is None:
+            return
+        self._buffer.set_style_scheme(scheme)
+        if self._scheme_chooser is not None:
+            # Sync the chooser without re-triggering our own change handler.
+            wired = self._scheme_button_wired()
+            if wired:
+                self._scheme_chooser.handler_block_by_func(self._on_scheme_changed)
+            self._scheme_chooser.set_style_scheme(scheme)
+            if wired:
+                self._scheme_chooser.handler_unblock_by_func(self._on_scheme_changed)
+
+    def _scheme_button_wired(self) -> bool:
+        return getattr(self, "_scheme_signal_wired", False)
+
+    def _on_scheme_changed(self, chooser, _pspec) -> None:
+        scheme = chooser.get_style_scheme()
+        if scheme is None:
+            return
+        if isinstance(self._buffer, GtkSource.Buffer):
+            self._buffer.set_style_scheme(scheme)
+        cfg = self._get_app_config()
+        if cfg:
+            cfg.set_setting("editor.style_scheme", scheme.get_id())
+
+    def _connect_dark_follow(self) -> None:
+        """When following the system (pref == 'auto'), recolor on dark toggle."""
+        self._scheme_signal_wired = self._scheme_chooser is not None
+        pref = self._pref("editor.style_scheme", "auto")
+        if pref and pref != "auto":
+            return
+        try:
+            sm = Adw.StyleManager.get_default()
+            self._dark_handler_id = sm.connect("notify::dark", self._on_dark_changed)
+        except Exception as e:  # noqa: BLE001
+            logger.debug("Could not follow system dark mode: %s", e)
+
+    def _on_dark_changed(self, *_a) -> None:
+        self._apply_style_scheme()
+
+    def _on_sidebar_toggled(self, button) -> None:
+        active = button.get_active()
+        if self._outline_scroller is not None:
+            self._outline_scroller.set_visible(active)
+        cfg = self._get_app_config()
+        if cfg:
+            cfg.set_setting("editor.show_outline_sidebar", active)
+
     def _apply_toast_css(self) -> None:
         """Apply the same toast CSS styling as file manager."""
         try:
@@ -910,7 +1042,15 @@ class RemoteFileEditorWindow(Adw.Window):
     def _do_close(self) -> None:
         """Actually close the window and clean up."""
         self._is_closing = True
-        
+
+        # Stop following system dark-mode changes (avoid leaking the handler).
+        if self._dark_handler_id:
+            try:
+                Adw.StyleManager.get_default().disconnect(self._dark_handler_id)
+            except Exception:
+                pass
+            self._dark_handler_id = 0
+
         # Stop monitoring
         if self._file_monitor:
             self._file_monitor.cancel()
