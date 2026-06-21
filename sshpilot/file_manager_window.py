@@ -1632,8 +1632,7 @@ class FileManagerWindow(Adw.Window):
             elif source_pane is self._left_pane and pane is self._right_pane:
                 self._perform_local_to_remote_clipboard_operation(entries, source_dir, destination, move_requested)
             elif source_pane is self._right_pane and pane is self._left_pane:
-                # Remote to local clipboard operation not supported
-                pane.show_toast("Remote to local clipboard operation not supported")
+                self._perform_remote_to_local_clipboard_operation(entries, source_dir, destination, move_requested)
             else:
                 pane.show_toast("Paste target is unavailable")
                 return
@@ -1703,6 +1702,73 @@ class FileManagerWindow(Adw.Window):
             dialog.connect("response", _on_response)
             dialog.present()
             # Focus the entry after the dialog is shown
+            GLib.idle_add(_focus_entry)
+        elif action == "newfile":
+            dialog = Adw.AlertDialog.new("New File", "Enter a name for the new file")
+            entry = Gtk.Entry()
+            entry.set_text("untitled.txt")
+            dialog.set_extra_child(entry)
+            dialog.add_response("cancel", "Cancel")
+            dialog.add_response("ok", "Create")
+            dialog.set_default_response("ok")
+            dialog.set_close_response("cancel")
+
+            def _on_response(_dialog, response: str) -> None:
+                if response == "ok":
+                    name = entry.get_text().strip()
+                    if name:
+                        current_dir = pane.toolbar.path_entry.get_text() or "/"
+                        if pane is self._left_pane:
+                            target_dir = self._normalize_local_path(current_dir)
+                            new_path = os.path.join(target_dir, name)
+                            try:
+                                with open(new_path, "x"):
+                                    pass
+                            except FileExistsError:
+                                pane.show_toast("File already exists")
+                            except Exception as exc:
+                                pane.show_toast(str(exc))
+                            else:
+                                self._pending_highlights[self._left_pane] = name
+                                self._load_local(os.path.dirname(new_path) or "/")
+                                self._open_path_in_editor(pane, new_path, name)
+                        else:
+                            new_path = posixpath.join(current_dir or "/", name)
+                            future = self._manager.touch(new_path)
+
+                            def _on_touch_done(completed_future, p=new_path, n=name) -> None:
+                                try:
+                                    completed_future.result()
+                                except FileExistsError:
+                                    GLib.idle_add(pane.show_toast, "File already exists")
+                                    return
+                                except Exception as e:
+                                    GLib.idle_add(pane.show_toast, f"Failed to create file: {e}")
+                                    return
+
+                                def _after() -> bool:
+                                    self._force_refresh_pane(pane, highlight_name=n)
+                                    self._open_path_in_editor(pane, p, n)
+                                    return False
+
+                                GLib.idle_add(_after)
+
+                            future.add_done_callback(_on_touch_done)
+                dialog.close()
+
+            def _focus_entry():
+                entry.grab_focus()
+                # Pre-select the base name (before the extension) for quick typing.
+                text = entry.get_text()
+                dot = text.rfind(".")
+                entry.select_region(0, dot if dot > 0 else -1)
+
+            def _on_entry_activate(_entry):
+                _on_response(dialog, "ok")
+
+            entry.connect("activate", _on_entry_activate)
+            dialog.connect("response", _on_response)
+            dialog.present()
             GLib.idle_add(_focus_entry)
         elif action == "rename" and isinstance(payload, dict):
             entries = payload.get("entries") or []
@@ -2530,6 +2596,56 @@ class FileManagerWindow(Adw.Window):
                 "move_source_dir": source_dir_norm,
             }
         self._on_request_operation(self._left_pane, "upload", payload, user_data=user_data)
+
+
+    def _perform_remote_to_local_clipboard_operation(
+        self,
+        entries: List[FileEntry],
+        source_dir: str,
+        destination_dir: str,
+        move: bool,
+    ) -> None:
+        """Paste copied/cut remote entries into the local pane by downloading
+        them — reuses the existing ``download`` handler (files + directories,
+        conflict checks, progress dialog, refresh, and cut → remote delete)."""
+        if not entries:
+            return
+        if getattr(self, "_manager", None) is None:
+            self._left_pane.show_toast("Remote connection unavailable")
+            return
+
+        destination = pathlib.Path(self._normalize_local_path(destination_dir))
+        payload = {
+            "entries": entries,
+            "directory": source_dir,
+            "destination": destination,
+        }
+        user_data = None
+        if move:
+            sources = [self._resolve_remote_entry_path(source_dir, e) for e in entries]
+            user_data = {
+                "move_remote_sources": sources,
+                "move_remote_pane": self._right_pane,
+            }
+        self._on_request_operation(self._right_pane, "download", payload, user_data=user_data)
+
+
+    def _open_path_in_editor(self, pane: FilePane, path: str, name: str) -> None:
+        """Open a (typically just-created) file in the text editor. Best-effort —
+        the file already exists on disk/remote regardless of whether this opens."""
+        try:
+            is_local = pane is self._left_pane
+            editor = RemoteFileEditorWindow(
+                parent=self,
+                file_path=path,
+                file_name=name,
+                is_local=is_local,
+                sftp_manager=None if is_local else getattr(self, "_manager", None),
+                file_manager_window=self,
+            )
+            editor.present()
+        except Exception as e:
+            logger.debug("Failed to open new file in editor: %s", e)
 
 
     def _schedule_local_move_cleanup(

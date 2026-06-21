@@ -1301,6 +1301,22 @@ class AsyncSFTPManager(GObject.GObject):
         # Don't call listdir from callback - let the UI handle refresh
         return self._submit(_impl)
 
+    def touch(self, path: str) -> Future:
+        """Create an empty remote file. Raises FileExistsError if it already
+        exists (so the caller can warn instead of truncating)."""
+        logger.debug(f"Creating empty file: {path}")
+
+        def _impl() -> None:
+            with self._lock:
+                if self._sftp is None:
+                    raise IOError("SFTP connection is not available")
+                if _sftp_path_exists(self._sftp, path):
+                    raise FileExistsError(path)
+                handle = self._sftp.open(path, "w")
+                handle.close()
+
+        return self._submit(_impl)
+
     def path_exists(self, path: str) -> Future:
         """Return a future that resolves to whether *path* exists remotely."""
 
