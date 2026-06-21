@@ -5,6 +5,10 @@
     <file>file-manager-choice.png</file>
     <file>keychain.png</file>
   </gresource>
+
+  <gresource prefix="/io/github/mfat/sshpilot/language-specs">
+    <file alias="sshconfig.lang">language-specs/sshconfig.lang</file>
+  </gresource>
   
   <gresource prefix="/io/github/mfat/sshpilot/icons/scalable/actions">
     <file alias="computer-symbolic.svg">icons/scalable/actions/computer-symbolic.svg</file>

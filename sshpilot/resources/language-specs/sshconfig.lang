@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<language id="sshconfig" name="SSH Config" version="2.0" _section="Other">
+  <metadata>
+    <property name="mimetypes">text/x-ssh-config</property>
+    <property name="globs">ssh_config;*/.ssh/config</property>
+    <property name="line-comment-start">#</property>
+  </metadata>
+
+  <styles>
+    <style id="comment"      name="Comment"        map-to="def:comment"/>
+    <style id="host-keyword" name="Host Keyword"   map-to="def:keyword"/>
+    <style id="host-pattern" name="Host Pattern"   map-to="def:type"/>
+    <style id="keyword"      name="Keyword"        map-to="def:identifier"/>
+    <style id="number"       name="Number"         map-to="def:decimal"/>
+    <style id="string"       name="String"         map-to="def:string"/>
+  </styles>
+
+  <definitions>
+    <context id="comment" style-ref="comment" end-at-line-end="true" class="comment">
+      <start>#</start>
+    </context>
+
+    <!-- "Host pattern1 pattern2" / "Match ..." header line. -->
+    <context id="host-line" end-at-line-end="true">
+      <start>^[ \t]*(?i:(Host|Match))\b</start>
+      <include>
+        <context sub-pattern="1" where="start" style-ref="host-keyword"/>
+        <context ref="comment"/>
+        <context id="host-pattern" style-ref="host-pattern">
+          <match>\S+</match>
+        </context>
+      </include>
+    </context>
+
+    <!-- "Keyword value" directive line: colour the leading keyword. -->
+    <context id="directive-line" end-at-line-end="true">
+      <start>^[ \t]*(?=[A-Za-z])</start>
+      <include>
+        <context id="directive-keyword" style-ref="keyword" once-only="true">
+          <match>[A-Za-z][A-Za-z0-9]*</match>
+        </context>
+        <context ref="comment"/>
+        <context id="number" style-ref="number">
+          <match>\b[0-9]+\b</match>
+        </context>
+      </include>
+    </context>
+
+    <context id="sshconfig" class="no-spell-check">
+      <include>
+        <context ref="comment"/>
+        <context ref="host-line"/>
+        <context ref="directive-line"/>
+      </include>
+    </context>
+  </definitions>
+</language>

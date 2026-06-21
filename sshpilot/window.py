@@ -4383,6 +4383,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 sftp_manager=None,
                 file_manager_window=None,
                 pre_save_validator=validate_ssh_config_text,
+                language_id="sshconfig",
+                show_outline=True,
             )
 
             # Set custom title for SSH config editor (the path shows as the

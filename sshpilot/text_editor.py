@@ -9,11 +9,12 @@ from __future__ import annotations
 
 import os
 import pathlib
+import re
 import tempfile
 from concurrent.futures import Future
 from typing import Callable, TYPE_CHECKING, Optional
 
-from gi.repository import Adw, Gio, GLib, GObject, Gdk, Gtk
+from gi.repository import Adw, Gio, GLib, GObject, Gdk, Gtk, Pango
 
 from .platform_utils import is_macos
 
@@ -33,6 +34,46 @@ if TYPE_CHECKING:
     from .file_manager_window import AsyncSFTPManager, FileManagerWindow
 
 logger = logging.getLogger(__name__)
+
+
+_BUNDLED_LANG_PATH = "resource:///io/github/mfat/sshpilot/language-specs/"
+_lang_specs_registered = False
+
+
+def _ensure_bundled_language_specs(language_manager) -> None:
+    """Add sshPilot's bundled GtkSourceView language-specs (e.g. the custom
+    ``sshconfig`` definition) to the manager's search path, once. GtkSourceView
+    natively supports ``resource://`` spec dirs, so this works under Flatpak with
+    no on-disk data files."""
+    global _lang_specs_registered
+    if _lang_specs_registered or language_manager is None:
+        return
+    try:
+        paths = list(language_manager.get_search_path() or [])
+        if _BUNDLED_LANG_PATH not in paths:
+            language_manager.set_search_path([_BUNDLED_LANG_PATH] + paths)
+    except Exception as e:  # noqa: BLE001 — highlighting is non-essential
+        logger.debug("Could not register bundled language-specs: %s", e)
+    _lang_specs_registered = True
+
+
+_OUTLINE_RE = re.compile(r'^[ \t]*(Host|Match)\b(.*)$', re.IGNORECASE)
+
+
+def parse_ssh_config_outline(text: str):
+    """Return ``[(line_index, kind, label)]`` for each ``Host``/``Match`` header
+    in *text* (0-based line index). Comments (``# Host …``) and value keywords
+    (``HostName``) are not matched."""
+    out = []
+    for i, line in enumerate((text or "").splitlines()):
+        m = _OUTLINE_RE.match(line)
+        if not m:
+            continue
+        kind = m.group(1).lower()
+        rest = (m.group(2) or "").strip()
+        label = rest if rest else m.group(1)
+        out.append((i, kind, label))
+    return out
 
 
 def prettify_path(path: str, home: Optional[str]) -> str:
@@ -68,6 +109,8 @@ class RemoteFileEditorWindow(Adw.Window):
         sftp_manager: Optional["AsyncSFTPManager"] = None,
         file_manager_window: Optional["FileManagerWindow"] = None,
         pre_save_validator: Optional[Callable[[str], Optional[str]]] = None,
+        language_id: Optional[str] = None,
+        show_outline: bool = False,
     ) -> None:
         super().__init__()
         self.set_transient_for(parent)
@@ -84,6 +127,13 @@ class RemoteFileEditorWindow(Adw.Window):
         # Optional pre-save check (e.g. `ssh -G` for the SSH config). Returns an
         # error string to block the save, or None to allow it.
         self._pre_save_validator = pre_save_validator
+        # Optional GtkSourceView language id (e.g. 'sshconfig') + a Host/Match
+        # outline sidebar — used by the SSH config editor only.
+        self._language_id = language_id
+        self._show_outline = show_outline
+        self._outline_listbox = None
+        self._outline_rows = []  # parallel list of (line_index, kind, label)
+        self._outline_refresh_id = 0
         self._temp_file: Optional[pathlib.Path] = None
         self._file_monitor: Optional[Gio.FileMonitor] = None
         self._file_modified_time: float = 0.0
@@ -281,8 +331,30 @@ class RemoteFileEditorWindow(Adw.Window):
         toast_overlay.set_child(content_box)
         self._toast_overlay = toast_overlay
         self._current_toast = None  # Keep reference for dismissal
-        
-        toolbar_view.set_content(toast_overlay)
+
+        if self._show_outline:
+            # Host/Match navigation sidebar (SSH config editor only).
+            outline_scroller = Gtk.ScrolledWindow()
+            outline_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+            self._outline_listbox = Gtk.ListBox()
+            self._outline_listbox.add_css_class("navigation-sidebar")
+            self._outline_listbox.set_selection_mode(Gtk.SelectionMode.SINGLE)
+            self._outline_listbox.connect("row-activated", self._on_outline_row_activated)
+            outline_scroller.set_child(self._outline_listbox)
+
+            paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
+            paned.set_start_child(outline_scroller)
+            paned.set_end_child(toast_overlay)
+            paned.set_resize_start_child(False)
+            paned.set_shrink_start_child(False)
+            paned.set_position(220)
+            toolbar_view.set_content(paned)
+
+            # Populate now and keep it in sync (debounced) as the buffer changes.
+            self._refresh_outline()
+            self._buffer.connect("changed", self._on_outline_buffer_changed)
+        else:
+            toolbar_view.set_content(toast_overlay)
         
         # Add keyboard controller for shortcuts
         key_controller = Gtk.EventControllerKey()
@@ -323,7 +395,12 @@ class RemoteFileEditorWindow(Adw.Window):
             self._source_view.set_wrap_mode(Gtk.WrapMode.WORD)
 
             language_manager = GtkSource.LanguageManager.get_default()
-            language = language_manager.guess_language(self._file_name, None)
+            _ensure_bundled_language_specs(language_manager)
+            language = None
+            if self._language_id:
+                language = language_manager.get_language(self._language_id)
+            if language is None:
+                language = language_manager.guess_language(self._file_name, None)
             if language:
                 self._buffer = GtkSource.Buffer.new_with_language(language)
             else:
@@ -549,6 +626,63 @@ class RemoteFileEditorWindow(Adw.Window):
         if getattr(self, "_title_widget", None) is not None:
             self._title_widget.set_title(f"• {base}" if modified else base)
             self._title_widget.set_subtitle(self._pretty_path())
+
+    # ---------- Host/Match outline sidebar ----------
+
+    def _on_outline_buffer_changed(self, _buffer) -> None:
+        # Debounce: rebuild shortly after edits settle, not on every keystroke.
+        if self._outline_refresh_id:
+            GLib.source_remove(self._outline_refresh_id)
+        self._outline_refresh_id = GLib.timeout_add(300, self._refresh_outline)
+
+    def _refresh_outline(self) -> bool:
+        self._outline_refresh_id = 0
+        listbox = self._outline_listbox
+        if listbox is None:
+            return False
+        # Clear existing rows.
+        child = listbox.get_first_child()
+        while child is not None:
+            nxt = child.get_next_sibling()
+            listbox.remove(child)
+            child = nxt
+        start, end = self._buffer.get_bounds()
+        text = self._buffer.get_text(start, end, False)
+        self._outline_rows = parse_ssh_config_outline(text)
+        for line_index, kind, label in self._outline_rows:
+            row = Gtk.ListBoxRow()
+            row._line_index = line_index  # consumed by row-activated
+            box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            for fn in (box.set_margin_top, box.set_margin_bottom,
+                       box.set_margin_start, box.set_margin_end):
+                fn(6)
+            if kind == "match":
+                tag = Gtk.Label(label="Match")
+                tag.add_css_class("dim-label")
+                tag.add_css_class("caption")
+                box.append(tag)
+            lbl = Gtk.Label(label=label, xalign=0)
+            lbl.set_ellipsize(Pango.EllipsizeMode.END)
+            lbl.set_hexpand(True)
+            box.append(lbl)
+            row.set_child(box)
+            listbox.append(row)
+        return False  # one-shot timeout
+
+    def _on_outline_row_activated(self, _listbox, row) -> None:
+        line_index = getattr(row, "_line_index", None)
+        if line_index is not None:
+            self._jump_to_line(line_index)
+
+    def _jump_to_line(self, line_index: int) -> None:
+        try:
+            res = self._buffer.get_iter_at_line(line_index)
+            it = res[1] if isinstance(res, tuple) else res
+            self._buffer.place_cursor(it)
+            self._source_view.scroll_to_iter(it, 0.1, True, 0.0, 0.0)
+            self._source_view.grab_focus()
+        except Exception as e:  # noqa: BLE001
+            logger.debug("Failed to jump to line %s: %s", line_index, e)
     
     def _on_file_saved_externally(self) -> None:
         """Handle when the file is saved externally (from the editor)."""
