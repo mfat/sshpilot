@@ -37,24 +37,30 @@ logger = logging.getLogger(__name__)
 
 
 _BUNDLED_LANG_PATH = "resource:///io/github/mfat/sshpilot/language-specs/"
-_lang_specs_registered = False
+_lang_manager = None
 
 
-def _ensure_bundled_language_specs(language_manager) -> None:
-    """Add sshPilot's bundled GtkSourceView language-specs (e.g. the custom
-    ``sshconfig`` definition) to the manager's search path, once. GtkSourceView
-    natively supports ``resource://`` spec dirs, so this works under Flatpak with
-    no on-disk data files."""
-    global _lang_specs_registered
-    if _lang_specs_registered or language_manager is None:
-        return
-    try:
-        paths = list(language_manager.get_search_path() or [])
-        if _BUNDLED_LANG_PATH not in paths:
-            language_manager.set_search_path([_BUNDLED_LANG_PATH] + paths)
-    except Exception as e:  # noqa: BLE001 — highlighting is non-essential
-        logger.debug("Could not register bundled language-specs: %s", e)
-    _lang_specs_registered = True
+def _get_language_manager():
+    """Return a private GtkSourceView LanguageManager that includes sshPilot's
+    bundled language-specs (e.g. the custom ``sshconfig`` definition).
+
+    A fresh manager is used rather than ``get_default()`` because GtkSourceView
+    only permits ``set_search_path()`` before a manager has been queried — the
+    shared default manager is used elsewhere, so mutating it triggers a
+    ``lm->ids == NULL`` CRITICAL. A fresh instance still carries the built-in
+    search paths, so all bundled languages keep working. Cached (configured once
+    before first use)."""
+    global _lang_manager
+    if _lang_manager is None and GtkSource is not None:
+        lm = GtkSource.LanguageManager()
+        try:
+            paths = list(lm.get_search_path() or [])
+            if _BUNDLED_LANG_PATH not in paths:
+                lm.set_search_path([_BUNDLED_LANG_PATH] + paths)
+        except Exception as e:  # noqa: BLE001 — highlighting is non-essential
+            logger.debug("Could not register bundled language-specs: %s", e)
+        _lang_manager = lm
+    return _lang_manager
 
 
 _OUTLINE_RE = re.compile(r'^[ \t]*(Host|Match)\b(.*)$', re.IGNORECASE)
@@ -434,8 +440,7 @@ class RemoteFileEditorWindow(Adw.Window):
             self._source_view.set_monospace(True)
             self._source_view.set_wrap_mode(Gtk.WrapMode.WORD)
 
-            language_manager = GtkSource.LanguageManager.get_default()
-            _ensure_bundled_language_specs(language_manager)
+            language_manager = _get_language_manager()
             language = None
             if self._language_id:
                 language = language_manager.get_language(self._language_id)
