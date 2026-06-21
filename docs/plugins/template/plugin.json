@@ -2,6 +2,7 @@
   "id": "example-plugin",
   "name": "Example Plugin",
   "version": "1.0.0",
+  "homepage": "https://github.com/yourname/example-plugin",
   "api_version": 1,
   "permissions": [
     "process"

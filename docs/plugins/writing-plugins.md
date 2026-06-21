@@ -95,6 +95,8 @@ my-plugin/
 {
   "id": "my-plugin",
   "name": "My Plugin",
+  "version": "1.0.0",
+  "homepage": "https://github.com/myuser/my-plugin",
   "api_version": 1
 }
 ```
@@ -111,6 +113,8 @@ Fields (schema: [`plugin.schema.json`](plugin.schema.json)):
   release tag). **Recommended:** it drives the in-app **update button** — sshPilot
   compares it against the registry's latest version and offers an update when
   yours is newer. Omit it and the plugin simply never shows an update prompt.
+- `homepage` — URL of your plugin's source/homepage. Shown as a clickable
+  link in the per-plugin **info** dialog in Preferences ▸ Plugins.
 - `permissions` — capabilities your plugin uses (see below). Declare every one;
   they're shown to the user before they enable/install your plugin.
 - `builtin` / `required` — for in-app built-ins only (don't set these in a
@@ -174,6 +178,32 @@ the authoritative reference; this is the practical map.
   `SESSION_OPENED/CLOSED`.
 - **Helpers:** `ctx.run_on_ui_thread(fn, *args)` (always marshal UI work from
   worker threads), `ctx.generate_key(...)`.
+- **Remote commands & config (API ≥ 1.5):** `ctx.run_command(nickname, command)`
+  runs a one-shot command on a saved host and returns a `CommandResult`
+  (`exit_code`/`stdout`/`stderr`) — it reuses the app's SSH/auth path
+  (`~/.ssh/config`, ProxyJump, stored credentials). `ctx.get_effective_ssh_config(nickname)`
+  returns the resolved `ssh -G` options. `run_command` blocks — call it from a
+  worker thread and marshal results back with `ctx.run_on_ui_thread`.
+- **Keys (API ≥ 1.5):** `ctx.list_keys()`, `ctx.delete_key(private_path)`
+  (only keys inside the app's key dir), `ctx.copy_key_to_host(nickname, public_key_path)`
+  (ssh-copy-id via the shared auth path).
+- **Terminals/sessions (API ≥ 1.5):** `ctx.list_sessions()` →
+  `SessionInfo` list; `ctx.read_terminal(session_id, max_chars=None)` reads a
+  session's text; `ctx.send_terminal(session_id, text)` sends input.
+- **Files & HTTP (API ≥ 1.5):** `ctx.data_dir` is a private persistent dir;
+  `ctx.files.read_text/write_text/read_bytes/write_bytes/exists/path` are
+  sandboxed to it (escapes rejected). `ctx.http.get/post` is a minimal blocking
+  HTTP client (call off the UI thread).
+- **Return types (API ≥ 1.5):** `run_command` → `CommandResult(exit_code, stdout,
+  stderr)` with `.ok` (`exit_code == 0`; `-1` means it couldn't be launched);
+  `ctx.http` calls → `HttpResponse(status, text, headers)` with `.json()` and
+  `.ok` (2xx).
+
+> **A note on power.** Plugins run in-process with full privileges; the
+> declared `permissions` are advisory (shown for transparency, not enforced).
+> The real safety boundary is **review/vetting before a plugin enters the
+> registry** — declare every capability you use so reviewers and users can see
+> it.
 
 ### Protocol plugins — `ProtocolBackend`
 Subclass and implement:

@@ -29,7 +29,12 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 #      add_connection_group (for multi-node provisioning); ctx.update_connection
 #      (refresh an existing connection in place).
 # 1.4: ctx.list_connections() — read-only snapshot of all saved connections.
-API_VERSION: Tuple[int, int] = (1, 4)
+# 1.5: power APIs — ctx.run_command (one-shot remote command via the native
+#      SSH/auth path), ctx.get_effective_ssh_config, ctx.copy_key_to_host,
+#      ctx.list_keys/ctx.delete_key, terminal/session access
+#      (ctx.list_sessions/ctx.read_terminal/ctx.send_terminal), and
+#      self-contained ctx.data_dir/ctx.files/ctx.http helpers.
+API_VERSION: Tuple[int, int] = (1, 5)
 
 # Stable event names and event payload types live in host.py; re-exported here
 # so plugins import everything from sshpilot.plugins.api. (host.py imports
@@ -241,6 +246,130 @@ class _SettingStore:
         self._config.set_setting(self._full(key), value)
 
 
+@dataclass
+class CommandResult:
+    """Outcome of ``ctx.run_command``: the remote command's exit code and its
+    captured output. ``exit_code`` is -1 when the command could not be run at
+    all (unknown connection, ssh missing, timeout)."""
+    exit_code: int
+    stdout: str = ""
+    stderr: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return self.exit_code == 0
+
+
+@dataclass
+class HttpResponse:
+    """Result of an ``ctx.http`` call."""
+    status: int
+    text: str = ""
+    headers: Dict[str, str] = field(default_factory=dict)
+
+    def json(self) -> Any:
+        import json as _json
+        return _json.loads(self.text)
+
+    @property
+    def ok(self) -> bool:
+        return 200 <= self.status < 300
+
+
+class _FilesFacade:
+    """Sandboxed file access (``ctx.files``) rooted at the plugin's own data
+    directory (``ctx.data_dir``). All paths are resolved relative to that root
+    and escapes (``..`` / absolute paths leaving the root) are rejected, so a
+    plugin can persist caches/state without hand-rolling XDG paths."""
+
+    def __init__(self, root_getter: Callable[[], str]):
+        self._root_getter = root_getter
+
+    def path(self, rel: str) -> str:
+        """Absolute path for ``rel`` inside the plugin data dir (creating the
+        dir). Raises ValueError if ``rel`` would escape the data dir."""
+        import os
+        root = self._root_getter()
+        full = os.path.realpath(os.path.join(root, rel))
+        if full != root and not full.startswith(root + os.sep):
+            raise ValueError(f"Path {rel!r} escapes the plugin data directory")
+        return full
+
+    def exists(self, rel: str) -> bool:
+        import os
+        return os.path.exists(self.path(rel))
+
+    def read_text(self, rel: str, encoding: str = "utf-8") -> str:
+        with open(self.path(rel), "r", encoding=encoding) as fh:
+            return fh.read()
+
+    def read_bytes(self, rel: str) -> bytes:
+        with open(self.path(rel), "rb") as fh:
+            return fh.read()
+
+    def write_text(self, rel: str, data: str, encoding: str = "utf-8") -> None:
+        import os
+        full = self.path(rel)
+        os.makedirs(os.path.dirname(full), exist_ok=True)
+        with open(full, "w", encoding=encoding) as fh:
+            fh.write(data)
+
+    def write_bytes(self, rel: str, data: bytes) -> None:
+        import os
+        full = self.path(rel)
+        os.makedirs(os.path.dirname(full), exist_ok=True)
+        with open(full, "wb") as fh:
+            fh.write(data)
+
+
+class _HttpFacade:
+    """Minimal blocking HTTP client (``ctx.http``) over urllib so plugins
+    don't hand-roll requests. Blocking — call from a worker thread and marshal
+    results back with ``ctx.run_on_ui_thread``."""
+
+    def get(self, url: str, *, headers: Optional[Dict[str, str]] = None,
+            timeout: float = 30) -> HttpResponse:
+        return self._request("GET", url, headers=headers, timeout=timeout)
+
+    def post(self, url: str, *, data: Optional[bytes] = None,
+             json: Any = None, headers: Optional[Dict[str, str]] = None,
+             timeout: float = 30) -> HttpResponse:
+        body = data
+        hdrs = dict(headers or {})
+        if json is not None:
+            import json as _json
+            body = _json.dumps(json).encode("utf-8")
+            hdrs.setdefault("Content-Type", "application/json")
+        return self._request("POST", url, data=body, headers=hdrs,
+                             timeout=timeout)
+
+    @staticmethod
+    def _request(method: str, url: str, *, data: Optional[bytes] = None,
+                 headers: Optional[Dict[str, str]] = None,
+                 timeout: float = 30) -> HttpResponse:
+        import urllib.request
+        import urllib.error
+        if not str(url).lower().startswith(("http://", "https://")):
+            raise ValueError("ctx.http only supports http(s) URLs")
+        req = urllib.request.Request(url, data=data, method=method,
+                                     headers=dict(headers or {}))
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                raw = resp.read()
+                status = getattr(resp, "status", None)
+                if status is None and hasattr(resp, "getcode"):
+                    status = resp.getcode()
+                return HttpResponse(
+                    status=int(status or 0),
+                    text=raw.decode("utf-8", "replace"),
+                    headers={k: v for k, v in resp.headers.items()})
+        except urllib.error.HTTPError as exc:
+            raw = exc.read() if hasattr(exc, "read") else b""
+            return HttpResponse(status=exc.code,
+                                text=raw.decode("utf-8", "replace"),
+                                headers={k: v for k, v in (exc.headers or {}).items()})
+
+
 class PluginContext:
     """Capabilities handed to a plugin on activation.
 
@@ -273,6 +402,9 @@ class PluginContext:
         self.ui = _UiFacade(host.ui, plugin_id) if host is not None else None
         self.secrets = _SecretStore(connection_manager, plugin_id)
         self.settings = _SettingStore(app_config, plugin_id)
+        # Self-contained helpers (no host needed) — available even in for_spawn.
+        self.files = _FilesFacade(self._data_dir)
+        self.http = _HttpFacade()
 
     @classmethod
     def for_spawn(cls, *, plugin_id: str, app_config: Any,
@@ -370,6 +502,150 @@ class PluginContext:
         the key manager (``key_type``, ``key_size``, ``comment``,
         ``passphrase``). Valid after ``app_started``."""
         return self._host.generate_key(name, **kwargs) if self._host is not None else None
+
+    def list_keys(self) -> List[Dict[str, str]]:
+        """List SSH keys known to the app's key manager as
+        ``[{"private_path", "public_path"}]``. Empty if the UI isn't ready.
+        Valid after ``app_started``."""
+        return self._host.list_keys() if self._host is not None else []
+
+    def delete_key(self, private_path: str) -> bool:
+        """Delete an SSH key pair (private + ``.pub``) managed by the app. Only
+        keys inside the app's key directory may be deleted; returns False
+        otherwise or if the UI isn't ready. Valid after ``app_started``."""
+        return (self._host.delete_key(private_path)
+                if self._host is not None else False)
+
+    # --- remote commands & ssh config ---------------------------------
+    def run_command(self, nickname: str, command: str, *,
+                    timeout: float = 30) -> "CommandResult":
+        """Run a one-shot command on a saved connection and capture its output.
+
+        Reuses the app's single SSH/auth path (``build_ssh_connection`` +
+        ``resolve_native_auth`` via ``~/.ssh/config``), so ProxyJump, ports,
+        identities and stored credentials all apply. **Blocking** — call from a
+        worker thread and marshal UI work back via ``run_on_ui_thread``.
+        Returns a ``CommandResult`` (``exit_code == -1`` means it could not be
+        launched)."""
+        import os
+        import subprocess
+        from ..ssh_connection_builder import (
+            ConnectionContext, build_ssh_connection)
+        conn = self.connection_manager.find_connection_by_nickname(nickname)
+        if conn is None:
+            return CommandResult(-1, "", f"No connection named {nickname!r}")
+        cleanup = None
+        try:
+            ctx = ConnectionContext(
+                connection=conn, connection_manager=self.connection_manager,
+                config=self.config, command_type='ssh',
+                remote_command=command, native_mode=True)
+            prepared = build_ssh_connection(ctx)
+            argv = list(prepared.command)
+            env = {**os.environ, **(prepared.env or {})}
+            # Password auth: feed via the shared sshpass FIFO (key/askpass auth
+            # is already baked into env by build_ssh_connection).
+            if prepared.use_sshpass and prepared.password:
+                from ..ssh_password_exec import wrap_argv_with_sshpass
+                argv, cleanup = wrap_argv_with_sshpass(
+                    argv, prepared.password, env=env)
+            result = subprocess.run(
+                argv, env=env, capture_output=True, text=True,
+                timeout=timeout, check=False)
+            return CommandResult(result.returncode, result.stdout, result.stderr)
+        except subprocess.TimeoutExpired:
+            return CommandResult(-1, "", "Command timed out")
+        except Exception as exc:  # noqa: BLE001 — surface as a failed result
+            return CommandResult(-1, "", str(exc))
+        finally:
+            if cleanup is not None:
+                cleanup()
+
+    def get_effective_ssh_config(self, nickname: str) -> Dict[str, Any]:
+        """Return the resolved per-host SSH options for a connection, as
+        computed by ``ssh -G`` (keys lowercased; multi-value options are
+        lists). Reflects everything in ``~/.ssh/config`` for that host."""
+        from ..ssh_config_utils import get_effective_ssh_config
+        conn = self.connection_manager.find_connection_by_nickname(nickname)
+        host = nickname
+        if conn is not None:
+            host = getattr(conn, "nickname", None) or getattr(conn, "host", None) or nickname
+        return dict(get_effective_ssh_config(host) or {})
+
+    def copy_key_to_host(self, nickname: str, public_key_path: str) -> bool:
+        """Install a public key on a saved host via the app's ssh-copy-id path
+        (reusing ``resolve_native_auth`` and ``~/.ssh/config``). **Blocking** —
+        call from a worker thread. Returns True on success."""
+        import os
+        import subprocess
+        from ..ssh_connection_builder import (
+            _build_base_ssh_command, resolve_native_auth)
+        from ..ssh_config_utils import get_effective_ssh_config
+        conn = self.connection_manager.find_connection_by_nickname(nickname)
+        if conn is None or not public_key_path:
+            return False
+        cleanup = None
+        try:
+            host = getattr(conn, "nickname", None) or getattr(conn, "host", None) or nickname
+            effective = get_effective_ssh_config(host) or {}
+            argv = _build_base_ssh_command(conn, effective, self.config,
+                                           'ssh-copy-id')
+            argv.extend(['-i', public_key_path])
+            auth = resolve_native_auth(conn, self.connection_manager, self.config)
+            argv.extend(auth.extra_opts or [])
+            env = {**os.environ, **(auth.env or {})}
+            if auth.use_sshpass and auth.password:
+                from ..ssh_password_exec import wrap_argv_with_sshpass
+                argv, cleanup = wrap_argv_with_sshpass(
+                    argv, auth.password, env=env)
+            result = subprocess.run(
+                argv, env=env, capture_output=True, text=True, check=False)
+            return result.returncode == 0
+        except Exception:  # noqa: BLE001
+            return False
+        finally:
+            if cleanup is not None:
+                cleanup()
+
+    # --- terminals / sessions -----------------------------------------
+    def list_sessions(self) -> List["SessionInfo"]:
+        """Return the currently open terminal sessions (empty if UI not ready).
+        Each ``SessionInfo`` carries the connection and a ``session_id`` usable
+        with ``read_terminal``/``send_terminal``. Valid after ``app_started``."""
+        return self._host.list_sessions() if self._host is not None else []
+
+    def read_terminal(self, session_id: str,
+                      max_chars: Optional[int] = None) -> Optional[str]:
+        """Read the visible/scrollback text of a session's terminal (up to
+        ``max_chars`` from the end). None if the session is unknown or the UI
+        isn't ready. Valid after ``app_started``."""
+        return (self._host.read_terminal(session_id, max_chars)
+                if self._host is not None else None)
+
+    def send_terminal(self, session_id: str, text: str) -> bool:
+        """Send ``text`` (as keyboard input) to a session's terminal. Returns
+        False if the session is unknown or the UI isn't ready. Valid after
+        ``app_started``."""
+        return (self._host.send_terminal(session_id, text)
+                if self._host is not None else False)
+
+    # --- per-plugin data dir ------------------------------------------
+    @property
+    def data_dir(self) -> str:
+        """Absolute path to a private, persistent directory for this plugin
+        (created on first access). Backed by the XDG data dir."""
+        return self._data_dir()
+
+    def _data_dir(self) -> str:
+        import os
+        # Resolved from XDG_DATA_HOME directly (like the plugin loader's
+        # _user_plugin_dir), so it sits beside the installed plugins and needs
+        # no GTK/GLib at import time.
+        base = os.environ.get("XDG_DATA_HOME") or os.path.join(
+            os.path.expanduser("~"), ".local", "share")
+        path = os.path.join(base, "sshpilot", "plugin-data", self.plugin_id)
+        os.makedirs(path, exist_ok=True)
+        return path
 
     # --- threading ----------------------------------------------------
     def run_on_ui_thread(self, fn: Callable, *args) -> None:

@@ -2433,19 +2433,24 @@ class PreferencesWindow(Adw.Window):
         builtin_group = Adw.PreferencesGroup(title=_("Built-in Plugins"))
         builtin_group.set_description(_("Changes take effect after restarting sshPilot"))
         for info in [i for i in infos if i.builtin]:
-            row = Adw.SwitchRow()
+            # ActionRow + manual switch so the suffixes order as
+            # gear, toggle, info (the SwitchRow toggle is forced to the far end).
+            row = Adw.ActionRow()
             row.set_title(info.name)
             row.set_subtitle(_subtitle(info))
-            row.set_active(info.required or info.plugin_id not in disabled)
-            if info.required or not info.api_compatible:
-                row.set_sensitive(False)
-            else:
-                row.connect(
+            togglable = not (info.required or not info.api_compatible)
+            switch = self._make_plugin_switch(
+                info.required or info.plugin_id not in disabled, togglable)
+            if togglable:
+                switch.connect(
                     'notify::active',
-                    lambda r, _p, pid=info.plugin_id: self._on_builtin_plugin_toggled(pid, r.get_active(), r),
+                    lambda s, _p, pid=info.plugin_id, r=row:
+                        self._on_builtin_plugin_toggled(pid, s.get_active(), r),
                 )
-            self._add_permissions_info(row, info.permissions)
-            self._add_plugin_page_gear(row, info.plugin_id)
+                row.set_activatable_widget(switch)
+            self._add_plugin_page_gear(row, info.plugin_id)  # gear (leftmost)
+            row.add_suffix(switch)                            # toggle
+            self._add_plugin_info(row, info)                  # info
             builtin_group.add(row)
         page.add(builtin_group)
         self._plugin_groups.append(builtin_group)
@@ -2461,27 +2466,31 @@ class PreferencesWindow(Adw.Window):
         self._user_plugin_rows = {}
         if user_infos:
             for info in user_infos:
-                row = Adw.SwitchRow()
+                # ActionRow + manual switch so suffixes order as
+                # gear, toggle, info, update, delete (delete stays rightmost).
+                row = Adw.ActionRow()
                 row.set_title(info.name)
                 row.set_subtitle(_subtitle(info))
-                row.set_active(info.plugin_id in enabled)
-                if not info.api_compatible:
-                    row.set_sensitive(False)
-                else:
-                    row.connect(
+                switch = self._make_plugin_switch(
+                    info.plugin_id in enabled, info.api_compatible)
+                if info.api_compatible:
+                    switch.connect(
                         'notify::active',
-                        lambda r, _p, pid=info.plugin_id, perms=info.permissions:
-                            self._on_user_plugin_toggled(pid, r.get_active(), r, perms),
+                        lambda s, _p, pid=info.plugin_id, perms=info.permissions, r=row:
+                            self._on_user_plugin_toggled(pid, s.get_active(), r,
+                                                         perms, switch=s),
                     )
-                self._add_permissions_info(row, info.permissions)
-                self._add_plugin_page_gear(row, info.plugin_id)
+                    row.set_activatable_widget(switch)
+                self._add_plugin_page_gear(row, info.plugin_id)  # gear (leftmost)
+                row.add_suffix(switch)                            # toggle
+                self._add_plugin_info(row, info)                  # info
                 update_btn = Gtk.Button()
                 update_btn.set_icon_name('software-update-available-symbolic')
                 update_btn.add_css_class('flat')
                 update_btn.add_css_class('accent')
                 update_btn.set_valign(Gtk.Align.CENTER)
                 update_btn.set_visible(False)
-                row.add_suffix(update_btn)
+                row.add_suffix(update_btn)                         # update (hidden)
                 self._user_plugin_rows[info.plugin_id] = (row, info, update_btn)
                 remove = Gtk.Button()
                 remove.set_icon_name('user-trash-symbolic')
@@ -2491,7 +2500,7 @@ class PreferencesWindow(Adw.Window):
                 remove.set_tooltip_text(_("Remove plugin"))
                 remove.connect('clicked',
                                lambda _b, i=info: self._confirm_remove_plugin(i))
-                row.add_suffix(remove)
+                row.add_suffix(remove)                            # delete (rightmost)
                 user_group.add(row)
         else:
             empty_row = Adw.ActionRow()
@@ -2572,6 +2581,9 @@ class PreferencesWindow(Adw.Window):
     def _apply_plugin_updates(self, entries):
         """Reveal the per-row update button when the registry has a newer,
         compatible version than the installed plugin's manifest version."""
+        # Keep the entries so the per-plugin info dialog can fall back to the
+        # registry's homepage when a manifest doesn't declare one.
+        self._registry_entries = list(entries or [])
         from .update_checker import compare_versions
         rows = getattr(self, '_user_plugin_rows', {})
         by_id = {e['id']: e for e in (entries or [])}
@@ -2722,6 +2734,72 @@ class PreferencesWindow(Adw.Window):
         pop.set_child(box)
         btn.set_popover(pop)
         row.add_suffix(btn)
+
+    def _plugin_homepage(self, info):
+        """Source/homepage URL for an installed plugin: its manifest's
+        ``homepage`` if present, else the registry entry's homepage."""
+        url = getattr(info, 'homepage', None)
+        if url:
+            return url
+        for entry in getattr(self, '_registry_entries', []):
+            if entry.get('id') == info.plugin_id:
+                return entry.get('homepage') or None
+        return None
+
+    def _make_plugin_switch(self, active, sensitive=True):
+        """A right-aligned toggle for a plugin ActionRow (replaces SwitchRow's
+        built-in switch, which is forced to the far end and can't be reordered)."""
+        sw = Gtk.Switch()
+        sw.set_active(bool(active))
+        sw.set_valign(Gtk.Align.CENTER)
+        sw.set_sensitive(bool(sensitive))
+        return sw
+
+    def _add_plugin_info(self, row, info):
+        """Add an info button to an installed plugin row. Opens a dialog with
+        the plugin's version, API level, declared permissions, and a clickable
+        link to its source (replaces the old declare-only permissions popover)."""
+        from sshpilot import icon_utils
+        btn = Gtk.Button()
+        btn.set_child(icon_utils.new_image_from_icon_name('info-outline-symbolic', 16))
+        btn.add_css_class('flat')
+        btn.add_css_class('image-button')
+        btn.set_valign(Gtk.Align.CENTER)
+        btn.set_tooltip_text(_("Plugin info"))
+        btn.connect('clicked', lambda _b, i=info: self._show_plugin_info(i))
+        row.add_suffix(btn)
+
+    def _show_plugin_info(self, info):
+        dlg = Adw.AlertDialog(heading=info.name)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+
+        def _field(caption, value):
+            lbl = Gtk.Label()
+            lbl.set_markup(
+                f"<b>{GLib.markup_escape_text(caption)}:</b> "
+                f"{GLib.markup_escape_text(str(value))}")
+            lbl.set_halign(Gtk.Align.START)
+            lbl.set_xalign(0)
+            lbl.set_wrap(True)
+            box.append(lbl)
+
+        _field(_("Version"), getattr(info, 'version', None) or "—")
+        if getattr(info, 'api_version', None) is not None:
+            _field(_("API version"), info.api_version)
+        if info.permissions:
+            _field(_("Permissions"), ", ".join(info.permissions))
+
+        url = self._plugin_homepage(info)
+        if url:
+            link = Gtk.LinkButton.new_with_label(url, _("View source ↗"))
+            link.set_halign(Gtk.Align.START)
+            box.append(link)
+        else:
+            _field(_("Source"), _("unknown"))
+
+        dlg.set_extra_child(box)
+        dlg.add_response('close', _("Close"))
+        dlg.present(self)
 
     def _plugin_consent(self, *, name, permissions, action, on_accept,
                         on_decline=None, sha256=None, verified=False):
@@ -3009,11 +3087,16 @@ class PreferencesWindow(Adw.Window):
             return
         from sshpilot import icon_utils
         gear = Gtk.Button()
-        icon_utils.set_button_icon(gear, 'settings-symbolic')
+        # Sized like the other icon buttons (16px symbolic + .image-button) so the
+        # bundled icon doesn't change row height.
+        gear.set_child(icon_utils.new_image_from_icon_name('settings-symbolic', 16))
         gear.add_css_class('flat')
+        gear.add_css_class('image-button')
         gear.set_valign(Gtk.Align.CENTER)
         gear.set_tooltip_text(_("Open plugin page"))
         gear.connect('clicked', lambda _b, fid=pages[0]: self._open_plugin_page(fid))
+        # Added as the first suffix → leftmost of the action cluster, before the
+        # toggle (gear, toggle, info, delete).
         row.add_suffix(gear)
 
     def _open_plugin_page(self, full_id):
@@ -3041,7 +3124,8 @@ class PreferencesWindow(Adw.Window):
             enabled.discard(plugin_id)
         self.config.set_setting('plugins.enabled', sorted(enabled))
 
-    def _on_user_plugin_toggled(self, plugin_id, active, row=None, permissions=None):
+    def _on_user_plugin_toggled(self, plugin_id, active, row=None,
+                                permissions=None, switch=None):
         if getattr(self, '_suppress_toggle', False):
             return
         if not active:
@@ -3057,9 +3141,11 @@ class PreferencesWindow(Adw.Window):
                 row.set_subtitle(_("Restart sshPilot to apply"))
 
         def _decline():
-            if row is not None:
+            # Revert the toggle (the manual switch; ActionRow has no set_active).
+            target = switch if switch is not None else row
+            if target is not None:
                 self._suppress_toggle = True
-                row.set_active(False)
+                target.set_active(False)
                 self._suppress_toggle = False
 
         self._plugin_consent(name=plugin_id, permissions=permissions or [],

@@ -74,6 +74,7 @@ _ICON_RESOURCE_MAP = {
     'dialog-warning-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/dialog-warning-symbolic.svg',
     'dialog-error-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/dialog-error-symbolic.svg',
     'error-outline-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/error-outline-symbolic.svg',
+    'info-outline-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/info-outline-symbolic.svg',
     'success-small-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/success-small-symbolic.svg',
     'network-server-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/network-server-symbolic.svg',
     'preferences-desktop-keyboard-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/preferences-desktop-keyboard-symbolic.svg',

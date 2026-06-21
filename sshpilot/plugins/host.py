@@ -311,6 +311,10 @@ class PluginHost:
         self._cm_handlers: List[int] = []
         # id(terminal) -> SessionInfo; also the reconnect-dedupe set.
         self._terminal_sessions: Dict[int, SessionInfo] = {}
+        # session_id (str) -> weakref to the live terminal widget, for
+        # ctx.read_terminal / ctx.send_terminal. Weak so a closed tab's widget
+        # can be collected even if a plugin held the id.
+        self._terminal_widgets: Dict[str, Any] = {}
 
     # --- binding ------------------------------------------------------
     def bind_window(self, window) -> None:
@@ -356,10 +360,16 @@ class PluginHost:
             str(key),
         )
         self._terminal_sessions[key] = info
+        import weakref
+        try:
+            self._terminal_widgets[str(key)] = weakref.ref(terminal)
+        except TypeError:
+            self._terminal_widgets[str(key)] = lambda t=terminal: t
         self.events.emit(Events.SESSION_OPENED, info)
 
     def dispatch_session_closed(self, terminal) -> None:
         key = id(terminal)
+        self._terminal_widgets.pop(str(key), None)
         info = self._terminal_sessions.pop(key, None)
         if info is None:
             info = SessionInfo(
@@ -459,6 +469,98 @@ class PluginHost:
             return None
         path = getattr(key, "private_path", None) or getattr(key, "path", None)
         return str(path) if path else None
+
+    # --- keys ---------------------------------------------------------
+    def list_keys(self) -> List[Dict[str, str]]:
+        """Public+private paths of keys known to the app's KeyManager."""
+        window = self._window
+        km = getattr(window, "key_manager", None) if window is not None else None
+        if km is None:
+            return []
+        try:
+            keys = km.discover_keys()
+        except Exception:
+            logger.exception("list_keys failed")
+            return []
+        out: List[Dict[str, str]] = []
+        for k in keys or []:
+            priv = getattr(k, "private_path", None) or getattr(k, "path", None)
+            if not priv:
+                continue
+            pub = getattr(k, "public_path", None) or f"{priv}.pub"
+            out.append({"private_path": str(priv), "public_path": str(pub)})
+        return out
+
+    def delete_key(self, private_path: str) -> bool:
+        """Delete a key pair, but only if it lives inside the KeyManager's key
+        directory (guards against deleting arbitrary files)."""
+        import os
+        window = self._window
+        km = getattr(window, "key_manager", None) if window is not None else None
+        if km is None or not private_path:
+            return False
+        key_dir = getattr(km, "key_dir", None) or getattr(km, "ssh_dir", None)
+        if not key_dir:
+            return False
+        key_dir = os.path.realpath(str(key_dir))
+        target = os.path.realpath(str(private_path))
+        if target != key_dir and not target.startswith(key_dir + os.sep):
+            logger.warning("delete_key refused outside key dir: %r", private_path)
+            return False
+        ok = False
+        for path in (target, f"{target}.pub"):
+            try:
+                if os.path.exists(path):
+                    os.remove(path)
+                    ok = True
+            except OSError:
+                logger.exception("delete_key failed for %r", path)
+        return ok
+
+    # --- terminals / sessions -----------------------------------------
+    def list_sessions(self) -> List[SessionInfo]:
+        """Snapshot of currently open terminal sessions."""
+        return list(self._terminal_sessions.values())
+
+    def _terminal_for(self, session_id: str):
+        ref = self._terminal_widgets.get(str(session_id))
+        return ref() if ref is not None else None
+
+    def read_terminal(self, session_id: str,
+                      max_chars: Optional[int] = None) -> Optional[str]:
+        """Read a session terminal's text via the backend's get_content (which
+        already handles the VTE feed/get_text_format gotcha)."""
+        term = self._terminal_for(session_id)
+        if term is None:
+            return None
+        backend = getattr(term, "backend", None)
+        try:
+            if backend is not None and hasattr(backend, "get_content"):
+                return backend.get_content(max_chars)
+        except Exception:
+            logger.exception("read_terminal failed")
+        return None
+
+    def send_terminal(self, session_id: str, text: str) -> bool:
+        """Feed input to a session terminal (on the UI thread)."""
+        term = self._terminal_for(session_id)
+        if term is None or text is None:
+            return False
+        data = text.encode("utf-8")
+
+        def _feed():
+            backend = getattr(term, "backend", None)
+            if backend is not None and hasattr(backend, "feed_child"):
+                backend.feed_child(data)
+            elif getattr(term, "vte", None) is not None:
+                term.vte.feed_child(data)
+
+        try:
+            self.run_on_ui_thread(_feed)
+            return True
+        except Exception:
+            logger.exception("send_terminal failed")
+            return False
 
     def run_on_ui_thread(self, fn: Callable, *args) -> None:
         # Already on the main thread (or in a headless test) → run inline.

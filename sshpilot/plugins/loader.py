@@ -75,6 +75,7 @@ class PluginInfo:
     api_version: Optional[int] = None
     permissions: List[str] = field(default_factory=list)
     version: Optional[str] = None  # plugin's own version (drives update checks)
+    homepage: Optional[str] = None  # source/homepage URL (shown in the info dialog)
 
 
 def _user_plugin_dir() -> Path:
@@ -265,6 +266,7 @@ def discover_plugins() -> List[PluginInfo]:
                 permissions=[str(p) for p in (meta.get("permissions") or [])
                              if isinstance(p, str)],
                 version=(str(meta["version"]) if meta.get("version") else None),
+                homepage=(str(meta["homepage"]) if meta.get("homepage") else None),
             ))
 
     _scan(_builtin_plugin_dir(), builtin=True)
