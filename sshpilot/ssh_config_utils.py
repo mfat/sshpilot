@@ -5,11 +5,105 @@ import getpass
 import socket
 import logging
 import re
+import stat
+import shutil
+import tempfile
 import subprocess
 from typing import Dict, List, Optional, Set, Union
 
 
 logger = logging.getLogger(__name__)
+
+
+def atomic_write_text(path: str, text: str, *, mode: Optional[int] = None,
+                      backup: bool = False) -> None:
+    """Atomically write *text* to *path* (temp file in the same dir, fsync,
+    then ``os.replace`` — readers only ever see the old or the complete new
+    file, never a truncated one).
+
+    - ``backup=True`` copies the prior file to ``<path>.bak`` first.
+    - ``mode`` sets the final permission bits (e.g. ``0o600`` for ~/.ssh/config).
+      When ``mode`` is None and the file already exists, its current permission
+      bits are preserved (a fresh temp file would otherwise be 0600 from
+      mkstemp); when None and the file is new, the OS umask applies.
+
+    Shared by the SSH config editors so manual edits get the same crash-safety
+    as the structured connection writer.
+    """
+    directory = os.path.dirname(path) or '.'
+    exists = os.path.exists(path)
+
+    final_mode = mode
+    if final_mode is None and exists:
+        try:
+            final_mode = stat.S_IMODE(os.stat(path).st_mode)
+        except OSError:
+            final_mode = None
+
+    if backup and exists:
+        try:
+            shutil.copy2(path, f"{path}.bak")
+            if final_mode is not None:
+                os.chmod(f"{path}.bak", final_mode)
+        except Exception as exc:  # noqa: BLE001 — backup is best-effort
+            logger.warning("Could not back up %s before writing: %s", path, exc)
+
+    fd, tmp_path = tempfile.mkstemp(dir=directory, prefix='.sshpilot-', suffix='.tmp')
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, path)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+    if final_mode is not None:
+        try:
+            os.chmod(path, final_mode)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Unable to set permissions on %s: %s", path, exc)
+
+
+def validate_ssh_config_text(text: str) -> Optional[str]:
+    """Dry-run validate SSH config *text* with ``ssh -G`` against a throwaway
+    host. Returns None if it parses, else a short error string (the parser's
+    own message). Returns None if ssh is unavailable / times out (don't block a
+    save just because we couldn't check).
+    """
+    fd, tmp_path = tempfile.mkstemp(prefix='.sshpilot-validate-', suffix='.conf')
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            f.write(text)
+        result = subprocess.run(
+            ['ssh', '-G', '-F', tmp_path, 'sshpilot-config-check'],
+            capture_output=True, text=True, timeout=10)
+    except FileNotFoundError:
+        return None  # no ssh binary — can't validate, don't block
+    except subprocess.TimeoutExpired:
+        return None
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("ssh -G validation could not run: %s", exc)
+        return None
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+
+    if result.returncode == 0:
+        return None
+    err = (result.stderr or '').strip()
+    # ssh prints lines like "/path: line N: Bad configuration option: foo";
+    # surface the most relevant line.
+    for line in err.splitlines():
+        if 'line ' in line or 'Bad ' in line or 'error' in line.lower():
+            return line.strip()
+    return err.splitlines()[-1].strip() if err else f"ssh -G exited {result.returncode}"
 
 
 _TOKEN_RE = re.compile(r'%(.)')
@@ -129,9 +223,12 @@ def get_effective_ssh_config(
     cmd.extend(['-G', host])
 
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        result = subprocess.run(cmd, capture_output=True, text=True,
+                                check=True, timeout=10)
 
     except Exception:
+        # ssh missing, non-zero exit, or a hang (timeout) — callers treat an
+        # empty dict as "no effective options".
         return {}
 
     config: Dict[str, Union[str, List[str]]] = {}

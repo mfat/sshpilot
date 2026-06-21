@@ -11,7 +11,7 @@ import os
 import pathlib
 import tempfile
 from concurrent.futures import Future
-from typing import TYPE_CHECKING, Optional
+from typing import Callable, TYPE_CHECKING, Optional
 
 from gi.repository import Adw, Gio, GLib, GObject, Gdk, Gtk
 
@@ -51,6 +51,7 @@ class RemoteFileEditorWindow(Adw.Window):
         is_local: bool = False,
         sftp_manager: Optional["AsyncSFTPManager"] = None,
         file_manager_window: Optional["FileManagerWindow"] = None,
+        pre_save_validator: Optional[Callable[[str], Optional[str]]] = None,
     ) -> None:
         super().__init__()
         self.set_transient_for(parent)
@@ -63,6 +64,9 @@ class RemoteFileEditorWindow(Adw.Window):
         self._file_name = file_name
         self._sftp_manager = sftp_manager
         self._file_manager_window = file_manager_window
+        # Optional pre-save check (e.g. `ssh -G` for the SSH config). Returns an
+        # error string to block the save, or None to allow it.
+        self._pre_save_validator = pre_save_validator
         self._temp_file: Optional[pathlib.Path] = None
         self._file_monitor: Optional[Gio.FileMonitor] = None
         self._file_modified_time: float = 0.0
@@ -514,6 +518,9 @@ class RemoteFileEditorWindow(Adw.Window):
     def _on_file_saved_externally(self) -> None:
         """Handle when the file is saved externally (from the editor)."""
         self._has_unsaved_changes = True
+        # Remember that the on-disk file diverged from our buffer so the next
+        # save warns before clobbering it (see _on_save_clicked).
+        self._externally_modified = True
         self._save_button.set_sensitive(True)
         self._update_title(True)
     
@@ -556,13 +563,43 @@ class RemoteFileEditorWindow(Adw.Window):
         if not self._temp_file:
             self._show_error("File not found")
             return
-        
+
         # Always save buffer content to file
         start, end = self._buffer.get_bounds()
         text = self._buffer.get_text(start, end, False)
+
+        # Optional syntax validation (e.g. `ssh -G` for the SSH config) so a
+        # broken file is never written.
+        if self._is_local and self._pre_save_validator is not None:
+            error = self._pre_save_validator(text)
+            if error:
+                self._show_error(f"Not saved — invalid SSH config:\n\n{error}")
+                return
+
+        # Guard against clobbering a change made on disk since we loaded/last
+        # saved (e.g. the connection editor rewrote ~/.ssh/config).
+        if self._is_local and getattr(self, '_externally_modified', False):
+            dlg = Adw.AlertDialog.new(
+                "File changed on disk",
+                "This file was modified outside the editor since you opened it. "
+                "Saving now overwrites those changes.")
+            dlg.add_response("cancel", "Cancel")
+            dlg.add_response("overwrite", "Overwrite")
+            dlg.set_response_appearance("overwrite", Adw.ResponseAppearance.DESTRUCTIVE)
+            dlg.connect("response",
+                        lambda _d, r: r == "overwrite" and self._perform_save(text))
+            dlg.present(self)
+            return
+
+        self._perform_save(text)
+
+    def _perform_save(self, text: str) -> None:
         try:
-            with open(self._temp_file, 'w', encoding='utf-8') as f:
-                f.write(text)
+            # Atomic temp+replace so a crash/full disk can't truncate the file
+            # (critical for ~/.ssh/config). mode=None preserves the file's
+            # existing permissions (e.g. keeps a 0600 config at 0600).
+            from .ssh_config_utils import atomic_write_text
+            atomic_write_text(str(self._temp_file), text)
             self._buffer.set_modified(False)
             
             # Reset undo stack after save
@@ -581,6 +618,7 @@ class RemoteFileEditorWindow(Adw.Window):
                     self._redo_button.set_sensitive(False)
             self._file_modified_time = self._temp_file.stat().st_mtime
             self._has_unsaved_changes = False
+            self._externally_modified = False
             self._update_title(False)
             
             if self._is_local:

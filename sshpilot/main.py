@@ -505,7 +505,6 @@ class SshPilotApplication(Adw.Application):
             'sshpilot.terminal_backends',
             'sshpilot.ssh_utils',
             'sshpilot.ssh_config_utils',
-            'sshpilot.ssh_config_editor',
             'sshpilot.ssh_connection_builder',
             'sshpilot.ssh_password_exec',
             'sshpilot.sshcopyid_window',
