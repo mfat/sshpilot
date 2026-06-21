@@ -4385,11 +4385,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 pre_save_validator=validate_ssh_config_text,
             )
 
-            # Set custom title for SSH config editor
-            editor.set_title(_("Edit SSH Config"))
-            # Also update the header bar title widget if it exists
-            if hasattr(editor, '_title_label'):
-                editor._title_label.set_label(_("Edit SSH Config"))
+            # Set custom title for SSH config editor (the path shows as the
+            # header subtitle automatically).
+            editor.set_title(_("Edit SSH Config"))  # window/taskbar title
+            if hasattr(editor, 'set_editor_title'):
+                editor.set_editor_title(_("SSH Config"))
 
             # Also reload when the editor closes (fallback)
             def _on_editor_close_request(window):

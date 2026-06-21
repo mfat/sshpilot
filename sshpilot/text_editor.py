@@ -35,6 +35,22 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def prettify_path(path: str, home: Optional[str]) -> str:
+    """Collapse a leading home directory to ``~`` for display.
+
+    ``home`` should be the same home the app uses for paths (GLib.get_home_dir()),
+    so the collapse is consistent inside and outside a Flatpak sandbox. Paths not
+    under ``home`` (and remote paths) are returned unchanged.
+    """
+    if not path or not home:
+        return path or ""
+    if path == home:
+        return "~"
+    if path.startswith(home + os.sep):
+        return "~" + path[len(home):]
+    return path
+
+
 class RemoteFileEditorWindow(Adw.Window):
     """FileZilla-style text editor window using GTK SourceView.
     
@@ -62,6 +78,7 @@ class RemoteFileEditorWindow(Adw.Window):
         self._is_local = is_local
         self._file_path = file_path  # Can be remote path or local path
         self._file_name = file_name
+        self._title_text = file_name  # overridable base title (see set_editor_title)
         self._sftp_manager = sftp_manager
         self._file_manager_window = file_manager_window
         # Optional pre-save check (e.g. `ssh -G` for the SSH config). Returns an
@@ -116,10 +133,13 @@ class RemoteFileEditorWindow(Adw.Window):
         toolbar_view = Adw.ToolbarView()
         self.set_content(toolbar_view)
         
-        # Header bar
+        # Header bar — title with the path shown as a dimmed subtitle (full
+        # path on hover).
         header_bar = Adw.HeaderBar()
-        self._title_label = Gtk.Label(label=f"Edit {self._file_name}")
-        header_bar.set_title_widget(self._title_label)
+        self._title_widget = Adw.WindowTitle(
+            title=self._title_text, subtitle=self._pretty_path())
+        self._title_widget.set_tooltip_text(self._file_path)
+        header_bar.set_title_widget(self._title_widget)
         
         # Save button - label depends on local vs remote
         save_label = "Save" if self._is_local else "Save"
@@ -505,15 +525,30 @@ class RemoteFileEditorWindow(Adw.Window):
             except Exception:
                 pass
     
+    def _pretty_path(self) -> str:
+        """Path for the title subtitle: local paths get the home dir collapsed
+        to ``~``; remote paths are shown verbatim."""
+        if not self._is_local:
+            return self._file_path
+        try:
+            home = GLib.get_home_dir()
+        except Exception:
+            home = os.path.expanduser("~")
+        return prettify_path(self._file_path, home)
+
+    def set_editor_title(self, title: str) -> None:
+        """Override the base title shown in the header (path subtitle is kept)."""
+        self._title_text = title
+        self._update_title()
+
     def _update_title(self, modified: bool = None) -> None:
-        """Update the headerbar title to show modified state."""
+        """Update the headerbar title (modified marker) and path subtitle."""
         if modified is None:
             modified = self._buffer.get_modified() if self._buffer else False
-        
-        if modified:
-            self._title_label.set_label(f"* (modified) Edit {self._file_name}")
-        else:
-            self._title_label.set_label(f"Edit {self._file_name}")
+        base = self._title_text or self._file_name
+        if getattr(self, "_title_widget", None) is not None:
+            self._title_widget.set_title(f"• {base}" if modified else base)
+            self._title_widget.set_subtitle(self._pretty_path())
     
     def _on_file_saved_externally(self) -> None:
         """Handle when the file is saved externally (from the editor)."""
