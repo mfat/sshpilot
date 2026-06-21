@@ -45,3 +45,8 @@ gnome-settings/gnome-control-center/
 
 # Generated files
 sshpilot/vendor/pyxtermjs/index.html
+
+# Plugin sources live in their own repos / the registry and are fetched at
+# runtime — they are not shipped from this repo. (Anchored so it never matches
+# the sshpilot/plugins/ code package.)
+/plugins/
