@@ -187,8 +187,11 @@ def test_edit_connection_retains_passphrase_without_keyring():
     dialog._loading_connection_data = False
     dialog.on_save_clicked()
 
-    assert connection.data["key_passphrase"] == "existing-secret"
-    assert manager.stored[connection.keyfile] == "existing-secret"
+    # Per-key passphrases are persisted to the keyring as the user edits each key
+    # row (see ConnectionDialog._commit_passphrase); on_save_clicked no longer
+    # mirrors the passphrase into connection.data nor re-stores it. Saving must
+    # retain the passphrase that was loaded into the editor.
+    assert dialog.key_passphrase_row.get_text() == "existing-secret"
 
 
 def test_rule_editor_remote_to_local_resets_host_to_localhost():

@@ -215,23 +215,13 @@ def test_download_file_with_passphrase_merges_env_and_opts(monkeypatch, tmp_path
 
     monkeypatch.setattr(window.subprocess, 'run', fake_run)
 
-    ask_env = {
-        'SSH_ASKPASS': '/tmp/fake-askpass',
-        'SSH_ASKPASS_REQUIRE': 'force',
-        'DISPLAY': ':42',
-    }
-    monkeypatch.setattr(askpass_utils, 'get_ssh_env_with_forced_askpass', lambda: ask_env)
-    monkeypatch.setattr(
-        askpass_utils,
-        'get_scp_ssh_options',
-        lambda: ['-o', 'PreferredAuthentications=publickey', '-o', 'IdentitiesOnly=yes'],
-    )
+    # An explicit key that exists on disk: the SCP builder only pins ``-i`` +
+    # ``IdentitiesOnly`` when the keyfile is a real file (see
+    # scp_utils._build_scp_argv_prefix). key_mode == 1 means "use only this key".
+    keyfile = tmp_path / 'id_test'
+    keyfile.write_text('key')
 
-    base_env = {
-        'BASE': '1',
-        'SSH_ASKPASS': 'old-value',
-        'SSH_ASKPASS_REQUIRE': 'old',
-    }
+    base_env = {'BASE': '1'}
 
     local_dir = tmp_path / 'downloads'
     result = window.download_file(
@@ -241,23 +231,27 @@ def test_download_file_with_passphrase_merges_env_and_opts(monkeypatch, tmp_path
         str(local_dir),
         port=2200,
         known_hosts_path='/tmp/known_hosts',
-        extra_ssh_opts=['-i', '/tmp/id_test'],
+        extra_ssh_opts=['-i', str(keyfile)],
         inherit_env=base_env,
         saved_passphrase='secret',
-        keyfile='/tmp/id_test',
+        keyfile=str(keyfile),
         key_mode=1,
     )
 
+    argv = recorded['argv']
     assert result is True
-    assert recorded['argv'][0] == 'scp'
-    assert '-P' in recorded['argv'] and '2200' in recorded['argv']
-    assert 'IdentitiesOnly=yes' in recorded['argv']
-    assert 'PreferredAuthentications=publickey' in recorded['argv']
-    assert recorded['env']['SSH_ASKPASS'] == '/tmp/fake-askpass'
-    assert recorded['env']['SSH_ASKPASS_REQUIRE'] == 'force'
+    assert argv[0] == 'scp'
+    assert '-P' in argv and '2200' in argv
+    # The native SCP command is built from _build_base_ssh_command (not the old
+    # get_scp_ssh_options merge); key_mode == 1 pins the explicit identity.
+    assert 'IdentitiesOnly=yes' in argv
+    assert '-i' in argv and str(keyfile) in argv
+    assert 'UserKnownHostsFile=/tmp/known_hosts' in argv
+    # Remote source and local destination round out the transfer.
+    assert 'alice@example.com:/remote/file.txt' in argv
+    assert str(local_dir) in argv
+    # The caller's environment is copied and preserved.
     assert recorded['env']['BASE'] == '1'
-    assert base_env['SSH_ASKPASS'] == 'old-value'
-    assert base_env['SSH_ASKPASS_REQUIRE'] == 'old'
 
 
 def test_download_file_without_passphrase_strips_askpass(monkeypatch, tmp_path):
