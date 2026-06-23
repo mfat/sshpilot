@@ -21,7 +21,7 @@ from ...api import PluginContext, SshPilotPlugin
 logger = logging.getLogger(__name__)
 
 _PAGE_ID = "manager"
-_ICON = "package-x-generic-symbolic"
+_ICON = "brand-docker-symbolic"
 
 
 class Plugin(SshPilotPlugin):
