@@ -1540,10 +1540,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.tips_revealer.set_child(tips_body)
         self.tips_banner_container = self.tips_revealer
 
-        # Create header bar
-        self.header_bar = Gtk.HeaderBar()
-        self.header_bar.set_title_widget(Gtk.Label(label="SSH Pilot"))
-        
+        # Create header bar (content pane — window controls on the right with split views)
+        self.header_bar = Adw.HeaderBar()
+        self.header_bar.add_css_class('flat')
+        self.header_bar.set_show_start_title_buttons(True)
+        self.header_bar.set_show_end_title_buttons(True)
+        # Empty title so Adw doesn't repeat the window title beside tab actions.
+        self.header_bar.set_title_widget(Gtk.Box())
+
         # Safely configure native window controls (macOS only, GTK 4.18+)
         maybe_set_native_controls(self.header_bar, False)
         
@@ -2822,7 +2826,23 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
         sidebar_box.append(toolbar)
 
-        self._set_sidebar_widget(sidebar_box)
+        # Sidebar header: title + window controls (GNOME split-view pattern)
+        self.sidebar_header_bar = Adw.HeaderBar()
+        self.sidebar_header_bar.add_css_class('flat')
+        if HAS_NAV_SPLIT or HAS_OVERLAY_SPLIT:
+            self.sidebar_header_bar.set_show_start_title_buttons(True)
+            self.sidebar_header_bar.set_show_end_title_buttons(True)
+
+        sidebar_title_label = Gtk.Label(label='SSH Pilot')
+        sidebar_title_label.add_css_class('title')
+        sidebar_title_label.set_xalign(0.0)
+        self.sidebar_header_bar.set_title_widget(sidebar_title_label)
+
+        sidebar_toolbar_view = Adw.ToolbarView()
+        sidebar_toolbar_view.add_top_bar(self.sidebar_header_bar)
+        sidebar_toolbar_view.set_content(sidebar_box)
+
+        self._set_sidebar_widget(sidebar_toolbar_view)
         logger.debug("Set sidebar widget")
 
     def _copy_connection_address(self):
@@ -3318,13 +3338,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.header_bar.pack_start(self.split_view_button)
 
         # Command blocks toggle button (right sidebar)
+        from sshpilot import icon_utils as _cmd_icon_utils
         self._cmd_blocks_toggle_btn = Gtk.ToggleButton()
-        _cmd_btn_content = Adw.ButtonContent()
-        _cmd_btn_content.set_icon_name('play-large-symbolic')
-        _cmd_btn_content.set_label(_('Commands'))
-        self._cmd_blocks_toggle_btn.set_child(_cmd_btn_content)
-        self._cmd_blocks_toggle_btn.add_css_class('opaque')
-        self._cmd_blocks_toggle_btn.set_tooltip_text(_('Toggle Command Blocks (Ctrl+Alt+S)'))
+        _cmd_icon_utils.set_button_icon(self._cmd_blocks_toggle_btn, 'play-large-symbolic')
+        self._cmd_blocks_toggle_btn.add_css_class('flat')
+        self._cmd_blocks_toggle_btn.set_tooltip_text(_('Commands (Ctrl+Alt+S)'))
         self._updating_cmd_toggle = False
 
         def _on_cmd_toggle_btn_toggled(btn):
