@@ -194,12 +194,15 @@ _RESTART_POLICIES = ("no", "on-failure", "always", "unless-stopped")
 
 class CreateContainerDialog(_DialogBase):
     """Form to create + run a container. Calls ``on_create(spec)`` where ``spec``
-    is a dict (image, name, ports, volumes, envs, restart, command)."""
+    is a dict (image, name, ports, volumes, envs, restart, command, network,
+    interactive, tty, user, memory, cpus) — the keys match ``create_run_args``."""
 
     def __init__(self, parent: Optional[Gtk.Window], images: List[str],
-                 on_create: Callable[[dict], None]) -> None:
+                 networks: Optional[List[str]] = None,
+                 on_create: Optional[Callable[[dict], None]] = None) -> None:
         super().__init__(parent, "Create container", width=560, height=680)
         self._on_create = on_create
+        self._networks = networks or ["bridge", "host", "none"]
 
         create_btn = Gtk.Button(label="Create")
         create_btn.add_css_class("suggested-action")
@@ -235,6 +238,47 @@ class CreateContainerDialog(_DialogBase):
                                   _PairList("/host/path", "/container/path", ":")))
         body.append(self._section("Environment (KEY = value)", "_envs",
                                   _PairList("KEY", "value", "=")))
+        body.append(self._build_advanced())
+
+    def _build_advanced(self) -> Adw.PreferencesGroup:
+        """Collapsed 'Advanced options': network, -i/-t, user, memory, cpu."""
+        group = Adw.PreferencesGroup()
+        expander = Adw.ExpanderRow(title="Advanced options")
+        group.add(expander)
+
+        self._network_row = Adw.ComboRow(title="Network")
+        self._network_row.set_model(Gtk.StringList.new(self._networks))
+        if "bridge" in self._networks:
+            self._network_row.set_selected(self._networks.index("bridge"))
+        expander.add_row(self._network_row)
+
+        self._interactive_switch = self._switch_row(
+            expander, "Keep STDIN open (-i)", "Required for interactive containers")
+        self._tty_switch = self._switch_row(
+            expander, "Allocate a pseudo-TTY (-t)",
+            "Together with -i, keeps a shell container (e.g. alpine) alive")
+
+        self._user_row = Adw.EntryRow(title="Run as user")
+        self._user_row.set_tooltip_text("UID:GID or a username (--user)")
+        expander.add_row(self._user_row)
+        self._memory_row = Adw.EntryRow(title="Memory limit")
+        self._memory_row.set_tooltip_text("e.g. 512m, 2g (--memory)")
+        expander.add_row(self._memory_row)
+        self._cpus_row = Adw.EntryRow(title="CPU limit")
+        self._cpus_row.set_tooltip_text("number of cores, e.g. 1.5 (--cpus)")
+        expander.add_row(self._cpus_row)
+        return group
+
+    @staticmethod
+    def _switch_row(expander: Adw.ExpanderRow, title: str, subtitle: str) -> Gtk.Switch:
+        """An Adw.ActionRow carrying a trailing Gtk.Switch (works on libadwaita
+        1.0+, unlike Adw.SwitchRow which needs 1.4). Returns the switch."""
+        row = Adw.ActionRow(title=title, subtitle=subtitle)
+        switch = Gtk.Switch(valign=Gtk.Align.CENTER)
+        row.add_suffix(switch)
+        row.set_activatable_widget(switch)
+        expander.add_row(row)
+        return switch
 
     def _section(self, title: str, attr: str, widget: _PairList) -> Adw.PreferencesGroup:
         group = Adw.PreferencesGroup(title=title)
@@ -250,6 +294,8 @@ class CreateContainerDialog(_DialogBase):
             return
         restart = _RESTART_POLICIES[self._restart_row.get_selected()] \
             if self._restart_row.get_selected() < len(_RESTART_POLICIES) else "no"
+        net_idx = self._network_row.get_selected()
+        network = self._networks[net_idx] if 0 <= net_idx < len(self._networks) else None
         spec = {
             "image": image,
             "name": self._name_row.get_text().strip() or None,
@@ -258,9 +304,16 @@ class CreateContainerDialog(_DialogBase):
             "envs": self._envs.values(),
             "restart": restart,
             "command": self._command_row.get_text().strip() or None,
+            "network": network,
+            "interactive": self._interactive_switch.get_active(),
+            "tty": self._tty_switch.get_active(),
+            "user": self._user_row.get_text().strip() or None,
+            "memory": self._memory_row.get_text().strip() or None,
+            "cpus": self._cpus_row.get_text().strip() or None,
         }
         self.close()
-        self._on_create(spec)
+        if self._on_create:
+            self._on_create(spec)
 
 
 def prompt_text(parent: Optional[Gtk.Window], heading: str, body: str,

@@ -132,6 +132,10 @@ class DockerClient:
     def volumes(self) -> List[dict]:
         return self._exec_json("volume ls --format '{{json .}}'")
 
+    def networks(self) -> List[dict]:
+        """Available networks: ``[{Name, Driver, ...}, ...]``."""
+        return self._exec_json("network ls --format '{{json .}}'")
+
     def ping(self) -> Any:
         """Cheap access probe (``<runtime> ps -q``); returns the CommandResult so
         callers can inspect exit_code/stderr (e.g. to detect a permission error
@@ -298,14 +302,35 @@ class DockerClient:
     def create_run_args(self, image: str, *, name: Optional[str] = None,
                         ports=None, volumes=None, envs=None,
                         restart: Optional[str] = None,
-                        command: Optional[str] = None) -> str:
+                        command: Optional[str] = None,
+                        network: Optional[str] = None,
+                        interactive: bool = False, tty: bool = False,
+                        user: Optional[str] = None,
+                        memory: Optional[str] = None,
+                        cpus: Optional[str] = None) -> str:
         """Build the ``run -d …`` argument string. ``ports``/``volumes`` are
         ``[(a, b), …]`` → ``a:b``; ``envs`` is ``[(k, v), …]`` → ``k=v``; all
         values are shell-quoted. ``command`` is appended raw (parsed by the
-        remote shell)."""
+        remote shell).
+
+        Advanced flags (all optional): ``interactive``/``tty`` add ``-i``/``-t``;
+        ``network`` adds ``--network`` (skipped for the default ``bridge``);
+        ``user``/``memory``/``cpus`` add ``--user``/``--memory``/``--cpus``."""
         parts: List[str] = ["run", "-d"]
+        if interactive:
+            parts.append("-i")
+        if tty:
+            parts.append("-t")
         if name:
             parts += ["--name", shlex.quote(name)]
+        if network and network != "bridge":
+            parts += ["--network", shlex.quote(network)]
+        if user:
+            parts += ["--user", shlex.quote(user)]
+        if memory:
+            parts += ["--memory", shlex.quote(memory)]
+        if cpus:
+            parts += ["--cpus", shlex.quote(cpus)]
         for host, cont in (ports or []):
             parts += ["-p", shlex.quote(f"{host}:{cont}")]
         for src, dst in (volumes or []):

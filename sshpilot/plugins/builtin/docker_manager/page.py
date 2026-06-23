@@ -541,7 +541,15 @@ class DockerManagerPage(Gtk.Box):
                     "create container", res, err, self._refresh_containers),
             )
 
-        CreateContainerDialog(self._window(), images, on_create).present()
+        # Fetch the host's networks first so the dialog's Network picker is
+        # populated; fall back to the built-in names if the probe fails.
+        def open_dialog(rows: Optional[List[dict]], _err: Optional[Exception]) -> None:
+            names = [_field(n, "Name") for n in (rows or []) if _field(n, "Name")]
+            if not names:
+                names = ["bridge", "host", "none"]
+            CreateContainerDialog(self._window(), images, names, on_create).present()
+
+        self._run_async(client.networks, open_dialog)
 
     def _lifecycle(self, action: str, cid: str, name: str) -> None:
         client = self._client()

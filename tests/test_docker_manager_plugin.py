@@ -425,6 +425,55 @@ def test_create_container_with_sudo():
     assert calls[-1] == "sudo -n docker run -d nginx"
 
 
+def test_networks_command_and_parse():
+    out = '{"Name":"bridge","Driver":"bridge"}\n{"Name":"mynet","Driver":"bridge"}'
+    client, calls = _recording_client(lambda c: FakeResult(stdout=out))
+    rows = client.networks()
+    assert calls[-1] == "docker network ls --format '{{json .}}'"
+    assert [n["Name"] for n in rows] == ["bridge", "mynet"]
+
+
+def test_create_run_args_interactive_tty():
+    client, _ = _recording_client(None)
+    assert client.create_run_args("alpine", interactive=True, tty=True) == \
+        "run -d -i -t alpine"
+
+
+def test_create_run_args_network_skips_default_bridge():
+    client, _ = _recording_client(None)
+    # The default bridge network is omitted (kept minimal)…
+    assert client.create_run_args("nginx", network="bridge") == "run -d nginx"
+    # …but host/none/custom are passed through.
+    assert client.create_run_args("nginx", network="host") == \
+        "run -d --network host nginx"
+
+
+def test_create_run_args_user_memory_cpus_quoted():
+    client, _ = _recording_client(None)
+    assert client.create_run_args(
+        "nginx", user="1000:1000", memory="512m", cpus="1.5") == \
+        "run -d --user 1000:1000 --memory 512m --cpus 1.5 nginx"
+
+
+def test_create_run_args_advanced_flag_order():
+    client, _ = _recording_client(None)
+    args = client.create_run_args(
+        "nginx:latest", name="web", network="mynet", interactive=True, tty=True,
+        user="app", memory="1g", cpus="2", ports=[("8080", "80")],
+        volumes=[("/data", "/var/www")], envs=[("TZ", "UTC")], restart="always",
+        command="nginx -g 'daemon off;'")
+    assert args == (
+        "run -d -i -t --name web --network mynet --user app --memory 1g --cpus 2 "
+        "-p 8080:80 -v /data:/var/www -e TZ=UTC --restart always nginx:latest "
+        "nginx -g 'daemon off;'")
+
+
+def test_create_container_passes_advanced_kwargs():
+    client, calls = _recording_client(None)
+    client.create_container("alpine", interactive=True, tty=True, memory="256m")
+    assert calls[-1] == "docker run -d -i -t --memory 256m alpine"
+
+
 # --- DockerClient: runtime detection ---------------------------------------
 
 @pytest.mark.parametrize("stdout,expected", [
@@ -555,7 +604,11 @@ def test_create_and_textview_dialogs_construct():
         CreateContainerDialog, TextViewDialog)
 
     captured = {}
-    dlg = CreateContainerDialog(None, ["nginx:latest"], lambda spec: captured.update(spec))
+    dlg = CreateContainerDialog(None, ["nginx:latest"], ["bridge", "host", "mynet"],
+                                lambda spec: captured.update(spec))
     # The image row is prefilled from the supplied image list.
     assert dlg._image_row.get_text() == "nginx:latest"
+    # The advanced Network picker is populated and defaults to bridge.
+    assert dlg._networks == ["bridge", "host", "mynet"]
+    assert dlg._network_row.get_selected() == 0
     TextViewDialog(None, "title", "body text")  # constructs without error
