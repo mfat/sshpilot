@@ -60,6 +60,14 @@
 
 
 
+    <release version="5.4.1" date="2026-06-24">
+      <description>
+        <p>New Docker/Podman management console</p>
+        <p>New plugin feature + plugin SDk with a bunch of experimental plugins</p>
+        <p>Support for additional protocols (mosh, serial, etc.)</p>
+        <p>UI fixes and improvements</p>
+      </description>
+    </release>
     <release version="5.4.0" date="2026-06-24">
       <description>
         <p>Docker/Podman container management console</p>
