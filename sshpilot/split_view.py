@@ -51,7 +51,7 @@ def create_layout_toggle_buttons(
     *,
     as_pill: bool = False,
 ) -> tuple[Gtk.ToggleButton, Gtk.ToggleButton, list]:
-    """Create H/V layout toggle buttons (same icons/tooltips as the header bar)."""
+    """Create H/V layout toggle buttons for the tab bar."""
     updating = [False]
 
     h_btn = Gtk.ToggleButton()
@@ -641,7 +641,7 @@ class SplitViewTab(Gtk.Box):
     Contains:
     - A Gtk.Box (content area) holding a dynamically rebuilt nested Gtk.Paned
       structure so every pane boundary is drag-resizable.
-    - A toolbar strip below the panes with layout, scroll, and add controls.
+    - An action bar below the panes with scroll and add controls.
     """
 
     __gtype_name__ = "SshPilotSplitViewTab"
@@ -724,9 +724,6 @@ class SplitViewTab(Gtk.Box):
         # Action bar strip below the panes (revealed shortly after the tab opens)
         self._add_pane_btn: Optional[Gtk.Button] = None
         self._add_pane_strip: Optional[Gtk.ActionBar] = None
-        self._layout_h_btn: Optional[Gtk.ToggleButton] = None
-        self._layout_v_btn: Optional[Gtk.ToggleButton] = None
-        self._layout_toggle_updating: list = [False]
         self._add_strip_reveal_scheduled = False
         self._add_strip = self._build_add_pane_strip()
         self.append(self._add_strip)
@@ -759,22 +756,11 @@ class SplitViewTab(Gtk.Box):
         if mode != self._layout_mode:
             self._layout_mode = mode
             self._rebuild_layout()
-        self._sync_layout_toggle_buttons()
         try:
             if hasattr(self.window, '_update_layout_toggle_state'):
                 self.window._update_layout_toggle_state()
         except Exception:
             pass
-
-    def _sync_layout_toggle_buttons(self) -> None:
-        if self._layout_h_btn is None or self._layout_v_btn is None:
-            return
-        self._layout_toggle_updating[0] = True
-        try:
-            self._layout_h_btn.set_active(self._layout_mode == self.HORIZONTAL)
-            self._layout_v_btn.set_active(self._layout_mode == self.VERTICAL)
-        finally:
-            self._layout_toggle_updating[0] = False
 
     def scroll_panes_to_top(self) -> None:
         try:
@@ -876,16 +862,6 @@ class SplitViewTab(Gtk.Box):
         strip.set_hexpand(True)
         strip.set_revealed(False)
 
-        self._layout_h_btn, self._layout_v_btn, self._layout_toggle_updating = (
-            create_layout_toggle_buttons(
-                lambda: self.set_layout_mode(self.HORIZONTAL),
-                lambda: self.set_layout_mode(self.VERTICAL),
-                as_pill=True,
-            )
-        )
-        strip.pack_start(self._layout_h_btn)
-        strip.pack_start(self._layout_v_btn)
-
         from sshpilot import icon_utils  # noqa: PLC0415
 
         scroll_top_btn = Gtk.Button()
@@ -923,7 +899,6 @@ class SplitViewTab(Gtk.Box):
 
         self._add_pane_btn = add_btn
         self._add_pane_strip = strip
-        self._sync_layout_toggle_buttons()
 
         dt = Gtk.DropTarget.new(type=GObject.TYPE_PYOBJECT, actions=Gdk.DragAction.MOVE)
         dt.connect("enter", lambda _t, _x, _y: Gdk.DragAction.MOVE)

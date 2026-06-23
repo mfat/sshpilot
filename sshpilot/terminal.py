@@ -4968,10 +4968,15 @@ class TerminalWidget(Gtk.Box):
             if self._fullscreen_banner_container and self._fullscreen_banner_container.get_parent() is None:
                 # Find the content wrapper that contains banners and content_stack
                 try:
-                    if hasattr(root, 'content_stack'):
-                        parent = root.content_stack.get_parent()
+                    if hasattr(root, 'tab_overview'):
+                        parent = root.tab_overview.get_parent()
                         if parent:
                             # Prepend banner at the beginning to appear above everything
+                            parent.prepend(self._fullscreen_banner_container)
+                            logger.debug("Fullscreen banner added to window content area")
+                    elif hasattr(root, 'tab_content_box'):
+                        parent = root.tab_content_box.get_parent()
+                        if parent:
                             parent.prepend(self._fullscreen_banner_container)
                             logger.debug("Fullscreen banner added to window content area")
                 except Exception as e:
