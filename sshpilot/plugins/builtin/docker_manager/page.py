@@ -67,6 +67,8 @@ class DockerManagerPage(Gtk.Box):
         # single map-time load targets it directly — no default-vs-target race.
         self._initial_host = initial_host
         self._initial_loaded = False
+        # Nickname whose SSH ControlMaster we're currently keeping warm (if any).
+        self._mux_nick: Optional[str] = None
         # Pulsing Docker-mark loading indicators (stopped on unmap).
         self._pulse_widgets: List[Gtk.Image] = []
 
@@ -264,6 +266,15 @@ class DockerManagerPage(Gtk.Box):
         self._sudo_check.connect("toggled", self._on_sudo_toggled)
         bar.append(self._sudo_check)
 
+        self._mux_check = Gtk.CheckButton(label="Reuse SSH")
+        self._mux_check.set_tooltip_text(
+            "Keep one SSH connection open and multiplex Docker commands over it "
+            "(ControlMaster) — faster polling"
+        )
+        self._mux_check.set_active(self._multiplex_enabled())
+        self._mux_check.connect("toggled", self._on_mux_toggled)
+        bar.append(self._mux_check)
+
         refresh = Gtk.Button(icon_name="view-refresh-symbolic")
         refresh.set_tooltip_text("Refresh")
         refresh.connect("clicked", lambda _b: self._refresh_visible())
@@ -274,6 +285,41 @@ class DockerManagerPage(Gtk.Box):
         nick = self._current_nickname()
         if nick:
             self.ctx.settings.set(f"sudo:{nick}", bool(check.get_active()))
+        self._refresh_visible()
+
+    # --- SSH multiplexing (ControlMaster) ------------------------------
+    def _multiplex_enabled(self) -> bool:
+        # On by default — reuse one SSH connection for the chatty Docker polling.
+        return bool(self.ctx.settings.get("controlmaster", True))
+
+    def _acquire_multiplex(self, nick: Optional[str]) -> None:
+        """Keep a master warm for ``nick`` (idempotent per held nick)."""
+        if not nick or not self._multiplex_enabled():
+            return
+        if self._mux_nick == nick:
+            return
+        self._release_multiplex()  # drop any previously-held host first
+        try:
+            self.ctx.acquire_multiplex(nick)
+            self._mux_nick = nick
+        except Exception:  # noqa: BLE001 — older core without the API; just skip
+            self._mux_nick = None
+
+    def _release_multiplex(self) -> None:
+        if not self._mux_nick:
+            return
+        try:
+            self.ctx.release_multiplex(self._mux_nick)
+        except Exception:  # noqa: BLE001
+            pass
+        self._mux_nick = None
+
+    def _on_mux_toggled(self, check: Gtk.CheckButton) -> None:
+        self.ctx.settings.set("controlmaster", bool(check.get_active()))
+        if check.get_active():
+            self._acquire_multiplex(self._current_nickname())
+        else:
+            self._release_multiplex()
         self._refresh_visible()
 
     def _list_ssh_connections(self) -> List[Any]:
@@ -289,6 +335,8 @@ class DockerManagerPage(Gtk.Box):
             return
         self.ctx.settings.set("last_host", nick)
         self._sudo_check.set_active(self._use_sudo_for(nick))
+        # Move the warm SSH master to the newly selected host.
+        self._acquire_multiplex(nick)
 
         # New host: invalidate any in-flight loads for the previous host (their
         # late results are dropped) and let the new host load immediately.
@@ -346,6 +394,8 @@ class DockerManagerPage(Gtk.Box):
     # auto-refresh lifecycle
     # ================================================================
     def _on_map(self, *_a) -> None:
+        # Keep an SSH master warm for this host while the page is visible.
+        self._acquire_multiplex(self._current_nickname())
         # Do the full host load (runtime/sudo probe → pulse → refresh) exactly
         # once, on first map — the single load both open paths rely on. Later
         # maps just refresh the visible view.
@@ -363,6 +413,8 @@ class DockerManagerPage(Gtk.Box):
             self._refresh_source = None
         for img in self._pulse_widgets:
             self._pulse_stop(img)
+        # Let the master expire once the page is no longer shown.
+        self._release_multiplex()
 
     def _tick(self) -> bool:
         # Only auto-refresh the live views; logs/images are manual.

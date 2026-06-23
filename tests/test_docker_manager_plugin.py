@@ -579,6 +579,41 @@ def test_page_builds_five_tabs():
     assert names == ["containers", "logs", "stats", "images", "compose"]
 
 
+def test_page_reuse_ssh_toggle_defaults_on_and_persists():
+    _gtk_or_skip()
+    from sshpilot.plugins.builtin.docker_manager.page import DockerManagerPage
+
+    store = {}
+    acquired, released = [], []
+
+    class Conn:
+        def __init__(self, n):
+            self.nickname = n
+            self.protocol = "ssh"
+
+    ctx = types.SimpleNamespace(
+        run_command=lambda *a, **k: FakeResult(),
+        run_on_ui_thread=lambda fn, *a: fn(*a),
+        settings=types.SimpleNamespace(
+            get=lambda k, d=None: store.get(k, d), set=store.__setitem__),
+        list_connections=lambda: [Conn("web")],
+        open_command_terminal=lambda *a, **k: True,
+        acquire_multiplex=lambda n: acquired.append(n),
+        release_multiplex=lambda n: released.append(n),
+        ui=types.SimpleNamespace(notify=lambda *a, **k: None),
+    )
+    page = DockerManagerPage(ctx, initial_host="web")
+    # Default ON.
+    assert page._mux_check.get_active() is True
+    # Acquire keeps the master for the current host.
+    page._acquire_multiplex("web")
+    assert acquired == ["web"] and page._mux_nick == "web"
+    # Toggling off persists the setting and releases.
+    page._mux_check.set_active(False)
+    assert store.get("controlmaster") is False
+    assert released == ["web"] and page._mux_nick is None
+
+
 def test_details_dialog_renders_inspect_data():
     _gtk_or_skip()
     from sshpilot.plugins.builtin.docker_manager.dialogs import ContainerDetailsDialog

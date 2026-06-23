@@ -1898,6 +1898,17 @@ class PreferencesWindow(Adw.Window):
             self.compression_row.set_active(bool(self.config.get_setting('ssh.compression', False)))
             advanced_group.add(self.compression_row)
 
+            # Connection multiplexing (ControlMaster). When on, the first
+            # connection to a host opens a master socket that later connections
+            # reuse (no re-handshake) — faster reconnects and chatty operations.
+            self.controlmaster_row = Adw.SwitchRow()
+            self.controlmaster_row.set_title("Enable SSH connection multiplexing")
+            self.controlmaster_row.set_subtitle(
+                "Reuse one connection per host (ControlMaster) for faster reconnects"
+            )
+            self.controlmaster_row.set_active(bool(self.config.get_setting('ssh.controlmaster', False)))
+            advanced_group.add(self.controlmaster_row)
+
             # SSH verbosity (-v levels)
             self.verbosity_row = Adw.SpinRow.new_with_range(0, 3, 1)
             self.verbosity_row.set_title("SSH Verbosity (-v)")
@@ -3601,6 +3612,10 @@ class PreferencesWindow(Adw.Window):
             if hasattr(self, 'debug_enabled_row'):
                 debug_enabled = bool(self.debug_enabled_row.get_active())
                 self.config.set_setting('ssh.debug_enabled', debug_enabled)
+            controlmaster_enabled = False
+            if hasattr(self, 'controlmaster_row'):
+                controlmaster_enabled = bool(self.controlmaster_row.get_active())
+                self.config.set_setting('ssh.controlmaster', controlmaster_enabled)
 
             overrides: List[str] = []
             if batch_mode_enabled:
@@ -3634,6 +3649,12 @@ class PreferencesWindow(Adw.Window):
 
             if log_level:
                 overrides.extend(['-o', f'LogLevel={log_level}'])
+
+            # Connection multiplexing applies to every connection via the same
+            # shared socket the per-plugin pool uses, so they never conflict.
+            if controlmaster_enabled:
+                from .ssh_multiplex import controlmaster_args
+                overrides.extend(controlmaster_args())
 
             self.config.set_setting('ssh.ssh_overrides', overrides)
             if getattr(self, 'force_internal_file_manager_row', None) is not None:

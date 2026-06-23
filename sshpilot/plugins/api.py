@@ -44,7 +44,11 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 # 1.8: ctx.ui.register_page(..., add_menu_item=False, on_activate=cb) — register
 #      a page with no Tools-menu entry (opened directly, e.g. one tab per host),
 #      and/or have the menu entry run a callback instead of opening the page.
-API_VERSION: Tuple[int, int] = (1, 8)
+# 1.9: ctx.acquire_multiplex(nickname) / ctx.release_multiplex(nickname) — keep a
+#      shared SSH ControlMaster warm for a host while a surface is open; run_command
+#      then transparently reuses that one connection (no re-auth per call). For
+#      polling surfaces such as the Docker Manager.
+API_VERSION: Tuple[int, int] = (1, 9)
 
 # Stable event names and event payload types live in host.py; re-exported here
 # so plugins import everything from sshpilot.plugins.api. (host.py imports
@@ -581,15 +585,21 @@ class PluginContext:
         import subprocess
         from ..ssh_connection_builder import (
             ConnectionContext, build_ssh_connection)
+        from .. import ssh_multiplex
         conn = self.connection_manager.find_connection_by_nickname(nickname)
         if conn is None:
             return CommandResult(-1, "", f"No connection named {nickname!r}")
         cleanup = None
         try:
+            # When a surface has acquired multiplexing for this host, reuse its
+            # ControlMaster socket: the first call opens the master, the rest ride
+            # it (no re-auth). Transparent — callers don't opt in per-call.
+            extra_args = (ssh_multiplex.controlmaster_args()
+                          if ssh_multiplex.is_active(nickname) else None)
             ctx = ConnectionContext(
                 connection=conn, connection_manager=self.connection_manager,
                 config=self.config, command_type='ssh',
-                remote_command=command, native_mode=True)
+                remote_command=command, native_mode=True, extra_args=extra_args)
             prepared = build_ssh_connection(ctx)
             argv = list(prepared.command)
             env = {**os.environ, **(prepared.env or {})}
@@ -610,6 +620,44 @@ class PluginContext:
         finally:
             if cleanup is not None:
                 cleanup()
+
+    def acquire_multiplex(self, nickname: str) -> None:
+        """Keep a shared SSH master (ControlMaster) warm for ``nickname`` while a
+        surface is open, so its ``run_command`` calls reuse one connection instead
+        of re-handshaking each time. Refcounted and reusable by any plugin —
+        balance every call with :meth:`release_multiplex`. The master itself is
+        created lazily by the first ``run_command`` (``ControlMaster=auto``)."""
+        from .. import ssh_multiplex
+        if nickname:
+            ssh_multiplex.acquire(nickname)
+
+    def release_multiplex(self, nickname: str) -> None:
+        """Drop a multiplex reference acquired with :meth:`acquire_multiplex`. When
+        the last reference goes away, tear the master down promptly via
+        ``ssh -O exit`` (reusing the native auth path); if that fails the master
+        expires on its own via ControlPersist."""
+        from .. import ssh_multiplex
+        if not nickname or not ssh_multiplex.release(nickname):
+            return
+        try:
+            import os
+            import subprocess
+            from ..ssh_connection_builder import (
+                ConnectionContext, build_ssh_connection)
+            conn = self.connection_manager.find_connection_by_nickname(nickname)
+            if conn is None:
+                return
+            ctx = ConnectionContext(
+                connection=conn, connection_manager=self.connection_manager,
+                config=self.config, command_type='ssh', native_mode=True,
+                extra_args=["-O", "exit", "-o",
+                            f"ControlPath={ssh_multiplex.control_path()}"])
+            prepared = build_ssh_connection(ctx)
+            env = {**os.environ, **(prepared.env or {})}
+            subprocess.run(list(prepared.command), env=env, capture_output=True,
+                           text=True, timeout=10, check=False)
+        except Exception:  # noqa: BLE001 — best-effort teardown; ControlPersist
+            pass               # expiry is the fallback, so failures are harmless
 
     def get_effective_ssh_config(self, nickname: str) -> Dict[str, Any]:
         """Return the resolved per-host SSH options for a connection, as
