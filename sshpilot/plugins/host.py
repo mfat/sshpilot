@@ -313,6 +313,12 @@ class UiHost:
 
     def _open_now(self, full_id: str) -> None:
         reg = self._pages[full_id]
+        # Pages registered with on_activate are opened indirectly (e.g. Docker
+        # Console's Tools-menu entry redirects to a per-host tab). Match the
+        # menu handler so open_page / Preferences gear behave the same way.
+        if reg.on_activate is not None:
+            reg.on_activate()
+            return
         window = self._window
         # Re-focus an already-open page if its tab is still attached.
         if reg.tab_page is not None:
@@ -331,6 +337,10 @@ class UiHost:
             widget = reg.factory()
         except Exception:
             logger.exception("Plugin page factory for %r failed", full_id)
+            self._show_toast(f"Failed to open {reg.title}", 3)
+            return
+        if widget is None:
+            logger.error("Plugin page factory for %r returned None", full_id)
             self._show_toast(f"Failed to open {reg.title}", 3)
             return
         try:

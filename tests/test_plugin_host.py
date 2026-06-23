@@ -287,6 +287,32 @@ def test_ui_host_reopen_focuses_without_rebuilding():
     assert len(window.tab_view.pages) == 1
 
 
+def test_ui_host_open_page_with_on_activate_delegates():
+    ui = UiHost()
+    built = []
+    activated = []
+    ui.register_page(
+        "p:redirect", "Redirect", "icon", lambda: built.append(1),
+        plugin_id="p", on_activate=lambda: activated.append(1),
+    )
+    window = FakeWindow()
+    ui.bind_window(window)
+    ui.open_page("p:redirect")
+    assert activated == [1]
+    assert built == []
+    assert len(window.tab_view.pages) == 0
+
+
+def test_ui_host_factory_returning_none_shows_toast():
+    ui = UiHost()
+    ui.register_page("p:empty", "Empty", "icon", lambda: None, plugin_id="p")
+    window = FakeWindow()
+    ui.bind_window(window)
+    ui.open_page("p:empty")
+    assert len(window.tab_view.pages) == 0
+    assert len(window.toast_overlay.toasts) == 1
+
+
 def test_ui_host_activate_time_calls_do_not_crash():
     ui = UiHost()
     # No window bound: these must queue, never raise.
