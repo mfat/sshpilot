@@ -137,6 +137,8 @@ class _PageReg:
     factory: Callable[[], Any]
     plugin_id: str
     tab_page: Any = None  # cached Adw.TabPage once opened
+    add_menu_item: bool = True            # whether to add a Tools-menu entry
+    on_activate: Optional[Callable[[], None]] = None  # menu click handler (overrides open_page)
 
 
 @dataclass
@@ -166,11 +168,14 @@ class UiHost:
 
     # --- registration (safe before or after bind) ---------------------
     def register_page(self, full_id: str, title: str, icon_name: str,
-                      factory: Callable[[], Any], *, plugin_id: str) -> None:
+                      factory: Callable[[], Any], *, plugin_id: str,
+                      add_menu_item: bool = True,
+                      on_activate: Optional[Callable[[], None]] = None) -> None:
         if full_id in self._pages:
             logger.warning("Plugin page %r already registered; ignoring", full_id)
             return
-        self._pages[full_id] = _PageReg(full_id, title, icon_name, factory, plugin_id)
+        self._pages[full_id] = _PageReg(full_id, title, icon_name, factory, plugin_id,
+                                        add_menu_item=add_menu_item, on_activate=on_activate)
         if self._window is not None:
             self._install_menu_item(self._pages[full_id])
 
@@ -284,12 +289,21 @@ class UiHost:
         window = self._window
         if window is None:
             return
+        if not reg.add_menu_item:
+            return  # page is opened directly (e.g. per-host tabs), no menu entry
         try:
             from gi.repository import Gio
             action_name = self._action_name(reg)
+
+            def _activate(*_a, reg=reg):
+                if reg.on_activate is not None:
+                    reg.on_activate()
+                else:
+                    self.open_page(reg.full_id)
+
             if window.lookup_action(action_name) is None:
                 action = Gio.SimpleAction.new(action_name, None)
-                action.connect("activate", lambda *_a, fid=reg.full_id: self.open_page(fid))
+                action.connect("activate", _activate)
                 window.add_action(action)
                 section = getattr(window, "_plugins_menu_section", None)
                 if section is not None:

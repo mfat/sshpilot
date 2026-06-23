@@ -80,9 +80,15 @@ class DockerManagerPage(Gtk.Box):
         self._stack.add_titled(self._build_logs_section(), "logs", "Logs")
         self._stack.add_titled(self._build_stats_section(), "stats", "Stats")
         self._stack.add_titled(self._build_images_section(), "images", "Images")
+        # Lazy-load the newly shown tab (e.g. Images doesn't load until viewed).
+        self._stack.connect("notify::visible-child", self._on_tab_switched)
 
         self.connect("map", self._on_map)
         self.connect("unmap", self._on_unmap)
+
+    def _on_tab_switched(self, *_a) -> None:
+        if self.get_mapped():
+            self._refresh_visible()
 
     # ================================================================
     # infrastructure
@@ -326,30 +332,6 @@ class DockerManagerPage(Gtk.Box):
 
         self._run_async(probe, done)
 
-    def switch_host(self, nickname: str) -> None:
-        """Point an already-open page at ``nickname`` and reload (used by the
-        connection context-menu action when the page tab is reused). Fresh pages
-        instead receive the host via the constructor."""
-        def index_of(nick: str) -> int:
-            return next((i for i, c in enumerate(self._connections)
-                         if c.nickname == nick), -1)
-
-        idx = index_of(nickname)
-        if idx < 0:
-            # The connection list may predate this host — rebuild and retry.
-            self._connections = self._list_ssh_connections()
-            self._host_combo.set_model(
-                Gtk.StringList.new([c.nickname for c in self._connections] or ["(no connections)"])
-            )
-            idx = index_of(nickname)
-        if idx < 0:
-            return
-        self._initial_loaded = True  # this counts as the load
-        if self._host_combo.get_selected() == idx:
-            self._on_host_changed()  # already selected → notify won't fire
-        else:
-            self._host_combo.set_selected(idx)  # fires notify::selected → _on_host_changed
-
     # ================================================================
     # auto-refresh lifecycle
     # ================================================================
@@ -409,6 +391,7 @@ class DockerManagerPage(Gtk.Box):
         scroller.set_vexpand(True)
         self._containers_list = Gtk.ListBox()
         self._containers_list.add_css_class("boxed-list")
+        self._containers_list.set_selection_mode(Gtk.SelectionMode.NONE)
         scroller.set_child(self._containers_list)
         self._containers_placeholder = self._make_loading_placeholder("Loading containers…")
         box.append(self._wrap_with_overlay(scroller, self._containers_placeholder))
@@ -755,6 +738,7 @@ class DockerManagerPage(Gtk.Box):
         scroller.set_vexpand(True)
         self._images_list = Gtk.ListBox()
         self._images_list.add_css_class("boxed-list")
+        self._images_list.set_selection_mode(Gtk.SelectionMode.NONE)
         scroller.set_child(self._images_list)
         self._images_placeholder = self._make_loading_placeholder("Loading images…")
         box.append(self._wrap_with_overlay(scroller, self._images_placeholder))

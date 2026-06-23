@@ -20,49 +20,63 @@ from ...api import PluginContext, SshPilotPlugin
 
 logger = logging.getLogger(__name__)
 
-_PAGE_ID = "manager"
 _ICON = "brand-docker-symbolic"
 
 
 class Plugin(SshPilotPlugin):
-    # activate() is registration only — the window UI does not exist yet, so the
-    # page is built lazily by the factory when first opened.
+    # activate() is registration only — the window UI does not exist yet, so each
+    # per-host page is built lazily by its factory when first opened.
     def activate(self, ctx: PluginContext) -> None:
         self.ctx = ctx
-        self._page = None
-        self._target_host = None  # host to focus when the page is next built
+        self._host_pages: set[str] = set()  # nicknames with a registered page
         # ctx.ui is None in headless contexts (no main window / UI host); this is
         # a UI-only plugin, so there is simply nothing to register there.
         if getattr(ctx, "ui", None) is None:
             return
-        ctx.ui.register_page(_PAGE_ID, "Docker Manager", _ICON, self._build_page)
-        # Right-click a connection → open Docker Manager targeting that host
-        # (API >= 1.7). Older cores simply won't have this method.
+        # Tools-menu "Docker Manager" → open the last-used host's tab. The page
+        # itself is never opened directly; on_activate handles the click.
+        ctx.ui.register_page("manager", "Docker Manager", _ICON, lambda: None,
+                             on_activate=self._open_last_host)
+        # Right-click a connection → a per-host Docker Manager tab (API >= 1.7).
         register_action = getattr(ctx.ui, "register_connection_action", None)
         if callable(register_action):
-            register_action("open", "Docker Manager", _ICON, self._on_connection_action)
+            register_action("open", "Docker Manager", _ICON, self._open_host_page)
 
-    def _build_page(self):
+    # --- one tab per host (reused if already open) ---------------------
+    def _open_host_page(self, nickname: str) -> None:
+        if not nickname:
+            return
+        page_id = f"host-{nickname}"
+        if page_id not in self._host_pages:
+            try:
+                self.ctx.ui.register_page(
+                    page_id, f"Docker — {nickname}", _ICON,
+                    lambda nk=nickname: self._build_host_page(nk),
+                    add_menu_item=False,
+                )
+                self._host_pages.add(page_id)
+            except Exception:
+                logger.debug("register per-host docker page for %r failed",
+                             nickname, exc_info=True)
+        self.ctx.ui.open_page(page_id)
+
+    def _build_host_page(self, nickname: str):
         from .page import DockerManagerPage
 
-        # Pass the target host so a freshly built page targets it from the start
-        # (its single map-time load uses it) — no default-host load racing it.
-        self._page = DockerManagerPage(self.ctx, initial_host=self._target_host)
-        return self._page
+        return DockerManagerPage(self.ctx, initial_host=nickname)
 
-    def _on_connection_action(self, nickname: str) -> None:
-        # Open (or focus) the Docker Manager targeting the right-clicked host.
-        self._target_host = nickname
-        page_before = getattr(self, "_page", None)
-        try:
-            self.ctx.ui.open_page(_PAGE_ID)
-            page = getattr(self, "_page", None)
-            # Fresh page → the factory built it with initial_host and its map-time
-            # load handles it. Reused (already-open) page → the factory didn't
-            # run, so re-point + reload it now.
-            if page is not None and page is page_before:
-                page.switch_host(nickname)
-        except Exception:
-            logger.debug("open Docker Manager for %r failed", nickname, exc_info=True)
-        finally:
-            self._target_host = None
+    def _open_last_host(self) -> None:
+        # No host context from the Tools menu → use the last-used host, else the
+        # first SSH connection.
+        nick = self.ctx.settings.get("last_host", None)
+        if not nick:
+            try:
+                conns = [c for c in self.ctx.list_connections()
+                         if getattr(c, "protocol", "ssh") in ("ssh", "", None)]
+            except Exception:
+                conns = []
+            nick = conns[0].nickname if conns else None
+        if nick:
+            self._open_host_page(nick)
+        else:
+            self.ctx.ui.notify("No SSH connections to manage Docker on")

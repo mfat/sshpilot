@@ -7,6 +7,7 @@ imported here — it pulls in GTK and is only built lazily in the real app.
 
 import os
 import sys
+import types
 
 import pytest
 
@@ -56,36 +57,88 @@ def test_loader_discovers_docker_manager():
     assert any(p.plugin_id == "docker-manager" and p.builtin for p in loaded)
 
 
-def test_activate_registers_page_and_connection_action():
-    class _UI:
-        def __init__(self):
-            self.pages = []
-            self.actions = []
+class _FakeUI:
+    def __init__(self):
+        self.pages = []    # (page_id, title, icon, factory, kwargs)
+        self.actions = []  # (action_id, label, icon, callback)
+        self.opened = []   # page_ids passed to open_page
+        self.toasts = []
 
-        def register_page(self, page_id, title, icon, factory):
-            self.pages.append((page_id, title, icon, factory))
+    def register_page(self, page_id, title, icon, factory, **kwargs):
+        self.pages.append((page_id, title, icon, factory, kwargs))
 
-        def register_connection_action(self, action_id, label, icon, callback):
-            self.actions.append((action_id, label, icon, callback))
+    def register_connection_action(self, action_id, label, icon, callback):
+        self.actions.append((action_id, label, icon, callback))
 
-    class _Ctx:
-        def __init__(self):
-            self.ui = _UI()
+    def open_page(self, page_id):
+        self.opened.append(page_id)
 
+    def notify(self, message, *a, **k):
+        self.toasts.append(message)
+
+
+def _fake_ctx(last_host=None, connections=()):
+    ui = _FakeUI()
+    return types.SimpleNamespace(
+        ui=ui,
+        settings=types.SimpleNamespace(get=lambda k, d=None: last_host if k == "last_host" else d,
+                                       set=lambda k, v: None),
+        list_connections=lambda: list(connections),
+    )
+
+
+def test_activate_registers_tools_menu_and_connection_action():
+    ctx = _fake_ctx()
+    Plugin().activate(ctx)
+    # Tools-menu "Docker Manager" entry opens via an on_activate callback (not a
+    # fixed page) so it can target the last-used host.
+    manager = [p for p in ctx.ui.pages if p[0] == "manager"]
+    assert manager and manager[0][1] == "Docker Manager"
+    assert callable(manager[0][4].get("on_activate"))
+    # Connection right-click action.
+    assert ctx.ui.actions and ctx.ui.actions[0][1] == "Docker Manager"
+
+
+def test_connection_action_opens_per_host_tab_and_reuses_it():
+    ctx = _fake_ctx()
     plugin = Plugin()
-    ctx = _Ctx()
     plugin.activate(ctx)
+    open_cb = ctx.ui.actions[0][3]
 
-    assert ctx.ui.pages, "expected the plugin to register a page"
-    page_id, title, icon, factory = ctx.ui.pages[0]
-    assert page_id == "manager"
-    assert title == "Docker Manager"  # not just "Docker"
-    assert callable(factory)
+    open_cb("web")
+    host_pages = [p for p in ctx.ui.pages if p[0] == "host-web"]
+    assert host_pages, "expected a per-host page id 'host-web'"
+    assert host_pages[0][1] == "Docker — web"
+    assert host_pages[0][4].get("add_menu_item") is False  # no Tools-menu clutter
+    assert ctx.ui.opened == ["host-web"]
 
-    assert ctx.ui.actions, "expected a connection context-menu action"
-    action_id, label, icon, callback = ctx.ui.actions[0]
-    assert label == "Docker Manager"
-    assert callable(callback)
+    # Reopening the same host registers once but opens (focuses) again.
+    open_cb("web")
+    assert sum(1 for p in ctx.ui.pages if p[0] == "host-web") == 1
+    assert ctx.ui.opened == ["host-web", "host-web"]
+
+    # A different host gets its own tab.
+    open_cb("db")
+    assert any(p[0] == "host-db" for p in ctx.ui.pages)
+    assert ctx.ui.opened[-1] == "host-db"
+
+
+def test_tools_menu_opens_last_used_host():
+    ctx = _fake_ctx(last_host="beta")
+    plugin = Plugin()
+    plugin.activate(ctx)
+    on_activate = next(p[4]["on_activate"] for p in ctx.ui.pages if p[0] == "manager")
+    on_activate()
+    assert "host-beta" in ctx.ui.opened
+
+
+def test_tools_menu_no_connections_notifies():
+    ctx = _fake_ctx(last_host=None, connections=())
+    plugin = Plugin()
+    plugin.activate(ctx)
+    on_activate = next(p[4]["on_activate"] for p in ctx.ui.pages if p[0] == "manager")
+    on_activate()
+    assert not ctx.ui.opened and ctx.ui.toasts
 
 
 def test_activate_without_register_connection_action_is_safe():

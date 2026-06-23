@@ -41,7 +41,10 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 # 1.7: ctx.ui.register_connection_action(action_id, label, icon_name, callback)
 #      — contribute an item to the connection-list right-click menu; callback
 #      receives the connection nickname.
-API_VERSION: Tuple[int, int] = (1, 7)
+# 1.8: ctx.ui.register_page(..., add_menu_item=False, on_activate=cb) — register
+#      a page with no Tools-menu entry (opened directly, e.g. one tab per host),
+#      and/or have the menu entry run a callback instead of opening the page.
+API_VERSION: Tuple[int, int] = (1, 8)
 
 # Stable event names and event payload types live in host.py; re-exported here
 # so plugins import everything from sshpilot.plugins.api. (host.py imports
@@ -189,13 +192,22 @@ class _UiFacade:
         return f"{self._plugin_id}:{page_id}"
 
     def register_page(self, page_id: str, title: str, icon_name: str,
-                      factory: Callable[[], Any]) -> None:
+                      factory: Callable[[], Any], *,
+                      add_menu_item: bool = True,
+                      on_activate: Optional[Callable[[], None]] = None) -> None:
         """Register a page. ``factory`` is a zero-arg callable returning a
         ``Gtk.Widget`` built on demand when the page is first opened. Safe to
         call from ``activate``; the page appears under the Tools menu once the
-        window is ready."""
+        window is ready.
+
+        ``add_menu_item=False`` (API >= 1.8) registers the page without a Tools-menu
+        entry — for pages opened directly via ``open_page`` (e.g. one tab per
+        host). ``on_activate`` (API >= 1.8), when given, is called when the
+        Tools-menu item is chosen instead of opening this page — e.g. to open a
+        different (per-host) page."""
         self._ui.register_page(self._full(page_id), title, icon_name, factory,
-                               plugin_id=self._plugin_id)
+                               plugin_id=self._plugin_id,
+                               add_menu_item=add_menu_item, on_activate=on_activate)
 
     def open_page(self, page_id: str) -> None:
         """Open (or focus) a registered page as a tab. Valid after
