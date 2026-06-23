@@ -22,6 +22,8 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Gtk, Adw  # noqa: E402
 
+from . import widgets as w  # noqa: E402
+
 
 # --------------------------------------------------------------------------
 # helpers to read inspect JSON defensively (docker/podman differ slightly)
@@ -382,9 +384,8 @@ class DockerConsoleSettingsDialog(_DialogBase):
 def prompt_text(parent: Optional[Gtk.Window], heading: str, body: str,
                 placeholder: str, ok_label: str,
                 on_ok: Callable[[str], None]) -> None:
-    """One-line input via Adw.MessageDialog (e.g. the image to pull)."""
-    dialog = Adw.MessageDialog(transient_for=parent, modal=True,
-                               heading=heading, body=body)
+    """One-line input dialog (e.g. the image to pull)."""
+    dialog = w.build_alert(heading, body)
     entry = Gtk.Entry(placeholder_text=placeholder, activates_default=True)
     dialog.set_extra_child(entry)
     dialog.add_response("cancel", "Cancel")
@@ -400,4 +401,4 @@ def prompt_text(parent: Optional[Gtk.Window], heading: str, body: str,
                 on_ok(text)
 
     dialog.connect("response", _resp)
-    dialog.present()
+    w.present_alert(dialog, parent)

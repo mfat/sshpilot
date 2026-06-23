@@ -93,6 +93,10 @@ class DockerConsolePage(
         self._syncing_runtime = False
         # Pulsing Docker-mark loading indicators (stopped on unmap).
         self._pulse_widgets: List[Gtk.Image] = []
+        # Open destructive confirm (AlertDialog/MessageDialog); dismissed on host
+        # change so a prune/remove can't run against the newly selected host.
+        self._active_confirm_dialog: Optional[Any] = None
+        self._confirm_gen = 0
 
         self.set_margin_top(12)
         self.set_margin_bottom(12)
@@ -463,6 +467,7 @@ class DockerConsolePage(
         nick = self._current_nickname()
         if not nick:
             return
+        self._dismiss_active_confirm()
         self.ctx.settings.set("last_host", nick)
         self._sudo_check.set_active(self._use_sudo_for(nick))
         self._syncing_runtime = True
@@ -546,6 +551,7 @@ class DockerConsolePage(
         self._start_timer()
 
     def _on_unmap(self, *_a) -> None:
+        self._dismiss_active_confirm()
         if self._refresh_source is not None:
             GLib.source_remove(self._refresh_source)
             self._refresh_source = None
@@ -599,6 +605,22 @@ class DockerConsolePage(
             self._toast(f"{label} done")
         refresh()
 
+    def _dismiss_active_confirm(self) -> None:
+        """Close any open destructive confirm and invalidate its response handler.
+
+        Called when the host changes or the page is hidden so a pending prune /
+        remove cannot run against a different host than the one shown when the
+        dialog was opened."""
+        self._confirm_gen += 1
+        dlg = self._active_confirm_dialog
+        self._active_confirm_dialog = None
+        if dlg is None:
+            return
+        try:
+            dlg.close()
+        except Exception:
+            logger.debug("dismiss confirm dialog failed", exc_info=True)
+
     def _confirm(self, *, heading: str, body: str, destructive_label: str,
                  on_confirm: Callable[[bool], None],
                  force_label: Optional[str] = None,
@@ -606,9 +628,10 @@ class DockerConsolePage(
         """Destructive-action confirm. ``force_label`` adds a Force checkbox;
         ``confirm_word`` (mutually exclusive) requires the user to type the word
         before the destructive button enables — for high-blast-radius prunes."""
-        dialog = Adw.MessageDialog(
-            transient_for=self._window(), modal=True, heading=heading, body=body
-        )
+        self._dismiss_active_confirm()
+        gen = self._confirm_gen
+        dialog = w.build_alert(heading, body)
+        self._active_confirm_dialog = dialog
         force_check: Optional[Gtk.CheckButton] = None
         if force_label:
             force_check = Gtk.CheckButton(label=force_label)
@@ -627,8 +650,11 @@ class DockerConsolePage(
                 "ok", e.get_text().strip() == confirm_word))
 
         def on_response(_d: Any, response: str) -> None:
+            if gen != self._confirm_gen:
+                return  # host changed or a newer confirm superseded this one
+            self._active_confirm_dialog = None
             if response == "ok":
                 on_confirm(bool(force_check.get_active()) if force_check else False)
 
         dialog.connect("response", on_response)
-        dialog.present()
+        w.present_alert(dialog, self._window())

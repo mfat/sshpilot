@@ -7,9 +7,36 @@ from typing import Callable, Optional
 import gi
 
 gi.require_version("Gtk", "4.0")
-from gi.repository import GLib, Gtk  # noqa: E402
+gi.require_version("Adw", "1")
+from gi.repository import GLib, Gtk, Adw  # noqa: E402
 
 from .client import DockerClient, DockerError  # noqa: E402
+
+# Prefer Adw.AlertDialog (libadwaita ≥ 1.5, May 2024) — Adw.MessageDialog is
+# deprecated since 1.6. The app's minimum is 1.4, so fall back to MessageDialog
+# where AlertDialog isn't available (matches sshpilot/file_manager/progress_dialog.py).
+_HAS_ALERT_DIALOG = hasattr(Adw, "AlertDialog")
+
+
+def build_alert(heading: str, body: str) -> Adw.Window:
+    """A response-based dialog (AlertDialog when available, else MessageDialog).
+    Both share the response API used here: ``add_response``,
+    ``set_response_appearance``, ``set_default_response``, ``set_close_response``,
+    ``set_response_enabled``, ``set_extra_child`` and the ``response`` signal."""
+    if _HAS_ALERT_DIALOG:
+        return Adw.AlertDialog(heading=heading, body=body)
+    return Adw.MessageDialog(modal=True, heading=heading, body=body)
+
+
+def present_alert(dialog: Adw.Window, parent: Optional[Gtk.Widget]) -> None:
+    """Present a :func:`build_alert` dialog. AlertDialog takes the parent at
+    present-time; MessageDialog needs it set as transient-for first."""
+    if _HAS_ALERT_DIALOG and isinstance(dialog, Adw.AlertDialog):
+        dialog.present(parent)
+    else:
+        if parent is not None:
+            dialog.set_transient_for(parent)
+        dialog.present()
 
 
 def field(d: dict, *keys: str, default: str = "") -> str:

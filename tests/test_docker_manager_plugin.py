@@ -672,6 +672,38 @@ def test_page_hardening_widgets_and_helpers():
     assert n == 1
 
 
+def test_dismiss_active_confirm_bumps_generation():
+    _gtk_or_skip()
+    from sshpilot.plugins.builtin.docker_manager.page import DockerConsolePage
+
+    page = DockerConsolePage(_gtk_ctx(), initial_host="web")
+    gen0 = page._confirm_gen
+    page._active_confirm_dialog = object()
+    page._dismiss_active_confirm()
+    assert page._confirm_gen == gen0 + 1
+    assert page._active_confirm_dialog is None
+
+
+def test_confirm_handler_ignored_after_dismiss():
+    """Generation guard used by ``_confirm`` — no GTK needed."""
+    confirm_gen = 1
+    gen = 1
+    called = []
+
+    def on_response(_d, response):
+        nonlocal confirm_gen
+        if gen != confirm_gen:
+            return
+        if response == "ok":
+            called.append(True)
+
+    on_response(None, "ok")
+    assert called == [True]
+    confirm_gen += 1  # simulates _dismiss_active_confirm / host switch
+    on_response(None, "ok")
+    assert called == [True]
+
+
 def test_settings_dialog_exposes_refresh_interval():
     _gtk_or_skip()
     from sshpilot.plugins.builtin.docker_manager.dialogs import DockerConsoleSettingsDialog
