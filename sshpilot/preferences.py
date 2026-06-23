@@ -1405,6 +1405,19 @@ class PreferencesWindow(Adw.Window):
             
             max_width_row.add_suffix(max_width_scale)
             sidebar_group.add(max_width_row)
+
+            flat_rows_switch = Adw.SwitchRow()
+            flat_rows_switch.set_title(_("Flat Sidebar Rows"))
+            flat_rows_switch.set_subtitle(
+                _("Use flat list rows instead of cards in the connection sidebar")
+            )
+            flat_rows_switch.set_active(
+                bool(self.config.get_setting('ui.sidebar_flat_rows', False))
+            )
+            flat_rows_switch.connect(
+                'notify::active', self.on_sidebar_flat_rows_changed
+            )
+            sidebar_group.add(flat_rows_switch)
             
             # Display user@hostname toggle
             show_user_hostname_switch = Adw.SwitchRow()
@@ -4589,6 +4602,16 @@ class PreferencesWindow(Adw.Window):
             self._update_external_file_manager_row()
         except Exception as exc:
             logger.error("Failed to update file manager preference: %s", exc)
+
+    def on_sidebar_flat_rows_changed(self, switch, *args):
+        """Persist flat vs card styling for sidebar connection rows."""
+        try:
+            active = bool(switch.get_active())
+            self.config.set_setting('ui.sidebar_flat_rows', active)
+            if self.parent_window and hasattr(self.parent_window, 'update_sidebar_display'):
+                self.parent_window.update_sidebar_display()
+        except Exception as exc:
+            logger.error("Failed to update sidebar flat rows preference: %s", exc)
 
     def on_sidebar_show_user_hostname_changed(self, switch, *args):
         """Persist the preference for showing user@hostname in sidebar."""

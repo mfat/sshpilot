@@ -71,6 +71,42 @@ def _install_sidebar_color_css():
         logger.debug("Failed to install sidebar color CSS", exc_info=True)
 
 
+def _use_flat_sidebar_rows(config) -> bool:
+    if config is None:
+        return False
+    try:
+        return bool(config.get_setting('ui.sidebar_flat_rows', False))
+    except Exception:
+        return False
+
+
+def _apply_sidebar_row_style(
+    row: Gtk.ListBoxRow,
+    config,
+    *,
+    in_tag_section: bool = False,
+    flat: bool | None = None,
+) -> None:
+    """Apply card or flat navigation-sidebar styling to a sidebar row."""
+    if in_tag_section:
+        row.remove_css_class('card')
+        row.remove_css_class('navigation-sidebar')
+        if not row.has_css_class('osd'):
+            row.add_css_class('osd')
+        return
+
+    use_flat = flat if flat is not None else _use_flat_sidebar_rows(config)
+    row.remove_css_class('osd')
+    if use_flat:
+        row.remove_css_class('card')
+        if not row.has_css_class('navigation-sidebar'):
+            row.add_css_class('navigation-sidebar')
+    else:
+        row.remove_css_class('navigation-sidebar')
+        if not row.has_css_class('card'):
+            row.add_css_class('card')
+
+
 def _parse_color(value: Optional[str]) -> Optional[Gdk.RGBA]:
     if not value:
         return None
@@ -229,8 +265,8 @@ class GroupRow(Gtk.ListBoxRow):
     def __init__(self, group_info: Dict, group_manager: GroupManager, connections_dict: Dict | None = None):
         super().__init__()
         _install_sidebar_color_css()
-        #self.add_css_class("navigation-sidebar")
-        self.add_css_class("card")        #self.add_css_class("navigation-sidebar")
+        config = getattr(group_manager, 'config', None)
+        _apply_sidebar_row_style(self, config)
         self.group_info = group_info
         self.group_manager = group_manager
         self.group_id = group_info["id"]
@@ -601,6 +637,10 @@ class GroupRow(Gtk.ListBoxRow):
             self.remove_css_class("drop-target-group")
             self.drop_target_indicator.set_visible(False)
 
+    def apply_row_style(self, flat: bool | None = None) -> None:
+        config = getattr(self.group_manager, 'config', None)
+        _apply_sidebar_row_style(self, config, flat=flat)
+
 
 class TagGroupRow(GroupRow):
     """Virtual, read-only group row derived from connection tags.
@@ -614,9 +654,9 @@ class TagGroupRow(GroupRow):
     def __init__(self, group_info: Dict, group_manager: GroupManager, connections_dict=None):
         super().__init__(group_info, group_manager, connections_dict)
         self.is_tag_group = True
-        # Replace the card style instead of stacking: osd's white foreground
-        # over card's light background is unreadable in light mode.
+        # Tag group headers always use osd style (never card/flat).
         self.remove_css_class("card")
+        self.remove_css_class("navigation-sidebar")
         self.add_css_class("osd")
         self.icon.set_from_icon_name("tag-symbolic")
         # The edit button renames the tag (across all tagged connections);
@@ -626,6 +666,10 @@ class TagGroupRow(GroupRow):
         if group_info.get("untagged"):
             # The Untagged section is not a real tag — nothing to rename.
             self.edit_button.set_visible(False)
+
+    def apply_row_style(self, flat: bool | None = None) -> None:
+        # Tag group headers always use osd styling.
+        return
 
     def _setup_drag_source(self):
         # Tag groups cannot be dragged or reordered.
@@ -689,20 +733,12 @@ class ConnectionRow(Gtk.ListBoxRow):
     ):
         super().__init__()
         _install_sidebar_color_css()
-        #self.add_css_class("navigation-sidebar")
-        self.add_css_class("card")
         self.connection = connection
         self.group_manager = group_manager
         self.config = config
         self._group_id = display_group_id
         self._in_tag_section = in_tag_section
-        if in_tag_section:
-            # Virtual tag groups render their whole section in OSD style.
-            # Replace the card style instead of stacking: osd's white
-            # foreground over card's light background is unreadable in
-            # light mode.
-            self.remove_css_class("card")
-            self.add_css_class("osd")
+        _apply_sidebar_row_style(self, config, in_tag_section=in_tag_section)
         self._file_manager_callback = file_manager_callback
         self._tint_provider = None
         self._color_badge_provider = None
@@ -1347,6 +1383,11 @@ class ConnectionRow(Gtk.ListBoxRow):
         display = _format_connection_host_display(self.connection, **format_kwargs)
         self.host_label.set_text(display or '')
         self.host_label.set_tooltip_text(display or '')
+
+    def apply_row_style(self, flat: bool | None = None) -> None:
+        _apply_sidebar_row_style(
+            self, self.config, in_tag_section=self._in_tag_section, flat=flat
+        )
 
     def apply_hide_hosts(self, hide: bool):
         self._apply_host_label_text()

@@ -1781,10 +1781,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         show_status = self.config.get_setting('ui.sidebar_show_connection_status', True)
         show_port_forwarding = self.config.get_setting('ui.sidebar_show_port_forwarding', True)
         show_connection_icon = self.config.get_setting('ui.sidebar_show_connection_icon', True)
+        flat_rows = self.config.get_setting('ui.sidebar_flat_rows', False)
         
         # Update all rows in the connection list
         row = self.connection_list.get_first_child()
         while row:
+            if hasattr(row, 'apply_row_style'):
+                row.apply_row_style(flat_rows)
             # Update ConnectionRow elements
             if hasattr(row, 'connection_icon'):
                 row.connection_icon.set_visible(show_connection_icon)

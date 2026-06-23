@@ -183,6 +183,7 @@ class Config(GObject.Object):
                 'sidebar_show_connection_status': True,
                 'sidebar_show_port_forwarding': True,
                 'sidebar_show_connection_icon': True,
+                'sidebar_flat_rows': False,
                 # Sidebar behavior (Settings ▸ Sidebar ▸ Sidebar behavior)
                 'sidebar_hide_on_startup': False,
                 'sidebar_hide_on_terminal_open': False,  # incl. local terminals
