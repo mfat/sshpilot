@@ -3340,7 +3340,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Command blocks toggle button (right sidebar)
         from sshpilot import icon_utils as _cmd_icon_utils
         self._cmd_blocks_toggle_btn = Gtk.ToggleButton()
-        _cmd_icon_utils.set_button_icon(self._cmd_blocks_toggle_btn, 'play-large-symbolic')
+        _cmd_icon_utils.set_button_icon(self._cmd_blocks_toggle_btn, 'system-run-symbolic')
         self._cmd_blocks_toggle_btn.add_css_class('flat')
         self._cmd_blocks_toggle_btn.set_tooltip_text(_('Commands (Ctrl+Alt+S)'))
         self._updating_cmd_toggle = False

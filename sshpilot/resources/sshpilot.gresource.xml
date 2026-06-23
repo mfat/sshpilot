@@ -75,6 +75,7 @@
     <file alias="R.svg">icons/scalable/actions/R.svg</file>
     <file alias="D.svg">icons/scalable/actions/D.svg</file>
     <file alias="system-search-symbolic.svg">icons/scalable/actions/system-search-symbolic.svg</file>
+    <file alias="system-run-symbolic.svg">icons/scalable/actions/system-run-symbolic.svg</file>
     <file alias="tag-symbolic.svg">icons/scalable/actions/tag-symbolic.svg</file>
     <file alias="tab-new-symbolic.svg">icons/scalable/actions/tab-new-symbolic.svg</file>
     <file alias="text-editor-symbolic.svg">icons/scalable/actions/text-editor-symbolic.svg</file>
