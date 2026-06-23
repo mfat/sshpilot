@@ -6789,10 +6789,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     # ── tab button visibility ─────────────────────────────────────────────────
 
     def _update_tab_button_visibility(self):
-        """Hide tab overview/count when only the Start tab is open."""
+        """Hide tab bar and overview button when only the Start tab is open."""
         try:
+            show_tabs = self.has_user_tabs()
             if hasattr(self, 'tab_button'):
-                self.tab_button.set_visible(self.has_user_tabs())
+                self.tab_button.set_visible(show_tabs)
+            if hasattr(self, 'tab_bar'):
+                self.tab_bar.set_visible(show_tabs)
         except Exception as e:
             logger.error(f"Failed to update tab button visibility: {e}")
 
