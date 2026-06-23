@@ -1,7 +1,7 @@
 """GTK UI for the Docker Manager plugin.
 
 A single page with a host picker and five sections — Containers, Logs, Stats,
-Images — driven by :class:`DockerClient` over ``ctx.run_command``. Every Docker
+Images, Compose — driven by :class:`DockerClient` over ``ctx.run_command``. Every Docker
 call runs on a worker thread and marshals back with ``ctx.run_on_ui_thread``;
 streamed/interactive output (live logs, exec shell) opens a terminal tab via
 ``ctx.open_command_terminal``.
@@ -18,11 +18,17 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import GLib, Gtk, Adw, Pango, Gdk, GdkPixbuf  # noqa: E402
+from gi.repository import GLib, Gio, Gtk, Adw, Pango, Gdk, GdkPixbuf  # noqa: E402
 
 _MARK_RESOURCE = "/io/github/mfat/sshpilot/icons/scalable/actions/docker-mark-ocean-blue.svg"
 
 from .client import DockerClient, DockerError  # noqa: E402
+from .dialogs import (  # noqa: E402
+    ContainerDetailsDialog,
+    CreateContainerDialog,
+    TextViewDialog,
+    prompt_text,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +52,8 @@ class DockerManagerPage(Gtk.Box):
         self.ctx = ctx
         self._connections: List[Any] = []
         self._containers: List[dict] = []
+        self._cached_images: List[dict] = []  # last images() result (for create dialog)
+        self._logs_raw: str = ""              # last snapshot, for search/errors-only
         self._refresh_source: Optional[int] = None
         # In-flight guards so the 3s auto-refresh can't pile up overlapping SSH
         # calls when a host is slow.
@@ -80,6 +88,7 @@ class DockerManagerPage(Gtk.Box):
         self._stack.add_titled(self._build_logs_section(), "logs", "Logs")
         self._stack.add_titled(self._build_stats_section(), "stats", "Stats")
         self._stack.add_titled(self._build_images_section(), "images", "Images")
+        self._stack.add_titled(self._build_compose_section(), "compose", "Compose")
         # Lazy-load the newly shown tab (e.g. Images doesn't load until viewed).
         self._stack.connect("notify::visible-child", self._on_tab_switched)
 
@@ -294,6 +303,7 @@ class DockerManagerPage(Gtk.Box):
         for lst, ph, text in (
             (self._containers_list, self._containers_placeholder, "Loading containers…"),
             (self._images_list, self._images_placeholder, "Loading images…"),
+            (self._compose_list, self._compose_placeholder, "Loading compose projects…"),
         ):
             self._clear_listbox(lst)
             self._set_placeholder_loading(ph, text)
@@ -373,6 +383,8 @@ class DockerManagerPage(Gtk.Box):
             self._refresh_images()
         elif name == "logs":
             self._reload_logs()
+        elif name == "compose":
+            self._refresh_compose()
 
     # ================================================================
     # 1. Containers
@@ -385,6 +397,14 @@ class DockerManagerPage(Gtk.Box):
         self._show_all_check.set_active(True)
         self._show_all_check.connect("toggled", lambda _c: self._refresh_containers())
         toolbar.append(self._show_all_check)
+        create = Gtk.Button()
+        create.set_child(Adw.ButtonContent(icon_name="list-add-symbolic",
+                                           label="New Container"))
+        create.add_css_class("suggested-action")
+        create.set_halign(Gtk.Align.END)
+        create.set_hexpand(True)
+        create.connect("clicked", lambda _b: self._create_container())
+        toolbar.append(create)
         box.append(toolbar)
 
         scroller = Gtk.ScrolledWindow()
@@ -482,8 +502,46 @@ class DockerManagerPage(Gtk.Box):
         else:
             act("media-playback-start-symbolic", "Start", lambda: self._lifecycle("start", cid, name))
             act("view-paged-symbolic", "Logs", lambda: self._follow_logs(cid, name))
+        act("dialog-information-symbolic", "Details", lambda: self._show_details(cid, name))
         act("user-trash-symbolic", "Remove", lambda: self._remove_container(cid, name))
         return self._listbox_wrap(row)
+
+    def _show_details(self, cid: str, name: str) -> None:
+        client = self._client()
+        if client is None:
+            return
+        self._run_async(
+            lambda: client.inspect(cid),
+            lambda data, err: self._on_details(name, data, err),
+        )
+
+    def _on_details(self, name: str, data: Optional[dict], err: Optional[Exception]) -> None:
+        if err is not None:
+            self._toast(f"Inspect {name} failed: {err}")
+            return
+        if not data:
+            self._toast(f"No details for {name}")
+            return
+        ContainerDetailsDialog(self._window(), name, data).present()
+
+    # --- container creation -------------------------------------------
+    def _create_container(self) -> None:
+        client = self._client()
+        if client is None:
+            self._toast("Select a host first")
+            return
+        images = [f"{_field(i, 'Repository')}:{_field(i, 'Tag')}"
+                  for i in self._cached_images
+                  if _field(i, "Repository") not in ("", "<none>")]
+
+        def on_create(spec: dict) -> None:
+            self._run_async(
+                lambda: client.create_container(spec.pop("image"), **spec),
+                lambda res, err: self._on_action(
+                    "create container", res, err, self._refresh_containers),
+            )
+
+        CreateContainerDialog(self._window(), images, on_create).present()
 
     def _lifecycle(self, action: str, cid: str, name: str) -> None:
         client = self._client()
@@ -568,10 +626,35 @@ class DockerManagerPage(Gtk.Box):
         follow = Gtk.Button(label="Follow in terminal")
         follow.connect("clicked", lambda _b: self._follow_logs_selected())
         actions.append(follow)
-        clear = Gtk.Button(label="Clear")
-        clear.connect("clicked", lambda _b: self._logs_buffer.set_text("", 0))
+        copy = Gtk.Button(icon_name="edit-copy-symbolic")
+        copy.set_tooltip_text("Copy logs")
+        copy.connect("clicked", lambda _b: self._copy_logs())
+        actions.append(copy)
+        save = Gtk.Button(icon_name="document-save-symbolic")
+        save.set_tooltip_text("Save logs…")
+        save.connect("clicked", lambda _b: self._save_logs())
+        actions.append(save)
+        clear = Gtk.Button(icon_name="edit-clear-all-symbolic")
+        clear.set_tooltip_text("Clear")
+        clear.connect("clicked", lambda _b: self._clear_logs())
         actions.append(clear)
         box.append(actions)
+
+        # Filter row: live search, errors-only, auto-scroll.
+        filters = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self._logs_search = Gtk.SearchEntry()
+        self._logs_search.set_placeholder_text("Filter lines…")
+        self._logs_search.set_hexpand(True)
+        self._logs_search.connect("search-changed", lambda _e: self._apply_log_filter())
+        filters.append(self._logs_search)
+        self._logs_errors_only = Gtk.ToggleButton(label="Errors only")
+        self._logs_errors_only.set_tooltip_text("Show only lines mentioning error/warn/fail/fatal")
+        self._logs_errors_only.connect("toggled", lambda _b: self._apply_log_filter())
+        filters.append(self._logs_errors_only)
+        self._logs_autoscroll = Gtk.ToggleButton(label="Auto-scroll")
+        self._logs_autoscroll.set_active(True)
+        filters.append(self._logs_autoscroll)
+        box.append(filters)
 
         scroller = Gtk.ScrolledWindow()
         scroller.set_vexpand(True)
@@ -628,9 +711,82 @@ class DockerManagerPage(Gtk.Box):
         self._pulse_stop(self._logs_pulse)
         self._logs_pulse.set_visible(False)
         if err is not None:
+            self._logs_raw = ""
             self._logs_buffer.set_text(f"Error: {err}", -1)
             return
-        self._logs_buffer.set_text(text or "(no output)", -1)
+        self._logs_raw = text or ""
+        self._apply_log_filter()
+
+    # Substrings that mark a "problem" line for the Errors-only filter.
+    _ERROR_MARKERS = ("error", "err ", "warn", "fail", "fatal", "exception",
+                      "panic", "critical")
+
+    def _apply_log_filter(self) -> None:
+        """Re-render the cached snapshot through the search + errors-only filters."""
+        text = self._logs_raw
+        if not text:
+            self._logs_buffer.set_text("(no output)", -1)
+            return
+        needle = self._logs_search.get_text().strip().lower()
+        errors_only = self._logs_errors_only.get_active()
+        lines = text.splitlines()
+        if needle:
+            lines = [ln for ln in lines if needle in ln.lower()]
+        if errors_only:
+            lines = [ln for ln in lines
+                     if any(m in ln.lower() for m in self._ERROR_MARKERS)]
+        shown = "\n".join(lines)
+        if not shown:
+            shown = "(no matching lines)"
+        self._logs_buffer.set_text(shown, -1)
+        if self._logs_autoscroll.get_active():
+            GLib.idle_add(self._scroll_logs_to_end)
+
+    def _scroll_logs_to_end(self) -> bool:
+        end = self._logs_buffer.get_end_iter()
+        self._logs_view.scroll_to_iter(end, 0.0, False, 0.0, 0.0)
+        return False
+
+    def _logs_text(self) -> str:
+        start, end = self._logs_buffer.get_bounds()
+        return self._logs_buffer.get_text(start, end, False)
+
+    def _clear_logs(self) -> None:
+        self._logs_raw = ""
+        self._logs_buffer.set_text("", 0)
+
+    def _copy_logs(self) -> None:
+        text = self._logs_text()
+        if not text:
+            self._toast("Nothing to copy")
+            return
+        display = self.get_display() or Gdk.Display.get_default()
+        if display is not None:
+            display.get_clipboard().set(text)
+            self._toast("Logs copied")
+
+    def _save_logs(self) -> None:
+        text = self._logs_text()
+        if not text:
+            self._toast("Nothing to save")
+            return
+        dialog = Gtk.FileDialog.new()
+        dialog.set_initial_name(f"{self._selected_container_name()}-logs.txt")
+
+        def done(dlg: Gtk.FileDialog, result: Any) -> None:
+            try:
+                gfile = dlg.save_finish(result)
+            except GLib.Error:
+                return  # cancelled
+            try:
+                gfile.replace_contents(
+                    text.encode("utf-8"), None, False,
+                    Gio.FileCreateFlags.REPLACE_DESTINATION, None)
+                self._toast("Logs saved")
+            except Exception as exc:  # noqa: BLE001
+                self._toast(f"Save failed: {exc}")
+
+        dialog.save(self._window(), None, done)
 
     def _follow_logs_selected(self) -> None:
         cid = self._selected_container_id()
@@ -723,6 +879,16 @@ class DockerManagerPage(Gtk.Box):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
 
         toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        pull = Gtk.Button(label="Pull image")
+        pull.set_tooltip_text("docker pull — progress shown in a terminal tab")
+        pull.add_css_class("suggested-action")
+        pull.connect("clicked", lambda _b: self._pull_image())
+        toolbar.append(pull)
+        iprune = Gtk.Button(label="Prune images")
+        iprune.set_tooltip_text("docker image prune -f (remove dangling images)")
+        iprune.add_css_class("destructive-action")
+        iprune.connect("clicked", lambda _b: self._image_prune())
+        toolbar.append(iprune)
         prune = Gtk.Button(label="System prune")
         prune.set_tooltip_text("docker system prune -f (dangling images, stopped containers, unused networks)")
         prune.add_css_class("destructive-action")
@@ -754,8 +920,10 @@ class DockerManagerPage(Gtk.Box):
     def _on_images(self, rows: Optional[List[dict]], err: Optional[Exception]) -> None:
         self._clear_listbox(self._images_list)
         if err is not None:
+            self._cached_images = []
             self._set_placeholder_idle(self._images_placeholder, self._error_text(err))
             return
+        self._cached_images = rows or []
         if not rows:
             self._set_placeholder_idle(self._images_placeholder, "No images")
             return
@@ -781,12 +949,74 @@ class DockerManagerPage(Gtk.Box):
             info.append(sub)
             row.append(info)
 
+            ref = f"{repo}:{tag}" if repo != "<none>" else iid
+            hist = Gtk.Button(icon_name="document-open-recent-symbolic")
+            hist.set_tooltip_text("Image history (layers)")
+            hist.add_css_class("flat")
+            hist.connect("clicked", lambda _b, r=ref: self._image_history(r))
+            row.append(hist)
+
             rm = Gtk.Button(icon_name="user-trash-symbolic")
             rm.set_tooltip_text("Remove image")
             rm.add_css_class("flat")
             rm.connect("clicked", lambda _b, i=iid, r=f"{repo}:{tag}": self._remove_image(i, r))
             row.append(rm)
             self._images_list.append(self._listbox_wrap(row))
+
+    def _pull_image(self) -> None:
+        client = self._client()
+        nick = self._current_nickname()
+        if client is None or not nick:
+            self._toast("Select a host first")
+            return
+
+        def on_ok(ref: str) -> None:
+            ok = self.ctx.open_command_terminal(
+                nick, client.pull_command(ref), title=f"pull: {ref}")
+            if not ok:
+                self._toast("Could not start pull")
+
+        prompt_text(self._window(), "Pull image",
+                    "Image reference to pull (e.g. nginx:latest).",
+                    "nginx:latest", "Pull", on_ok)
+
+    def _image_prune(self) -> None:
+        client = self._client()
+        if client is None:
+            return
+
+        def do(_force: bool) -> None:
+            self._run_async(client.image_prune,
+                            lambda res, err: self._on_prune(res, err))
+
+        self._confirm(
+            heading="Prune unused images?",
+            body="Removes all dangling images (untagged layers not used by a container).",
+            destructive_label="Prune",
+            on_confirm=do,
+        )
+
+    def _image_history(self, ref: str) -> None:
+        client = self._client()
+        if client is None:
+            return
+
+        def render(rows: List[dict]) -> str:
+            lines = []
+            for layer in rows:
+                created = _field(layer, "CreatedSince", "CreatedAt", default="")
+                size = _field(layer, "Size", default="")
+                by = _field(layer, "CreatedBy", "Comment", default="").strip()
+                lines.append(f"{created}  {size}\n  {by}")
+            return "\n\n".join(lines) or "(no layers)"
+
+        def done(rows: Optional[List[dict]], err: Optional[Exception]) -> None:
+            if err is not None:
+                self._toast(f"History {ref} failed: {err}")
+                return
+            TextViewDialog(self._window(), f"{ref} — history", render(rows or [])).present()
+
+        self._run_async(lambda: client.image_history(ref), done)
 
     def _remove_image(self, image_id: str, label: str) -> None:
         client = self._client()
@@ -852,6 +1082,147 @@ class DockerManagerPage(Gtk.Box):
         reclaimed = next((ln for ln in out.splitlines() if "reclaimed" in ln.lower()), "")
         self._toast(reclaimed or "Prune complete")
         self._refresh_images()
+
+    # ================================================================
+    # 5. Compose
+    # ================================================================
+    def _build_compose_section(self) -> Gtk.Widget:
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+
+        scroller = Gtk.ScrolledWindow()
+        scroller.set_vexpand(True)
+        self._compose_list = Gtk.ListBox()
+        self._compose_list.add_css_class("boxed-list")
+        self._compose_list.set_selection_mode(Gtk.SelectionMode.NONE)
+        scroller.set_child(self._compose_list)
+        self._compose_placeholder = self._make_loading_placeholder("Loading compose projects…")
+        box.append(self._wrap_with_overlay(scroller, self._compose_placeholder))
+        return box
+
+    def _refresh_compose(self) -> None:
+        client = self._client()
+        if client is None:
+            return
+        self._set_placeholder_loading(self._compose_placeholder, "Loading compose projects…")
+        self._run_async(client.compose_ls, self._on_compose)
+
+    def _on_compose(self, rows: Optional[List[dict]], err: Optional[Exception]) -> None:
+        self._clear_listbox(self._compose_list)
+        if err is not None:
+            msg = self._error_text(err)
+            if "compose" in str(err).lower() or "is not a docker command" in str(err).lower():
+                msg = ("Docker Compose is not available on this host.\n"
+                       "Install the Compose plugin to manage stacks here.")
+            self._set_placeholder_idle(self._compose_placeholder, msg)
+            return
+        if not rows:
+            self._set_placeholder_idle(self._compose_placeholder, "No compose projects")
+            return
+        self._hide_placeholder(self._compose_placeholder)
+        for proj in rows:
+            self._compose_list.append(self._compose_row(proj))
+
+    def _compose_row(self, proj: dict) -> Gtk.Widget:
+        name = _field(proj, "Name", default="?")
+        status = _field(proj, "Status")
+        config = _field(proj, "ConfigFiles", "ConfigFile")
+
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        row.set_margin_top(6)
+        row.set_margin_bottom(6)
+        row.set_margin_start(8)
+        row.set_margin_end(8)
+
+        info = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True)
+        t = Gtk.Label(label=name, xalign=0)
+        t.add_css_class("heading")
+        info.append(t)
+        sub = Gtk.Label(label=" · ".join(p for p in (status, config) if p), xalign=0)
+        sub.add_css_class("dim-label")
+        sub.add_css_class("caption")
+        sub.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
+        info.append(sub)
+        row.append(info)
+
+        def act(icon: str, tip: str, cb: Callable[[], None]) -> None:
+            btn = Gtk.Button(icon_name=icon)
+            btn.set_tooltip_text(tip)
+            btn.add_css_class("flat")
+            btn.connect("clicked", lambda _b: cb())
+            row.append(btn)
+
+        # Up/redeploy is streamed (needs the config file); start/stop/restart are
+        # captured; down is destructive (confirm) and streamed.
+        first_config = (config or "").split(",")[0].strip()
+        act("view-refresh-symbolic", "Up / redeploy (compose up -d)",
+            lambda f=first_config: self._compose_up(name, f))
+        act("media-playback-start-symbolic", "Start",
+            lambda: self._compose_action(name, "start"))
+        act("media-playback-stop-symbolic", "Stop",
+            lambda: self._compose_action(name, "stop"))
+        act("system-reboot-symbolic", "Restart",
+            lambda: self._compose_action(name, "restart"))
+        if first_config:
+            act("document-open-symbolic", "View compose file",
+                lambda f=first_config: self._compose_view_file(f))
+        act("user-trash-symbolic", "Down (stop & remove)",
+            lambda: self._compose_down(name))
+        return self._listbox_wrap(row)
+
+    def _compose_action(self, project: str, action: str) -> None:
+        client = self._client()
+        if client is None:
+            return
+        self._run_async(
+            lambda: client.compose(project, action),
+            lambda res, err: self._on_action(f"{action} {project}", res, err,
+                                             self._refresh_compose),
+        )
+
+    def _compose_up(self, project: str, config_file: str) -> None:
+        client = self._client()
+        nick = self._current_nickname()
+        if client is None or not nick:
+            return
+        if not config_file:
+            self._toast("No compose file path for this project")
+            return
+        ok = self.ctx.open_command_terminal(
+            nick, client.compose_up_command(config_file), title=f"compose up: {project}")
+        if not ok:
+            self._toast("Could not start compose up")
+
+    def _compose_down(self, project: str) -> None:
+        client = self._client()
+        nick = self._current_nickname()
+        if client is None or not nick:
+            return
+
+        def do(_force: bool) -> None:
+            ok = self.ctx.open_command_terminal(
+                nick, client.compose_down_command(project), title=f"compose down: {project}")
+            if not ok:
+                self._toast("Could not start compose down")
+
+        self._confirm(
+            heading="Tear down stack?",
+            body=f"This stops and removes all containers, networks for “{project}”.",
+            destructive_label="Down",
+            on_confirm=do,
+        )
+
+    def _compose_view_file(self, path: str) -> None:
+        client = self._client()
+        if client is None:
+            return
+
+        def done(text: Optional[str], err: Optional[Exception]) -> None:
+            if err is not None:
+                self._toast(f"Read {path} failed: {err}")
+                return
+            TextViewDialog(self._window(), path, text or "").present()
+
+        self._run_async(lambda: client.read_file(path), done)
 
     # ================================================================
     # shared helpers

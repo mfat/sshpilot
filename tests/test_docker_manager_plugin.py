@@ -275,6 +275,156 @@ def test_runtime_podman_is_used_in_commands():
     assert client.stats_stream_command() == "podman stats"
 
 
+# --- DockerClient: details / images / compose / create ----------------------
+
+def test_inspect_returns_first_object():
+    obj = '{"Id":"abc","Name":"/web","Config":{"Image":"nginx"}}'
+    client, calls = _recording_client(lambda c: FakeResult(stdout=obj))
+    data = client.inspect("abc")
+    assert calls[-1] == "docker inspect abc --format '{{json .}}'"
+    assert data["Name"] == "/web" and data["Config"]["Image"] == "nginx"
+
+
+def test_inspect_empty_on_no_output():
+    client, _ = _recording_client(lambda c: FakeResult(stdout=""))
+    assert client.inspect("abc") == {}
+
+
+def test_image_history_command_and_parse():
+    out = '{"CreatedBy":"RUN apk add","Size":"5MB"}\n{"CreatedBy":"CMD","Size":"0B"}'
+    client, calls = _recording_client(lambda c: FakeResult(stdout=out))
+    rows = client.image_history("nginx:latest")
+    assert calls[-1] == "docker history --no-trunc --format '{{json .}}' nginx:latest"
+    assert rows[0]["Size"] == "5MB" and len(rows) == 2
+
+
+def test_image_prune_command():
+    client, calls = _recording_client(None)
+    client.image_prune()
+    assert calls[-1] == "docker image prune -f"
+
+
+def test_pull_command_string():
+    client, _ = _recording_client(None)
+    assert client.pull_command("nginx:latest") == "docker pull nginx:latest"
+    assert client.pull_command("weird;rm") == "docker pull 'weird;rm'"
+
+
+def test_compose_ls_command_and_parse():
+    out = '[{"Name":"stack1","Status":"running(2)","ConfigFiles":"/srv/dc.yml"}]'
+    client, calls = _recording_client(lambda c: FakeResult(stdout=out))
+    rows = client.compose_ls()
+    assert calls[-1] == "docker compose ls --all --format json"
+    assert rows == [{"Name": "stack1", "Status": "running(2)", "ConfigFiles": "/srv/dc.yml"}]
+
+
+def test_compose_ls_falls_back_without_all_flag():
+    out = '[{"Name":"stack1","Status":"running"}]'
+
+    def responder(cmd):
+        if "--all" in cmd:
+            return FakeResult(exit_code=1, stderr="unknown flag: --all")
+        return FakeResult(stdout=out)
+
+    client, calls = _recording_client(responder)
+    rows = client.compose_ls()
+    assert calls[-2] == "docker compose ls --all --format json"
+    assert calls[-1] == "docker compose ls --format json"  # retried without --all
+    assert rows == [{"Name": "stack1", "Status": "running"}]
+
+
+def test_compose_ls_falls_back_to_table_when_no_format_flag():
+    table = ("NAME       STATUS              CONFIG FILES\n"
+             "stack1     running(2)          /srv/dc.yml\n"
+             "stack2     exited(1)           /opt/app/compose.yml\n")
+
+    def responder(cmd):
+        if "--format" in cmd:
+            return FakeResult(exit_code=1, stderr="unknown flag: --format")
+        if "--all" in cmd:
+            return FakeResult(exit_code=1, stderr="unknown flag: --all")
+        return FakeResult(stdout=table)
+
+    client, calls = _recording_client(responder)
+    rows = client.compose_ls()
+    assert calls[-1] == "docker compose ls"  # degraded all the way to plain table
+    assert rows == [
+        {"Name": "stack1", "Status": "running(2)", "ConfigFiles": "/srv/dc.yml"},
+        {"Name": "stack2", "Status": "exited(1)", "ConfigFiles": "/opt/app/compose.yml"},
+    ]
+
+
+def test_compose_ls_raises_on_real_error():
+    client, _ = _recording_client(
+        lambda c: FakeResult(exit_code=1, stderr="Cannot connect to the Docker daemon"))
+    with pytest.raises(DockerError, match="Cannot connect"):
+        client.compose_ls()
+
+
+@pytest.mark.parametrize("action", ["start", "stop", "restart"])
+def test_compose_action_commands(action):
+    client, calls = _recording_client(None)
+    client.compose("my proj", action)
+    assert calls[-1] == f"docker compose -p 'my proj' {action}"
+
+
+def test_compose_rejects_unknown_action():
+    client, _ = _recording_client(None)
+    with pytest.raises(ValueError):
+        client.compose("p", "up")
+
+
+def test_compose_up_and_down_command_strings():
+    client, _ = _recording_client(None)
+    assert client.compose_up_command("/srv/dc.yml") == \
+        "docker compose -f /srv/dc.yml up -d"
+    assert client.compose_down_command("stack1") == \
+        "docker compose -p stack1 down"
+
+
+def test_read_file_is_raw_cat_not_runtime_prefixed():
+    client, calls = _recording_client(lambda c: FakeResult(stdout="services: {}\n"))
+    text = client.read_file("/srv/dc.yml")
+    assert calls[-1] == "cat /srv/dc.yml"  # no 'docker' prefix
+    assert text == "services: {}\n"
+
+
+def test_read_file_raises_on_error():
+    client, _ = _recording_client(lambda c: FakeResult(exit_code=1, stderr="No such file"))
+    with pytest.raises(DockerError, match="No such file"):
+        client.read_file("/nope")
+
+
+def test_create_run_args_quotes_all_fields():
+    client, _ = _recording_client(None)
+    args = client.create_run_args(
+        "nginx:latest", name="my web", ports=[("8080", "80")],
+        volumes=[("/host data", "/var/www")], envs=[("TZ", "Europe/Berlin")],
+        restart="always", command="nginx -g 'daemon off;'")
+    assert args == (
+        "run -d --name 'my web' -p 8080:80 -v '/host data:/var/www' "
+        "-e TZ=Europe/Berlin --restart always nginx:latest nginx -g 'daemon off;'")
+
+
+def test_create_run_args_minimal_and_restart_no_omitted():
+    client, _ = _recording_client(None)
+    assert client.create_run_args("alpine", restart="no") == "run -d alpine"
+    assert client.create_run_args("alpine") == "run -d alpine"
+
+
+def test_create_container_runs_via_exec():
+    client, calls = _recording_client(None)
+    client.create_container("nginx", name="web", ports=[("8080", "80")])
+    assert calls[-1] == "docker run -d --name web -p 8080:80 nginx"
+
+
+def test_create_container_with_sudo():
+    client, calls = _recording_client(None)
+    client.use_sudo = True
+    client.create_container("nginx")
+    assert calls[-1] == "sudo -n docker run -d nginx"
+
+
 # --- DockerClient: runtime detection ---------------------------------------
 
 @pytest.mark.parametrize("stdout,expected", [
@@ -329,3 +479,83 @@ def test_no_sudo_when_disabled():
 ])
 def test_is_permission_error(text, expected):
     assert DockerClient.is_permission_error(text) is expected
+
+
+# --- real-GTK page + dialogs (skipped if GTK can't init headless) -----------
+
+def _gtk_or_skip():
+    try:
+        import gi
+        gi.require_version("Gtk", "4.0")
+        gi.require_version("Adw", "1")
+        from gi.repository import Gtk, Adw
+    except Exception as exc:  # noqa: BLE001
+        pytest.skip(f"GTK unavailable: {exc}")
+    # tests/conftest.py stubs `gi` with dummy modules when real GTK isn't present
+    # (CI's slim image). Detect that — a real binding exposes MAJOR_VERSION as an
+    # int — and skip rather than construct dummy widgets that lack methods.
+    if not isinstance(getattr(Gtk, "MAJOR_VERSION", None), int):
+        pytest.skip("gi is stubbed in this environment (no real GTK)")
+    if not Gtk.init_check():
+        pytest.skip("GTK cannot initialise (no display)")
+    Adw.init()  # register Adw widget types (the app does this via Adw.Application)
+
+
+def _gtk_ctx():
+    class Conn:
+        def __init__(self, n):
+            self.nickname = n
+            self.protocol = "ssh"
+
+    return types.SimpleNamespace(
+        run_command=lambda *a, **k: FakeResult(),
+        run_on_ui_thread=lambda fn, *a: fn(*a),
+        settings=types.SimpleNamespace(get=lambda k, d=None: d, set=lambda k, v: None),
+        list_connections=lambda: [Conn("web"), Conn("db")],
+        open_command_terminal=lambda *a, **k: True,
+        ui=types.SimpleNamespace(notify=lambda *a, **k: None),
+    )
+
+
+def test_page_builds_five_tabs():
+    _gtk_or_skip()
+    from sshpilot.plugins.builtin.docker_manager.page import DockerManagerPage
+
+    page = DockerManagerPage(_gtk_ctx(), initial_host="web")
+    names = []
+    child = page._stack.get_first_child()
+    while child is not None:
+        names.append(page._stack.get_page(child).get_name())
+        child = child.get_next_sibling()
+    assert names == ["containers", "logs", "stats", "images", "compose"]
+
+
+def test_details_dialog_renders_inspect_data():
+    _gtk_or_skip()
+    from sshpilot.plugins.builtin.docker_manager.dialogs import ContainerDetailsDialog
+
+    data = {
+        "Name": "/web", "Id": "abc123def456",
+        "Config": {"Image": "nginx", "Env": ["TZ=UTC"], "Labels": {"role": "web"}},
+        "State": {"Status": "running"},
+        "HostConfig": {"RestartPolicy": {"Name": "always"},
+                       "PortBindings": {"80/tcp": [{"HostIp": "0.0.0.0", "HostPort": "8080"}]}},
+        "NetworkSettings": {"Networks": {"bridge": {}}},
+        "Mounts": [{"Source": "/data", "Destination": "/var/www"}],
+    }
+    groups = ContainerDetailsDialog._build_groups(data)
+    titles = [g.get_title() for g in groups]
+    assert titles == ["General", "State", "Ports", "Networks",
+                      "Mounts / volumes", "Environment", "Labels"]
+
+
+def test_create_and_textview_dialogs_construct():
+    _gtk_or_skip()
+    from sshpilot.plugins.builtin.docker_manager.dialogs import (
+        CreateContainerDialog, TextViewDialog)
+
+    captured = {}
+    dlg = CreateContainerDialog(None, ["nginx:latest"], lambda spec: captured.update(spec))
+    # The image row is prefilled from the supplied image list.
+    assert dlg._image_row.get_text() == "nginx:latest"
+    TextViewDialog(None, "title", "body text")  # constructs without error

@@ -14,6 +14,7 @@ fake (no Docker, no SSH needed).
 from __future__ import annotations
 
 import json
+import re
 import shlex
 from typing import Any, Callable, List, Optional
 
@@ -197,3 +198,127 @@ class DockerClient:
 
     def stats_stream_command(self) -> str:
         return f"{self._interactive_runtime()} stats"
+
+    # -- details / inspect -------------------------------------------
+    def inspect(self, container_id: str) -> dict:
+        """Full ``inspect`` of a container as a dict (empty on failure)."""
+        rows = self._exec_json(
+            f"inspect {shlex.quote(container_id)} --format '{{{{json .}}}}'")
+        return rows[0] if rows else {}
+
+    # -- images ------------------------------------------------------
+    def image_history(self, image: str) -> List[dict]:
+        return self._exec_json(
+            f"history --no-trunc --format '{{{{json .}}}}' {shlex.quote(image)}")
+
+    def image_prune(self) -> Any:
+        return self._exec("image prune -f")
+
+    def pull_command(self, ref: str) -> str:
+        """Streamed `pull` (progress shown in a terminal tab)."""
+        return f"{self._interactive_runtime()} pull {shlex.quote(ref)}"
+
+    # -- compose -----------------------------------------------------
+    _COMPOSE_ACTIONS = {"stop", "start", "restart"}
+
+    def compose_ls(self) -> List[dict]:
+        """Compose projects: ``[{Name, Status, ConfigFiles}, ...]`` (Compose v2).
+
+        Older Compose builds support neither ``--all`` (include stopped projects)
+        nor ``--format json``, so we degrade through the variants on an
+        "unknown flag" error and parse the plain table as the last resort."""
+        # (args, returns-json) in order of richest → most compatible.
+        variants = (
+            ("compose ls --all --format json", True),
+            ("compose ls --format json", True),
+            ("compose ls --all", False),
+            ("compose ls", False),
+        )
+        res = None
+        for args, is_json in variants:
+            res = self._exec(args)
+            if getattr(res, "exit_code", 1) == 0:
+                return (self._parse_ndjson(res.stdout) if is_json
+                        else self._parse_compose_table(res.stdout))
+            text = ((res.stderr or "") + (res.stdout or "")).lower()
+            if not ("unknown flag" in text or "unknown shorthand" in text
+                    or "--all" in text or "--format" in text):
+                break  # a real error (daemon down, no compose) — stop degrading
+        raise DockerError(
+            ((getattr(res, "stderr", "") or getattr(res, "stdout", "") or "command failed")).strip())
+
+    @staticmethod
+    def _parse_compose_table(text: str) -> List[dict]:
+        """Parse the columnar ``docker compose ls`` output (no ``--format``).
+
+        Columns are separated by runs of 2+ spaces:
+        ``NAME    STATUS    CONFIG FILES``."""
+        lines = [ln for ln in (text or "").splitlines() if ln.strip()]
+        if lines and lines[0].strip().upper().startswith("NAME"):
+            lines = lines[1:]
+        out: List[dict] = []
+        for line in lines:
+            cols = re.split(r"\s{2,}", line.strip())
+            row = {"Name": cols[0]}
+            if len(cols) > 1:
+                row["Status"] = cols[1]
+            if len(cols) > 2:
+                row["ConfigFiles"] = cols[2]
+            out.append(row)
+        return out
+
+    def compose(self, project: str, action: str) -> Any:
+        """Quick captured compose action on an existing project's containers."""
+        if action not in self._COMPOSE_ACTIONS:
+            raise ValueError(f"unsupported compose action: {action!r}")
+        return self._exec(f"compose -p {shlex.quote(project)} {action}")
+
+    def compose_up_command(self, config_file: str) -> str:
+        """Streamed `compose up -d` (deploy/redeploy) from the project's file."""
+        return (f"{self._interactive_runtime()} compose "
+                f"-f {shlex.quote(config_file)} up -d")
+
+    def compose_down_command(self, project: str) -> str:
+        """Streamed `compose down` (tear the stack down) by project name."""
+        return (f"{self._interactive_runtime()} compose "
+                f"-p {shlex.quote(project)} down")
+
+    # -- misc --------------------------------------------------------
+    def read_file(self, path: str) -> str:
+        """Read a host file (e.g. a compose file) via ``cat`` — NOT a docker
+        command, so it is not runtime-prefixed (sudo still honoured)."""
+        prefix = "sudo -n " if self.use_sudo else ""
+        res = self._run_command(self.nickname, f"{prefix}cat {shlex.quote(path)}",
+                                timeout=self.timeout)
+        if getattr(res, "exit_code", 1) != 0:
+            raise DockerError((res.stderr or res.stdout or "read failed").strip())
+        return res.stdout or ""
+
+    # -- container creation ------------------------------------------
+    def create_run_args(self, image: str, *, name: Optional[str] = None,
+                        ports=None, volumes=None, envs=None,
+                        restart: Optional[str] = None,
+                        command: Optional[str] = None) -> str:
+        """Build the ``run -d …`` argument string. ``ports``/``volumes`` are
+        ``[(a, b), …]`` → ``a:b``; ``envs`` is ``[(k, v), …]`` → ``k=v``; all
+        values are shell-quoted. ``command`` is appended raw (parsed by the
+        remote shell)."""
+        parts: List[str] = ["run", "-d"]
+        if name:
+            parts += ["--name", shlex.quote(name)]
+        for host, cont in (ports or []):
+            parts += ["-p", shlex.quote(f"{host}:{cont}")]
+        for src, dst in (volumes or []):
+            parts += ["-v", shlex.quote(f"{src}:{dst}")]
+        for key, value in (envs or []):
+            parts += ["-e", shlex.quote(f"{key}={value}")]
+        if restart and restart != "no":
+            parts += ["--restart", shlex.quote(restart)]
+        parts.append(shlex.quote(image))
+        if command:
+            parts.append(command)
+        return " ".join(parts)
+
+    def create_container(self, image: str, **kwargs: Any) -> Any:
+        """Create + start a detached container; returns the CommandResult."""
+        return self._exec(self.create_run_args(image, **kwargs), timeout=120)
