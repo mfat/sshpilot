@@ -30,6 +30,7 @@ class Plugin(SshPilotPlugin):
     def activate(self, ctx: PluginContext) -> None:
         self.ctx = ctx
         self._page = None
+        self._target_host = None  # host to focus when the page is next built
         # ctx.ui is None in headless contexts (no main window / UI host); this is
         # a UI-only plugin, so there is simply nothing to register there.
         if getattr(ctx, "ui", None) is None:
@@ -44,15 +45,24 @@ class Plugin(SshPilotPlugin):
     def _build_page(self):
         from .page import DockerManagerPage
 
-        self._page = DockerManagerPage(self.ctx)
+        # Pass the target host so a freshly built page targets it from the start
+        # (its single map-time load uses it) — no default-host load racing it.
+        self._page = DockerManagerPage(self.ctx, initial_host=self._target_host)
         return self._page
 
     def _on_connection_action(self, nickname: str) -> None:
-        # Open (or focus) the page, then point it at the right-clicked host.
-        self.ctx.ui.open_page(_PAGE_ID)
-        page = getattr(self, "_page", None)
-        if page is not None:
-            try:
-                page.select_host(nickname)
-            except Exception:
-                logger.debug("select_host(%r) failed", nickname, exc_info=True)
+        # Open (or focus) the Docker Manager targeting the right-clicked host.
+        self._target_host = nickname
+        page_before = getattr(self, "_page", None)
+        try:
+            self.ctx.ui.open_page(_PAGE_ID)
+            page = getattr(self, "_page", None)
+            # Fresh page → the factory built it with initial_host and its map-time
+            # load handles it. Reused (already-open) page → the factory didn't
+            # run, so re-point + reload it now.
+            if page is not None and page is page_before:
+                page.switch_host(nickname)
+        except Exception:
+            logger.debug("open Docker Manager for %r failed", nickname, exc_info=True)
+        finally:
+            self._target_host = None

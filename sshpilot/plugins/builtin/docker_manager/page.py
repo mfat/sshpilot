@@ -10,6 +10,7 @@ streamed/interactive output (live logs, exec shell) opens a terminal tab via
 from __future__ import annotations
 
 import logging
+import math
 import threading
 from typing import Any, Callable, List, Optional
 
@@ -17,7 +18,9 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import GLib, Gtk, Adw, Pango  # noqa: E402
+from gi.repository import GLib, Gtk, Adw, Pango, Gdk, GdkPixbuf  # noqa: E402
+
+_MARK_RESOURCE = "/io/github/mfat/sshpilot/icons/scalable/actions/docker-mark-ocean-blue.svg"
 
 from .client import DockerClient, DockerError  # noqa: E402
 
@@ -38,7 +41,7 @@ def _field(d: dict, *keys: str, default: str = "") -> str:
 
 
 class DockerManagerPage(Gtk.Box):
-    def __init__(self, ctx: Any) -> None:
+    def __init__(self, ctx: Any, initial_host: Optional[str] = None) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         self.ctx = ctx
         self._connections: List[Any] = []
@@ -48,6 +51,16 @@ class DockerManagerPage(Gtk.Box):
         # calls when a host is slow.
         self._containers_busy = False
         self._stats_busy = False
+        self._stats_has_data = False
+        # Bumped on every host switch; async loads carry the gen they started
+        # with and a stale (previous-host) result is dropped on arrival.
+        self._load_gen = 0
+        # Host chosen at construction (e.g. the right-clicked connection) so the
+        # single map-time load targets it directly — no default-vs-target race.
+        self._initial_host = initial_host
+        self._initial_loaded = False
+        # Pulsing Docker-mark loading indicators (stopped on unmap).
+        self._pulse_widgets: List[Gtk.Image] = []
 
         self.set_margin_top(12)
         self.set_margin_bottom(12)
@@ -85,37 +98,94 @@ class DockerManagerPage(Gtk.Box):
 
         threading.Thread(target=worker, daemon=True).start()
 
+    # --- pulsing Docker-mark loading indicator -------------------------
+    def _make_docker_mark(self, size: int = 56) -> Gtk.Image:
+        """The full-colour Docker mark used (pulsing) as the loading indicator.
+
+        Loaded as a texture straight from the resource SVG rather than via the
+        icon theme: the theme path renders nothing for this non-square,
+        non-symbolic brand icon, whereas a texture rasterises reliably."""
+        img = Gtk.Image()
+        img.set_pixel_size(size)
+        img.set_halign(Gtk.Align.CENTER)
+        img.set_valign(Gtk.Align.CENTER)
+        try:
+            pixbuf = GdkPixbuf.Pixbuf.new_from_resource_at_scale(
+                _MARK_RESOURCE, size, size, True)
+            img.set_from_paintable(Gdk.Texture.new_for_pixbuf(pixbuf))
+        except Exception:
+            img.set_from_icon_name("docker-mark-ocean-blue")  # fallback
+        img._pulse_id = None      # type: ignore[attr-defined]
+        img._pulse_phase = 0.0    # type: ignore[attr-defined]
+        self._pulse_widgets.append(img)
+        return img
+
+    def _pulse_start(self, img: Gtk.Image) -> None:
+        if getattr(img, "_pulse_id", None):
+            return
+
+        def _tick() -> bool:
+            img._pulse_phase += 0.18  # type: ignore[attr-defined]
+            img.set_opacity(0.3 + 0.7 * (0.5 + 0.5 * math.sin(img._pulse_phase)))
+            return True
+
+        img._pulse_phase = 0.0    # type: ignore[attr-defined]
+        img.set_opacity(1.0)
+        img._pulse_id = GLib.timeout_add(60, _tick)  # type: ignore[attr-defined]
+
+    def _pulse_stop(self, img: Gtk.Image) -> None:
+        pid = getattr(img, "_pulse_id", None)
+        if pid:
+            GLib.source_remove(pid)
+            img._pulse_id = None  # type: ignore[attr-defined]
+        img.set_opacity(1.0)
+
     # --- in-content loading placeholders --------------------------------
     def _make_loading_placeholder(self, text: str = "Loading…") -> Gtk.Widget:
-        """A centered spinner + label, used as a Gtk.ListBox placeholder so it
-        shows (only) while a list is empty — i.e. on first load."""
+        """A centered pulsing Docker mark + label, used as a Gtk.ListBox
+        placeholder so it shows (only) while a list is empty — i.e. on first
+        load. Built in the loading state so the logo is visible immediately."""
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
         box.set_valign(Gtk.Align.CENTER)
         box.set_halign(Gtk.Align.CENTER)
         box.set_margin_top(24)
         box.set_margin_bottom(24)
-        spinner = Gtk.Spinner()
-        spinner.set_size_request(32, 32)
-        spinner.start()
+        mark = self._make_docker_mark(56)
         label = Gtk.Label(label=text)
         label.add_css_class("dim-label")
-        box.append(spinner)
+        box.append(mark)
         box.append(label)
-        box._spinner = spinner   # type: ignore[attr-defined]
-        box._label = label       # type: ignore[attr-defined]
+        box._pulse = mark    # type: ignore[attr-defined]
+        box._label = label   # type: ignore[attr-defined]
         return box
 
     @staticmethod
-    def _set_placeholder_loading(ph: Gtk.Widget, text: str = "Loading…") -> None:
-        ph._spinner.set_visible(True)   # type: ignore[attr-defined]
-        ph._spinner.start()             # type: ignore[attr-defined]
+    def _wrap_with_overlay(content: Gtk.Widget, placeholder: Gtk.Widget) -> Gtk.Overlay:
+        """Overlay ``placeholder`` (centered) on ``content``. Used instead of
+        Gtk.ListBox.set_placeholder, which did not reliably display the loading
+        indicator. The placeholder's own visibility is toggled in code."""
+        overlay = Gtk.Overlay()
+        overlay.set_vexpand(True)
+        overlay.set_child(content)
+        placeholder.set_can_target(False)  # never intercept clicks meant for the list
+        overlay.add_overlay(placeholder)
+        return overlay
+
+    def _set_placeholder_loading(self, ph: Gtk.Widget, text: str = "Loading…") -> None:
+        ph.set_visible(True)
+        ph._pulse.set_visible(True)   # type: ignore[attr-defined]
+        self._pulse_start(ph._pulse)  # type: ignore[attr-defined]
+        ph._label.set_text(text)      # type: ignore[attr-defined]
+
+    def _set_placeholder_idle(self, ph: Gtk.Widget, text: str) -> None:
+        ph.set_visible(True)
+        self._pulse_stop(ph._pulse)     # type: ignore[attr-defined]
+        ph._pulse.set_visible(False)    # type: ignore[attr-defined]
         ph._label.set_text(text)        # type: ignore[attr-defined]
 
-    @staticmethod
-    def _set_placeholder_idle(ph: Gtk.Widget, text: str) -> None:
-        ph._spinner.stop()              # type: ignore[attr-defined]
-        ph._spinner.set_visible(False)  # type: ignore[attr-defined]
-        ph._label.set_text(text)        # type: ignore[attr-defined]
+    def _hide_placeholder(self, ph: Gtk.Widget) -> None:
+        self._pulse_stop(ph._pulse)     # type: ignore[attr-defined]
+        ph.set_visible(False)
 
     def _current_nickname(self) -> Optional[str]:
         idx = self._host_combo.get_selected()
@@ -157,11 +227,13 @@ class DockerManagerPage(Gtk.Box):
         names = [f"{c.nickname}" for c in self._connections] or ["(no connections)"]
         self._host_combo = Gtk.DropDown.new_from_strings(names)
         self._host_combo.set_hexpand(True)
-        # Restore last-used host.
-        last = self.ctx.settings.get("last_host", None)
-        if last:
+        # Select the construction-time host (right-clicked connection), else the
+        # last-used host. Done BEFORE connecting the signal so the initial load
+        # happens once, at map time, rather than firing here.
+        target = self._initial_host or self.ctx.settings.get("last_host", None)
+        if target:
             for i, c in enumerate(self._connections):
-                if c.nickname == last:
+                if c.nickname == target:
                     self._host_combo.set_selected(i)
                     break
         self._host_combo.connect("notify::selected", self._on_host_changed)
@@ -203,6 +275,13 @@ class DockerManagerPage(Gtk.Box):
         self.ctx.settings.set("last_host", nick)
         self._sudo_check.set_active(self._use_sudo_for(nick))
 
+        # New host: invalidate any in-flight loads for the previous host (their
+        # late results are dropped) and let the new host load immediately.
+        self._load_gen += 1
+        self._containers_busy = False
+        self._stats_busy = False
+        self._stats_has_data = False
+
         # Drop the previous host's rows and show a spinner immediately (clearing
         # makes each list's placeholder visible) for the whole probe + load.
         self._containers = []
@@ -213,8 +292,8 @@ class DockerManagerPage(Gtk.Box):
             self._clear_listbox(lst)
             self._set_placeholder_loading(ph, text)
         self._clear_grid(self._stats_grid)
-        self._stats_spinner.set_visible(True)
-        self._stats_spinner.start()
+        self._stats_pulse.set_visible(True)
+        self._pulse_start(self._stats_pulse)
 
         rc = self.ctx.run_command
 
@@ -247,9 +326,10 @@ class DockerManagerPage(Gtk.Box):
 
         self._run_async(probe, done)
 
-    def select_host(self, nickname: str) -> None:
-        """Select ``nickname`` in the host picker (used by the connection
-        context-menu action). Rebuilds the list if the host isn't present yet."""
+    def switch_host(self, nickname: str) -> None:
+        """Point an already-open page at ``nickname`` and reload (used by the
+        connection context-menu action when the page tab is reused). Fresh pages
+        instead receive the host via the constructor."""
         def index_of(nick: str) -> int:
             return next((i for i, c in enumerate(self._connections)
                          if c.nickname == nick), -1)
@@ -264,6 +344,7 @@ class DockerManagerPage(Gtk.Box):
             idx = index_of(nickname)
         if idx < 0:
             return
+        self._initial_loaded = True  # this counts as the load
         if self._host_combo.get_selected() == idx:
             self._on_host_changed()  # already selected → notify won't fire
         else:
@@ -273,7 +354,14 @@ class DockerManagerPage(Gtk.Box):
     # auto-refresh lifecycle
     # ================================================================
     def _on_map(self, *_a) -> None:
-        self._refresh_visible()
+        # Do the full host load (runtime/sudo probe → pulse → refresh) exactly
+        # once, on first map — the single load both open paths rely on. Later
+        # maps just refresh the visible view.
+        if not self._initial_loaded:
+            self._initial_loaded = True
+            self._on_host_changed()
+        else:
+            self._refresh_visible()
         if self._refresh_source is None:
             self._refresh_source = GLib.timeout_add_seconds(_REFRESH_SECONDS, self._tick)
 
@@ -281,6 +369,8 @@ class DockerManagerPage(Gtk.Box):
         if self._refresh_source is not None:
             GLib.source_remove(self._refresh_source)
             self._refresh_source = None
+        for img in self._pulse_widgets:
+            self._pulse_stop(img)
 
     def _tick(self) -> bool:
         # Only auto-refresh the live views; logs/images are manual.
@@ -319,10 +409,9 @@ class DockerManagerPage(Gtk.Box):
         scroller.set_vexpand(True)
         self._containers_list = Gtk.ListBox()
         self._containers_list.add_css_class("boxed-list")
-        self._containers_placeholder = self._make_loading_placeholder("Loading containers…")
-        self._containers_list.set_placeholder(self._containers_placeholder)
         scroller.set_child(self._containers_list)
-        box.append(scroller)
+        self._containers_placeholder = self._make_loading_placeholder("Loading containers…")
+        box.append(self._wrap_with_overlay(scroller, self._containers_placeholder))
         return box
 
     def _refresh_containers(self) -> None:
@@ -330,22 +419,33 @@ class DockerManagerPage(Gtk.Box):
         if client is None or self._containers_busy:
             return
         self._containers_busy = True
-        self._set_placeholder_loading(self._containers_placeholder, "Loading containers…")
+        # Only show the loading logo on the first load (empty list); auto-refresh
+        # of an already-populated list updates silently (no flashing).
+        if not self._containers:
+            self._set_placeholder_loading(self._containers_placeholder, "Loading containers…")
         show_all = self._show_all_check.get_active()
-        self._run_async(lambda: client.ps(all=show_all), self._on_containers)
+        gen = self._load_gen
+        self._run_async(lambda: client.ps(all=show_all),
+                        lambda r, e, g=gen: self._on_containers(r, e, g))
 
-    def _on_containers(self, rows: Optional[List[dict]], err: Optional[Exception]) -> None:
+    def _on_containers(self, rows: Optional[List[dict]], err: Optional[Exception],
+                       gen: int = 0) -> None:
+        if gen != self._load_gen:
+            return  # stale result for a previous host — drop it
         self._containers_busy = False
         self._clear_listbox(self._containers_list)
         if err is not None:
-            self._containers_list.append(self._error_row(err))
+            self._containers = []
+            self._set_placeholder_idle(self._containers_placeholder, self._error_text(err))
+            self._refresh_logs_targets()
             return
         self._containers = rows or []
         if not self._containers:
-            # Empty list → the placeholder shows this text (no spinner).
             self._set_placeholder_idle(self._containers_placeholder, "No containers")
-        for c in self._containers:
-            self._containers_list.append(self._container_row(c))
+        else:
+            self._hide_placeholder(self._containers_placeholder)
+            for c in self._containers:
+                self._containers_list.append(self._container_row(c))
         self._refresh_logs_targets()
 
     def _container_row(self, c: dict) -> Gtk.Widget:
@@ -499,17 +599,14 @@ class DockerManagerPage(Gtk.Box):
         self._logs_buffer = self._logs_view.get_buffer()
         scroller.set_child(self._logs_view)
 
-        # A spinner overlaid on the (otherwise blank) log view while a snapshot
-        # loads. TextView has no placeholder API, so use an overlay.
+        # A pulsing Docker mark overlaid on the (otherwise blank) log view while
+        # a snapshot loads. TextView has no placeholder API, so use an overlay.
         overlay = Gtk.Overlay()
         overlay.set_vexpand(True)
         overlay.set_child(scroller)
-        self._logs_spinner = Gtk.Spinner()
-        self._logs_spinner.set_size_request(32, 32)
-        self._logs_spinner.set_halign(Gtk.Align.CENTER)
-        self._logs_spinner.set_valign(Gtk.Align.CENTER)
-        self._logs_spinner.set_visible(False)
-        overlay.add_overlay(self._logs_spinner)
+        self._logs_pulse = self._make_docker_mark(56)
+        self._logs_pulse.set_visible(False)
+        overlay.add_overlay(self._logs_pulse)
         box.append(overlay)
         return box
 
@@ -537,16 +634,16 @@ class DockerManagerPage(Gtk.Box):
             return
         tail = int(self._tail_spin.get_value())
         ts = self._ts_switch.get_active()
-        self._logs_spinner.set_visible(True)
-        self._logs_spinner.start()
+        self._logs_pulse.set_visible(True)
+        self._pulse_start(self._logs_pulse)
         self._run_async(
             lambda: client.logs_snapshot(cid, tail=tail, timestamps=ts),
             self._on_logs,
         )
 
     def _on_logs(self, text: Optional[str], err: Optional[Exception]) -> None:
-        self._logs_spinner.stop()
-        self._logs_spinner.set_visible(False)
+        self._pulse_stop(self._logs_pulse)
+        self._logs_pulse.set_visible(False)
         if err is not None:
             self._logs_buffer.set_text(f"Error: {err}", -1)
             return
@@ -585,16 +682,13 @@ class DockerManagerPage(Gtk.Box):
         self._stats_grid.set_hexpand(True)
         scroller.set_child(self._stats_grid)
 
-        # Spinner overlay while loading (Grid has no placeholder API).
+        # Pulsing Docker-mark overlay while loading (Grid has no placeholder API).
         overlay = Gtk.Overlay()
         overlay.set_vexpand(True)
         overlay.set_child(scroller)
-        self._stats_spinner = Gtk.Spinner()
-        self._stats_spinner.set_size_request(32, 32)
-        self._stats_spinner.set_halign(Gtk.Align.CENTER)
-        self._stats_spinner.set_valign(Gtk.Align.CENTER)
-        self._stats_spinner.set_visible(False)
-        overlay.add_overlay(self._stats_spinner)
+        self._stats_pulse = self._make_docker_mark(56)
+        self._stats_pulse.set_visible(False)
+        overlay.add_overlay(self._stats_pulse)
         box.append(overlay)
         return box
 
@@ -603,22 +697,31 @@ class DockerManagerPage(Gtk.Box):
         if client is None or self._stats_busy:
             return
         self._stats_busy = True
-        self._stats_spinner.set_visible(True)
-        self._stats_spinner.start()
-        self._run_async(client.stats, self._on_stats)
+        # Only show the loading logo on the first load; auto-refresh is silent.
+        if not self._stats_has_data:
+            self._stats_pulse.set_visible(True)
+            self._pulse_start(self._stats_pulse)
+        gen = self._load_gen
+        self._run_async(client.stats, lambda r, e, g=gen: self._on_stats(r, e, g))
 
-    def _on_stats(self, rows: Optional[List[dict]], err: Optional[Exception]) -> None:
+    def _on_stats(self, rows: Optional[List[dict]], err: Optional[Exception],
+                  gen: int = 0) -> None:
+        if gen != self._load_gen:
+            return  # stale result for a previous host — drop it
         self._stats_busy = False
-        self._stats_spinner.stop()
-        self._stats_spinner.set_visible(False)
+        self._pulse_stop(self._stats_pulse)
+        self._stats_pulse.set_visible(False)
         self._clear_grid(self._stats_grid)
         span = len(self._STATS_COLUMNS)
         if err is not None:
+            self._stats_has_data = False
             self._stats_grid.attach(self._grid_message(self._error_text(err), error=True), 0, 0, span, 1)
             return
         if not rows:
+            self._stats_has_data = False
             self._stats_grid.attach(self._grid_message("No running containers"), 0, 0, span, 1)
             return
+        self._stats_has_data = True
         # Header row.
         for col, (title, _keys) in enumerate(self._STATS_COLUMNS):
             head = Gtk.Label(label=title, xalign=0, hexpand=True)
@@ -652,10 +755,9 @@ class DockerManagerPage(Gtk.Box):
         scroller.set_vexpand(True)
         self._images_list = Gtk.ListBox()
         self._images_list.add_css_class("boxed-list")
-        self._images_placeholder = self._make_loading_placeholder("Loading images…")
-        self._images_list.set_placeholder(self._images_placeholder)
         scroller.set_child(self._images_list)
-        box.append(scroller)
+        self._images_placeholder = self._make_loading_placeholder("Loading images…")
+        box.append(self._wrap_with_overlay(scroller, self._images_placeholder))
         return box
 
     def _refresh_images(self) -> None:
@@ -668,11 +770,12 @@ class DockerManagerPage(Gtk.Box):
     def _on_images(self, rows: Optional[List[dict]], err: Optional[Exception]) -> None:
         self._clear_listbox(self._images_list)
         if err is not None:
-            self._images_list.append(self._error_row(err))
+            self._set_placeholder_idle(self._images_placeholder, self._error_text(err))
             return
         if not rows:
             self._set_placeholder_idle(self._images_placeholder, "No images")
             return
+        self._hide_placeholder(self._images_placeholder)
         for img in rows:
             iid = _field(img, "ID", "Id")
             repo = _field(img, "Repository", default="<none>")
@@ -840,12 +943,3 @@ class DockerManagerPage(Gtk.Box):
         lbl.set_margin_top(12)
         lbl.set_margin_bottom(12)
         return lbl
-
-    def _error_row(self, err: Exception) -> Gtk.Widget:
-        lbl = Gtk.Label(label=self._error_text(err), wrap=True, xalign=0)
-        lbl.add_css_class("error")
-        lbl.set_margin_top(12)
-        lbl.set_margin_bottom(12)
-        lbl.set_margin_start(8)
-        lbl.set_margin_end(8)
-        return self._listbox_wrap(lbl)
