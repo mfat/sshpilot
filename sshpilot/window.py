@@ -585,6 +585,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.cmd_split_view = None
         self._command_sidebar_visible: bool = False
         self._cmd_blocks_toggle_btn = None
+        self._headerbar_theme_menu_button = None
         
         # Update notification
         self.update_banner = None
@@ -735,6 +736,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 self.update_sidebar_max_width(max_width)
             except (ValueError, TypeError) as e:
                 logger.error(f"Invalid max-sidebar-width value: {e}")
+            return
+
+        if key == 'app-theme':
+            try:
+                self._sync_theme_menu_button()
+            except Exception:
+                logger.debug("Failed to sync theme toggle button", exc_info=True)
             return
 
     def _schedule_startup_tasks(self):
@@ -1760,6 +1768,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         mapping = (
             ('split_view_button', 'ui.headerbar_show_split_view', False),
             ('_cmd_blocks_toggle_btn', 'ui.headerbar_show_commands', True),
+            ('_headerbar_theme_menu_button', 'ui.headerbar_show_theme_toggle', True),
             ('_headerbar_local_terminal_button', 'ui.headerbar_show_local_terminal', True),
         )
         for attr, key, default in mapping:
@@ -3114,6 +3123,44 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     # Connection sorting helpers
     # ------------------------------------------------------------------
 
+    def _apply_app_theme(self, theme: str) -> None:
+        """Apply application light/dark/system theme and persist app-theme."""
+        theme_key = str(theme).lower()
+        if theme_key not in {'default', 'light', 'dark'}:
+            theme_key = 'default'
+
+        style_manager = Adw.StyleManager.get_default()
+        if theme_key == 'light':
+            style_manager.set_color_scheme(Adw.ColorScheme.FORCE_LIGHT)
+        elif theme_key == 'dark':
+            style_manager.set_color_scheme(Adw.ColorScheme.FORCE_DARK)
+        else:
+            style_manager.set_color_scheme(Adw.ColorScheme.DEFAULT)
+
+        self.config.set_setting('app-theme', theme_key)
+        self._sync_theme_menu_button()
+
+    def _create_theme_menu(self) -> Gio.Menu:
+        menu = Gio.Menu()
+        menu.append(_('Follow System'), 'win.set-app-theme::default')
+        menu.append(_('Light'), 'win.set-app-theme::light')
+        menu.append(_('Dark'), 'win.set-app-theme::dark')
+        return menu
+
+    def _sync_theme_menu_button(self) -> None:
+        btn = getattr(self, '_headerbar_theme_menu_button', None)
+        if btn is None:
+            return
+
+        labels = {
+            'default': _('Follow System'),
+            'light': _('Light'),
+            'dark': _('Dark'),
+        }
+        saved = str(self.config.get_setting('app-theme', 'default'))
+        current = labels.get(saved, labels['default'])
+        btn.set_tooltip_text(_('Application theme: {theme}').format(theme=current))
+
     def _build_sort_button(self):
         from sshpilot import icon_utils
         button = icon_utils.new_button_from_icon_name("view-sort-ascending-symbolic")
@@ -3367,6 +3414,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
         # Command blocks toggle button (right sidebar)
         from sshpilot import icon_utils as _cmd_icon_utils
+
+        self._headerbar_theme_menu_button = Gtk.MenuButton()
+        _cmd_icon_utils.set_button_icon(self._headerbar_theme_menu_button, 'dark-mode-symbolic')
+        self._headerbar_theme_menu_button.add_css_class('flat')
+        self._headerbar_theme_menu_button.set_tooltip_text(_('Application theme'))
+        self._headerbar_theme_menu_button.set_menu_model(self._create_theme_menu())
+
         self._cmd_blocks_toggle_btn = Gtk.ToggleButton()
         _cmd_icon_utils.set_button_icon(self._cmd_blocks_toggle_btn, 'system-run-symbolic')
         self._cmd_blocks_toggle_btn.add_css_class('flat')
@@ -3380,6 +3434,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
         self._cmd_blocks_toggle_btn.connect('toggled', _on_cmd_toggle_btn_toggled)
         self.header_bar.pack_end(self._cmd_blocks_toggle_btn)
+        self.header_bar.pack_end(self._headerbar_theme_menu_button)
+        self._sync_theme_menu_button()
 
         # Create broadcast command banner (custom banner-like widget)
         self.broadcast_banner = Gtk.Revealer()

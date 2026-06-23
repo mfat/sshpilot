@@ -1840,6 +1840,17 @@ def register_window_actions(window):
     window.view_logs_action.connect('activate', _on_view_logs_action_factory(window))
     window.add_action(window.view_logs_action)
 
+    # Application theme (header bar menu)
+    if hasattr(window, '_apply_app_theme'):
+        theme_action = Gio.SimpleAction.new('set-app-theme', GLib.VariantType.new('s'))
+        theme_action.connect(
+            'activate',
+            lambda _action, param: window._apply_app_theme(
+                param.get_string() if param else 'default'
+            ),
+        )
+        window.add_action(theme_action)
+
     # Command blocks panel toggle
     if hasattr(window, '_toggle_command_blocks_panel'):
         cb_action = Gio.SimpleAction.new('toggle-command-blocks', None)

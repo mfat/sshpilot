@@ -87,6 +87,7 @@ _ICON_RESOURCE_MAP = {
     'pan-end-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/pan-end-symbolic.svg',
     'pan-down-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/pan-down-symbolic.svg',
     'computer-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/computer-symbolic.svg',
+    'dark-mode-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/dark-mode-symbolic.svg',
     'network-offline-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/network-offline-symbolic.svg',
     'network-idle-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/network-idle-symbolic.svg',
     'input-keyboard-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/input-keyboard-symbolic.svg',

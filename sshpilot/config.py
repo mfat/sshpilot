@@ -191,6 +191,7 @@ class Config(GObject.Object):
                 # Header-bar button visibility (Settings ▸ Interface ▸ Header Bar)
                 'headerbar_show_split_view': False,
                 'headerbar_show_commands': True,
+                'headerbar_show_theme_toggle': True,
                 'headerbar_show_local_terminal': True,
             },
             'welcome': {

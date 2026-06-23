@@ -1541,6 +1541,11 @@ class PreferencesWindow(Adw.Window):
                 'ui.headerbar_show_commands',
             )
             _add_headerbar_switch(
+                "Theme Menu",
+                "Show the application theme menu beside the commands button",
+                'ui.headerbar_show_theme_toggle',
+            )
+            _add_headerbar_switch(
                 "Local Terminal Button",
                 "Show the button that opens a local terminal",
                 'ui.headerbar_show_local_terminal',
