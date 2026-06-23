@@ -70,6 +70,7 @@ class DockerManagerPage(Gtk.Box):
         self._initial_loaded = False
         # Nickname whose SSH ControlMaster we're currently keeping warm (if any).
         self._mux_nick: Optional[str] = None
+        self._selected_nick: Optional[str] = None
         # Pulsing Docker-mark loading indicators (stopped on unmap).
         self._pulse_widgets: List[Gtk.Image] = []
 
@@ -206,10 +207,7 @@ class DockerManagerPage(Gtk.Box):
         ph.set_visible(False)
 
     def _current_nickname(self) -> Optional[str]:
-        idx = self._host_combo.get_selected()
-        if 0 <= idx < len(self._connections):
-            return self._connections[idx].nickname
-        return None
+        return self._selected_nick
 
     def _runtime_for(self, nickname: str) -> str:
         return self.ctx.settings.get(f"runtime:{nickname}", "docker") or "docker"
@@ -239,23 +237,34 @@ class DockerManagerPage(Gtk.Box):
     # ================================================================
     def _build_host_bar(self) -> Gtk.Widget:
         bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        bar.append(Gtk.Label(label="Host:"))
 
         self._connections = self._list_ssh_connections()
-        names = [f"{c.nickname}" for c in self._connections] or ["(no connections)"]
-        self._host_combo = Gtk.DropDown.new_from_strings(names)
-        self._host_combo.set_hexpand(True)
-        # Select the construction-time host (right-clicked connection), else the
-        # last-used host. Done BEFORE connecting the signal so the initial load
-        # happens once, at map time, rather than firing here.
         target = self._initial_host or self.ctx.settings.get("last_host", None)
-        if target:
-            for i, c in enumerate(self._connections):
-                if c.nickname == target:
-                    self._host_combo.set_selected(i)
-                    break
-        self._host_combo.connect("notify::selected", self._on_host_changed)
-        bar.append(self._host_combo)
+        if target and any(c.nickname == target for c in self._connections):
+            self._selected_nick = target
+        elif self._connections:
+            self._selected_nick = self._connections[0].nickname
+
+        self._host_btn = Gtk.Button()
+        self._host_btn.add_css_class("flat")
+        self._host_btn.set_tooltip_text("Choose Docker host")
+        host_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        host_icon = Gtk.Image.new_from_icon_name("computer-symbolic")
+        host_icon.set_pixel_size(16)
+        host_box.append(host_icon)
+        self._host_label = Gtk.Label()
+        host_box.append(self._host_label)
+        caret = Gtk.Image.new_from_icon_name("pan-down-symbolic")
+        caret.set_pixel_size(12)
+        host_box.append(caret)
+        self._host_btn.set_child(host_box)
+        self._host_btn.connect("clicked", self._show_host_picker)
+        self._update_host_button_label()
+        bar.append(self._host_btn)
+
+        spacer = Gtk.Box()
+        spacer.set_hexpand(True)
+        bar.append(spacer)
 
         self._sudo_check = Gtk.CheckButton(label="sudo")
         self._sudo_check.set_tooltip_text(
@@ -277,6 +286,38 @@ class DockerManagerPage(Gtk.Box):
         refresh.connect("clicked", lambda _b: self._refresh_visible())
         bar.append(refresh)
         return bar
+
+    def _update_host_button_label(self) -> None:
+        nick = self._selected_nick
+        if nick:
+            self._host_label.set_label(nick)
+            self._host_btn.set_sensitive(True)
+        else:
+            self._host_label.set_label("(no connections)")
+            self._host_btn.set_sensitive(False)
+
+    def _show_host_picker(self, _btn: Gtk.Button) -> None:
+        from ....host_picker import show_host_picker  # noqa: PLC0415
+
+        self._connections = self._list_ssh_connections()
+        if not self._connections:
+            self._toast("No SSH connections")
+            return
+        show_host_picker(
+            self._window(),
+            self._host_btn,
+            self._on_host_picked,
+            toast=self._toast,
+            connections=self._connections,
+        )
+
+    def _on_host_picked(self, conn: Any) -> None:
+        nick = getattr(conn, "nickname", None)
+        if not nick or nick == self._selected_nick:
+            return
+        self._selected_nick = nick
+        self._update_host_button_label()
+        self._on_host_changed()
 
     def _on_sudo_toggled(self, check: Gtk.CheckButton) -> None:
         nick = self._current_nickname()

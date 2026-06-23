@@ -579,6 +579,28 @@ def test_page_builds_five_tabs():
     assert names == ["containers", "logs", "stats", "images", "compose"]
 
 
+def test_page_host_button_shows_initial_host():
+    _gtk_or_skip()
+    from sshpilot.plugins.builtin.docker_manager.page import DockerManagerPage
+
+    class Conn:
+        def __init__(self, n):
+            self.nickname = n
+            self.protocol = "ssh"
+
+    ctx = types.SimpleNamespace(
+        run_command=lambda *a, **k: FakeResult(),
+        run_on_ui_thread=lambda fn, *a: fn(*a),
+        settings=types.SimpleNamespace(get=lambda k, d=None: d, set=lambda k, v: None),
+        list_connections=lambda: [Conn("alpha"), Conn("beta")],
+        open_command_terminal=lambda *a, **k: True,
+        ui=types.SimpleNamespace(notify=lambda *a, **k: None),
+    )
+    page = DockerManagerPage(ctx, initial_host="beta")
+    assert page._selected_nick == "beta"
+    assert page._host_label.get_label() == "beta"
+
+
 def test_page_reuse_ssh_toggle_defaults_on_and_persists():
     _gtk_or_skip()
     from sshpilot.plugins.builtin.docker_manager.page import DockerManagerPage
