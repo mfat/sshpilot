@@ -21,6 +21,10 @@
       "pattern": "^[0-9]+(\\.[0-9]+)*$",
       "description": "Plugin version, e.g. \"1.2.0\" (dotted integers). Should match the published release tag. Drives the in-app 'update available' button: the app compares it against the registry's latest version."
     },
+    "homepage": {
+      "type": "string",
+      "description": "URL of the plugin's source/homepage. Shown as a clickable link in the per-plugin info dialog in Preferences ▸ Plugins."
+    },
     "api_version": {
       "type": "integer",
       "minimum": 1,

@@ -6,6 +6,7 @@ Main application entry point
 
 import sys
 import os
+import gc
 import logging
 import argparse
 from logging.handlers import RotatingFileHandler
@@ -114,6 +115,17 @@ class SshPilotApplication(Adw.Application):
             application_id='io.github.mfat.sshpilot',
             flags=Gio.ApplicationFlags.FLAGS_NONE
         )
+
+        # GTK is not thread-safe: Python's *cyclic* garbage collector can run on
+        # any thread (e.g. an SFTP worker thread during repeated saves) and would
+        # then dispose GObject reference-cycles — including GTK widgets — off the
+        # main thread, which segfaults (observed on macOS). Disable the cyclic
+        # collector and drive it from a main-thread timer so GObject finalization
+        # only ever happens on the main thread. (Refcount-based finalization is
+        # unaffected, so non-cyclic resources still free promptly.)
+        gc.disable()
+        self._gc_pending = False
+        self._gc_timer_id = GLib.timeout_add_seconds(5, self._collect_garbage)
 
         # Command line verbosity overrides — mutually exclusive at argparse,
         # but defensively normalise here too.
@@ -505,7 +517,6 @@ class SshPilotApplication(Adw.Application):
             'sshpilot.terminal_backends',
             'sshpilot.ssh_utils',
             'sshpilot.ssh_config_utils',
-            'sshpilot.ssh_config_editor',
             'sshpilot.ssh_connection_builder',
             'sshpilot.ssh_password_exec',
             'sshpilot.sshcopyid_window',
@@ -754,6 +765,21 @@ class SshPilotApplication(Adw.Application):
         win = self.props.active_window
         if win and hasattr(win, '_open_ssh_config_editor'):
             win._open_ssh_config_editor()
+
+    def _collect_garbage(self) -> bool:
+        """Periodic trigger: queue a low-priority idle that runs the cyclic GC on
+        the main thread, but only once it's idle (no UI jank). See gc.disable()
+        in __init__. Guarded so collections never stack under sustained load."""
+        if not self._gc_pending:
+            self._gc_pending = True
+            GLib.idle_add(self._run_gc_collect, priority=GLib.PRIORITY_LOW)
+        return True  # GLib.SOURCE_CONTINUE — keep the periodic timer
+
+    def _run_gc_collect(self) -> bool:
+        """Run the cyclic collector on the main thread at idle priority."""
+        self._gc_pending = False
+        gc.collect()
+        return False  # one-shot idle
 
     def do_activate(self):
         """Called when the application is activated"""

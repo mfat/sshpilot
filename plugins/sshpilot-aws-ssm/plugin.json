@@ -1,9 +1,0 @@
-{
-  "id": "aws-ssm",
-  "name": "AWS SSM",
-  "version": "1.0.1",
-  "api_version": 1,
-  "permissions": [
-    "process"
-  ]
-}

@@ -1,0 +1,177 @@
+"""API 1.5 power APIs on PluginContext: run_command (reuses the native SSH/auth
+path), the sandboxed files facade, and the http facade. No GTK/host required."""
+
+import os
+import subprocess
+import sys
+import types
+
+import pytest
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+from sshpilot.plugins import api as api_mod
+from sshpilot.plugins.api import API_VERSION, CommandResult, PluginContext
+from sshpilot.plugins.registry import ProtocolRegistry
+
+
+def test_api_version_is_1_5():
+    assert API_VERSION == (1, 5)
+
+
+class _Conn:
+    def __init__(self, nickname):
+        self.nickname = nickname
+
+
+class _Manager:
+    def __init__(self, conns):
+        self._by_nick = {c.nickname: c for c in conns}
+
+    def find_connection_by_nickname(self, nickname):
+        return self._by_nick.get(nickname)
+
+
+def _ctx(manager=None, plugin_id="test-plugin"):
+    return PluginContext(plugin_id=plugin_id, app_config=None,
+                         connection_manager=manager or _Manager([]),
+                         protocol_registry=ProtocolRegistry())
+
+
+# --- run_command ----------------------------------------------------------
+
+def test_run_command_unknown_connection_fails_cleanly():
+    res = _ctx().run_command("nope", "echo hi")
+    assert isinstance(res, CommandResult)
+    assert res.exit_code == -1
+    assert "nope" in res.stderr
+
+
+def test_run_command_builds_native_context_and_maps_output(monkeypatch):
+    captured = {}
+
+    class _Prepared:
+        command = ["ssh", "host", "echo hi"]
+        env = {"SSH_ASKPASS": "/x"}
+        use_sshpass = False
+        password = None
+
+    def _fake_build(ctx):
+        captured["remote_command"] = ctx.remote_command
+        captured["native_mode"] = ctx.native_mode
+        captured["command_type"] = ctx.command_type
+        return _Prepared()
+
+    def _fake_run(argv, env=None, **kwargs):
+        captured["argv"] = argv
+        captured["env_has_askpass"] = env.get("SSH_ASKPASS") == "/x"
+        return types.SimpleNamespace(returncode=0, stdout="hi\n", stderr="")
+
+    monkeypatch.setattr("sshpilot.ssh_connection_builder.build_ssh_connection",
+                        _fake_build)
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+
+    ctx = _ctx(_Manager([_Conn("web")]))
+    res = ctx.run_command("web", "echo hi", timeout=5)
+
+    assert res.ok and res.exit_code == 0 and res.stdout == "hi\n"
+    assert captured["remote_command"] == "echo hi"
+    assert captured["native_mode"] is True
+    assert captured["command_type"] == "ssh"
+    assert captured["argv"] == ["ssh", "host", "echo hi"]
+    assert captured["env_has_askpass"] is True
+
+
+def test_run_command_wraps_sshpass_for_password_auth(monkeypatch):
+    seen = {}
+
+    class _Prepared:
+        command = ["ssh", "host", "id"]
+        env = {}
+        use_sshpass = True
+        password = "secret"
+
+    monkeypatch.setattr("sshpilot.ssh_connection_builder.build_ssh_connection",
+                        lambda ctx: _Prepared())
+
+    def _fake_wrap(argv, password, *, env=None):
+        seen["password"] = password
+        return (["sshpass", "-f", "/fifo", *argv], lambda: seen.__setitem__("cleaned", True))
+
+    monkeypatch.setattr("sshpilot.ssh_password_exec.wrap_argv_with_sshpass",
+                        _fake_wrap)
+
+    def _fake_run(argv, env=None, **kw):
+        seen["argv"] = argv
+        return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+
+    _ctx(_Manager([_Conn("web")])).run_command("web", "id")
+    assert seen["password"] == "secret"
+    assert seen["argv"][:3] == ["sshpass", "-f", "/fifo"]
+    assert seen.get("cleaned") is True  # FIFO temp dir cleaned up
+
+
+def test_run_command_timeout_is_a_failed_result(monkeypatch):
+    monkeypatch.setattr("sshpilot.ssh_connection_builder.build_ssh_connection",
+                        lambda ctx: types.SimpleNamespace(
+                            command=["ssh"], env={}, use_sshpass=False, password=None))
+
+    def _boom(*a, **k):
+        raise subprocess.TimeoutExpired(cmd="ssh", timeout=1)
+
+    monkeypatch.setattr(subprocess, "run", _boom)
+    res = _ctx(_Manager([_Conn("web")])).run_command("web", "sleep 99")
+    assert res.exit_code == -1 and "timed out" in res.stderr.lower()
+
+
+# --- files facade ---------------------------------------------------------
+
+def test_files_roundtrip_in_data_dir(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    ctx = _ctx(plugin_id="acme")
+    ctx.files.write_text("notes/today.txt", "hello")
+    assert ctx.files.exists("notes/today.txt")
+    assert ctx.files.read_text("notes/today.txt") == "hello"
+    # The file really lives under the per-plugin data dir.
+    assert ctx.data_dir.endswith(os.path.join("plugin-data", "acme"))
+    assert ctx.files.path("notes/today.txt").startswith(ctx.data_dir)
+
+
+def test_files_rejects_path_escape(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    ctx = _ctx(plugin_id="acme")
+    with pytest.raises(ValueError):
+        ctx.files.path("../../etc/passwd")
+    with pytest.raises(ValueError):
+        ctx.files.read_text("../escape.txt")
+
+
+# --- http facade ----------------------------------------------------------
+
+def test_http_get_parses_response(monkeypatch):
+    import urllib.request
+
+    class _Resp:
+        status = 200
+        headers = {"Content-Type": "application/json"}
+
+        def read(self):
+            return b'{"ok": true}'
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout=None: _Resp())
+    resp = _ctx().http.get("https://example.com/api")
+    assert resp.ok and resp.status == 200
+    assert resp.json() == {"ok": True}
+
+
+def test_http_rejects_non_http_scheme():
+    with pytest.raises(ValueError):
+        _ctx().http.get("file:///etc/passwd")

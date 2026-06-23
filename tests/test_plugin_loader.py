@@ -112,14 +112,16 @@ def test_discover_reads_manifest_version(tmp_path):
     versioned.mkdir(parents=True)
     (versioned / "plugin.json").write_text(json.dumps({
         "id": "versioned", "name": "Versioned", "api_version": 1,
-        "version": "1.2.3",
+        "version": "1.2.3", "homepage": "https://example.com/src",
     }))
     (versioned / "__init__.py").write_text("")
     _write_user_plugin(tmp_path, "nover")  # no version field
 
     by_id = {i.plugin_id: i for i in discover_plugins()}
     assert by_id["versioned"].version == "1.2.3"
+    assert by_id["versioned"].homepage == "https://example.com/src"
     assert by_id["nover"].version is None
+    assert by_id["nover"].homepage is None
 
 
 def test_user_plugin_with_dataclass_loads(tmp_path):

@@ -1,6 +1,7 @@
 {
   "id": "docker",
   "name": "Docker/Podman protocol",
+  "homepage": "https://github.com/mfat/sshpilot",
   "api_version": 1,
   "builtin": true,
   "permissions": [

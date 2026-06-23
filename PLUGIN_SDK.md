@@ -12,7 +12,7 @@ change without notice.
 > and the iterate loop; this file is the deeper API reference.
 
 - **The only import you need:** `sshpilot.plugins.api`.
-- **Current API version:** `1.4` (see [Versioning](#versioning)).
+- **Current API version:** `1.5` (see [Versioning](#versioning)).
 - **Worked examples** — two provider archetypes:
   - [`examples/mock_vps/`](sshpilot/plugins/examples/mock_vps/) — an **IP/SSH** provider: provision → get an IP → `add_connection` a normal SSH connection.
   - [`examples/easyenv_workspaces/`](sshpilot/plugins/examples/easyenv_workspaces/) — a **CLI/mesh** provider (real partner [easyenv.io](https://easyenv.io/cli)): a protocol backend whose connection *is* a CLI command, plus a management page. See [CLI-driven plugins](#11-cli-driven-plugins).
@@ -30,6 +30,11 @@ change without notice.
 | Create & persist a connection | `ctx.add_connection(data)` |
 | Open a terminal for a connection | `ctx.open_connection(nickname)` |
 | Generate an SSH key | `ctx.generate_key(name, ...)` |
+| Run a one-shot remote command (native SSH/auth path) | `ctx.run_command(nickname, command)` *(1.5)* |
+| Read resolved SSH config (`ssh -G`) | `ctx.get_effective_ssh_config(nickname)` *(1.5)* |
+| List/delete keys, deploy a key to a host | `ctx.list_keys()` / `ctx.delete_key(path)` / `ctx.copy_key_to_host(nickname, pub)` *(1.5)* |
+| Inspect/drive open terminals | `ctx.list_sessions()` / `ctx.read_terminal(id)` / `ctx.send_terminal(id, text)` *(1.5)* |
+| Persist files / make HTTP calls | `ctx.data_dir`, `ctx.files`, `ctx.http` *(1.5)* |
 | Store/read credentials (keyring) | `ctx.secrets.get/set/delete(key)` |
 | Store/read plugin settings | `ctx.settings.get/set(key)` |
 | Run code back on the UI thread | `ctx.run_on_ui_thread(fn, *args)` |
@@ -53,6 +58,8 @@ my-plugin/
 {
   "id": "acme-vps",
   "name": "ACME VPS Provider",
+  "version": "1.0.0",
+  "homepage": "https://github.com/yourname/acme-vps",
   "api_version": 1
 }
 ```
@@ -61,6 +68,7 @@ my-plugin/
 - `name` — shown in Preferences ▸ Plugins.
 - `version` — your plugin's version, e.g. `"1.2.0"` (dotted integers, matching your release tag). Recommended: it drives the in-app **update button** (sshPilot compares it to the registry's latest version).
 - `api_version` — the API **major** version you target (currently `1`). The loader refuses plugins whose major version doesn't match the running app.
+- `homepage` — optional URL of your plugin's source/homepage; shown as a clickable link in the per-plugin info dialog in Preferences ▸ Plugins.
 - `permissions` — optional list declaring the capabilities you use
   (`network`, `filesystem`, `keyring`, `connections`, `process`, `ui`,
   `settings`). They are **shown to the user at install/enable for informed
@@ -135,6 +143,23 @@ Passed to `activate`. One context per plugin; `ctx.plugin_id` is your manifest i
 - `list_connections() -> list[ConnectionInfo]` — read-only snapshot of every saved connection. Safe any time after load. *(API ≥ 1.4)*
 - `generate_key(name: str, *, key_type="ed25519", key_size=3072, comment=None, passphrase=None) -> str | None` — generate an SSH key; returns the private-key path or `None`. *(after `app_started`)*
 
+### Remote commands, config & keys *(API ≥ 1.5)*
+- `run_command(nickname: str, command: str, *, timeout=30) -> CommandResult` — run a one-shot command on a saved host and capture `exit_code`/`stdout`/`stderr`. Reuses the app's SSH/auth path (`~/.ssh/config`, ProxyJump, stored password via sshpass / passphrase via askpass). **Blocking** — call from a worker thread. `exit_code == -1` means it couldn't be launched.
+- `get_effective_ssh_config(nickname: str) -> dict` — resolved `ssh -G` options for the host (keys lowercased; multi-value options are lists).
+- `list_keys() -> list[dict]` — `{"private_path", "public_path"}` for keys the app manages. *(after `app_started`)*
+- `delete_key(private_path: str) -> bool` — delete a key pair; refuses paths outside the app's key dir. *(after `app_started`)*
+- `copy_key_to_host(nickname: str, public_key_path: str) -> bool` — install a public key on a host via the shared ssh-copy-id/auth path. **Blocking.** *(after `app_started`)*
+
+### Terminals & sessions *(API ≥ 1.5, after `app_started`)*
+- `list_sessions() -> list[SessionInfo]` — currently open terminal sessions.
+- `read_terminal(session_id: str, max_chars=None) -> str | None` — read a session's terminal text.
+- `send_terminal(session_id: str, text: str) -> bool` — send input to a session's terminal.
+
+### Files & HTTP *(API ≥ 1.5)*
+- `ctx.data_dir -> str` — a private, persistent per-plugin directory (created on access).
+- `ctx.files` — sandboxed to `data_dir`: `path(rel)`, `read_text/write_text`, `read_bytes/write_bytes`, `exists(rel)` (escapes rejected).
+- `ctx.http` — minimal blocking client: `get(url, *, headers=None, timeout=30)`, `post(url, *, data=None, json=None, headers=None, timeout=30)` → `HttpResponse{status, text, json(), ok}`. Call off the UI thread.
+
 ### UI — `ctx.ui`
 - `register_page(page_id, title, icon_name, factory)` — `factory` is a zero-arg callable returning a `Gtk.Widget`, built on first open. The page appears under the **Tools** section of the main menu. *(safe in `activate`)*
 - `open_page(page_id)` — open or focus the page as a tab. *(after `app_started`)*
@@ -199,6 +224,8 @@ Read-only frozen snapshots — decoupled from internal objects, safe to keep.
 ```python
 ConnectionInfo(nickname: str, host: str, username: str, protocol: str, port: int)
 SessionInfo(connection: ConnectionInfo, session_id: str)
+CommandResult(exit_code: int, stdout: str, stderr: str)   # .ok == (exit_code == 0); -1 == couldn't launch
+HttpResponse(status: int, text: str, headers: dict)        # .json() parses text; .ok == 2xx
 ```
 
 ---
@@ -272,7 +299,7 @@ must be made on the UI thread.
 
 ## 9. Versioning
 
-- `API_VERSION = (major, minor)`, currently `(1, 4)`. Your manifest declares the
+- `API_VERSION = (major, minor)`, currently `(1, 5)`. Your manifest declares the
   **major** you target; the loader skips plugins whose major doesn't match.
 - Minor bumps are additive (new methods/events); your plugin keeps working. Note
   the loader checks only the **major**, so a plugin using a newer minor's API on
@@ -281,7 +308,10 @@ must be made on the UI thread.
   `open_connection`, `generate_key`, scoped `ctx.secrets`/`ctx.settings`,
   `ctx.run_on_ui_thread`, `ctx.plugin_id`; `1.3` connection groups
   (`create_group`/`add_connection_to_group`/`add_connection_group`) and
-  `update_connection`; `1.4` `list_connections`.
+  `update_connection`; `1.4` `list_connections`; `1.5` `run_command`,
+  `get_effective_ssh_config`, `copy_key_to_host`, `list_keys`/`delete_key`,
+  `list_sessions`/`read_terminal`/`send_terminal`, and `ctx.data_dir`/
+  `ctx.files`/`ctx.http`.
 
 ---
 

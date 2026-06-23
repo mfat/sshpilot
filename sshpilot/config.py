@@ -178,17 +178,17 @@ class Config(GObject.Object):
                 'use_group_color_in_tab': False,
                 'use_group_color_in_terminal': False,
                 'connection_sort_last': 'name-asc',
-                'sidebar_show_user_hostname': False,
+                'sidebar_show_user_hostname': True,
                 'sidebar_show_group_count': True,
                 'sidebar_show_connection_status': True,
-                'sidebar_show_port_forwarding': False,
+                'sidebar_show_port_forwarding': True,
                 'sidebar_show_connection_icon': True,
                 # Sidebar behavior (Settings ▸ Sidebar ▸ Sidebar behavior)
                 'sidebar_hide_on_startup': False,
                 'sidebar_hide_on_terminal_open': False,  # incl. local terminals
                 'sidebar_show_when_no_tabs': False,
                 # Header-bar button visibility (Settings ▸ Interface ▸ Header Bar)
-                'headerbar_show_split_view': True,
+                'headerbar_show_split_view': False,
                 'headerbar_show_commands': True,
                 'headerbar_show_local_terminal': True,
             },

@@ -154,13 +154,12 @@ def test_isolated_config_used_for_effective_resolution(tmp_path, monkeypatch):
     loop = asyncio.get_event_loop()
     assert loop.run_until_complete(connection.connect())
 
-    expected_cmd = [
-        'ssh',
-        '-F',
-        os.path.abspath(str(config_path)),
-        '-G',
-        'alias',
-    ]
-    assert calls == [expected_cmd]
+    # Native connect builds the minimal `ssh -F <isolated config> … alias`; ssh
+    # itself resolves HostName/User from that config (there is no separate
+    # `ssh -G` subprocess during connect).
+    cmd = connection.ssh_cmd
+    assert '-F' in cmd
+    assert cmd[cmd.index('-F') + 1] == os.path.abspath(str(config_path))
+    assert cmd[-1].endswith('alias')
     assert connection.hostname == '10.0.0.5'
 

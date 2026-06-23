@@ -2,6 +2,7 @@
   "id": "ui-template",
   "name": "UI Template Plugin",
   "version": "1.0.0",
+  "homepage": "https://github.com/yourname/ui-template",
   "api_version": 1,
   "permissions": [
     "ui",

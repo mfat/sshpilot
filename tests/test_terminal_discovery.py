@@ -3,6 +3,22 @@
 import sys
 import types
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _consistent_terminal_modules():
+    """TerminalManager binds ``TerminalWidget``/``SplitViewTab`` at import time and
+    uses them in ``isinstance`` checks. If a sibling test re-imported
+    ``sshpilot.terminal`` (or ``split_view``) as a fresh module after
+    ``terminal_manager`` captured the old classes, those checks silently fail and
+    regular-tab terminals stop being recognised. Purge the trio so each test
+    re-imports a mutually consistent set.
+    """
+    for name in ("sshpilot.terminal_manager", "sshpilot.terminal", "sshpilot.split_view"):
+        sys.modules.pop(name, None)
+    yield
+
 
 def _ensure_cairo_stub():
     if 'cairo' not in sys.modules:

@@ -31,6 +31,8 @@ def test_validate_mac():
     assert validate_mac("1.2.3.4") is False
 
 
+@pytest.mark.skipif(not is_wol_available(),
+                    reason="wakeonlan not installed; send_wol short-circuits before MAC validation")
 def test_send_wol_invalid_mac():
     ok, msg = send_wol("invalid")
     assert ok is False

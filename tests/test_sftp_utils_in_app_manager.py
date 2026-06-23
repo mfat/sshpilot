@@ -301,7 +301,8 @@ def test_open_remote_uses_gvfs_flow_when_available(monkeypatch):
 
     recorded = {}
 
-    def fake_mount(uri, user, host, error_callback=None, progress_dialog=None):
+    def fake_mount(uri, user, host, error_callback=None, progress_dialog=None,
+                   *args, **kwargs):
         recorded["uri"] = uri
         recorded["user"] = user
         recorded["host"] = host

@@ -176,6 +176,29 @@ class AsyncSFTPManager(GObject.GObject):
         logger.info("AsyncSFTPManager.close() called")
         # Stop keepalive worker first
         self._stop_keepalive_worker()
+
+        # Interrupt any in-flight blocking operation BEFORE taking ``_lock``.
+        # A worker thread stuck in a no-timeout paramiko read (listdir/get/…)
+        # holds ``_lock`` for the entire call, so waiting on ``_lock`` here would
+        # deadlock and hang the whole app on quit. Closing the transport/socket
+        # from this thread makes that blocked read raise, letting the worker
+        # release ``_lock`` and finish. These are plain attribute reads (no lock)
+        # used purely to force the sockets shut; closing twice is harmless, since
+        # the locked cleanup below repeats it.
+        interrupt_targets: List[Any] = []
+        try:
+            interrupt_targets = [self._sftp, self._client, self._proxy_sock]
+            interrupt_targets.extend(self._jump_clients or [])
+        except Exception:  # pragma: no cover - defensive
+            interrupt_targets = []
+        for obj in interrupt_targets:
+            if obj is None:
+                continue
+            try:
+                obj.close()
+            except Exception as exc:  # best-effort interruption
+                logger.debug("Error interrupting %r during close: %s", obj, exc)
+
         with self._lock:
             if self._sftp is not None:
                 try:
@@ -1114,8 +1137,17 @@ class AsyncSFTPManager(GObject.GObject):
             "look_for_keys": look_for_keys,
         }
 
-        if connect_timeout is not None:
-            connect_kwargs["timeout"] = connect_timeout
+        # Always bound the handshake. A server that accepts the TCP connection
+        # but then stalls or slow-closes during key exchange (e.g. an expired
+        # account, or a host that refuses post-quantum-less clients) would
+        # otherwise block the worker thread forever: the loading toast never
+        # clears and quit deadlocks. paramiko's ``timeout`` covers the socket
+        # connect, ``banner_timeout`` the protocol banner, and ``auth_timeout``
+        # authentication; set all three, defaulting when unconfigured.
+        effective_timeout = connect_timeout if (connect_timeout and connect_timeout > 0) else 30
+        connect_kwargs["timeout"] = effective_timeout
+        connect_kwargs["banner_timeout"] = effective_timeout
+        connect_kwargs["auth_timeout"] = effective_timeout
 
         if password:
             connect_kwargs["password"] = password
@@ -1299,6 +1331,22 @@ class AsyncSFTPManager(GObject.GObject):
                     raise IOError("SFTP connection is not available")
                 self._sftp.mkdir(path)
         # Don't call listdir from callback - let the UI handle refresh
+        return self._submit(_impl)
+
+    def touch(self, path: str) -> Future:
+        """Create an empty remote file. Raises FileExistsError if it already
+        exists (so the caller can warn instead of truncating)."""
+        logger.debug(f"Creating empty file: {path}")
+
+        def _impl() -> None:
+            with self._lock:
+                if self._sftp is None:
+                    raise IOError("SFTP connection is not available")
+                if _sftp_path_exists(self._sftp, path):
+                    raise FileExistsError(path)
+                handle = self._sftp.open(path, "w")
+                handle.close()
+
         return self._submit(_impl)
 
     def path_exists(self, path: str) -> Future:

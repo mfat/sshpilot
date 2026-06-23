@@ -769,7 +769,7 @@ class ConnectionRow(Gtk.ListBoxRow):
         self.host_label.set_max_width_chars(25)  # Maximum natural width (prevents expansion)
         self._apply_host_label_text()
         # Set initial visibility based on preference
-        show_user_hostname = self.config.get_setting('ui.sidebar_show_user_hostname', False)
+        show_user_hostname = self.config.get_setting('ui.sidebar_show_user_hostname', True)
         self.host_label.set_visible(show_user_hostname)
         info_box.append(self.host_label)
 
@@ -1290,7 +1290,7 @@ class ConnectionRow(Gtk.ListBoxRow):
             return
 
         # Check preference for showing port forwarding indicators
-        show_port_forwarding = self.config.get_setting('ui.sidebar_show_port_forwarding', False)
+        show_port_forwarding = self.config.get_setting('ui.sidebar_show_port_forwarding', True)
         if not show_port_forwarding:
             return
 

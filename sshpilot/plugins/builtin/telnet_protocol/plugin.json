@@ -1,6 +1,7 @@
 {
   "id": "telnet",
   "name": "Telnet protocol",
+  "homepage": "https://github.com/mfat/sshpilot",
   "api_version": 1,
   "builtin": true,
   "permissions": [

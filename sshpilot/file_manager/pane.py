@@ -944,6 +944,7 @@ class FilePane(Gtk.Box):
         _add_action("rename", lambda: self._emit_entry_operation("rename"))
         _add_action("delete", lambda: self._emit_entry_operation("delete"))
         _add_action("new_folder", lambda: self.emit("request-operation", "mkdir", None))
+        _add_action("new_file", lambda: self.emit("request-operation", "newfile", None))
         _add_action("properties", self._on_menu_properties)
 
         # Create popover with listbox (same style as connection list)
@@ -1144,9 +1145,10 @@ class FilePane(Gtk.Box):
             _add_menu_item("Rename…", "document-edit-symbolic", "rename")
             _add_menu_item("Delete", "user-trash-symbolic", "delete")
         
-        # Add New Folder only if no items are selected (before Properties)
+        # Add New Folder / New File only if no items are selected (before Properties)
         if not has_selection:
             _add_menu_item("New Folder", "folder-new-symbolic", "new_folder")
+            _add_menu_item("New File", "document-new-symbolic", "new_file")
         
         # Always add Properties (at the end)
         _add_menu_item("Properties…", "document-properties-symbolic", "properties")

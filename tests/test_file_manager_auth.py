@@ -144,6 +144,9 @@ def _load_file_manager_module(monkeypatch):
         RejectPolicy=lambda: DummyPolicy("reject"),
         WarningPolicy=lambda: DummyPolicy("warn"),
         MissingHostKeyPolicy=object,
+        # Exception types the manager's connect path references (except clauses).
+        AuthenticationException=type("AuthenticationException", (Exception,), {}),
+        SSHException=type("SSHException", (Exception,), {}),
         proxy=proxy_module,
     )
     monkeypatch.setitem(sys.modules, "paramiko", paramiko_stub)
@@ -160,7 +163,30 @@ def _load_file_manager_module(monkeypatch):
     sys.modules.pop("sshpilot.ssh_config_utils", None)
     monkeypatch.setitem(sys.modules, "sshpilot.ssh_config_utils", ssh_config_stub)
 
-    sys.modules.pop("sshpilot.file_manager_window", None)
+    # AsyncSFTPManager._connect_impl lazily does ``from ..config import Config`` and,
+    # when that Config exposes ``get_file_manager_config``, prefers it over the
+    # ``ssh_config`` passed to the manager — so the app's default
+    # sftp_keepalive_interval/sftp_connect_timeout would shadow the per-test values.
+    # In isolation Config() happens to raise (dummy gi), but in full-suite order a
+    # sibling makes it importable, flipping these results. Pin a Config that lacks
+    # get_file_manager_config so the explicit ssh_config is always honoured.
+    config_stub = types.ModuleType("sshpilot.config")
+
+    class _StubConfig:
+        def get_ssh_config(self):
+            return {}
+
+    config_stub.Config = _StubConfig
+    monkeypatch.setitem(sys.modules, "sshpilot.config", config_stub)
+
+    # Force a fresh import of the file-manager chain so AsyncSFTPManager binds
+    # the stubbed paramiko/gi above. Without dropping the cached sftp_manager,
+    # a prior test that imported it with the real paramiko would make these
+    # tests fail in full-suite order (they passed only in isolation).
+    for mod in ("sshpilot.file_manager_window",
+                "sshpilot.file_manager.sftp_manager",
+                "sshpilot.file_manager"):
+        sys.modules.pop(mod, None)
     module = importlib.import_module("sshpilot.file_manager_window")
     module._fake_ssh_config = ssh_config_stub
     return module
