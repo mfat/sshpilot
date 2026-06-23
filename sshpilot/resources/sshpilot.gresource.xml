@@ -57,6 +57,7 @@
     <file alias="wired-lock-dots-symbolic.svg">icons/scalable/actions/wired-lock-dots-symbolic.svg</file>
     <file alias="wired-lock-none-symbolic.svg">icons/scalable/actions/wired-lock-none-symbolic.svg</file>
     <file alias="open-menu-symbolic.svg">icons/scalable/actions/open-menu-symbolic.svg</file>
+    <file alias="org.gnome.Settings-system-symbolic.svg">icons/scalable/actions/org.gnome.Settings-system-symbolic.svg</file>
     <file alias="pan-down-symbolic.svg">icons/scalable/actions/pan-down-symbolic.svg</file>
     <file alias="pan-end-symbolic.svg">icons/scalable/actions/pan-end-symbolic.svg</file>
     <file alias="preferences-desktop-keyboard-symbolic.svg">icons/scalable/actions/preferences-desktop-keyboard-symbolic.svg</file>

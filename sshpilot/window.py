@@ -1592,15 +1592,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Toggled by Preferences ▸ Interface ▸ Header Bar.
         self._headerbar_local_terminal_button = self.local_terminal_button
 
-        # Add view toggle button to switch between welcome and tabs
-        self.view_toggle_button = Gtk.Button()
-        from sshpilot import icon_utils
-        icon_utils.set_button_icon(self.view_toggle_button, 'go-home-symbolic')
-        self.view_toggle_button.set_tooltip_text('Show Start Page')
-        self.view_toggle_button.connect('clicked', self.on_view_toggle_clicked)
-        self.view_toggle_button.set_visible(False)  # Shown when user tabs exist
-        self.header_bar.pack_start(self.view_toggle_button)
-        
         # Add tab button to header bar (will be created later in setup_content_area)
         # This will be added after the tab view is created
         
@@ -2119,7 +2110,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             pass
         header.append(add_button)
 
-        # Search button (placed on sidebar header bar below)
+        # Search button
         self.search_button = icon_utils.new_button_from_icon_name('system-search-symbolic')
         self.search_button.add_css_class('flat')
         # Platform-aware shortcut in tooltip
@@ -2130,6 +2121,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             self.search_button.set_can_focus(False)
         except Exception:
             pass
+        header.append(self.search_button)
 
         # Hide/Show hostnames button (eye icon)
         def _update_eye_icon(btn):
@@ -2844,7 +2836,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         sidebar_title_label.set_xalign(0.0)
         self.sidebar_header_bar.set_title_widget(sidebar_title_label)
 
-        self.sidebar_header_bar.pack_start(self.search_button)
         self.sidebar_header_bar.pack_end(self.menu_button)
 
         sidebar_toolbar_view = Adw.ToolbarView()
@@ -3108,7 +3099,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
     def _build_preferences_button(self):
         from sshpilot import icon_utils
-        button = icon_utils.new_button_from_icon_name("settings-symbolic")
+        button = icon_utils.new_button_from_icon_name("org.gnome.Settings-system-symbolic")
         button.add_css_class('flat')
         button.set_can_focus(False)
         button.set_tooltip_text(_("Settings"))
@@ -3334,7 +3325,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
         self._create_start_tab()
         self._update_tab_button_visibility()
-        self._update_view_toggle_button()
         
         # Split-view button — opens a new split-view tab
         from sshpilot import icon_utils as _iu
@@ -4016,24 +4006,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception:
             logger.debug("Failed to update tab content theme", exc_info=True)
 
-    def _update_view_toggle_button(self) -> None:
-        if not hasattr(self, 'view_toggle_button'):
-            return
-        try:
-            if not self.has_user_tabs():
-                self.view_toggle_button.set_visible(False)
-                return
-            from sshpilot import icon_utils
-            self.view_toggle_button.set_visible(True)
-            if self.is_start_tab_selected():
-                icon_utils.set_button_icon(self.view_toggle_button, 'view-grid-symbolic')
-                self.view_toggle_button.set_tooltip_text(_('Show open tabs'))
-            else:
-                icon_utils.set_button_icon(self.view_toggle_button, 'go-home-symbolic')
-                self.view_toggle_button.set_tooltip_text(_('Show Start Page'))
-        except Exception:
-            logger.debug("Failed to update view toggle button", exc_info=True)
-
     def show_start_tab(self) -> None:
         """Select the pinned Start tab."""
         self._create_start_tab()
@@ -4042,7 +4014,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception:
             pass
         self._update_content_theme_for_selected_tab()
-        self._update_view_toggle_button()
         GLib.idle_add(self._focus_connection_list_first_row)
 
         try:
@@ -4069,7 +4040,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             except Exception:
                 pass
         self._update_content_theme_for_selected_tab()
-        self._update_view_toggle_button()
         self._update_layout_toggle_state()
         logger.info("Showing tab view")
 
@@ -5790,7 +5760,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     def on_tab_selected(self, tab_view: Adw.TabView, _pspec=None) -> None:
         """Update active terminal mapping when the user switches tabs."""
         self._update_content_theme_for_selected_tab()
-        self._update_view_toggle_button()
         self._update_layout_toggle_state()
         try:
             page = tab_view.get_selected_page()
@@ -6030,16 +5999,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception:
             logger.debug("hide_sidebar_after_terminal failed", exc_info=True)
         return GLib.SOURCE_REMOVE
-
-    def on_view_toggle_clicked(self, button):
-        """Switch between the Start tab and open user tabs."""
-        try:
-            if self.is_start_tab_selected():
-                self.show_tab_view()
-            else:
-                self.show_start_tab()
-        except Exception as e:
-            logger.error(f"Failed to toggle view: {e}")
 
     def _toggle_sidebar_visibility(self, is_visible):
         """Helper method to toggle sidebar visibility"""
@@ -6597,7 +6556,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     def on_tab_attached(self, tab_view, page, position):
         """Handle tab attached"""
         self._update_tab_button_visibility()
-        self._update_view_toggle_button()
         # Register a drop target on TerminalWidget pages so dragging a
         # connection onto a terminal converts that tab into a split-view tab.
         try:
@@ -6846,8 +6804,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             self._update_tab_button_visibility()
             if tab_view.get_n_pages() <= 1:
                 self.show_start_tab()
-            else:
-                self._update_view_toggle_button()
             return
 
         # Cleanup terminal-to-connection maps when a page is detached
@@ -6877,14 +6833,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
         # Update tab button visibility
         self._update_tab_button_visibility()
-        self._update_view_toggle_button()
         self._update_layout_toggle_state()
 
         # Select Start when the last user tab closes
         if not self.has_user_tabs():
             self.show_start_tab()
-        else:
-            self._update_view_toggle_button()
 
         # Recompute the affected connection's state now that the terminal has
         # been removed from the maps. With no terminals left this resolves to

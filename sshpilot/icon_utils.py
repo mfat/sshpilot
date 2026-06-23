@@ -62,6 +62,7 @@ _ICON_RESOURCE_MAP = {
     'system-run-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/system-run-symbolic.svg',
     'sidebar-show-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/sidebar-show-symbolic.svg',
     'open-menu-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/open-menu-symbolic.svg',
+    'org.gnome.Settings-system-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/org.gnome.Settings-system-symbolic.svg',
     'window-close-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/window-close-symbolic.svg',
     'utilities-terminal-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/utilities-terminal-symbolic.svg',
     'dialog-password-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/dialog-password-symbolic.svg',
