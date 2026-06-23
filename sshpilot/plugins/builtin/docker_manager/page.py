@@ -300,18 +300,16 @@ class DockerConsolePage(
         self._update_host_button_label()
         bar.append(self._host_btn)
 
-        # Make it unmistakable this manages a REMOTE host over SSH, not the local
-        # `docker` protocol plugin.
-        via = Gtk.Label(label="via SSH")
-        via.add_css_class("dim-label")
-        via.add_css_class("caption")
-        bar.append(via)
-
         spacer = Gtk.Box()
         spacer.set_hexpand(True)
         bar.append(spacer)
 
-        # Runtime: Auto-detect (default) or force docker/podman per host.
+        runtime_label = Gtk.Label(label="Runtime")
+        runtime_label.add_css_class("dim-label")
+        runtime_label.add_css_class("caption")
+        bar.append(runtime_label)
+
+        # Auto-detect (default) or force docker/podman per host.
         self._RUNTIME_MODES = ("Auto", "docker", "podman")
         self._runtime_drop = Gtk.DropDown.new_from_strings(list(self._RUNTIME_MODES))
         self._runtime_drop.set_tooltip_text("Container runtime (Auto detects docker/podman)")
