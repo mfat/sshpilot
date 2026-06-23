@@ -1,6 +1,6 @@
 {
   "id": "docker-manager",
-  "name": "Docker Manager",
+  "name": "Docker Console",
   "homepage": "https://github.com/mfat/sshpilot",
   "api_version": 1,
   "version": "1.0.0",

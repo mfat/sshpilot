@@ -1,4 +1,4 @@
-"""GTK dialogs for the Docker Manager plugin.
+"""GTK dialogs for the Docker Console plugin.
 
 Kept separate from page.py to avoid bloating it. Three dialogs:
 
@@ -7,7 +7,7 @@ Kept separate from page.py to avoid bloating it. Three dialogs:
 * ``TextViewDialog`` — a monospace read-only text viewer (image history,
   compose file).
 * ``CreateContainerDialog`` — a form to create + run a container.
-* ``DockerManagerSettingsDialog`` — plugin settings (SSH connection reuse).
+* ``DockerConsoleSettingsDialog`` — plugin settings (SSH connection reuse).
 * ``prompt_text`` — a tiny one-line input dialog (e.g. the image to pull).
 """
 
@@ -330,15 +330,15 @@ class CreateContainerDialog(_DialogBase):
             self._on_create(spec)
 
 
-class DockerManagerSettingsDialog(_DialogBase):
-    """Plugin settings for the Docker Manager page."""
+class DockerConsoleSettingsDialog(_DialogBase):
+    """Plugin settings for the Docker Console page."""
 
     def __init__(self, parent: Optional[Gtk.Window], *,
                  reuse_ssh: bool,
                  on_reuse_ssh_changed: Callable[[bool], None],
                  refresh_interval: int = 10,
                  on_refresh_interval_changed: Optional[Callable[[int], None]] = None) -> None:
-        super().__init__(parent, "Docker Manager Settings", width=420, height=300)
+        super().__init__(parent, "Docker Console Settings", width=420, height=300)
         close = Gtk.Button(icon_name="window-close-symbolic")
         close.set_tooltip_text("Close")
         close.connect("clicked", lambda _b: self.close())

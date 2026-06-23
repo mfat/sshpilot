@@ -1,4 +1,4 @@
-"""Tests for the built-in Docker Manager plugin.
+"""Tests for the built-in Docker Console plugin.
 
 Fully offline: ``DockerClient`` is pure logic over an injected ``run_command``,
 so we drive it with a fake (no Docker, no SSH, no GTK). ``page.py`` is not
@@ -90,13 +90,13 @@ def _fake_ctx(last_host=None, connections=()):
 def test_activate_registers_tools_menu_and_connection_action():
     ctx = _fake_ctx()
     Plugin().activate(ctx)
-    # Tools-menu "Docker Manager" entry opens via an on_activate callback (not a
+    # Tools-menu "Docker Console" entry opens via an on_activate callback (not a
     # fixed page) so it can target the last-used host.
     manager = [p for p in ctx.ui.pages if p[0] == "manager"]
-    assert manager and manager[0][1] == "Docker Manager"
+    assert manager and manager[0][1] == "Docker Console"
     assert callable(manager[0][4].get("on_activate"))
     # Connection right-click action.
-    assert ctx.ui.actions and ctx.ui.actions[0][1] == "Docker Manager"
+    assert ctx.ui.actions and ctx.ui.actions[0][1] == "Docker Console"
 
 
 def test_connection_action_opens_per_host_tab_and_reuses_it():
@@ -630,9 +630,9 @@ def _gtk_ctx():
 
 def test_page_builds_all_tabs():
     _gtk_or_skip()
-    from sshpilot.plugins.builtin.docker_manager.page import DockerManagerPage
+    from sshpilot.plugins.builtin.docker_manager.page import DockerConsolePage
 
-    page = DockerManagerPage(_gtk_ctx(), initial_host="web")
+    page = DockerConsolePage(_gtk_ctx(), initial_host="web")
     names = []
     child = page._stack.get_first_child()
     while child is not None:
@@ -644,9 +644,9 @@ def test_page_builds_all_tabs():
 
 def test_page_hardening_widgets_and_helpers():
     _gtk_or_skip()
-    from sshpilot.plugins.builtin.docker_manager.page import DockerManagerPage
+    from sshpilot.plugins.builtin.docker_manager.page import DockerConsolePage
 
-    page = DockerManagerPage(_gtk_ctx(), initial_host="web")
+    page = DockerConsolePage(_gtk_ctx(), initial_host="web")
     # Pause toggle defaults off; toggling sets the paused flag.
     assert page._pause_btn.get_active() is False
     page._pause_btn.set_active(True)
@@ -674,10 +674,10 @@ def test_page_hardening_widgets_and_helpers():
 
 def test_settings_dialog_exposes_refresh_interval():
     _gtk_or_skip()
-    from sshpilot.plugins.builtin.docker_manager.dialogs import DockerManagerSettingsDialog
+    from sshpilot.plugins.builtin.docker_manager.dialogs import DockerConsoleSettingsDialog
 
     seen = {}
-    dlg = DockerManagerSettingsDialog(
+    dlg = DockerConsoleSettingsDialog(
         None, reuse_ssh=True, on_reuse_ssh_changed=lambda v: None,
         refresh_interval=12, on_refresh_interval_changed=lambda n: seen.__setitem__("n", n))
     assert dlg._interval_row.get_value() == 12
@@ -698,7 +698,7 @@ def test_create_dialog_rejects_unbalanced_command():
 
 def test_page_host_button_shows_initial_host():
     _gtk_or_skip()
-    from sshpilot.plugins.builtin.docker_manager.page import DockerManagerPage
+    from sshpilot.plugins.builtin.docker_manager.page import DockerConsolePage
 
     class Conn:
         def __init__(self, n):
@@ -713,14 +713,14 @@ def test_page_host_button_shows_initial_host():
         open_command_terminal=lambda *a, **k: True,
         ui=types.SimpleNamespace(notify=lambda *a, **k: None),
     )
-    page = DockerManagerPage(ctx, initial_host="beta")
+    page = DockerConsolePage(ctx, initial_host="beta")
     assert page._selected_nick == "beta"
     assert page._host_label.get_label() == "beta"
 
 
 def test_page_reuse_ssh_toggle_defaults_on_and_persists():
     _gtk_or_skip()
-    from sshpilot.plugins.builtin.docker_manager.page import DockerManagerPage
+    from sshpilot.plugins.builtin.docker_manager.page import DockerConsolePage
 
     store = {}
     acquired, released = [], []
@@ -741,7 +741,7 @@ def test_page_reuse_ssh_toggle_defaults_on_and_persists():
         release_multiplex=lambda n: released.append(n),
         ui=types.SimpleNamespace(notify=lambda *a, **k: None),
     )
-    page = DockerManagerPage(ctx, initial_host="web")
+    page = DockerConsolePage(ctx, initial_host="web")
     # Default ON.
     assert page._multiplex_enabled() is True
     # Acquire keeps the master for the current host.
@@ -775,10 +775,10 @@ def test_details_dialog_renders_inspect_data():
 def test_settings_dialog_reuse_ssh_switch():
     _gtk_or_skip()
     from sshpilot.plugins.builtin.docker_manager.dialogs import (
-        DockerManagerSettingsDialog)
+        DockerConsoleSettingsDialog)
 
     changes = []
-    dlg = DockerManagerSettingsDialog(
+    dlg = DockerConsoleSettingsDialog(
         None, reuse_ssh=True, on_reuse_ssh_changed=changes.append)
     assert dlg._reuse_row.get_active() is True
     assert dlg._reuse_row.get_title() == "Reuse SSH connection"

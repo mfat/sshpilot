@@ -1,4 +1,4 @@
-"""Docker Manager plugin.
+"""Docker Console plugin.
 
 A management dashboard for the Docker/Podman daemon running on a host you reach
 over SSH. It does NOT talk to a daemon socket or use the docker SDK — every
@@ -33,14 +33,14 @@ class Plugin(SshPilotPlugin):
         # a UI-only plugin, so there is simply nothing to register there.
         if getattr(ctx, "ui", None) is None:
             return
-        # Tools-menu "Docker Manager" → open the last-used host's tab. The page
+        # Tools-menu "Docker Console" → open the last-used host's tab. The page
         # itself is never opened directly; on_activate handles the click.
-        ctx.ui.register_page("manager", "Docker Manager", _ICON, lambda: None,
+        ctx.ui.register_page("manager", "Docker Console", _ICON, lambda: None,
                              on_activate=self._open_last_host)
-        # Right-click a connection → a per-host Docker Manager tab (API >= 1.7).
+        # Right-click a connection → a per-host Docker Console tab (API >= 1.7).
         register_action = getattr(ctx.ui, "register_connection_action", None)
         if callable(register_action):
-            register_action("open", "Docker Manager", _ICON, self._open_host_page)
+            register_action("open", "Docker Console", _ICON, self._open_host_page)
 
     # --- one tab per host (reused if already open) ---------------------
     def _open_host_page(self, nickname: str) -> None:
@@ -61,9 +61,9 @@ class Plugin(SshPilotPlugin):
         self.ctx.ui.open_page(page_id)
 
     def _build_host_page(self, nickname: str):
-        from .page import DockerManagerPage
+        from .page import DockerConsolePage
 
-        return DockerManagerPage(self.ctx, initial_host=nickname)
+        return DockerConsolePage(self.ctx, initial_host=nickname)
 
     def _open_last_host(self) -> None:
         # No host context from the Tools menu → use the last-used host, else the

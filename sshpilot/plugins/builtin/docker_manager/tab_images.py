@@ -1,4 +1,4 @@
-"""Docker Manager tab: Images."""
+"""Docker Console tab: Images."""
 
 from __future__ import annotations
 

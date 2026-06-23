@@ -1,4 +1,4 @@
-# Docker Manager plugin — design plan
+# Docker Console plugin — design plan
 
 Branch: `feature-docker-plugin`
 
@@ -48,7 +48,7 @@ a local-daemon, event-stream-heavy app — not ours.
   `docker_protocol`).
 - **Files:** `plugin.json`, `__init__.py` (`class Plugin(SshPilotPlugin)`),
   `client.py` (the CLI/SSH data layer), `page.py` (GTK UI).
-- **Manifest:** `{"id": "docker-manager", "name": "Docker Manager",
+- **Manifest:** `{"id": "docker-manager", "name": "Docker Console",
   "api_version": 1, "version": "1.0.0", "builtin": true,
   "permissions": ["process", "ui", "connections"]}`.
 - **API used:** `ctx.ui.register_page/open_page/notify`,
@@ -57,12 +57,12 @@ a local-daemon, event-stream-heavy app — not ours.
   `ctx.settings`. Requires **API ≥ 1.7** — this work added
   `open_command_terminal` (1.6) and `register_connection_action` (1.7).
 - **Entry:** `activate(ctx)` registers one page (icon e.g. `package-x-generic`),
-  caches `ctx`, and registers a "Docker Manager" connection context-menu action.
+  caches `ctx`, and registers a "Docker Console" connection context-menu action.
   All host calls happen lazily from the page.
 
 ### Shipped additions (beyond the original plan)
 - **Connection context-menu action** (`ctx.ui.register_connection_action`, API
-  1.7): right-click a connection → "Docker Manager" opens the page targeting that
+  1.7): right-click a connection → "Docker Console" opens the page targeting that
   host (`page.select_host(nickname)`).
 - **sudo support** for non-root hosts: `DockerClient(use_sudo=…)` prefixes
   captured commands with `sudo -n` and interactive ones with `sudo`; the page
@@ -202,7 +202,7 @@ sshpilot/plugins/builtin/docker_manager/
   plugin.json
   __init__.py        # Plugin(SshPilotPlugin): activate() registers the page
   client.py          # DockerClient (ctx.run_command + JSON parsing)
-  page.py            # DockerManagerPage (GTK; host picker + 5 sections)
+  page.py            # DockerConsolePage (GTK; host picker + 5 sections)
 tests/test_docker_manager_plugin.py   # unit tests, mock ctx.run_command
 ```
 
@@ -218,7 +218,7 @@ tests/test_docker_manager_plugin.py   # unit tests, mock ctx.run_command
 
 ## Verification
 - `python3 -m pytest -q tests/test_docker_manager_plugin.py` → green offline.
-- Manual: enable the plugin (Preferences ▸ Plugins), open the Docker Manager
+- Manual: enable the plugin (Preferences ▸ Plugins), open the Docker Console
   page, pick a host that runs docker, confirm: container list + status; start/
   stop/restart/kill/rm (with Force + confirm); logs view with timestamps/clear;
   stats numbers update; images list + rmi; system prune frees space (toast).

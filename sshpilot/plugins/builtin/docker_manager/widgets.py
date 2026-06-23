@@ -1,4 +1,4 @@
-"""Shared GTK helpers for the Docker Manager plugin UI."""
+"""Shared GTK helpers for the Docker Console plugin UI."""
 
 from __future__ import annotations
 

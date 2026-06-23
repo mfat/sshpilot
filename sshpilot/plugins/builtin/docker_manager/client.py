@@ -1,4 +1,4 @@
-"""Data layer for the Docker Manager plugin.
+"""Data layer for the Docker Console plugin.
 
 A thin wrapper that runs Docker/Podman **CLI** commands on a host over the app's
 single native SSH path (``ctx.run_command``) and parses the JSON the CLI emits

@@ -4,7 +4,7 @@ Spawning ``ssh -F config host <cmd>`` per call pays a full TCP connect and auth
 handshake every time. OpenSSH's ControlMaster lets the first connection open a
 master socket that later ``ssh`` invocations reuse over a new channel — no
 re-auth, ~10–50 ms per call instead of hundreds of ms / seconds. This is the
-right fix for polling surfaces such as the Docker Manager (a 3-second ``ps`` +
+right fix for polling surfaces such as the Docker Console (a 3-second ``ps`` +
 ``stats`` refresh).
 
 This module owns two things:

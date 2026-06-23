@@ -1,4 +1,4 @@
-"""Docker Manager tab: Compose."""
+"""Docker Console tab: Compose."""
 
 from __future__ import annotations
 

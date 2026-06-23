@@ -47,7 +47,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 # 1.9: ctx.acquire_multiplex(nickname) / ctx.release_multiplex(nickname) — keep a
 #      shared SSH ControlMaster warm for a host while a surface is open; run_command
 #      then transparently reuses that one connection (no re-auth per call). For
-#      polling surfaces such as the Docker Manager.
+#      polling surfaces such as the Docker Console.
 API_VERSION: Tuple[int, int] = (1, 9)
 
 # Stable event names and event payload types live in host.py; re-exported here

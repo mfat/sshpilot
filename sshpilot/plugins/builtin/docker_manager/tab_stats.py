@@ -1,4 +1,4 @@
-"""Docker Manager tab: Stats."""
+"""Docker Console tab: Stats."""
 
 from __future__ import annotations
 

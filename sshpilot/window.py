@@ -2453,7 +2453,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         pass
 
                     # Plugin-contributed connection actions (single SSH host),
-                    # e.g. "Docker Manager". The menu is rebuilt per right-click,
+                    # e.g. "Docker Console". The menu is rebuilt per right-click,
                     # so actions registered at activate time appear here.
                     try:
                         if not multi and conn and getattr(conn, 'protocol', 'ssh') == 'ssh':

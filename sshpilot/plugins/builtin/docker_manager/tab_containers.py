@@ -1,4 +1,4 @@
-"""Docker Manager tab: Containers."""
+"""Docker Console tab: Containers."""
 
 from __future__ import annotations
 

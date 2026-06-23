@@ -1,4 +1,4 @@
-"""GTK UI for the Docker Manager plugin.
+"""GTK UI for the Docker Console plugin.
 
 A single page with a host picker and seven sections — Containers, Logs, Stats,
 Images, Volumes, Networks, Compose — driven by :class:`DockerClient` over
@@ -23,7 +23,7 @@ from gi.repository import GLib, Gtk, Adw, Gdk, GdkPixbuf  # noqa: E402
 _MARK_RESOURCE = "/io/github/mfat/sshpilot/icons/scalable/actions/docker-mark-ocean-blue.svg"
 
 from .client import DockerClient  # noqa: E402
-from .dialogs import DockerManagerSettingsDialog  # noqa: E402
+from .dialogs import DockerConsoleSettingsDialog  # noqa: E402
 from . import widgets as w  # noqa: E402
 from .tab_compose import ComposeTabMixin  # noqa: E402
 from .tab_containers import ContainersTabMixin  # noqa: E402
@@ -38,7 +38,7 @@ _DEFAULT_REFRESH_SECONDS = 10
 _MIN_REFRESH_SECONDS = 2
 
 
-class DockerManagerPage(
+class DockerConsolePage(
     ContainersTabMixin,
     LogsTabMixin,
     StatsTabMixin,
@@ -47,7 +47,7 @@ class DockerManagerPage(
     ComposeTabMixin,
     Gtk.Box,
 ):
-    """The Docker Manager page, composed from one mixin per tab.
+    """The Docker Console page, composed from one mixin per tab.
 
     The tab mixins are NOT independent units — they all operate on the same
     ``self`` and rely on shared state/methods defined here (``_client``,
@@ -331,7 +331,7 @@ class DockerManagerPage(
         bar.append(self._pause_btn)
 
         settings = Gtk.Button(icon_name="settings-symbolic")
-        settings.set_tooltip_text("Docker Manager settings")
+        settings.set_tooltip_text("Docker Console settings")
         settings.connect("clicked", lambda _b: self._open_settings())
         bar.append(settings)
 
@@ -444,7 +444,7 @@ class DockerManagerPage(
         self._refresh_visible()
 
     def _open_settings(self) -> None:
-        DockerManagerSettingsDialog(
+        DockerConsoleSettingsDialog(
             self._window(),
             reuse_ssh=self._multiplex_enabled(),
             on_reuse_ssh_changed=self._set_multiplex_enabled,
