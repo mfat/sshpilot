@@ -208,11 +208,13 @@ class DockerManagerPage(Gtk.Box):
         self._containers = []
         for lst, ph, text in (
             (self._containers_list, self._containers_placeholder, "Loading containers…"),
-            (self._stats_list, self._stats_placeholder, "Loading stats…"),
             (self._images_list, self._images_placeholder, "Loading images…"),
         ):
             self._clear_listbox(lst)
             self._set_placeholder_loading(ph, text)
+        self._clear_grid(self._stats_grid)
+        self._stats_spinner.set_visible(True)
+        self._stats_spinner.start()
 
         rc = self.ctx.run_command
 
@@ -558,22 +560,42 @@ class DockerManagerPage(Gtk.Box):
     # ================================================================
     # 3. Stats
     # ================================================================
+    # Columns rendered in the stats grid: (header, stat-keys to read).
+    _STATS_COLUMNS = (
+        ("Name", ("Name", "Container")),
+        ("CPU %", ("CPUPerc", "CPU")),
+        ("Memory", ("MemUsage", "MemUsageLimit")),
+        ("Mem %", ("MemPerc", "Mem")),
+        ("Net I/O", ("NetIO",)),
+        ("Block I/O", ("BlockIO",)),
+    )
+
     def _build_stats_section(self) -> Gtk.Widget:
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        for title in ("Name", "CPU %", "Memory", "Mem %", "Net I/O", "Block I/O"):
-            lbl = Gtk.Label(label=title, xalign=0, hexpand=True)
-            lbl.add_css_class("heading")
-            header.append(lbl)
-        box.append(header)
 
         scroller = Gtk.ScrolledWindow()
         scroller.set_vexpand(True)
-        self._stats_list = Gtk.ListBox()
-        self._stats_placeholder = self._make_loading_placeholder("Loading stats…")
-        self._stats_list.set_placeholder(self._stats_placeholder)
-        scroller.set_child(self._stats_list)
-        box.append(scroller)
+        # A Grid keeps every column the same width across the header and all
+        # rows, so the numbers line up (an HBox-per-row does not).
+        self._stats_grid = Gtk.Grid(column_spacing=18, row_spacing=6)
+        self._stats_grid.set_margin_top(6)
+        self._stats_grid.set_margin_bottom(6)
+        self._stats_grid.set_margin_start(8)
+        self._stats_grid.set_margin_end(8)
+        self._stats_grid.set_hexpand(True)
+        scroller.set_child(self._stats_grid)
+
+        # Spinner overlay while loading (Grid has no placeholder API).
+        overlay = Gtk.Overlay()
+        overlay.set_vexpand(True)
+        overlay.set_child(scroller)
+        self._stats_spinner = Gtk.Spinner()
+        self._stats_spinner.set_size_request(32, 32)
+        self._stats_spinner.set_halign(Gtk.Align.CENTER)
+        self._stats_spinner.set_valign(Gtk.Align.CENTER)
+        self._stats_spinner.set_visible(False)
+        overlay.add_overlay(self._stats_spinner)
+        box.append(overlay)
         return box
 
     def _refresh_stats(self) -> None:
@@ -581,33 +603,32 @@ class DockerManagerPage(Gtk.Box):
         if client is None or self._stats_busy:
             return
         self._stats_busy = True
-        self._set_placeholder_loading(self._stats_placeholder, "Loading stats…")
+        self._stats_spinner.set_visible(True)
+        self._stats_spinner.start()
         self._run_async(client.stats, self._on_stats)
 
     def _on_stats(self, rows: Optional[List[dict]], err: Optional[Exception]) -> None:
         self._stats_busy = False
-        self._clear_listbox(self._stats_list)
+        self._stats_spinner.stop()
+        self._stats_spinner.set_visible(False)
+        self._clear_grid(self._stats_grid)
+        span = len(self._STATS_COLUMNS)
         if err is not None:
-            self._stats_list.append(self._error_row(err))
+            self._stats_grid.attach(self._grid_message(self._error_text(err), error=True), 0, 0, span, 1)
             return
         if not rows:
-            self._set_placeholder_idle(self._stats_placeholder, "No running containers")
+            self._stats_grid.attach(self._grid_message("No running containers"), 0, 0, span, 1)
             return
-        for s in rows:
-            line = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-            line.set_margin_top(4)
-            line.set_margin_bottom(4)
-            line.set_margin_start(8)
-            for value in (
-                _field(s, "Name", "Container"),
-                _field(s, "CPUPerc", "CPU"),
-                _field(s, "MemUsage", "MemUsageLimit"),
-                _field(s, "MemPerc", "Mem"),
-                _field(s, "NetIO"),
-                _field(s, "BlockIO"),
-            ):
-                line.append(Gtk.Label(label=value or "-", xalign=0, hexpand=True))
-            self._stats_list.append(self._listbox_wrap(line))
+        # Header row.
+        for col, (title, _keys) in enumerate(self._STATS_COLUMNS):
+            head = Gtk.Label(label=title, xalign=0, hexpand=True)
+            head.add_css_class("heading")
+            self._stats_grid.attach(head, col, 0, 1, 1)
+        # Data rows — same column index → same column width as the header.
+        for r, s in enumerate(rows, start=1):
+            for col, (_title, keys) in enumerate(self._STATS_COLUMNS):
+                cell = Gtk.Label(label=_field(s, *keys) or "-", xalign=0, hexpand=True)
+                self._stats_grid.attach(cell, col, r, 1, 1)
 
     # ================================================================
     # 4. Images & cleanup
@@ -789,19 +810,39 @@ class DockerManagerPage(Gtk.Box):
             child = nxt
 
     @staticmethod
+    def _clear_grid(grid: Gtk.Grid) -> None:
+        child = grid.get_first_child()
+        while child is not None:
+            nxt = child.get_next_sibling()
+            grid.remove(child)
+            child = nxt
+
+    @staticmethod
     def _listbox_wrap(widget: Gtk.Widget) -> Gtk.Widget:
         row = Gtk.ListBoxRow()
         row.set_activatable(False)
         row.set_child(widget)
         return row
 
-    def _error_row(self, err: Exception) -> Gtk.Widget:
+    @staticmethod
+    def _error_text(err: Exception) -> str:
         msg = str(err) if isinstance(err, DockerError) else f"Error: {err}"
         if DockerClient.is_permission_error(str(err)):
             msg += ("\n\nDocker needs elevated access. Enable the “sudo” toggle "
                     "above (requires passwordless sudo), or add your user to the "
                     "“docker” group on the host.")
-        lbl = Gtk.Label(label=msg, wrap=True, xalign=0)
+        return msg
+
+    @staticmethod
+    def _grid_message(text: str, *, error: bool = False) -> Gtk.Widget:
+        lbl = Gtk.Label(label=text, wrap=True, xalign=0)
+        lbl.add_css_class("error" if error else "dim-label")
+        lbl.set_margin_top(12)
+        lbl.set_margin_bottom(12)
+        return lbl
+
+    def _error_row(self, err: Exception) -> Gtk.Widget:
+        lbl = Gtk.Label(label=self._error_text(err), wrap=True, xalign=0)
         lbl.add_css_class("error")
         lbl.set_margin_top(12)
         lbl.set_margin_bottom(12)
