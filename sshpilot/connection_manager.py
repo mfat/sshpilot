@@ -479,8 +479,13 @@ class Connection:
         """
         return await self.native_connect()
 
-    async def native_connect(self):
-        """Prepare a minimal SSH command using ssh_connection_builder in native mode."""
+    async def native_connect(self, remote_command: Optional[str] = None):
+        """Prepare a minimal SSH command using ssh_connection_builder in native mode.
+
+        ``remote_command``, when given, is appended to the ssh invocation on the
+        CLI (a one-off command to run on the host) instead of opening an
+        interactive login shell — used by ``ctx.open_command_terminal``. It is
+        not persisted to ``~/.ssh/config``."""
         try:
             self._update_identity_agent_state(None)
             # Reset resolved identity cache when preparing native command
@@ -508,7 +513,7 @@ class Connection:
                 command_type='ssh',
                 extra_args=[],
                 port_forwarding_rules=None,
-                remote_command=None,
+                remote_command=remote_command,
                 local_command=None,
                 extra_ssh_config=None,
                 known_hosts_path=known_hosts_path,

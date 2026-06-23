@@ -184,6 +184,13 @@ the authoritative reference; this is the practical map.
   (`~/.ssh/config`, ProxyJump, stored credentials). `ctx.get_effective_ssh_config(nickname)`
   returns the resolved `ssh -G` options. `run_command` blocks — call it from a
   worker thread and marshal results back with `ctx.run_on_ui_thread`.
+- **Streamed/interactive commands (API ≥ 1.6):**
+  `ctx.open_command_terminal(nickname, remote_command, title=None)` opens a new
+  terminal tab that runs `remote_command` on the host — over the same native
+  SSH/auth path, no new transport. Use it for streamed or interactive output
+  `run_command` can't show (e.g. `docker logs -f`, `docker exec -it <c> sh`,
+  `top`). Returns `False` if the connection is unknown / command empty / UI not
+  ready.
 - **Keys (API ≥ 1.5):** `ctx.list_keys()`, `ctx.delete_key(private_path)`
   (only keys inside the app's key dir), `ctx.copy_key_to_host(nickname, public_key_path)`
   (ssh-copy-id via the shared auth path).

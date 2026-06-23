@@ -1,0 +1,747 @@
+"""GTK UI for the Docker Manager plugin.
+
+A single page with a host picker and five sections — Containers, Logs, Stats,
+Images — driven by :class:`DockerClient` over ``ctx.run_command``. Every Docker
+call runs on a worker thread and marshals back with ``ctx.run_on_ui_thread``;
+streamed/interactive output (live logs, exec shell) opens a terminal tab via
+``ctx.open_command_terminal``.
+"""
+
+from __future__ import annotations
+
+import logging
+import threading
+from typing import Any, Callable, List, Optional
+
+import gi
+
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+from gi.repository import GLib, Gtk, Adw, Pango  # noqa: E402
+
+from .client import DockerClient, DockerError  # noqa: E402
+
+logger = logging.getLogger(__name__)
+
+_REFRESH_SECONDS = 3
+
+
+def _field(d: dict, *keys: str, default: str = "") -> str:
+    """First present non-empty value among ``keys`` (Docker/Podman differ)."""
+    for k in keys:
+        v = d.get(k)
+        if isinstance(v, (list, tuple)):
+            v = ", ".join(str(x) for x in v)
+        if v not in (None, ""):
+            return str(v)
+    return default
+
+
+class DockerManagerPage(Gtk.Box):
+    def __init__(self, ctx: Any) -> None:
+        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        self.ctx = ctx
+        self._connections: List[Any] = []
+        self._containers: List[dict] = []
+        self._refresh_source: Optional[int] = None
+        # In-flight guards so the 3s auto-refresh can't pile up overlapping SSH
+        # calls when a host is slow.
+        self._containers_busy = False
+        self._stats_busy = False
+
+        self.set_margin_top(12)
+        self.set_margin_bottom(12)
+        self.set_margin_start(12)
+        self.set_margin_end(12)
+
+        self.append(self._build_host_bar())
+
+        self._stack = Gtk.Stack()
+        self._stack.set_vexpand(True)
+        switcher = Gtk.StackSwitcher(stack=self._stack)
+        switcher.set_halign(Gtk.Align.CENTER)
+        self.append(switcher)
+        self.append(self._stack)
+
+        self._stack.add_titled(self._build_containers_section(), "containers", "Containers")
+        self._stack.add_titled(self._build_logs_section(), "logs", "Logs")
+        self._stack.add_titled(self._build_stats_section(), "stats", "Stats")
+        self._stack.add_titled(self._build_images_section(), "images", "Images")
+
+        self.connect("map", self._on_map)
+        self.connect("unmap", self._on_unmap)
+
+    # ================================================================
+    # infrastructure
+    # ================================================================
+    def _run_async(self, fn: Callable[[], Any], on_done: Callable[[Any, Optional[Exception]], None]) -> None:
+        """Run ``fn`` on a worker thread; deliver ``(result, error)`` on the UI thread."""
+        def worker() -> None:
+            try:
+                result, err = fn(), None
+            except Exception as exc:  # noqa: BLE001 - reported to the UI
+                result, err = None, exc
+            self.ctx.run_on_ui_thread(on_done, result, err)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _current_nickname(self) -> Optional[str]:
+        idx = self._host_combo.get_selected()
+        if 0 <= idx < len(self._connections):
+            return self._connections[idx].nickname
+        return None
+
+    def _runtime_for(self, nickname: str) -> str:
+        return self.ctx.settings.get(f"runtime:{nickname}", "docker") or "docker"
+
+    def _use_sudo_for(self, nickname: str) -> bool:
+        return bool(self.ctx.settings.get(f"sudo:{nickname}", False))
+
+    def _client(self) -> Optional[DockerClient]:
+        nick = self._current_nickname()
+        if not nick:
+            return None
+        return DockerClient(self.ctx.run_command, nick, self._runtime_for(nick),
+                            use_sudo=self._use_sudo_for(nick))
+
+    def _toast(self, message: str) -> None:
+        try:
+            self.ctx.ui.notify(message)
+        except Exception:
+            logger.debug("notify failed: %s", message)
+
+    def _window(self) -> Optional[Gtk.Window]:
+        root = self.get_root()
+        return root if isinstance(root, Gtk.Window) else None
+
+    # ================================================================
+    # host bar
+    # ================================================================
+    def _build_host_bar(self) -> Gtk.Widget:
+        bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        bar.append(Gtk.Label(label="Host:"))
+
+        self._connections = self._list_ssh_connections()
+        names = [f"{c.nickname}" for c in self._connections] or ["(no connections)"]
+        self._host_combo = Gtk.DropDown.new_from_strings(names)
+        self._host_combo.set_hexpand(True)
+        # Restore last-used host.
+        last = self.ctx.settings.get("last_host", None)
+        if last:
+            for i, c in enumerate(self._connections):
+                if c.nickname == last:
+                    self._host_combo.set_selected(i)
+                    break
+        self._host_combo.connect("notify::selected", self._on_host_changed)
+        bar.append(self._host_combo)
+
+        self._sudo_check = Gtk.CheckButton(label="sudo")
+        self._sudo_check.set_tooltip_text(
+            "Run docker with sudo (for users not in the 'docker' group)"
+        )
+        nick0 = self._current_nickname()
+        if nick0:
+            self._sudo_check.set_active(self._use_sudo_for(nick0))
+        self._sudo_check.connect("toggled", self._on_sudo_toggled)
+        bar.append(self._sudo_check)
+
+        refresh = Gtk.Button(icon_name="view-refresh-symbolic")
+        refresh.set_tooltip_text("Refresh")
+        refresh.connect("clicked", lambda _b: self._refresh_visible())
+        bar.append(refresh)
+        return bar
+
+    def _on_sudo_toggled(self, check: Gtk.CheckButton) -> None:
+        nick = self._current_nickname()
+        if nick:
+            self.ctx.settings.set(f"sudo:{nick}", bool(check.get_active()))
+        self._refresh_visible()
+
+    def _list_ssh_connections(self) -> List[Any]:
+        try:
+            conns = self.ctx.list_connections()
+        except Exception:
+            conns = []
+        return [c for c in conns if getattr(c, "protocol", "ssh") in ("ssh", "", None)]
+
+    def _on_host_changed(self, *_a) -> None:
+        nick = self._current_nickname()
+        if not nick:
+            return
+        self.ctx.settings.set("last_host", nick)
+        self._sudo_check.set_active(self._use_sudo_for(nick))
+        rc = self.ctx.run_command
+
+        # Detect docker vs podman, then probe access: if a plain `ps` is denied by
+        # the daemon socket but `sudo -n ps` works, switch this host to sudo.
+        def probe():
+            runtime = DockerClient(rc, nick).detect_runtime() or "docker"
+            plain = DockerClient(rc, nick, runtime, use_sudo=False).ping()
+            if getattr(plain, "exit_code", 0) == 0:
+                return runtime, False, None
+            text = (getattr(plain, "stderr", "") or "") + (getattr(plain, "stdout", "") or "")
+            if DockerClient.is_permission_error(text):
+                sudo = DockerClient(rc, nick, runtime, use_sudo=True).ping()
+                if getattr(sudo, "exit_code", 1) == 0:
+                    return runtime, True, None
+                return runtime, False, "denied"  # sudo needs a password
+            return runtime, False, None  # other error — let the refresh surface it
+
+        def done(result, _err: Optional[Exception]) -> None:
+            if result:
+                runtime, use_sudo, status = result
+                self.ctx.settings.set(f"runtime:{nick}", runtime)
+                if use_sudo:
+                    self.ctx.settings.set(f"sudo:{nick}", True)
+                    self._sudo_check.set_active(True)
+                elif status == "denied":
+                    self._toast("Docker access denied. Add your user to the "
+                                "'docker' group, or enable passwordless sudo.")
+            self._refresh_visible()
+
+        self._run_async(probe, done)
+
+    def select_host(self, nickname: str) -> None:
+        """Select ``nickname`` in the host picker (used by the connection
+        context-menu action). Rebuilds the list if the host isn't present yet."""
+        def index_of(nick: str) -> int:
+            return next((i for i, c in enumerate(self._connections)
+                         if c.nickname == nick), -1)
+
+        idx = index_of(nickname)
+        if idx < 0:
+            # The connection list may predate this host — rebuild and retry.
+            self._connections = self._list_ssh_connections()
+            self._host_combo.set_model(
+                Gtk.StringList.new([c.nickname for c in self._connections] or ["(no connections)"])
+            )
+            idx = index_of(nickname)
+        if idx < 0:
+            return
+        if self._host_combo.get_selected() == idx:
+            self._on_host_changed()  # already selected → notify won't fire
+        else:
+            self._host_combo.set_selected(idx)  # fires notify::selected → _on_host_changed
+
+    # ================================================================
+    # auto-refresh lifecycle
+    # ================================================================
+    def _on_map(self, *_a) -> None:
+        self._refresh_visible()
+        if self._refresh_source is None:
+            self._refresh_source = GLib.timeout_add_seconds(_REFRESH_SECONDS, self._tick)
+
+    def _on_unmap(self, *_a) -> None:
+        if self._refresh_source is not None:
+            GLib.source_remove(self._refresh_source)
+            self._refresh_source = None
+
+    def _tick(self) -> bool:
+        # Only auto-refresh the live views; logs/images are manual.
+        name = self._stack.get_visible_child_name()
+        if name == "containers":
+            self._refresh_containers()
+        elif name == "stats":
+            self._refresh_stats()
+        return True  # keep ticking
+
+    def _refresh_visible(self) -> None:
+        name = self._stack.get_visible_child_name()
+        if name == "containers":
+            self._refresh_containers()
+        elif name == "stats":
+            self._refresh_stats()
+        elif name == "images":
+            self._refresh_images()
+        elif name == "logs":
+            self._reload_logs()
+
+    # ================================================================
+    # 1. Containers
+    # ================================================================
+    def _build_containers_section(self) -> Gtk.Widget:
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+
+        toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self._show_all_check = Gtk.CheckButton(label="Show stopped")
+        self._show_all_check.set_active(True)
+        self._show_all_check.connect("toggled", lambda _c: self._refresh_containers())
+        toolbar.append(self._show_all_check)
+        box.append(toolbar)
+
+        scroller = Gtk.ScrolledWindow()
+        scroller.set_vexpand(True)
+        self._containers_list = Gtk.ListBox()
+        self._containers_list.add_css_class("boxed-list")
+        scroller.set_child(self._containers_list)
+        box.append(scroller)
+        return box
+
+    def _refresh_containers(self) -> None:
+        client = self._client()
+        if client is None or self._containers_busy:
+            return
+        self._containers_busy = True
+        show_all = self._show_all_check.get_active()
+        self._run_async(lambda: client.ps(all=show_all), self._on_containers)
+
+    def _on_containers(self, rows: Optional[List[dict]], err: Optional[Exception]) -> None:
+        self._containers_busy = False
+        self._clear_listbox(self._containers_list)
+        if err is not None:
+            self._containers_list.append(self._error_row(err))
+            return
+        self._containers = rows or []
+        if not self._containers:
+            self._containers_list.append(self._placeholder_row("No containers"))
+        for c in self._containers:
+            self._containers_list.append(self._container_row(c))
+        self._refresh_logs_targets()
+
+    def _container_row(self, c: dict) -> Gtk.Widget:
+        cid = _field(c, "ID", "Id", "ContainerID")
+        name = _field(c, "Names", "Name", default=cid[:12])
+        image = _field(c, "Image")
+        status = _field(c, "Status", "State")
+        ports = _field(c, "Ports")
+        state = _field(c, "State", "Status").lower()
+        running = "up" in state or "running" in state
+        paused = "paused" in state
+
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        row.set_margin_top(6)
+        row.set_margin_bottom(6)
+        row.set_margin_start(8)
+        row.set_margin_end(8)
+
+        dot = Gtk.Image.new_from_icon_name(
+            "media-record-symbolic" if running else "media-playback-stop-symbolic"
+        )
+        dot.add_css_class("success" if running else ("warning" if paused else "dim-label"))
+        row.append(dot)
+
+        info = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True)
+        title = Gtk.Label(label=name, xalign=0)
+        title.add_css_class("heading")
+        info.append(title)
+        sub = Gtk.Label(xalign=0)
+        sub.add_css_class("dim-label")
+        sub.add_css_class("caption")
+        sub.set_text(" · ".join(p for p in (image, status, ports) if p))
+        sub.set_ellipsize(Pango.EllipsizeMode.END)
+        info.append(sub)
+        row.append(info)
+
+        def act(icon: str, tip: str, cb: Callable[[], None], *, sensitive: bool = True) -> None:
+            btn = Gtk.Button(icon_name=icon)
+            btn.set_tooltip_text(tip)
+            btn.add_css_class("flat")
+            btn.set_sensitive(sensitive)
+            btn.connect("clicked", lambda _b: cb())
+            row.append(btn)
+
+        if running or paused:
+            act("media-playback-stop-symbolic", "Stop", lambda: self._lifecycle("stop", cid, name))
+            act("view-refresh-symbolic", "Restart", lambda: self._lifecycle("restart", cid, name))
+            act("process-stop-symbolic", "Kill", lambda: self._lifecycle("kill", cid, name))
+            act("utilities-terminal-symbolic", "Open shell", lambda: self._open_shell(cid, name))
+            act("view-paged-symbolic", "Follow logs", lambda: self._follow_logs(cid, name))
+        else:
+            act("media-playback-start-symbolic", "Start", lambda: self._lifecycle("start", cid, name))
+            act("view-paged-symbolic", "Logs", lambda: self._follow_logs(cid, name))
+        act("user-trash-symbolic", "Remove", lambda: self._remove_container(cid, name))
+        return self._listbox_wrap(row)
+
+    def _lifecycle(self, action: str, cid: str, name: str) -> None:
+        client = self._client()
+        if client is None:
+            return
+        self._run_async(
+            lambda: client.lifecycle(action, cid),
+            lambda res, err: self._on_action(f"{action} {name}", res, err, self._refresh_containers),
+        )
+
+    def _remove_container(self, cid: str, name: str) -> None:
+        client = self._client()
+        if client is None:
+            return
+
+        def do(force: bool) -> None:
+            self._run_async(
+                lambda: client.lifecycle("rm", cid, force=force),
+                lambda res, err: self._on_action(f"remove {name}", res, err, self._refresh_containers),
+            )
+
+        self._confirm(
+            heading="Remove container?",
+            body=f"This will remove “{name}”.",
+            destructive_label="Remove",
+            on_confirm=do,
+            force_label="Force (-f) — remove even if running",
+        )
+
+    def _open_shell(self, cid: str, name: str) -> None:
+        client = self._client()
+        nick = self._current_nickname()
+        if client is None or not nick:
+            return
+        ok = self.ctx.open_command_terminal(
+            nick, client.exec_shell_command(cid), title=f"sh: {name}"
+        )
+        if not ok:
+            self._toast("Could not open shell")
+
+    def _follow_logs(self, cid: str, name: str) -> None:
+        client = self._client()
+        nick = self._current_nickname()
+        if client is None or not nick:
+            return
+        cmd = client.logs_follow_command(
+            cid, tail=int(self._tail_spin.get_value()),
+            timestamps=self._ts_switch.get_active(),
+        )
+        ok = self.ctx.open_command_terminal(nick, cmd, title=f"logs: {name}")
+        if not ok:
+            self._toast("Could not open logs")
+
+    # ================================================================
+    # 2. Logs (in-page snapshot + controls)
+    # ================================================================
+    def _build_logs_section(self) -> Gtk.Widget:
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+
+        toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        toolbar.append(Gtk.Label(label="Container:"))
+        self._logs_combo = Gtk.DropDown.new_from_strings(["(refresh containers)"])
+        self._logs_combo.set_hexpand(True)
+        toolbar.append(self._logs_combo)
+
+        toolbar.append(Gtk.Label(label="Tail:"))
+        self._tail_spin = Gtk.SpinButton.new_with_range(10, 5000, 50)
+        self._tail_spin.set_value(100)
+        toolbar.append(self._tail_spin)
+
+        self._ts_switch = Gtk.Switch()
+        self._ts_switch.set_tooltip_text("Show timestamps (-t)")
+        self._ts_switch.set_valign(Gtk.Align.CENTER)
+        toolbar.append(Gtk.Label(label="Timestamps"))
+        toolbar.append(self._ts_switch)
+        box.append(toolbar)
+
+        actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        load = Gtk.Button(label="Load")
+        load.connect("clicked", lambda _b: self._reload_logs())
+        actions.append(load)
+        follow = Gtk.Button(label="Follow in terminal")
+        follow.connect("clicked", lambda _b: self._follow_logs_selected())
+        actions.append(follow)
+        clear = Gtk.Button(label="Clear")
+        clear.connect("clicked", lambda _b: self._logs_buffer.set_text("", 0))
+        actions.append(clear)
+        box.append(actions)
+
+        scroller = Gtk.ScrolledWindow()
+        scroller.set_vexpand(True)
+        self._logs_view = Gtk.TextView()
+        self._logs_view.set_editable(False)
+        self._logs_view.set_monospace(True)
+        self._logs_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+        self._logs_buffer = self._logs_view.get_buffer()
+        scroller.set_child(self._logs_view)
+        box.append(scroller)
+        return box
+
+    def _refresh_logs_targets(self) -> None:
+        names = [_field(c, "Names", "Name", "ID", "Id") for c in self._containers]
+        model = Gtk.StringList.new(names or ["(no containers)"])
+        self._logs_combo.set_model(model)
+
+    def _selected_container_id(self) -> Optional[str]:
+        idx = self._logs_combo.get_selected()
+        if 0 <= idx < len(self._containers):
+            return _field(self._containers[idx], "ID", "Id", "ContainerID")
+        return None
+
+    def _selected_container_name(self) -> str:
+        idx = self._logs_combo.get_selected()
+        if 0 <= idx < len(self._containers):
+            return _field(self._containers[idx], "Names", "Name", default="container")
+        return "container"
+
+    def _reload_logs(self) -> None:
+        client = self._client()
+        cid = self._selected_container_id()
+        if client is None or not cid:
+            return
+        tail = int(self._tail_spin.get_value())
+        ts = self._ts_switch.get_active()
+        self._run_async(
+            lambda: client.logs_snapshot(cid, tail=tail, timestamps=ts),
+            self._on_logs,
+        )
+
+    def _on_logs(self, text: Optional[str], err: Optional[Exception]) -> None:
+        if err is not None:
+            self._logs_buffer.set_text(f"Error: {err}", -1)
+            return
+        self._logs_buffer.set_text(text or "(no output)", -1)
+
+    def _follow_logs_selected(self) -> None:
+        cid = self._selected_container_id()
+        if cid:
+            self._follow_logs(cid, self._selected_container_name())
+
+    # ================================================================
+    # 3. Stats
+    # ================================================================
+    def _build_stats_section(self) -> Gtk.Widget:
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        for title in ("Name", "CPU %", "Memory", "Mem %", "Net I/O", "Block I/O"):
+            lbl = Gtk.Label(label=title, xalign=0, hexpand=True)
+            lbl.add_css_class("heading")
+            header.append(lbl)
+        box.append(header)
+
+        scroller = Gtk.ScrolledWindow()
+        scroller.set_vexpand(True)
+        self._stats_list = Gtk.ListBox()
+        scroller.set_child(self._stats_list)
+        box.append(scroller)
+        return box
+
+    def _refresh_stats(self) -> None:
+        client = self._client()
+        if client is None or self._stats_busy:
+            return
+        self._stats_busy = True
+        self._run_async(client.stats, self._on_stats)
+
+    def _on_stats(self, rows: Optional[List[dict]], err: Optional[Exception]) -> None:
+        self._stats_busy = False
+        self._clear_listbox(self._stats_list)
+        if err is not None:
+            self._stats_list.append(self._error_row(err))
+            return
+        if not rows:
+            self._stats_list.append(self._placeholder_row("No running containers"))
+            return
+        for s in rows:
+            line = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            line.set_margin_top(4)
+            line.set_margin_bottom(4)
+            line.set_margin_start(8)
+            for value in (
+                _field(s, "Name", "Container"),
+                _field(s, "CPUPerc", "CPU"),
+                _field(s, "MemUsage", "MemUsageLimit"),
+                _field(s, "MemPerc", "Mem"),
+                _field(s, "NetIO"),
+                _field(s, "BlockIO"),
+            ):
+                line.append(Gtk.Label(label=value or "-", xalign=0, hexpand=True))
+            self._stats_list.append(self._listbox_wrap(line))
+
+    # ================================================================
+    # 4. Images & cleanup
+    # ================================================================
+    def _build_images_section(self) -> Gtk.Widget:
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+
+        toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        prune = Gtk.Button(label="System prune")
+        prune.set_tooltip_text("docker system prune -f (dangling images, stopped containers, unused networks)")
+        prune.add_css_class("destructive-action")
+        prune.connect("clicked", lambda _b: self._system_prune())
+        toolbar.append(prune)
+        vprune = Gtk.Button(label="Prune volumes")
+        vprune.add_css_class("destructive-action")
+        vprune.connect("clicked", lambda _b: self._volume_prune())
+        toolbar.append(vprune)
+        box.append(toolbar)
+
+        scroller = Gtk.ScrolledWindow()
+        scroller.set_vexpand(True)
+        self._images_list = Gtk.ListBox()
+        self._images_list.add_css_class("boxed-list")
+        scroller.set_child(self._images_list)
+        box.append(scroller)
+        return box
+
+    def _refresh_images(self) -> None:
+        client = self._client()
+        if client is None:
+            return
+        self._run_async(client.images, self._on_images)
+
+    def _on_images(self, rows: Optional[List[dict]], err: Optional[Exception]) -> None:
+        self._clear_listbox(self._images_list)
+        if err is not None:
+            self._images_list.append(self._error_row(err))
+            return
+        if not rows:
+            self._images_list.append(self._placeholder_row("No images"))
+            return
+        for img in rows:
+            iid = _field(img, "ID", "Id")
+            repo = _field(img, "Repository", default="<none>")
+            tag = _field(img, "Tag", default="<none>")
+            size = _field(img, "Size")
+
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+            row.set_margin_top(6)
+            row.set_margin_bottom(6)
+            row.set_margin_start(8)
+            row.set_margin_end(8)
+            info = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True)
+            t = Gtk.Label(label=f"{repo}:{tag}", xalign=0)
+            t.add_css_class("heading")
+            info.append(t)
+            sub = Gtk.Label(label=" · ".join(p for p in (iid[:12], size) if p), xalign=0)
+            sub.add_css_class("dim-label")
+            sub.add_css_class("caption")
+            info.append(sub)
+            row.append(info)
+
+            rm = Gtk.Button(icon_name="user-trash-symbolic")
+            rm.set_tooltip_text("Remove image")
+            rm.add_css_class("flat")
+            rm.connect("clicked", lambda _b, i=iid, r=f"{repo}:{tag}": self._remove_image(i, r))
+            row.append(rm)
+            self._images_list.append(self._listbox_wrap(row))
+
+    def _remove_image(self, image_id: str, label: str) -> None:
+        client = self._client()
+        if client is None:
+            return
+
+        def do(force: bool) -> None:
+            self._run_async(
+                lambda: client.remove_image(image_id, force=force),
+                lambda res, err: self._on_action(f"remove {label}", res, err, self._refresh_images),
+            )
+
+        self._confirm(
+            heading="Remove image?",
+            body=f"This will remove “{label}”.",
+            destructive_label="Remove",
+            on_confirm=do,
+            force_label="Force (-f)",
+        )
+
+    def _system_prune(self) -> None:
+        client = self._client()
+        if client is None:
+            return
+
+        def do(_force: bool) -> None:
+            self._run_async(
+                client.system_prune,
+                lambda res, err: self._on_prune(res, err),
+            )
+
+        self._confirm(
+            heading="Run system prune?",
+            body="Removes all dangling images, stopped containers, and unused networks.",
+            destructive_label="Prune",
+            on_confirm=do,
+        )
+
+    def _volume_prune(self) -> None:
+        client = self._client()
+        if client is None:
+            return
+
+        def do(_force: bool) -> None:
+            self._run_async(
+                client.volume_prune,
+                lambda res, err: self._on_prune(res, err),
+            )
+
+        self._confirm(
+            heading="Prune unused volumes?",
+            body="Removes all volumes not used by at least one container.",
+            destructive_label="Prune",
+            on_confirm=do,
+        )
+
+    def _on_prune(self, res: Any, err: Optional[Exception]) -> None:
+        if err is not None or (res is not None and getattr(res, "exit_code", 0) != 0):
+            self._toast(f"Prune failed: {err or getattr(res, 'stderr', '')}")
+            return
+        out = (getattr(res, "stdout", "") or "").strip()
+        # Surface the "Total reclaimed space" line if present.
+        reclaimed = next((ln for ln in out.splitlines() if "reclaimed" in ln.lower()), "")
+        self._toast(reclaimed or "Prune complete")
+        self._refresh_images()
+
+    # ================================================================
+    # shared helpers
+    # ================================================================
+    def _on_action(self, label: str, res: Any, err: Optional[Exception],
+                   refresh: Callable[[], None]) -> None:
+        if err is not None or (res is not None and getattr(res, "exit_code", 0) != 0):
+            detail = err or (getattr(res, "stderr", "") or "").strip()
+            self._toast(f"{label} failed: {detail}")
+        else:
+            self._toast(f"{label} done")
+        refresh()
+
+    def _confirm(self, *, heading: str, body: str, destructive_label: str,
+                 on_confirm: Callable[[bool], None],
+                 force_label: Optional[str] = None) -> None:
+        dialog = Adw.MessageDialog(
+            transient_for=self._window(), modal=True, heading=heading, body=body
+        )
+        force_check: Optional[Gtk.CheckButton] = None
+        if force_label:
+            force_check = Gtk.CheckButton(label=force_label)
+            dialog.set_extra_child(force_check)
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("ok", destructive_label)
+        dialog.set_response_appearance("ok", Adw.ResponseAppearance.DESTRUCTIVE)
+        dialog.set_default_response("cancel")
+        dialog.set_close_response("cancel")
+
+        def on_response(_d: Any, response: str) -> None:
+            if response == "ok":
+                on_confirm(bool(force_check.get_active()) if force_check else False)
+
+        dialog.connect("response", on_response)
+        dialog.present()
+
+    @staticmethod
+    def _clear_listbox(listbox: Gtk.ListBox) -> None:
+        child = listbox.get_first_child()
+        while child is not None:
+            nxt = child.get_next_sibling()
+            listbox.remove(child)
+            child = nxt
+
+    @staticmethod
+    def _listbox_wrap(widget: Gtk.Widget) -> Gtk.Widget:
+        row = Gtk.ListBoxRow()
+        row.set_activatable(False)
+        row.set_child(widget)
+        return row
+
+    def _placeholder_row(self, text: str) -> Gtk.Widget:
+        lbl = Gtk.Label(label=text)
+        lbl.add_css_class("dim-label")
+        lbl.set_margin_top(12)
+        lbl.set_margin_bottom(12)
+        return self._listbox_wrap(lbl)
+
+    def _error_row(self, err: Exception) -> Gtk.Widget:
+        msg = str(err) if isinstance(err, DockerError) else f"Error: {err}"
+        if DockerClient.is_permission_error(str(err)):
+            msg += ("\n\nDocker needs elevated access. Enable the “sudo” toggle "
+                    "above (requires passwordless sudo), or add your user to the "
+                    "“docker” group on the host.")
+        lbl = Gtk.Label(label=msg, wrap=True, xalign=0)
+        lbl.add_css_class("error")
+        lbl.set_margin_top(12)
+        lbl.set_margin_bottom(12)
+        lbl.set_margin_start(8)
+        lbl.set_margin_end(8)
+        return self._listbox_wrap(lbl)

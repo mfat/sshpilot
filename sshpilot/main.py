@@ -347,6 +347,7 @@ class SshPilotApplication(Adw.Application):
                         if host is not None:
                             host.events.unsubscribe_plugin(pid)
                             host.ui.remove_plugin_pages(pid)
+                            host.ui.remove_plugin_actions(pid)
                     except Exception:
                         logger.exception("Plugin %r host unwind failed", pid)
                     try:

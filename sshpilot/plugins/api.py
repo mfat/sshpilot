@@ -34,7 +34,14 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 #      ctx.list_keys/ctx.delete_key, terminal/session access
 #      (ctx.list_sessions/ctx.read_terminal/ctx.send_terminal), and
 #      self-contained ctx.data_dir/ctx.files/ctx.http helpers.
-API_VERSION: Tuple[int, int] = (1, 5)
+# 1.6: ctx.open_command_terminal(nickname, remote_command, title=) — open a new
+#      terminal tab running a one-off command on a connection's host, over the
+#      single native SSH/auth path (no new transport). For streamed output such
+#      as `docker logs -f`, interactive `docker exec -it`, or `top`.
+# 1.7: ctx.ui.register_connection_action(action_id, label, icon_name, callback)
+#      — contribute an item to the connection-list right-click menu; callback
+#      receives the connection nickname.
+API_VERSION: Tuple[int, int] = (1, 7)
 
 # Stable event names and event payload types live in host.py; re-exported here
 # so plugins import everything from sshpilot.plugins.api. (host.py imports
@@ -199,6 +206,19 @@ class _UiFacade:
         """Show a transient in-app toast. Valid after ``app_started``;
         earlier calls are queued."""
         self._ui.notify(message, timeout)
+
+    def register_connection_action(self, action_id: str, label: str,
+                                   icon_name: str,
+                                   callback: Callable[[str], None]) -> None:
+        """Add an item to the connection-list right-click menu (API >= 1.7).
+
+        ``callback`` is invoked with the right-clicked connection's nickname.
+        Safe to call from ``activate``; the item appears for SSH connections
+        once the window is ready. Use it to open a plugin page targeting that
+        host (e.g. ``ctx.ui.open_page(...)`` then point the page at the host)."""
+        register = getattr(self._ui, "register_connection_action", None)
+        if callable(register):
+            register(action_id, label, icon_name, callback, plugin_id=self._plugin_id)
 
 
 class _SecretStore:
@@ -457,6 +477,24 @@ class PluginContext:
         Returns False if unknown or the UI isn't ready. Valid after
         ``app_started``."""
         return self._host.open_connection(nickname) if self._host is not None else False
+
+    def open_command_terminal(self, nickname: str, remote_command: str,
+                              *, title: Optional[str] = None) -> bool:
+        """Open a new terminal tab that runs ``remote_command`` on the host of
+        the connection ``nickname`` (API >= 1.6).
+
+        The command runs over the app's single native SSH path (the same
+        ``~/.ssh/config`` / ProxyJump / stored-credential handling as a normal
+        session) — no new transport is introduced. Use this for streamed or
+        interactive output that ``run_command`` (one-shot, captured) cannot
+        show, e.g. ``docker logs -f``, ``docker exec -it <c> sh``, or live
+        ``docker stats``. ``title`` overrides the tab title.
+
+        Returns False if the connection is unknown, the command is empty, or the
+        UI isn't ready. Valid after ``app_started``."""
+        if self._host is None:
+            return False
+        return self._host.open_command_terminal(nickname, remote_command, title=title)
 
     # --- groups -------------------------------------------------------
     def create_group(self, name: str, color: Optional[str] = None) -> Optional[str]:

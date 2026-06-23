@@ -1,0 +1,13 @@
+{
+  "id": "docker-manager",
+  "name": "Docker Manager",
+  "homepage": "https://github.com/mfat/sshpilot",
+  "api_version": 1,
+  "version": "1.0.0",
+  "builtin": true,
+  "permissions": [
+    "process",
+    "ui",
+    "connections"
+  ]
+}

@@ -52,8 +52,9 @@ a local-daemon, event-stream-heavy app — not ours.
   "api_version": 1, "version": "1.0.0", "builtin": true,
   "permissions": ["process", "ui", "connections"]}`.
 - **API used:** `ctx.ui.register_page/open_page/notify`, `ctx.run_command`,
-  `ctx.list_connections`, `ctx.run_on_ui_thread`, `ctx.settings`,
-  `ctx.open_connection` (exec fallback). Requires **API ≥ 1.5**.
+  `ctx.open_command_terminal` (new — see Streaming), `ctx.list_connections`,
+  `ctx.run_on_ui_thread`, `ctx.settings`. Requires **API ≥ 1.6** (this plan adds
+  `open_command_terminal`, bumping the minor from the current `(1, 5)`).
 - **Entry:** `activate(ctx)` registers one page (icon e.g. `package-x-generic`),
   caches `ctx`. All host calls happen lazily from the page.
 
@@ -119,28 +120,57 @@ the active session's host) + a `Gtk.Stack`/`Adw.ViewStack` with tabs:
   command output in a toast (`ctx.ui.notify`).
 - (Volumes: `volume ls` + `volume prune -f` as a small sub-section, same pattern.)
 
-## Streaming (`logs -f`, interactive `exec -it`, live `stats`) — the one gap
+## Streaming (`logs -f`, interactive `exec -it`, live `stats`) — DECIDED
 The plugin API can run blocking commands (`run_command`) and open a **saved**
 connection's terminal (`open_connection`), but there is **no API to open a new
 PTY terminal tab running an arbitrary remote command**. Three of the requested
-behaviours are genuinely interactive. Two ways forward:
+behaviours are genuinely interactive.
 
-- **Recommended (v1, no core change):** ship logs as **tail+poll snapshots** and
-  stats as **`--no-stream` poll** (both already feel "live" at a 2–3 s cadence).
-  For **Exec**, reuse the existing `docker_protocol` terminal seam: build a
-  transient docker-protocol spawn for the chosen container and open it as a tab.
-  This covers all five features with zero core-code changes.
-- **Best UX (v1.1, one small core addition):** add a thin host method
-  `open_command_terminal(nickname, remote_command, title)` to the plugin host +
-  window that opens a terminal tab whose prepared command is
-  `ssh -F <config> <host> <remote_command>` — reusing the existing native command
-  builder and the terminal's "consume prepared command" seam (no new SSH/auth
-  path, per CLAUDE.md). Then `logs -f`, `exec -it … bash||sh`, and live `stats`
-  become real streamed terminals. This is the only change that touches core code;
-  everything else lives entirely in the plugin.
+**Chosen approach (true streaming):** add one thin host method —
 
-Decision to confirm with maintainer: ship v1 (snapshot/poll + protocol-reuse
-exec) first, then add `open_command_terminal` for true streaming.
+```
+ctx.open_command_terminal(nickname, remote_command, *, title=None) -> bool
+```
+
+— to the plugin API (`api.py`), the plugin host (`plugins/host.py`), and the
+window. It opens a new terminal tab whose **prepared command** is
+`ssh -F <config> <host> <remote_command>`, built with the **existing native
+command builder** (`build_ssh_connection` / `build_native_command`) and handed to
+the terminal's existing "consume a prepared command" seam. **No new SSH/auth path
+is introduced** — it reuses the single connection path per CLAUDE.md (same
+`~/.ssh/config`, ProxyJump, keyring/sshpass). This is the only core-code change;
+everything else is contained in the plugin.
+
+With this hook:
+- **Live logs:** `open_command_terminal(host, "docker logs -f --tail=N [-t] <cid>", title="logs: <name>")`.
+- **Exec shell:** `open_command_terminal(host, "docker exec -it <cid> /bin/bash || docker exec -it <cid> /bin/sh", title="sh: <name>")`.
+- **Live stats (optional):** a streamed `docker stats` tab, in addition to the
+  in-page `--no-stream` polled table.
+
+The in-page snapshot/poll views (tail logs, `--no-stream` stats) are still kept as
+the lightweight default; the streamed terminals are opened on demand from
+buttons ("Follow logs", "Open shell", "Live stats").
+
+### `open_command_terminal` — implementation notes (core hook)
+- **`api.py`:** add the public method on `PluginContext` delegating to
+  `self._host.open_command_terminal(...)` (mirror `open_connection`); bump
+  `API_VERSION` minor to `(1, 6)` and document it in `docs/plugins/writing-plugins.md`.
+- **`plugins/host.py`:** resolve the connection by nickname, then open a terminal
+  tab on the main window passing the remote command through to the native
+  builder — reuse whatever path `open_connection` already uses to create a
+  terminal tab, but with an explicit `remote_command` override instead of the
+  connection's default. Must run on the UI thread / after `app_started`.
+- **window/terminal:** the terminal already accepts a prepared command; the only
+  addition is plumbing an optional `remote_command` so the docker command is what
+  runs on the host (instead of an interactive login shell). Per-host SSH settings
+  still come from `~/.ssh/config`, not CLI flags.
+
+## Host target — DECIDED: host picker
+A **host-picker dropdown** at the top of the page, populated from
+`ctx.list_connections()` and defaulting to the active session's host (fall back to
+the first connection). Explicit and flexible; the chosen nickname is the
+`nickname` argument to every `run_command` / `open_command_terminal` call and is
+remembered in `ctx.settings`.
 
 ## Threading & safety
 - Never call `run_command` on the GTK thread. Each action: spawn a short-lived

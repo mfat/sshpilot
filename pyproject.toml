@@ -47,6 +47,7 @@ exclude = ["packaging*", "screenshots*", "sshpilot.plugins.examples*"]
 "sshpilot.plugins.builtin.docker_protocol" = ["plugin.json"]
 "sshpilot.plugins.builtin.kubernetes_protocol" = ["plugin.json"]
 "sshpilot.plugins.builtin.mosh_protocol" = ["plugin.json"]
+"sshpilot.plugins.builtin.docker_manager" = ["plugin.json"]
 
 [project.urls]
 Homepage = "https://github.com/mfat/sshpilot"
