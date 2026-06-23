@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 class WelcomePage(Gtk.Overlay):
-    """Welcome page shown when no tabs are open."""
+    """Start page shown in the pinned Start tab."""
 
 
 
