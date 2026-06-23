@@ -1765,16 +1765,16 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         """Show/hide the toggleable header-bar buttons per preferences
         (Settings ▸ Interface ▸ Header Bar)."""
         mapping = (
-            ('split_view_button', 'ui.headerbar_show_split_view'),
-            ('_cmd_blocks_toggle_btn', 'ui.headerbar_show_commands'),
-            ('_headerbar_local_terminal_button', 'ui.headerbar_show_local_terminal'),
+            ('split_view_button', 'ui.headerbar_show_split_view', False),
+            ('_cmd_blocks_toggle_btn', 'ui.headerbar_show_commands', True),
+            ('_headerbar_local_terminal_button', 'ui.headerbar_show_local_terminal', True),
         )
-        for attr, key in mapping:
+        for attr, key, default in mapping:
             btn = getattr(self, attr, None)
             if btn is None:
                 continue
             try:
-                btn.set_visible(bool(self.config.get_setting(key, True)))
+                btn.set_visible(bool(self.config.get_setting(key, default)))
             except Exception:
                 logger.debug("Failed to apply header-bar button visibility for %s", attr, exc_info=True)
 

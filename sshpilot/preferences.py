@@ -1497,11 +1497,11 @@ class PreferencesWindow(Adw.Window):
             # Header bar button visibility
             headerbar_group = Adw.PreferencesGroup(title="Header Bar Buttons")
 
-            def _add_headerbar_switch(title, subtitle, key):
+            def _add_headerbar_switch(title, subtitle, key, default=True):
                 row = Adw.SwitchRow()
                 row.set_title(title)
                 row.set_subtitle(subtitle)
-                row.set_active(bool(self.config.get_setting(key, True)))
+                row.set_active(bool(self.config.get_setting(key, default)))
 
                 def _on_toggled(r, _p, _k=key):
                     self.config.set_setting(_k, bool(r.get_active()))
@@ -1515,6 +1515,7 @@ class PreferencesWindow(Adw.Window):
                 "Split View Button",
                 "Show the split-view button (the grid icon that starts a split view)",
                 'ui.headerbar_show_split_view',
+                default=False,
             )
             _add_headerbar_switch(
                 "Commands Button",

@@ -188,7 +188,7 @@ class Config(GObject.Object):
                 'sidebar_hide_on_terminal_open': False,  # incl. local terminals
                 'sidebar_show_when_no_tabs': False,
                 # Header-bar button visibility (Settings ▸ Interface ▸ Header Bar)
-                'headerbar_show_split_view': True,
+                'headerbar_show_split_view': False,
                 'headerbar_show_commands': True,
                 'headerbar_show_local_terminal': True,
             },
