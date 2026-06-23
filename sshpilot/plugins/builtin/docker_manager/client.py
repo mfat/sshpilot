@@ -14,9 +14,12 @@ fake (no Docker, no SSH needed).
 from __future__ import annotations
 
 import json
+import logging
 import re
 import shlex
-from typing import Any, Callable, List, Optional
+from typing import Any, Callable, List, Optional, Union
+
+logger = logging.getLogger(__name__)
 
 # run_command(nickname, command, *, timeout=...) -> object with
 # .exit_code / .stdout / .stderr (the app's CommandResult).
@@ -88,8 +91,10 @@ class DockerClient:
                 data = json.loads(text)
                 return [d for d in data if isinstance(d, dict)]
             except json.JSONDecodeError:
-                pass
+                logger.debug("docker output looked like a JSON array but didn't "
+                             "parse; falling back to line-by-line")
         out: List[dict] = []
+        skipped = 0
         for line in text.splitlines():
             line = line.strip()
             if not line:
@@ -97,9 +102,13 @@ class DockerClient:
             try:
                 obj = json.loads(line)
             except json.JSONDecodeError:
+                skipped += 1
+                logger.debug("skipping unparseable docker output line: %.200r", line)
                 continue
             if isinstance(obj, dict):
                 out.append(obj)
+        if skipped:
+            logger.debug("%d docker output line(s) failed to parse", skipped)
         return out
 
     # -- runtime detection -------------------------------------------
@@ -132,9 +141,24 @@ class DockerClient:
     def volumes(self) -> List[dict]:
         return self._exec_json("volume ls --format '{{json .}}'")
 
+    def volume_inspect(self, name: str) -> dict:
+        rows = self._exec_json(f"volume inspect {shlex.quote(name)} --format '{{{{json .}}}}'")
+        return rows[0] if rows else {}
+
+    def remove_volume(self, name: str, *, force: bool = False) -> Any:
+        flag = " -f" if force else ""
+        return self._exec(f"volume rm{flag} {shlex.quote(name)}")
+
     def networks(self) -> List[dict]:
         """Available networks: ``[{Name, Driver, ...}, ...]``."""
         return self._exec_json("network ls --format '{{json .}}'")
+
+    def network_inspect(self, name: str) -> dict:
+        rows = self._exec_json(f"network inspect {shlex.quote(name)} --format '{{{{json .}}}}'")
+        return rows[0] if rows else {}
+
+    def remove_network(self, name: str) -> Any:
+        return self._exec(f"network rm {shlex.quote(name)}")
 
     def ping(self) -> Any:
         """Cheap access probe (``<runtime> ps -q``); returns the CommandResult so
@@ -277,6 +301,24 @@ class DockerClient:
             raise ValueError(f"unsupported compose action: {action!r}")
         return self._exec(f"compose -p {shlex.quote(project)} {action}")
 
+    def compose_ps(self, project: str) -> List[dict]:
+        """Per-service breakdown of a compose project: ``[{Name, Service, State,
+        Status, Ports}, ...]``. Degrades like :meth:`compose_ls` when ``--format``
+        isn't supported (older Compose) — parsing the plain table instead."""
+        p = shlex.quote(project)
+        for args, is_json in ((f"compose -p {p} ps --format json", True),
+                              (f"compose -p {p} ps", False)):
+            res = self._exec(args)
+            if getattr(res, "exit_code", 1) == 0:
+                return (self._parse_ndjson(res.stdout) if is_json
+                        else self._parse_compose_table(res.stdout))
+            text = ((res.stderr or "") + (res.stdout or "")).lower()
+            if not ("unknown flag" in text or "unknown shorthand" in text
+                    or "--format" in text):
+                raise DockerError(
+                    ((res.stderr or res.stdout or "command failed")).strip())
+        return self._parse_compose_table(res.stdout)
+
     def compose_up_command(self, config_file: str) -> str:
         """Streamed `compose up -d` (deploy/redeploy) from the project's file."""
         return (f"{self._interactive_runtime()} compose "
@@ -302,7 +344,7 @@ class DockerClient:
     def create_run_args(self, image: str, *, name: Optional[str] = None,
                         ports=None, volumes=None, envs=None,
                         restart: Optional[str] = None,
-                        command: Optional[str] = None,
+                        command: Union[str, List[str], None] = None,
                         network: Optional[str] = None,
                         interactive: bool = False, tty: bool = False,
                         user: Optional[str] = None,
@@ -310,8 +352,12 @@ class DockerClient:
                         cpus: Optional[str] = None) -> str:
         """Build the ``run -d …`` argument string. ``ports``/``volumes`` are
         ``[(a, b), …]`` → ``a:b``; ``envs`` is ``[(k, v), …]`` → ``k=v``; all
-        values are shell-quoted. ``command`` is appended raw (parsed by the
-        remote shell).
+        values are shell-quoted.
+
+        ``command`` is an argv: a list is used as-is, a string is ``shlex.split``;
+        either way every token is ``shlex.quote``d, so a value can never break out
+        of its argument into the remote shell. (A malformed string raises
+        ``ValueError`` from ``shlex.split`` — callers validate before calling.)
 
         Advanced flags (all optional): ``interactive``/``tty`` add ``-i``/``-t``;
         ``network`` adds ``--network`` (skipped for the default ``bridge``);
@@ -340,8 +386,8 @@ class DockerClient:
         if restart and restart != "no":
             parts += ["--restart", shlex.quote(restart)]
         parts.append(shlex.quote(image))
-        if command:
-            parts.append(command)
+        argv = shlex.split(command) if isinstance(command, str) else list(command or [])
+        parts += [shlex.quote(tok) for tok in argv]
         return " ".join(parts)
 
     def create_container(self, image: str, **kwargs: Any) -> Any:

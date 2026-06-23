@@ -474,6 +474,68 @@ def test_create_container_passes_advanced_kwargs():
     assert calls[-1] == "docker run -d -i -t --memory 256m alpine"
 
 
+def test_create_run_args_command_is_not_shell_injectable():
+    client, _ = _recording_client(None)
+    # A malicious one-liner must not break out of its argument: every token is
+    # shell-quoted, so the ';' and 'rm' become inert literal args.
+    args = client.create_run_args("alpine", command="; rm -rf /")
+    assert args == "run -d alpine ';' rm -rf /"
+    # An argv list is quoted token-by-token too.
+    assert client.create_run_args("alpine", command=["sh", "-c", "echo hi; rm x"]) == \
+        "run -d alpine sh -c 'echo hi; rm x'"
+
+
+def test_create_run_args_command_unbalanced_quotes_raises():
+    client, _ = _recording_client(None)
+    with pytest.raises(ValueError):
+        client.create_run_args("alpine", command="sh -c 'unbalanced")
+
+
+# --- DockerClient: volumes / networks / compose ps -------------------------
+
+def test_volume_and_network_commands():
+    client, calls = _recording_client(lambda c: FakeResult(stdout='{"Name":"v1"}'))
+    client.remove_volume("v1")
+    assert calls[-1] == "docker volume rm v1"
+    client.remove_volume("v1", force=True)
+    assert calls[-1] == "docker volume rm -f v1"
+    assert client.volume_inspect("v1") == {"Name": "v1"}
+    assert calls[-1] == "docker volume inspect v1 --format '{{json .}}'"
+    client.remove_network("n1")
+    assert calls[-1] == "docker network rm n1"
+    client.network_inspect("n1")
+    assert calls[-1] == "docker network inspect n1 --format '{{json .}}'"
+
+
+def test_compose_ps_command_and_table_fallback():
+    rows = '[{"Service":"web","State":"running"}]'
+    client, calls = _recording_client(lambda c: FakeResult(stdout=rows))
+    assert client.compose_ps("proj") == [{"Service": "web", "State": "running"}]
+    assert calls[-1] == "docker compose -p proj ps --format json"
+
+    table = ("NAME      STATUS\nweb       running\n")
+
+    def responder(cmd):
+        if "--format" in cmd:
+            return FakeResult(exit_code=1, stderr="unknown flag: --format")
+        return FakeResult(stdout=table)
+
+    client2, calls2 = _recording_client(responder)
+    out = client2.compose_ps("proj")
+    assert calls2[-1] == "docker compose -p proj ps"
+    assert out and out[0]["Name"] == "web"
+
+
+def test_parse_ndjson_logs_skipped_lines(caplog):
+    import logging
+    client, _ = _recording_client(lambda c: FakeResult(stdout='{"ID":"1"}\nbroken\n'))
+    with caplog.at_level(logging.DEBUG,
+                         logger="sshpilot.plugins.builtin.docker_manager.client"):
+        assert client.ps() == [{"ID": "1"}]
+    assert any("failed to parse" in r.message or "unparseable" in r.message
+               for r in caplog.records)
+
+
 # --- DockerClient: runtime detection ---------------------------------------
 
 @pytest.mark.parametrize("stdout,expected", [
@@ -566,7 +628,7 @@ def _gtk_ctx():
     )
 
 
-def test_page_builds_five_tabs():
+def test_page_builds_all_tabs():
     _gtk_or_skip()
     from sshpilot.plugins.builtin.docker_manager.page import DockerManagerPage
 
@@ -576,7 +638,62 @@ def test_page_builds_five_tabs():
     while child is not None:
         names.append(page._stack.get_page(child).get_name())
         child = child.get_next_sibling()
-    assert names == ["containers", "logs", "stats", "images", "compose"]
+    assert names == ["containers", "logs", "stats", "images",
+                     "volumes", "networks", "compose"]
+
+
+def test_page_hardening_widgets_and_helpers():
+    _gtk_or_skip()
+    from sshpilot.plugins.builtin.docker_manager.page import DockerManagerPage
+
+    page = DockerManagerPage(_gtk_ctx(), initial_host="web")
+    # Pause toggle defaults off; toggling sets the paused flag.
+    assert page._pause_btn.get_active() is False
+    page._pause_btn.set_active(True)
+    assert page._paused is True
+    # Default refresh interval is the safer 10s (not the old 3s).
+    assert page._refresh_interval() == 10
+    # Runtime override dropdown present, defaults to Auto.
+    assert page._RUNTIME_MODES[page._runtime_drop.get_selected()] == "Auto"
+    # Health parsing from the ps Status string.
+    assert page._health_of("Up 2 hours (healthy)") == "healthy"
+    assert page._health_of("Up (unhealthy)") == "unhealthy"
+    assert page._health_of("Up 3 hours") is None
+    # Container search filters the cached list.
+    page._containers = [{"Names": "web", "Image": "nginx", "ID": "a1"},
+                        {"Names": "db", "Image": "postgres", "ID": "b2"}]
+    page._container_query = "postgres"
+    page._render_containers()
+    n = 0
+    ch = page._containers_list.get_first_child()
+    while ch is not None:
+        n += 1
+        ch = ch.get_next_sibling()
+    assert n == 1
+
+
+def test_settings_dialog_exposes_refresh_interval():
+    _gtk_or_skip()
+    from sshpilot.plugins.builtin.docker_manager.dialogs import DockerManagerSettingsDialog
+
+    seen = {}
+    dlg = DockerManagerSettingsDialog(
+        None, reuse_ssh=True, on_reuse_ssh_changed=lambda v: None,
+        refresh_interval=12, on_refresh_interval_changed=lambda n: seen.__setitem__("n", n))
+    assert dlg._interval_row.get_value() == 12
+
+
+def test_create_dialog_rejects_unbalanced_command():
+    _gtk_or_skip()
+    from sshpilot.plugins.builtin.docker_manager.dialogs import CreateContainerDialog
+
+    called = []
+    dlg = CreateContainerDialog(None, ["nginx"], ["bridge"], lambda s: called.append(s))
+    dlg._image_row.set_text("nginx")
+    dlg._command_row.set_text("sh -c 'unbalanced")
+    dlg._on_create_clicked(None)
+    assert not called  # dialog stays open, on_create not invoked
+    assert dlg._command_row.has_css_class("error")
 
 
 def test_page_host_button_shows_initial_host():

@@ -13,6 +13,7 @@ Kept separate from page.py to avoid bloating it. Three dialogs:
 
 from __future__ import annotations
 
+import shlex
 from typing import Any, Callable, List, Optional, Tuple
 
 import gi
@@ -230,6 +231,9 @@ class CreateContainerDialog(_DialogBase):
         self._restart_row.set_model(Gtk.StringList.new(list(_RESTART_POLICIES)))
         basics.add(self._restart_row)
         self._command_row = Adw.EntryRow(title="Command (optional)")
+        self._command_row.set_tooltip_text(
+            "Parsed like a shell line; quotes are respected and each argument is "
+            "passed safely (not run through a remote shell)")
         basics.add(self._command_row)
         body.append(basics)
 
@@ -297,6 +301,15 @@ class CreateContainerDialog(_DialogBase):
             if self._restart_row.get_selected() < len(_RESTART_POLICIES) else "no"
         net_idx = self._network_row.get_selected()
         network = self._networks[net_idx] if 0 <= net_idx < len(self._networks) else None
+        # Parse the command field into an argv now so a malformed line is caught
+        # here (and never reaches the host). The client quotes each token.
+        self._command_row.remove_css_class("error")
+        command_text = self._command_row.get_text().strip()
+        try:
+            command = shlex.split(command_text) if command_text else None
+        except ValueError:
+            self._command_row.add_css_class("error")
+            return  # unbalanced quotes — keep the dialog open for a fix
         spec = {
             "image": image,
             "name": self._name_row.get_text().strip() or None,
@@ -304,7 +317,7 @@ class CreateContainerDialog(_DialogBase):
             "volumes": self._volumes.values(),
             "envs": self._envs.values(),
             "restart": restart,
-            "command": self._command_row.get_text().strip() or None,
+            "command": command,
             "network": network,
             "interactive": self._interactive_switch.get_active(),
             "tty": self._tty_switch.get_active(),
@@ -322,8 +335,10 @@ class DockerManagerSettingsDialog(_DialogBase):
 
     def __init__(self, parent: Optional[Gtk.Window], *,
                  reuse_ssh: bool,
-                 on_reuse_ssh_changed: Callable[[bool], None]) -> None:
-        super().__init__(parent, "Docker Manager Settings", width=420, height=240)
+                 on_reuse_ssh_changed: Callable[[bool], None],
+                 refresh_interval: int = 10,
+                 on_refresh_interval_changed: Optional[Callable[[int], None]] = None) -> None:
+        super().__init__(parent, "Docker Manager Settings", width=420, height=300)
         close = Gtk.Button(icon_name="window-close-symbolic")
         close.set_tooltip_text("Close")
         close.connect("clicked", lambda _b: self.close())
@@ -343,10 +358,23 @@ class DockerManagerSettingsDialog(_DialogBase):
         group = Adw.PreferencesGroup(title="Connection")
         group.add(self._reuse_row)
 
+        self._interval_row = Adw.SpinRow.new_with_range(2, 60, 1)
+        self._interval_row.set_title("Auto-refresh interval")
+        self._interval_row.set_subtitle("Seconds between updates of the visible tab")
+        self._interval_row.set_value(int(refresh_interval))
+        if on_refresh_interval_changed is not None:
+            self._interval_row.connect(
+                "notify::value",
+                lambda row, _pspec: on_refresh_interval_changed(int(row.get_value())),
+            )
+        polling = Adw.PreferencesGroup(title="Polling")
+        polling.add(self._interval_row)
+
         scroller = Gtk.ScrolledWindow(vexpand=True)
         body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18,
                        margin_top=16, margin_bottom=16, margin_start=16, margin_end=16)
         body.append(group)
+        body.append(polling)
         scroller.set_child(body)
         self._toolbar.set_content(scroller)
 
