@@ -60,6 +60,16 @@
 
 
 
+    <release version="5.4.0" date="2026-06-24">
+      <description>
+        <p>Docker/Podman container management console</p>
+        <p>New plugin framework and SDK</p>
+        <p>New plugin settings to install and manage plugins</p>
+        <p>Improved SSH config editor</p>
+        <p>UI fixes and improvements</p>
+        <p>Additional protocols</p>
+      </description>
+    </release>
     <release version="5.3.0" date="2026-06-12">
       <description>
         <p>New &quot;Tags&quot; feature: add tags to connections</p>

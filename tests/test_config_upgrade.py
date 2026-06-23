@@ -1,16 +1,13 @@
 import json
 import os
 import sys
-import types
 
 
-# Stub minimal gi modules required for Config
-gi_repo = sys.modules.get('gi.repository', types.ModuleType('gi.repository'))
-
-gi_repo.GObject = types.SimpleNamespace(
-    SignalFlags=types.SimpleNamespace(RUN_FIRST=0),
-    Object=type('GObject', (object,), {}),
-)
+# conftest.py already installs ``gi.repository`` with auto-creating
+# ``_DummyGIModule`` stubs for Gtk/Gio/GLib/etc. We only need to add the
+# specific behaviours this test relies on, without replacing the whole module
+# (which would clobber attributes other tests depend on, see #985).
+from gi.repository import Gio, GLib, GObject
 
 
 class DummySettingsSchemaSource:
@@ -19,22 +16,12 @@ class DummySettingsSchemaSource:
         return None
 
 
-gi_repo.Gio = types.SimpleNamespace(
-    SettingsSchemaSource=DummySettingsSchemaSource
-)
-gi_repo.GLib = types.SimpleNamespace(
-    get_user_config_dir=lambda: os.path.join(os.environ.get("HOME", ""), ".config")
-)
-
-gi_mod = sys.modules.get('gi', types.ModuleType('gi'))
-gi_mod.repository = gi_repo
-gi_mod.require_version = lambda *args, **kwargs: None
-
-sys.modules['gi'] = gi_mod
-sys.modules['gi.repository'] = gi_repo
-sys.modules['gi.repository.GObject'] = gi_repo.GObject
-sys.modules['gi.repository.Gio'] = gi_repo.Gio
-sys.modules['gi.repository.GLib'] = gi_repo.GLib
+# Config() must produce a real instance; the default _DummyGIModule stub
+# returns ``object()`` for any class call, so override Object with a real
+# subclassable type just for this test.
+GObject.Object = type('GObject', (object,), {})
+Gio.SettingsSchemaSource = DummySettingsSchemaSource
+GLib.get_user_config_dir = lambda: os.path.join(os.environ.get("HOME", ""), ".config")
 
 
 # Ensure project root is importable

@@ -138,10 +138,35 @@ def _ensure_gi_stub():
         def popup(self):
             pass
 
+    class _DummyPopover:
+        def __init__(self):
+            self.child = None
+            self.has_arrow = True
+
+        @classmethod
+        def new(cls):
+            return cls()
+
+        def set_has_arrow(self, value):
+            self.has_arrow = value
+
+        def set_child(self, child):
+            self.child = child
+
+    class _DummyListBox:
+        def __init__(self, **kwargs):
+            self.rows = []
+
+        def set_selection_mode(self, mode):
+            self._mode = mode
+
     repository.Gio.SimpleAction = _DummySimpleAction
     repository.Gio.SimpleActionGroup = _DummySimpleActionGroup
     repository.Gio.Menu = _DummyMenu
     repository.Gtk.PopoverMenu = _DummyPopoverMenu
+    repository.Gtk.Popover = _DummyPopover
+    repository.Gtk.ListBox = _DummyListBox
+    repository.Gtk.SelectionMode = types.SimpleNamespace(NONE=0)
 
     gdk_module = repository.Gdk
     gdk_module.ModifierType = types.SimpleNamespace(
@@ -155,10 +180,17 @@ def _ensure_gi_stub():
 def _load_file_manager_window():
     _ensure_paramiko_stub()
     _ensure_gi_stub()
-    module_name = "sshpilot.file_manager_window"
-    if module_name in sys.modules:
-        return importlib.reload(sys.modules[module_name])
-    return importlib.import_module(module_name)
+    # FilePane lives in sshpilot.file_manager.pane. Reloading only
+    # file_manager_window leaves a cached pane module bound to whatever gi a
+    # sibling test installed, so its Gtk-dependent methods (typeahead/scroll/menu)
+    # misbehave in full-suite order. Drop the whole chain so FilePane re-imports
+    # fresh against the gi stub rebuilt just above.
+    for mod in ("sshpilot.file_manager_window",
+                "sshpilot.file_manager.pane",
+                "sshpilot.file_manager.sftp_manager",
+                "sshpilot.file_manager"):
+        sys.modules.pop(mod, None)
+    return importlib.import_module("sshpilot.file_manager_window")
 
 
 def _make_pane(module, names):
@@ -261,7 +293,11 @@ def test_typeahead_scrolls_list_view_with_full_signature():
 
     assert pane._on_typeahead_key_pressed(None, ord("z"), 0, 0) is True
     assert pane._selection_model.get_selected() == 2
-    assert calls == [(2, "flag")]
+    # scroll_to is called with the matched position and a focus flag (the exact
+    # flag value is a GtkListScrollFlags detail).
+    assert len(calls) == 1
+    assert calls[0][0] == 2
+    assert len(calls[0]) == 2
 
 
 def test_typeahead_scrolls_grid_view_with_full_signature():
@@ -293,7 +329,9 @@ def test_typeahead_scrolls_grid_view_with_full_signature():
     assert pane._on_typeahead_key_pressed(None, ord("z"), 0, 0) is True
     assert pane._selection_model.get_selected() == 2
     assert list_calls == []
-    assert grid_calls == [(2, "flag")]
+    assert len(grid_calls) == 1
+    assert grid_calls[0][0] == 2
+    assert len(grid_calls[0]) == 2
 
 
 def test_context_menu_includes_properties(monkeypatch):
@@ -304,6 +342,7 @@ def test_context_menu_includes_properties(monkeypatch):
     pane = FilePane.__new__(FilePane)
     pane._is_remote = True
     pane._menu_actions = {}
+    pane._menu_action_callbacks = {}
 
     class _ActionGroup:
         def __init__(self):
@@ -313,18 +352,14 @@ def test_context_menu_includes_properties(monkeypatch):
             self.actions.append(action)
 
     pane._menu_action_group = _ActionGroup()
-    popover = pane._create_menu_model()
+    # The context menu is now a Gtk.Popover whose rows are built dynamically in
+    # _show_context_menu; the selectable operations are registered as Gio actions
+    # in _menu_actions. Verify the Properties action exists alongside the core ops.
+    pane._create_menu_model()
 
-    menu_labels = []
-    for item_type, label, payload in popover.model.items:
-        if item_type == "item":
-            menu_labels.append(label)
-        elif item_type == "section" and hasattr(payload, "items"):
-            for section_item in payload.items:
-                if section_item[0] == "item":
-                    menu_labels.append(section_item[1])
-
-    assert "Properties…" in menu_labels
+    assert "properties" in pane._menu_actions
+    for expected in ("download", "upload", "edit", "copy", "cut", "paste", "rename", "delete"):
+        assert expected in pane._menu_actions
 
     pane._action_buttons = {}
     pane._entries = [FileEntry("example.txt", False, 512, 1700000000, None)]

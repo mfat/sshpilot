@@ -59,10 +59,13 @@ for package in "${REQUIRED_BREW_PACKAGES[@]}"; do
     fi
 done
 
-# Create virtual environment for the bundle
+# Create virtual environment for the bundle.
+# --system-site-packages so the bundle can use Homebrew's PyGObject/pycairo and
+# the GI typelibs (requirements.txt no longer pip-installs the GTK bindings; they
+# come from the brew packages this script already requires — see the check above).
 echo -e "${GREEN}Creating Python virtual environment...${NC}"
 cd "$BUILD_DIR"
-python3 -m venv venv
+python3 -m venv venv --system-site-packages
 source venv/bin/activate
 
 # Install Python dependencies

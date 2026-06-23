@@ -129,7 +129,13 @@ def _make_page(child, custom_title=None):
 def test_capture_session_schema(monkeypatch):
     _ensure_cairo_stub()
     from sshpilot import window as window_module
-    from sshpilot.terminal import TerminalWidget
+    # capture_session uses window's *module-level* TerminalWidget in an
+    # isinstance() check. In full-suite order a sibling may have imported window
+    # (binding TerminalWidget) before sshpilot.terminal was re-imported as a fresh
+    # module, so a separate ``from sshpilot.terminal import TerminalWidget`` would
+    # yield a different class and the regular/local tabs would be silently
+    # dropped. Use the exact class the app checks against.
+    TerminalWidget = window_module.TerminalWidget
     from sshpilot.split_view import SplitViewTab
 
     win = window_module.MainWindow.__new__(window_module.MainWindow)

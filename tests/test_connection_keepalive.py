@@ -1,5 +1,5 @@
 import asyncio
-from typing import Any, List, Tuple
+from typing import Any
 
 import pytest
 
@@ -11,27 +11,18 @@ import sshpilot.config as config_mod
 asyncio.set_event_loop(asyncio.new_event_loop())
 
 
-class _DummyStream:
-    async def read(self, *args: Any, **kwargs: Any) -> bytes:  # pragma: no cover - interface shim
-        return b""
-
-
-class _DummyProcess:
-    def __init__(self):
-        self.returncode = None
-        self.stdout = _DummyStream()
-        self.stderr = _DummyStream()
-
-    async def wait(self) -> int:  # pragma: no cover - deterministic return
-        return 0
-
-
 def _prepare_connection(monkeypatch: pytest.MonkeyPatch, interval: int = 45, count: int = 6) -> Connection:
+    # Native mode composes app-level SSH options from ``ssh_overrides`` (the flat
+    # list produced by Preferences ▸ SSH Settings) and appends them verbatim to
+    # the command, so keepalive is provided that way rather than via the old
+    # ``keepalive_interval`` / ``keepalive_count_max`` keys.
     class _ConfigStub:
         def get_ssh_config(self) -> dict:
             return {
-                'keepalive_interval': interval,
-                'keepalive_count_max': count,
+                'ssh_overrides': [
+                    '-o', f'ServerAliveInterval={interval}',
+                    '-o', f'ServerAliveCountMax={count}',
+                ],
             }
 
     monkeypatch.setattr(config_mod, 'Config', _ConfigStub)
@@ -56,25 +47,9 @@ def test_connection_appends_keepalive_options(monkeypatch: pytest.MonkeyPatch) -
     assert cmd[count_index - 1] == '-o'
 
 
-def test_port_forwarding_inherits_keepalive(monkeypatch: pytest.MonkeyPatch) -> None:
-    conn = _prepare_connection(monkeypatch)
-    captured: List[Tuple[str, ...]] = []
-
-    async def _fake_create_subprocess_exec(*args: str, **kwargs: Any):
-        captured.append(tuple(args))
-        return _DummyProcess()
-
-    monkeypatch.setattr(asyncio, 'create_subprocess_exec', _fake_create_subprocess_exec)
-
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(
-        conn.start_local_forwarding('127.0.0.1', 8022, 'remote.host', 22)
-    )
-    loop.run_until_complete(
-        conn.start_remote_forwarding('0.0.0.0', 9000, 'remote.host', 22)
-    )
-
-    assert captured, "Expected subprocess calls for forwarding rules"
-    for cmd in captured:
-        assert 'ServerAliveInterval=45' in cmd
-        assert 'ServerAliveCountMax=6' in cmd
+# Note: per-connection port forwarding is now expressed as LocalForward/
+# RemoteForward/DynamicForward directives in ~/.ssh/config (handled by ssh
+# itself in the single native command), not by spawning a separate ssh process
+# per rule. The former ``Connection.start_local_forwarding`` /
+# ``start_remote_forwarding`` subprocess methods were removed; config-based
+# forwarding output is covered by tests/test_connection_forwarding.py.

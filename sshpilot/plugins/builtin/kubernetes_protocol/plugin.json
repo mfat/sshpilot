@@ -1,0 +1,10 @@
+{
+  "id": "k8s",
+  "name": "Kubernetes protocol",
+  "homepage": "https://github.com/mfat/sshpilot",
+  "api_version": 1,
+  "builtin": true,
+  "permissions": [
+    "process"
+  ]
+}

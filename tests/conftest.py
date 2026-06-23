@@ -2,6 +2,39 @@ import os
 import sys
 import types
 
+import pytest
+
+
+# Pre-existing test failures tracked in #987. The original list (introduced by
+# the CI PR #985) bundled three buckets: API/architecture drift, gi/paramiko stub
+# gaps, and order-dependent module-state leakage. The drift and order-dependence
+# entries have since been fixed at the source (tests rewritten to today's
+# native-SSH behaviour; order-sensitive files made to re-import a consistent
+# module set / use the app's own class objects). What remains is purely
+# environment-specific: tests that need a binary/package absent from CI's slim
+# image. They pass locally (where the binary exists) but fail in CI, so they stay
+# marked xfail; ``strict=False`` means a local XPASS won't fail the build.
+#
+# Remove an entry once CI grows the dependency it needs.
+_KNOWN_FAILING_NODEIDS = {
+    # Environment-specific (need binaries / pip packages not in CI's slim image).
+    # These pass locally where the binaries exist but fail in CI's slim image, so
+    # they stay tracked (strict=False means a local XPASS won't fail the build).
+    "tests/test_certificate_support.py::test_certificate_support",  # needs ssh-keygen
+    "tests/test_key_discovery.py::test_discover_keys_recurses",     # needs /usr/bin/python3 + paramiko
+}
+
+
+def pytest_collection_modifyitems(config, items):
+    xfail_marker = pytest.mark.xfail(
+        reason="Environment-specific pre-existing failure tracked in #987; see tests/conftest.py.",
+        strict=False,
+    )
+    for item in items:
+        if item.nodeid in _KNOWN_FAILING_NODEIDS:
+            item.add_marker(xfail_marker)
+
+
 # Ensure project root is on sys.path
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if ROOT not in sys.path:
@@ -74,7 +107,7 @@ if 'gi' not in sys.modules:
     setattr(repository, 'Secret', secret_module)
     sys.modules['gi.repository.Secret'] = secret_module
 
-    for name in ['Gtk', 'Adw', 'Gio', 'Gdk', 'Pango', 'PangoFT2']:
+    for name in ['Gtk', 'Adw', 'Gio', 'Gdk', 'GdkPixbuf', 'Pango', 'PangoFT2', 'Vte', 'GtkSource']:
         submodule = _DummyGIModule(f'gi.repository.{name}')
         setattr(repository, name, submodule)
         sys.modules[f'gi.repository.{name}'] = submodule

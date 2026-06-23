@@ -4,9 +4,6 @@
 
 sshPilot is a user-friendly, modern SSH connection manager with an integrated terminal for Linux, macOS, and Windows. It's built with Python, GTK4, and libadwaita, providing a native desktop experience.
 
-### Documentation Resources
-- A full catalog of package functions and methods is available in `documentation/function-reference.md`. Update this document with `python3 scripts/generate_function_reference.py` when APIs change.
-
 ## SSH Connection & Authentication Architecture
 
 This is the single most important subsystem to understand before changing how
@@ -270,3 +267,36 @@ sudo dnf install python3-gobject gtk4 libadwaita vte291-gtk4 gtksourceview5 libs
 - Do not add/remove features without user's confirmation
 - User prefers no UI files; define all interfaces in code
 - User requires explicit permission before modifying/deploying codebase
+
+## Cursor Cloud specific instructions
+
+These notes cover non-obvious caveats for this VM. Standard commands live in
+**Setup Commands** / **Development Environment** above and in `README.md`.
+
+- **Python deps live in the system interpreter, not a venv.** The app uses the
+  system `python3-gi` (PyGObject) + GTK/VTE/libadwaita GObject-introspection
+  packages, which a fresh virtualenv cannot see. Install pip deps with
+  `pip install --break-system-packages -r requirements.txt` (the startup update
+  script does this). A plain `python3 -m venv` will fail to import `gi`.
+- **`pytest` is required to run the suite** but is not in `requirements.txt`; the
+  update script installs it.
+- **GUI runs headed on `DISPLAY=:1`** (X11 is already available). Launch with
+  `python3 run.py --verbose`; it is a long-running process, so run it in a tmux
+  session. `libEGL ... DRI3` warnings are harmless (software rendering).
+- **SVG icons need `librsvg2-common`** (provides the gdk-pixbuf SVG loader). It
+  is installed in the snapshot; without it the app logs many
+  `Failed to load icon ... Unrecognized image file format` warnings (cosmetic
+  only — the app still runs).
+- **`pytest` runs headless against a stubbed `gi`** (see `tests/conftest.py`,
+  which injects dummy GTK modules when `gi` is not already imported). The
+  default `pytest` collects only `tests/`. There are **pre-existing** failures
+  and collection errors on `main` (mostly terminal/window test modules whose
+  needs exceed the stub, plus a few tests referencing methods not on
+  `Connection`); ~498 tests pass. These are not caused by the environment. CI
+  does not run the test suite (only packaging workflows exist).
+- **Nickname field forbids whitespace.** When creating a connection in the GUI,
+  the Save button silently stays disabled if the nickname contains a space
+  ("no whitespaces allowed"); use e.g. `DemoServer`, not `Demo Server`.
+- **The GResource bundle (`sshpilot/resources/sshpilot.gresource`) is committed**
+  and loaded at startup (the app exits if it cannot load it). Only rebuild it
+  with `./build_gresource.sh` if you change files under `sshpilot/resources/`.

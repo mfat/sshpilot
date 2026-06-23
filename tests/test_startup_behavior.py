@@ -70,7 +70,9 @@ def test_startup_defaults_to_welcome(monkeypatch):
     main_window._schedule_startup_tasks()
 
     assert 'terminal_shown' not in calls
-    assert calls.get('welcome_focus') == [True]
+    # Welcome focus is scheduled twice: early (100 ms) for immediate feedback and
+    # late (700 ms) to win focus back after startup settles.
+    assert calls.get('welcome_focus') == [True, True]
     assert 100 in calls.get('timeout', [])
     assert calls.get('idle', []) == []
 
@@ -86,7 +88,9 @@ def test_startup_honors_terminal_preference(monkeypatch):
     main_window._schedule_startup_tasks()
 
     assert calls.get('terminal_shown') == [True]
-    assert calls.get('idle')
+    # The terminal is created synchronously now (deferring via idle_add flashed
+    # the welcome page first), so no idle work is scheduled for this path.
+    assert not calls.get('idle')
     assert 100 not in calls.get('timeout', [])
     assert calls.get('queued') and callable(calls['queued'][0])
 

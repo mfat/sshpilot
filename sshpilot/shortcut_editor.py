@@ -67,6 +67,7 @@ ACTION_LABELS: Dict[str, str] = {
     'tab-overview': _('Tab Overview'),
     'new-split-view-tab': _('New Split View Tab'),
     'toggle-command-blocks': _('Command Blocks Sidebar'),
+    'toggle_sidebar': _('Toggle Sidebar'),
 }
 
 PASS_THROUGH_NOTICE = _('Shortcuts disabled while terminal pass-through mode is active')
@@ -259,7 +260,7 @@ class ShortcutsPreferencesPage(PreferencesPageBase):
         tab_group.set_title(_('Tab Management'))
 
         # Categorize actions
-        general_actions = ['quit', 'preferences', 'help', 'shortcuts']
+        general_actions = ['quit', 'preferences', 'help', 'shortcuts', 'toggle_sidebar']
         connection_actions = [
             'new-connection',
             'open-new-connection-tab',

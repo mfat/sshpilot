@@ -9,29 +9,37 @@ from gi.repository import Gtk, GLib
 from gettext import gettext as _
 
 
-def show_host_picker(window, anchor, on_selected, *, toast=None):
+def show_host_picker(window, anchor, on_selected, *, toast=None,
+                     connections=None):
     """Pop up a searchable list of the saved connections, anchored at *anchor*.
 
     Args:
         window: the main window (provides ``connection_manager`` and
-            ``active_terminals``).
+            ``active_terminals``). May be ``None`` when *connections* is given.
         anchor: the widget the popover points to.
         on_selected: callable invoked with the chosen ``connection`` when the
             user picks a row.
         toast: optional callable(str) used to warn when there are no hosts.
+        connections: optional pre-filtered connection list; defaults to every
+            connection in the window's ``connection_manager``.
 
     Returns the ``Gtk.Popover`` (already scheduled to pop up), or ``None``.
     """
-    cm = getattr(window, 'connection_manager', None)
-    if cm is None:
-        return None
-    connections = getattr(cm, 'connections', [])
+    if connections is None:
+        cm = getattr(window, 'connection_manager', None) if window is not None else None
+        if cm is None:
+            return None
+        connections = list(getattr(cm, 'connections', []))
+    else:
+        connections = list(connections)
+
     if not connections:
         if toast:
             toast(_('No connections in inventory'))
         return None
 
-    active_terminals = getattr(window, 'active_terminals', {})
+    active_terminals = (getattr(window, 'active_terminals', {})
+                        if window is not None else {})
 
     popover = Gtk.Popover()
     popover.set_parent(anchor)

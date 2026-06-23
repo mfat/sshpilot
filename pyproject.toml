@@ -22,6 +22,7 @@ dependencies = [
     "cryptography>=42.0",
     "keyring>=24.3",
     "psutil>=5.9.0",
+    "certifi>=2023.7.22",
 ]
 # Note: This package also requires system dependencies that must be installed separately:
 # - GTK4, libadwaita, VTE (for terminal backend)
@@ -31,10 +32,42 @@ dependencies = [
 # See README.md or AGENTS.md for complete system dependency list.
 
 [tool.setuptools.packages.find]
-where = ["", "src"]
-include = ["sshpilot*", "sshpilot_dnd*"]
-exclude = ["packaging*", "screenshots*"]
+where = [""]
+include = ["sshpilot*"]
+# Example plugins are developer references only — never shipped. Users get them
+# from the plugin registry instead.
+exclude = ["packaging*", "screenshots*", "sshpilot.plugins.examples*"]
+
+[tool.setuptools.package-data]
+# Built-in plugin manifests are read from disk by the plugin loader.
+# setuptools does not glob package names here: add a key per built-in plugin.
+"sshpilot.plugins.builtin.ssh_protocol" = ["plugin.json"]
+"sshpilot.plugins.builtin.telnet_protocol" = ["plugin.json"]
+"sshpilot.plugins.builtin.serial_protocol" = ["plugin.json"]
+"sshpilot.plugins.builtin.docker_protocol" = ["plugin.json"]
+"sshpilot.plugins.builtin.kubernetes_protocol" = ["plugin.json"]
+"sshpilot.plugins.builtin.mosh_protocol" = ["plugin.json"]
+"sshpilot.plugins.builtin.docker_manager" = ["plugin.json"]
 
 [project.urls]
 Homepage = "https://github.com/mfat/sshpilot"
 Issues = "https://github.com/mfat/sshpilot/issues"
+
+[tool.ruff]
+target-version = "py39"
+line-length = 100
+extend-exclude = [
+    "src",
+    "sshpilot/vendor",
+    "tests/manual",
+    "tests_e2e",
+    "build",
+    "dist",
+    "packaging",
+]
+
+[tool.ruff.lint]
+# Conservative initial rule set: syntax errors, misused comparisons, and the
+# pyflakes checks that almost always flag runtime bugs. Broader rules can be
+# enabled incrementally as the tree is cleaned up.
+select = ["E9", "F63", "F7"]

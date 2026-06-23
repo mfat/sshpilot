@@ -9,11 +9,12 @@ from __future__ import annotations
 
 import os
 import pathlib
+import re
 import tempfile
 from concurrent.futures import Future
-from typing import TYPE_CHECKING, Optional
+from typing import Callable, TYPE_CHECKING, Optional
 
-from gi.repository import Adw, Gio, GLib, GObject, Gdk, Gtk
+from gi.repository import Adw, Gio, GLib, GObject, Gdk, Gtk, Pango
 
 from .platform_utils import is_macos
 
@@ -35,6 +36,68 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+_BUNDLED_LANG_PATH = "resource:///io/github/mfat/sshpilot/language-specs/"
+_lang_manager = None
+
+
+def _get_language_manager():
+    """Return a private GtkSourceView LanguageManager that includes sshPilot's
+    bundled language-specs (e.g. the custom ``sshconfig`` definition).
+
+    A fresh manager is used rather than ``get_default()`` because GtkSourceView
+    only permits ``set_search_path()`` before a manager has been queried — the
+    shared default manager is used elsewhere, so mutating it triggers a
+    ``lm->ids == NULL`` CRITICAL. A fresh instance still carries the built-in
+    search paths, so all bundled languages keep working. Cached (configured once
+    before first use)."""
+    global _lang_manager
+    if _lang_manager is None and GtkSource is not None:
+        lm = GtkSource.LanguageManager()
+        try:
+            paths = list(lm.get_search_path() or [])
+            if _BUNDLED_LANG_PATH not in paths:
+                lm.set_search_path([_BUNDLED_LANG_PATH] + paths)
+        except Exception as e:  # noqa: BLE001 — highlighting is non-essential
+            logger.debug("Could not register bundled language-specs: %s", e)
+        _lang_manager = lm
+    return _lang_manager
+
+
+_OUTLINE_RE = re.compile(r'^[ \t]*(Host|Match)\b(.*)$', re.IGNORECASE)
+
+
+def parse_ssh_config_outline(text: str):
+    """Return ``[(line_index, kind, label)]`` for each ``Host``/``Match`` header
+    in *text* (0-based line index). Comments (``# Host …``) and value keywords
+    (``HostName``) are not matched."""
+    out = []
+    for i, line in enumerate((text or "").splitlines()):
+        m = _OUTLINE_RE.match(line)
+        if not m:
+            continue
+        kind = m.group(1).lower()
+        rest = (m.group(2) or "").strip()
+        label = rest if rest else m.group(1)
+        out.append((i, kind, label))
+    return out
+
+
+def prettify_path(path: str, home: Optional[str]) -> str:
+    """Collapse a leading home directory to ``~`` for display.
+
+    ``home`` should be the same home the app uses for paths (GLib.get_home_dir()),
+    so the collapse is consistent inside and outside a Flatpak sandbox. Paths not
+    under ``home`` (and remote paths) are returned unchanged.
+    """
+    if not path or not home:
+        return path or ""
+    if path == home:
+        return "~"
+    if path.startswith(home + os.sep):
+        return "~" + path[len(home):]
+    return path
+
+
 class RemoteFileEditorWindow(Adw.Window):
     """FileZilla-style text editor window using GTK SourceView.
     
@@ -51,6 +114,9 @@ class RemoteFileEditorWindow(Adw.Window):
         is_local: bool = False,
         sftp_manager: Optional["AsyncSFTPManager"] = None,
         file_manager_window: Optional["FileManagerWindow"] = None,
+        pre_save_validator: Optional[Callable[[str], Optional[str]]] = None,
+        language_id: Optional[str] = None,
+        show_outline: bool = False,
     ) -> None:
         super().__init__()
         self.set_transient_for(parent)
@@ -61,8 +127,26 @@ class RemoteFileEditorWindow(Adw.Window):
         self._is_local = is_local
         self._file_path = file_path  # Can be remote path or local path
         self._file_name = file_name
+        self._title_text = file_name  # overridable base title (see set_editor_title)
         self._sftp_manager = sftp_manager
         self._file_manager_window = file_manager_window
+        # Optional pre-save check (e.g. `ssh -G` for the SSH config). Returns an
+        # error string to block the save, or None to allow it.
+        self._pre_save_validator = pre_save_validator
+        # Optional GtkSourceView language id (e.g. 'sshconfig') + a Host/Match
+        # outline sidebar — used by the SSH config editor only.
+        self._language_id = language_id
+        self._show_outline = show_outline
+        self._outline_listbox = None
+        self._outline_scroller = None
+        self._outline_rows = []  # parallel list of (line_index, kind, label)
+        self._outline_refresh_id = 0
+        # Style-scheme selector + sidebar toggle state (lazy app config).
+        self._app_config = None
+        self._scheme_button = None
+        self._scheme_chooser = None
+        self._sidebar_toggle = None
+        self._dark_handler_id = 0
         self._temp_file: Optional[pathlib.Path] = None
         self._file_monitor: Optional[Gio.FileMonitor] = None
         self._file_modified_time: float = 0.0
@@ -112,10 +196,13 @@ class RemoteFileEditorWindow(Adw.Window):
         toolbar_view = Adw.ToolbarView()
         self.set_content(toolbar_view)
         
-        # Header bar
+        # Header bar — title with the path shown as a dimmed subtitle (full
+        # path on hover).
         header_bar = Adw.HeaderBar()
-        self._title_label = Gtk.Label(label=f"Edit {self._file_name}")
-        header_bar.set_title_widget(self._title_label)
+        self._title_widget = Adw.WindowTitle(
+            title=self._title_text, subtitle=self._pretty_path())
+        self._title_widget.set_tooltip_text(self._file_path)
+        header_bar.set_title_widget(self._title_widget)
         
         # Save button - label depends on local vs remote
         save_label = "Save" if self._is_local else "Save"
@@ -125,8 +212,20 @@ class RemoteFileEditorWindow(Adw.Window):
         self._save_button.connect("clicked", self._on_save_clicked)
         header_bar.pack_end(self._save_button)
         
-        # Undo/Redo buttons
         from sshpilot import icon_utils
+
+        # Sidebar show/hide toggle — leftmost, before undo/redo (only for
+        # editors that have an outline).
+        if self._show_outline:
+            self._sidebar_toggle = Gtk.ToggleButton()
+            self._sidebar_toggle.set_icon_name("sidebar-show-symbolic")
+            self._sidebar_toggle.set_tooltip_text("Show/Hide sidebar")
+            self._sidebar_toggle.set_active(
+                bool(self._pref("editor.show_outline_sidebar", True)))
+            self._sidebar_toggle.connect("toggled", self._on_sidebar_toggled)
+            header_bar.pack_start(self._sidebar_toggle)
+
+        # Undo/Redo buttons
         self._undo_button = icon_utils.new_button_from_icon_name("edit-undo-symbolic")
         self._undo_button.set_tooltip_text("Undo")
         self._undo_button.set_sensitive(False)
@@ -168,7 +267,24 @@ class RemoteFileEditorWindow(Adw.Window):
         zoom_box.append(self._zoom_in_button)
         
         header_bar.pack_start(zoom_box)
-        
+
+        # Color-scheme chooser — icon-only button on the right, just before Save.
+        # Only meaningful with GtkSource.
+        if self._gtksource_enabled and hasattr(GtkSource, "StyleSchemeChooserWidget"):
+            self._scheme_button = Gtk.MenuButton()
+            self._scheme_button.set_child(icon_utils.new_image_from_icon_name("color-symbolic"))
+            self._scheme_button.set_tooltip_text("Editor color scheme")
+            chooser_scroller = Gtk.ScrolledWindow()
+            chooser_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+            chooser_scroller.set_min_content_width(240)
+            chooser_scroller.set_min_content_height(320)
+            self._scheme_chooser = GtkSource.StyleSchemeChooserWidget()
+            chooser_scroller.set_child(self._scheme_chooser)
+            popover = Gtk.Popover()
+            popover.set_child(chooser_scroller)
+            self._scheme_button.set_popover(popover)
+            header_bar.pack_end(self._scheme_button)
+
         toolbar_view.add_top_bar(header_bar)
         
         # Toolbar for search/replace (only if GtkSource is available)
@@ -257,8 +373,34 @@ class RemoteFileEditorWindow(Adw.Window):
         toast_overlay.set_child(content_box)
         self._toast_overlay = toast_overlay
         self._current_toast = None  # Keep reference for dismissal
-        
-        toolbar_view.set_content(toast_overlay)
+
+        if self._show_outline:
+            # Host/Match navigation sidebar (SSH config editor only).
+            outline_scroller = Gtk.ScrolledWindow()
+            outline_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+            self._outline_scroller = outline_scroller
+            # Honour the persisted show/hide preference.
+            outline_scroller.set_visible(
+                bool(self._pref("editor.show_outline_sidebar", True)))
+            self._outline_listbox = Gtk.ListBox()
+            self._outline_listbox.add_css_class("navigation-sidebar")
+            self._outline_listbox.set_selection_mode(Gtk.SelectionMode.SINGLE)
+            self._outline_listbox.connect("row-activated", self._on_outline_row_activated)
+            outline_scroller.set_child(self._outline_listbox)
+
+            paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
+            paned.set_start_child(outline_scroller)
+            paned.set_end_child(toast_overlay)
+            paned.set_resize_start_child(False)
+            paned.set_shrink_start_child(False)
+            paned.set_position(220)
+            toolbar_view.set_content(paned)
+
+            # Populate now and keep it in sync (debounced) as the buffer changes.
+            self._refresh_outline()
+            self._buffer.connect("changed", self._on_outline_buffer_changed)
+        else:
+            toolbar_view.set_content(toast_overlay)
         
         # Add keyboard controller for shortcuts
         key_controller = Gtk.EventControllerKey()
@@ -298,13 +440,24 @@ class RemoteFileEditorWindow(Adw.Window):
             self._source_view.set_monospace(True)
             self._source_view.set_wrap_mode(Gtk.WrapMode.WORD)
 
-            language_manager = GtkSource.LanguageManager.get_default()
-            language = language_manager.guess_language(self._file_name, None)
+            language_manager = _get_language_manager()
+            language = None
+            if self._language_id:
+                language = language_manager.get_language(self._language_id)
+            if language is None:
+                language = language_manager.guess_language(self._file_name, None)
             if language:
                 self._buffer = GtkSource.Buffer.new_with_language(language)
             else:
                 self._buffer = GtkSource.Buffer()
             self._source_view.set_buffer(self._buffer)
+
+            # Apply the saved/auto color scheme, then start listening for changes
+            # (connect after the initial apply so it doesn't fire spuriously).
+            self._apply_style_scheme()
+            if self._scheme_chooser is not None:
+                self._scheme_chooser.connect("notify::style-scheme", self._on_scheme_changed)
+            self._connect_dark_follow()
 
             self._search_settings = GtkSource.SearchSettings()
             self._search_context = GtkSource.SearchContext.new(self._buffer, self._search_settings)
@@ -328,7 +481,92 @@ class RemoteFileEditorWindow(Adw.Window):
         self._search_settings = None
         self._search_context = None
         self._gtksource_enabled = False
-    
+
+    # ---------- color scheme + sidebar preferences ----------
+
+    def _get_app_config(self):
+        """Lazily obtain the shared app Config (reads/writes the same store)."""
+        if self._app_config is None:
+            try:
+                from .config import Config
+                self._app_config = Config()
+            except Exception as e:  # noqa: BLE001
+                logger.debug("Editor could not load app config: %s", e)
+        return self._app_config
+
+    def _pref(self, key: str, default):
+        cfg = self._get_app_config()
+        try:
+            return cfg.get_setting(key, default) if cfg else default
+        except Exception:
+            return default
+
+    def _resolve_scheme_id(self) -> str:
+        """Saved scheme id, or the theme-appropriate default when 'auto'."""
+        pref = self._pref("editor.style_scheme", "auto")
+        if pref and pref != "auto":
+            return pref
+        try:
+            dark = Adw.StyleManager.get_default().get_dark()
+        except Exception:
+            dark = False
+        return "Adwaita-dark" if dark else "Adwaita"
+
+    def _apply_style_scheme(self) -> None:
+        """Set the GtkSourceView style scheme on the buffer (per the docs, a
+        scheme should always be set) and reflect it on the chooser button."""
+        if not (self._gtksource_enabled and isinstance(self._buffer, GtkSource.Buffer)):
+            return
+        sm = GtkSource.StyleSchemeManager.get_default()
+        scheme = sm.get_scheme(self._resolve_scheme_id()) or sm.get_scheme("Adwaita")
+        if scheme is None:
+            return
+        self._buffer.set_style_scheme(scheme)
+        if self._scheme_chooser is not None:
+            # Sync the chooser without re-triggering our own change handler.
+            wired = self._scheme_button_wired()
+            if wired:
+                self._scheme_chooser.handler_block_by_func(self._on_scheme_changed)
+            self._scheme_chooser.set_style_scheme(scheme)
+            if wired:
+                self._scheme_chooser.handler_unblock_by_func(self._on_scheme_changed)
+
+    def _scheme_button_wired(self) -> bool:
+        return getattr(self, "_scheme_signal_wired", False)
+
+    def _on_scheme_changed(self, chooser, _pspec) -> None:
+        scheme = chooser.get_style_scheme()
+        if scheme is None:
+            return
+        if isinstance(self._buffer, GtkSource.Buffer):
+            self._buffer.set_style_scheme(scheme)
+        cfg = self._get_app_config()
+        if cfg:
+            cfg.set_setting("editor.style_scheme", scheme.get_id())
+
+    def _connect_dark_follow(self) -> None:
+        """When following the system (pref == 'auto'), recolor on dark toggle."""
+        self._scheme_signal_wired = self._scheme_chooser is not None
+        pref = self._pref("editor.style_scheme", "auto")
+        if pref and pref != "auto":
+            return
+        try:
+            sm = Adw.StyleManager.get_default()
+            self._dark_handler_id = sm.connect("notify::dark", self._on_dark_changed)
+        except Exception as e:  # noqa: BLE001
+            logger.debug("Could not follow system dark mode: %s", e)
+
+    def _on_dark_changed(self, *_a) -> None:
+        self._apply_style_scheme()
+
+    def _on_sidebar_toggled(self, button) -> None:
+        active = button.get_active()
+        if self._outline_scroller is not None:
+            self._outline_scroller.set_visible(active)
+        cfg = self._get_app_config()
+        if cfg:
+            cfg.set_setting("editor.show_outline_sidebar", active)
+
     def _apply_toast_css(self) -> None:
         """Apply the same toast CSS styling as file manager."""
         try:
@@ -501,19 +739,94 @@ class RemoteFileEditorWindow(Adw.Window):
             except Exception:
                 pass
     
+    def _pretty_path(self) -> str:
+        """Path for the title subtitle: local paths get the home dir collapsed
+        to ``~``; remote paths are shown verbatim."""
+        if not self._is_local:
+            return self._file_path
+        try:
+            home = GLib.get_home_dir()
+        except Exception:
+            home = os.path.expanduser("~")
+        return prettify_path(self._file_path, home)
+
+    def set_editor_title(self, title: str) -> None:
+        """Override the base title shown in the header (path subtitle is kept)."""
+        self._title_text = title
+        self._update_title()
+
     def _update_title(self, modified: bool = None) -> None:
-        """Update the headerbar title to show modified state."""
+        """Update the headerbar title (modified marker) and path subtitle."""
         if modified is None:
             modified = self._buffer.get_modified() if self._buffer else False
-        
-        if modified:
-            self._title_label.set_label(f"* (modified) Edit {self._file_name}")
-        else:
-            self._title_label.set_label(f"Edit {self._file_name}")
+        base = self._title_text or self._file_name
+        if getattr(self, "_title_widget", None) is not None:
+            self._title_widget.set_title(f"• {base}" if modified else base)
+            self._title_widget.set_subtitle(self._pretty_path())
+
+    # ---------- Host/Match outline sidebar ----------
+
+    def _on_outline_buffer_changed(self, _buffer) -> None:
+        # Debounce: rebuild shortly after edits settle, not on every keystroke.
+        if self._outline_refresh_id:
+            GLib.source_remove(self._outline_refresh_id)
+        self._outline_refresh_id = GLib.timeout_add(300, self._refresh_outline)
+
+    def _refresh_outline(self) -> bool:
+        self._outline_refresh_id = 0
+        listbox = self._outline_listbox
+        if listbox is None:
+            return False
+        # Clear existing rows.
+        child = listbox.get_first_child()
+        while child is not None:
+            nxt = child.get_next_sibling()
+            listbox.remove(child)
+            child = nxt
+        start, end = self._buffer.get_bounds()
+        text = self._buffer.get_text(start, end, False)
+        self._outline_rows = parse_ssh_config_outline(text)
+        for line_index, kind, label in self._outline_rows:
+            row = Gtk.ListBoxRow()
+            row._line_index = line_index  # consumed by row-activated
+            box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            for fn in (box.set_margin_top, box.set_margin_bottom,
+                       box.set_margin_start, box.set_margin_end):
+                fn(6)
+            if kind == "match":
+                tag = Gtk.Label(label="Match")
+                tag.add_css_class("dim-label")
+                tag.add_css_class("caption")
+                box.append(tag)
+            lbl = Gtk.Label(label=label, xalign=0)
+            lbl.set_ellipsize(Pango.EllipsizeMode.END)
+            lbl.set_hexpand(True)
+            box.append(lbl)
+            row.set_child(box)
+            listbox.append(row)
+        return False  # one-shot timeout
+
+    def _on_outline_row_activated(self, _listbox, row) -> None:
+        line_index = getattr(row, "_line_index", None)
+        if line_index is not None:
+            self._jump_to_line(line_index)
+
+    def _jump_to_line(self, line_index: int) -> None:
+        try:
+            res = self._buffer.get_iter_at_line(line_index)
+            it = res[1] if isinstance(res, tuple) else res
+            self._buffer.place_cursor(it)
+            self._source_view.scroll_to_iter(it, 0.1, True, 0.0, 0.0)
+            self._source_view.grab_focus()
+        except Exception as e:  # noqa: BLE001
+            logger.debug("Failed to jump to line %s: %s", line_index, e)
     
     def _on_file_saved_externally(self) -> None:
         """Handle when the file is saved externally (from the editor)."""
         self._has_unsaved_changes = True
+        # Remember that the on-disk file diverged from our buffer so the next
+        # save warns before clobbering it (see _on_save_clicked).
+        self._externally_modified = True
         self._save_button.set_sensitive(True)
         self._update_title(True)
     
@@ -556,13 +869,43 @@ class RemoteFileEditorWindow(Adw.Window):
         if not self._temp_file:
             self._show_error("File not found")
             return
-        
+
         # Always save buffer content to file
         start, end = self._buffer.get_bounds()
         text = self._buffer.get_text(start, end, False)
+
+        # Optional syntax validation (e.g. `ssh -G` for the SSH config) so a
+        # broken file is never written.
+        if self._is_local and self._pre_save_validator is not None:
+            error = self._pre_save_validator(text)
+            if error:
+                self._show_error(f"Not saved — invalid SSH config:\n\n{error}")
+                return
+
+        # Guard against clobbering a change made on disk since we loaded/last
+        # saved (e.g. the connection editor rewrote ~/.ssh/config).
+        if self._is_local and getattr(self, '_externally_modified', False):
+            dlg = Adw.AlertDialog.new(
+                "File changed on disk",
+                "This file was modified outside the editor since you opened it. "
+                "Saving now overwrites those changes.")
+            dlg.add_response("cancel", "Cancel")
+            dlg.add_response("overwrite", "Overwrite")
+            dlg.set_response_appearance("overwrite", Adw.ResponseAppearance.DESTRUCTIVE)
+            dlg.connect("response",
+                        lambda _d, r: r == "overwrite" and self._perform_save(text))
+            dlg.present(self)
+            return
+
+        self._perform_save(text)
+
+    def _perform_save(self, text: str) -> None:
         try:
-            with open(self._temp_file, 'w', encoding='utf-8') as f:
-                f.write(text)
+            # Atomic temp+replace so a crash/full disk can't truncate the file
+            # (critical for ~/.ssh/config). mode=None preserves the file's
+            # existing permissions (e.g. keeps a 0600 config at 0600).
+            from .ssh_config_utils import atomic_write_text
+            atomic_write_text(str(self._temp_file), text)
             self._buffer.set_modified(False)
             
             # Reset undo stack after save
@@ -581,6 +924,7 @@ class RemoteFileEditorWindow(Adw.Window):
                     self._redo_button.set_sensitive(False)
             self._file_modified_time = self._temp_file.stat().st_mtime
             self._has_unsaved_changes = False
+            self._externally_modified = False
             self._update_title(False)
             
             if self._is_local:
@@ -703,7 +1047,15 @@ class RemoteFileEditorWindow(Adw.Window):
     def _do_close(self) -> None:
         """Actually close the window and clean up."""
         self._is_closing = True
-        
+
+        # Stop following system dark-mode changes (avoid leaking the handler).
+        if self._dark_handler_id:
+            try:
+                Adw.StyleManager.get_default().disconnect(self._dark_handler_id)
+            except Exception:
+                pass
+            self._dark_handler_id = 0
+
         # Stop monitoring
         if self._file_monitor:
             self._file_monitor.cancel()

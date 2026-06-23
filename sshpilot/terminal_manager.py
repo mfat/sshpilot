@@ -2,6 +2,7 @@ import os
 import asyncio
 import logging
 import math
+from typing import Optional
 
 import cairo
 
@@ -70,7 +71,10 @@ class TerminalManager:
                 logger.debug("Failed to iterate tab view while refreshing backends", exc_info=True)
 
     # Connecting/disconnecting hosts
-    def connect_to_host(self, connection, force_new: bool = False):
+    def connect_to_host(self, connection, force_new: bool = False,
+                        remote_command: Optional[str] = None,
+                        tab_title: Optional[str] = None,
+                        force_tty: bool = False):
         window = self.window
         group_color = self._resolve_group_color(connection)
         if not force_new:
@@ -117,7 +121,7 @@ class TerminalManager:
 
             from sshpilot import icon_utils
             page = window.tab_view.append(terminal)
-            page.set_title(connection.nickname)
+            page.set_title(tab_title or connection.nickname)
             page.set_icon(icon_utils.new_gicon_from_icon_name('utilities-terminal-symbolic'))
             if group_name:
                 setattr(terminal, 'group_name', group_name)
@@ -164,9 +168,11 @@ class TerminalManager:
                         app = None
                 # sshPilot connects in native mode only; connect() delegates to
                 # native_connect(), so either entry point prepares a native command.
-                if not getattr(connection, 'ssh_cmd', None):
+                if (getattr(connection, 'protocol', 'ssh') == 'ssh'
+                        and not getattr(connection, 'ssh_cmd', None)):
                     prepare = (
-                        connection.native_connect()
+                        connection.native_connect(remote_command=remote_command,
+                                                  force_tty=force_tty)
                         if hasattr(connection, 'native_connect')
                         else connection.connect()
                     )
@@ -242,7 +248,8 @@ class TerminalManager:
                     except Exception:
                         app = None
                 # Native-only connection (connect() delegates to native_connect()).
-                if not getattr(connection, 'ssh_cmd', None):
+                if (getattr(connection, 'protocol', 'ssh') == 'ssh'
+                        and not getattr(connection, 'ssh_cmd', None)):
                     prepare = (
                         connection.native_connect()
                         if hasattr(connection, 'native_connect')
@@ -771,6 +778,15 @@ class TerminalManager:
             logger.debug(
                 f"Terminal reconnected after settings update: {terminal.connection.nickname}")
 
+        # Notify plugins (session_opened). The host dedupes reconnects by
+        # terminal identity, so this is safe to call on every connect.
+        try:
+            host = getattr(self.window, 'plugin_host', None)
+            if host is not None:
+                host.dispatch_session_opened(terminal)
+        except Exception:
+            logger.exception("Plugin session_opened dispatch failed")
+
     def on_terminal_disconnected(self, terminal):
         # The just-disconnected terminal has already flipped its own
         # is_connected flag; recompute the connection's aggregate state so a
@@ -787,6 +803,14 @@ class TerminalManager:
         logger.info(
             f"Terminal disconnected: {terminal.connection.nickname} ({terminal.connection.username}@{host_value})"
         )
+
+        # Notify plugins (session_closed).
+        try:
+            host = getattr(self.window, 'plugin_host', None)
+            if host is not None:
+                host.dispatch_session_closed(terminal)
+        except Exception:
+            logger.exception("Plugin session_closed dispatch failed")
 
     def on_terminal_title_changed(self, terminal, title):
         page = self.window._page_for_child(terminal)

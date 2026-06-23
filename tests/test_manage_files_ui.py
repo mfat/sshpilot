@@ -29,6 +29,8 @@ def setup_gi(monkeypatch):
         def connect(self, *args, **kwargs):
             pass
     repository.Gio.SimpleAction = SimpleAction
+    # Parameterised actions (e.g. sort-connections) construct a VariantType.
+    repository.GLib.VariantType = types.SimpleNamespace(new=lambda *_a, **_k: object())
 
 
 def reload_module(name):
@@ -59,6 +61,13 @@ def prepare_file_manager_integration(monkeypatch):
 
 def create_window():
     class DummyWindow:
+        # Any action handler the registration connects to resolves to a no-op,
+        # so the test doesn't have to enumerate every on_*_action (they grow).
+        def __getattr__(self, name):
+            if name.startswith("on_"):
+                return lambda *a, **k: None
+            raise AttributeError(name)
+
         def add_action(self, action):
             pass
         def on_open_new_connection_action(self, *args):
@@ -86,6 +95,8 @@ def create_window():
         def on_move_to_group_action(self, *args):
              pass
         def on_toggle_sidebar_action(self, *args):
+             pass
+        def on_open_in_split_view_action(self, *args):
              pass
     return DummyWindow()
 

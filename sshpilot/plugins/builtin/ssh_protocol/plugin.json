@@ -1,0 +1,11 @@
+{
+  "id": "ssh",
+  "name": "SSH protocol",
+  "homepage": "https://github.com/mfat/sshpilot",
+  "api_version": 1,
+  "builtin": true,
+  "required": true,
+  "permissions": [
+    "process"
+  ]
+}

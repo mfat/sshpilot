@@ -93,6 +93,8 @@ from .shortcut_utils import get_primary_modifier_label
 from .platform_utils import is_macos, get_config_dir, get_ssh_dir
 from .command_blocks import CommandBlocksPanel, CommandBlockStore
 from .context_menu import IconContextMenu
+from .plugins.api import Capability
+from .plugins.registry import capabilities_for
 from .ssh_utils import ensure_writable_ssh_home
 from .scp_utils import assemble_scp_transfer_args, classify_sftp_error, download_file, upload_file
 from .ssh_password_exec import run_ssh_with_password, run_scp_with_password
@@ -583,6 +585,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.cmd_split_view = None
         self._command_sidebar_visible: bool = False
         self._cmd_blocks_toggle_btn = None
+        self._headerbar_theme_menu_button = None
         
         # Update notification
         self.update_banner = None
@@ -609,6 +612,41 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         effective_isolated = isolated or bool(self.config.get_setting('ssh.use_isolated_config', False))
         key_dir = Path(get_config_dir()) if effective_isolated else None
         self.connection_manager = ConnectionManager(self.config, isolated_mode=effective_isolated)
+
+        # Menu section that plugin pages append to (built before create_menu
+        # runs during setup_ui; the host mutates it on bind).
+        self._plugins_menu_section = Gio.Menu()
+
+        # Load plugins once per process (cached on the application object so a
+        # second window doesn't re-activate them) before any terminal can spawn.
+        # The PluginHost (event bus + UI host) is likewise process-wide; it is
+        # bound to the first window's live UI at the end of setup_ui.
+        try:
+            from .plugins.loader import load_plugins
+            from .plugins.host import PluginHost
+            host = getattr(app, 'plugin_host', None) if app else None
+            if host is None:
+                host = PluginHost(connection_manager=self.connection_manager)
+                if app is not None:
+                    setattr(app, 'plugin_host', host)
+            self.plugin_host = host
+            if app is not None:
+                setattr(app, 'plugin_host', host)
+            loaded_plugins = getattr(app, 'loaded_plugins', None) if app else None
+            if loaded_plugins is None:
+                loaded_plugins = load_plugins(
+                    app_config=self.config,
+                    connection_manager=self.connection_manager,
+                    plugin_host=host,
+                )
+                if app is not None:
+                    setattr(app, 'loaded_plugins', loaded_plugins)
+            self.loaded_plugins = loaded_plugins
+        except Exception:
+            logger.exception("Plugin loading failed")
+            self.loaded_plugins = []
+            self.plugin_host = None
+
         self.key_manager = KeyManager(key_dir)
         self.group_manager = GroupManager(self.config)
         self.session_manager = SessionManager(self.config)
@@ -698,6 +736,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 self.update_sidebar_max_width(max_width)
             except (ValueError, TypeError) as e:
                 logger.error(f"Invalid max-sidebar-width value: {e}")
+            return
+
+        if key == 'app-theme':
+            try:
+                self._sync_theme_menu_button()
+            except Exception:
+                logger.debug("Failed to sync theme toggle button", exc_info=True)
             return
 
     def _schedule_startup_tasks(self):
@@ -1503,10 +1548,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.tips_revealer.set_child(tips_body)
         self.tips_banner_container = self.tips_revealer
 
-        # Create header bar
-        self.header_bar = Gtk.HeaderBar()
-        self.header_bar.set_title_widget(Gtk.Label(label="SSH Pilot"))
-        
+        # Create header bar (content pane — window controls on the right with split views)
+        self.header_bar = Adw.HeaderBar()
+        self.header_bar.add_css_class('flat')
+        self.header_bar.set_show_start_title_buttons(True)
+        self.header_bar.set_show_end_title_buttons(True)
+        # Empty title so Adw doesn't repeat the window title beside tab actions.
+        self.header_bar.set_title_widget(Gtk.Box())
+
         # Safely configure native window controls (macOS only, GTK 4.18+)
         maybe_set_native_controls(self.header_bar, False)
         
@@ -1520,9 +1569,20 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
         from sshpilot import icon_utils
         icon_utils.set_button_icon(self.sidebar_toggle_button, 'sidebar-show-symbolic')
-        self.sidebar_toggle_button.set_tooltip_text(
-            f'Hide Sidebar (F9, {get_primary_modifier_label()}+B)'
-        )
+        # Show the effective (possibly user-customized) shortcut in the tooltip.
+        sidebar_accels = self._get_safe_current_shortcuts().get('toggle_sidebar') or ['F9']
+
+        def _accel_label(accel):
+            try:
+                ok, keyval, mods = Gtk.accelerator_parse(accel)
+                if ok and keyval:
+                    return Gtk.accelerator_get_label(keyval, mods)
+            except Exception:
+                pass
+            return accel
+
+        accel_labels = ', '.join(_accel_label(a) for a in sidebar_accels)
+        self.sidebar_toggle_button.set_tooltip_text(f'Hide Sidebar ({accel_labels})')
         # Button should not appear pressed when sidebar is visible
         self.sidebar_toggle_button.set_active(False)
         self.sidebar_toggle_button.connect('toggled', self.on_sidebar_toggle)
@@ -1537,20 +1597,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.local_terminal_button.add_css_class('flat')
         self.local_terminal_button.set_action_name('app.local-terminal')
         self.header_bar.pack_start(self.local_terminal_button)
-        # Keep a stable reference: self.local_terminal_button is reassigned later
-        # to the tab-bar button. This one is the header-bar local-terminal button,
-        # toggled by Preferences ▸ Interface ▸ Header Bar.
+        # Toggled by Preferences ▸ Interface ▸ Header Bar.
         self._headerbar_local_terminal_button = self.local_terminal_button
 
-        # Add view toggle button to switch between welcome and tabs
-        self.view_toggle_button = Gtk.Button()
-        from sshpilot import icon_utils
-        icon_utils.set_button_icon(self.view_toggle_button, 'go-home-symbolic')
-        self.view_toggle_button.set_tooltip_text('Show Start Page')
-        self.view_toggle_button.connect('clicked', self.on_view_toggle_clicked)
-        self.view_toggle_button.set_visible(False)  # Hidden by default
-        self.header_bar.pack_start(self.view_toggle_button)
-        
         # Add tab button to header bar (will be created later in setup_content_area)
         # This will be added after the tab view is created
         
@@ -1643,6 +1692,15 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.toast_overlay.set_child(main_box)
         self.set_content(self.toast_overlay)
 
+        # The window UI now exists (tab_view, toast_overlay, the plugins menu
+        # section). Bind the plugin host so plugin pages, toasts, events, and
+        # terminal control go live. Idempotent: only the first window binds.
+        try:
+            if getattr(self, 'plugin_host', None) is not None:
+                self.plugin_host.bind_window(self)
+        except Exception:
+            logger.exception("Plugin host bind_window failed")
+
     def _set_sidebar_widget(self, widget: Gtk.Widget) -> None:
         if HAS_OVERLAY_SPLIT:
             try:
@@ -1708,16 +1766,17 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         """Show/hide the toggleable header-bar buttons per preferences
         (Settings ▸ Interface ▸ Header Bar)."""
         mapping = (
-            ('split_view_button', 'ui.headerbar_show_split_view'),
-            ('_cmd_blocks_toggle_btn', 'ui.headerbar_show_commands'),
-            ('_headerbar_local_terminal_button', 'ui.headerbar_show_local_terminal'),
+            ('split_view_button', 'ui.headerbar_show_split_view', False),
+            ('_cmd_blocks_toggle_btn', 'ui.headerbar_show_commands', True),
+            ('_headerbar_theme_menu_button', 'ui.headerbar_show_theme_toggle', True),
+            ('_headerbar_local_terminal_button', 'ui.headerbar_show_local_terminal', True),
         )
-        for attr, key in mapping:
+        for attr, key, default in mapping:
             btn = getattr(self, attr, None)
             if btn is None:
                 continue
             try:
-                btn.set_visible(bool(self.config.get_setting(key, True)))
+                btn.set_visible(bool(self.config.get_setting(key, default)))
             except Exception:
                 logger.debug("Failed to apply header-bar button visibility for %s", attr, exc_info=True)
 
@@ -1726,15 +1785,18 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         if not hasattr(self, 'connection_list'):
             return
         
-        show_user_hostname = self.config.get_setting('ui.sidebar_show_user_hostname', False)
+        show_user_hostname = self.config.get_setting('ui.sidebar_show_user_hostname', True)
         show_group_count = self.config.get_setting('ui.sidebar_show_group_count', True)
         show_status = self.config.get_setting('ui.sidebar_show_connection_status', True)
-        show_port_forwarding = self.config.get_setting('ui.sidebar_show_port_forwarding', False)
+        show_port_forwarding = self.config.get_setting('ui.sidebar_show_port_forwarding', True)
         show_connection_icon = self.config.get_setting('ui.sidebar_show_connection_icon', True)
+        flat_rows = self.config.get_setting('ui.sidebar_flat_rows', False)
         
         # Update all rows in the connection list
         row = self.connection_list.get_first_child()
         while row:
+            if hasattr(row, 'apply_row_style'):
+                row.apply_row_style(flat_rows)
             # Update ConnectionRow elements
             if hasattr(row, 'connection_icon'):
                 row.connection_icon.set_visible(show_connection_icon)
@@ -1857,6 +1919,22 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
             new_nickname = self._generate_duplicate_nickname(getattr(connection, 'nickname', ''))
             new_data['nickname'] = new_nickname
+
+            # Plugin protocols: the data dict is authoritative (no ssh_config
+            # attribute fixups apply); persist through the non-SSH store.
+            if getattr(connection, 'protocol', 'ssh') != 'ssh':
+                new_connection = Connection(new_data)
+                if not self.connection_manager.update_connection(new_connection, dict(new_data)):
+                    raise RuntimeError(_('Failed to save duplicated connection.'))
+                original_groups = self.group_manager.get_connection_groups(connection.nickname)
+                original_group_id = original_groups[0] if original_groups else None
+                if original_group_id and original_group_id in getattr(self.group_manager, 'groups', {}):
+                    try:
+                        self.group_manager.move_connection(new_nickname, original_group_id)
+                    except Exception:
+                        pass
+                self.rebuild_connection_list()
+                return new_connection
 
             host_value = (
                 getattr(connection, 'hostname', '')
@@ -2008,6 +2086,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             logger.error(f"Failed to duplicate connection: {error}", exc_info=True)
             return None
 
+    @staticmethod
+    def _expand_sidebar_toolbar_button(button: Gtk.Widget) -> Gtk.Widget:
+        """Give a sidebar toolbar control an equal share of the row width."""
+        button.set_hexpand(True)
+        button.set_halign(Gtk.Align.FILL)
+        return button
+
     def setup_sidebar(self):
         """Set up the sidebar with connection list"""
         sidebar_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -2018,6 +2103,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
         # Sidebar header
         header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        header.set_hexpand(True)
+        header.set_homogeneous(True)
         header.set_margin_start(12)
         header.set_margin_end(12)
         header.set_margin_top(12)
@@ -2033,6 +2120,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Add connection button
         from sshpilot import icon_utils
         add_button = icon_utils.new_button_from_icon_name('list-add-symbolic')
+        add_button.add_css_class('flat')
+        self._expand_sidebar_toolbar_button(add_button)
         add_button.set_tooltip_text(
             f'Add Connection ({get_primary_modifier_label()}+N)'
         )
@@ -2044,16 +2133,18 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         header.append(add_button)
 
         # Search button
-        search_button = icon_utils.new_button_from_icon_name('system-search-symbolic')
+        self.search_button = icon_utils.new_button_from_icon_name('system-search-symbolic')
+        self.search_button.add_css_class('flat')
+        self._expand_sidebar_toolbar_button(self.search_button)
         # Platform-aware shortcut in tooltip
         shortcut = 'Cmd+F' if is_macos() else 'Ctrl+F'
-        search_button.set_tooltip_text(f'Search Connections ({shortcut})')
-        search_button.connect('clicked', lambda *_: self.focus_search_entry())
+        self.search_button.set_tooltip_text(f'Search Connections ({shortcut})')
+        self.search_button.connect('clicked', lambda *_: self.focus_search_entry())
         try:
-            search_button.set_can_focus(False)
+            self.search_button.set_can_focus(False)
         except Exception:
             pass
-        header.append(search_button)
+        header.append(self.search_button)
 
         # Hide/Show hostnames button (eye icon)
         def _update_eye_icon(btn):
@@ -2065,6 +2156,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 pass
 
         hide_button = icon_utils.new_button_from_icon_name('view-reveal-symbolic')
+        hide_button.add_css_class('flat')
+        self._expand_sidebar_toolbar_button(hide_button)
         _update_eye_icon(hide_button)
         def _on_toggle_hide(btn):
             try:
@@ -2094,6 +2187,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # A ToggleButton so Adwaita renders the active state; the tag icon
         # is constant.
         view_button = Gtk.ToggleButton()
+        view_button.add_css_class('flat')
+        self._expand_sidebar_toolbar_button(view_button)
         icon_utils.set_button_icon(view_button, 'tag-symbolic')
         view_button.set_active(self._sidebar_view == 'tags')
 
@@ -2127,27 +2222,25 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         header.append(view_button)
 
         sort_button = self._build_sort_button()
+        self._expand_sidebar_toolbar_button(sort_button)
         header.append(sort_button)
 
         preferences_button = self._build_preferences_button()
+        self._expand_sidebar_toolbar_button(preferences_button)
         header.append(preferences_button)
 
-        # Add spacer to push menu button to far right
-        spacer = Gtk.Box()
-        spacer.set_hexpand(True)
-        header.append(spacer)
-
-        # Menu button - positioned at the far right relative to sidebar
-        menu_button = Gtk.MenuButton()
-        menu_button.set_can_focus(False)
+        # Menu button (placed on sidebar header bar below)
+        self.menu_button = Gtk.MenuButton()
+        self.menu_button.add_css_class('flat')
+        self.menu_button.set_can_focus(False)
         # MenuButton uses set_icon_name() which goes through icon theme
         # We'll use set_icon_name() - the icon theme should find our bundled icon
-        menu_button.set_icon_name('open-menu-symbolic')
-        menu_button.set_tooltip_text('Menu')
-        menu_button.set_menu_model(self.create_menu())
-        header.append(menu_button)
+        self.menu_button.set_icon_name('open-menu-symbolic')
+        self.menu_button.set_tooltip_text('Menu')
+        self.menu_button.set_menu_model(self.create_menu())
 
         header_handle = Gtk.WindowHandle()
+        header_handle.set_hexpand(True)
         header_handle.set_child(header)
         sidebar_box.append(header_handle)
 
@@ -2299,20 +2392,28 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     # the item callback runs.
                     self._context_menu_connections = list(selected_conns) if multi else None
 
+                    # Protocol capabilities decide which per-host actions make
+                    # sense (all-capable for SSH, narrower for plugin protocols).
+                    conn_caps = capabilities_for(conn) if conn else frozenset()
+                    all_remote_command = bool(selected_conns) and all(
+                        Capability.REMOTE_COMMAND in capabilities_for(c)
+                        for c in selected_conns
+                    )
+
                     if multi:
                         # Multi-selection: only actions that operate on all
                         # selected connections; per-host dialogs are hidden.
                         menu.add_section(
                             menu.add_item('list-add-symbolic', _('Open New Connections'), lambda: self.on_open_new_connection_action(None, None)),
                             menu.add_item('view-grid-symbolic', _('Open in Split View'), lambda: self.on_open_in_split_view_action(None, None)),
-                            menu.add_item('utilities-terminal-symbolic', _('Run Command on Hosts…'), lambda: self.on_run_command_action()),
+                            menu.add_item('utilities-terminal-symbolic', _('Run Command on Hosts…'), lambda: self.on_run_command_action()) if all_remote_command else None,
                         )
                     else:
                         menu.add_section(
                             menu.add_item('list-add-symbolic', _('Open New Connection'), lambda: self.on_open_new_connection_action(None, None)),
                             menu.add_item('document-edit-symbolic', _('Edit Connection'), lambda: self.on_edit_connection_action(None, None)),
                             menu.add_item('view-grid-symbolic', _('Open in Split View'), lambda: self.on_open_in_split_view_action(None, None)),
-                            menu.add_item('utilities-terminal-symbolic', _('Run Command on Host…'), lambda: self.on_run_command_action()),
+                            menu.add_item('utilities-terminal-symbolic', _('Run Command on Host…'), lambda: self.on_run_command_action()) if Capability.REMOTE_COMMAND in conn_caps else None,
                             menu.add_item('edit-copy-symbolic', _('Duplicate Connection'), lambda: self.on_duplicate_connection_action(None, None)),
                             menu.add_item('edit-copy-symbolic', _('Copy Address'), lambda: self._copy_connection_address()),
                         )
@@ -2331,11 +2432,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         menu.add_section(wol_item)
                     else:
                         menu.add_section(
-                            menu.add_item('folder-symbolic', _('Manage Files'), lambda: self.on_manage_files_action(None, None)) if not should_hide_file_manager_options() else None,
-                            menu.add_item('dialog-password-symbolic', _('Copy Key to Server'), lambda: self.on_copy_key_to_server_action(None, None)),
-                            menu.add_item('dialog-password-symbolic', _('Manage authorized_keys…'), lambda: self.on_manage_authorized_keys_action(None, None)),
+                            menu.add_item('folder-symbolic', _('Manage Files'), lambda: self.on_manage_files_action(None, None)) if (Capability.FILE_TRANSFER in conn_caps and not should_hide_file_manager_options()) else None,
+                            menu.add_item('dialog-password-symbolic', _('Copy Key to Server'), lambda: self.on_copy_key_to_server_action(None, None)) if Capability.KEY_DEPLOYMENT in conn_caps else None,
+                            menu.add_item('dialog-password-symbolic', _('Manage authorized_keys…'), lambda: self.on_manage_authorized_keys_action(None, None)) if Capability.KEY_DEPLOYMENT in conn_caps else None,
                             wol_item,
-                            menu.add_item('utilities-terminal-symbolic', _('Open in System Terminal'), lambda: self.on_open_in_system_terminal_action(None, None)) if not should_hide_external_terminal_options() else None,
+                            # System terminal rides build_native_command(), an SSH-only path.
+                            menu.add_item('utilities-terminal-symbolic', _('Open in System Terminal'), lambda: self.on_open_in_system_terminal_action(None, None)) if (getattr(conn, 'protocol', 'ssh') == 'ssh' and not should_hide_external_terminal_options()) else None,
                         )
 
                     def _conn_groups(c):
@@ -2369,6 +2471,26 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                             )
                     except Exception:
                         pass
+
+                    # Plugin-contributed connection actions (single SSH host),
+                    # e.g. "Docker Console". The menu is rebuilt per right-click,
+                    # so actions registered at activate time appear here.
+                    try:
+                        if not multi and conn and getattr(conn, 'protocol', 'ssh') == 'ssh':
+                            ph = getattr(self, 'plugin_host', None)
+                            actions = ph.ui.connection_actions() if ph is not None else []
+                            if actions:
+                                nick = getattr(conn, 'nickname', '')
+                                menu.add_section(*[
+                                    menu.add_item(
+                                        a.icon_name or 'application-x-executable-symbolic',
+                                        a.label,
+                                        lambda cb=a.callback, nk=nick: cb(nk),
+                                    )
+                                    for a in actions
+                                ])
+                    except Exception:
+                        logger.debug("Failed to add plugin connection actions", exc_info=True)
 
                     menu.add_section(
                         menu.add_item('user-trash-symbolic', _('Delete'), lambda: self.on_delete_connection_action(None, None)),
@@ -2620,6 +2742,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
         # Sidebar toolbar
         toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        toolbar.set_hexpand(True)
         toolbar.set_margin_start(6)
         toolbar.set_margin_end(6)
         toolbar.set_margin_top(6)
@@ -2644,9 +2767,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
         # Connection toolbar buttons
         self.connection_toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        self.connection_toolbar.set_hexpand(True)
+        self.connection_toolbar.set_homogeneous(True)
         
         # Edit button
         self.edit_button = icon_utils.new_button_from_icon_name('document-edit-symbolic')
+        self.edit_button.add_css_class('flat')
+        self._expand_sidebar_toolbar_button(self.edit_button)
         self.edit_button.set_tooltip_text('Edit Connection')
         self.edit_button.set_sensitive(False)
         self.edit_button.connect('clicked', self.on_edit_connection_clicked)
@@ -2654,6 +2781,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
         # Copy key to server button (ssh-copy-id)
         self.copy_key_button = icon_utils.new_button_from_icon_name('dialog-password-symbolic')
+        self.copy_key_button.add_css_class('flat')
+        self._expand_sidebar_toolbar_button(self.copy_key_button)
         self.copy_key_button.set_tooltip_text(
             f'Copy public key to server for passwordless login ({get_primary_modifier_label()}+Shift+K)'
         )
@@ -2663,6 +2792,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
         # SCP transfer button
         self.scp_button = icon_utils.new_button_from_icon_name('vertical-arrows-long-symbolic')
+        self.scp_button.add_css_class('flat')
+        self._expand_sidebar_toolbar_button(self.scp_button)
         self.scp_button.set_tooltip_text('Transfer files with scp')
         self.scp_button.set_sensitive(False)
         self.scp_button.connect('clicked', self.on_scp_button_clicked)
@@ -2670,6 +2801,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
         # Manage files button (visibility controlled dynamically)
         self.manage_files_button = icon_utils.new_button_from_icon_name('folder-symbolic')
+        self.manage_files_button.add_css_class('flat')
+        self._expand_sidebar_toolbar_button(self.manage_files_button)
         primary_label = get_primary_modifier_label()
         self.manage_files_button.set_tooltip_text(
             f"Open file manager for remote server ({primary_label}+Shift+O)"
@@ -2682,6 +2815,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # System terminal button (only when external terminals are available)
         if not should_hide_external_terminal_options():
             self.system_terminal_button = icon_utils.new_button_from_icon_name('utilities-terminal-symbolic')
+            self.system_terminal_button.add_css_class('flat')
+            self._expand_sidebar_toolbar_button(self.system_terminal_button)
             self.system_terminal_button.set_tooltip_text('Open connection in system terminal')
             self.system_terminal_button.set_sensitive(False)
             self.system_terminal_button.connect('clicked', self.on_system_terminal_button_clicked)
@@ -2689,6 +2824,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
         # Delete button
         self.delete_button = icon_utils.new_button_from_icon_name('user-trash-symbolic')
+        self.delete_button.add_css_class('flat')
+        self._expand_sidebar_toolbar_button(self.delete_button)
         self.delete_button.set_tooltip_text('Delete Connection')
         self.delete_button.set_sensitive(False)
         self.delete_button.connect('clicked', self.on_delete_connection_clicked)
@@ -2696,9 +2833,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
         # Group toolbar buttons
         self.group_toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        self.group_toolbar.set_hexpand(True)
+        self.group_toolbar.set_homogeneous(True)
         
         # Rename group button
         self.rename_group_button = icon_utils.new_button_from_icon_name('document-edit-symbolic')
+        self.rename_group_button.add_css_class('flat')
+        self._expand_sidebar_toolbar_button(self.rename_group_button)
         self.rename_group_button.set_tooltip_text('Rename Group')
         self.rename_group_button.set_sensitive(False)
         self.rename_group_button.connect('clicked', self.on_rename_group_clicked)
@@ -2706,6 +2847,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
         # Delete group button
         self.delete_group_button = icon_utils.new_button_from_icon_name('user-trash-symbolic')
+        self.delete_group_button.add_css_class('flat')
+        self._expand_sidebar_toolbar_button(self.delete_group_button)
         self.delete_group_button.set_tooltip_text('Delete Group')
         self.delete_group_button.set_sensitive(False)
         self.delete_group_button.connect('clicked', self.on_delete_group_clicked)
@@ -2715,14 +2858,27 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         toolbar.append(self.connection_toolbar)
         toolbar.append(self.group_toolbar)
         
-        # Spacer
-        spacer = Gtk.Box()
-        spacer.set_hexpand(True)
-        toolbar.append(spacer)
-        
         sidebar_box.append(toolbar)
 
-        self._set_sidebar_widget(sidebar_box)
+        # Sidebar header: title + window controls (GNOME split-view pattern)
+        self.sidebar_header_bar = Adw.HeaderBar()
+        self.sidebar_header_bar.add_css_class('flat')
+        if HAS_NAV_SPLIT or HAS_OVERLAY_SPLIT:
+            self.sidebar_header_bar.set_show_start_title_buttons(True)
+            self.sidebar_header_bar.set_show_end_title_buttons(True)
+
+        sidebar_title_label = Gtk.Label(label='SSH Pilot')
+        sidebar_title_label.add_css_class('title')
+        sidebar_title_label.set_xalign(0.0)
+        self.sidebar_header_bar.set_title_widget(sidebar_title_label)
+
+        self.sidebar_header_bar.pack_end(self.menu_button)
+
+        sidebar_toolbar_view = Adw.ToolbarView()
+        sidebar_toolbar_view.add_top_bar(self.sidebar_header_bar)
+        sidebar_toolbar_view.set_content(sidebar_box)
+
+        self._set_sidebar_widget(sidebar_toolbar_view)
         logger.debug("Set sidebar widget")
 
     def _copy_connection_address(self):
@@ -2967,9 +3123,48 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     # Connection sorting helpers
     # ------------------------------------------------------------------
 
+    def _apply_app_theme(self, theme: str) -> None:
+        """Apply application light/dark/system theme and persist app-theme."""
+        theme_key = str(theme).lower()
+        if theme_key not in {'default', 'light', 'dark'}:
+            theme_key = 'default'
+
+        style_manager = Adw.StyleManager.get_default()
+        if theme_key == 'light':
+            style_manager.set_color_scheme(Adw.ColorScheme.FORCE_LIGHT)
+        elif theme_key == 'dark':
+            style_manager.set_color_scheme(Adw.ColorScheme.FORCE_DARK)
+        else:
+            style_manager.set_color_scheme(Adw.ColorScheme.DEFAULT)
+
+        self.config.set_setting('app-theme', theme_key)
+        self._sync_theme_menu_button()
+
+    def _create_theme_menu(self) -> Gio.Menu:
+        menu = Gio.Menu()
+        menu.append(_('Follow System'), 'win.set-app-theme::default')
+        menu.append(_('Light'), 'win.set-app-theme::light')
+        menu.append(_('Dark'), 'win.set-app-theme::dark')
+        return menu
+
+    def _sync_theme_menu_button(self) -> None:
+        btn = getattr(self, '_headerbar_theme_menu_button', None)
+        if btn is None:
+            return
+
+        labels = {
+            'default': _('Follow System'),
+            'light': _('Light'),
+            'dark': _('Dark'),
+        }
+        saved = str(self.config.get_setting('app-theme', 'default'))
+        current = labels.get(saved, labels['default'])
+        btn.set_tooltip_text(_('Application theme: {theme}').format(theme=current))
+
     def _build_sort_button(self):
         from sshpilot import icon_utils
         button = icon_utils.new_button_from_icon_name("view-sort-ascending-symbolic")
+        button.add_css_class('flat')
         button.set_can_focus(False)
         button.connect("clicked", self._on_sort_button_clicked)
         self.sort_button = button
@@ -2978,7 +3173,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
     def _build_preferences_button(self):
         from sshpilot import icon_utils
-        button = icon_utils.new_button_from_icon_name("settings-symbolic")
+        button = icon_utils.new_button_from_icon_name("org.gnome.Settings-system-symbolic")
+        button.add_css_class('flat')
         button.set_can_focus(False)
         button.set_tooltip_text(_("Settings"))
         button.connect("clicked", lambda *_: self.show_preferences())
@@ -3056,16 +3252,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         toast_overlay.add_toast(toast)
 
     def setup_content_area(self):
-        """Set up the main content area with stack for tabs and welcome view"""
-        # Create stack to switch between welcome view and tab view
-        self.content_stack = Gtk.Stack()
-        self.content_stack.set_hexpand(True)
-        self.content_stack.set_vexpand(True)
-        
-        # Create welcome/help view
-        self.welcome_view = WelcomePage(self)
-        self.content_stack.add_named(self.welcome_view, "welcome")
-        
+        """Set up the main content area with tab overview and pinned Start tab."""
         # Create tab view
         self.tab_view = Adw.TabView()
         self.tab_view.set_hexpand(True)
@@ -3170,22 +3357,29 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.tab_bar = Adw.TabBar()
         self.tab_bar.set_view(self.tab_view)
         self.tab_bar.set_autohide(False)
-        
-        # Add local terminal button before the tabs
-        from sshpilot import icon_utils
-        self.local_terminal_button = Gtk.Button()
-        icon_utils.set_button_icon(self.local_terminal_button, 'tab-new-symbolic')
-        self.local_terminal_button.add_css_class('flat')  # Make button flat
-        
-        # Set tooltip with keyboard shortcut
-        mac = is_macos()
-        primary = '⌘' if mac else 'Ctrl'
-        shift = '⇧' if mac else 'Shift'
-        shortcut_text = f'{primary}+{shift}+T'
-        self.local_terminal_button.set_tooltip_text(_('Open Local Terminal ({})').format(shortcut_text))
-        
-        self.local_terminal_button.connect('clicked', self.on_local_terminal_button_clicked)
-        self.tab_bar.set_start_action_widget(self.local_terminal_button)
+
+        # H/V layout toggles after the last tab (tab bar end action)
+        from .split_view import create_layout_toggle_buttons
+
+        self._layout_h_btn, self._layout_v_btn, self._layout_toggle_updating = (
+            create_layout_toggle_buttons(
+                lambda: self._apply_tab_layout_mode('horizontal'),
+                lambda: self._apply_tab_layout_mode('vertical'),
+            )
+        )
+        self._layout_h_btn.set_visible(False)
+        self._layout_v_btn.set_visible(False)
+
+        self.tab_button = Adw.TabButton()
+        self.tab_button.set_view(self.tab_view)
+        self.tab_button.connect('clicked', self.on_tab_button_clicked)
+        self.tab_button.set_visible(False)  # Hidden by default, shown when tabs exist
+
+        layout_end_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        layout_end_box.append(self._layout_h_btn)
+        layout_end_box.append(self._layout_v_btn)
+        layout_end_box.append(self.tab_button)
+        self.tab_bar.set_end_action_widget(layout_end_box)
 
         # Double-click on a tab to rename it inline
         rename_gesture = Gtk.GestureClick()
@@ -3194,23 +3388,18 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.tab_bar.add_controller(rename_gesture)
 
         # Create tab content box
-        tab_content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        tab_content_box.append(self.tab_bar)
-        tab_content_box.append(self.tab_view)
-        # Ensure background matches terminal theme to avoid white flash
-        if hasattr(tab_content_box, 'add_css_class'):
-            tab_content_box.add_css_class('terminal-bg')
+        self.tab_content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.tab_content_box.append(self.tab_bar)
+        self.tab_content_box.append(self.tab_view)
+        if hasattr(self.tab_view, 'add_css_class'):
+            self.tab_view.add_css_class('terminal-bg')
         
         # Set the tab content box as the child of the tab overview
-        self.tab_overview.set_child(tab_content_box)
-        
-        # Create and add tab button to header bar
-        self.tab_button = Adw.TabButton()
-        self.tab_button.set_view(self.tab_view)
-        self.tab_button.connect('clicked', self.on_tab_button_clicked)
-        self.tab_button.set_visible(False)  # Hidden by default, shown when tabs exist
-        self.header_bar.pack_start(self.tab_button)
+        self.tab_overview.set_child(self.tab_content_box)
 
+        self._create_start_tab()
+        self._update_tab_button_visibility()
+        
         # Split-view button — opens a new split-view tab
         from sshpilot import icon_utils as _iu
         self.split_view_button = Gtk.Button()
@@ -3224,13 +3413,18 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.header_bar.pack_start(self.split_view_button)
 
         # Command blocks toggle button (right sidebar)
+        from sshpilot import icon_utils as _cmd_icon_utils
+
+        self._headerbar_theme_menu_button = Gtk.MenuButton()
+        _cmd_icon_utils.set_button_icon(self._headerbar_theme_menu_button, 'dark-mode-symbolic')
+        self._headerbar_theme_menu_button.add_css_class('flat')
+        self._headerbar_theme_menu_button.set_tooltip_text(_('Application theme'))
+        self._headerbar_theme_menu_button.set_menu_model(self._create_theme_menu())
+
         self._cmd_blocks_toggle_btn = Gtk.ToggleButton()
-        _cmd_btn_content = Adw.ButtonContent()
-        _cmd_btn_content.set_icon_name('play-large-symbolic')
-        _cmd_btn_content.set_label(_('Commands'))
-        self._cmd_blocks_toggle_btn.set_child(_cmd_btn_content)
-        self._cmd_blocks_toggle_btn.add_css_class('opaque')
-        self._cmd_blocks_toggle_btn.set_tooltip_text(_('Toggle Command Blocks (Ctrl+Alt+S)'))
+        _cmd_icon_utils.set_button_icon(self._cmd_blocks_toggle_btn, 'system-run-symbolic')
+        self._cmd_blocks_toggle_btn.add_css_class('flat')
+        self._cmd_blocks_toggle_btn.set_tooltip_text(_('Commands (Ctrl+Alt+S)'))
         self._updating_cmd_toggle = False
 
         def _on_cmd_toggle_btn_toggled(btn):
@@ -3240,29 +3434,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
         self._cmd_blocks_toggle_btn.connect('toggled', _on_cmd_toggle_btn_toggled)
         self.header_bar.pack_end(self._cmd_blocks_toggle_btn)
-
-        # H/V layout toggle buttons (control split-view layout or convert a
-        # regular terminal tab to a split-view tab)
-        from .split_view import create_layout_toggle_buttons
-
-        self._layout_h_btn, self._layout_v_btn, self._layout_toggle_updating = (
-            create_layout_toggle_buttons(
-                lambda: self._apply_tab_layout_mode('horizontal'),
-                lambda: self._apply_tab_layout_mode('vertical'),
-            )
-        )
-        self._layout_h_btn.set_visible(False)
-        self._layout_v_btn.set_visible(False)
-        self.header_bar.pack_start(self._layout_h_btn)
-        self.header_bar.pack_start(self._layout_v_btn)
-
-        self.content_stack.add_named(self.tab_overview, "tabs")
-        # Also color the stack background
-        if hasattr(self.content_stack, 'add_css_class'):
-            self.content_stack.add_css_class('terminal-bg')
-        
-        # Start with welcome view visible
-        self.content_stack.set_visible_child_name("welcome")
+        self.header_bar.pack_end(self._headerbar_theme_menu_button)
+        self._sync_theme_menu_button()
 
         # Create broadcast command banner (custom banner-like widget)
         self.broadcast_banner = Gtk.Revealer()
@@ -3349,7 +3522,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             content_wrapper.append(self.update_banner_container)
             content_wrapper.append(self.tips_banner_container)
             content_wrapper.append(self.broadcast_banner)
-            content_wrapper.append(self.content_stack)
+            content_wrapper.append(self.tab_overview)
             # Wrap only the content area (below the header bar) so the command
             # blocks sidebar opens inside the terminal pane, not across the full window.
             self._wrap_content_with_command_panel(content_wrapper, set_as_window_content=False)
@@ -3368,7 +3541,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             content_wrapper.append(self.update_banner_container)
             content_wrapper.append(self.tips_banner_container)
             content_wrapper.append(self.broadcast_banner)
-            content_wrapper.append(self.content_stack)
+            content_wrapper.append(self.tab_overview)
             # Same: scope the sidebar to the content pane only.
             self._wrap_content_with_command_panel(content_wrapper, set_as_window_content=False)
             content_box.set_content(
@@ -3384,7 +3557,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             main_box.append(self.update_banner_container)
             main_box.append(self.tips_banner_container)
             main_box.append(self.broadcast_banner)
-            main_box.append(self.content_stack)
+            main_box.append(self.tab_overview)
             self._set_content_widget(main_box)
             logger.debug("Set content widget for other split view types")
 
@@ -3501,6 +3674,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
         menu.append('About', 'app.about')
         menu.append('Quit', 'app.quit')
+
+        # Plugin-contributed pages land here in their own section, shown as a
+        # plain separator (no header). The section object is shared/mutable, so
+        # items the plugin host appends after this menu is built still appear.
+        section = getattr(self, '_plugins_menu_section', None)
+        if section is not None:
+            menu.append_section(None, section)
 
         return menu
 
@@ -3844,51 +4024,107 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.config.connect('setting-changed', self.on_setting_changed)
 
 
-    def show_welcome_view(self):
-        """Show the welcome/help view when no connections are active"""
-        # Remove terminal background styling so welcome uses app theme colors
-        if hasattr(self.content_stack, 'remove_css_class'):
+    def _is_start_tab_page(self, page) -> bool:
+        return page is not None and page is getattr(self, '_start_tab_page', None)
+
+    def has_user_tabs(self) -> bool:
+        try:
+            return self.tab_view.get_n_pages() > 1
+        except Exception:
+            return False
+
+    def is_start_tab_selected(self) -> bool:
+        try:
+            page = self.tab_view.get_selected_page()
+            return self._is_start_tab_page(page)
+        except Exception:
+            return False
+
+    def _pin_start_tab_page(self) -> None:
+        """Pin the Start tab so the tab bar hides its close button."""
+        page = getattr(self, '_start_tab_page', None)
+        if page is None:
+            return
+        try:
+            self.tab_view.set_page_pinned(page, True)
+        except Exception:
             try:
-                self.content_stack.remove_css_class('terminal-bg')
+                page.set_pinned(True)
+            except Exception:
+                logger.debug("Could not pin Start tab", exc_info=True)
+
+    def _create_start_tab(self) -> None:
+        """Add the pinned Start tab (WelcomePage) if it is not already present."""
+        if getattr(self, '_start_tab_page', None) is not None:
+            try:
+                if self._start_tab_page in list(self.tab_view.get_pages()):
+                    self._pin_start_tab_page()
+                    return
             except Exception:
                 pass
-        # Ensure welcome fills the pane
-        if hasattr(self, 'welcome_view'):
-            try:
-                self.welcome_view.set_hexpand(True)
-                self.welcome_view.set_vexpand(True)
-            except Exception:
-                pass
-        self.content_stack.set_visible_child_name("welcome")
+
+        self.welcome_view = WelcomePage(self)
+        self._start_tab_page = self.tab_view.prepend(self.welcome_view)
+        self._start_tab_page.set_title(_('Start'))
+        try:
+            from sshpilot import icon_utils
+            self._start_tab_page.set_icon(
+                icon_utils.new_gicon_from_icon_name('go-home-symbolic')
+            )
+        except Exception:
+            pass
+        self._pin_start_tab_page()
+        self.tab_view.set_selected_page(self._start_tab_page)
+        self._update_content_theme_for_selected_tab()
+
+    def _update_content_theme_for_selected_tab(self) -> None:
+        """Use terminal background only when a non-Start tab is selected."""
+        if not hasattr(self, 'tab_view'):
+            return
+        try:
+            if self.is_start_tab_selected():
+                self.tab_view.remove_css_class('terminal-bg')
+            else:
+                self.tab_view.add_css_class('terminal-bg')
+        except Exception:
+            logger.debug("Failed to update tab content theme", exc_info=True)
+
+    def show_start_tab(self) -> None:
+        """Select the pinned Start tab."""
+        self._create_start_tab()
+        try:
+            self.tab_view.set_selected_page(self._start_tab_page)
+        except Exception:
+            pass
+        self._update_content_theme_for_selected_tab()
         GLib.idle_add(self._focus_connection_list_first_row)
 
-        # Hide layout toggle buttons — they only apply when a terminal is active
-        if hasattr(self, '_layout_h_btn'):
-            self._layout_h_btn.set_visible(False)
-        if hasattr(self, '_layout_v_btn'):
-            self._layout_v_btn.set_visible(False)
-
-        # Update view toggle button
-        if hasattr(self, 'view_toggle_button'):
-            # Check if there are any active tabs
-            has_tabs = len(self.tab_view.get_pages()) > 0
-            if has_tabs:
-                from sshpilot import icon_utils
-                icon_utils.set_button_icon(self.view_toggle_button, 'go-home-symbolic')
-                self.view_toggle_button.set_tooltip_text('Hide Start Page')
-                self.view_toggle_button.set_visible(True)
-            else:
-                self.view_toggle_button.set_visible(False)  # Hide button when no tabs
-
-        # Sidebar behavior: reveal the sidebar when there are genuinely no tabs.
         try:
             if (self.config.get_setting('ui.sidebar_show_when_no_tabs', False)
-                    and self.tab_view.get_n_pages() == 0):
+                    and not self.has_user_tabs()):
                 self._apply_sidebar_visible(True)
         except Exception:
             logger.debug("sidebar show-when-no-tabs failed", exc_info=True)
 
-        logger.info("Showing welcome view")
+        logger.info("Showing Start tab")
+
+    def show_welcome_view(self):
+        """Select the pinned Start tab (legacy name)."""
+        self.show_start_tab()
+
+    def show_tab_view(self):
+        """Select the first user tab, or keep the current selection."""
+        if self.has_user_tabs() and self.is_start_tab_selected():
+            try:
+                for page in self.tab_view.get_pages():
+                    if not self._is_start_tab_page(page):
+                        self.tab_view.set_selected_page(page)
+                        break
+            except Exception:
+                pass
+        self._update_content_theme_for_selected_tab()
+        self._update_layout_toggle_state()
+        logger.info("Showing tab view")
 
     def _focus_connection_list_first_row(self):
         """Focus the first row of the connection list so arrow-key navigation works immediately."""
@@ -4066,40 +4302,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception as e:
             logger.error(f"Failed to toggle search entry: {e}")
 
-    def show_tab_view(self):
-        """Show the tab view when connections are active"""
-        # Re-apply terminal background when switching back to tabs
-        if hasattr(self.content_stack, 'add_css_class'):
-            try:
-                self.content_stack.add_css_class('terminal-bg')
-            except Exception:
-                pass
-        self.content_stack.set_visible_child_name("tabs")
-        
-        # Update view toggle button
-        if hasattr(self, 'view_toggle_button'):
-            from sshpilot import icon_utils
-            icon_utils.set_button_icon(self.view_toggle_button, 'go-home-symbolic')
-            self.view_toggle_button.set_tooltip_text('Show Start Page')
-            self.view_toggle_button.set_visible(True)  # Show button when tabs are active
-
-        # Restore layout toggle button visibility based on the active tab type
-        self._update_layout_toggle_state()
-
-        logger.info("Showing tab view")
-
     def _return_to_tab_view_if_welcome(self):
-        """Switch back to tab view if the welcome view is currently visible."""
+        """Switch to a user tab when an action fires while Start is selected."""
         try:
-            if not hasattr(self, 'content_stack'):
+            if not self.is_start_tab_selected():
                 return
-            if self.content_stack.get_visible_child_name() != "welcome":
+            if not self.has_user_tabs():
                 return
-            if not hasattr(self, 'tab_view'):
-                return
-            if self.tab_view.get_n_pages() <= 0:
-                return
-            logger.debug("Leaving welcome view due to user interaction")
+            logger.debug("Leaving Start tab due to user interaction")
             self.show_tab_view()
         except Exception as exc:
             logger.debug(f"Failed to return to tab view: {exc}")
@@ -4192,151 +4402,142 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
     def _open_ssh_config_editor(self):
         try:
-            # Try to use text_editor.py if gtksourceview5 is available
-            from .text_editor import _HAS_GTKSOURCE, RemoteFileEditorWindow
-            
-            if _HAS_GTKSOURCE:
-                # Use the modern text editor with syntax highlighting
-                config_path = getattr(self.connection_manager, 'ssh_config_path', None)
-                if not config_path:
-                    from .platform_utils import get_ssh_dir
-                    config_path = os.path.join(get_ssh_dir(), 'config')
-                
-                config_path = os.path.abspath(os.path.expanduser(config_path))
-                config_name = os.path.basename(config_path)
-                
-                # Set up file monitoring to detect when the file is saved
-                file_modified_time = 0.0
-                if os.path.exists(config_path):
-                    try:
-                        file_modified_time = os.path.getmtime(config_path)
-                    except Exception:
-                        pass
-                
-                def _reload_ssh_config():
-                    """Reload SSH config and refresh connection list, preserving group membership"""
-                    try:
-                        # Capture current connections and their group memberships before reload
-                        old_connections = {conn.nickname: conn for conn in self.connection_manager.get_connections()}
-                        old_group_memberships = {}
-                        for nickname in old_connections.keys():
-                            group_id = self.group_manager.get_connection_group(nickname)
-                            if group_id:
-                                old_group_memberships[nickname] = group_id
-                        
-                        # Reload SSH config (this creates new Connection objects)
-                        self.connection_manager.load_ssh_config()
-                        new_connections = {conn.nickname: conn for conn in self.connection_manager.get_connections()}
-                        
-                        # Detect nickname changes by matching connections on hostname/username/port
-                        # This handles the case where Host value changes but connection is otherwise the same
-                        for old_nickname, old_conn in old_connections.items():
-                            if old_nickname in old_group_memberships:
-                                # This connection was in a group, try to find its new nickname
-                                group_id = old_group_memberships[old_nickname]
-                                
-                                # Try to find matching connection by hostname/username/port
-                                matching_new_nickname = None
-                                for new_nickname, new_conn in new_connections.items():
-                                    if (new_conn.hostname == old_conn.hostname and
-                                        new_conn.username == old_conn.username and
-                                        new_conn.port == old_conn.port):
-                                        matching_new_nickname = new_nickname
-                                        break
-                                
-                                # If we found a match and nickname changed, update group membership
-                                if matching_new_nickname and matching_new_nickname != old_nickname:
-                                    try:
-                                        self.group_manager.rename_connection(old_nickname, matching_new_nickname)
-                                        logger.info(f"Preserved group membership: '{old_nickname}' -> '{matching_new_nickname}' in group {group_id}")
-                                    except Exception as e:
-                                        logger.error(f"Failed to preserve group membership for renamed connection: {e}")
-                                # If old nickname still exists, group membership is already preserved
-                        
-                        self.rebuild_connection_list()
-                        logger.info("SSH config reloaded after file save")
-                    except Exception as e:
-                        logger.error(f"Failed to refresh connections after SSH config save: {e}")
-                
-                # Monitor file for changes
-                def _on_file_changed(monitor, file, other_file, event_type):
-                    """Handle file system changes to detect saves"""
-                    if event_type in (Gio.FileMonitorEvent.CHANGED, Gio.FileMonitorEvent.CHANGES_DONE_HINT):
-                        try:
-                            if os.path.exists(config_path):
-                                new_mtime = os.path.getmtime(config_path)
-                                nonlocal file_modified_time
-                                if new_mtime > file_modified_time:
-                                    file_modified_time = new_mtime
-                                    # Reload after a short delay to ensure file is fully written
-                                    GLib.timeout_add(100, _reload_ssh_config)
-                        except Exception as e:
-                            logger.debug(f"Error checking file modification time: {e}")
-                
-                # Create file monitor
+            # Single editor for the SSH config: the GtkSourceView-backed editor,
+            # which self-degrades to a plain TextView if GtkSourceView is absent.
+            from .text_editor import RemoteFileEditorWindow
+            from .ssh_config_utils import validate_ssh_config_text
+
+            config_path = getattr(self.connection_manager, 'ssh_config_path', None)
+            if not config_path:
+                from .platform_utils import get_ssh_dir
+                config_path = os.path.join(get_ssh_dir(), 'config')
+
+            config_path = os.path.abspath(os.path.expanduser(config_path))
+            config_name = os.path.basename(config_path)
+
+            # Set up file monitoring to detect when the file is saved
+            file_modified_time = 0.0
+            if os.path.exists(config_path):
                 try:
-                    gfile = Gio.File.new_for_path(config_path)
-                    file_monitor = gfile.monitor_file(Gio.FileMonitorFlags.WATCH_MOVES, None)
-                    file_monitor.connect("changed", _on_file_changed)
-                    # Store monitor reference to keep it alive
-                    if not hasattr(self, '_ssh_config_monitors'):
-                        self._ssh_config_monitors = []
-                    self._ssh_config_monitors.append(file_monitor)
+                    file_modified_time = os.path.getmtime(config_path)
+                except Exception:
+                    pass
+
+            def _reload_ssh_config():
+                """Reload SSH config and refresh connection list, preserving group membership"""
+                try:
+                    # Capture current connections and their group memberships before reload
+                    old_connections = {conn.nickname: conn for conn in self.connection_manager.get_connections()}
+                    old_group_memberships = {}
+                    for nickname in old_connections.keys():
+                        group_id = self.group_manager.get_connection_group(nickname)
+                        if group_id:
+                            old_group_memberships[nickname] = group_id
+
+                    # Reload SSH config (this creates new Connection objects)
+                    self.connection_manager.load_ssh_config()
+                    new_connections = {conn.nickname: conn for conn in self.connection_manager.get_connections()}
+
+                    # Detect nickname changes by matching connections on hostname/username/port
+                    # This handles the case where Host value changes but connection is otherwise the same
+                    for old_nickname, old_conn in old_connections.items():
+                        if old_nickname in old_group_memberships:
+                            # This connection was in a group, try to find its new nickname
+                            group_id = old_group_memberships[old_nickname]
+
+                            # Try to find matching connection by hostname/username/port
+                            matching_new_nickname = None
+                            for new_nickname, new_conn in new_connections.items():
+                                if (new_conn.hostname == old_conn.hostname and
+                                    new_conn.username == old_conn.username and
+                                    new_conn.port == old_conn.port):
+                                    matching_new_nickname = new_nickname
+                                    break
+
+                            # If we found a match and nickname changed, update group membership
+                            if matching_new_nickname and matching_new_nickname != old_nickname:
+                                try:
+                                    self.group_manager.rename_connection(old_nickname, matching_new_nickname)
+                                    logger.info(f"Preserved group membership: '{old_nickname}' -> '{matching_new_nickname}' in group {group_id}")
+                                except Exception as e:
+                                    logger.error(f"Failed to preserve group membership for renamed connection: {e}")
+                            # If old nickname still exists, group membership is already preserved
+
+                    self.rebuild_connection_list()
+                    logger.info("SSH config reloaded after file save")
                 except Exception as e:
-                    logger.debug(f"Failed to set up file monitoring for SSH config: {e}")
-                    file_monitor = None
-                
-                editor = RemoteFileEditorWindow(
-                    parent=self,
-                    file_path=config_path,
-                    file_name=config_name,
-                    is_local=True,
-                    sftp_manager=None,
-                    file_manager_window=None
-                )
-                
-                # Set custom title for SSH config editor
-                editor.set_title(_("Edit SSH Config"))
-                # Also update the header bar title widget if it exists
-                if hasattr(editor, '_title_label'):
-                    editor._title_label.set_label(_("Edit SSH Config"))
-                
-                # Also reload when the editor closes (fallback)
-                def _on_editor_close_request(window):
-                    # Clean up file monitor
-                    if hasattr(self, '_ssh_config_monitors') and file_monitor:
-                        try:
-                            if file_monitor in self._ssh_config_monitors:
-                                self._ssh_config_monitors.remove(file_monitor)
-                            file_monitor.cancel()
-                        except Exception:
-                            pass
-                    # Final reload check when closing
+                    logger.error(f"Failed to refresh connections after SSH config save: {e}")
+
+            # Monitor file for changes
+            def _on_file_changed(monitor, file, other_file, event_type):
+                """Handle file system changes to detect saves"""
+                if event_type in (Gio.FileMonitorEvent.CHANGED, Gio.FileMonitorEvent.CHANGES_DONE_HINT):
                     try:
                         if os.path.exists(config_path):
                             new_mtime = os.path.getmtime(config_path)
+                            nonlocal file_modified_time
                             if new_mtime > file_modified_time:
-                                _reload_ssh_config()
+                                file_modified_time = new_mtime
+                                # Reload after a short delay to ensure file is fully written
+                                GLib.timeout_add(100, _reload_ssh_config)
+                    except Exception as e:
+                        logger.debug(f"Error checking file modification time: {e}")
+
+            # Create file monitor
+            try:
+                gfile = Gio.File.new_for_path(config_path)
+                file_monitor = gfile.monitor_file(Gio.FileMonitorFlags.WATCH_MOVES, None)
+                file_monitor.connect("changed", _on_file_changed)
+                # Store monitor reference to keep it alive
+                if not hasattr(self, '_ssh_config_monitors'):
+                    self._ssh_config_monitors = []
+                self._ssh_config_monitors.append(file_monitor)
+            except Exception as e:
+                logger.debug(f"Failed to set up file monitoring for SSH config: {e}")
+                file_monitor = None
+
+            editor = RemoteFileEditorWindow(
+                parent=self,
+                file_path=config_path,
+                file_name=config_name,
+                is_local=True,
+                sftp_manager=None,
+                file_manager_window=None,
+                pre_save_validator=validate_ssh_config_text,
+                language_id="sshconfig",
+                show_outline=True,
+            )
+
+            # Set custom title for SSH config editor (the path shows as the
+            # header subtitle automatically).
+            editor.set_title(_("Edit SSH Config"))  # window/taskbar title
+            if hasattr(editor, 'set_editor_title'):
+                editor.set_editor_title(_("SSH Config"))
+
+            # Also reload when the editor closes (fallback)
+            def _on_editor_close_request(window):
+                # Clean up file monitor
+                if hasattr(self, '_ssh_config_monitors') and file_monitor:
+                    try:
+                        if file_monitor in self._ssh_config_monitors:
+                            self._ssh_config_monitors.remove(file_monitor)
+                        file_monitor.cancel()
                     except Exception:
                         pass
-                    return False  # Allow window to close
-                
-                editor.connect("close-request", _on_editor_close_request)
-                editor.present()
-            else:
-                # Fallback to the simple editor if gtksourceview5 is not available
-                from .ssh_config_editor import SSHConfigEditorWindow
-                editor = SSHConfigEditorWindow(self, self.connection_manager, on_saved=self._on_ssh_config_editor_saved)
-                editor.present()
+                # Final reload check when closing
+                try:
+                    if os.path.exists(config_path):
+                        new_mtime = os.path.getmtime(config_path)
+                        if new_mtime > file_modified_time:
+                            _reload_ssh_config()
+                except Exception:
+                    pass
+                return False  # Allow window to close
+
+            editor.connect("close-request", _on_editor_close_request)
+            editor.present()
         except Exception as e:
             logger.error(f"Failed to open SSH config editor: {e}")
-
-    def _on_ssh_config_editor_saved(self):
-        try:
-            self.connection_manager.load_ssh_config()
-            self.rebuild_connection_list()
-        except Exception as e:
-            logger.error(f"Failed to refresh connections after SSH config save: {e}")
 
     def show_connection_selection_for_ssh_copy(self):
         """Show a dialog to select a connection for SSH key copy"""
@@ -4671,6 +4872,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 logger.error(f"Failed to show error dialog: {e}")
             return
         connection = selected_row.connection
+        if Capability.KEY_DEPLOYMENT not in capabilities_for(connection):
+            logger.debug("ssh-copy-id unavailable: protocol %r has no key deployment",
+                         getattr(connection, 'protocol', 'ssh'))
+            return
         logger.info(f"Main window: Selected connection: {getattr(connection, 'nickname', 'unknown')}")
         logger.debug(f"Main window: Connection details - host: {getattr(connection, 'hostname', getattr(connection, 'host', 'unknown'))}, "
                     f"username: {getattr(connection, 'username', 'unknown')}, "
@@ -5080,11 +5285,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
         # General shortcuts group
         group_general = Gtk.ShortcutsGroup()
-        group_general.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Toggle Sidebar'), accelerator='F9'))
-        
+
         # Add general shortcuts with current values
         general_actions = [
+            ('toggle_sidebar', _('Toggle Sidebar')),
             ('quit', _('Quit')),
             ('preferences', _('Settings')),
             ('help', _('Documentation')),
@@ -5369,7 +5573,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         pane instead (Ctrl+Shift+W is context-dependent)."""
         try:
             page = self.tab_view.get_selected_page()
-            if page is None:
+            if page is None or self._is_start_tab_page(page):
                 return
             child = page.get_child()
             from .split_view import SplitViewTab
@@ -5638,7 +5842,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
     def on_tab_selected(self, tab_view: Adw.TabView, _pspec=None) -> None:
         """Update active terminal mapping when the user switches tabs."""
-        self._return_to_tab_view_if_welcome()
+        self._update_content_theme_for_selected_tab()
         self._update_layout_toggle_state()
         try:
             page = tab_view.get_selected_page()
@@ -5646,6 +5850,16 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 return
             child = page.get_child() if hasattr(page, 'get_child') else None
             if child is None:
+                return
+
+            if self._is_start_tab_page(page):
+                GLib.idle_add(self._focus_connection_list_first_row)
+                try:
+                    if (self.config.get_setting('ui.sidebar_show_when_no_tabs', False)
+                            and not self.has_user_tabs()):
+                        self._apply_sidebar_visible(True)
+                except Exception:
+                    pass
                 return
             
             # Focus the terminal when tab is selected
@@ -5734,17 +5948,29 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             self.group_toolbar.set_visible(False)
 
             multiple_connections = len(connection_rows) > 1
+            selected_conn = getattr(connection_rows[0], 'connection', None)
+            caps = capabilities_for(selected_conn) if (not multiple_connections and selected_conn) else frozenset()
             self.edit_button.set_sensitive(not multiple_connections)
             if hasattr(self, 'copy_key_button'):
-                self.copy_key_button.set_sensitive(not multiple_connections)
+                self.copy_key_button.set_sensitive(
+                    not multiple_connections and Capability.KEY_DEPLOYMENT in caps
+                )
             if hasattr(self, 'scp_button'):
-                self.scp_button.set_sensitive(not multiple_connections)
+                self.scp_button.set_sensitive(
+                    not multiple_connections and Capability.FILE_TRANSFER in caps
+                )
             self.manage_files_button.set_sensitive(
-                not multiple_connections and not should_hide_file_manager_options()
+                not multiple_connections
+                and Capability.FILE_TRANSFER in caps
+                and not should_hide_file_manager_options()
             )
             self.manage_files_button.set_visible(not should_hide_file_manager_options())
             if hasattr(self, 'system_terminal_button') and self.system_terminal_button:
-                self.system_terminal_button.set_sensitive(not multiple_connections)
+                # System terminal rides build_native_command(), an SSH-only path.
+                self.system_terminal_button.set_sensitive(
+                    not multiple_connections
+                    and getattr(selected_conn, 'protocol', 'ssh') == 'ssh'
+                )
             self.delete_button.set_sensitive(True)
             self.rename_group_button.set_sensitive(False)
             self.delete_group_button.set_sensitive(False)
@@ -5856,22 +6082,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception:
             logger.debug("hide_sidebar_after_terminal failed", exc_info=True)
         return GLib.SOURCE_REMOVE
-
-    def on_view_toggle_clicked(self, button):
-        """Handle view toggle button click to switch between welcome and tabs"""
-        try:
-            # Check which view is currently visible
-            current_view = self.content_stack.get_visible_child_name()
-            
-            if current_view == "welcome":
-                # Switch to tab view
-                self.show_tab_view()
-            else:
-                # Switch to welcome view
-                self.show_welcome_view()
-                
-        except Exception as e:
-            logger.error(f"Failed to toggle view: {e}")
 
     def _toggle_sidebar_visibility(self, is_visible):
         """Helper method to toggle sidebar visibility"""
@@ -6059,7 +6269,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         if n_press != 2:
             return
         page = self.tab_view.get_selected_page()
-        if page:
+        if page and not self._is_start_tab_page(page):
             self._show_tab_rename_popover(page, x, y)
 
     def _show_tab_rename_popover(self, page, x, y):
@@ -6124,6 +6334,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 page = None
             if page is None:
                 continue
+            if self._is_start_tab_page(page):
+                continue
             child = page.get_child()
             if child is None:
                 continue
@@ -6182,16 +6394,19 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         return {'tabs': tabs}
 
     def _close_all_tabs(self):
-        """Programmatically close every open tab without confirmation dialogs."""
+        """Close every user tab; the pinned Start tab is kept."""
         self._suppress_close_confirmation = True
         try:
             for page in list(self.tab_view.get_pages()):
+                if self._is_start_tab_page(page):
+                    continue
                 try:
                     self.tab_view.close_page(page)
                 except Exception:
                     pass
         finally:
             self._suppress_close_confirmation = False
+        self.show_start_tab()
 
     def _restore_split_tab(self, entry):
         """Recreate a split-view tab from a captured entry."""
@@ -6278,6 +6493,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
     def on_tab_close(self, tab_view, page):
         """Handle tab close - THE KEY FIX: Never call close_page ourselves"""
+        if self._is_start_tab_page(page):
+            return True
+
         # If we are closing pages programmatically (e.g., after deleting a
         # connection), suppress the confirmation dialog and allow the default
         # close behavior to proceed.
@@ -6323,8 +6541,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 connection = self.terminal_to_connection.get(child)
         
         if not connection:
-            # For non-terminal tabs, allow immediate close
-            return False  # Allow the default close behavior
+            # Non-terminal tabs (plugins, file manager, …) close immediately.
+            return False
         
         # Check if confirmation is required
         confirm_disconnect = self.config.get_setting('confirm-disconnect', True)
@@ -6382,9 +6600,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             # Update tab button visibility after closing
             self._update_tab_button_visibility()
             
-            # Check if this was the last tab and show welcome screen if needed
-            if tab_view.get_n_pages() == 0:
-                self.show_welcome_view()
+            # Check if this was the last user tab
+            if not self.has_user_tabs():
+                self.show_start_tab()
         else:
             # User cancelled, so we reject the close request.
             # This is the critical step that makes the close button work again.
@@ -6408,8 +6626,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             if tab_view is not None and page is not None:
                 tab_view.close_page_finish(page, True)
             self._update_tab_button_visibility()
-            if tab_view is not None and tab_view.get_n_pages() == 0:
-                self.show_welcome_view()
+            if tab_view is not None and not self.has_user_tabs():
+                self.show_start_tab()
         else:
             if tab_view is not None and page is not None:
                 tab_view.close_page_finish(page, False)
@@ -6580,11 +6798,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     # ── layout toggle state / apply ───────────────────────────────────────────
 
     def _update_layout_toggle_state(self) -> None:
-        """Sync toggle button visibility and active states with the selected tab.
-
-        Buttons are shown only when the active tab is a terminal or split-view
-        tab.  They are hidden on the welcome page, file manager tabs, etc.
-        """
+        """Sync tab-bar H/V toggles with the selected tab."""
         if not hasattr(self, '_layout_h_btn'):
             return
         try:
@@ -6658,11 +6872,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     # ── tab button visibility ─────────────────────────────────────────────────
 
     def _update_tab_button_visibility(self):
-        """Update TabButton visibility based on number of tabs"""
+        """Hide tab bar and overview button when only the Start tab is open."""
         try:
+            show_tabs = self.has_user_tabs()
             if hasattr(self, 'tab_button'):
-                has_tabs = self.tab_view.get_n_pages() > 0
-                self.tab_button.set_visible(has_tabs)
+                self.tab_button.set_visible(show_tabs)
+            if hasattr(self, 'tab_bar'):
+                self.tab_bar.set_visible(show_tabs)
         except Exception as e:
             logger.error(f"Failed to update tab button visibility: {e}")
 
@@ -6672,11 +6888,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # (the terminal stays live; its tracking entries remain valid).
         if getattr(self, '_moving_tab_to_pane', False):
             self._update_tab_button_visibility()
-            if tab_view.get_n_pages() == 0:
-                self.show_welcome_view()
-            else:
-                if hasattr(self, 'view_toggle_button'):
-                    self.view_toggle_button.set_visible(True)
+            if tab_view.get_n_pages() <= 1:
+                self.show_start_tab()
             return
 
         # Cleanup terminal-to-connection maps when a page is detached
@@ -6708,13 +6921,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self._update_tab_button_visibility()
         self._update_layout_toggle_state()
 
-        # Show welcome view if no more tabs are left
-        if tab_view.get_n_pages() == 0:
-            self.show_welcome_view()
-        else:
-            # Update button visibility when tabs remain
-            if hasattr(self, 'view_toggle_button'):
-                self.view_toggle_button.set_visible(True)
+        # Select Start when the last user tab closes
+        if not self.has_user_tabs():
+            self.show_start_tab()
 
         # Recompute the affected connection's state now that the terminal has
         # been removed from the maps. With no terminals left this resolves to
@@ -6750,12 +6959,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             logger.error(f"Failed to open local terminal: {e}")
 
     def on_tab_button_clicked(self, button):
-        """Handle tab button click to open/close tab overview and switch to tab view"""
+        """Toggle the tab overview."""
         try:
-            # First, ensure we're showing the tab view stack
-            self.show_tab_view()
-            
-            # Then toggle the tab overview
             is_open = self.tab_overview.get_open()
             self.tab_overview.set_open(not is_open)
         except Exception as e:
@@ -7199,6 +7404,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         if not (hasattr(self, '_context_menu_connection') and self._context_menu_connection):
             return
         connection = self._context_menu_connection
+        if Capability.KEY_DEPLOYMENT not in capabilities_for(connection):
+            logger.debug("authorized_keys editor unavailable: protocol %r has no key deployment",
+                         getattr(connection, 'protocol', 'ssh'))
+            return
         try:
             from .authorized_keys_window import AuthorizedKeysWindow
             from .file_manager_window import AsyncSFTPManager
@@ -7264,6 +7473,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         prompt the user once and remember their pick. Subsequent calls go
         straight to the open flow.
         """
+        if Capability.FILE_TRANSFER not in capabilities_for(connection):
+            logger.debug("Manage Files unavailable: protocol %r has no file transfer",
+                         getattr(connection, 'protocol', 'ssh'))
+            return
         if self._should_prompt_file_manager_choice():
             self._show_file_manager_first_run_dialog(
                 lambda choice: self._continue_open_manage_files_after_choice(connection, choice)
@@ -7779,7 +7992,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         ssh_config=ssh_config,
                     )
                 except Exception as exc:  # pragma: no cover - defensive
-                    logger.error("Embedded file manager failed: %s", exc)
+                    logger.error("Embedded file manager failed: %s", exc, exc_info=True)
                     self._handle_file_manager_placeholder_error(
                         placeholder_info,
                         str(nickname or host_value or _('Remote Host')),
@@ -7812,7 +8025,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     ssh_config=ssh_config,
                 )
             except Exception as exc:
-                logger.error("Embedded file manager failed: %s", exc)
+                logger.error("Embedded file manager failed: %s", exc, exc_info=True)
                 self._handle_file_manager_placeholder_error(
                     fallback_placeholder,
                     str(nickname or host_value or _('Remote Host')),
@@ -8231,6 +8444,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         connections = list(getattr(self, '_context_menu_connections', None) or [])
         connection = getattr(self, '_context_menu_connection', None)
         group_row = getattr(self, '_context_menu_group_row', None)
+
+        # Only target connections whose protocol can run remote commands.
+        connections = [
+            c for c in connections
+            if Capability.REMOTE_COMMAND in capabilities_for(c)
+        ]
+        if connection is not None and Capability.REMOTE_COMMAND not in capabilities_for(connection):
+            connection = None
 
         if len(connections) > 1:
             panel.show_command_picker_for_target(anchor, connections=connections)
@@ -8961,6 +9182,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
     def open_in_system_terminal(self, connection):
         """Open the connection in the system's default terminal using ssh_connection_builder"""
+        if getattr(connection, 'protocol', 'ssh') != 'ssh':
+            # build_native_command() is an SSH-only path.
+            logger.debug("System terminal unavailable for protocol %r",
+                         getattr(connection, 'protocol', 'ssh'))
+            return
         try:
             from .ssh_connection_builder import build_native_command
 
@@ -9468,21 +9694,66 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             logger.debug(f"Saved window geometry: {width}x{height}, sidebar: {sidebar_width}")
         except Exception as e:
             logger.error(f"Failed to save window state: {e}")
-            self.welcome_view.set_visible(False)
-            self.tab_view.set_visible(True)
-            # Update tab titles in case they've changed
-            self._update_tab_titles()
     
     def _update_tab_titles(self):
         """Update tab titles"""
         for page in self.tab_view.get_pages():
+            if self._is_start_tab_page(page):
+                continue
             child = page.get_child()
             if hasattr(child, 'connection'):
                 page.set_title(child.connection.nickname)
     
+    def _on_plugin_connection_saved(self, dialog, connection_data):
+        """Persist a plugin-protocol connection (JSON store, no ssh_config)."""
+        if dialog.is_editing and dialog.connection is not None:
+            old_connection = dialog.connection
+            original_nickname = old_connection.nickname
+            if not self.connection_manager.update_connection(old_connection, connection_data):
+                logger.error("Failed to update plugin connection")
+                return
+            new_nickname = connection_data.get('nickname') or original_nickname
+            if original_nickname != new_nickname:
+                try:
+                    self.group_manager.rename_connection(original_nickname, new_nickname)
+                except Exception:
+                    pass
+                try:
+                    old_meta = self.config.get_connection_meta(original_nickname)
+                    if old_meta:
+                        new_meta = self.config.get_connection_meta(new_nickname)
+                        merged = {**old_meta, **new_meta}
+                        meta_all = self.config.get_setting('connections_meta', {}) or {}
+                        meta_all.pop(original_nickname, None)
+                        self.config.set_setting('connections_meta', meta_all)
+                        self.config.set_connection_meta(new_nickname, merged)
+                except Exception:
+                    logger.debug("Failed to migrate connection meta on rename", exc_info=True)
+            try:
+                old_connection.tags = self.config.get_connection_tags(old_connection.nickname)
+            except Exception:
+                pass
+            rows = self._rows_for_connection(old_connection)
+            if rows:
+                for row in rows:
+                    row.update_display()
+            else:
+                self.rebuild_connection_list()
+            logger.info(f"Updated plugin connection: {old_connection.nickname}")
+        else:
+            connection = Connection(connection_data)
+            if self.connection_manager.update_connection(connection, connection_data):
+                self.rebuild_connection_list()
+                logger.info(f"Created new plugin connection: {connection_data['nickname']}")
+            else:
+                logger.error("Failed to save plugin connection")
+
     def on_connection_saved(self, dialog, connection_data):
         """Handle connection saved from dialog"""
         try:
+            if connection_data.get('protocol', 'ssh') != 'ssh':
+                self._on_plugin_connection_saved(dialog, connection_data)
+                return
             if dialog.is_editing:
                 # Update existing connection
                 old_connection = dialog.connection
@@ -9912,25 +10183,27 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
             # Rebuild the SSH command using the latest configuration so that
             # options resolved via ssh -G are honored for the reconnect.
-            try:
-                loop = asyncio.get_event_loop()
-                # Native-only (connect() delegates to native_connect()).
-                if hasattr(connection, 'native_connect'):
-                    connect_coro = connection.native_connect()
-                else:
-                    connect_coro = connection.connect()
-                if loop.is_running():
-                    future = asyncio.run_coroutine_threadsafe(connect_coro, loop)
-                    future.result()
-                else:
-                    loop.run_until_complete(connect_coro)
-            except Exception as prep_err:
-                logger.error(
-                    "Failed to prepare SSH command before reconnect: %s",
-                    prep_err,
-                )
-                GLib.idle_add(self._show_reconnect_error, connection, str(prep_err))
-                return False
+            # Plugin protocols rebuild statelessly in build_spawn() instead.
+            if getattr(connection, 'protocol', 'ssh') == 'ssh':
+                try:
+                    loop = asyncio.get_event_loop()
+                    # Native-only (connect() delegates to native_connect()).
+                    if hasattr(connection, 'native_connect'):
+                        connect_coro = connection.native_connect()
+                    else:
+                        connect_coro = connection.connect()
+                    if loop.is_running():
+                        future = asyncio.run_coroutine_threadsafe(connect_coro, loop)
+                        future.result()
+                    else:
+                        loop.run_until_complete(connect_coro)
+                except Exception as prep_err:
+                    logger.error(
+                        "Failed to prepare SSH command before reconnect: %s",
+                        prep_err,
+                    )
+                    GLib.idle_add(self._show_reconnect_error, connection, str(prep_err))
+                    return False
 
             # Reconnect with new settings
             if not terminal._connect_ssh():

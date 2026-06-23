@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:5.3.0}
+Version:        %{?version}%{!?version:5.4.0}
 Release:        1%{?dist}
 Summary:        Manage your servers with ease
 
@@ -35,6 +35,8 @@ Requires:       libsecret
 Requires:       sshpass
 Requires:       openssh-askpass
 Requires:       webkitgtk6.0
+# For the built-in telnet protocol plugin (degrades gracefully if absent)
+Recommends:     telnet
 
 %description
 SSH Pilot is a user-friendly SSH connection manager featuring built-in tabbed terminal, remote file management, key transfer, port forwarding and more. It's an alternative to Putty, Termius and Mobaxterm.
@@ -56,6 +58,12 @@ install -D -m 755 run.py %{buildroot}%{_bindir}/sshpilot
 # Install Python modules
 install -d %{buildroot}%{python3_sitelib}/sshpilot
 cp -a sshpilot/*.py %{buildroot}%{python3_sitelib}/sshpilot/
+
+# Plugin subpackage (loader, registry, built-in protocols + their plugin.json).
+# Example plugins are dev references only — never shipped.
+cp -a sshpilot/plugins %{buildroot}%{python3_sitelib}/sshpilot/
+rm -rf %{buildroot}%{python3_sitelib}/sshpilot/plugins/examples
+find %{buildroot}%{python3_sitelib}/sshpilot/plugins -name __pycache__ -type d -prune -exec rm -rf {} +
 
 # Install resources
 install -d %{buildroot}%{python3_sitelib}/sshpilot/resources
@@ -92,6 +100,14 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/io.github.mfat.sshpil
 %{_datadir}/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg
 
 %changelog
+* Wed Jun 24 2026 mFat <newmfat@gmail.com> - 5.4.0
+- Docker/Podman container management console
+- New plugin framework and SDK
+- New plugin settings to install and manage plugins
+- Improved SSH config editor
+- UI fixes and improvements
+- Additional protocols
+
 * Fri Jun 12 2026 mFat <newmfat@gmail.com> - 5.3.0
 - New "Tags" feature: add tags to connections
 - Search now supports tags

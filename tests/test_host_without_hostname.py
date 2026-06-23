@@ -1,35 +1,10 @@
 import os
 import sys
-import types
 import asyncio
 import subprocess
 
-# Stub external dependencies required by connection_manager
-
-
-gi_repo = types.ModuleType('gi.repository')
-gi_repo.GObject = types.SimpleNamespace(
-    SignalFlags=types.SimpleNamespace(RUN_FIRST=0),
-    Object=type('GObject', (object,), {})
-)
-gi_repo.GLib = types.SimpleNamespace(idle_add=lambda *args, **kwargs: None)
-gi_repo.Gtk = types.SimpleNamespace()
-gi_repo.Secret = types.SimpleNamespace(
-    Schema=types.SimpleNamespace(new=lambda *a, **k: object()),
-    SchemaFlags=types.SimpleNamespace(NONE=0),
-    SchemaAttributeType=types.SimpleNamespace(STRING=0),
-    password_store_sync=lambda *a, **k: True,
-    password_lookup_sync=lambda *a, **k: None,
-    password_clear_sync=lambda *a, **k: None,
-    COLLECTION_DEFAULT=None,
-)
-
-gi_mod = types.ModuleType('gi')
-gi_mod.repository = gi_repo
-gi_mod.require_version = lambda *args, **kwargs: None
-sys.modules['gi'] = gi_mod
-sys.modules['gi.repository'] = gi_repo
-sys.modules['gi.repository.Secret'] = gi_repo.Secret
+# gi.repository / Secret stubs come from tests/conftest.py; redefining them
+# here would clobber other tests' expectations (see #985).
 
 # Ensure the project package is importable
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -179,13 +154,52 @@ def test_isolated_config_used_for_effective_resolution(tmp_path, monkeypatch):
     loop = asyncio.get_event_loop()
     assert loop.run_until_complete(connection.connect())
 
-    expected_cmd = [
-        'ssh',
-        '-F',
-        os.path.abspath(str(config_path)),
-        '-G',
-        'alias',
-    ]
-    assert calls == [expected_cmd]
+    # Native connect builds the minimal `ssh -F <isolated config> … alias`; ssh
+    # itself resolves HostName/User from that config (there is no separate
+    # `ssh -G` subprocess during connect).
+    cmd = connection.ssh_cmd
+    assert '-F' in cmd
+    assert cmd[cmd.index('-F') + 1] == os.path.abspath(str(config_path))
+    assert cmd[-1].endswith('alias')
     assert connection.hostname == '10.0.0.5'
+
+
+def test_native_connect_force_tty_adds_pty_flag(tmp_path, monkeypatch):
+    """force_tty makes native_connect request a remote PTY (ssh -t), placed
+    before the host, so an interactive remote command (e.g. docker exec -it) gets
+    a terminal. Without it (default) no -t is added — captured run_command stays
+    TTY-free."""
+    asyncio.set_event_loop(asyncio.new_event_loop())
+
+    config_dir = tmp_path / 'iso'
+    config_dir.mkdir()
+    config_path = config_dir / 'ssh_config'
+    config_path.write_text("Host alias\n    HostName 10.0.0.5\n    User tester\n")
+
+    class DummyResult:
+        stdout = ''
+        stderr = ''
+
+    monkeypatch.setattr(subprocess, 'run', lambda *a, **k: DummyResult())
+
+    def _conn():
+        c = Connection({'nickname': 'alias', 'host': 'alias', 'hostname': '10.0.0.5',
+                        'username': 'tester', 'source': str(config_path)})
+        c.isolated_mode = True
+        return c
+
+    loop = asyncio.get_event_loop()
+    remote = "docker exec -it web /bin/bash"
+
+    c1 = _conn()
+    loop.run_until_complete(c1.native_connect(remote_command=remote, force_tty=True))
+    cmd1 = c1.ssh_cmd
+    assert '-t' in cmd1
+    assert cmd1.index('-t') < cmd1.index('alias')  # PTY flag before the host
+    assert cmd1[-1] == remote                       # command after the host
+
+    c2 = _conn()
+    loop.run_until_complete(c2.native_connect(remote_command=remote, force_tty=False))
+    assert '-t' not in c2.ssh_cmd
+    assert c2.ssh_cmd[-1] == remote
 

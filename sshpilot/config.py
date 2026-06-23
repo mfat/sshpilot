@@ -178,18 +178,20 @@ class Config(GObject.Object):
                 'use_group_color_in_tab': False,
                 'use_group_color_in_terminal': False,
                 'connection_sort_last': 'name-asc',
-                'sidebar_show_user_hostname': False,
+                'sidebar_show_user_hostname': True,
                 'sidebar_show_group_count': True,
                 'sidebar_show_connection_status': True,
-                'sidebar_show_port_forwarding': False,
+                'sidebar_show_port_forwarding': True,
                 'sidebar_show_connection_icon': True,
+                'sidebar_flat_rows': False,
                 # Sidebar behavior (Settings ▸ Sidebar ▸ Sidebar behavior)
                 'sidebar_hide_on_startup': False,
                 'sidebar_hide_on_terminal_open': False,  # incl. local terminals
                 'sidebar_show_when_no_tabs': False,
                 # Header-bar button visibility (Settings ▸ Interface ▸ Header Bar)
-                'headerbar_show_split_view': True,
+                'headerbar_show_split_view': False,
                 'headerbar_show_commands': True,
+                'headerbar_show_theme_toggle': True,
                 'headerbar_show_local_terminal': True,
             },
             'welcome': {
@@ -482,6 +484,62 @@ class Config(GObject.Object):
                     '#9893a5', '#b4637a', '#286983', '#ea9d34',
                     '#56949f', '#907aa9', '#d7827e', '#464261'
                 ]
+            },
+            'catppuccin_latte': {
+                'name': 'Catppuccin Latte',
+                'foreground': '#4c4f69',
+                'background': '#eff1f5',
+                'cursor_color': '#dc8a78',
+                'highlight_background': '#ccd0da',
+                'highlight_foreground': '#4c4f69',
+                'palette': [
+                    '#5c5f77', '#d20f39', '#40a02b', '#df8e1d',
+                    '#1e66f5', '#8839ef', '#179299', '#acb0be',
+                    '#6c6f85', '#d20f39', '#40a02b', '#df8e1d',
+                    '#1e66f5', '#8839ef', '#179299', '#bcc0cc'
+                ]
+            },
+            'catppuccin_frappe': {
+                'name': 'Catppuccin Frappé',
+                'foreground': '#c6d0f5',
+                'background': '#303446',
+                'cursor_color': '#f2d5cf',
+                'highlight_background': '#414559',
+                'highlight_foreground': '#c6d0f5',
+                'palette': [
+                    '#51576d', '#e78284', '#a6d189', '#e5c890',
+                    '#8caaee', '#ca9ee6', '#81c8be', '#b5bfe2',
+                    '#626880', '#e78284', '#a6d189', '#e5c890',
+                    '#8caaee', '#ca9ee6', '#81c8be', '#a5adce'
+                ]
+            },
+            'catppuccin_macchiato': {
+                'name': 'Catppuccin Macchiato',
+                'foreground': '#cad3f5',
+                'background': '#24273a',
+                'cursor_color': '#f4dbd6',
+                'highlight_background': '#363a4f',
+                'highlight_foreground': '#cad3f5',
+                'palette': [
+                    '#494d64', '#ed8796', '#a6da95', '#eed49f',
+                    '#8aadf4', '#c6a0f6', '#8bd5ca', '#b8c0e0',
+                    '#5b6078', '#ed8796', '#a6da95', '#eed49f',
+                    '#8aadf4', '#c6a0f6', '#8bd5ca', '#a5adcb'
+                ]
+            },
+            'catppuccin_mocha': {
+                'name': 'Catppuccin Mocha',
+                'foreground': '#cdd6f4',
+                'background': '#1e1e2e',
+                'cursor_color': '#f5e0dc',
+                'highlight_background': '#313244',
+                'highlight_foreground': '#cdd6f4',
+                'palette': [
+                    '#45475a', '#f38ba8', '#a6e3a1', '#f9e2af',
+                    '#89b4fa', '#cba6f7', '#94e2d5', '#bac2de',
+                    '#585b70', '#f38ba8', '#a6e3a1', '#f9e2af',
+                    '#89b4fa', '#cba6f7', '#94e2d5', '#a6adc8'
+                ]
             }
         }
 
@@ -739,7 +797,7 @@ class Config(GObject.Object):
 
     def remove_custom_theme(self, name: str):
         """Remove a custom theme"""
-        if name in self.terminal_themes and name not in ['default', 'dark', 'light', 'black_on_white', 'solarized_dark', 'solarized_light', 'monokai', 'dracula', 'nord', 'gruvbox_dark', 'one_dark', 'tomorrow_night', 'material_dark', 'rose_pine', 'rose_pine_moon', 'rose_pine_dawn']:
+        if name in self.terminal_themes and name not in ['default', 'dark', 'light', 'black_on_white', 'solarized_dark', 'solarized_light', 'monokai', 'dracula', 'nord', 'gruvbox_dark', 'one_dark', 'tomorrow_night', 'material_dark', 'rose_pine', 'rose_pine_moon', 'rose_pine_dawn', 'catppuccin_latte', 'catppuccin_frappe', 'catppuccin_macchiato', 'catppuccin_mocha']:
             del self.terminal_themes[name]
             
             # Remove from config
@@ -972,7 +1030,7 @@ class Config(GObject.Object):
                 config_data = self.config_data.copy()
             
             # Add custom themes
-            builtin = ['default', 'dark', 'light', 'black_on_white', 'solarized_dark', 'solarized_light', 'monokai', 'dracula', 'nord', 'gruvbox_dark', 'one_dark', 'tomorrow_night', 'material_dark', 'rose_pine', 'rose_pine_moon', 'rose_pine_dawn']
+            builtin = ['default', 'dark', 'light', 'black_on_white', 'solarized_dark', 'solarized_light', 'monokai', 'dracula', 'nord', 'gruvbox_dark', 'one_dark', 'tomorrow_night', 'material_dark', 'rose_pine', 'rose_pine_moon', 'rose_pine_dawn', 'catppuccin_latte', 'catppuccin_frappe', 'catppuccin_macchiato', 'catppuccin_mocha']
             config_data['custom_themes'] = {name: theme for name, theme in self.terminal_themes.items() if name not in builtin}
             
             with open(file_path, 'w') as f:

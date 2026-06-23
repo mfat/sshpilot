@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mfat/sshpilot/docs/plugins/plugin.schema.json",
+  "title": "sshPilot plugin manifest",
+  "description": "Schema for a plugin.json. See docs/plugins/writing-plugins.md.",
+  "type": "object",
+  "required": ["id", "api_version"],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_-]*$",
+      "description": "Stable unique id. Used as the on-disk directory name, the connection 'protocol' value for protocol plugins, and the keyring/settings namespace. Lowercase letters, digits, '-' and '_'."
+    },
+    "name": {
+      "type": "string",
+      "description": "Human-readable name shown in Preferences ▸ Plugins."
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+(\\.[0-9]+)*$",
+      "description": "Plugin version, e.g. \"1.2.0\" (dotted integers). Should match the published release tag. Drives the in-app 'update available' button: the app compares it against the registry's latest version."
+    },
+    "homepage": {
+      "type": "string",
+      "description": "URL of the plugin's source/homepage. Shown as a clickable link in the per-plugin info dialog in Preferences ▸ Plugins."
+    },
+    "api_version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Major version of the plugin API this targets. The app loads a plugin only when this equals the app's API_VERSION[0]; a mismatch is skipped (shown 'Incompatible' in Preferences)."
+    },
+    "builtin": {
+      "type": "boolean",
+      "description": "True only for plugins shipped inside the app under sshpilot/plugins/builtin/. Third-party/user plugins omit this or set false."
+    },
+    "required": {
+      "type": "boolean",
+      "description": "Built-in only: load even if listed in plugins.disabled (e.g. the SSH protocol). Third-party plugins must not set this."
+    },
+    "entry": {
+      "type": "string",
+      "deprecated": true,
+      "description": "Reserved/ignored. The loader always instantiates a class named 'Plugin' in the package's __init__.py."
+    },
+    "permissions": {
+      "type": "array",
+      "uniqueItems": true,
+      "description": "Capabilities the plugin uses. Shown to the user before they enable/install it (informed consent; not yet enforced). Declare every capability you use.",
+      "items": {
+        "type": "string",
+        "enum": ["network", "filesystem", "keyring", "connections", "process", "ui", "settings"]
+      }
+    }
+  }
+}

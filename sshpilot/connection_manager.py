@@ -205,6 +205,9 @@ class Connection:
 
         self.username = data.get('username', '')
         self.port = data.get('port', 22)
+        # Protocol backend handling this connection ('ssh' for every existing
+        # saved/ssh_config-derived connection; see sshpilot.plugins).
+        self.protocol = data.get('protocol', 'ssh')
         # previously: self.keyfile = data.get('keyfile', '')
         self.keyfile = data.get('keyfile') or data.get('private_key', '') or ''
         # Full list of IdentityFile/CertificateFile entries (ssh_config(5) allows
@@ -476,8 +479,18 @@ class Connection:
         """
         return await self.native_connect()
 
-    async def native_connect(self):
-        """Prepare a minimal SSH command using ssh_connection_builder in native mode."""
+    async def native_connect(self, remote_command: Optional[str] = None,
+                             force_tty: bool = False):
+        """Prepare a minimal SSH command using ssh_connection_builder in native mode.
+
+        ``remote_command``, when given, is appended to the ssh invocation on the
+        CLI (a one-off command to run on the host) instead of opening an
+        interactive login shell — used by ``ctx.open_command_terminal``. It is
+        not persisted to ``~/.ssh/config``.
+
+        ``force_tty`` adds ``-t`` so ssh allocates a remote PTY even though a
+        command is given (ssh only auto-allocates one for interactive sessions).
+        Required for interactive remote programs like ``docker exec -it``."""
         try:
             self._update_identity_agent_state(None)
             # Reset resolved identity cache when preparing native command
@@ -503,9 +516,9 @@ class Connection:
                 connection_manager=connection_manager,
                 config=cfg,
                 command_type='ssh',
-                extra_args=[],
+                extra_args=(['-t'] if force_tty else []),
                 port_forwarding_rules=None,
-                remote_command=None,
+                remote_command=remote_command,
                 local_command=None,
                 extra_ssh_config=None,
                 known_hosts_path=known_hosts_path,
@@ -708,6 +721,7 @@ class Connection:
 
         self.username = data.get('username', '')
         self.port = data.get('port', 22)
+        self.protocol = data.get('protocol', getattr(self, 'protocol', 'ssh'))
         self.keyfile = data.get('keyfile') or data.get('private_key', '') or ''
         self.identity_files = list(data.get('identity_files') or ([self.keyfile] if self.keyfile else []))
         self.identity_file_none = bool(data.get('identity_file_none', False))
@@ -836,6 +850,116 @@ class ConnectionManager(GObject.Object):
         """Link a connection to this manager and add it to the list."""
         connection._connection_manager = self
         self.connections.append(connection)
+
+    # --- Non-SSH (plugin protocol) connection persistence -----------------
+    #
+    # ~/.ssh/config is the source of truth for SSH connections only; plugin
+    # protocols (telnet, serial, ...) persist their Connection.data dicts as
+    # JSON in the app config under 'connections.non_ssh', mirroring the
+    # existing connections_meta pattern. Passwords never enter the JSON —
+    # they go through store_password()/get_password() like SSH ones.
+
+    _NON_SSH_SETTING = 'connections.non_ssh'
+
+    @staticmethod
+    def _serializable_connection_data(data: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            k: v for k, v in (data or {}).items()
+            if not k.startswith('__') and k not in ('password', 'password_changed')
+        }
+
+    @staticmethod
+    def _non_ssh_password_host(connection_or_data) -> str:
+        """Keyring host identifier for a non-SSH connection.
+
+        Scoped by ``protocol:nickname`` so two connections to the same host (or
+        with empty usernames) can't collide on one keyring slot; the nickname is
+        unique within the app."""
+        if isinstance(connection_or_data, dict):
+            data = connection_or_data
+        else:
+            data = getattr(connection_or_data, 'data', None) or {}
+        protocol = data.get('protocol') or 'plugin'
+        ident = (data.get('nickname') or data.get('host')
+                 or data.get('hostname') or '')
+        return f"{protocol}:{ident}" if ident else ''
+
+    def _load_non_ssh_connections(self, existing_by_nickname: Dict[str, 'Connection']) -> None:
+        """Append persisted plugin-protocol connections to self.connections.
+
+        Reuses prior Connection objects by nickname (object identity matters:
+        active_terminals and the sidebar are keyed by the objects)."""
+        try:
+            stored = self.config.get_setting(self._NON_SSH_SETTING, []) or []
+        except Exception:
+            stored = []
+        for data in stored:
+            if not isinstance(data, dict) or (data.get('protocol', 'ssh') == 'ssh'):
+                continue
+            try:
+                nickname = data.get('nickname') or ''
+                existing = existing_by_nickname.get(nickname)
+                if existing is not None and getattr(existing, 'protocol', 'ssh') != 'ssh':
+                    existing.update_data(dict(data))
+                    self._register_connection(existing)
+                else:
+                    self._register_connection(Connection(dict(data)))
+            except Exception:
+                logger.exception("Failed to load non-SSH connection %r",
+                                 data.get('nickname'))
+
+    def _persist_non_ssh_connections(self) -> None:
+        """Write all plugin-protocol connections back to the app config."""
+        try:
+            payload = [
+                self._serializable_connection_data(conn.data)
+                for conn in self.connections
+                if getattr(conn, 'protocol', 'ssh') != 'ssh'
+            ]
+            self.config.set_setting(self._NON_SSH_SETTING, payload)
+        except Exception:
+            logger.exception("Failed to persist non-SSH connections")
+
+    def _update_non_ssh_connection(self, connection: Connection,
+                                   new_data: Dict[str, Any]) -> bool:
+        """update_connection() counterpart for plugin protocols: keyring for
+        the password, JSON store instead of the ssh_config write path."""
+        try:
+            new_data = dict(new_data)
+            new_data.pop('__split_from_group', None)
+            new_data.pop('__split_source', None)
+            new_data.pop('__split_original_nickname', None)
+
+            prev_host = self._non_ssh_password_host(connection)
+            prev_user = getattr(connection, 'username', '') or ''
+
+            password = new_data.pop('password', None)
+            new_data.pop('password_changed', None)
+
+            connection.update_data(new_data)
+
+            if password is not None:
+                curr_host = self._non_ssh_password_host(connection)
+                curr_user = getattr(connection, 'username', '') or ''
+                if password and curr_host:
+                    self.store_password(curr_host, curr_user, password)
+                else:
+                    for host, user in {(prev_host, prev_user), (curr_host, curr_user)}:
+                        if host:
+                            try:
+                                self.delete_password(host, user)
+                            except Exception:
+                                pass
+
+            if connection not in self.connections:
+                self._register_connection(connection)
+            self._persist_non_ssh_connections()
+            self.emit('connection-updated', connection)
+            logger.info(f"Non-SSH connection updated: {connection.nickname}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to update non-SSH connection: {e}")
+            return False
 
     def _get_active_connection_key(self, connection: Connection) -> str:
         identifier = connection.resolve_host_identifier()
@@ -1054,6 +1178,7 @@ class ConnectionManager(GObject.Object):
                     f.write("# SSH configuration file\n")
                     f.write('\n')
                 self._ensure_secure_permissions(self.ssh_config_path, 0o600)
+                self._load_non_ssh_connections(existing_by_nickname)
                 return
             else:
                 self._ensure_secure_permissions(self.ssh_config_path, 0o600)
@@ -1222,6 +1347,7 @@ class ConnectionManager(GObject.Object):
                     i += 1
                 if current_hosts and current_config:
                     flush_block(current_hosts, current_config, cfg_file)
+            self._load_non_ssh_connections(existing_by_nickname)
             logger.info(f"Loaded {len(self.connections)} connections from SSH config")
         except Exception as e:
             logger.error(f"Failed to load SSH config: {e}", exc_info=True)
@@ -1784,6 +1910,26 @@ class ConnectionManager(GObject.Object):
         if removed_any:
             logger.debug(f"Deleted stored password for {username}@{host}")
         return removed_any
+
+    # --- Plugin secrets ----------------------------------------------------
+    #
+    # Namespaced per plugin id so a plugin can never read another plugin's
+    # (or a connection's) secrets. Reuses the store_password() dual-backend
+    # path with a reserved host identifier: real SSH hosts are stored under
+    # their hostname, plugin secrets under 'sshpilot-plugin/<id>'.
+
+    @staticmethod
+    def _plugin_secret_host(plugin_id: str) -> str:
+        return f"sshpilot-plugin/{plugin_id}"
+
+    def store_plugin_secret(self, plugin_id: str, key: str, value: str) -> bool:
+        return bool(self.store_password(self._plugin_secret_host(plugin_id), key, value))
+
+    def get_plugin_secret(self, plugin_id: str, key: str) -> Optional[str]:
+        return self.get_password(self._plugin_secret_host(plugin_id), key)
+
+    def delete_plugin_secret(self, plugin_id: str, key: str) -> bool:
+        return self.delete_password(self._plugin_secret_host(plugin_id), key)
 
     def store_key_passphrase(self, key_path: str, passphrase: str) -> bool:
         """Store key passphrase securely in system keyring"""
@@ -2387,9 +2533,65 @@ class ConnectionManager(GObject.Object):
         _reconcile('identity_files', 'keyfile')
         _reconcile('certificate_files', 'certificate')
 
+    def add_connection_from_data(self, data: Dict[str, Any]) -> Connection:
+        """Create, persist, and announce a new connection from a data dict.
+
+        The programmatic counterpart of the connection dialog's save path,
+        exposed to plugins via PluginContext.add_connection (e.g. a VPS
+        provider provisioning hosts). Raises ValueError on invalid data."""
+        data = dict(data)
+        data.setdefault('protocol', 'ssh')
+
+        # Validate via the protocol backend (late import: plugins.api/registry
+        # never import connection_manager, so there is no cycle).
+        from .plugins.registry import protocol_registry
+        backend = protocol_registry().get_or_none(data['protocol'])
+        if backend is None:
+            raise ValueError(f"Unknown protocol {data['protocol']!r}")
+
+        errors = list(backend.validate(data) or [])
+        nickname = (data.get('nickname') or data.get('host')
+                    or data.get('hostname') or '').strip()
+        if not nickname:
+            errors.append("A nickname or host is required.")
+        elif self.find_connection_by_nickname(nickname):
+            errors.append(f"A connection named {nickname!r} already exists.")
+        if errors:
+            raise ValueError('; '.join(errors))
+        data['nickname'] = nickname
+
+        connection = Connection(dict(data))
+        if self.isolated_mode:
+            connection.isolated_config = True
+            connection.config_root = self.ssh_config_path
+            connection.data['isolated_mode'] = True
+            if self.ssh_config_path:
+                connection.data['config_root'] = self.ssh_config_path
+
+        self._register_connection(connection)
+        # update_connection persists to the protocol's store (ssh_config for
+        # SSH — including password keyring handling — or the non-SSH JSON
+        # store) and emits 'connection-updated'.
+        if not self.update_connection(connection, dict(data)):
+            try:
+                self.connections.remove(connection)
+            except ValueError:
+                pass
+            raise RuntimeError("Failed to persist connection")
+
+        # Announce on the main loop: provider plugins may call from workers.
+        GLib.idle_add(self.emit, 'connection-added', connection)
+        return connection
+
     def update_connection(self, connection: Connection, new_data: Dict[str, Any]) -> bool:
         """Update an existing connection"""
         try:
+            protocol = (new_data.get('protocol')
+                        or getattr(connection, 'protocol', 'ssh') or 'ssh')
+            if protocol != 'ssh':
+                # Plugin protocols never touch ~/.ssh/config.
+                return self._update_non_ssh_connection(connection, new_data)
+
             split_from_group = bool(new_data.pop('__split_from_group', False))
             split_source_override = new_data.pop('__split_source', None)
             split_original_host = new_data.pop('__split_original_nickname', None)
@@ -2503,12 +2705,16 @@ class ConnectionManager(GObject.Object):
             except Exception as e:
                 logger.warning(f"Failed to remove password from storage: {e}")
             
-            # Remove from SSH config file
-            try:
-                removed = self.remove_ssh_config_entry(connection.nickname, getattr(connection, 'source', None))
-                logger.debug(f"SSH config entry removed={removed} for {connection.nickname}")
-            except Exception as e:
-                logger.warning(f"Failed to remove SSH config entry for {connection.nickname}: {e}")
+            # Remove from the protocol's store (ssh_config for SSH, the JSON
+            # list for plugin protocols)
+            if getattr(connection, 'protocol', 'ssh') != 'ssh':
+                self._persist_non_ssh_connections()
+            else:
+                try:
+                    removed = self.remove_ssh_config_entry(connection.nickname, getattr(connection, 'source', None))
+                    logger.debug(f"SSH config entry removed={removed} for {connection.nickname}")
+                except Exception as e:
+                    logger.warning(f"Failed to remove SSH config entry for {connection.nickname}: {e}")
             
             # Remove per-connection metadata (auth method, etc.) to avoid lingering entries
             try:

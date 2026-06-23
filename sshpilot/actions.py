@@ -39,6 +39,14 @@ class WindowActions:
         if not app:
             return
 
+        # Delegate to the app's shortcut registry so config overrides from
+        # the shortcut editor are respected (it also clears accels while
+        # accelerators are suspended, e.g. terminal pass-through mode).
+        if hasattr(app, '_apply_shortcut_for_action'):
+            app._apply_shortcut_for_action('toggle_sidebar')
+            return
+
+        # Fallback for app objects without the registry (tests/fakes).
         shortcuts = ['F9']
         if is_macos():
             shortcuts.append('<Meta>b')
@@ -257,6 +265,13 @@ class WindowActions:
                 row = self.connection_list.get_selected_row()
                 connection = getattr(row, 'connection', None) if row else None
             if connection is None:
+                return
+
+            from .plugins.api import Capability
+            from .plugins.registry import capabilities_for
+            if Capability.KEY_DEPLOYMENT not in capabilities_for(connection):
+                logger.debug("ssh-copy-id unavailable: protocol %r has no key deployment",
+                             getattr(connection, 'protocol', 'ssh'))
                 return
 
             # Open the copy key window directly
@@ -1824,6 +1839,17 @@ def register_window_actions(window):
     window.view_logs_action = Gio.SimpleAction.new('view-logs', None)
     window.view_logs_action.connect('activate', _on_view_logs_action_factory(window))
     window.add_action(window.view_logs_action)
+
+    # Application theme (header bar menu)
+    if hasattr(window, '_apply_app_theme'):
+        theme_action = Gio.SimpleAction.new('set-app-theme', GLib.VariantType.new('s'))
+        theme_action.connect(
+            'activate',
+            lambda _action, param: window._apply_app_theme(
+                param.get_string() if param else 'default'
+            ),
+        )
+        window.add_action(theme_action)
 
     # Command blocks panel toggle
     if hasattr(window, '_toggle_command_blocks_panel'):
