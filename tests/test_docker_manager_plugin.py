@@ -208,7 +208,11 @@ def test_logs_follow_command_string():
 def test_exec_shell_command_prefers_bash_with_sh_fallback():
     client, _ = _recording_client(None)
     cmd = client.exec_shell_command("c1")
-    assert cmd == "docker exec -it c1 /bin/bash || docker exec -it c1 /bin/sh"
+    # PATH-resolved (no hard-coded /bin), single exec, bash preferred.
+    assert cmd == (
+        "docker exec -it c1 sh -c "
+        "'command -v bash >/dev/null 2>&1 && exec bash || exec sh'"
+    )
 
 
 def test_runtime_podman_is_used_in_commands():
@@ -251,8 +255,10 @@ def test_sudo_uses_plain_sudo_for_interactive_commands():
     client.use_sudo = True
     assert client.logs_follow_command("c1", tail=10) == "sudo docker logs -f --tail 10 c1"
     assert client.stats_stream_command() == "sudo docker stats"
-    assert client.exec_shell_command("c1") == \
-        "sudo docker exec -it c1 /bin/bash || sudo docker exec -it c1 /bin/sh"
+    assert client.exec_shell_command("c1") == (
+        "sudo docker exec -it c1 sh -c "
+        "'command -v bash >/dev/null 2>&1 && exec bash || exec sh'"
+    )
 
 
 def test_no_sudo_when_disabled():

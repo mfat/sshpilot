@@ -163,3 +163,43 @@ def test_isolated_config_used_for_effective_resolution(tmp_path, monkeypatch):
     assert cmd[-1].endswith('alias')
     assert connection.hostname == '10.0.0.5'
 
+
+def test_native_connect_force_tty_adds_pty_flag(tmp_path, monkeypatch):
+    """force_tty makes native_connect request a remote PTY (ssh -t), placed
+    before the host, so an interactive remote command (e.g. docker exec -it) gets
+    a terminal. Without it (default) no -t is added — captured run_command stays
+    TTY-free."""
+    asyncio.set_event_loop(asyncio.new_event_loop())
+
+    config_dir = tmp_path / 'iso'
+    config_dir.mkdir()
+    config_path = config_dir / 'ssh_config'
+    config_path.write_text("Host alias\n    HostName 10.0.0.5\n    User tester\n")
+
+    class DummyResult:
+        stdout = ''
+        stderr = ''
+
+    monkeypatch.setattr(subprocess, 'run', lambda *a, **k: DummyResult())
+
+    def _conn():
+        c = Connection({'nickname': 'alias', 'host': 'alias', 'hostname': '10.0.0.5',
+                        'username': 'tester', 'source': str(config_path)})
+        c.isolated_mode = True
+        return c
+
+    loop = asyncio.get_event_loop()
+    remote = "docker exec -it web /bin/bash"
+
+    c1 = _conn()
+    loop.run_until_complete(c1.native_connect(remote_command=remote, force_tty=True))
+    cmd1 = c1.ssh_cmd
+    assert '-t' in cmd1
+    assert cmd1.index('-t') < cmd1.index('alias')  # PTY flag before the host
+    assert cmd1[-1] == remote                       # command after the host
+
+    c2 = _conn()
+    loop.run_until_complete(c2.native_connect(remote_command=remote, force_tty=False))
+    assert '-t' not in c2.ssh_cmd
+    assert c2.ssh_cmd[-1] == remote
+

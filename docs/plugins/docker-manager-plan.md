@@ -51,12 +51,27 @@ a local-daemon, event-stream-heavy app — not ours.
 - **Manifest:** `{"id": "docker-manager", "name": "Docker Manager",
   "api_version": 1, "version": "1.0.0", "builtin": true,
   "permissions": ["process", "ui", "connections"]}`.
-- **API used:** `ctx.ui.register_page/open_page/notify`, `ctx.run_command`,
-  `ctx.open_command_terminal` (new — see Streaming), `ctx.list_connections`,
-  `ctx.run_on_ui_thread`, `ctx.settings`. Requires **API ≥ 1.6** (this plan adds
-  `open_command_terminal`, bumping the minor from the current `(1, 5)`).
+- **API used:** `ctx.ui.register_page/open_page/notify`,
+  `ctx.ui.register_connection_action`, `ctx.run_command`,
+  `ctx.open_command_terminal`, `ctx.list_connections`, `ctx.run_on_ui_thread`,
+  `ctx.settings`. Requires **API ≥ 1.7** — this work added
+  `open_command_terminal` (1.6) and `register_connection_action` (1.7).
 - **Entry:** `activate(ctx)` registers one page (icon e.g. `package-x-generic`),
-  caches `ctx`. All host calls happen lazily from the page.
+  caches `ctx`, and registers a "Docker Manager" connection context-menu action.
+  All host calls happen lazily from the page.
+
+### Shipped additions (beyond the original plan)
+- **Connection context-menu action** (`ctx.ui.register_connection_action`, API
+  1.7): right-click a connection → "Docker Manager" opens the page targeting that
+  host (`page.select_host(nickname)`).
+- **sudo support** for non-root hosts: `DockerClient(use_sudo=…)` prefixes
+  captured commands with `sudo -n` and interactive ones with `sudo`; the page
+  auto-detects (probe plain, retry `sudo -n` on a permission-denied socket) and
+  offers a **sudo** toggle, remembered per host in `ctx.settings`.
+- **PTY for interactive commands**: `open_command_terminal` forces `ssh -t` so
+  `docker exec -it` / `logs -f` / live `stats` attach to a real terminal.
+- **Interactive shell** resolves via the container PATH (prefer bash, fall back
+  to sh) instead of hard-coded `/bin/*`, so minimal images still work.
 
 ## Data layer — `client.py`
 A small, testable wrapper so the UI never builds shell strings inline:

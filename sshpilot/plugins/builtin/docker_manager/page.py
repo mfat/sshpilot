@@ -48,6 +48,10 @@ class DockerManagerPage(Gtk.Box):
         # calls when a host is slow.
         self._containers_busy = False
         self._stats_busy = False
+        # Global activity indicator: any async work shows a spinner in the host
+        # bar (containers/stats/images/logs/host probe).
+        self._busy = 0
+        self._spinner = None
 
         self.set_margin_top(12)
         self.set_margin_bottom(12)
@@ -76,14 +80,33 @@ class DockerManagerPage(Gtk.Box):
     # ================================================================
     def _run_async(self, fn: Callable[[], Any], on_done: Callable[[Any, Optional[Exception]], None]) -> None:
         """Run ``fn`` on a worker thread; deliver ``(result, error)`` on the UI thread."""
+        self._set_busy(True)
+
         def worker() -> None:
             try:
                 result, err = fn(), None
             except Exception as exc:  # noqa: BLE001 - reported to the UI
                 result, err = None, exc
-            self.ctx.run_on_ui_thread(on_done, result, err)
+
+            def deliver(r: Any, e: Optional[Exception]) -> None:
+                self._set_busy(False)
+                on_done(r, e)
+
+            self.ctx.run_on_ui_thread(deliver, result, err)
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _set_busy(self, busy: bool) -> None:
+        """Track in-flight async work and show/hide the host-bar spinner."""
+        self._busy = max(0, self._busy + (1 if busy else -1))
+        if self._spinner is None:
+            return
+        if self._busy > 0:
+            self._spinner.set_visible(True)
+            self._spinner.start()
+        else:
+            self._spinner.stop()
+            self._spinner.set_visible(False)
 
     def _current_nickname(self) -> Optional[str]:
         idx = self._host_combo.get_selected()
@@ -144,6 +167,11 @@ class DockerManagerPage(Gtk.Box):
             self._sudo_check.set_active(self._use_sudo_for(nick0))
         self._sudo_check.connect("toggled", self._on_sudo_toggled)
         bar.append(self._sudo_check)
+
+        self._spinner = Gtk.Spinner()
+        self._spinner.set_valign(Gtk.Align.CENTER)
+        self._spinner.set_visible(False)
+        bar.append(self._spinner)
 
         refresh = Gtk.Button(icon_name="view-refresh-symbolic")
         refresh.set_tooltip_text("Refresh")

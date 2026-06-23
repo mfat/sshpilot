@@ -179,16 +179,21 @@ class DockerClient:
 
     def exec_shell_command(self, container_id: str, *, user: Optional[str] = None,
                            workdir: Optional[str] = None) -> str:
-        """`exec -it` into the container, preferring bash with an sh fallback."""
+        """`exec -it` into the container, preferring bash with an sh fallback.
+
+        The shell is resolved via the container's PATH (not hard-coded
+        ``/bin/bash``/``/bin/sh``), so images whose shell lives elsewhere still
+        work. A single ``exec`` is used so exiting bash with a non-zero status
+        does not spuriously re-open sh."""
         c = shlex.quote(container_id)
         opts = ""
         if user:
             opts += f"-u {shlex.quote(user)} "
         if workdir:
             opts += f"-w {shlex.quote(workdir)} "
-        rt = self._interactive_runtime()
-        return (f"{rt} exec -it {opts}{c} /bin/bash || "
-                f"{rt} exec -it {opts}{c} /bin/sh")
+        # Resolved inside the container by its own PATH; prefer bash, else sh.
+        picker = shlex.quote("command -v bash >/dev/null 2>&1 && exec bash || exec sh")
+        return f"{self._interactive_runtime()} exec -it {opts}{c} sh -c {picker}"
 
     def stats_stream_command(self) -> str:
         return f"{self._interactive_runtime()} stats"

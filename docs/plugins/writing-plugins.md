@@ -172,7 +172,11 @@ the authoritative reference; this is the practical map.
 - **Secrets/settings (per-plugin, namespaced):** `ctx.secrets.get/set/delete`
   (OS keyring), `ctx.settings.get/set` (app config).
 - **UI:** `ctx.ui.register_page(page_id, title, icon_name, factory)`,
-  `ctx.ui.open_page(page_id)`, `ctx.ui.notify(message)`.
+  `ctx.ui.open_page(page_id)`, `ctx.ui.notify(message)`;
+  `ctx.ui.register_connection_action(action_id, label, icon_name, callback)`
+  (API ≥ 1.7) adds an item to a connection's right-click menu in the sidebar —
+  `callback` receives the right-clicked connection's nickname (e.g. open a plugin
+  page targeting that host).
 - **Events:** `ctx.events.subscribe(Events.X, callback)` —
   `APP_STARTED`, `APP_SHUTDOWN`, `CONNECTION_CREATED/UPDATED/DELETED`,
   `SESSION_OPENED/CLOSED`.

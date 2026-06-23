@@ -479,13 +479,18 @@ class Connection:
         """
         return await self.native_connect()
 
-    async def native_connect(self, remote_command: Optional[str] = None):
+    async def native_connect(self, remote_command: Optional[str] = None,
+                             force_tty: bool = False):
         """Prepare a minimal SSH command using ssh_connection_builder in native mode.
 
         ``remote_command``, when given, is appended to the ssh invocation on the
         CLI (a one-off command to run on the host) instead of opening an
         interactive login shell — used by ``ctx.open_command_terminal``. It is
-        not persisted to ``~/.ssh/config``."""
+        not persisted to ``~/.ssh/config``.
+
+        ``force_tty`` adds ``-t`` so ssh allocates a remote PTY even though a
+        command is given (ssh only auto-allocates one for interactive sessions).
+        Required for interactive remote programs like ``docker exec -it``."""
         try:
             self._update_identity_agent_state(None)
             # Reset resolved identity cache when preparing native command
@@ -511,7 +516,7 @@ class Connection:
                 connection_manager=connection_manager,
                 config=cfg,
                 command_type='ssh',
-                extra_args=[],
+                extra_args=(['-t'] if force_tty else []),
                 port_forwarding_rules=None,
                 remote_command=remote_command,
                 local_command=None,

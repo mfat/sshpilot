@@ -469,6 +469,7 @@ class PluginHost:
             self._window.terminal_manager.connect_to_host(
                 clone, force_new=True,
                 remote_command=str(remote_command), tab_title=title,
+                force_tty=True,  # a command in a terminal tab always wants a PTY
             )
             return True
         except Exception:

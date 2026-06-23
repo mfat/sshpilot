@@ -73,7 +73,8 @@ class TerminalManager:
     # Connecting/disconnecting hosts
     def connect_to_host(self, connection, force_new: bool = False,
                         remote_command: Optional[str] = None,
-                        tab_title: Optional[str] = None):
+                        tab_title: Optional[str] = None,
+                        force_tty: bool = False):
         window = self.window
         group_color = self._resolve_group_color(connection)
         if not force_new:
@@ -170,7 +171,8 @@ class TerminalManager:
                 if (getattr(connection, 'protocol', 'ssh') == 'ssh'
                         and not getattr(connection, 'ssh_cmd', None)):
                     prepare = (
-                        connection.native_connect(remote_command=remote_command)
+                        connection.native_connect(remote_command=remote_command,
+                                                  force_tty=force_tty)
                         if hasattr(connection, 'native_connect')
                         else connection.connect()
                     )
