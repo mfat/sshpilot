@@ -2108,6 +2108,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Add connection button
         from sshpilot import icon_utils
         add_button = icon_utils.new_button_from_icon_name('list-add-symbolic')
+        add_button.add_css_class('flat')
         add_button.set_tooltip_text(
             f'Add Connection ({get_primary_modifier_label()}+N)'
         )
@@ -2118,17 +2119,17 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             pass
         header.append(add_button)
 
-        # Search button
-        search_button = icon_utils.new_button_from_icon_name('system-search-symbolic')
+        # Search button (placed on sidebar header bar below)
+        self.search_button = icon_utils.new_button_from_icon_name('system-search-symbolic')
+        self.search_button.add_css_class('flat')
         # Platform-aware shortcut in tooltip
         shortcut = 'Cmd+F' if is_macos() else 'Ctrl+F'
-        search_button.set_tooltip_text(f'Search Connections ({shortcut})')
-        search_button.connect('clicked', lambda *_: self.focus_search_entry())
+        self.search_button.set_tooltip_text(f'Search Connections ({shortcut})')
+        self.search_button.connect('clicked', lambda *_: self.focus_search_entry())
         try:
-            search_button.set_can_focus(False)
+            self.search_button.set_can_focus(False)
         except Exception:
             pass
-        header.append(search_button)
 
         # Hide/Show hostnames button (eye icon)
         def _update_eye_icon(btn):
@@ -2140,6 +2141,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 pass
 
         hide_button = icon_utils.new_button_from_icon_name('view-reveal-symbolic')
+        hide_button.add_css_class('flat')
         _update_eye_icon(hide_button)
         def _on_toggle_hide(btn):
             try:
@@ -2169,6 +2171,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # A ToggleButton so Adwaita renders the active state; the tag icon
         # is constant.
         view_button = Gtk.ToggleButton()
+        view_button.add_css_class('flat')
         icon_utils.set_button_icon(view_button, 'tag-symbolic')
         view_button.set_active(self._sidebar_view == 'tags')
 
@@ -2207,20 +2210,15 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         preferences_button = self._build_preferences_button()
         header.append(preferences_button)
 
-        # Add spacer to push menu button to far right
-        spacer = Gtk.Box()
-        spacer.set_hexpand(True)
-        header.append(spacer)
-
-        # Menu button - positioned at the far right relative to sidebar
-        menu_button = Gtk.MenuButton()
-        menu_button.set_can_focus(False)
+        # Menu button (placed on sidebar header bar below)
+        self.menu_button = Gtk.MenuButton()
+        self.menu_button.add_css_class('flat')
+        self.menu_button.set_can_focus(False)
         # MenuButton uses set_icon_name() which goes through icon theme
         # We'll use set_icon_name() - the icon theme should find our bundled icon
-        menu_button.set_icon_name('open-menu-symbolic')
-        menu_button.set_tooltip_text('Menu')
-        menu_button.set_menu_model(self.create_menu())
-        header.append(menu_button)
+        self.menu_button.set_icon_name('open-menu-symbolic')
+        self.menu_button.set_tooltip_text('Menu')
+        self.menu_button.set_menu_model(self.create_menu())
 
         header_handle = Gtk.WindowHandle()
         header_handle.set_child(header)
@@ -2751,6 +2749,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
         # Edit button
         self.edit_button = icon_utils.new_button_from_icon_name('document-edit-symbolic')
+        self.edit_button.add_css_class('flat')
         self.edit_button.set_tooltip_text('Edit Connection')
         self.edit_button.set_sensitive(False)
         self.edit_button.connect('clicked', self.on_edit_connection_clicked)
@@ -2758,6 +2757,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
         # Copy key to server button (ssh-copy-id)
         self.copy_key_button = icon_utils.new_button_from_icon_name('dialog-password-symbolic')
+        self.copy_key_button.add_css_class('flat')
         self.copy_key_button.set_tooltip_text(
             f'Copy public key to server for passwordless login ({get_primary_modifier_label()}+Shift+K)'
         )
@@ -2767,6 +2767,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
         # SCP transfer button
         self.scp_button = icon_utils.new_button_from_icon_name('vertical-arrows-long-symbolic')
+        self.scp_button.add_css_class('flat')
         self.scp_button.set_tooltip_text('Transfer files with scp')
         self.scp_button.set_sensitive(False)
         self.scp_button.connect('clicked', self.on_scp_button_clicked)
@@ -2774,6 +2775,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
         # Manage files button (visibility controlled dynamically)
         self.manage_files_button = icon_utils.new_button_from_icon_name('folder-symbolic')
+        self.manage_files_button.add_css_class('flat')
         primary_label = get_primary_modifier_label()
         self.manage_files_button.set_tooltip_text(
             f"Open file manager for remote server ({primary_label}+Shift+O)"
@@ -2786,6 +2788,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # System terminal button (only when external terminals are available)
         if not should_hide_external_terminal_options():
             self.system_terminal_button = icon_utils.new_button_from_icon_name('utilities-terminal-symbolic')
+            self.system_terminal_button.add_css_class('flat')
             self.system_terminal_button.set_tooltip_text('Open connection in system terminal')
             self.system_terminal_button.set_sensitive(False)
             self.system_terminal_button.connect('clicked', self.on_system_terminal_button_clicked)
@@ -2793,6 +2796,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
         # Delete button
         self.delete_button = icon_utils.new_button_from_icon_name('user-trash-symbolic')
+        self.delete_button.add_css_class('flat')
         self.delete_button.set_tooltip_text('Delete Connection')
         self.delete_button.set_sensitive(False)
         self.delete_button.connect('clicked', self.on_delete_connection_clicked)
@@ -2803,6 +2807,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
         # Rename group button
         self.rename_group_button = icon_utils.new_button_from_icon_name('document-edit-symbolic')
+        self.rename_group_button.add_css_class('flat')
         self.rename_group_button.set_tooltip_text('Rename Group')
         self.rename_group_button.set_sensitive(False)
         self.rename_group_button.connect('clicked', self.on_rename_group_clicked)
@@ -2810,6 +2815,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
         # Delete group button
         self.delete_group_button = icon_utils.new_button_from_icon_name('user-trash-symbolic')
+        self.delete_group_button.add_css_class('flat')
         self.delete_group_button.set_tooltip_text('Delete Group')
         self.delete_group_button.set_sensitive(False)
         self.delete_group_button.connect('clicked', self.on_delete_group_clicked)
@@ -2837,6 +2843,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         sidebar_title_label.add_css_class('title')
         sidebar_title_label.set_xalign(0.0)
         self.sidebar_header_bar.set_title_widget(sidebar_title_label)
+
+        self.sidebar_header_bar.pack_start(self.search_button)
+        self.sidebar_header_bar.pack_end(self.menu_button)
 
         sidebar_toolbar_view = Adw.ToolbarView()
         sidebar_toolbar_view.add_top_bar(self.sidebar_header_bar)
@@ -3090,6 +3099,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     def _build_sort_button(self):
         from sshpilot import icon_utils
         button = icon_utils.new_button_from_icon_name("view-sort-ascending-symbolic")
+        button.add_css_class('flat')
         button.set_can_focus(False)
         button.connect("clicked", self._on_sort_button_clicked)
         self.sort_button = button
@@ -3099,6 +3109,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     def _build_preferences_button(self):
         from sshpilot import icon_utils
         button = icon_utils.new_button_from_icon_name("settings-symbolic")
+        button.add_css_class('flat')
         button.set_can_focus(False)
         button.set_tooltip_text(_("Settings"))
         button.connect("clicked", lambda *_: self.show_preferences())
