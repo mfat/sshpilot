@@ -137,6 +137,18 @@ class _PageReg:
     factory: Callable[[], Any]
     plugin_id: str
     tab_page: Any = None  # cached Adw.TabPage once opened
+    add_menu_item: bool = True            # whether to add a Tools-menu entry
+    on_activate: Optional[Callable[[], None]] = None  # menu click handler (overrides open_page)
+
+
+@dataclass
+class _ConnActionReg:
+    """A plugin-contributed item in the connection-list right-click menu."""
+    full_id: str
+    label: str
+    icon_name: str
+    callback: Callable[[str], None]  # called with the connection nickname
+    plugin_id: str
 
 
 class UiHost:
@@ -148,14 +160,22 @@ class UiHost:
         self._pages: Dict[str, _PageReg] = {}
         self._pending_open: List[str] = []
         self._pending_toasts: List[Tuple[str, int]] = []
+        # Plugin-contributed connection context-menu actions. The window reads
+        # this when it builds a connection's right-click menu (rebuilt each
+        # time), so actions registered at activate time appear without any
+        # window-action plumbing.
+        self._connection_actions: Dict[str, _ConnActionReg] = {}
 
     # --- registration (safe before or after bind) ---------------------
     def register_page(self, full_id: str, title: str, icon_name: str,
-                      factory: Callable[[], Any], *, plugin_id: str) -> None:
+                      factory: Callable[[], Any], *, plugin_id: str,
+                      add_menu_item: bool = True,
+                      on_activate: Optional[Callable[[], None]] = None) -> None:
         if full_id in self._pages:
             logger.warning("Plugin page %r already registered; ignoring", full_id)
             return
-        self._pages[full_id] = _PageReg(full_id, title, icon_name, factory, plugin_id)
+        self._pages[full_id] = _PageReg(full_id, title, icon_name, factory, plugin_id,
+                                        add_menu_item=add_menu_item, on_activate=on_activate)
         if self._window is not None:
             self._install_menu_item(self._pages[full_id])
 
@@ -163,6 +183,29 @@ class UiHost:
         """Full ids of pages registered by ``plugin_id`` (empty if none / the
         plugin isn't active). Used by Preferences to offer an 'open page' gear."""
         return [fid for fid, reg in self._pages.items() if reg.plugin_id == plugin_id]
+
+    def register_connection_action(self, action_id: str, label: str,
+                                   icon_name: str, callback: Callable[[str], None],
+                                   *, plugin_id: str) -> None:
+        """Register an item for the connection-list right-click menu. ``callback``
+        is called with the connection's nickname when chosen. Safe before or
+        after bind — the menu is rebuilt on each right-click."""
+        full_id = f"{plugin_id}:{action_id}"
+        if full_id in self._connection_actions:
+            logger.warning("Connection action %r already registered; ignoring", full_id)
+            return
+        self._connection_actions[full_id] = _ConnActionReg(
+            full_id, label, icon_name, callback, plugin_id)
+
+    def connection_actions(self) -> List[_ConnActionReg]:
+        """All registered connection context-menu actions (window reads this)."""
+        return list(self._connection_actions.values())
+
+    def remove_plugin_actions(self, plugin_id: str) -> None:
+        """Drop every connection action a plugin registered (used on deactivate)."""
+        for full_id in [fid for fid, reg in self._connection_actions.items()
+                        if reg.plugin_id == plugin_id]:
+            self._connection_actions.pop(full_id, None)
 
     def remove_plugin_pages(self, plugin_id: str) -> None:
         """Drop every page a plugin registered (used on deactivate): close its
@@ -246,12 +289,21 @@ class UiHost:
         window = self._window
         if window is None:
             return
+        if not reg.add_menu_item:
+            return  # page is opened directly (e.g. per-host tabs), no menu entry
         try:
             from gi.repository import Gio
             action_name = self._action_name(reg)
+
+            def _activate(*_a, reg=reg):
+                if reg.on_activate is not None:
+                    reg.on_activate()
+                else:
+                    self.open_page(reg.full_id)
+
             if window.lookup_action(action_name) is None:
                 action = Gio.SimpleAction.new(action_name, None)
-                action.connect("activate", lambda *_a, fid=reg.full_id: self.open_page(fid))
+                action.connect("activate", _activate)
                 window.add_action(action)
                 section = getattr(window, "_plugins_menu_section", None)
                 if section is not None:
@@ -402,6 +454,40 @@ class PluginHost:
             return True
         except Exception:
             logger.exception("open_connection(%r) failed", nickname)
+            return False
+
+    def open_command_terminal(self, nickname: str, remote_command: str,
+                              *, title: Optional[str] = None) -> bool:
+        if self._window is None:
+            logger.warning("open_command_terminal(%r) before window is ready", nickname)
+            return False
+        if not remote_command or not str(remote_command).strip():
+            return False
+        try:
+            conn = self._cm.find_connection_by_nickname(nickname)
+        except Exception:
+            conn = None
+        if conn is None:
+            self.ui.notify(f"No connection named {nickname!r}")
+            return False
+        try:
+            import copy
+            # Transient clone so the saved connection's cached command/state is
+            # not polluted and the one-off command runs in its own tab. The clone
+            # re-prepares via the native builder with the remote command appended
+            # on the CLI (same path as ctx.run_command) — no new SSH/auth path.
+            clone = copy.copy(conn)
+            clone.ssh_cmd = []
+            clone.ssh_connection_cmd = None
+            clone.ssh_env = {}
+            self._window.terminal_manager.connect_to_host(
+                clone, force_new=True,
+                remote_command=str(remote_command), tab_title=title,
+                force_tty=True,  # a command in a terminal tab always wants a PTY
+            )
+            return True
+        except Exception:
+            logger.exception("open_command_terminal(%r) failed", nickname)
             return False
 
     # --- connection groups -------------------------------------------

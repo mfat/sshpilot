@@ -2,6 +2,7 @@ import os
 import asyncio
 import logging
 import math
+from typing import Optional
 
 import cairo
 
@@ -70,7 +71,10 @@ class TerminalManager:
                 logger.debug("Failed to iterate tab view while refreshing backends", exc_info=True)
 
     # Connecting/disconnecting hosts
-    def connect_to_host(self, connection, force_new: bool = False):
+    def connect_to_host(self, connection, force_new: bool = False,
+                        remote_command: Optional[str] = None,
+                        tab_title: Optional[str] = None,
+                        force_tty: bool = False):
         window = self.window
         group_color = self._resolve_group_color(connection)
         if not force_new:
@@ -117,7 +121,7 @@ class TerminalManager:
 
             from sshpilot import icon_utils
             page = window.tab_view.append(terminal)
-            page.set_title(connection.nickname)
+            page.set_title(tab_title or connection.nickname)
             page.set_icon(icon_utils.new_gicon_from_icon_name('utilities-terminal-symbolic'))
             if group_name:
                 setattr(terminal, 'group_name', group_name)
@@ -167,7 +171,8 @@ class TerminalManager:
                 if (getattr(connection, 'protocol', 'ssh') == 'ssh'
                         and not getattr(connection, 'ssh_cmd', None)):
                     prepare = (
-                        connection.native_connect()
+                        connection.native_connect(remote_command=remote_command,
+                                                  force_tty=force_tty)
                         if hasattr(connection, 'native_connect')
                         else connection.connect()
                     )

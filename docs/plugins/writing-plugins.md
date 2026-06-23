@@ -172,7 +172,11 @@ the authoritative reference; this is the practical map.
 - **Secrets/settings (per-plugin, namespaced):** `ctx.secrets.get/set/delete`
   (OS keyring), `ctx.settings.get/set` (app config).
 - **UI:** `ctx.ui.register_page(page_id, title, icon_name, factory)`,
-  `ctx.ui.open_page(page_id)`, `ctx.ui.notify(message)`.
+  `ctx.ui.open_page(page_id)`, `ctx.ui.notify(message)`;
+  `ctx.ui.register_connection_action(action_id, label, icon_name, callback)`
+  (API ≥ 1.7) adds an item to a connection's right-click menu in the sidebar —
+  `callback` receives the right-clicked connection's nickname (e.g. open a plugin
+  page targeting that host).
 - **Events:** `ctx.events.subscribe(Events.X, callback)` —
   `APP_STARTED`, `APP_SHUTDOWN`, `CONNECTION_CREATED/UPDATED/DELETED`,
   `SESSION_OPENED/CLOSED`.
@@ -184,6 +188,25 @@ the authoritative reference; this is the practical map.
   (`~/.ssh/config`, ProxyJump, stored credentials). `ctx.get_effective_ssh_config(nickname)`
   returns the resolved `ssh -G` options. `run_command` blocks — call it from a
   worker thread and marshal results back with `ctx.run_on_ui_thread`.
+- **Streamed/interactive commands (API ≥ 1.6):**
+  `ctx.open_command_terminal(nickname, remote_command, title=None)` opens a new
+  terminal tab that runs `remote_command` on the host — over the same native
+  SSH/auth path, no new transport. Use it for streamed or interactive output
+  `run_command` can't show (e.g. `docker logs -f`, `docker exec -it <c> sh`,
+  `top`). Returns `False` if the connection is unknown / command empty / UI not
+  ready.
+- **Connection multiplexing for polling (API ≥ 1.9):** if your plugin makes
+  repeated `run_command` calls to a host (a dashboard, a stats/watch loop), each
+  call otherwise pays a fresh connect + auth handshake. Call
+  `ctx.acquire_multiplex(nickname)` while your surface is open to keep one SSH
+  **ControlMaster** connection warm — `run_command` then reuses it transparently
+  (no re-auth, ~10–50 ms/call). It's **refcounted** and shared process-wide; the
+  master is created lazily by the first call and is self-healing. **Always balance
+  it** with `ctx.release_multiplex(nickname)` — the natural spots are a page's
+  `map`/`unmap` (acquire when shown, release when hidden; swap on host change).
+  No socket bookkeeping or new auth path on your side. The built-in **Docker
+  Manager** uses exactly this pattern. Guard with `try/except AttributeError` if
+  you must run on cores older than 1.9.
 - **Keys (API ≥ 1.5):** `ctx.list_keys()`, `ctx.delete_key(private_path)`
   (only keys inside the app's key dir), `ctx.copy_key_to_host(nickname, public_key_path)`
   (ssh-copy-id via the shared auth path).

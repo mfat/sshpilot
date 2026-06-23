@@ -34,7 +34,21 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 #      ctx.list_keys/ctx.delete_key, terminal/session access
 #      (ctx.list_sessions/ctx.read_terminal/ctx.send_terminal), and
 #      self-contained ctx.data_dir/ctx.files/ctx.http helpers.
-API_VERSION: Tuple[int, int] = (1, 5)
+# 1.6: ctx.open_command_terminal(nickname, remote_command, title=) — open a new
+#      terminal tab running a one-off command on a connection's host, over the
+#      single native SSH/auth path (no new transport). For streamed output such
+#      as `docker logs -f`, interactive `docker exec -it`, or `top`.
+# 1.7: ctx.ui.register_connection_action(action_id, label, icon_name, callback)
+#      — contribute an item to the connection-list right-click menu; callback
+#      receives the connection nickname.
+# 1.8: ctx.ui.register_page(..., add_menu_item=False, on_activate=cb) — register
+#      a page with no Tools-menu entry (opened directly, e.g. one tab per host),
+#      and/or have the menu entry run a callback instead of opening the page.
+# 1.9: ctx.acquire_multiplex(nickname) / ctx.release_multiplex(nickname) — keep a
+#      shared SSH ControlMaster warm for a host while a surface is open; run_command
+#      then transparently reuses that one connection (no re-auth per call). For
+#      polling surfaces such as the Docker Console.
+API_VERSION: Tuple[int, int] = (1, 9)
 
 # Stable event names and event payload types live in host.py; re-exported here
 # so plugins import everything from sshpilot.plugins.api. (host.py imports
@@ -182,13 +196,22 @@ class _UiFacade:
         return f"{self._plugin_id}:{page_id}"
 
     def register_page(self, page_id: str, title: str, icon_name: str,
-                      factory: Callable[[], Any]) -> None:
+                      factory: Callable[[], Any], *,
+                      add_menu_item: bool = True,
+                      on_activate: Optional[Callable[[], None]] = None) -> None:
         """Register a page. ``factory`` is a zero-arg callable returning a
         ``Gtk.Widget`` built on demand when the page is first opened. Safe to
         call from ``activate``; the page appears under the Tools menu once the
-        window is ready."""
+        window is ready.
+
+        ``add_menu_item=False`` (API >= 1.8) registers the page without a Tools-menu
+        entry — for pages opened directly via ``open_page`` (e.g. one tab per
+        host). ``on_activate`` (API >= 1.8), when given, is called when the
+        Tools-menu item is chosen instead of opening this page — e.g. to open a
+        different (per-host) page."""
         self._ui.register_page(self._full(page_id), title, icon_name, factory,
-                               plugin_id=self._plugin_id)
+                               plugin_id=self._plugin_id,
+                               add_menu_item=add_menu_item, on_activate=on_activate)
 
     def open_page(self, page_id: str) -> None:
         """Open (or focus) a registered page as a tab. Valid after
@@ -199,6 +222,19 @@ class _UiFacade:
         """Show a transient in-app toast. Valid after ``app_started``;
         earlier calls are queued."""
         self._ui.notify(message, timeout)
+
+    def register_connection_action(self, action_id: str, label: str,
+                                   icon_name: str,
+                                   callback: Callable[[str], None]) -> None:
+        """Add an item to the connection-list right-click menu (API >= 1.7).
+
+        ``callback`` is invoked with the right-clicked connection's nickname.
+        Safe to call from ``activate``; the item appears for SSH connections
+        once the window is ready. Use it to open a plugin page targeting that
+        host (e.g. ``ctx.ui.open_page(...)`` then point the page at the host)."""
+        register = getattr(self._ui, "register_connection_action", None)
+        if callable(register):
+            register(action_id, label, icon_name, callback, plugin_id=self._plugin_id)
 
 
 class _SecretStore:
@@ -458,6 +494,24 @@ class PluginContext:
         ``app_started``."""
         return self._host.open_connection(nickname) if self._host is not None else False
 
+    def open_command_terminal(self, nickname: str, remote_command: str,
+                              *, title: Optional[str] = None) -> bool:
+        """Open a new terminal tab that runs ``remote_command`` on the host of
+        the connection ``nickname`` (API >= 1.6).
+
+        The command runs over the app's single native SSH path (the same
+        ``~/.ssh/config`` / ProxyJump / stored-credential handling as a normal
+        session) — no new transport is introduced. Use this for streamed or
+        interactive output that ``run_command`` (one-shot, captured) cannot
+        show, e.g. ``docker logs -f``, ``docker exec -it <c> sh``, or live
+        ``docker stats``. ``title`` overrides the tab title.
+
+        Returns False if the connection is unknown, the command is empty, or the
+        UI isn't ready. Valid after ``app_started``."""
+        if self._host is None:
+            return False
+        return self._host.open_command_terminal(nickname, remote_command, title=title)
+
     # --- groups -------------------------------------------------------
     def create_group(self, name: str, color: Optional[str] = None) -> Optional[str]:
         """Find-or-create a sidebar group by display name; return its id
@@ -531,15 +585,21 @@ class PluginContext:
         import subprocess
         from ..ssh_connection_builder import (
             ConnectionContext, build_ssh_connection)
+        from .. import ssh_multiplex
         conn = self.connection_manager.find_connection_by_nickname(nickname)
         if conn is None:
             return CommandResult(-1, "", f"No connection named {nickname!r}")
         cleanup = None
         try:
+            # When a surface has acquired multiplexing for this host, reuse its
+            # ControlMaster socket: the first call opens the master, the rest ride
+            # it (no re-auth). Transparent — callers don't opt in per-call.
+            extra_args = (ssh_multiplex.controlmaster_args()
+                          if ssh_multiplex.is_active(nickname) else None)
             ctx = ConnectionContext(
                 connection=conn, connection_manager=self.connection_manager,
                 config=self.config, command_type='ssh',
-                remote_command=command, native_mode=True)
+                remote_command=command, native_mode=True, extra_args=extra_args)
             prepared = build_ssh_connection(ctx)
             argv = list(prepared.command)
             env = {**os.environ, **(prepared.env or {})}
@@ -560,6 +620,44 @@ class PluginContext:
         finally:
             if cleanup is not None:
                 cleanup()
+
+    def acquire_multiplex(self, nickname: str) -> None:
+        """Keep a shared SSH master (ControlMaster) warm for ``nickname`` while a
+        surface is open, so its ``run_command`` calls reuse one connection instead
+        of re-handshaking each time. Refcounted and reusable by any plugin —
+        balance every call with :meth:`release_multiplex`. The master itself is
+        created lazily by the first ``run_command`` (``ControlMaster=auto``)."""
+        from .. import ssh_multiplex
+        if nickname:
+            ssh_multiplex.acquire(nickname)
+
+    def release_multiplex(self, nickname: str) -> None:
+        """Drop a multiplex reference acquired with :meth:`acquire_multiplex`. When
+        the last reference goes away, tear the master down promptly via
+        ``ssh -O exit`` (reusing the native auth path); if that fails the master
+        expires on its own via ControlPersist."""
+        from .. import ssh_multiplex
+        if not nickname or not ssh_multiplex.release(nickname):
+            return
+        try:
+            import os
+            import subprocess
+            from ..ssh_connection_builder import (
+                ConnectionContext, build_ssh_connection)
+            conn = self.connection_manager.find_connection_by_nickname(nickname)
+            if conn is None:
+                return
+            ctx = ConnectionContext(
+                connection=conn, connection_manager=self.connection_manager,
+                config=self.config, command_type='ssh', native_mode=True,
+                extra_args=["-O", "exit", "-o",
+                            f"ControlPath={ssh_multiplex.control_path()}"])
+            prepared = build_ssh_connection(ctx)
+            env = {**os.environ, **(prepared.env or {})}
+            subprocess.run(list(prepared.command), env=env, capture_output=True,
+                           text=True, timeout=10, check=False)
+        except Exception:  # noqa: BLE001 — best-effort teardown; ControlPersist
+            pass               # expiry is the fallback, so failures are harmless
 
     def get_effective_ssh_config(self, nickname: str) -> Dict[str, Any]:
         """Return the resolved per-host SSH options for a connection, as

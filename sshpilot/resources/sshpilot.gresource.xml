@@ -11,6 +11,8 @@
   </gresource>
   
   <gresource prefix="/io/github/mfat/sshpilot/icons/scalable/actions">
+    <file alias="brand-docker-symbolic.svg">icons/scalable/actions/brand-docker-symbolic.svg</file>
+    <file alias="docker-mark-ocean-blue.svg">icons/scalable/actions/docker-mark-ocean-blue.svg</file>
     <file alias="computer-symbolic.svg">icons/scalable/actions/computer-symbolic.svg</file>
     <file alias="dialog-error-symbolic.svg">icons/scalable/actions/dialog-error-symbolic.svg</file>
     <file alias="dialog-password-symbolic.svg">icons/scalable/actions/dialog-password-symbolic.svg</file>

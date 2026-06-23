@@ -2452,6 +2452,26 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     except Exception:
                         pass
 
+                    # Plugin-contributed connection actions (single SSH host),
+                    # e.g. "Docker Console". The menu is rebuilt per right-click,
+                    # so actions registered at activate time appear here.
+                    try:
+                        if not multi and conn and getattr(conn, 'protocol', 'ssh') == 'ssh':
+                            ph = getattr(self, 'plugin_host', None)
+                            actions = ph.ui.connection_actions() if ph is not None else []
+                            if actions:
+                                nick = getattr(conn, 'nickname', '')
+                                menu.add_section(*[
+                                    menu.add_item(
+                                        a.icon_name or 'application-x-executable-symbolic',
+                                        a.label,
+                                        lambda cb=a.callback, nk=nick: cb(nk),
+                                    )
+                                    for a in actions
+                                ])
+                    except Exception:
+                        logger.debug("Failed to add plugin connection actions", exc_info=True)
+
                     menu.add_section(
                         menu.add_item('user-trash-symbolic', _('Delete'), lambda: self.on_delete_connection_action(None, None)),
                     )

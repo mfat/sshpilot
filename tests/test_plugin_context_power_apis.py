@@ -15,8 +15,11 @@ from sshpilot.plugins.api import API_VERSION, CommandResult, PluginContext
 from sshpilot.plugins.registry import ProtocolRegistry
 
 
-def test_api_version_is_1_5():
-    assert API_VERSION == (1, 5)
+def test_api_version_is_at_least_1_7():
+    # 1.6 added ctx.open_command_terminal; 1.7 added
+    # ctx.ui.register_connection_action. Keep the floor pinned so a regression
+    # that drops an API method is caught.
+    assert API_VERSION >= (1, 7)
 
 
 class _Conn:
