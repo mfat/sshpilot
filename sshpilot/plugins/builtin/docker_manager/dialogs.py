@@ -7,6 +7,7 @@ Kept separate from page.py to avoid bloating it. Three dialogs:
 * ``TextViewDialog`` — a monospace read-only text viewer (image history,
   compose file).
 * ``CreateContainerDialog`` — a form to create + run a container.
+* ``DockerManagerSettingsDialog`` — plugin settings (SSH connection reuse).
 * ``prompt_text`` — a tiny one-line input dialog (e.g. the image to pull).
 """
 
@@ -314,6 +315,40 @@ class CreateContainerDialog(_DialogBase):
         self.close()
         if self._on_create:
             self._on_create(spec)
+
+
+class DockerManagerSettingsDialog(_DialogBase):
+    """Plugin settings for the Docker Manager page."""
+
+    def __init__(self, parent: Optional[Gtk.Window], *,
+                 reuse_ssh: bool,
+                 on_reuse_ssh_changed: Callable[[bool], None]) -> None:
+        super().__init__(parent, "Docker Manager Settings", width=420, height=240)
+        close = Gtk.Button(icon_name="window-close-symbolic")
+        close.set_tooltip_text("Close")
+        close.connect("clicked", lambda _b: self.close())
+        self._header.pack_end(close)
+
+        self._reuse_row = Adw.SwitchRow()
+        self._reuse_row.set_title("Reuse SSH connection")
+        self._reuse_row.set_subtitle(
+            "One open connection per host — faster status checks"
+        )
+        self._reuse_row.set_active(reuse_ssh)
+        self._reuse_row.connect(
+            "notify::active",
+            lambda row, _pspec: on_reuse_ssh_changed(row.get_active()),
+        )
+
+        group = Adw.PreferencesGroup(title="Connection")
+        group.add(self._reuse_row)
+
+        scroller = Gtk.ScrolledWindow(vexpand=True)
+        body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18,
+                       margin_top=16, margin_bottom=16, margin_start=16, margin_end=16)
+        body.append(group)
+        scroller.set_child(body)
+        self._toolbar.set_content(scroller)
 
 
 def prompt_text(parent: Optional[Gtk.Window], heading: str, body: str,

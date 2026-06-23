@@ -604,12 +604,12 @@ def test_page_reuse_ssh_toggle_defaults_on_and_persists():
     )
     page = DockerManagerPage(ctx, initial_host="web")
     # Default ON.
-    assert page._mux_check.get_active() is True
+    assert page._multiplex_enabled() is True
     # Acquire keeps the master for the current host.
     page._acquire_multiplex("web")
     assert acquired == ["web"] and page._mux_nick == "web"
     # Toggling off persists the setting and releases.
-    page._mux_check.set_active(False)
+    page._set_multiplex_enabled(False)
     assert store.get("controlmaster") is False
     assert released == ["web"] and page._mux_nick is None
 
@@ -631,6 +631,20 @@ def test_details_dialog_renders_inspect_data():
     titles = [g.get_title() for g in groups]
     assert titles == ["General", "State", "Ports", "Networks",
                       "Mounts / volumes", "Environment", "Labels"]
+
+
+def test_settings_dialog_reuse_ssh_switch():
+    _gtk_or_skip()
+    from sshpilot.plugins.builtin.docker_manager.dialogs import (
+        DockerManagerSettingsDialog)
+
+    changes = []
+    dlg = DockerManagerSettingsDialog(
+        None, reuse_ssh=True, on_reuse_ssh_changed=changes.append)
+    assert dlg._reuse_row.get_active() is True
+    assert dlg._reuse_row.get_title() == "Reuse SSH connection"
+    dlg._reuse_row.set_active(False)
+    assert changes == [False]
 
 
 def test_create_and_textview_dialogs_construct():

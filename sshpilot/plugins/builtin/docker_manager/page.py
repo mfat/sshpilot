@@ -26,6 +26,7 @@ from .client import DockerClient, DockerError  # noqa: E402
 from .dialogs import (  # noqa: E402
     ContainerDetailsDialog,
     CreateContainerDialog,
+    DockerManagerSettingsDialog,
     TextViewDialog,
     prompt_text,
 )
@@ -266,14 +267,10 @@ class DockerManagerPage(Gtk.Box):
         self._sudo_check.connect("toggled", self._on_sudo_toggled)
         bar.append(self._sudo_check)
 
-        self._mux_check = Gtk.CheckButton(label="Reuse SSH")
-        self._mux_check.set_tooltip_text(
-            "Keep one SSH connection open and multiplex Docker commands over it "
-            "(ControlMaster) — faster polling"
-        )
-        self._mux_check.set_active(self._multiplex_enabled())
-        self._mux_check.connect("toggled", self._on_mux_toggled)
-        bar.append(self._mux_check)
+        settings = Gtk.Button(icon_name="settings-symbolic")
+        settings.set_tooltip_text("Docker Manager settings")
+        settings.connect("clicked", lambda _b: self._open_settings())
+        bar.append(settings)
 
         refresh = Gtk.Button(icon_name="view-refresh-symbolic")
         refresh.set_tooltip_text("Refresh")
@@ -314,13 +311,20 @@ class DockerManagerPage(Gtk.Box):
             pass
         self._mux_nick = None
 
-    def _on_mux_toggled(self, check: Gtk.CheckButton) -> None:
-        self.ctx.settings.set("controlmaster", bool(check.get_active()))
-        if check.get_active():
+    def _set_multiplex_enabled(self, enabled: bool) -> None:
+        self.ctx.settings.set("controlmaster", bool(enabled))
+        if enabled:
             self._acquire_multiplex(self._current_nickname())
         else:
             self._release_multiplex()
         self._refresh_visible()
+
+    def _open_settings(self) -> None:
+        DockerManagerSettingsDialog(
+            self._window(),
+            reuse_ssh=self._multiplex_enabled(),
+            on_reuse_ssh_changed=self._set_multiplex_enabled,
+        ).present()
 
     def _list_ssh_connections(self) -> List[Any]:
         try:

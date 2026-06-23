@@ -12,7 +12,7 @@ change without notice.
 > and the iterate loop; this file is the deeper API reference.
 
 - **The only import you need:** `sshpilot.plugins.api`.
-- **Current API version:** `1.5` (see [Versioning](#versioning)).
+- **Current API version:** `1.9` (see [Versioning](#versioning)).
 - **Worked examples** — two provider archetypes:
   - [`examples/mock_vps/`](sshpilot/plugins/examples/mock_vps/) — an **IP/SSH** provider: provision → get an IP → `add_connection` a normal SSH connection.
   - [`examples/easyenv_workspaces/`](sshpilot/plugins/examples/easyenv_workspaces/) — a **CLI/mesh** provider (real partner [easyenv.io](https://easyenv.io/cli)): a protocol backend whose connection *is* a CLI command, plus a management page. See [CLI-driven plugins](#11-cli-driven-plugins).
@@ -35,6 +35,10 @@ change without notice.
 | List/delete keys, deploy a key to a host | `ctx.list_keys()` / `ctx.delete_key(path)` / `ctx.copy_key_to_host(nickname, pub)` *(1.5)* |
 | Inspect/drive open terminals | `ctx.list_sessions()` / `ctx.read_terminal(id)` / `ctx.send_terminal(id, text)` *(1.5)* |
 | Persist files / make HTTP calls | `ctx.data_dir`, `ctx.files`, `ctx.http` *(1.5)* |
+| Open a terminal tab running a one-off command (streamed) | `ctx.open_command_terminal(nickname, remote_command, title=)` *(1.6)* |
+| Add an item to the connection right-click menu | `ctx.ui.register_connection_action(action_id, label, icon, callback)` *(1.7)* |
+| Register a page with no menu entry / custom activation | `ctx.ui.register_page(..., add_menu_item=False, on_activate=cb)` *(1.8)* |
+| Keep one SSH connection warm & multiplex calls over it | `ctx.acquire_multiplex(nickname)` / `ctx.release_multiplex(nickname)` *(1.9)* |
 | Store/read credentials (keyring) | `ctx.secrets.get/set/delete(key)` |
 | Store/read plugin settings | `ctx.settings.get/set(key)` |
 | Run code back on the UI thread | `ctx.run_on_ui_thread(fn, *args)` |
@@ -149,6 +153,32 @@ Passed to `activate`. One context per plugin; `ctx.plugin_id` is your manifest i
 - `list_keys() -> list[dict]` — `{"private_path", "public_path"}` for keys the app manages. *(after `app_started`)*
 - `delete_key(private_path: str) -> bool` — delete a key pair; refuses paths outside the app's key dir. *(after `app_started`)*
 - `copy_key_to_host(nickname: str, public_key_path: str) -> bool` — install a public key on a host via the shared ssh-copy-id/auth path. **Blocking.** *(after `app_started`)*
+- `open_command_terminal(nickname: str, remote_command: str, *, title=None) -> bool` *(API ≥ 1.6)* — open a new terminal tab running a one-off command on the host over the single native SSH/auth path. Use this for **streamed/interactive** output that `run_command` (one-shot, captured) can't show — e.g. `docker logs -f`, `docker exec -it`, `top`. *(after `app_started`)*
+
+### Connection multiplexing — faster polling *(API ≥ 1.9)*
+If your plugin polls a host (repeated `run_command` calls — a dashboard, a stats
+refresh, a watch loop), each call otherwise pays a fresh TCP connect **and auth
+handshake**. Ask core to keep one SSH **ControlMaster** connection warm for the
+host while your surface is open; `run_command` then transparently reuses it (no
+re-auth, ~10–50 ms/call instead of hundreds). No socket management or new auth
+path on your side — it rides the same `~/.ssh/config`/auth path as everything else.
+- `acquire_multiplex(nickname: str) -> None` — start keeping a master warm for the
+  host. **Refcounted** and shared process-wide, so two surfaces (or your plugin +
+  the global Preferences toggle) share a single master. The master is created
+  lazily by the first `run_command` after acquire and is self-healing.
+- `release_multiplex(nickname: str) -> None` — drop your reference; when the last
+  one goes away core tears the master down (`ssh -O exit`), else `ControlPersist`
+  expires it. **Always balance every `acquire`** — the natural place is the page's
+  `map`/`unmap` (acquire when shown, release when hidden; swap on host change).
+- Older cores lack these methods — guard with `try/except AttributeError` (or check
+  the negotiated API minor) and fall back to plain `run_command`.
+
+```python
+# In a polling page, tie the warm master to the page being visible:
+self.connect("map",   lambda *_: self.ctx.acquire_multiplex(self._nick))
+self.connect("unmap", lambda *_: self.ctx.release_multiplex(self._nick))
+# …then just call self.ctx.run_command(self._nick, "docker ps …") on your timer.
+```
 
 ### Terminals & sessions *(API ≥ 1.5, after `app_started`)*
 - `list_sessions() -> list[SessionInfo]` — currently open terminal sessions.
@@ -161,8 +191,9 @@ Passed to `activate`. One context per plugin; `ctx.plugin_id` is your manifest i
 - `ctx.http` — minimal blocking client: `get(url, *, headers=None, timeout=30)`, `post(url, *, data=None, json=None, headers=None, timeout=30)` → `HttpResponse{status, text, json(), ok}`. Call off the UI thread.
 
 ### UI — `ctx.ui`
-- `register_page(page_id, title, icon_name, factory)` — `factory` is a zero-arg callable returning a `Gtk.Widget`, built on first open. The page appears under the **Tools** section of the main menu. *(safe in `activate`)*
+- `register_page(page_id, title, icon_name, factory, *, add_menu_item=True, on_activate=None)` — `factory` is a zero-arg callable returning a `Gtk.Widget`, built on first open. The page appears under the **Tools** section of the main menu. *(safe in `activate`)* — *(API ≥ 1.8)* pass `add_menu_item=False` for a page opened directly (e.g. one tab per host, no menu clutter), and/or `on_activate=cb` to have the menu entry run a callback instead of opening the page.
 - `open_page(page_id)` — open or focus the page as a tab. *(after `app_started`)*
+- `register_connection_action(action_id, label, icon_name, callback)` *(API ≥ 1.7)* — add an item to the connection-list **right-click menu**; `callback` receives the connection nickname. *(safe in `activate`)*
 - `notify(message, timeout=3)` — transient in-app toast. *(after `app_started`)*
 
 ### Events — `ctx.events`
@@ -299,7 +330,7 @@ must be made on the UI thread.
 
 ## 9. Versioning
 
-- `API_VERSION = (major, minor)`, currently `(1, 5)`. Your manifest declares the
+- `API_VERSION = (major, minor)`, currently `(1, 9)`. Your manifest declares the
   **major** you target; the loader skips plugins whose major doesn't match.
 - Minor bumps are additive (new methods/events); your plugin keeps working. Note
   the loader checks only the **major**, so a plugin using a newer minor's API on
@@ -311,7 +342,11 @@ must be made on the UI thread.
   `update_connection`; `1.4` `list_connections`; `1.5` `run_command`,
   `get_effective_ssh_config`, `copy_key_to_host`, `list_keys`/`delete_key`,
   `list_sessions`/`read_terminal`/`send_terminal`, and `ctx.data_dir`/
-  `ctx.files`/`ctx.http`.
+  `ctx.files`/`ctx.http`; `1.6` `open_command_terminal` (streamed/interactive
+  output); `1.7` `ui.register_connection_action` (connection right-click menu);
+  `1.8` `ui.register_page(add_menu_item=…, on_activate=…)`; `1.9`
+  `acquire_multiplex`/`release_multiplex` (ControlMaster connection reuse for
+  polling plugins — `run_command` reuses the warm master transparently).
 
 ---
 
@@ -320,6 +355,8 @@ must be made on the UI thread.
 - **Do** import only from `sshpilot.plugins.api`.
 - **Do** keep `activate` to registration; do live work after `app_started`.
 - **Do** keep network/slow work off the UI thread.
+- **Do** call `acquire_multiplex`/`release_multiplex` (balanced) if you poll a host
+  with repeated `run_command` calls — it removes a per-call connect+auth handshake.
 - **Don't** touch the main window, the internal `Connection` class, private
   modules, or GObject signals directly — use events and `PluginContext`.
 - **Don't** store secrets in `settings`.

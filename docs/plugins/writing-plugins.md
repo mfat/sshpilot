@@ -195,6 +195,18 @@ the authoritative reference; this is the practical map.
   `run_command` can't show (e.g. `docker logs -f`, `docker exec -it <c> sh`,
   `top`). Returns `False` if the connection is unknown / command empty / UI not
   ready.
+- **Connection multiplexing for polling (API ≥ 1.9):** if your plugin makes
+  repeated `run_command` calls to a host (a dashboard, a stats/watch loop), each
+  call otherwise pays a fresh connect + auth handshake. Call
+  `ctx.acquire_multiplex(nickname)` while your surface is open to keep one SSH
+  **ControlMaster** connection warm — `run_command` then reuses it transparently
+  (no re-auth, ~10–50 ms/call). It's **refcounted** and shared process-wide; the
+  master is created lazily by the first call and is self-healing. **Always balance
+  it** with `ctx.release_multiplex(nickname)` — the natural spots are a page's
+  `map`/`unmap` (acquire when shown, release when hidden; swap on host change).
+  No socket bookkeeping or new auth path on your side. The built-in **Docker
+  Manager** uses exactly this pattern. Guard with `try/except AttributeError` if
+  you must run on cores older than 1.9.
 - **Keys (API ≥ 1.5):** `ctx.list_keys()`, `ctx.delete_key(private_path)`
   (only keys inside the app's key dir), `ctx.copy_key_to_host(nickname, public_key_path)`
   (ssh-copy-id via the shared auth path).
