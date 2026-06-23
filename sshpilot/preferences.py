@@ -1406,7 +1406,7 @@ class PreferencesWindow(Adw.Window):
             show_user_hostname_switch.set_title("Display user@hostname")
             show_user_hostname_switch.set_subtitle("Show username@hostname in connection rows")
             show_user_hostname_switch.set_active(
-                self.config.get_setting('ui.sidebar_show_user_hostname', False)
+                self.config.get_setting('ui.sidebar_show_user_hostname', True)
             )
             show_user_hostname_switch.connect('notify::active', self.on_sidebar_show_user_hostname_changed)
             sidebar_group.add(show_user_hostname_switch)
@@ -1436,7 +1436,7 @@ class PreferencesWindow(Adw.Window):
             show_port_forwarding_switch.set_title("Display Port Forwarding Labels")
             show_port_forwarding_switch.set_subtitle("Show port forwarding indicators (L/R/D) in connection rows")
             show_port_forwarding_switch.set_active(
-                self.config.get_setting('ui.sidebar_show_port_forwarding', False)
+                self.config.get_setting('ui.sidebar_show_port_forwarding', True)
             )
             show_port_forwarding_switch.connect('notify::active', self.on_sidebar_show_port_forwarding_changed)
             sidebar_group.add(show_port_forwarding_switch)

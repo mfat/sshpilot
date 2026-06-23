@@ -1783,10 +1783,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         if not hasattr(self, 'connection_list'):
             return
         
-        show_user_hostname = self.config.get_setting('ui.sidebar_show_user_hostname', False)
+        show_user_hostname = self.config.get_setting('ui.sidebar_show_user_hostname', True)
         show_group_count = self.config.get_setting('ui.sidebar_show_group_count', True)
         show_status = self.config.get_setting('ui.sidebar_show_connection_status', True)
-        show_port_forwarding = self.config.get_setting('ui.sidebar_show_port_forwarding', False)
+        show_port_forwarding = self.config.get_setting('ui.sidebar_show_port_forwarding', True)
         show_connection_icon = self.config.get_setting('ui.sidebar_show_connection_icon', True)
         
         # Update all rows in the connection list
