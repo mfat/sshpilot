@@ -243,7 +243,7 @@ sudo apt install \
   libvte-2.91-gtk4-0 gir1.2-vte-3.91 \
   libgtksourceview-5-0 gir1.2-gtksource-5 \
   libsecret-1-0 gir1.2-secret-1 \
-  python3-paramiko python3-cryptography sshpass ssh-askpass \
+  python3-cryptography sshpass ssh-askpass \
   gir1.2-webkit-6.0
 ```
 
@@ -256,7 +256,7 @@ sudo dnf install \
   vte291-gtk4 \
   gtksourceview5 \
   libsecret \
-  python3-paramiko python3-cryptography sshpass openssh-askpass \
+  python3-cryptography sshpass openssh-askpass \
   webkitgtk6
 ```
 
@@ -266,7 +266,7 @@ sudo dnf install \
 sudo pacman -S --needed \
   python python-gobject python-cairo \
   gtk4 libadwaita vte4 gtksourceview5 libsecret \
-  python-paramiko python-cryptography sshpass
+  python-cryptography sshpass
 ```
 
 **openSUSE (Tumbleweed)**
@@ -280,7 +280,7 @@ sudo zypper install \
   typelib-1_0-Vte-3_91 \
   typelib-1_0-GtkSource-5 \
   typelib-1_0-Secret-1 \
-  python3-paramiko python3-cryptography \
+  python3-cryptography \
   sshpass openssh-askpass-gnome
 ```
 

@@ -217,6 +217,8 @@ def setup_gi(monkeypatch):
     gio.File = DummyFile
     gio.AppInfo = types.SimpleNamespace(launch_default_for_uri=lambda *_a, **_k: None)
     gio.MountOperation = DummyWidget
+    gio.AskPasswordFlags = types.SimpleNamespace()
+    gio.MountOperationResult = types.SimpleNamespace(HANDLED=0, UNHANDLED=1)
     repository.Gio = gio
     monkeypatch.setitem(sys.modules, "gi.repository.Gio", gio)
 

@@ -31,6 +31,7 @@ def setup_gi(monkeypatch):
     repository.Gio.SimpleAction = SimpleAction
     # Parameterised actions (e.g. sort-connections) construct a VariantType.
     repository.GLib.VariantType = types.SimpleNamespace(new=lambda *_a, **_k: object())
+    repository.Gtk.ToggleButton = type("ToggleButton", (), {})
 
 
 def reload_module(name):

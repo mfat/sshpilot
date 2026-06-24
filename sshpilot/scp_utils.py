@@ -26,7 +26,7 @@ SFTP_UNAVAILABLE_MESSAGE = (
 )
 
 # Substrings (case-insensitive) that indicate the remote SFTP subsystem is
-# missing or could not be started. Used to map cryptic paramiko/scp errors to a
+# missing or could not be started. Used to map cryptic SSH/scp errors to a
 # clear, actionable message.
 _SFTP_UNAVAILABLE_MARKERS = (
     "subsystem request failed",
@@ -42,7 +42,7 @@ _SFTP_UNAVAILABLE_MARKERS = (
 def classify_sftp_error(error_text: Optional[str]) -> Optional[str]:
     """Return a friendly message when ``error_text`` indicates a missing SFTP server.
 
-    Inspects a paramiko exception message or scp stderr blob for known markers of
+    Inspects an SSH exception message or scp stderr blob for known markers of
     an unavailable/failed SFTP subsystem. Returns a single user-facing string when
     a marker is found, otherwise ``None``.
     """

@@ -12,6 +12,9 @@
 pytest>=7.0
 pytest-cov
 jsonschema
+# Test-only: test_combined_auth.py uses paramiko as a mock SSH server to
+# validate the native auth path; not a runtime dependency.
+paramiko>=3.4
 
 # Lint (pinned to match the CI Ruff version)
 ruff==0.15.17

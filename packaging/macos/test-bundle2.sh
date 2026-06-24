@@ -90,7 +90,7 @@ echo "================================"
 
 # Test core dependencies
 echo "Testing core dependencies..."
-CORE_MODULES=("paramiko" "cryptography" "keyring" "psutil" "cairo")
+CORE_MODULES=("cryptography" "keyring" "psutil" "cairo")
 for module in "${CORE_MODULES[@]}"; do
     if "$PYTHON_EXEC" -c "import $module; print('✅ $module imported successfully')" 2>/dev/null; then
         :

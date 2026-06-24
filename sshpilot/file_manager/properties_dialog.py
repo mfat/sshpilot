@@ -2,25 +2,28 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import posixpath
 import threading
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from gi.repository import Adw, Gio, GLib, Gtk
 
 from .format_utils import _human_size, _human_time, _mode_to_octal, _mode_to_str
 
+logger = logging.getLogger(__name__)
+
 if TYPE_CHECKING:
     # Forward refs only — keeps the file_manager_window mega-module from
     # being imported eagerly when this module is loaded.
-    from ..file_manager_window import AsyncSFTPManager, FileEntry
+    from .common import FileEntry
 
 
 class PropertiesDialog(Adw.Window):
     """Nautilus-style properties dialog using card-based design."""
 
-    def __init__(self, entry: "FileEntry", current_path: str, parent: Gtk.Window, sftp_manager: Optional["AsyncSFTPManager"] = None):
+    def __init__(self, entry: "FileEntry", current_path: str, parent: Gtk.Window, sftp_manager: Optional[Any] = None):
         super().__init__()
         self._entry = entry
         self._current_path = current_path
@@ -80,7 +83,10 @@ class PropertiesDialog(Adw.Window):
         # Modified and Created rows
         content.append(self._create_modified_row())
         content.append(self._create_created_row())
-        
+
+        # Owner / group row
+        content.append(self._create_owner_row())
+
         # Permissions row
         content.append(self._create_permissions_row())
         
@@ -97,7 +103,7 @@ class PropertiesDialog(Adw.Window):
         
         # Icon — use the file-type-aware icon resolved from the entry's name.
         from sshpilot import icon_utils
-        from .file_type_icons import get_icon_for_name
+        from ..file_type_icons import get_icon_for_name
         icon_name = get_icon_for_name(self._entry.name, self._entry.is_dir)
         icon = icon_utils.new_image_from_icon_name(icon_name)
         # Set a larger custom size instead of using predefined sizes
@@ -143,14 +149,22 @@ class PropertiesDialog(Adw.Window):
     def _create_size_row(self) -> Gtk.Widget:
         """Create the size row."""
         if self._entry.is_dir:
-            if self._entry.item_count is not None:
-                size_text = f"{self._entry.item_count} item{'s' if self._entry.item_count != 1 else ''}"
-                # For local folders, start calculating actual size
-                if not self._is_remote_file():
-                    size_text += " (calculating size...)"
-                    self._start_folder_size_calculation()
-            else:
-                size_text = "—"
+            base = (
+                f"{self._entry.item_count} item{'s' if self._entry.item_count != 1 else ''}"
+                if self._entry.item_count is not None
+                else "Folder"
+            )
+            size_text = base
+            if not self._is_remote_file():
+                # Local folders: recurse with os.walk in the background.
+                size_text = f"{base} (calculating size...)"
+                self._start_folder_size_calculation()
+            elif self._sftp_manager is not None and hasattr(
+                self._sftp_manager, "directory_size"
+            ):
+                # Remote folders: recurse over SFTP in the background.
+                size_text = f"{base} (calculating size...)"
+                self._start_remote_folder_size_calculation()
         else:
             size_text = _human_size(self._entry.size) if self._entry.size else "—"
         
@@ -184,7 +198,97 @@ class PropertiesDialog(Adw.Window):
         modified_time = _human_time(self._entry.modified) if self._entry.modified else "—"
         row = Adw.ActionRow(title="Modified", subtitle=modified_time)
         row.add_css_class("card")
+        # Stored so the async remote stat can refresh it with the precise mtime.
+        self._modified_row = row
         return row
+
+    def _create_owner_row(self) -> Gtk.Widget:
+        """Create the owner/group row."""
+        owner_text = "—"
+        if not self._is_remote_file():
+            try:
+                path = os.path.join(self._current_path, self._entry.name)
+                st = os.stat(path)
+                owner_text = self._format_owner(st.st_uid, st.st_gid)
+            except Exception:
+                owner_text = "—"
+        elif self._sftp_manager is not None:
+            owner_text = "Loading…"  # filled by the async remote stat
+        row = Adw.ActionRow(title="Owner", subtitle=owner_text)
+        row.add_css_class("card")
+        self._owner_row = row
+        return row
+
+    @staticmethod
+    def _format_owner(uid, gid) -> str:
+        """Format uid/gid, resolving to names on the local machine."""
+        if uid is None or gid is None:
+            return "—"
+        user, group = str(uid), str(gid)
+        try:
+            import pwd
+
+            user = pwd.getpwuid(int(uid)).pw_name
+        except Exception:
+            pass
+        try:
+            import grp
+
+            group = grp.getgrgid(int(gid)).gr_name
+        except Exception:
+            pass
+        return f"{user} : {group}"
+
+    @staticmethod
+    def _lookup_name_in_passwd(content: str, uid: int) -> Optional[str]:
+        target = str(int(uid))
+        for line in content.splitlines():
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split(":")
+            if len(parts) >= 3 and parts[2] == target:
+                return parts[0]
+        return None
+
+    @staticmethod
+    def _lookup_name_in_group(content: str, gid: int) -> Optional[str]:
+        target = str(int(gid))
+        for line in content.splitlines():
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split(":")
+            if len(parts) >= 3 and parts[2] == target:
+                return parts[0]
+        return None
+
+    @staticmethod
+    def _read_remote_text(sftp, path: str) -> Optional[str]:
+        try:
+            with sftp.open(path, "r") as fh:
+                data = fh.read()
+        except Exception:
+            return None
+        if isinstance(data, bytes):
+            return data.decode("utf-8", errors="replace")
+        return data
+
+    @classmethod
+    def _format_remote_owner(cls, sftp, uid, gid) -> str:
+        """Resolve owner/group from the remote host, not the local passwd database."""
+        if uid is None or gid is None:
+            return "—"
+        user, group = str(uid), str(gid)
+        passwd_text = cls._read_remote_text(sftp, "/etc/passwd")
+        if passwd_text:
+            name = cls._lookup_name_in_passwd(passwd_text, int(uid))
+            if name:
+                user = name
+        group_text = cls._read_remote_text(sftp, "/etc/group")
+        if group_text:
+            name = cls._lookup_name_in_group(group_text, int(gid))
+            if name:
+                group = name
+        return f"{user} : {group}"
 
     def _create_created_row(self) -> Gtk.Widget:
         """Create the created date row (if available)."""
@@ -258,40 +362,54 @@ class PropertiesDialog(Adw.Window):
                     # Get file attributes from SFTP asynchronously
                     def _get_attr():
                         assert self._sftp_manager._sftp is not None
-                        logger.debug(f"PropertiesDialog: Background thread calling stat({remote_path})")
-                        attr = self._sftp_manager._sftp.stat(remote_path)
-                        logger.debug(f"PropertiesDialog: stat() returned: {attr}, st_mode={getattr(attr, 'st_mode', None)}")
-                        return attr
+                        sftp = self._sftp_manager._sftp
+                        logger.debug(
+                            "PropertiesDialog: Background thread calling stat(%s)",
+                            remote_path,
+                        )
+                        attr = sftp.stat(remote_path)
+                        logger.debug(
+                            "PropertiesDialog: stat() returned: %s, st_mode=%s",
+                            attr,
+                            getattr(attr, "st_mode", None),
+                        )
+                        uid = getattr(attr, "st_uid", None)
+                        gid = getattr(attr, "st_gid", None)
+                        owner_text = (
+                            self._format_remote_owner(sftp, uid, gid)
+                            if uid is not None and gid is not None
+                            else None
+                        )
+                        return attr, owner_text
                     
                     def _update_permissions(future):
+                        owner_text = None
+                        modified_text = None
                         try:
-                            logger.debug(f"PropertiesDialog: Future completed, getting result")
-                            attr = future.result()
-                            logger.debug(f"PropertiesDialog: Got attr: {attr}, has st_mode: {hasattr(attr, 'st_mode')}")
-                            if attr and hasattr(attr, 'st_mode'):
+                            attr, owner_text = future.result()
+                            if attr and hasattr(attr, 'st_mode') and attr.st_mode:
                                 mode = attr.st_mode
-                                # Show both letter format and numeric format
-                                letter_format = _mode_to_str(mode)
-                                numeric_format = _mode_to_octal(mode)
-                                new_text = f"{letter_format} ({numeric_format})"
-                                logger.debug(f"PropertiesDialog: Setting permissions to: {new_text}")
+                                new_text = f"{_mode_to_str(mode)} ({_mode_to_octal(mode)})"
                             else:
-                                # Fallback to simplified permissions
-                                if self._entry.is_dir:
-                                    new_text = "Create and Delete Files"
-                                else:
-                                    new_text = "Read and Write"
-                                logger.debug(f"PropertiesDialog: No st_mode, using fallback: {new_text}")
+                                new_text = "Create and Delete Files" if self._entry.is_dir else "Read and Write"
+                            mtime = getattr(attr, 'st_mtime', None)
+                            if mtime:
+                                modified_text = _human_time(mtime)
                         except Exception as e:
-                            logger.debug(f"Failed to get remote file permissions: {e}", exc_info=True)
-                            # Fallback to simplified permissions if we can't get mode
-                            if self._entry.is_dir:
-                                new_text = "Create and Delete Files"
-                            else:
-                                new_text = "Read and Write"
-                        
-                        # Update the row subtitle on the main thread
-                        GLib.idle_add(lambda: self._update_permissions_row(new_text))
+                            logger.debug(f"Failed to get remote file attributes: {e}", exc_info=True)
+                            new_text = "Create and Delete Files" if self._entry.is_dir else "Read and Write"
+
+                        def _apply():
+                            self._update_permissions_row(new_text)
+                            if owner_text is not None and hasattr(self, '_owner_row'):
+                                self._owner_row.set_subtitle(owner_text)
+                            elif hasattr(self, '_owner_row') and self._owner_row.get_subtitle() == "Loading…":
+                                self._owner_row.set_subtitle("—")
+                            if modified_text is not None and hasattr(self, '_modified_row'):
+                                self._modified_row.set_subtitle(modified_text)
+                            return GLib.SOURCE_REMOVE
+
+                        GLib.idle_add(_apply)
                     
                     # Submit stat operation to background thread
                     logger.debug(f"PropertiesDialog: Submitting stat operation to background thread")
@@ -358,6 +476,29 @@ class PropertiesDialog(Adw.Window):
         thread = threading.Thread(target=self._calculate_folder_size, args=(folder_path,))
         thread.daemon = True  # Allows main program to exit even if thread is running
         thread.start()
+
+    def _remote_path(self) -> str:
+        if self._current_path.endswith("/"):
+            return self._current_path + self._entry.name
+        return posixpath.join(self._current_path, self._entry.name)
+
+    def _start_remote_folder_size_calculation(self) -> None:
+        """Recursively size a remote folder over SFTP, then update the row."""
+        try:
+            future = self._sftp_manager.directory_size(self._remote_path())
+        except Exception as exc:
+            logger.debug("Remote folder size request failed: %s", exc)
+            return
+
+        def _done(fut) -> None:
+            try:
+                total = fut.result()
+            except Exception as exc:
+                logger.debug("Remote folder size failed: %s", exc)
+                total = -1
+            GLib.idle_add(self._update_folder_size_ui, total)
+
+        future.add_done_callback(_done)
 
     def _calculate_folder_size(self, path):
         """

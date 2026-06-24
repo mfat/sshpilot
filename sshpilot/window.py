@@ -240,7 +240,10 @@ def list_remote_files(
     safe_path = _normalize_remote_path(remote_path)
 
     command_path = _quote_remote_path_for_shell(safe_path)
-    list_command = f"LC_ALL=C ls -1p --color=never -- {command_path}"
+    # -L dereferences symlinks when classifying, so a symlink that points to a
+    # directory is marked with a trailing "/" (and thus shown/navigated as a
+    # folder). -p alone leaves symlinked dirs unmarked. See issue #1002.
+    list_command = f"LC_ALL=C ls -1pL --color=never -- {command_path}"
     wrapped_command = (
         "set -f; "
         "printf '__SSHPILOT_BEGIN__\\n'; "
@@ -385,6 +388,223 @@ def list_remote_files(
 # Imported at the top of the file
 
 
+def resolve_app_modal_parent(from_widget=None) -> "Gtk.Window":
+    """Return the primary app window to use as a modal dialog parent.
+
+    Use this before showing any ``Adw.MessageDialog`` (or similar modal) from
+    code that runs inside a secondary window — e.g. :class:`FileManagerWindow`,
+    a plugin page tab, or a progress window — so the dialog stacks correctly on
+    Wayland.
+
+    Resolution order:
+
+    1. ``Gtk.Application.window`` (the live :class:`MainWindow`)
+    2. Any registered window whose class name is ``MainWindow``
+    3. If ``from_widget`` is set: embedded root (``_embedded_parent.get_root()``),
+       ``get_transient_for()``, ``get_root()``, or ``from_widget`` itself when it
+       is a :class:`Gtk.Window`
+    4. ``Gtk.Application.get_active_window()``
+
+    Raises :class:`RuntimeError` if no suitable parent exists.
+
+    See also :func:`present_for_modal_dialog` and :func:`show_ssh_password_dialog`.
+    Pair with ``present_for_modal_dialog(parent)`` before ``dialog.present()``.
+    """
+    app = None
+    if from_widget is not None:
+        try:
+            app = from_widget.get_application()
+        except Exception:
+            app = None
+    if app is None:
+        app = Gtk.Application.get_default()
+
+    if app is not None:
+        main_win = getattr(app, "window", None)
+        if main_win is not None and isinstance(main_win, Gtk.Window):
+            return main_win
+        for win in app.get_windows():
+            if win.__class__.__name__ == "MainWindow":
+                return win
+
+    if from_widget is not None:
+        embedded_parent = getattr(from_widget, "_embedded_parent", None)
+        if embedded_parent is not None:
+            try:
+                root = embedded_parent.get_root()
+                if root is not None:
+                    return root
+            except Exception:
+                pass
+        try:
+            transient = from_widget.get_transient_for()
+            if transient is not None:
+                return transient
+        except Exception:
+            pass
+        try:
+            root = from_widget.get_root()
+            if root is not None:
+                return root
+        except Exception:
+            pass
+        if isinstance(from_widget, Gtk.Window):
+            return from_widget
+
+    if app is not None:
+        try:
+            active = app.get_active_window()
+            if active is not None and isinstance(active, Gtk.Window):
+                return active
+        except Exception:
+            pass
+
+    raise RuntimeError("No modal parent window available")
+
+
+def present_for_modal_dialog(window: Gtk.Window) -> None:
+    """Raise *window* before showing a modal child so it stacks on top (Wayland).
+
+    Calls ``unminimize()`` and ``present()`` on *window*. Always invoke this on
+    the parent returned by :func:`resolve_app_modal_parent` immediately before
+    presenting a modal dialog.
+    """
+    try:
+        window.unminimize()
+    except Exception:
+        pass
+    try:
+        window.present()
+    except Exception as exc:
+        logger.debug("Failed to present modal parent window: %s", exc)
+
+
+def show_ssh_password_dialog(
+    *,
+    from_widget=None,
+    parent_window: Optional[Gtk.Window] = None,
+    display_name: str = "",
+    host: Optional[str] = None,
+    username: Optional[str] = None,
+    connection: Any = None,
+    connection_manager: Optional[Any] = None,
+    heading: Optional[str] = None,
+    body: Optional[str] = None,
+) -> Optional[str]:
+    """Show the standard in-app SSH **password** dialog (blocking).
+
+    This is the single supported entry point for prompting the user for an SSH
+    login password from core features, plugins (advanced), and secondary windows
+    (file manager, authorized-keys editor, external SFTP mount, …). Do **not**
+    roll a custom ``Adw.MessageDialog`` for passwords — use this helper so
+    Wayland stacking, copy, and keyring storage behave consistently.
+
+    The dialog is modal, parented on :class:`MainWindow` (via
+    :func:`resolve_app_modal_parent`), and blocks until the user dismisses it
+    (nested ``GLib.MainLoop``). **Must be called on the GTK main thread.**
+
+    Parameters
+    ----------
+    from_widget
+        Any widget or window tied to the caller (plugin page, file-manager pane,
+        progress dialog, …). Used to locate :class:`MainWindow` when
+        *parent_window* is omitted. Pass the widget that logically triggered the
+        prompt.
+    parent_window
+        Explicit parent. When set, skips :func:`resolve_app_modal_parent` but
+        still calls :func:`present_for_modal_dialog`. Prefer omitting this and
+        passing *from_widget* so the main window is chosen automatically.
+    display_name
+        Shown in the default body text (e.g. connection nickname or
+        ``user@host``). Ignored when *connection* supplies a nickname and
+        *display_name* is empty.
+    host, username
+        Used for the optional **Store password** checkbox (via
+        *connection_manager*). When *connection* is given, missing *host* /
+        *username* are filled from ``hostname`` / ``host`` / ``nickname`` and
+        ``username`` on the connection object.
+    connection
+        Optional connection record (built-in ``Connection`` or any object with
+        ``nickname``, ``username``, ``hostname`` / ``host``). Convenient way to
+        pass display and storage fields together.
+    connection_manager
+        When the user checks **Store password**, calls
+        ``connection_manager.store_password(host, username, password)``. Pass
+        ``self.connection_manager`` from :class:`MainWindow` or
+        ``ctx.connection_manager`` from a plugin context.
+    heading, body
+        Optional overrides for dialog title and message (e.g. auth-retry text).
+
+    Returns
+    -------
+    str or None
+        The entered password, or ``None`` if the user cancelled or submitted an
+        empty password.
+
+    Examples
+    --------
+    From a built-in secondary window (file manager pattern)::
+
+        password = show_ssh_password_dialog(
+            from_widget=self,
+            connection=self._connection,
+            connection_manager=self._connection_manager,
+        )
+
+    From a plugin page (UI thread; ``ctx.connection_manager`` escape hatch)::
+
+        password = show_ssh_password_dialog(
+            from_widget=page_widget,
+            display_name=info.nickname,
+            host=info.host,
+            username=info.username,
+            connection_manager=ctx.connection_manager,
+        )
+
+    See :meth:`MainWindow.prompt_ssh_password` when you already hold a reference
+    to the main window. For **key passphrases** prompted outside the askpass
+    helper process, use :meth:`MainWindow.prompt_ssh_passphrase` instead.
+    """
+    storage_host = host
+    storage_user = username
+    prompt_name = display_name
+
+    if connection is not None:
+        storage_user = storage_user or getattr(connection, "username", None)
+        storage_host = (
+            storage_host
+            or getattr(connection, "hostname", None)
+            or getattr(connection, "host", None)
+            or getattr(connection, "nickname", None)
+        )
+        if not prompt_name:
+            nickname = getattr(connection, "nickname", None)
+            user_label = storage_user or ""
+            host_label = storage_host or ""
+            prompt_name = (
+                str(nickname)
+                if nickname
+                else (f"{user_label}@{host_label}" if user_label else str(host_label))
+            )
+
+    if parent_window is not None:
+        parent = parent_window
+    else:
+        parent = resolve_app_modal_parent(from_widget)
+
+    present_for_modal_dialog(parent)
+    return _show_password_passphrase_dialog(
+        parent,
+        prompt_type="password",
+        display_name=prompt_name,
+        host=storage_host,
+        username=storage_user,
+        connection_manager=connection_manager,
+        heading=heading,
+        body=body,
+    )
+
+
 def _show_password_passphrase_dialog(
     parent_window,
     prompt_type: str = "password",
@@ -393,6 +613,9 @@ def _show_password_passphrase_dialog(
     host: Optional[str] = None,
     username: Optional[str] = None,
     connection_manager: Optional[Any] = None,
+    *,
+    heading: Optional[str] = None,
+    body: Optional[str] = None,
 ) -> Optional[str]:
     """Show a graphical password or passphrase dialog.
     
@@ -412,6 +635,8 @@ def _show_password_passphrase_dialog(
         Username for storing password (for password prompts)
     connection_manager : Optional[Any]
         Connection manager instance for storing passwords
+    heading, body
+        Optional overrides for the dialog title and message text.
     
     Returns
     -------
@@ -423,21 +648,26 @@ def _show_password_passphrase_dialog(
     main_loop = GLib.MainLoop()
     
     # Determine dialog heading and body text
-    if prompt_type == "passphrase":
-        heading = _("Passphrase Required")
-        if key_path:
-            key_name = os.path.basename(key_path)
-            body = _("Please enter the passphrase for key {key_name}:").format(key_name=key_name)
+    if heading is None:
+        if prompt_type == "passphrase":
+            heading = _("Passphrase Required")
         else:
-            body = _("Please enter your passphrase:")
-        placeholder = _("Passphrase")
-        store_label = _("Store passphrase")
-    else:
-        heading = _("Password Required")
-        if display_name:
+            heading = _("Password Required")
+    if body is None:
+        if prompt_type == "passphrase":
+            if key_path:
+                key_name = os.path.basename(key_path)
+                body = _("Please enter the passphrase for key {key_name}:").format(key_name=key_name)
+            else:
+                body = _("Please enter your passphrase:")
+        elif display_name:
             body = _("Please enter your password for {display_name}:").format(display_name=display_name)
         else:
             body = _("Please enter your password:")
+    if prompt_type == "passphrase":
+        placeholder = _("Passphrase")
+        store_label = _("Store passphrase")
+    else:
         placeholder = _("Password")
         store_label = _("Store password")
     
@@ -7260,19 +7490,35 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         window that can hide behind it on Wayland. Returns the passphrase, or
         None if the user cancelled. Blocks until the dialog is dismissed.
         """
-        # Bring the app forward so the modal prompt is clearly attached to it.
-        try:
-            self.unminimize()
-        except Exception as e:
-            logger.debug(f"Failed to unminimize window: {e}")
-        try:
-            self.present()
-        except Exception as e:
-            logger.debug(f"Failed to bring window to foreground: {e}")
+        present_for_modal_dialog(self)
         return _show_password_passphrase_dialog(
             self,
             prompt_type="passphrase",
             key_path=key_path or None,
+        )
+
+    def prompt_ssh_password(
+        self,
+        *,
+        display_name: str = "",
+        host: Optional[str] = None,
+        username: Optional[str] = None,
+        heading: Optional[str] = None,
+        body: Optional[str] = None,
+    ) -> Optional[str]:
+        """Show an SSH password prompt as a modal child of the main window.
+
+        Thin wrapper around :func:`show_ssh_password_dialog` for callers that
+        already have the :class:`MainWindow` instance (e.g. future in-app actions).
+        """
+        return show_ssh_password_dialog(
+            parent_window=self,
+            display_name=display_name,
+            host=host,
+            username=username,
+            connection_manager=getattr(self, "connection_manager", None),
+            heading=heading,
+            body=body,
         )
 
     def show_quit_confirmation_dialog(self):
@@ -7410,7 +7656,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             return
         try:
             from .authorized_keys_window import AuthorizedKeysWindow
-            from .file_manager_window import AsyncSFTPManager
+            from .file_manager import create_file_manager_backend
         except Exception as exc:
             logger.error("authorized_keys editor unavailable: %s", exc)
             return
@@ -7436,7 +7682,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 initial_password = None
 
         try:
-            manager = AsyncSFTPManager(
+            manager = create_file_manager_backend(
                 str(host_value or ''),
                 str(username or ''),
                 int(port_value),
@@ -8905,89 +9151,75 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 else:
                     self.group_manager.move_connection(nickname, target_group_id)
 
-            # Get available groups
             available_groups = self.get_available_groups()
             logger.debug(f"Available groups for {mode} dialog: {len(available_groups)} groups")
-            
-            # Show group selection dialog
-            dialog = Gtk.Dialog(
-                title=_("Copy to Group") if is_copy else _("Move to Group"),
-                transient_for=self,
-                modal=True,
-                destroy_with_parent=True
-            )
-            
-            dialog.set_default_size(400, 300)
-            dialog.set_resizable(False)
-            
-            content_area = dialog.get_content_area()
-            content_area.set_margin_start(20)
-            content_area.set_margin_end(20)
-            content_area.set_margin_top(20)
-            content_area.set_margin_bottom(20)
-            content_area.set_spacing(12)
-            
-            # Add label
-            if is_copy:
-                if len(connection_nicknames) == 1:
-                    label_text = _("Select a group to copy the connection to:")
-                else:
-                    label_text = _("Select a group to copy the selected connections to:")
-            elif len(connection_nicknames) == 1:
-                label_text = _("Select a group to move the connection to:")
+
+            from sshpilot import icon_utils
+
+            title_text = _("Copy to Group") if is_copy else _("Move to Group")
+            confirm_label = _("Copy") if is_copy else _("Move")
+
+            # Adwaita dialog scaffold (GNOME HIG): Adw.Dialog + ToolbarView/HeaderBar
+            # with a PreferencesPage body (provides insets and grouped row styling).
+            dialog = Adw.Dialog()
+            dialog.set_title(title_text)
+            dialog.set_content_width(420)
+            dialog.set_follows_content_size(True)
+
+            toolbar_view = Adw.ToolbarView()
+            header = Adw.HeaderBar()
+            header.set_show_start_title_buttons(False)
+            header.set_show_end_title_buttons(False)
+
+            cancel_button = Gtk.Button(label=_("Cancel"))
+            cancel_button.connect('clicked', lambda _b: dialog.close())
+            header.pack_start(cancel_button)
+
+            confirm_button = Gtk.Button(label=confirm_label)
+            confirm_button.add_css_class('suggested-action')
+            header.pack_end(confirm_button)
+
+            toolbar_view.add_top_bar(header)
+
+            page = Adw.PreferencesPage()
+            body_scroller = Gtk.ScrolledWindow()
+            body_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+            body_scroller.set_propagate_natural_height(True)
+            body_scroller.set_max_content_height(420)
+            body_scroller.set_child(page)
+            toolbar_view.set_content(body_scroller)
+            dialog.set_child(toolbar_view)
+
+            # --- Create new group -------------------------------------------
+            create_group = Adw.PreferencesGroup()
+            create_group.set_title(_("Create New Group"))
+            if len(connection_nicknames) == 1:
+                create_group.set_description(
+                    _("Copy the connection to a new group") if is_copy
+                    else _("Move the connection to a new group")
+                )
             else:
-                label_text = _("Select a group to move the selected connections to:")
-            label = Gtk.Label(label=label_text)
-            label.set_wrap(True)
-            label.set_xalign(0)
-            content_area.append(label)
+                create_group.set_description(
+                    _("Copy the selected connections to a new group") if is_copy
+                    else _("Move the selected connections to a new group")
+                )
 
-            # Add list box for groups
-            listbox = Gtk.ListBox()
-            listbox.set_selection_mode(Gtk.SelectionMode.SINGLE)
-            listbox.set_vexpand(True)
+            create_group_entry = Adw.EntryRow()
+            create_group_entry.set_title(_("Group name"))
+            create_group.add(create_group_entry)
 
-            # Add inline group creation section
-            create_section_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-            create_section_box.set_margin_start(12)
-            create_section_box.set_margin_end(12)
-            create_section_box.set_margin_top(6)
-            create_section_box.set_margin_bottom(6)
+            color_row = Adw.ActionRow()
+            color_row.set_title(_("Color"))
+            color_row.set_subtitle(_("Optional"))
 
-            # Create new group label
-            create_label = Gtk.Label(label=_("Create New Group"))
-            create_label.set_xalign(0)
-            create_label.add_css_class("heading")
-            create_section_box.append(create_label)
-
-            # Create new group entry and button
-            create_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-
-            create_group_entry = Gtk.Entry()
-            create_group_entry.set_placeholder_text(_("Enter group name"))
-            create_group_entry.set_hexpand(True)
-            create_group_entry.set_activates_default(True)
-            create_box.append(create_group_entry)
-
-            create_section_box.append(create_box)
-
-            # Color selector matching create group dialog
-            color_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-            color_row.set_hexpand(True)
-            color_label = Gtk.Label(label=_("Group color"))
-            color_label.set_xalign(0)
-            color_label.set_hexpand(True)
-            color_row.append(color_label)
-
-            color_controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
             color_button = Gtk.ColorButton()
+            color_button.set_valign(Gtk.Align.CENTER)
             color_button.set_use_alpha(True)
             color_button.set_title(_("Select group color"))
             initial_rgba = Gdk.RGBA()
             initial_rgba.red = initial_rgba.green = initial_rgba.blue = 0
             initial_rgba.alpha = 0
             color_button.set_rgba(initial_rgba)
-            color_controls.append(color_button)
 
             color_selected = False
 
@@ -9006,86 +9238,80 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 color_button.set_rgba(cleared)
 
             clear_color_button = Gtk.Button(label=_("Clear"))
+            clear_color_button.set_valign(Gtk.Align.CENTER)
             clear_color_button.add_css_class('flat')
             clear_color_button.connect('clicked', lambda _btn: reset_color_selection())
-            color_controls.append(clear_color_button)
 
-            color_row.append(color_controls)
-            create_section_box.append(color_row)
+            color_row.add_suffix(color_button)
+            color_row.add_suffix(clear_color_button)
+            create_group.add(color_row)
+            page.add(create_group)
 
-            # Add the create section to content area
-            content_area.append(create_section_box)
-            
-            # Add separator
-            separator = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
-            content_area.append(separator)
-            
-            # Add existing groups label
-            if available_groups:
-                existing_label = Gtk.Label(label=_("Existing Groups"))
-                existing_label.set_xalign(0)
-                existing_label.add_css_class("heading")
-                content_area.append(existing_label)
-            
-            # Add groups to list
+            # --- Existing groups (single selection via a checkmark) ---------
+            existing_group = Adw.PreferencesGroup()
+            existing_group.set_title(_("Existing Groups"))
+
             selected_group_id = None
-            for group in available_groups:
-                row = Gtk.ListBoxRow()
-                box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-                
-                # Add group icon
-                from sshpilot import icon_utils
-                icon = icon_utils.new_image_from_icon_name('folder-symbolic')
-                icon.set_pixel_size(16)
-                box.append(icon)
-                
-                # Add group name
-                label = Gtk.Label(label=group['name'])
-                label.set_xalign(0)
-                label.set_hexpand(True)
-                box.append(label)
-                
-                row.set_child(box)
-                row.group_id = group['id']
-                listbox.append(row)
-            
-            content_area.append(listbox)
-            
-            # Add buttons
-            dialog.add_button(_('Cancel'), Gtk.ResponseType.CANCEL)
-            move_button = dialog.add_button(_('Copy') if is_copy else _('Move'), Gtk.ResponseType.OK)
-            move_button.get_style_context().add_class('suggested-action')
-            
-            dialog.set_default_response(Gtk.ResponseType.OK)
-            
-            # Connect entry and button events
-            def find_existing_group_id(name: str) -> Optional[str]:
+            selected_row_ref = None
+
+            def has_valid_target() -> bool:
+                if create_group_entry.get_text().strip():
+                    return True
+                return selected_group_id is not None
+
+            def update_confirm_state(*_args):
+                confirm_button.set_sensitive(has_valid_target())
+
+            def select_group_row(row) -> None:
+                nonlocal selected_group_id, selected_row_ref
+                if selected_row_ref is row:
+                    return
+                if selected_row_ref is not None:
+                    selected_row_ref._check.set_visible(False)
+                selected_row_ref = row
+                selected_group_id = row.group_id
+                row._check.set_visible(True)
+                update_confirm_state()
+
+            if available_groups:
+                for group in available_groups:
+                    row = Adw.ActionRow()
+                    row.set_title(group['name'])
+                    row.set_activatable(True)
+                    icon = icon_utils.new_image_from_icon_name('folder-symbolic')
+                    row.add_prefix(icon)
+                    check = Gtk.Image.new_from_icon_name('object-select-symbolic')
+                    check.set_visible(False)
+                    row.add_suffix(check)
+                    row._check = check
+                    row.group_id = group['id']
+                    row.connect('activated', select_group_row)
+                    existing_group.add(row)
+            else:
+                existing_group.set_description(_("No groups yet — create one above."))
+
+            page.add(existing_group)
+
+            # --- Validation + actions (business logic preserved) ------------
+            def find_existing_group_id(name: str):
                 lowered = name.lower()
                 for group in available_groups:
                     if group['name'].lower() == lowered:
                         return group['id']
                 return None
 
-            def has_valid_target() -> bool:
-                if create_group_entry.get_text().strip():
-                    return True
-                return listbox.get_selected_row() is not None
+            def show_group_exists_error(message: str) -> None:
+                error = Adw.AlertDialog(
+                    heading=_("Group Already Exists"),
+                    body=message,
+                )
+                error.add_response('ok', _("OK"))
+                error.set_default_response('ok')
+                error.set_close_response('ok')
+                error.present(dialog)
 
-            def update_move_button_state(*_args):
-                move_button.set_sensitive(has_valid_target())
-
-            listbox.connect('row-selected', lambda _lb, _row: update_move_button_state())
-
-            def on_entry_changed(entry):
-                update_move_button_state()
-
-            def on_entry_activated(_entry):
-                if has_valid_target():
-                    dialog.response(Gtk.ResponseType.OK)
-
-            create_group_entry.connect('changed', on_entry_changed)
-            create_group_entry.connect('activate', on_entry_activated)
-            update_move_button_state()
+            create_group_entry.connect('changed', update_confirm_state)
+            update_confirm_state()
 
             def perform_move() -> bool:
                 group_name = create_group_entry.get_text().strip()
@@ -9107,66 +9333,31 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         self.rebuild_connection_list()
                         return True
                     except ValueError as e:
-                        error_dialog = Gtk.Dialog(
-                            title=_("Group Already Exists"),
-                            transient_for=dialog,
-                            modal=True,
-                            destroy_with_parent=True
-                        )
-                        error_dialog.set_default_size(400, 150)
-                        error_dialog.set_resizable(False)
-
-                        content_area = error_dialog.get_content_area()
-                        content_area.set_margin_start(20)
-                        content_area.set_margin_end(20)
-                        content_area.set_margin_top(20)
-                        content_area.set_margin_bottom(20)
-
-                        error_label = Gtk.Label(label=str(e))
-                        error_label.set_wrap(True)
-                        error_label.set_xalign(0)
-                        content_area.append(error_label)
-
-                        error_dialog.add_button(_('OK'), Gtk.ResponseType.OK)
-                        error_dialog.set_default_response(Gtk.ResponseType.OK)
-
-                        def on_error_response(dialog, _response):
-                            dialog.destroy()
-
-                        error_dialog.connect('response', on_error_response)
-                        error_dialog.present()
-
+                        show_group_exists_error(str(e))
                         create_group_entry.set_text("")
                         reset_color_selection()
                         create_group_entry.grab_focus()
-                        update_move_button_state()
+                        update_confirm_state()
                         return False
 
-                selected_row = listbox.get_selected_row()
-                if selected_row:
-                    target_group_id = selected_row.group_id
+                if selected_group_id is not None:
                     for nickname in connection_nicknames:
-                        assign(nickname, target_group_id)
+                        assign(nickname, selected_group_id)
                     self.rebuild_connection_list()
                     return True
                 return False
 
-            def on_response(dialog, response):
-                if response == Gtk.ResponseType.OK:
-                    if perform_move():
-                        dialog.destroy()
-                        return
-                    return
-                dialog.destroy()
-            
-            dialog.connect('response', on_response)
-            dialog.present()
-            
+            def on_confirm(*_args):
+                if has_valid_target() and perform_move():
+                    dialog.close()
+
+            confirm_button.connect('clicked', on_confirm)
+            create_group_entry.connect('entry-activated', lambda _e: on_confirm())
+
+            dialog.present(self)
+
         except Exception as e:
             logger.error(f"Failed to show move to group dialog: {e}")
-    
-
-    
 
     def move_connection_to_group(self, connection_nickname: str, target_group_id: str = None):
         """Move a connection to a specific group"""
@@ -9632,10 +9823,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                             logger.info(f"Closing file manager window: {window}")
                             # Try to clean up the manager first
                             if hasattr(window, '_manager') and window._manager is not None:
-                                logger.info("Closing AsyncSFTPManager in file manager window")
+                                logger.info("Closing file manager backend in file manager window")
                                 window._manager.close()
                                 window._manager = None
-                                logger.info("AsyncSFTPManager closed")
+                                logger.info("File manager backend closed")
                             # Close the window
                             if hasattr(window, 'close'):
                                 window.close()
@@ -9658,7 +9849,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                                 logger.info(f"Found untracked file manager window, closing: {window}")
                                 try:
                                     if hasattr(window, '_manager') and window._manager is not None:
-                                        logger.info("Closing AsyncSFTPManager in untracked window")
+                                        logger.info("Closing file manager backend in untracked window")
                                         window._manager.close()
                                         window._manager = None
                                 except Exception as exc:

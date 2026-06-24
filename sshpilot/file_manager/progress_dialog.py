@@ -50,7 +50,13 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
     _SPEED_WINDOW_SECONDS = 5.0
 
     def __init__(self, parent=None, operation_type="transfer"):
-        title = "Downloading Files" if operation_type == "download" else "Uploading Files"
+        _titles = {
+            "download": "Downloading Files",
+            "upload": "Uploading Files",
+            "copy": "Copying on Server",
+            "move": "Moving on Server",
+        }
+        title = _titles.get(operation_type, "Transferring Files")
 
         # Different constructor kwargs for the two base classes.
         if _HAS_ALERT_DIALOG:
@@ -236,6 +242,15 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
         # Set the progress content as extra child
         self.set_extra_child(progress_box)
     
+    def is_reusable(self) -> bool:
+        """Return True if this dialog can track another transfer in-place."""
+        if self.is_cancelled or self._closed or self._completion_shown:
+            return False
+        try:
+            return bool(self.get_visible())
+        except Exception:
+            return False
+
     def set_operation_details(self, total_files, filename=None):
         """Set the operation details"""
         # Only update total_files if it's larger (for adding more files to existing dialog)

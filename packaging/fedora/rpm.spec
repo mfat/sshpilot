@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:5.4.2}
+Version:        %{?version}%{!?version:5.4.3}
 Release:        1%{?dist}
 Summary:        Manage your servers with ease
 
@@ -26,7 +26,6 @@ Requires:       gtk4 >= 4.6
 Requires:       libadwaita >= 1.4
 Requires:       vte291-gtk4 >= 0.70
 Requires:       gtksourceview5 >= 5.0
-Requires:       python3-paramiko
 Requires:       python3-cryptography
 Requires:       python3-secretstorage 
 Requires:       python3-flask
@@ -86,6 +85,11 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/io.github.mfat.sshpil
 %{_datadir}/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg
 
 %changelog
+* Wed Jun 24 2026 mFat <newmfat@gmail.com> - 5.4.3
+- Bug fixes
+- Performance improvements for SFTP file manager
+- Added option to copy text on select
+
 * Wed Jun 24 2026 mFat <newmfat@gmail.com> - 5.4.2
 - Bug fixes
 

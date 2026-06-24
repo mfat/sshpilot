@@ -24,7 +24,9 @@
 # WebKit is accessed via PyGObject (gi.repository.WebKit) and must be installed as a system package.
 
 # SSH and crypto
-paramiko>=3.4
+# (paramiko is no longer a runtime dependency — the file manager uses the native
+#  OpenSSH `ssh -s sftp` subprocess. It remains a dev/test-only dependency; see
+#  requirements-dev.txt.)
 cryptography>=42.0
 keyring>=24.3
 

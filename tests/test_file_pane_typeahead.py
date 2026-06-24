@@ -187,7 +187,6 @@ def _load_file_manager_window():
     # fresh against the gi stub rebuilt just above.
     for mod in ("sshpilot.file_manager_window",
                 "sshpilot.file_manager.pane",
-                "sshpilot.file_manager.sftp_manager",
                 "sshpilot.file_manager"):
         sys.modules.pop(mod, None)
     return importlib.import_module("sshpilot.file_manager_window")

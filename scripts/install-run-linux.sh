@@ -79,23 +79,23 @@ case " $ids " in
               libvte-2.91-gtk4-0 gir1.2-vte-3.91
               libgtksourceview-5-0 gir1.2-gtksource-5
               libsecret-1-0 gir1.2-secret-1
-              python3-paramiko python3-cryptography sshpass ssh-askpass)
+              python3-cryptography sshpass ssh-askpass)
         WEBKIT_PKG="gir1.2-webkit-6.0" ;;
     *" fedora "*|*" rhel "*|*" centos "*|*" rocky "*|*" almalinux "*|*" ol "*)
         PM="dnf"
         PKGS=(python3 python3-gobject gtk4 libadwaita vte291-gtk4 gtksourceview5
-              libsecret python3-paramiko python3-cryptography sshpass openssh-askpass)
+              libsecret python3-cryptography sshpass openssh-askpass)
         WEBKIT_PKG="webkitgtk6" ;;
     *" arch "*|*" manjaro "*|*" endeavouros "*|*" cachyos "*|*" arcolinux "*)
         PM="pacman"
         PKGS=(python python-gobject python-cairo gtk4 libadwaita vte4 gtksourceview5
-              libsecret python-paramiko python-cryptography sshpass)
+              libsecret python-cryptography sshpass)
         WEBKIT_PKG="webkitgtk-6.0" ;;
     *opensuse*|*" sles "*|*" suse "*)
         PM="zypper"
         PKGS=(python3 python3-gobject typelib-1_0-Gtk-4_0 gtk4 libadwaita
               typelib-1_0-Adw-1 typelib-1_0-Vte-3_91 typelib-1_0-GtkSource-5
-              typelib-1_0-Secret-1 python3-paramiko python3-cryptography
+              typelib-1_0-Secret-1 python3-cryptography
               sshpass openssh-askpass-gnome)
         WEBKIT_PKG="typelib-1_0-WebKit-6_0" ;;
     *)
@@ -106,7 +106,7 @@ Install these manually, then create a --system-site-packages venv and
 'pip install -r requirements.txt' (see documentation/running-from-source.md):
 
   GTK4, libadwaita, VTE (GTK4 build), GtkSourceView 5, libsecret,
-  PyGObject + pycairo, plus: python3-paramiko python3-cryptography sshpass
+  PyGObject + pycairo, plus: python3-cryptography sshpass
 EOF
         die "cannot auto-install on this distro." ;;
 esac

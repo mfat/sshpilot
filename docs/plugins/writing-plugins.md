@@ -329,6 +329,16 @@ rebuilds only its rules list when you add/remove a rule.
 defensively (it round-tripped through JSON). `ctx.secrets` is the OS keyring for
 sensitive strings (tokens, passwords); never put secrets in `settings`.
 
+### SSH password prompts (in-app)
+
+If your plugin needs to ask the user for an **SSH login password** in the GUI
+(do not build a custom password dialog — it will stack incorrectly on Wayland),
+use the shared helper documented in **[PLUGIN_SDK.md § Advanced UI — credential dialogs](../../PLUGIN_SDK.md#advanced-ui--credential-dialogs)**:
+
+`from sshpilot.window import show_ssh_password_dialog` — call on the **UI thread
+only** (or inside `ctx.run_on_ui_thread`). Pass `from_widget=your_page_widget`
+and `connection_manager=ctx.connection_manager` so **Store password** works.
+
 ### Background work & clean shutdown
 
 Do network or other slow work **off the UI thread**, then marshal results back

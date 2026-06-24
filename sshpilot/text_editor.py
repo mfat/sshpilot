@@ -12,7 +12,7 @@ import pathlib
 import re
 import tempfile
 from concurrent.futures import Future
-from typing import Callable, TYPE_CHECKING, Optional
+from typing import Any, Callable, TYPE_CHECKING, Optional
 
 from gi.repository import Adw, Gio, GLib, GObject, Gdk, Gtk, Pango
 
@@ -31,7 +31,7 @@ except (ImportError, ValueError, AttributeError):
 import logging
 
 if TYPE_CHECKING:
-    from .file_manager_window import AsyncSFTPManager, FileManagerWindow
+    from .file_manager_window import FileManagerWindow
 
 logger = logging.getLogger(__name__)
 
@@ -112,7 +112,7 @@ class RemoteFileEditorWindow(Adw.Window):
         file_path: str,
         file_name: str,
         is_local: bool = False,
-        sftp_manager: Optional["AsyncSFTPManager"] = None,
+        sftp_manager: Optional[Any] = None,
         file_manager_window: Optional["FileManagerWindow"] = None,
         pre_save_validator: Optional[Callable[[str], Optional[str]]] = None,
         language_id: Optional[str] = None,

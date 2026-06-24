@@ -29,7 +29,7 @@ build() {
 
 package() {
 	depends+=(
-		'python-gobject' 'python-cairo' 'python-paramiko' 'python-cryptography' 'python-matplotlib'
+		'python-gobject' 'python-cairo' 'python-cryptography' 'python-matplotlib'
 		'libsecret' 'libadwaita' 'vte4' 'gtksourceview5' 'sshpass' 'webkitgtk-6.0' 'python-flask' 'python-flask-socketio')
 
 	cd "${_srcdir}"
