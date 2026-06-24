@@ -109,6 +109,18 @@ def test_local_save_backs_up_existing_file_once_per_session(tmp_path):
     assert len(backups_after) == 1, "second save should not create another backup"
 
 
+def test_sftp_save_falls_back_when_posix_rename_unsupported():
+    sftp = FakeSFTP(posix_rename_fails=True)
+    svc = AuthorizedKeysService(FakeManager(sftp, FakeSSH()))
+    svc.save(parse_file(SAMPLE), make_backup=False).result(timeout=2)
+
+    ak = "/home/test/.ssh/authorized_keys"
+    assert ak in sftp.files
+    assert sftp.files[ak].decode("utf-8") == SAMPLE
+    assert any(c[0] == "posix_rename" for c in sftp.calls)
+    assert any(c[0] == "rename" for c in sftp.calls)
+
+
 def test_local_save_backup_is_copy_not_rename(tmp_path):
     """The live authorized_keys must stay in place during backup; only
     the final atomic replace should swap it out."""
@@ -185,10 +197,11 @@ class _FakeSFTPFile(io.BytesIO):
 
 
 class FakeSFTP:
-    """In-memory paramiko.SFTPClient stand-in for service-layer tests."""
+    """In-memory SFTP client stand-in for service-layer tests."""
 
-    def __init__(self, home="/home/test"):
+    def __init__(self, home="/home/test", *, posix_rename_fails: bool = False):
         self._home = home
+        self.posix_rename_fails = posix_rename_fails
         # filename -> bytes
         self.files: dict[str, bytes] = {}
         # filename -> mode
@@ -238,10 +251,29 @@ class FakeSFTP:
 
     def posix_rename(self, src, dst):
         self._record("posix_rename", src, dst)
+        if self.posix_rename_fails:
+            raise IOError("posix-rename@openssh.com not supported")
         if src not in self.files:
             raise IOError(f"missing rename src: {src}")
         self.files[dst] = self.files.pop(src)
         # posix_rename preserves source mode.
+        if src in self.modes:
+            self.modes[dst] = self.modes.pop(src)
+
+    def remove(self, path):
+        self._record("remove", path)
+        if path in self.files:
+            del self.files[path]
+        elif path in self.dirs:
+            self.dirs.discard(path)
+        else:
+            raise IOError(f"missing: {path}")
+
+    def rename(self, src, dst):
+        self._record("rename", src, dst)
+        if src not in self.files:
+            raise IOError(f"missing rename src: {src}")
+        self.files[dst] = self.files.pop(src)
         if src in self.modes:
             self.modes[dst] = self.modes.pop(src)
 

@@ -17,6 +17,7 @@ from .authorized_keys_parser import (
     parse_file,
 )
 from .authorized_keys_service import AuthorizedKeysService, LocalAuthorizedKeysService
+from .sftp_utils import _is_password_auth_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +93,9 @@ class AuthorizedKeysWindow(Adw.Window):
         self._manager_signal_ids: List[int] = []
         self._open_raw_editors: List[Gtk.Window] = []
         self._teardown_when_idle = False
+        self._password_dialog_shown = False
+        self._password_retry_count = 0
+        self._max_password_retries = 3
 
         if local_path is not None:
             self._local_path = os.path.expanduser(local_path)
@@ -131,6 +135,8 @@ class AuthorizedKeysWindow(Adw.Window):
                     self._manager_signal_ids.append(sid)
                 except Exception as exc:
                     logger.debug("Could not hook SFTP signals: %s", exc)
+                if not self._ensure_password_before_connect():
+                    return
                 try:
                     manager.connect_to_server()
                 except Exception as exc:
@@ -236,6 +242,8 @@ class AuthorizedKeysWindow(Adw.Window):
     # ------------------------------------------------------------------
 
     def _on_manager_connected(self, _manager) -> None:
+        self._password_dialog_shown = False
+        self._password_retry_count = 0
         if self._closing:
             return
         GLib.idle_add(self._reload)
@@ -243,21 +251,110 @@ class AuthorizedKeysWindow(Adw.Window):
     def _on_manager_connection_error(self, _manager, msg) -> None:
         if self._closing:
             return
+        error_text = msg or ""
+        if (
+            "authentication" not in error_text.lower()
+            and "password" not in error_text.lower()
+        ):
+            self._password_dialog_shown = False
+            self._password_retry_count = 0
         GLib.idle_add(self._toast, _("Connection error: {}").format(msg))
 
+    def _connection_display_name(self) -> str:
+        user = getattr(self._connection, "username", "") or ""
+        host = (
+            getattr(self._connection, "hostname", None)
+            or getattr(self._connection, "host", None)
+            or getattr(self._connection, "nickname", "")
+        )
+        nickname = getattr(self._connection, "nickname", None)
+        if nickname:
+            return str(nickname)
+        return f"{user}@{host}" if user else str(host)
+
+    def _manager_has_password(self) -> bool:
+        manager = self._manager
+        if manager is None:
+            return False
+        password = getattr(manager, "_password", None)
+        return bool(password and str(password).strip())
+
+    def _ensure_password_before_connect(self) -> bool:
+        """Prompt for a password when required and none is available yet."""
+        if self._manager_has_password():
+            return True
+        if not _is_password_auth_enabled(self._connection):
+            return True
+        password = self._prompt_for_password()
+        if password is None:
+            self._set_status(_("Authentication cancelled"))
+            GLib.idle_add(self._toast, _("Authentication cancelled"))
+            return False
+        self._apply_manager_password(password)
+        return True
+
+    def _apply_manager_password(self, password: str) -> None:
+        manager = self._manager
+        if manager is None:
+            return
+        manager._password = password
+        if self._connection is not None:
+            self._connection.password = password
+
+    def _prompt_for_password(self) -> Optional[str]:
+        from .window import _show_password_passphrase_dialog
+
+        return _show_password_passphrase_dialog(
+            parent_window=self,
+            prompt_type="password",
+            display_name=self._connection_display_name(),
+            host=getattr(self._connection, "hostname", None)
+            or getattr(self._connection, "host", None),
+            username=getattr(self._connection, "username", None),
+            connection_manager=self._connection_manager,
+        )
+
     def _on_manager_auth_required(self, _manager, msg) -> None:
-        # The OpenSSH backend emits this on an auth failure. We don't prompt for
-        # a password inline here; surface it clearly so the editor doesn't sit
-        # silently on "Loading…".
         if self._closing:
             return
+        GLib.idle_add(self._handle_auth_required, msg)
 
-        def _show() -> bool:
+    def _handle_auth_required(self, msg: str) -> bool:
+        if not _is_password_auth_enabled(self._connection):
             self._set_status(_("Authentication failed"))
             self._toast(_("Authentication failed: {}").format(msg))
             return False
 
-        GLib.idle_add(_show)
+        if self._password_dialog_shown:
+            return False
+
+        if self._password_retry_count >= self._max_password_retries:
+            self._toast(
+                _("Authentication failed after {n} attempts").format(
+                    n=self._max_password_retries
+                )
+            )
+            self._set_status(_("Authentication failed"))
+            return False
+
+        self._password_dialog_shown = True
+        self._password_retry_count += 1
+        password = self._prompt_for_password()
+        self._password_dialog_shown = False
+
+        if not password:
+            self._set_status(_("Authentication cancelled"))
+            self._toast(_("Authentication cancelled"))
+            return False
+
+        self._apply_manager_password(password)
+        try:
+            assert self._manager is not None
+            self._manager.connect_to_server()
+        except Exception as exc:
+            logger.error("Failed to retry SFTP connection: %s", exc)
+            self._toast(_("Connection failed: {}").format(exc))
+        return False
 
     # ------------------------------------------------------------------
     # Toast / status

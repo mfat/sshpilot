@@ -1,7 +1,7 @@
 """Single file-manager pane (local or remote SFTP).
 
 Houses ``FilePane`` — the main browser widget shown in the left/right side of
-``FileManagerWindow``. Talks to ``AsyncSFTPManager`` for remote operations and
+``FileManagerWindow``. Talks to the OpenSSH SFTP backend for remote operations and
 exposes signals back to the window for cross-pane orchestration.
 """
 

@@ -50,7 +50,13 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
     _SPEED_WINDOW_SECONDS = 5.0
 
     def __init__(self, parent=None, operation_type="transfer"):
-        title = "Downloading Files" if operation_type == "download" else "Uploading Files"
+        _titles = {
+            "download": "Downloading Files",
+            "upload": "Uploading Files",
+            "copy": "Copying on Server",
+            "move": "Moving on Server",
+        }
+        title = _titles.get(operation_type, "Transferring Files")
 
         # Different constructor kwargs for the two base classes.
         if _HAS_ALERT_DIALOG:

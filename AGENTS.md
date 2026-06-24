@@ -40,8 +40,6 @@ Rules:
   the passphrase fallback.
 - Never append per-host SSH settings to a command line — persist them to
   `~/.ssh/config` (see below) and let the native command pick them up.
-- The only exception is the **paramiko** SFTP file manager, which is in-process
-  and does not use the ssh command path at all.
 - If you genuinely believe a new connection path is needed, stop and confirm
   with the user first — don't add one silently.
 
@@ -151,9 +149,9 @@ to askpass for a password.
 - **System / external terminal**: uses `build_native_command()` — a *plain*
   `ssh -F <config> <host>` with **no** in-app auth (`IdentityAgent`/askpass),
   because the external terminal supplies its own TTY and agent.
-- **SFTP file manager** (`file_manager_window.py`): uses **paramiko in-process**,
-  not the ssh command path. It is a separate subsystem — leave it alone unless
-  the task is explicitly about it.
+- **SFTP file manager** (`file_manager/openssh_backend.py`): uses the same
+  native `build_ssh_connection()` + `resolve_native_auth()` path, spawning
+  `ssh -F <config> … -s <host> sftp` and speaking SFTP v3 over pipes.
 
 ### Key functions/files
 - `ssh_connection_builder.py`: `build_ssh_connection` (native-only),
@@ -183,19 +181,18 @@ Install GTK4/libadwaita/VTE system packages
 
 **Debian/Ubuntu:**
 ```bash
-sudo apt install python3-gi python3-gi-cairo libgtk-4-1 gir1.2-gtk-4.0 libadwaita-1-0 gir1.2-adw-1 libvte-2.91-gtk4-0 gir1.2-vte-3.91 libgtksourceview-5-0 gir1.2-gtksource-5 libsecret-1-0 gir1.2-secret-1 python3-paramiko python3-cryptography sshpass ssh-askpass gir1.2-webkit-6.0
+sudo apt install python3-gi python3-gi-cairo libgtk-4-1 gir1.2-gtk-4.0 libadwaita-1-0 gir1.2-adw-1 libvte-2.91-gtk4-0 gir1.2-vte-3.91 libgtksourceview-5-0 gir1.2-gtksource-5 libsecret-1-0 gir1.2-secret-1 python3-cryptography sshpass ssh-askpass gir1.2-webkit-6.0
 ```
 
 **Fedora/RHEL/CentOS:**
 ```bash
-sudo dnf install python3-gobject gtk4 libadwaita vte291-gtk4 gtksourceview5 libsecret python3-paramiko python3-cryptography sshpass openssh-askpass webkitgtk6
+sudo dnf install python3-gobject gtk4 libadwaita vte291-gtk4 gtksourceview5 libsecret python3-cryptography sshpass openssh-askpass webkitgtk6
 ```
 
 ### Python Dependencies
 - Python >= 3.8
 - PyGObject >= 3.42
 - pycairo >= 1.20.0
-- paramiko >= 3.4
 - cryptography >= 42.0
 - libsecret (via PyGObject) for credential storage on Linux
 - keyring >= 24.3

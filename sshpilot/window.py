@@ -9632,10 +9632,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                             logger.info(f"Closing file manager window: {window}")
                             # Try to clean up the manager first
                             if hasattr(window, '_manager') and window._manager is not None:
-                                logger.info("Closing AsyncSFTPManager in file manager window")
+                                logger.info("Closing file manager backend in file manager window")
                                 window._manager.close()
                                 window._manager = None
-                                logger.info("AsyncSFTPManager closed")
+                                logger.info("File manager backend closed")
                             # Close the window
                             if hasattr(window, 'close'):
                                 window.close()
@@ -9658,7 +9658,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                                 logger.info(f"Found untracked file manager window, closing: {window}")
                                 try:
                                     if hasattr(window, '_manager') and window._manager is not None:
-                                        logger.info("Closing AsyncSFTPManager in untracked window")
+                                        logger.info("Closing file manager backend in untracked window")
                                         window._manager.close()
                                         window._manager = None
                                 except Exception as exc:

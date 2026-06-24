@@ -15,7 +15,7 @@ from logging.handlers import RotatingFileHandler
 def _clamp_thirdparty_loggers() -> None:
     """Pin chatty third-party loggers to WARNING.
 
-    Called BEFORE any other module is imported so that keyring/paramiko/etc.
+    Called BEFORE any other module is imported so that keyring/etc.
     don't dump DEBUG noise to the root logger at import-time, which happens
     before :meth:`SshPilotApplication.setup_logging` has had a chance to run.
     Re-applied (idempotently) inside setup_logging so direct callers of that

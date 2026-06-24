@@ -498,42 +498,6 @@ class FileManagerWindow(Adw.Window):
         except Exception as exc:
             logger.exception("Error connecting to server: %s", exc)
     
-    def _on_connected(self, _manager) -> None:
-        """Handle successful connection - reset password dialog state."""
-        self._password_dialog_shown = False
-        self._password_retry_count = 0
-        logger.debug("Built-in file manager: Connection successful, reset password dialog state")
-    
-    def _on_connection_error(self, _manager, error_message: str) -> None:
-        """Handle connection error - reset password dialog state if not authentication error."""
-        # Only reset if this is not an authentication error (which would trigger authentication-required)
-        # Authentication errors are handled by _on_authentication_required
-        if "authentication" not in error_message.lower() and "password" not in error_message.lower():
-            self._password_dialog_shown = False
-            self._password_retry_count = 0
-            logger.debug("Built-in file manager: Non-authentication connection error, reset password dialog state")
-        
-        # Show error toast
-        self._clear_progress_toast()
-        self._right_pane.show_toast(f"Connection error: {error_message}")
-
-    def _on_close_request(self, window) -> bool:
-        """Handle window close request - clean up resources."""
-        logger.debug("FileManagerWindow close-request received, cleaning up")
-        try:
-            if hasattr(self, '_manager') and self._manager is not None:
-                logger.debug("Closing file manager backend")
-                self._manager.close()
-                self._manager = None
-        except Exception as exc:
-            logger.error(f"Error closing file manager backend: {exc}", exc_info=True)
-        
-        # Clear progress dialog if it exists
-        self._clear_progress_toast()
-        
-        # Allow the window to close
-        return False
-
     def detach_for_embedding(self, parent: Optional[Gtk.Widget] = None) -> Gtk.Widget:
         """Detach the window content for embedding in another container."""
 
@@ -634,9 +598,13 @@ class FileManagerWindow(Adw.Window):
             toggle_button.set_tooltip_text("Hide Local Pane")
 
     def _on_connected(self, *_args) -> None:
+        """Handle successful connection: reset password state and load directories."""
+        self._password_dialog_shown = False
+        self._password_retry_count = 0
+        logger.debug(
+            "Built-in file manager: Connection successful, reset password dialog state"
+        )
         self._show_progress(0.4, "Connected")
-        
-        # Trigger directory loads for all panes that have a pending initial path
         for pane, pending in self._pending_paths.items():
             if pending:
                 self._manager.listdir(pending)
@@ -667,8 +635,19 @@ class FileManagerWindow(Adw.Window):
             pass
 
     def _on_connection_error(self, _manager, message: str) -> None:
-        """Handle connection error with toast."""
-        # Use GLib.idle_add to ensure we're on the main thread
+        """Handle connection error with toast and password-dialog state reset."""
+        error_text = message or ""
+        if (
+            "authentication" not in error_text.lower()
+            and "password" not in error_text.lower()
+        ):
+            self._password_dialog_shown = False
+            self._password_retry_count = 0
+            logger.debug(
+                "Built-in file manager: Non-authentication connection error, "
+                "reset password dialog state"
+            )
+
         def show_error():
             try:
                 self._clear_progress_toast()
@@ -2542,7 +2521,7 @@ class FileManagerWindow(Adw.Window):
             return
 
         skipped: List[str] = []
-        scheduled_any = False
+        work_items: List[tuple[str, str, FileEntry, bool]] = []
 
         for entry in entries:
             source_path = self._resolve_remote_entry_path(source_dir, entry)
@@ -2554,18 +2533,43 @@ class FileManagerWindow(Adw.Window):
                 )
                 continue
 
+            work_items.append(
+                (source_path, destination_path, entry, entry.is_dir)
+            )
 
-            def _impl(src=source_path, dest=destination_path, is_dir=entry.is_dir):
+        if not work_items:
+            if skipped:
+                self._right_pane.show_toast(skipped[0])
+            return
+
+        operation = "move" if move else "copy"
+        total_files = len(work_items)
+
+        for source_path, destination_path, entry, is_dir in work_items:
+
+            def _impl(
+                src=source_path,
+                dest=destination_path,
+                copy_is_dir=is_dir,
+            ):
                 sftp = getattr(manager, "_sftp", None)
                 if sftp is None:
                     raise RuntimeError("SFTP session is not connected")
                 self._ensure_remote_directory(sftp, posixpath.dirname(dest))
-                if is_dir:
+                if copy_is_dir:
                     self._copy_remote_directory(sftp, src, dest)
                 else:
                     self._copy_remote_file(sftp, src, dest)
 
             future = manager._submit(_impl)
+            self._show_progress_dialog(
+                operation,
+                entry.name,
+                future,
+                total_files=total_files,
+                source_path=source_path,
+                destination_path=destination_path,
+            )
             self._attach_refresh(
                 future,
                 refresh_remote=self._right_pane,
@@ -2573,13 +2577,8 @@ class FileManagerWindow(Adw.Window):
             )
             if move:
                 self._schedule_remote_move_cleanup(future, source_path, self._right_pane)
-            scheduled_any = True
 
-        if scheduled_any:
-            self._right_pane.show_toast(
-                "Moving items…" if move else "Copying items…"
-            )
-        elif skipped:
+        if skipped:
             self._right_pane.show_toast(skipped[0])
 
 

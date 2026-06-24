@@ -1,6 +1,6 @@
 """Async service for loading and saving a remote ``~/.ssh/authorized_keys`` file.
 
-Sits on top of :class:`AsyncSFTPManager` from ``file_manager_window`` and
+Uses the OpenSSH SFTP file-manager backend (:class:`OpenSSHSFTPManager`) and
 returns futures so callers can dispatch back to the GTK main thread via the
 existing pattern.
 """
@@ -25,7 +25,7 @@ SSH_DIR_BASENAME = ".ssh"
 
 
 class AuthorizedKeysService:
-    """Load / save the remote authorized_keys file via an AsyncSFTPManager."""
+    """Load / save the remote authorized_keys file via the SFTP file manager."""
 
     def __init__(self, sftp_manager) -> None:
         self._manager = sftp_manager
@@ -39,6 +39,26 @@ class AuthorizedKeysService:
         ssh_dir = posixpath.join(home, SSH_DIR_BASENAME)
         ak_path = posixpath.join(ssh_dir, REMOTE_BASENAME)
         return home, ssh_dir, ak_path
+
+    def _install_atomic(self, sftp, tmp_path: str, ak_path: str) -> None:
+        """Replace ``ak_path`` with ``tmp_path``, preferring OpenSSH posix-rename."""
+        try:
+            sftp.posix_rename(tmp_path, ak_path)
+            return
+        except IOError as exc:
+            logger.debug(
+                "posix-rename unsupported or failed (%s); falling back to rename",
+                exc,
+            )
+        try:
+            sftp.remove(ak_path)
+        except IOError:
+            pass
+        sftp.rename(tmp_path, ak_path)
+        try:
+            sftp.chmod(ak_path, 0o600)
+        except IOError as chmod_exc:
+            logger.debug("chmod after rename fallback failed: %s", chmod_exc)
 
     # -- load -----------------------------------------------------------
 
@@ -140,9 +160,7 @@ class AuthorizedKeysService:
                 fh.write(payload)
             finally:
                 fh.close()
-            # posix_rename preserves the source's mode, so the final file
-            # is 0600 without a follow-up chmod.
-            sftp.posix_rename(tmp_path, ak_path)
+            self._install_atomic(sftp, tmp_path, ak_path)
 
         future = self._manager._submit(_do)
 

@@ -15,8 +15,7 @@ Architecture**. The essentials:
   `_build_base_ssh_command()` + `resolve_native_auth()`. Do **not** hand-roll a
   new `ssh`/`scp` command builder or a new auth env anywhere. If an existing
   function almost fits, extend it; if you think a new path is truly needed,
-  confirm with the user first. (The paramiko SFTP file manager is the only
-  exception — it doesn't use the ssh command path.)
+  confirm with the user first.
 
 - **One connection method, native-only.** Every in-app SSH connection goes
   through `Connection.native_connect()` → `build_ssh_connection(ctx)`
@@ -30,7 +29,8 @@ Architecture**. The essentials:
   the command line. Add new per-connection SSH settings by persisting them to
   the config, not by appending CLI flags.
 - **One auth resolver:** `resolve_native_auth(...)` in `ssh_connection_builder.py`
-  is the only place auth is decided, shared by terminal, SCP, and ssh-copy-id.
+  is the only place auth is decided, shared by terminal, SCP, ssh-copy-id, and
+  the SFTP file manager (`ssh -s sftp` subprocess).
   Key auth → `SSH_ASKPASS` (REQUIRE=prefer) + keyring autofill (GTK prompt
   fallback); the agent is left intact so SSH uses it when keys are loaded.
   Password → `sshpass` via a write-once FIFO. Keyring autofill and the askpass
@@ -38,8 +38,8 @@ Architecture**. The essentials:
 - **Callers:** the terminal consumes the prepared command (it does not build
   commands); SCP/ssh-copy-id build explicit commands + `resolve_native_auth`;
   the system/external terminal uses `build_native_command()` (plain, no in-app
-  auth); the SFTP file manager uses paramiko in-process (separate — leave it
-  alone unless the task is about it).
+  auth); the SFTP file manager uses the same native auth path over
+  `ssh -s sftp`.
 - **Advanced SSH options** (Preferences ▸ SSH Settings) are saved as `ssh.*`
   keys and composed into a flat `ssh.ssh_overrides` list
   (`preferences.py::save_advanced_ssh_settings`); the native command appends
