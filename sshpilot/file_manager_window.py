@@ -2491,6 +2491,11 @@ class FileManagerWindow(Adw.Window):
             else:
                 self._copy_remote_file(sftp, child_source, child_destination)
 
+    def _on_progress_dialog_closed(self, dialog) -> None:
+        """Drop our reference when the user dismisses the progress dialog."""
+        if getattr(self, "_progress_dialog", None) is dialog:
+            self._progress_dialog = None
+
     def _show_progress_dialog(self, operation_type: str, filename: str, future: Future,
                                total_files: int = 1,
                                source_path: Optional[str] = None,
@@ -2499,16 +2504,22 @@ class FileManagerWindow(Adw.Window):
         try:
             logger.debug("_show_progress_dialog called for %s %s", operation_type, filename)
 
-            # Check if we can reuse an existing dialog for the same operation type
+            # Reuse only when the existing dialog is still open and active.
+            # A dismissed/completed dialog keeps its Python wrapper around until
+            # the user starts another transfer; reusing that object skips
+            # present() and nothing appears on screen.
             reuse_dialog = False
-            if (hasattr(self, '_progress_dialog') and self._progress_dialog and
-                self._progress_dialog.operation_type == operation_type and
-                not self._progress_dialog.is_cancelled):
+            if (
+                hasattr(self, "_progress_dialog")
+                and self._progress_dialog
+                and self._progress_dialog.is_reusable()
+                and self._progress_dialog.operation_type == operation_type
+            ):
                 reuse_dialog = True
                 logger.debug("Reusing existing progress dialog for %s", operation_type)
             else:
-                # Dismiss any existing progress dialog for different operation type
-                if hasattr(self, '_progress_dialog') and self._progress_dialog:
+                # Dismiss any stale or different-operation dialog.
+                if hasattr(self, "_progress_dialog") and self._progress_dialog:
                     try:
                         self._progress_dialog.close()
                     except (AttributeError, RuntimeError):
@@ -2530,6 +2541,7 @@ class FileManagerWindow(Adw.Window):
                         pass
 
                 self._progress_dialog = SFTPProgressDialog(parent=dialog_parent, operation_type=operation_type)
+                self._progress_dialog.connect("closed", self._on_progress_dialog_closed)
                 self._progress_dialog.set_operation_details(total_files=total_files, filename=filename)
                 # AlertDialog.present takes a parent widget; MessageDialog
                 # already had it set via set_transient_for in the dialog ctor.
@@ -2538,6 +2550,25 @@ class FileManagerWindow(Adw.Window):
                 else:
                     self._progress_dialog.present()
                 logger.debug("Progress dialog created and shown successfully")
+            elif not self._progress_dialog.get_visible():
+                # Same batch, dialog object reused but not visible — re-present.
+                dialog_parent = self
+                if self._embedded_parent is not None:
+                    dialog_parent = self._embedded_parent
+                else:
+                    try:
+                        transient = self.get_transient_for()
+                        if transient is not None:
+                            dialog_parent = transient
+                    except Exception:
+                        pass
+                try:
+                    if _HAS_ALERT_DIALOG:
+                        self._progress_dialog.present(dialog_parent)
+                    else:
+                        self._progress_dialog.present()
+                except Exception as exc:
+                    logger.debug("Failed to re-present progress dialog: %s", exc)
             
             # Add future to dialog (will update total_files if needed). Real
             # byte counts arrive via the manager's progress-bytes signal — no

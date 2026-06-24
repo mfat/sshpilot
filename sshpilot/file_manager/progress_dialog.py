@@ -242,6 +242,15 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
         # Set the progress content as extra child
         self.set_extra_child(progress_box)
     
+    def is_reusable(self) -> bool:
+        """Return True if this dialog can track another transfer in-place."""
+        if self.is_cancelled or self._closed or self._completion_shown:
+            return False
+        try:
+            return bool(self.get_visible())
+        except Exception:
+            return False
+
     def set_operation_details(self, total_files, filename=None):
         """Set the operation details"""
         # Only update total_files if it's larger (for adding more files to existing dialog)
