@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:5.4.1}
+Version:        %{?version}%{!?version:5.4.2}
 Release:        1%{?dist}
 Summary:        Manage your servers with ease
 
@@ -86,6 +86,9 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/io.github.mfat.sshpil
 %{_datadir}/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg
 
 %changelog
+* Wed Jun 24 2026 mFat <newmfat@gmail.com> - 5.4.2
+- Bug fixes
+
 * Wed Jun 24 2026 mFat <newmfat@gmail.com> - 5.4.1
 - New Docker/Podman management console
 - New plugin feature + plugin SDk with a bunch of experimental plugins
