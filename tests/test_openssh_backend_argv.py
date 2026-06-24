@@ -83,6 +83,40 @@ def test_build_argv_wraps_sshpass_when_password_auth(monkeypatch):
     manager.close()
 
 
+def test_build_argv_uses_manager_password_for_sshpass(monkeypatch):
+    """Password from the file-manager dialog lives on manager._password; it must
+    reach resolve_native_auth via connection.password (no TTY on the SFTP pipe)."""
+    import sshpilot.ssh_connection_builder as scb
+    import sshpilot.ssh_password_exec as spe
+
+    conn = types.SimpleNamespace(
+        nickname="host",
+        hostname="host.example",
+        username="user",
+        auth_method=1,
+    )
+    _load_file_manager_module(monkeypatch)
+    import sshpilot.file_manager.openssh_backend as ob
+
+    manager = ob.OpenSSHSFTPManager("host", "user", 22, connection=conn)
+    manager._password = "dialog-pw"
+
+    calls = {}
+
+    def fake_wrap(argv, password, env=None):
+        calls["password"] = password
+        return (["sshpass", "-f", "fifo"] + list(argv), lambda: None)
+
+    monkeypatch.setattr(spe, "wrap_argv_with_sshpass", fake_wrap)
+
+    argv, env, cleanup = manager._build_argv()
+
+    assert conn.password == "dialog-pw"
+    assert calls["password"] == "dialog-pw"
+    assert argv[0] == "sshpass"
+    manager.close()
+
+
 def test_build_argv_no_sshpass_when_key_auth(monkeypatch):
     import sshpilot.ssh_connection_builder as scb
     import sshpilot.ssh_password_exec as spe

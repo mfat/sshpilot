@@ -539,6 +539,14 @@ class OpenSSHSFTPManager(GObject.GObject):
         except Exception:  # pragma: no cover - defensive
             app_config = None
 
+        # Dialog / connect_to_server(password=…) stores the secret on the manager;
+        # resolve_native_auth reads connection.password (same as scp_utils).
+        if self._password and self._connection is not None:
+            try:
+                self._connection.password = self._password
+            except Exception:  # pragma: no cover - defensive
+                pass
+
         ctx = ConnectionContext(
             connection=self._connection,
             connection_manager=self._connection_manager,
