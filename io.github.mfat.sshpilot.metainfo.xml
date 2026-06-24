@@ -60,6 +60,11 @@
 
 
 
+    <release version="5.4.2" date="2026-06-24">
+      <description>
+        <p>Bug fixes</p>
+      </description>
+    </release>
     <release version="5.4.1" date="2026-06-24">
       <description>
         <p>New Docker/Podman management console</p>
