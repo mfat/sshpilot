@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+import sys
+import types
 from unittest.mock import MagicMock
+
+if "cairo" not in sys.modules:
+    sys.modules["cairo"] = types.ModuleType("cairo")
 
 from sshpilot.window import resolve_app_modal_parent
 
