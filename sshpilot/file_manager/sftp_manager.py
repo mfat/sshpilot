@@ -31,6 +31,24 @@ from .remote_walk import _sftp_path_exists, stat_isdir
 logger = logging.getLogger(__name__)
 
 
+def _existing_identity_files(raw: Any) -> List[str]:
+    """Expand a config ``IdentityFile`` value to deduped paths that exist on disk.
+
+    Accepts a string or list (as ``ssh -G`` / ``get_effective_ssh_config``
+    returns it). Used to offer a host exactly its configured identity instead of
+    spraying every agent/default key, matching native ``ssh -F config``.
+    """
+
+    if isinstance(raw, str):
+        raw = [raw]
+    result: List[str] = []
+    for entry in raw or []:
+        expanded = os.path.expanduser(os.path.expandvars(str(entry)))
+        if os.path.isfile(expanded) and expanded not in result:
+            result.append(expanded)
+    return result
+
+
 @dataclasses.dataclass
 class FileEntry:
     """Light weight description of a directory entry."""
@@ -561,9 +579,27 @@ class AsyncSFTPManager(GObject.GObject):
             except (TypeError, ValueError):
                 return default
 
+        def _split_proxy_jump(value: Any) -> List[str]:
+            if isinstance(value, (list, tuple, set)):
+                tokens: List[str] = []
+                for item in value:
+                    tokens.extend(_split_proxy_jump(item))
+                return tokens
+            if isinstance(value, str):
+                return [tok.strip() for tok in re.split(r"[\s,]+", value) if tok.strip()]
+            return []
+
         resolved_hops: List[Dict[str, Any]] = []
-        for raw_entry in jump_entries:
+        visited: set = set()
+
+        def _expand_entry(raw_entry: str) -> None:
             host_token, explicit_user, explicit_port = self._parse_proxy_jump_entry(raw_entry)
+            if host_token in visited:
+                # Cycle protection: a hop's ProxyJump that loops back to an
+                # already-resolved alias is skipped rather than recursed forever.
+                logger.debug("Skipping already-resolved ProxyJump alias %s", host_token)
+                return
+            visited.add(host_token)
             try:
                 hop_cfg = get_effective_ssh_config(host_token, config_file=config_override)
             except Exception as exc:  # pragma: no cover - defensive
@@ -573,6 +609,12 @@ class AsyncSFTPManager(GObject.GObject):
                     exc,
                 )
                 hop_cfg = {}
+
+            # A jump host can itself sit behind its own ProxyJump; those inner
+            # hops are closer to us, so resolve them first (native ssh chains the
+            # full path, not just the outermost jump).
+            for inner_entry in _split_proxy_jump(hop_cfg.get("proxyjump")):
+                _expand_entry(inner_entry)
 
             hostname = str(hop_cfg.get("hostname", host_token) or host_token)
             username = str(explicit_user or hop_cfg.get("user", base_username) or base_username)
@@ -590,98 +632,185 @@ class AsyncSFTPManager(GObject.GObject):
                 }
             )
 
+        for raw_entry in jump_entries:
+            _expand_entry(raw_entry)
+
         jump_clients: List[paramiko.SSHClient] = []
         upstream_sock: Optional[Any] = None
 
-        for index, hop in enumerate(resolved_hops):
-            jump_client = paramiko.SSHClient()
-            try:
-                jump_client.load_system_host_keys()
-            except Exception as exc:  # pragma: no cover - defensive
-                logger.debug("Unable to load system host keys for jump host: %s", exc)
-            jump_client.set_missing_host_key_policy(policy)
-
-            if known_hosts_path:
+        try:
+            for index, hop in enumerate(resolved_hops):
+                jump_client = paramiko.SSHClient()
                 try:
-                    if os.path.exists(known_hosts_path):
-                        jump_client.load_host_keys(known_hosts_path)
+                    jump_client.load_system_host_keys()
                 except Exception as exc:  # pragma: no cover - defensive
-                    logger.debug(
-                        "Failed to load known hosts for ProxyJump host %s: %s",
-                        hop["alias"],
-                        exc,
-                    )
+                    logger.debug("Unable to load system host keys for jump host: %s", exc)
+                jump_client.set_missing_host_key_policy(policy)
 
-            hop_kwargs: Dict[str, Any] = {
-                "hostname": hop["hostname"],
-                "username": hop["username"],
-                "port": hop["port"],
-                "allow_agent": allow_agent,
-                "look_for_keys": look_for_keys,
-            }
-
-            if connect_timeout is not None:
-                hop_kwargs["timeout"] = connect_timeout
-
-            if upstream_sock is not None:
-                hop_kwargs["sock"] = upstream_sock
-
-            if key_filename:
-                hop_kwargs["key_filename"] = key_filename
-            if passphrase:
-                hop_kwargs["passphrase"] = passphrase
-
-            hop_password: Optional[str] = None
-            if self._connection_manager is not None and hasattr(
-                self._connection_manager, "get_password"
-            ):
-                try:
-                    hop_password = self._connection_manager.get_password(
-                        hop["alias"], hop["username"]
-                    )
-                    if not hop_password:
-                        hop_password = self._connection_manager.get_password(
-                            hop["hostname"], hop["username"]
+                if known_hosts_path:
+                    try:
+                        if os.path.exists(known_hosts_path):
+                            jump_client.load_host_keys(known_hosts_path)
+                    except Exception as exc:  # pragma: no cover - defensive
+                        logger.debug(
+                            "Failed to load known hosts for ProxyJump host %s: %s",
+                            hop["alias"],
+                            exc,
                         )
-                except Exception as exc:  # pragma: no cover - defensive
+
+                # Honor the jump host's OWN identity from ~/.ssh/config so we offer
+                # the right key (and only that key), mirroring `ssh -F config`.
+                # Without this we fall back to the target's key plus every agent /
+                # default ``~/.ssh/id_*`` key, which can exceed the jump host's
+                # MaxAuthTries and get the session dropped mid-auth (surfacing as
+                # paramiko "No existing session").
+                hop_cfg = hop.get("config") or {}
+                hop_identities = _existing_identity_files(hop_cfg.get("identityfile"))
+
+                # Preload the hop's passphrase-protected key(s) into the ssh-agent
+                # so paramiko can authenticate to the jump host through the agent
+                # (it has no interactive passphrase prompt of its own for hops).
+                # Keyring-gated, mirroring Connection._preload_keys_into_agent:
+                # only keys whose passphrase the user stored are unlocked; the
+                # agent is never disabled.
+                try:
+                    from ..askpass_utils import ensure_key_in_agent, lookup_passphrase
+
+                    for ident in hop_identities:
+                        if lookup_passphrase(ident):
+                            ensure_key_in_agent(ident, force=True)
+                            logger.debug(
+                                "Preloaded ProxyJump host %s key into ssh-agent: %s",
+                                hop["alias"],
+                                ident,
+                            )
+                except Exception as exc:  # pragma: no cover - best effort
                     logger.debug(
-                        "Password lookup for ProxyJump host %s failed: %s",
-                        hop["alias"],
-                        exc,
+                        "ProxyJump host %s key preload failed: %s", hop["alias"], exc
                     )
 
-            if hop_password:
-                hop_kwargs["password"] = hop_password
+                # The hop authenticates with ITS OWN config, not the target's:
+                # inheriting the target's pinned keyfile would offer the wrong key
+                # to the bastion, and inheriting a password-mode target's disabled
+                # agent would block key auth to a key-only hop. Start from agent +
+                # default discovery and let the hop's config narrow it.
+                # The agent is always left enabled: sshpilot's askpass flow loads
+                # passphrase-protected keys into the ssh-agent, so disabling it
+                # (e.g. for IdentityAgent none) would break auth for exactly those
+                # keys. We never turn the agent off.
+                hop_allow_agent = True
+                hop_look_for_keys = True
+                hop_key_filename: Optional[Any] = None
+                hop_passphrase: Optional[str] = None
 
-            jump_client.connect(**hop_kwargs)
-            jump_clients.append(jump_client)
+                if hop_identities:
+                    hop_key_filename = hop_identities
+                    # Don't fan out default ~/.ssh/id_* keys; configured IdentityFile
+                    # entries (plus the agent when enabled) mirror native ssh.
+                    hop_look_for_keys = False
 
-            transport = jump_client.get_transport()
-            if transport is None:
-                raise RuntimeError(
-                    f"ProxyJump host {hop['alias']} did not provide a transport"
+                    if not hop_passphrase and self._connection_manager is not None and hasattr(
+                        self._connection_manager, "get_key_passphrase"
+                    ):
+                        for ident in hop_identities:
+                            try:
+                                stored = self._connection_manager.get_key_passphrase(ident)
+                            except Exception as exc:  # pragma: no cover - defensive
+                                logger.debug(
+                                    "Failed to load key passphrase for ProxyJump host %s (%s): %s",
+                                    hop["alias"],
+                                    ident,
+                                    exc,
+                                )
+                                continue
+                            if stored:
+                                hop_passphrase = stored
+                                break
+
+                hop_kwargs: Dict[str, Any] = {
+                    "hostname": hop["hostname"],
+                    "username": hop["username"],
+                    "port": hop["port"],
+                    "allow_agent": hop_allow_agent,
+                    "look_for_keys": hop_look_for_keys,
+                }
+
+                # Bound the handshake the same way the target connection does so a
+                # half-open jump host can't hang the worker thread.
+                hop_timeout = connect_timeout if (connect_timeout and connect_timeout > 0) else 30
+                hop_kwargs["timeout"] = hop_timeout
+                hop_kwargs["banner_timeout"] = hop_timeout
+                hop_kwargs["auth_timeout"] = hop_timeout
+
+                if upstream_sock is not None:
+                    hop_kwargs["sock"] = upstream_sock
+
+                if hop_key_filename:
+                    hop_kwargs["key_filename"] = hop_key_filename
+                if hop_passphrase:
+                    hop_kwargs["passphrase"] = hop_passphrase
+
+                hop_password: Optional[str] = None
+                if self._connection_manager is not None and hasattr(
+                    self._connection_manager, "get_password"
+                ):
+                    try:
+                        hop_password = self._connection_manager.get_password(
+                            hop["alias"], hop["username"]
+                        )
+                        if not hop_password:
+                            hop_password = self._connection_manager.get_password(
+                                hop["hostname"], hop["username"]
+                            )
+                    except Exception as exc:  # pragma: no cover - defensive
+                        logger.debug(
+                            "Password lookup for ProxyJump host %s failed: %s",
+                            hop["alias"],
+                            exc,
+                        )
+
+                if hop_password:
+                    hop_kwargs["password"] = hop_password
+
+                jump_client.connect(**hop_kwargs)
+                jump_clients.append(jump_client)
+
+                transport = jump_client.get_transport()
+                if transport is None:
+                    raise RuntimeError(
+                        f"ProxyJump host {hop['alias']} did not provide a transport"
+                    )
+
+                if index + 1 < len(resolved_hops):
+                    next_hop = resolved_hops[index + 1]
+                    dest = (next_hop["hostname"], next_hop["port"])
+                else:
+                    dest = (resolved_host, resolved_port)
+
+                upstream_sock = transport.open_channel(
+                    "direct-tcpip",
+                    dest,
+                    ("127.0.0.1", 0),
                 )
 
-            if index + 1 < len(resolved_hops):
-                next_hop = resolved_hops[index + 1]
-                dest = (next_hop["hostname"], next_hop["port"])
-            else:
-                dest = (resolved_host, resolved_port)
+                logger.debug(
+                    "ProxyJump hop %s connected to %s:%s, chaining towards %s:%s",
+                    hop["alias"],
+                    hop["hostname"],
+                    hop["port"],
+                    dest[0],
+                    dest[1],
+                )
 
-            upstream_sock = transport.open_channel(
-                "direct-tcpip",
-                dest,
-                ("127.0.0.1", 0),
-            )
-
-            logger.debug(
-                "ProxyJump hop %s connected to %s:%s, chaining towards %s:%s",
-                hop["alias"],
-                hop["hostname"],
-                hop["port"],
-                dest[0],
-                dest[1],
-            )
+        except Exception:
+            # Close any hops we already opened so a partial chain doesn't leak
+            # sockets/threads, then let the caller surface the failure.
+            for opened in reversed(jump_clients):
+                try:
+                    opened.close()
+                except Exception:  # pragma: no cover - defensive
+                    pass
+            raise
 
         if upstream_sock is None:
             raise RuntimeError("ProxyJump chain failed to produce a socket")
@@ -776,14 +905,9 @@ class AsyncSFTPManager(GObject.GObject):
         if self._connection_manager is not None:
             known_hosts_path = getattr(self._connection_manager, "known_hosts_path", None)
 
-        if known_hosts_path:
-            try:
-                if os.path.exists(known_hosts_path):
-                    client.load_host_keys(known_hosts_path)
-                else:
-                    logger.debug("Known hosts file not found at %s", known_hosts_path)
-            except Exception as exc:  # pragma: no cover - defensive
-                logger.debug("Failed to load known hosts from %s: %s", known_hosts_path, exc)
+        # NOTE: the app-level known_hosts is loaded later, after effective_cfg is
+        # resolved, so a per-host UserKnownHostsFile can take precedence. See the
+        # per-host override block below.
 
         password = self._password or None
         connection = self._connection
@@ -1080,6 +1204,37 @@ class AsyncSFTPManager(GObject.GObject):
             return token_pattern.sub(_replace, raw_command)
 
 
+        # Per-host host-key policy and known-hosts from the effective SSH config
+        # take precedence over the app-level defaults, matching native
+        # ``ssh -F config``. Applied here (after effective_cfg, before connecting)
+        # so the target client and any jump hops use the resolved values.
+        eff_strict = str(effective_cfg.get("stricthostkeychecking", "") or "").strip()
+        if eff_strict:
+            policy = self._select_host_key_policy(eff_strict, auto_add)
+            client.set_missing_host_key_policy(policy)
+
+        eff_known_hosts = effective_cfg.get("userknownhostsfile")
+        if isinstance(eff_known_hosts, (list, tuple)):
+            eff_known_candidates = list(eff_known_hosts)
+        elif eff_known_hosts:
+            eff_known_candidates = re.split(r"\s+", str(eff_known_hosts).strip())
+        else:
+            eff_known_candidates = []
+        for candidate in eff_known_candidates:
+            expanded_kh = os.path.expanduser(os.path.expandvars(str(candidate)))
+            if os.path.exists(expanded_kh):
+                known_hosts_path = expanded_kh
+                break
+
+        if known_hosts_path:
+            try:
+                if os.path.exists(known_hosts_path):
+                    client.load_host_keys(known_hosts_path)
+                else:
+                    logger.debug("Known hosts file not found at %s", known_hosts_path)
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug("Failed to load known hosts from %s: %s", known_hosts_path, exc)
+
         proxy_sock: Optional[Any] = None
         jump_clients: List[paramiko.SSHClient] = []
         proxy_command = proxy_command.strip()
@@ -1095,9 +1250,14 @@ class AsyncSFTPManager(GObject.GObject):
                     proxy_command,
                 )
 
-            except Exception as exc:  # pragma: no cover - defensive
+            except Exception as exc:
+                # The target is only reachable via the ProxyCommand; a direct
+                # fallback would hit the wrong host or fail confusingly. Surface
+                # the real reason instead (mirrors the ProxyJump handling below).
                 logger.warning("Failed to set up ProxyCommand '%s': %s", proxy_command, exc)
-                proxy_sock = None
+                raise paramiko.SSHException(
+                    f"Could not connect through ProxyCommand: {exc}"
+                ) from exc
         elif proxy_jump:
             try:
                 proxy_sock, jump_clients = self._create_proxy_jump_socket(
@@ -1118,16 +1278,52 @@ class AsyncSFTPManager(GObject.GObject):
                     "File manager: using Paramiko ProxyJump chain via %s",
                     ", ".join(proxy_jump),
                 )
-            except Exception as exc:  # pragma: no cover - defensive
+            except Exception as exc:
+                # The target is only reachable via the jump host(s); falling back
+                # to a direct connection would hit the wrong host or fail with a
+                # confusing error. Surface the real reason instead.
                 logger.warning("Failed to set up ProxyJump chain %s: %s", proxy_jump, exc)
-                proxy_sock = None
-                jump_clients = []
+                raise paramiko.SSHException(
+                    f"Could not connect through jump host(s) {', '.join(proxy_jump)}: {exc}"
+                ) from exc
         else:
             jump_clients = []
 
         if not proxy_jump:
             jump_clients = []
 
+        # Honor the TARGET host's own IdentityFile/IdentitiesOnly from ssh -G,
+        # the same way native ssh does. When the host pins itself with
+        # ``IdentitiesOnly yes``, restrict to its configured identity files (not
+        # default ~/.ssh/id_*), but keep the agent enabled so loaded keys work.
+        # Done after the jump chain and in automatic key mode only.
+        target_identities_only = (
+            str(effective_cfg.get("identitiesonly", "")).strip().lower() == "yes"
+        )
+        if key_filename is None and target_identities_only:
+            target_identities: List[str] = []
+            if connection is not None and hasattr(
+                connection, "collect_identity_file_candidates"
+            ):
+                try:
+                    target_identities = (
+                        connection.collect_identity_file_candidates(effective_cfg) or []
+                    )
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.debug("Failed to resolve target identity files: %s", exc)
+                    target_identities = []
+            if not target_identities:
+                target_identities = _existing_identity_files(
+                    effective_cfg.get("identityfile")
+                )
+            # IdentitiesOnly yes => configured identity files only (agent still on).
+            look_for_keys = False
+            if target_identities:
+                key_filename = target_identities
+            logger.debug(
+                "File manager: target IdentitiesOnly=yes, using identities: %s",
+                target_identities,
+            )
 
         connect_kwargs: Dict[str, Any] = {
             "hostname": resolved_host,
@@ -1160,6 +1356,18 @@ class AsyncSFTPManager(GObject.GObject):
 
         if proxy_sock is not None:
             connect_kwargs["sock"] = proxy_sock
+
+        # Preload the target host's passphrase-protected key(s) into the ssh-agent
+        # so paramiko can authenticate via the agent (covers automatic key mode;
+        # the explicit-key path above already prepared its key). Keyring-gated and
+        # a no-op for password auth / IdentityAgent-pinned hosts — the canonical
+        # native logic; the agent is never disabled. We run on a worker thread, so
+        # askpass/keyring access is safe here.
+        if connection is not None and hasattr(connection, "_preload_keys_into_agent"):
+            try:
+                connection._preload_keys_into_agent(cfg)
+            except Exception as exc:  # pragma: no cover - best effort
+                logger.debug("Target key preload failed: %s", exc)
 
         transport: Optional[Any] = None
         try:

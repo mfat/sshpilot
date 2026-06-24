@@ -373,6 +373,149 @@ def test_async_sftp_manager_builds_proxy_jump_chain(monkeypatch):
     assert proxy_channel.closed
 
 
+def test_proxy_jump_honors_jump_host_identity(monkeypatch, tmp_path):
+    module = _load_file_manager_module(monkeypatch)
+
+    jump_key = tmp_path / "router_id_ed25519"
+    jump_key.write_text("dummy-key")
+
+    module._fake_ssh_config.config_map.update(
+        {
+            "Router": {
+                "hostname": "router.internal",
+                "user": "gateway",
+                "port": "2201",
+                "identityfile": [str(jump_key)],
+                "identitiesonly": "yes",
+            },
+        }
+    )
+
+    connection = types.SimpleNamespace(
+        hostname="example.com",
+        host="example.com",
+        username="alice",
+        auth_method=0,
+        key_select_mode=0,
+        proxy_jump=["Router"],
+    )
+
+    manager = module.AsyncSFTPManager(
+        "example.com",
+        "alice",
+        port=2222,
+        connection=connection,
+        connection_manager=None,
+        ssh_config={"auto_add_host_keys": True},
+    )
+
+    manager._connect_impl()
+
+    jump_client = DummyClient.instances[1]
+    jump_kwargs = jump_client.connect_calls[-1]
+    # The jump host's own configured identity is offered, and nothing else.
+    assert jump_kwargs["key_filename"] == [str(jump_key)]
+    assert jump_kwargs["look_for_keys"] is False
+    # Agent stays enabled (same as native ssh); IdentitiesOnly limits keys via IdentityFile.
+    assert jump_kwargs["allow_agent"] is True
+
+
+def test_proxy_jump_failure_raises_instead_of_direct_connect(monkeypatch):
+    module = _load_file_manager_module(monkeypatch)
+
+    module._fake_ssh_config.config_map.update(
+        {
+            "Router": {"hostname": "router.internal", "user": "gateway", "port": "2201"},
+        }
+    )
+
+    original_connect = DummyClient.connect
+
+    def failing_connect(self, **kwargs):
+        if kwargs.get("hostname") == "router.internal":
+            raise module.paramiko.SSHException("No existing session")
+        return original_connect(self, **kwargs)
+
+    monkeypatch.setattr(DummyClient, "connect", failing_connect)
+
+    connection = types.SimpleNamespace(
+        hostname="example.com",
+        host="example.com",
+        username="alice",
+        auth_method=0,
+        key_select_mode=0,
+        proxy_jump=["Router"],
+    )
+
+    manager = module.AsyncSFTPManager(
+        "example.com",
+        "alice",
+        port=2222,
+        connection=connection,
+        connection_manager=None,
+        ssh_config={"auto_add_host_keys": True},
+    )
+
+    with pytest.raises(module.paramiko.SSHException):
+        manager._connect_impl()
+
+    # The required jump failed, so we must NOT silently connect to the target
+    # directly (it is only reachable via the jump host).
+    target_client = DummyClient.instances[0]
+    assert not any(
+        call.get("hostname") == "example.com" for call in target_client.connect_calls
+    )
+
+
+def test_target_honors_host_identity_from_config(monkeypatch, tmp_path):
+    module = _load_file_manager_module(monkeypatch)
+
+    target_key = tmp_path / "oracle_id_ed25519"
+    target_key.write_text("dummy-key")
+
+    module._fake_ssh_config.config_map.update(
+        {
+            "example.com": {"identitiesonly": "yes"},
+        }
+    )
+
+    class StubConnection:
+        hostname = "example.com"
+        host = "example.com"
+        username = "alice"
+        auth_method = 0
+        key_select_mode = 0
+
+        def __init__(self) -> None:
+            self.collect_calls = []
+
+        def collect_identity_file_candidates(self, effective_cfg=None):
+            self.collect_calls.append(effective_cfg)
+            return [str(target_key)]
+
+    connection = StubConnection()
+
+    manager = module.AsyncSFTPManager(
+        "example.com",
+        "alice",
+        port=2222,
+        connection=connection,
+        connection_manager=None,
+        ssh_config={"auto_add_host_keys": True},
+    )
+
+    manager._connect_impl()
+
+    # No proxy here: only the target client is created.
+    client = DummyClient.instances[-1]
+    kwargs = client.connect_calls[-1]
+    assert kwargs["key_filename"] == [str(target_key)]
+    assert kwargs["look_for_keys"] is False
+    assert kwargs["allow_agent"] is True
+    # The helper was consulted with the target's effective config.
+    assert connection.collect_calls, "Expected collect_identity_file_candidates to be used"
+
+
 def test_async_sftp_manager_proxy_jump_timeout(monkeypatch):
     module = _load_file_manager_module(monkeypatch)
 
