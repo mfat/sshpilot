@@ -385,6 +385,77 @@ def list_remote_files(
 # Imported at the top of the file
 
 
+def resolve_app_modal_parent(from_widget=None) -> "Gtk.Window":
+    """Return the primary app window to use as a modal dialog parent.
+
+    On Wayland, ``Adw.MessageDialog`` must be transient for the focused app
+    window (typically :class:`MainWindow`), not a secondary top-level such as
+    :class:`FileManagerWindow`, or the prompt can map behind the main window.
+    """
+    app = None
+    if from_widget is not None:
+        try:
+            app = from_widget.get_application()
+        except Exception:
+            app = None
+    if app is None:
+        app = Gtk.Application.get_default()
+
+    if app is not None:
+        main_win = getattr(app, "window", None)
+        if main_win is not None and isinstance(main_win, Gtk.Window):
+            return main_win
+        for win in app.get_windows():
+            if win.__class__.__name__ == "MainWindow":
+                return win
+
+    if from_widget is not None:
+        embedded_parent = getattr(from_widget, "_embedded_parent", None)
+        if embedded_parent is not None:
+            try:
+                root = embedded_parent.get_root()
+                if root is not None:
+                    return root
+            except Exception:
+                pass
+        try:
+            transient = from_widget.get_transient_for()
+            if transient is not None:
+                return transient
+        except Exception:
+            pass
+        try:
+            root = from_widget.get_root()
+            if root is not None:
+                return root
+        except Exception:
+            pass
+        if isinstance(from_widget, Gtk.Window):
+            return from_widget
+
+    if app is not None:
+        try:
+            active = app.get_active_window()
+            if active is not None and isinstance(active, Gtk.Window):
+                return active
+        except Exception:
+            pass
+
+    raise RuntimeError("No modal parent window available")
+
+
+def present_for_modal_dialog(window: Gtk.Window) -> None:
+    """Raise ``window`` so a modal child dialog stacks above it on Wayland."""
+    try:
+        window.unminimize()
+    except Exception:
+        pass
+    try:
+        window.present()
+    except Exception as exc:
+        logger.debug("Failed to present modal parent window: %s", exc)
+
+
 def _show_password_passphrase_dialog(
     parent_window,
     prompt_type: str = "password",
@@ -393,6 +464,9 @@ def _show_password_passphrase_dialog(
     host: Optional[str] = None,
     username: Optional[str] = None,
     connection_manager: Optional[Any] = None,
+    *,
+    heading: Optional[str] = None,
+    body: Optional[str] = None,
 ) -> Optional[str]:
     """Show a graphical password or passphrase dialog.
     
@@ -412,6 +486,8 @@ def _show_password_passphrase_dialog(
         Username for storing password (for password prompts)
     connection_manager : Optional[Any]
         Connection manager instance for storing passwords
+    heading, body
+        Optional overrides for the dialog title and message text.
     
     Returns
     -------
@@ -423,21 +499,26 @@ def _show_password_passphrase_dialog(
     main_loop = GLib.MainLoop()
     
     # Determine dialog heading and body text
-    if prompt_type == "passphrase":
-        heading = _("Passphrase Required")
-        if key_path:
-            key_name = os.path.basename(key_path)
-            body = _("Please enter the passphrase for key {key_name}:").format(key_name=key_name)
+    if heading is None:
+        if prompt_type == "passphrase":
+            heading = _("Passphrase Required")
         else:
-            body = _("Please enter your passphrase:")
-        placeholder = _("Passphrase")
-        store_label = _("Store passphrase")
-    else:
-        heading = _("Password Required")
-        if display_name:
+            heading = _("Password Required")
+    if body is None:
+        if prompt_type == "passphrase":
+            if key_path:
+                key_name = os.path.basename(key_path)
+                body = _("Please enter the passphrase for key {key_name}:").format(key_name=key_name)
+            else:
+                body = _("Please enter your passphrase:")
+        elif display_name:
             body = _("Please enter your password for {display_name}:").format(display_name=display_name)
         else:
             body = _("Please enter your password:")
+    if prompt_type == "passphrase":
+        placeholder = _("Passphrase")
+        store_label = _("Store passphrase")
+    else:
         placeholder = _("Password")
         store_label = _("Store password")
     
@@ -7260,19 +7341,33 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         window that can hide behind it on Wayland. Returns the passphrase, or
         None if the user cancelled. Blocks until the dialog is dismissed.
         """
-        # Bring the app forward so the modal prompt is clearly attached to it.
-        try:
-            self.unminimize()
-        except Exception as e:
-            logger.debug(f"Failed to unminimize window: {e}")
-        try:
-            self.present()
-        except Exception as e:
-            logger.debug(f"Failed to bring window to foreground: {e}")
+        present_for_modal_dialog(self)
         return _show_password_passphrase_dialog(
             self,
             prompt_type="passphrase",
             key_path=key_path or None,
+        )
+
+    def prompt_ssh_password(
+        self,
+        *,
+        display_name: str = "",
+        host: Optional[str] = None,
+        username: Optional[str] = None,
+        heading: Optional[str] = None,
+        body: Optional[str] = None,
+    ) -> Optional[str]:
+        """Show an SSH password prompt as a modal child of the main window."""
+        present_for_modal_dialog(self)
+        return _show_password_passphrase_dialog(
+            self,
+            prompt_type="password",
+            display_name=display_name,
+            host=host,
+            username=username,
+            connection_manager=getattr(self, "connection_manager", None),
+            heading=heading,
+            body=body,
         )
 
     def show_quit_confirmation_dialog(self):
