@@ -1,8 +1,8 @@
 """Shared, backend-agnostic primitives for the file manager.
 
-Both the paramiko backend (``sftp_manager``) and the pure OpenSSH backend
-(``openssh_backend``) use these. Importing this module must NOT pull in paramiko,
-so the OpenSSH path stays paramiko-free.
+Used by the OpenSSH SFTP backend (``openssh_backend``) and the window/pane UI.
+Importing this module pulls in no SSH library — it is just dataclasses and the
+GLib main-thread dispatcher.
 """
 
 from __future__ import annotations

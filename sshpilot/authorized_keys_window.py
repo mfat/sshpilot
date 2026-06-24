@@ -127,6 +127,8 @@ class AuthorizedKeysWindow(Adw.Window):
                     self._manager_signal_ids.append(sid)
                     sid = manager.connect("connection-error", self._on_manager_connection_error)
                     self._manager_signal_ids.append(sid)
+                    sid = manager.connect("authentication-required", self._on_manager_auth_required)
+                    self._manager_signal_ids.append(sid)
                 except Exception as exc:
                     logger.debug("Could not hook SFTP signals: %s", exc)
                 try:
@@ -242,6 +244,20 @@ class AuthorizedKeysWindow(Adw.Window):
         if self._closing:
             return
         GLib.idle_add(self._toast, _("Connection error: {}").format(msg))
+
+    def _on_manager_auth_required(self, _manager, msg) -> None:
+        # The OpenSSH backend emits this on an auth failure. We don't prompt for
+        # a password inline here; surface it clearly so the editor doesn't sit
+        # silently on "Loading…".
+        if self._closing:
+            return
+
+        def _show() -> bool:
+            self._set_status(_("Authentication failed"))
+            self._toast(_("Authentication failed: {}").format(msg))
+            return False
+
+        GLib.idle_add(_show)
 
     # ------------------------------------------------------------------
     # Toast / status
