@@ -88,6 +88,9 @@ class FilePane(Gtk.Box):
         # entries vanish unpredictably. The factory's bind/unbind pair makes
         # explicit add/discard reliable.
         self._bound_list_icons: set = set()
+        # Currently-bound list row boxes, so deferred folder item-counts can be
+        # written into visible rows in place (no list-store rebuild).
+        self._bound_list_boxes: set = set()
         self._bound_grid_images: set = set()
 
         self._stack = Gtk.Stack()
@@ -531,6 +534,7 @@ class FilePane(Gtk.Box):
 
         box._pane_entry = entry
         box._pane_index = position
+        self._bound_list_boxes.add(box)
 
     def _on_list_unbind(self, factory: Gtk.SignalListItemFactory, item):
         box = item.get_child()
@@ -539,6 +543,30 @@ class FilePane(Gtk.Box):
         icon = getattr(box, "icon", None)
         if icon is not None:
             self._bound_list_icons.discard(icon)
+        self._bound_list_boxes.discard(box)
+
+    def update_item_counts(self, path: str, counts) -> None:
+        """Apply background-computed folder item-counts to the current listing.
+
+        Mutates the shared ``FileEntry`` objects (so rows bound later read the
+        count in ``_on_list_bind``) and refreshes the subtitle of any currently
+        visible folder row in place — no list-store rebuild, so scroll position
+        and selection are preserved. Ignored if the user has navigated away.
+        """
+        if not counts or path != self._current_path or not self._is_remote:
+            return
+        for entry in self._cached_entries:
+            if entry.is_dir and entry.name in counts:
+                entry.item_count = counts[entry.name]
+        for box in list(self._bound_list_boxes):
+            entry = getattr(box, "_pane_entry", None)
+            if entry is None or not entry.is_dir or entry.name not in counts:
+                continue
+            label = getattr(box, "metadata_label", None)
+            if label is not None:
+                count_text = f"{entry.item_count} items"
+                label.set_text(count_text)
+                label.set_tooltip_text(count_text)
 
     def _resolve_entry_icon(self, name: str, is_dir: bool) -> str:
         """Return the Adwaita mimetype icon name to use for a directory entry."""

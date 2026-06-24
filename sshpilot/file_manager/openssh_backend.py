@@ -296,6 +296,8 @@ class OpenSSHSFTPManager(GObject.GObject):
         "progress-bytes": (GObject.SignalFlags.RUN_FIRST, None, (object, object)),
         "operation-error": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
         "directory-loaded": (GObject.SignalFlags.RUN_FIRST, None, (str, object)),
+        # Folder item-counts filled in after the listing: (path, {name: count}).
+        "directory-counts": (GObject.SignalFlags.RUN_FIRST, None, (str, object)),
     }
 
     def __init__(
@@ -328,6 +330,7 @@ class OpenSSHSFTPManager(GObject.GObject):
         self._cancel_lock = threading.Lock()
         self._cancelled_operations: set = set()
         self._operation_seq = 0
+        self._listdir_seq = 0  # generation guard for background count passes
         self._client: Optional[OpenSSHSFTPClient] = None
         self._proc: Optional[subprocess.Popen] = None
         self._sshpass_cleanup: Optional[Callable[[], None]] = None
@@ -561,36 +564,73 @@ class OpenSSHSFTPManager(GObject.GObject):
 
     # -- directory listing ------------------------------------------------
     def listdir(self, path: str) -> None:
+        # Bump the generation so an in-flight background count pass for a
+        # previous directory abandons itself (see _start_count_pass).
+        with self._cancel_lock:
+            self._listdir_seq += 1
+            generation = self._listdir_seq
+
         def _impl() -> Tuple[str, List[FileEntry]]:
             with self._lock:
                 client = self._client_or_raise()
                 target = self._expand(path)
                 entries: List[FileEntry] = []
+                # Fast path: no per-folder "N items" count here — that needs a
+                # separate remote read per subfolder and is what made listing
+                # slow over high-latency links. Counts are filled in afterwards
+                # by a cooperative background pass.
                 for attr in client.listdir_attr(target):
                     is_dir = _is_dir(attr)
-                    item_count = None
-                    if is_dir:
-                        try:
-                            child = target.rstrip("/") + "/" + attr.filename
-                            item_count = len(client.listdir_attr(child))
-                        except Exception:
-                            item_count = None
                     entries.append(
                         FileEntry(
                             name=attr.filename,
                             is_dir=is_dir,
                             size=int(attr.st_size or 0),
                             modified=float(attr.st_mtime or 0),
-                            item_count=item_count,
+                            item_count=None,
                         )
                     )
             return target, entries
 
+        def _loaded(result):
+            target, entries = result
+            self.emit("directory-loaded", target, entries)
+            self._start_count_pass(target, entries, generation)
+
         self._submit(
             _impl,
-            on_success=lambda result: self.emit("directory-loaded", *result),
+            on_success=_loaded,
             on_error=lambda exc: self.emit("operation-error", str(exc)),
         )
+
+    def _start_count_pass(
+        self, path: str, entries: List[FileEntry], generation: int
+    ) -> None:
+        """Fill folder item-counts in the background, one folder per executor
+        task so user operations interleave, and abandon if the user navigates."""
+        folders = [e.name for e in entries if e.is_dir]
+        if not folders:
+            return
+
+        def _count_chunk(index: int) -> None:
+            with self._cancel_lock:
+                if self._listdir_seq != generation:
+                    return  # superseded by a newer listing
+            name = folders[index]
+            try:
+                with self._lock:
+                    client = self._client_or_raise()
+                    child = path.rstrip("/") + "/" + name
+                    count = len(client.listdir_attr(child))
+                self._dispatcher(
+                    self.emit, ("directory-counts", path, {name: count}), {}
+                )
+            except Exception as exc:  # leave this folder's count as None
+                logger.debug("Count for %s failed: %s", name, exc)
+            if index + 1 < len(folders):
+                self._submit(lambda: _count_chunk(index + 1))
+
+        self._submit(lambda: _count_chunk(0))
 
     # -- simple operations ------------------------------------------------
     def mkdir(self, path: str) -> Future:

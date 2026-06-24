@@ -452,6 +452,7 @@ class FileManagerWindow(Adw.Window):
             self._manager.connect("progress", self._on_progress)
             self._manager.connect("operation-error", self._on_operation_error)
             self._manager.connect("directory-loaded", self._on_directory_loaded)
+            self._manager.connect("directory-counts", self._on_directory_counts)
         except Exception as exc:
             logger.exception("Error connecting signals: %s", exc)
         
@@ -1230,6 +1231,18 @@ class FileManagerWindow(Adw.Window):
                 self._refreshing_panes.discard(target)
         
         logger.debug(f"_on_directory_loaded: completed directory load for {path}")
+
+    def _on_directory_counts(self, _manager, path: str, counts) -> None:
+        """Background folder item-counts arrived; forward to whichever pane is
+        currently showing this path (the pane also guards on its current path)."""
+        for pane in (self._left_pane, self._right_pane):
+            if pane is None:
+                continue
+            try:
+                if getattr(pane, "_current_path", None) == path:
+                    pane.update_item_counts(path, counts)
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug("update_item_counts failed: %s", exc)
 
     # -- local filesystem helpers ---------------------------------------
 

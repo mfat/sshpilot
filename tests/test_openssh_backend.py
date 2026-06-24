@@ -339,6 +339,46 @@ def test_manager_mkdir_future(backend_modules, monkeypatch):
     manager.close()
 
 
+def test_manager_listdir_defers_counts(backend_modules, monkeypatch):
+    """listdir emits directory-loaded immediately with no counts, then a
+    background directory-counts pass reports each folder's child count."""
+    _, ob, proto = backend_modules
+    manager, server, emitted = _make_manager(ob, proto, monkeypatch)
+
+    manager.listdir("~")
+
+    assert _wait_for(lambda: any(e[0] == "directory-loaded" for e in emitted))
+    dl = next(e for e in emitted if e[0] == "directory-loaded")
+    entries = dl[2]
+    sub = next(fe for fe in entries if fe.name == "sub")
+    assert sub.item_count is None  # not blocked on the count
+
+    # The background pass reports sub's child count (it contains inner.txt → 1).
+    assert _wait_for(lambda: any(e[0] == "directory-counts" for e in emitted))
+    counts = {}
+    for e in emitted:
+        if e[0] == "directory-counts":
+            counts.update(e[2])
+    assert counts.get("sub") == 1
+    manager.close()
+
+
+def test_count_pass_abandons_stale_generation(backend_modules, monkeypatch):
+    """A count pass tagged with an old generation emits nothing (the user
+    navigated away)."""
+    _, ob, proto = backend_modules
+    manager, server, emitted = _make_manager(ob, proto, monkeypatch)
+    manager._client = _make_client(ob, proto)[0]
+    manager._home = "/home/alice"
+
+    manager._listdir_seq = 5  # current generation
+    folders = [ob.FileEntry(name="sub", is_dir=True, size=0, modified=0)]
+    manager._start_count_pass("/home/alice", folders, generation=1)  # stale
+    time.sleep(0.3)
+    assert not any(e[0] == "directory-counts" for e in emitted)
+    manager.close()
+
+
 def test_manager_upload_download_roundtrip(backend_modules, monkeypatch, tmp_path):
     import pathlib
 

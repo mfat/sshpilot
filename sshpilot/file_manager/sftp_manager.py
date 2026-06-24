@@ -95,6 +95,12 @@ class AsyncSFTPManager(GObject.GObject):
             None,
             (str, object),
         ),
+        # Folder item-counts filled in after the listing: (path, {name: count}).
+        "directory-counts": (
+            GObject.SignalFlags.RUN_FIRST,
+            None,
+            (str, object),
+        ),
     }
 
     def __init__(
@@ -141,6 +147,7 @@ class AsyncSFTPManager(GObject.GObject):
         # guarantees no two transfers (within or across threads) ever share an
         # ID, even when scheduled in the same nanosecond. Bumped under _lock.
         self._operation_seq = 0
+        self._listdir_seq = 0  # generation guard for background count passes
         self._connection = connection
         self._connection_manager = connection_manager
         self._ssh_config = dict(ssh_config) if ssh_config else None
@@ -1437,6 +1444,12 @@ class AsyncSFTPManager(GObject.GObject):
 
     def listdir(self, path: str) -> None:
         logger.debug(f"AsyncSFTPManager.listdir called for path: {path}")
+        # Bump the generation so an in-flight background count pass for a
+        # previous directory abandons itself (see _start_count_pass).
+        with self._cancel_lock:
+            self._listdir_seq += 1
+            generation = self._listdir_seq
+
         def _impl() -> Tuple[str, List[FileEntry]]:
             entries: List[FileEntry] = []
             
@@ -1486,36 +1499,65 @@ class AsyncSFTPManager(GObject.GObject):
                             # Ultimate fallback
                             expanded_path = f"/home/{self._username}" + (path[1:] if path.startswith("~/") else "")
                 
+                # Fast path: no per-folder "N items" count here — counting each
+                # subfolder needs a separate remote listdir and is what made
+                # listing slow over high-latency links. Counts are filled in by a
+                # cooperative background pass (see _start_count_pass).
                 for attr in self._sftp.listdir_attr(expanded_path):
                     is_dir = stat_isdir(attr)
-                    item_count = None
-                    
-                    # Count items in directory
-                    if is_dir:
-                        try:
-                            dir_path = os.path.join(expanded_path, attr.filename)
-                            dir_attrs = self._sftp.listdir_attr(dir_path)
-                            item_count = len(dir_attrs)
-                        except Exception:
-                            # If we can't read the directory, set count to None
-                            item_count = None
-                    
                     entries.append(
                         FileEntry(
                             name=attr.filename,
                             is_dir=is_dir,
                             size=attr.st_size,
                             modified=attr.st_mtime,
-                            item_count=item_count,
+                            item_count=None,
                         )
                     )
             return expanded_path, entries
 
+        def _loaded(result):
+            target, entries = result
+            logger.debug(
+                "listdir success for %s, emitting directory-loaded with %d entries",
+                target, len(entries),
+            )
+            self.emit("directory-loaded", target, entries)
+            self._start_count_pass(target, entries, generation)
+
         self._submit(
             _impl,
-            on_success=lambda result: (logger.debug(f"listdir success for {result[0]}, emitting directory-loaded with {len(result[1])} entries"), self.emit("directory-loaded", *result))[1],
+            on_success=_loaded,
             on_error=lambda exc: (logger.debug(f"listdir error: {exc}"), self.emit("operation-error", str(exc)))[1],
         )
+
+    def _start_count_pass(self, path: str, entries: List[FileEntry], generation: int) -> None:
+        """Fill folder item-counts in the background, one folder per executor
+        task so user operations interleave, and abandon if the user navigates."""
+        folders = [e.name for e in entries if e.is_dir]
+        if not folders:
+            return
+
+        def _count_chunk(index: int) -> None:
+            with self._cancel_lock:
+                if self._listdir_seq != generation:
+                    return  # superseded by a newer listing
+            name = folders[index]
+            try:
+                with self._lock:
+                    if self._sftp is None:
+                        return
+                    child = os.path.join(path, name)
+                    count = len(self._sftp.listdir_attr(child))
+                self._dispatcher(
+                    self.emit, ("directory-counts", path, {name: count}), {}
+                )
+            except Exception as exc:  # leave this folder's count as None
+                logger.debug("Count for %s failed: %s", name, exc)
+            if index + 1 < len(folders):
+                self._submit(lambda: _count_chunk(index + 1))
+
+        self._submit(lambda: _count_chunk(0))
 
     def mkdir(self, path: str) -> Future:
         logger.debug(f"Creating directory: {path}")
