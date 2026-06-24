@@ -9151,89 +9151,75 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 else:
                     self.group_manager.move_connection(nickname, target_group_id)
 
-            # Get available groups
             available_groups = self.get_available_groups()
             logger.debug(f"Available groups for {mode} dialog: {len(available_groups)} groups")
-            
-            # Show group selection dialog
-            dialog = Gtk.Dialog(
-                title=_("Copy to Group") if is_copy else _("Move to Group"),
-                transient_for=self,
-                modal=True,
-                destroy_with_parent=True
-            )
-            
-            dialog.set_default_size(400, 300)
-            dialog.set_resizable(False)
-            
-            content_area = dialog.get_content_area()
-            content_area.set_margin_start(20)
-            content_area.set_margin_end(20)
-            content_area.set_margin_top(20)
-            content_area.set_margin_bottom(20)
-            content_area.set_spacing(12)
-            
-            # Add label
-            if is_copy:
-                if len(connection_nicknames) == 1:
-                    label_text = _("Select a group to copy the connection to:")
-                else:
-                    label_text = _("Select a group to copy the selected connections to:")
-            elif len(connection_nicknames) == 1:
-                label_text = _("Select a group to move the connection to:")
+
+            from sshpilot import icon_utils
+
+            title_text = _("Copy to Group") if is_copy else _("Move to Group")
+            confirm_label = _("Copy") if is_copy else _("Move")
+
+            # Adwaita dialog scaffold (GNOME HIG): Adw.Dialog + ToolbarView/HeaderBar
+            # with a PreferencesPage body (provides insets and grouped row styling).
+            dialog = Adw.Dialog()
+            dialog.set_title(title_text)
+            dialog.set_content_width(420)
+            dialog.set_follows_content_size(True)
+
+            toolbar_view = Adw.ToolbarView()
+            header = Adw.HeaderBar()
+            header.set_show_start_title_buttons(False)
+            header.set_show_end_title_buttons(False)
+
+            cancel_button = Gtk.Button(label=_("Cancel"))
+            cancel_button.connect('clicked', lambda _b: dialog.close())
+            header.pack_start(cancel_button)
+
+            confirm_button = Gtk.Button(label=confirm_label)
+            confirm_button.add_css_class('suggested-action')
+            header.pack_end(confirm_button)
+
+            toolbar_view.add_top_bar(header)
+
+            page = Adw.PreferencesPage()
+            body_scroller = Gtk.ScrolledWindow()
+            body_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+            body_scroller.set_propagate_natural_height(True)
+            body_scroller.set_max_content_height(420)
+            body_scroller.set_child(page)
+            toolbar_view.set_content(body_scroller)
+            dialog.set_child(toolbar_view)
+
+            # --- Create new group -------------------------------------------
+            create_group = Adw.PreferencesGroup()
+            create_group.set_title(_("Create New Group"))
+            if len(connection_nicknames) == 1:
+                create_group.set_description(
+                    _("Copy the connection to a new group") if is_copy
+                    else _("Move the connection to a new group")
+                )
             else:
-                label_text = _("Select a group to move the selected connections to:")
-            label = Gtk.Label(label=label_text)
-            label.set_wrap(True)
-            label.set_xalign(0)
-            content_area.append(label)
+                create_group.set_description(
+                    _("Copy the selected connections to a new group") if is_copy
+                    else _("Move the selected connections to a new group")
+                )
 
-            # Add list box for groups
-            listbox = Gtk.ListBox()
-            listbox.set_selection_mode(Gtk.SelectionMode.SINGLE)
-            listbox.set_vexpand(True)
+            create_group_entry = Adw.EntryRow()
+            create_group_entry.set_title(_("Group name"))
+            create_group.add(create_group_entry)
 
-            # Add inline group creation section
-            create_section_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-            create_section_box.set_margin_start(12)
-            create_section_box.set_margin_end(12)
-            create_section_box.set_margin_top(6)
-            create_section_box.set_margin_bottom(6)
+            color_row = Adw.ActionRow()
+            color_row.set_title(_("Color"))
+            color_row.set_subtitle(_("Optional"))
 
-            # Create new group label
-            create_label = Gtk.Label(label=_("Create New Group"))
-            create_label.set_xalign(0)
-            create_label.add_css_class("heading")
-            create_section_box.append(create_label)
-
-            # Create new group entry and button
-            create_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-
-            create_group_entry = Gtk.Entry()
-            create_group_entry.set_placeholder_text(_("Enter group name"))
-            create_group_entry.set_hexpand(True)
-            create_group_entry.set_activates_default(True)
-            create_box.append(create_group_entry)
-
-            create_section_box.append(create_box)
-
-            # Color selector matching create group dialog
-            color_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-            color_row.set_hexpand(True)
-            color_label = Gtk.Label(label=_("Group color"))
-            color_label.set_xalign(0)
-            color_label.set_hexpand(True)
-            color_row.append(color_label)
-
-            color_controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
             color_button = Gtk.ColorButton()
+            color_button.set_valign(Gtk.Align.CENTER)
             color_button.set_use_alpha(True)
             color_button.set_title(_("Select group color"))
             initial_rgba = Gdk.RGBA()
             initial_rgba.red = initial_rgba.green = initial_rgba.blue = 0
             initial_rgba.alpha = 0
             color_button.set_rgba(initial_rgba)
-            color_controls.append(color_button)
 
             color_selected = False
 
@@ -9252,86 +9238,80 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 color_button.set_rgba(cleared)
 
             clear_color_button = Gtk.Button(label=_("Clear"))
+            clear_color_button.set_valign(Gtk.Align.CENTER)
             clear_color_button.add_css_class('flat')
             clear_color_button.connect('clicked', lambda _btn: reset_color_selection())
-            color_controls.append(clear_color_button)
 
-            color_row.append(color_controls)
-            create_section_box.append(color_row)
+            color_row.add_suffix(color_button)
+            color_row.add_suffix(clear_color_button)
+            create_group.add(color_row)
+            page.add(create_group)
 
-            # Add the create section to content area
-            content_area.append(create_section_box)
-            
-            # Add separator
-            separator = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
-            content_area.append(separator)
-            
-            # Add existing groups label
-            if available_groups:
-                existing_label = Gtk.Label(label=_("Existing Groups"))
-                existing_label.set_xalign(0)
-                existing_label.add_css_class("heading")
-                content_area.append(existing_label)
-            
-            # Add groups to list
+            # --- Existing groups (single selection via a checkmark) ---------
+            existing_group = Adw.PreferencesGroup()
+            existing_group.set_title(_("Existing Groups"))
+
             selected_group_id = None
-            for group in available_groups:
-                row = Gtk.ListBoxRow()
-                box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-                
-                # Add group icon
-                from sshpilot import icon_utils
-                icon = icon_utils.new_image_from_icon_name('folder-symbolic')
-                icon.set_pixel_size(16)
-                box.append(icon)
-                
-                # Add group name
-                label = Gtk.Label(label=group['name'])
-                label.set_xalign(0)
-                label.set_hexpand(True)
-                box.append(label)
-                
-                row.set_child(box)
-                row.group_id = group['id']
-                listbox.append(row)
-            
-            content_area.append(listbox)
-            
-            # Add buttons
-            dialog.add_button(_('Cancel'), Gtk.ResponseType.CANCEL)
-            move_button = dialog.add_button(_('Copy') if is_copy else _('Move'), Gtk.ResponseType.OK)
-            move_button.get_style_context().add_class('suggested-action')
-            
-            dialog.set_default_response(Gtk.ResponseType.OK)
-            
-            # Connect entry and button events
-            def find_existing_group_id(name: str) -> Optional[str]:
+            selected_row_ref = None
+
+            def has_valid_target() -> bool:
+                if create_group_entry.get_text().strip():
+                    return True
+                return selected_group_id is not None
+
+            def update_confirm_state(*_args):
+                confirm_button.set_sensitive(has_valid_target())
+
+            def select_group_row(row) -> None:
+                nonlocal selected_group_id, selected_row_ref
+                if selected_row_ref is row:
+                    return
+                if selected_row_ref is not None:
+                    selected_row_ref._check.set_visible(False)
+                selected_row_ref = row
+                selected_group_id = row.group_id
+                row._check.set_visible(True)
+                update_confirm_state()
+
+            if available_groups:
+                for group in available_groups:
+                    row = Adw.ActionRow()
+                    row.set_title(group['name'])
+                    row.set_activatable(True)
+                    icon = icon_utils.new_image_from_icon_name('folder-symbolic')
+                    row.add_prefix(icon)
+                    check = Gtk.Image.new_from_icon_name('object-select-symbolic')
+                    check.set_visible(False)
+                    row.add_suffix(check)
+                    row._check = check
+                    row.group_id = group['id']
+                    row.connect('activated', select_group_row)
+                    existing_group.add(row)
+            else:
+                existing_group.set_description(_("No groups yet — create one above."))
+
+            page.add(existing_group)
+
+            # --- Validation + actions (business logic preserved) ------------
+            def find_existing_group_id(name: str):
                 lowered = name.lower()
                 for group in available_groups:
                     if group['name'].lower() == lowered:
                         return group['id']
                 return None
 
-            def has_valid_target() -> bool:
-                if create_group_entry.get_text().strip():
-                    return True
-                return listbox.get_selected_row() is not None
+            def show_group_exists_error(message: str) -> None:
+                error = Adw.AlertDialog(
+                    heading=_("Group Already Exists"),
+                    body=message,
+                )
+                error.add_response('ok', _("OK"))
+                error.set_default_response('ok')
+                error.set_close_response('ok')
+                error.present(dialog)
 
-            def update_move_button_state(*_args):
-                move_button.set_sensitive(has_valid_target())
-
-            listbox.connect('row-selected', lambda _lb, _row: update_move_button_state())
-
-            def on_entry_changed(entry):
-                update_move_button_state()
-
-            def on_entry_activated(_entry):
-                if has_valid_target():
-                    dialog.response(Gtk.ResponseType.OK)
-
-            create_group_entry.connect('changed', on_entry_changed)
-            create_group_entry.connect('activate', on_entry_activated)
-            update_move_button_state()
+            create_group_entry.connect('changed', update_confirm_state)
+            update_confirm_state()
 
             def perform_move() -> bool:
                 group_name = create_group_entry.get_text().strip()
@@ -9353,66 +9333,31 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         self.rebuild_connection_list()
                         return True
                     except ValueError as e:
-                        error_dialog = Gtk.Dialog(
-                            title=_("Group Already Exists"),
-                            transient_for=dialog,
-                            modal=True,
-                            destroy_with_parent=True
-                        )
-                        error_dialog.set_default_size(400, 150)
-                        error_dialog.set_resizable(False)
-
-                        content_area = error_dialog.get_content_area()
-                        content_area.set_margin_start(20)
-                        content_area.set_margin_end(20)
-                        content_area.set_margin_top(20)
-                        content_area.set_margin_bottom(20)
-
-                        error_label = Gtk.Label(label=str(e))
-                        error_label.set_wrap(True)
-                        error_label.set_xalign(0)
-                        content_area.append(error_label)
-
-                        error_dialog.add_button(_('OK'), Gtk.ResponseType.OK)
-                        error_dialog.set_default_response(Gtk.ResponseType.OK)
-
-                        def on_error_response(dialog, _response):
-                            dialog.destroy()
-
-                        error_dialog.connect('response', on_error_response)
-                        error_dialog.present()
-
+                        show_group_exists_error(str(e))
                         create_group_entry.set_text("")
                         reset_color_selection()
                         create_group_entry.grab_focus()
-                        update_move_button_state()
+                        update_confirm_state()
                         return False
 
-                selected_row = listbox.get_selected_row()
-                if selected_row:
-                    target_group_id = selected_row.group_id
+                if selected_group_id is not None:
                     for nickname in connection_nicknames:
-                        assign(nickname, target_group_id)
+                        assign(nickname, selected_group_id)
                     self.rebuild_connection_list()
                     return True
                 return False
 
-            def on_response(dialog, response):
-                if response == Gtk.ResponseType.OK:
-                    if perform_move():
-                        dialog.destroy()
-                        return
-                    return
-                dialog.destroy()
-            
-            dialog.connect('response', on_response)
-            dialog.present()
-            
+            def on_confirm(*_args):
+                if has_valid_target() and perform_move():
+                    dialog.close()
+
+            confirm_button.connect('clicked', on_confirm)
+            create_group_entry.connect('entry-activated', lambda _e: on_confirm())
+
+            dialog.present(self)
+
         except Exception as e:
             logger.error(f"Failed to show move to group dialog: {e}")
-    
-
-    
 
     def move_connection_to_group(self, connection_nickname: str, target_group_id: str = None):
         """Move a connection to a specific group"""
