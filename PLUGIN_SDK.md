@@ -40,6 +40,7 @@ change without notice.
 | Register a page with no menu entry / custom activation | `ctx.ui.register_page(..., add_menu_item=False, on_activate=cb)` *(1.8)* |
 | Keep one SSH connection warm & multiplex calls over it | `ctx.acquire_multiplex(nickname)` / `ctx.release_multiplex(nickname)` *(1.9)* |
 | Store/read credentials (keyring) | `ctx.secrets.get/set/delete(key)` |
+| Prompt for SSH login password (in-app GUI) | `show_ssh_password_dialog(...)` in `sshpilot.window` *(escape hatch — see [Advanced UI — credential dialogs](#advanced-ui--credential-dialogs))* |
 | Store/read plugin settings | `ctx.settings.get/set(key)` |
 | Run code back on the UI thread | `ctx.run_on_ui_thread(fn, *args)` |
 
@@ -211,6 +212,54 @@ self.connect("unmap", lambda *_: self.ctx.release_multiplex(self._nick))
 ### Advanced (escape hatch)
 - `ctx.config`, `ctx.connection_manager` — live internal objects. Stable enough that the built-in backends use them, but prefer the named APIs; treat these as advanced.
 
+#### Advanced UI — credential dialogs
+
+When your plugin must collect an **SSH login password** in the GUI (e.g. before
+calling `run_command` with a password-only host, or provisioning a connection),
+use the same shared dialog as core — **do not** build your own password
+`Adw.MessageDialog`.
+
+```python
+from sshpilot.window import show_ssh_password_dialog
+
+# On the GTK main thread only (button handler, app_started callback, or inside
+# ctx.run_on_ui_thread). Blocks until the user dismisses the dialog.
+password = show_ssh_password_dialog(
+    from_widget=page_widget,       # your page's root widget
+    display_name=info.nickname,
+    host=info.host,
+    username=info.username,
+    connection_manager=self.ctx.connection_manager,  # enables "Store password"
+)
+if not password:
+    return
+# Use password for your flow, or persist via ctx.secrets / connection fields.
+```
+
+Why this helper exists: on Wayland the dialog must be transient for
+`MainWindow`, not your plugin tab. The helper resolves that parent, presents
+the main window, and reuses the app's standard copy/storage UX.
+
+| Need | API |
+| --- | --- |
+| SSH login password (in-app) | `show_ssh_password_dialog(...)` |
+| SSH key passphrase (in-app, you have `MainWindow`) | `main_window.prompt_ssh_passphrase(key_path)` — internal; no stable plugin export yet |
+| Passphrase for `ssh` subprocess | Handled automatically via askpass — do not prompt manually |
+| Custom non-password modal from a plugin page | `resolve_app_modal_parent(widget)` + `present_for_modal_dialog(parent)` then your dialog |
+
+**Threading:** `show_ssh_password_dialog` runs a nested main loop and **must**
+run on the UI thread. From a worker thread, marshal with
+`ctx.run_on_ui_thread(lambda: show_ssh_password_dialog(...))` and pass the
+result back with a queue/future.
+
+**Auth for remote commands:** prefer `ctx.run_command(nickname, …)` so core
+applies stored passwords via sshpass/askpass. Prompt with
+`show_ssh_password_dialog` only when you need a password that is not already in
+the keyring / connection record.
+
+Full reference: **AGENTS.md → In-app password & passphrase dialogs** and
+docstrings on `show_ssh_password_dialog` in `sshpilot/window.py`.
+
 ---
 
 ## 5. Events
@@ -360,6 +409,8 @@ must be made on the UI thread.
 - **Don't** touch the main window, the internal `Connection` class, private
   modules, or GObject signals directly — use events and `PluginContext`.
 - **Don't** store secrets in `settings`.
+- **Don't** roll custom `Adw.MessageDialog` password prompts — use
+  `show_ssh_password_dialog` (see [Advanced UI — credential dialogs](#advanced-ui--credential-dialogs)).
 
 See the full [`mock_vps`](sshpilot/plugins/examples/mock_vps/) example for all of
 the above wired together.

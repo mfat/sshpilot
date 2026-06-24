@@ -302,21 +302,11 @@ class AuthorizedKeysWindow(Adw.Window):
             self._connection.password = password
 
     def _prompt_for_password(self) -> Optional[str]:
-        from .window import (
-            _show_password_passphrase_dialog,
-            present_for_modal_dialog,
-            resolve_app_modal_parent,
-        )
+        from .window import show_ssh_password_dialog
 
-        parent = resolve_app_modal_parent(self)
-        present_for_modal_dialog(parent)
-        return _show_password_passphrase_dialog(
-            parent_window=parent,
-            prompt_type="password",
-            display_name=self._connection_display_name(),
-            host=getattr(self._connection, "hostname", None)
-            or getattr(self._connection, "host", None),
-            username=getattr(self._connection, "username", None),
+        return show_ssh_password_dialog(
+            from_widget=self,
+            connection=self._connection,
             connection_manager=self._connection_manager,
         )
 

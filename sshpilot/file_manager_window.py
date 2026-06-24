@@ -769,62 +769,19 @@ class FileManagerWindow(Adw.Window):
         # Default: key-based auth (auth_method == 0) - don't show password prompt
         return False
 
-    def _lookup_password_storage_host(self, host: str) -> str:
-        if self._connection is None:
-            return host
-        return (
-            getattr(self._connection, "hostname", None)
-            or getattr(self._connection, "host", None)
-            or getattr(self._connection, "nickname", None)
-            or host
-        )
-
-    def _prompt_for_ssh_password(
-        self,
-        user: str,
-        host: str,
-        connection: Any = None,
-        *,
-        body: Optional[str] = None,
-        heading: Optional[str] = None,
-    ) -> Optional[str]:
-        """Show a modal password dialog parented on the main app window."""
-        from .window import (
-            _show_password_passphrase_dialog,
-            present_for_modal_dialog,
-            resolve_app_modal_parent,
-        )
-
-        nickname = getattr(connection, "nickname", None) if connection else None
-        display_name = nickname or f"{user}@{host}"
-        lookup_host = self._lookup_password_storage_host(host)
-        lookup_user = (
-            getattr(connection, "username", None) if connection else None
-        ) or user
-
-        parent = resolve_app_modal_parent(self)
-        present_for_modal_dialog(parent)
-        logger.debug(
-            "Built-in file manager: password dialog parent=%s (embedded=%s)",
-            type(parent).__name__,
-            self._embedded_parent is not None,
-        )
-        return _show_password_passphrase_dialog(
-            parent,
-            prompt_type="password",
-            display_name=display_name,
-            host=lookup_host,
-            username=lookup_user,
-            connection_manager=self._connection_manager,
-            heading=heading,
-            body=body,
-        )
-
     def _show_password_dialog_before_connect(
         self, user: str, host: str, connection: Any = None
     ) -> Optional[str]:
         """Show password dialog before attempting connection."""
-        return self._prompt_for_ssh_password(user, host, connection)
+        from .window import show_ssh_password_dialog
+
+        return show_ssh_password_dialog(
+            from_widget=self,
+            connection=connection,
+            host=host,
+            username=user,
+            connection_manager=self._connection_manager,
+        )
 
     def _on_authentication_required(self, _manager, error_message: str) -> None:
         """Handle authentication failure by showing password dialog."""
@@ -870,10 +827,15 @@ class FileManagerWindow(Adw.Window):
                     else None
                 )
                 display_name = nickname or f"{username}@{host}"
-                password = self._prompt_for_ssh_password(
-                    username,
-                    host,
-                    self._connection,
+                from .window import show_ssh_password_dialog
+
+                password = show_ssh_password_dialog(
+                    from_widget=self,
+                    connection=self._connection,
+                    host=host,
+                    username=username,
+                    display_name=display_name,
+                    connection_manager=self._connection_manager,
                     heading=_("Password Required"),
                     body=_(
                         "Authentication failed for {name}.\n\n"

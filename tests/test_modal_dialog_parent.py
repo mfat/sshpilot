@@ -59,3 +59,46 @@ def test_resolve_app_modal_parent_embedded_uses_root():
     widget.get_application.return_value = app
 
     assert resolve_app_modal_parent(widget) is main
+
+
+def test_show_ssh_password_dialog_delegates_to_shared_helper(monkeypatch):
+    from sshpilot.window import show_ssh_password_dialog
+
+    calls = {}
+
+    def fake_dialog(parent, **kwargs):
+        calls["parent"] = parent
+        calls.update(kwargs)
+        return "secret"
+
+    monkeypatch.setattr(
+        "sshpilot.window._show_password_passphrase_dialog", fake_dialog
+    )
+    monkeypatch.setattr(
+        "sshpilot.window.present_for_modal_dialog", lambda _w: None
+    )
+
+    main = MainWindow()
+    app = MagicMock()
+    app.window = main
+    app.get_windows.return_value = [main]
+    widget = MagicMock()
+    widget.get_application.return_value = app
+
+    conn = MagicMock(
+        nickname="demo",
+        username="alice",
+        hostname="example.com",
+    )
+    result = show_ssh_password_dialog(
+        from_widget=widget,
+        connection=conn,
+        connection_manager=MagicMock(),
+    )
+
+    assert result == "secret"
+    assert calls["parent"] is main
+    assert calls["prompt_type"] == "password"
+    assert calls["display_name"] == "demo"
+    assert calls["host"] == "example.com"
+    assert calls["username"] == "alice"

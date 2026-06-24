@@ -388,9 +388,24 @@ def list_remote_files(
 def resolve_app_modal_parent(from_widget=None) -> "Gtk.Window":
     """Return the primary app window to use as a modal dialog parent.
 
-    On Wayland, ``Adw.MessageDialog`` must be transient for the focused app
-    window (typically :class:`MainWindow`), not a secondary top-level such as
-    :class:`FileManagerWindow`, or the prompt can map behind the main window.
+    Use this before showing any ``Adw.MessageDialog`` (or similar modal) from
+    code that runs inside a secondary window — e.g. :class:`FileManagerWindow`,
+    a plugin page tab, or a progress window — so the dialog stacks correctly on
+    Wayland.
+
+    Resolution order:
+
+    1. ``Gtk.Application.window`` (the live :class:`MainWindow`)
+    2. Any registered window whose class name is ``MainWindow``
+    3. If ``from_widget`` is set: embedded root (``_embedded_parent.get_root()``),
+       ``get_transient_for()``, ``get_root()``, or ``from_widget`` itself when it
+       is a :class:`Gtk.Window`
+    4. ``Gtk.Application.get_active_window()``
+
+    Raises :class:`RuntimeError` if no suitable parent exists.
+
+    See also :func:`present_for_modal_dialog` and :func:`show_ssh_password_dialog`.
+    Pair with ``present_for_modal_dialog(parent)`` before ``dialog.present()``.
     """
     app = None
     if from_widget is not None:
@@ -445,7 +460,12 @@ def resolve_app_modal_parent(from_widget=None) -> "Gtk.Window":
 
 
 def present_for_modal_dialog(window: Gtk.Window) -> None:
-    """Raise ``window`` so a modal child dialog stacks above it on Wayland."""
+    """Raise *window* before showing a modal child so it stacks on top (Wayland).
+
+    Calls ``unminimize()`` and ``present()`` on *window*. Always invoke this on
+    the parent returned by :func:`resolve_app_modal_parent` immediately before
+    presenting a modal dialog.
+    """
     try:
         window.unminimize()
     except Exception:
@@ -454,6 +474,132 @@ def present_for_modal_dialog(window: Gtk.Window) -> None:
         window.present()
     except Exception as exc:
         logger.debug("Failed to present modal parent window: %s", exc)
+
+
+def show_ssh_password_dialog(
+    *,
+    from_widget=None,
+    parent_window: Optional[Gtk.Window] = None,
+    display_name: str = "",
+    host: Optional[str] = None,
+    username: Optional[str] = None,
+    connection: Any = None,
+    connection_manager: Optional[Any] = None,
+    heading: Optional[str] = None,
+    body: Optional[str] = None,
+) -> Optional[str]:
+    """Show the standard in-app SSH **password** dialog (blocking).
+
+    This is the single supported entry point for prompting the user for an SSH
+    login password from core features, plugins (advanced), and secondary windows
+    (file manager, authorized-keys editor, external SFTP mount, …). Do **not**
+    roll a custom ``Adw.MessageDialog`` for passwords — use this helper so
+    Wayland stacking, copy, and keyring storage behave consistently.
+
+    The dialog is modal, parented on :class:`MainWindow` (via
+    :func:`resolve_app_modal_parent`), and blocks until the user dismisses it
+    (nested ``GLib.MainLoop``). **Must be called on the GTK main thread.**
+
+    Parameters
+    ----------
+    from_widget
+        Any widget or window tied to the caller (plugin page, file-manager pane,
+        progress dialog, …). Used to locate :class:`MainWindow` when
+        *parent_window* is omitted. Pass the widget that logically triggered the
+        prompt.
+    parent_window
+        Explicit parent. When set, skips :func:`resolve_app_modal_parent` but
+        still calls :func:`present_for_modal_dialog`. Prefer omitting this and
+        passing *from_widget* so the main window is chosen automatically.
+    display_name
+        Shown in the default body text (e.g. connection nickname or
+        ``user@host``). Ignored when *connection* supplies a nickname and
+        *display_name* is empty.
+    host, username
+        Used for the optional **Store password** checkbox (via
+        *connection_manager*). When *connection* is given, missing *host* /
+        *username* are filled from ``hostname`` / ``host`` / ``nickname`` and
+        ``username`` on the connection object.
+    connection
+        Optional connection record (built-in ``Connection`` or any object with
+        ``nickname``, ``username``, ``hostname`` / ``host``). Convenient way to
+        pass display and storage fields together.
+    connection_manager
+        When the user checks **Store password**, calls
+        ``connection_manager.store_password(host, username, password)``. Pass
+        ``self.connection_manager`` from :class:`MainWindow` or
+        ``ctx.connection_manager`` from a plugin context.
+    heading, body
+        Optional overrides for dialog title and message (e.g. auth-retry text).
+
+    Returns
+    -------
+    str or None
+        The entered password, or ``None`` if the user cancelled or submitted an
+        empty password.
+
+    Examples
+    --------
+    From a built-in secondary window (file manager pattern)::
+
+        password = show_ssh_password_dialog(
+            from_widget=self,
+            connection=self._connection,
+            connection_manager=self._connection_manager,
+        )
+
+    From a plugin page (UI thread; ``ctx.connection_manager`` escape hatch)::
+
+        password = show_ssh_password_dialog(
+            from_widget=page_widget,
+            display_name=info.nickname,
+            host=info.host,
+            username=info.username,
+            connection_manager=ctx.connection_manager,
+        )
+
+    See :meth:`MainWindow.prompt_ssh_password` when you already hold a reference
+    to the main window. For **key passphrases** prompted outside the askpass
+    helper process, use :meth:`MainWindow.prompt_ssh_passphrase` instead.
+    """
+    storage_host = host
+    storage_user = username
+    prompt_name = display_name
+
+    if connection is not None:
+        storage_user = storage_user or getattr(connection, "username", None)
+        storage_host = (
+            storage_host
+            or getattr(connection, "hostname", None)
+            or getattr(connection, "host", None)
+            or getattr(connection, "nickname", None)
+        )
+        if not prompt_name:
+            nickname = getattr(connection, "nickname", None)
+            user_label = storage_user or ""
+            host_label = storage_host or ""
+            prompt_name = (
+                str(nickname)
+                if nickname
+                else (f"{user_label}@{host_label}" if user_label else str(host_label))
+            )
+
+    if parent_window is not None:
+        parent = parent_window
+    else:
+        parent = resolve_app_modal_parent(from_widget)
+
+    present_for_modal_dialog(parent)
+    return _show_password_passphrase_dialog(
+        parent,
+        prompt_type="password",
+        display_name=prompt_name,
+        host=storage_host,
+        username=storage_user,
+        connection_manager=connection_manager,
+        heading=heading,
+        body=body,
+    )
 
 
 def _show_password_passphrase_dialog(
@@ -7357,11 +7503,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         heading: Optional[str] = None,
         body: Optional[str] = None,
     ) -> Optional[str]:
-        """Show an SSH password prompt as a modal child of the main window."""
-        present_for_modal_dialog(self)
-        return _show_password_passphrase_dialog(
-            self,
-            prompt_type="password",
+        """Show an SSH password prompt as a modal child of the main window.
+
+        Thin wrapper around :func:`show_ssh_password_dialog` for callers that
+        already have the :class:`MainWindow` instance (e.g. future in-app actions).
+        """
+        return show_ssh_password_dialog(
+            parent_window=self,
             display_name=display_name,
             host=host,
             username=username,

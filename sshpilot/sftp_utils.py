@@ -91,110 +91,18 @@ def _show_password_dialog_for_mount(
     host: str,
     connection: Any = None,
     parent_window=None,
+    connection_manager: Any = None,
 ) -> Optional[str]:
-    """Show password dialog for external file manager mount.
-    
-    Returns the password if user provided it, None if cancelled.
-    Uses GLib main loop to handle dialog interaction properly.
-    """
-    password_result = [None]  # Use list to allow modification in nested function
-    main_loop = GLib.MainLoop()
-    
-    # Get display name
-    nickname = getattr(connection, 'nickname', None) if connection else None
-    display_name = nickname or f"{user}@{host}"
-    
-    # Create password dialog
-    dialog = Adw.MessageDialog(
-        transient_for=parent_window,
-        modal=True,
-        heading="Password Required",
-        body=f"Please enter your password for {display_name}:",
+    """Show password dialog for external file manager mount."""
+    from .window import show_ssh_password_dialog
+
+    return show_ssh_password_dialog(
+        from_widget=parent_window,
+        connection=connection,
+        host=host,
+        username=user,
+        connection_manager=connection_manager,
     )
-    
-    # Create a container box for entry and checkbox
-    content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-    content_box.set_margin_top(12)
-    content_box.set_margin_bottom(12)
-    content_box.set_margin_start(12)
-    content_box.set_margin_end(12)
-    
-    # Add password entry
-    password_entry = Gtk.PasswordEntry()
-    password_entry.set_property("placeholder-text", "Password")
-    content_box.append(password_entry)
-    
-    # Add checkbox to store password
-    store_checkbox = Gtk.CheckButton(label="Store password")
-    store_checkbox.set_active(False)
-    content_box.append(store_checkbox)
-    
-    # Add container to dialog's extra child area
-    dialog.set_extra_child(content_box)
-    
-    # Add responses
-    dialog.add_response("cancel", "Cancel")
-    dialog.add_response("connect", "Connect")
-    dialog.set_default_response("connect")
-    dialog.set_close_response("cancel")
-    
-    # Handle Enter key - try multiple approaches for maximum compatibility
-    def on_entry_activate(_entry):
-        """Handle Enter key press in password entry"""
-        dialog.emit("response", "connect")
-    
-    # Try to set activates-default property (works for Gtk.Entry)
-    try:
-        password_entry.set_property("activates-default", True)
-    except (TypeError, AttributeError):
-        pass
-    
-    # Also connect to activate signal as fallback
-    try:
-        password_entry.connect("activate", on_entry_activate)
-    except (TypeError, AttributeError):
-        # Fallback to key controller if activate signal is not available
-        key_controller = Gtk.EventControllerKey()
-        def on_key_pressed(_controller, keyval, _keycode, _state):
-            if keyval == Gdk.KEY_Return or keyval == Gdk.KEY_KP_Enter:
-                dialog.emit("response", "connect")
-                return True
-            return False
-        key_controller.connect("key-pressed", on_key_pressed)
-        password_entry.add_controller(key_controller)
-    
-    # Focus password entry when dialog is shown
-    def on_dialog_shown(_dialog):
-        password_entry.grab_focus()
-    dialog.connect("notify::visible", lambda d, _: on_dialog_shown(d) if d.get_visible() else None)
-    
-    def on_response(_dialog, response: str) -> None:
-        if response == "connect":
-            entered_password = password_entry.get_text()
-            if entered_password:
-                password_result[0] = entered_password
-                
-                # Store password if checkbox is checked
-                if store_checkbox.get_active() and connection_manager:
-                    try:
-                        connection_manager.store_password(host, user, entered_password)
-                    except Exception as e:
-                        logger.debug(f"Failed to store password: {e}")
-            else:
-                password_result[0] = None  # Empty password treated as cancel
-        else:
-            password_result[0] = None  # User cancelled
-        dialog.destroy()
-        main_loop.quit()
-    
-    dialog.connect("response", on_response)
-    dialog.present()
-    
-    # Run main loop to wait for dialog response
-    # This blocks until the dialog is closed
-    main_loop.run()
-    
-    return password_result[0]
 
 
 class PasswordMountOperation(Gio.MountOperation):
@@ -324,7 +232,9 @@ def open_remote_in_file_manager(
     if not has_password and connection_manager is not None:
         if _is_password_auth_enabled(connection):
             logger.debug("External file manager: No password found, password auth enabled, showing password dialog before verification")
-            dialog_password = _show_password_dialog_for_mount(user, host, connection, progress_dialog)
+            dialog_password = _show_password_dialog_for_mount(
+                user, host, connection, progress_dialog, connection_manager
+            )
             if dialog_password:
                 logger.debug("External file manager: Password provided via dialog")
                 has_password = True
@@ -523,7 +433,9 @@ def _mount_and_open_sftp(
         if not password and connection_manager is not None:
             if _is_password_auth_enabled(connection):
                 logger.debug("External file manager: No password found, password auth enabled, showing password dialog")
-                password = _show_password_dialog_for_mount(user, host, connection, progress_dialog)
+                password = _show_password_dialog_for_mount(
+                    user, host, connection, progress_dialog, connection_manager
+                )
                 if not password:
                     # User cancelled password dialog
                     logger.info("User cancelled password entry for external file manager")

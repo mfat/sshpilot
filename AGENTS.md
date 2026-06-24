@@ -127,6 +127,55 @@ stays minimal and lets the spawned `ssh` resolve the config itself at run time.
   `use-builtin-passphrase-prompt` (sub-option, default off — our GUI prompt)
   gate this; with askpass off, ssh prompts natively on the TTY.
 
+### In-app password & passphrase dialogs (GUI)
+
+When **your code** (not the `ssh` subprocess) must ask the user for credentials,
+use the shared helpers in `window.py`. Do **not** create a one-off
+`Adw.MessageDialog` for SSH passwords — secondary windows parented incorrectly
+hide behind the main window on Wayland.
+
+**SSH login password (in-process, blocking, main-thread only)**
+
+- **`show_ssh_password_dialog(...)`** in `window.py` — the single entry point.
+  Resolves `MainWindow` via `resolve_app_modal_parent(from_widget)`, presents it,
+  shows the standard password dialog (optional **Store password** via
+  `connection_manager`), and returns the string or `None`.
+- Used by: built-in file manager, authorized-keys editor, external SFTP mount
+  (`sftp_utils`), and `MainWindow.prompt_ssh_password()`.
+
+Typical call from a secondary window or plugin page:
+
+```python
+from sshpilot.window import show_ssh_password_dialog
+
+password = show_ssh_password_dialog(
+    from_widget=self,                    # or your Gtk.Widget / Adw.Window
+    connection=connection,               # optional; fills host/user/nickname
+    connection_manager=connection_manager,
+)
+if not password:
+    return  # user cancelled
+connection.password = password          # then pass to resolve_native_auth / backend
+```
+
+**Key passphrase (in-process)**
+
+- **`MainWindow.prompt_ssh_passphrase(key_path)`** — same stacking rules; use when
+  you hold a `MainWindow` reference.
+- Passphrases needed **by the `ssh` child process** go through askpass IPC
+  (`askpass_server.py` → `prompt_ssh_passphrase`), not this API.
+
+**Modal stacking helpers (custom dialogs)**
+
+If you add a non-password modal from a plugin page or secondary window:
+
+1. `parent = resolve_app_modal_parent(from_widget)`
+2. `present_for_modal_dialog(parent)`
+3. Build `Adw.MessageDialog(transient_for=parent, modal=True, …)` and `present()`
+
+Plugins: see **PLUGIN_SDK.md → Advanced UI — credential dialogs** (`ctx.connection_manager`
+for store-password; must run on the UI thread).
+
 ### sshpass mechanics
 The password is fed to ssh via a **write-once FIFO**, never on the command line
 or in the environment: `_mk_priv_dir()` creates a 0700 temp dir,
@@ -161,6 +210,9 @@ to askpass for a password.
 - `connection_manager.py`: `Connection.native_connect()`/`connect()`,
   persistence of connections to `~/.ssh/config`, credential storage.
 - `askpass_utils.py`: the askpass helper, keyring lookup, and GTK prompt.
+- `window.py`: `show_ssh_password_dialog`, `resolve_app_modal_parent`,
+  `present_for_modal_dialog` — in-app SSH password prompts and Wayland-safe modal
+  parenting (see **In-app password & passphrase dialogs** above).
 
 When changing this subsystem: keep a **single** connection method and a
 **single** auth resolver; prefer writing per-host settings to `~/.ssh/config`
