@@ -167,6 +167,11 @@ class Config(GObject.Object):
                 'paste_on_right_click': False,
                 'encoding': 'UTF-8',
             },
+            'secrets': {
+                # Secret storage backend: 'auto' (platform default), 'libsecret',
+                # 'keyring', 'pass', or a registered custom backend name.
+                'backend': 'auto',
+            },
             'ui': {
                 'show_hostname': True,
                 'auto_focus_terminal': True,

@@ -1105,30 +1105,29 @@ class ConnectionManager(GObject.Object):
         except Exception as e:
             logger.debug(f"SSH key scan skipped/failed: {e}")
         
-        # Initialize secure storage (can be slow)
+        # Initialize secure storage via the pluggable secret manager.
         self.secure_storage_backend = 'none'
         self.libsecret_available = False
-        if not is_macos() and Secret is not None:
+        try:
+            from .secret_storage import get_secret_manager
+            manager = get_secret_manager()
             try:
-                Secret.Service.get_sync(Secret.ServiceFlags.NONE)
-                self.libsecret_available = True
-
-                self.secure_storage_backend = 'libsecret'
-                logger.info("Secure storage backend: libsecret (Secret Service)")
-            except Exception as e:
-                logger.warning(f"libsecret backend unavailable: {e}")
-        if not self.libsecret_available and keyring is not None:
-            try:
-                backend = keyring.get_keyring()
-                backend_name = backend.__class__.__name__
-                self._keyring_backend_name = backend_name
-                self.secure_storage_backend = f"keyring:{backend_name}"
-                logger.info("Secure storage backend: keyring (%s)", backend_name)
-            except Exception as e:
-                logger.info(
-                    "Keyring module present but no usable backend; passwords will not be stored (%s)",
-                    e,
-                )
+                from .config import Config
+                selected = Config().get_setting('secrets.backend', 'auto')
+            except Exception:
+                selected = 'auto'
+            manager.set_selected(selected)
+            # Propagate the selection to child processes (e.g. the askpass helper)
+            # so they resolve the same backend.
+            os.environ['SSHPILOT_SECRET_BACKEND'] = str(selected or 'auto')
+            self.libsecret_available = 'libsecret' in manager.available_backends()
+            self.secure_storage_backend = manager.active_backend_name
+            logger.info(
+                "Secure storage backend: %s (selected=%s)",
+                self.secure_storage_backend, selected,
+            )
+        except Exception as e:
+            logger.warning("Secret manager initialization failed: %s", e)
         if self.secure_storage_backend == 'none':
             logger.info("Secure storage backend: unavailable; password storage disabled")
         return False  # run once
@@ -1772,141 +1771,22 @@ class ConnectionManager(GObject.Object):
         return keys
 
     def store_password(self, host: str, username: str, password: str):
-        """Store password securely in system keyring"""
-        # Prefer libsecret on Linux when available
-        libsecret_failed = False
-        if not is_macos() and self.libsecret_available and _SECRET_SCHEMA is not None:
-            try:
-                attributes = {
-                    'application': _SERVICE_NAME,
-                    'type': 'ssh_password',
-                    'host': host,
-                    'username': username,
-                }
-                Secret.password_store_sync(
-                    _SECRET_SCHEMA,
-                    attributes,
-                    Secret.COLLECTION_DEFAULT,
-                    f'{_SERVICE_NAME}: {username}@{host}',
-                    password,
-                    None,
-                )
-                logger.debug(f"Password stored for {username}@{host} via libsecret")
-                return True
-            except Exception as e:
-                logger.error(f"Failed to store password (libsecret): {e}")
-                libsecret_failed = True
-
-        # Fallback to cross-platform keyring (macOS Keychain, etc.)
-        if self._should_use_keyring_fallback(force=libsecret_failed):
-            backend_name = self._get_keyring_backend_name()
-            try:
-                keyring.set_password(_SERVICE_NAME, f"{username}@{host}", password)
-                logger.debug(
-                    "Password stored for %s@%s via keyring backend %s",
-                    username,
-                    host,
-                    backend_name,
-                )
-                self._keyring_used = True
-                return True
-            except Exception as e:
-                logger.error(
-                    "Failed to store password (keyring:%s): %s",
-                    backend_name,
-                    e,
-                )
-        logger.warning("No secure storage backend available; password not stored")
-        return False
+        """Store a password via the selected secret backend (see secret_storage)."""
+        from .secret_storage import get_secret_manager, password_spec
+        stored = get_secret_manager().store(password_spec(host, username), password)
+        if not stored:
+            logger.warning("No secure storage backend available; password not stored")
+        return stored
 
     def get_password(self, host: str, username: str) -> Optional[str]:
-        """Retrieve password from system keyring"""
-        # Try libsecret first
-        if not is_macos() and self.libsecret_available and _SECRET_SCHEMA is not None:
-            try:
-                attributes = {
-                    'application': _SERVICE_NAME,
-                    'type': 'ssh_password',
-                    'host': host,
-                    'username': username,
-                }
-                password = Secret.password_lookup_sync(_SECRET_SCHEMA, attributes, None)
-                if password is not None:
-                    logger.debug(f"Password retrieved for {username}@{host} via libsecret")
-                    return password
-            except Exception as e:
-                logger.error(f"Error retrieving password (libsecret) for {username}@{host}: {e}")
-
-        # Fallback to keyring
-        if self._should_use_keyring_fallback():
-            backend_name = self._get_keyring_backend_name()
-            try:
-                pw = keyring.get_password(_SERVICE_NAME, f"{username}@{host}")
-                if pw:
-                    self._keyring_used = True
-                    logger.debug(
-                        "Password retrieved for %s@%s via keyring backend %s",
-                        username,
-                        host,
-                        backend_name,
-                    )
-                return pw
-            except Exception as e:
-                message = str(e)
-                if 'kwallet' in message.lower():
-                    logger.debug(
-                        "Keyring backend %s unavailable during retrieval for %s@%s: %s",
-                        backend_name,
-                        username,
-                        host,
-                        e,
-                    )
-                else:
-                    logger.error(
-                        "Error retrieving password (keyring:%s) for %s@%s: %s",
-                        backend_name,
-                        username,
-                        host,
-                        e,
-                    )
-        return None
+        """Retrieve a password via the selected secret backend."""
+        from .secret_storage import get_secret_manager, password_spec
+        return get_secret_manager().lookup(password_spec(host, username))
 
     def delete_password(self, host: str, username: str) -> bool:
-        """Delete stored password for host/user from system keyring"""
-        removed_any = False
-        # Try libsecret first
-        if not is_macos() and self.libsecret_available and _SECRET_SCHEMA is not None:
-            try:
-                attributes = {
-                    'application': _SERVICE_NAME,
-                    'type': 'ssh_password',
-                    'host': host,
-                    'username': username,
-                }
-                removed_any = Secret.password_clear_sync(_SECRET_SCHEMA, attributes, None) or removed_any
-            except Exception as e:
-                logger.error(f"Error deleting password (libsecret) for {username}@{host}: {e}")
-
-        # Also attempt keyring cleanup so both stores are cleared if both were used
-        if self._should_use_keyring_fallback():
-            backend_name = self._get_keyring_backend_name()
-            try:
-                keyring.delete_password(_SERVICE_NAME, f"{username}@{host}")
-                removed_any = True or removed_any
-                logger.debug(
-                    "Password entry cleared via keyring backend %s for %s@%s",
-                    backend_name,
-                    username,
-                    host,
-                )
-            except Exception as e:
-                logger.debug(
-                    "Keyring backend %s failed to delete %s@%s: %s",
-                    backend_name,
-                    username,
-                    host,
-                    e,
-                )
+        """Delete a stored password from all available secret backends."""
+        from .secret_storage import get_secret_manager, password_spec
+        removed_any = get_secret_manager().delete(password_spec(host, username))
         if removed_any:
             logger.debug(f"Deleted stored password for {username}@{host}")
         return removed_any

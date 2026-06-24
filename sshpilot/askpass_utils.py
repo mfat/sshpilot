@@ -158,22 +158,13 @@ def _extract_key_path(prompt: str) -> str:
 
 
 def get_secret_schema() -> "Secret.Schema":
-    """Return the shared Secret.Schema for stored secrets."""
+    """Return the shared Secret.Schema for stored secrets.
 
-    global _SCHEMA
-    if _SCHEMA is None and Secret is not None:
-        _SCHEMA = Secret.Schema.new(
-            "io.github.mfat.sshpilot",
-            Secret.SchemaFlags.NONE,
-            {
-                "application": Secret.SchemaAttributeType.STRING,
-                "type": Secret.SchemaAttributeType.STRING,
-                "key_path": Secret.SchemaAttributeType.STRING,
-                "host": Secret.SchemaAttributeType.STRING,
-                "username": Secret.SchemaAttributeType.STRING,
-            },
-        )
-    return _SCHEMA
+    Delegates to :func:`sshpilot.secret_storage.get_schema` so a single schema
+    definition is shared by all backends and call sites.
+    """
+    from .secret_storage import get_schema
+    return get_schema()
 
 
 def get_askpass_log_path() -> str:
@@ -692,118 +683,52 @@ def run_askpass_and_write(prompt: str) -> int:
 
 
 def store_passphrase(key_path: str, passphrase: str) -> bool:
-    """Store a key passphrase using keyring (macOS) or libsecret (Linux)."""
+    """Store a key passphrase via the selected secret backend."""
 
     if not key_path:
         return False
 
+    from .secret_storage import get_secret_manager, passphrase_spec
+
     canonical_path = _normalize_key_path_for_storage(key_path)
-
-    # Try keyring first (macOS)
-    if keyring and is_macos():
-        try:
-            keyring.set_password('sshPilot', canonical_path, passphrase)
-            return True
-        except Exception as e:
-            logger.debug(f"Failed to store passphrase in keyring: {e}")
-            return False
-
-    # Fall back to libsecret (Linux)
-    schema = get_secret_schema()
-    if not schema:
-        return False
-    attributes = {
-        "application": "sshPilot",
-        "type": "key_passphrase",
-        "key_path": canonical_path,
-    }
-    try:
-        Secret.password_store_sync(
-            schema,
-            attributes,
-            Secret.COLLECTION_DEFAULT,
-            f"SSH Key Passphrase: {os.path.basename(canonical_path)}",
-            passphrase,
-            None,
-        )
-        return True
-    except Exception:
-        return False
+    return get_secret_manager().store(passphrase_spec(canonical_path), passphrase)
 
 
 def lookup_passphrase(key_path: str) -> str:
-    """Look up a key passphrase using keyring (macOS) or libsecret (Linux)."""
+    """Look up a key passphrase via the selected secret backend.
+
+    Tries each normalized candidate path; the backend itself falls through to the
+    platform default stores so passphrases saved under a previous backend resolve.
+    """
 
     candidates = _get_key_path_lookup_candidates(key_path)
     if not candidates:
         return ""
 
-    # Try keyring first (macOS)
-    if keyring and is_macos():
-        for candidate in candidates:
-            try:
-                passphrase = keyring.get_password('sshPilot', candidate)
-            except Exception as e:
-                logger.debug(f"Failed to retrieve passphrase from keyring: {e}")
-                break
+    from .secret_storage import get_secret_manager, passphrase_spec
 
-            if passphrase:
-                return passphrase
-
-    # Fall back to libsecret (Linux)
-    schema = get_secret_schema()
-    if not schema:
-        return ""
+    manager = get_secret_manager()
     for candidate in candidates:
-        attributes = {
-            "application": "sshPilot",
-            "type": "key_passphrase",
-            "key_path": candidate,
-        }
-        try:
-            result = Secret.password_lookup_sync(schema, attributes, None)
-        except Exception:
-            continue
+        result = manager.lookup(passphrase_spec(candidate))
         if result:
             return result
     return ""
 
 
 def clear_passphrase(key_path: str) -> bool:
-    """Remove a stored key passphrase using keyring (macOS) or libsecret (Linux)."""
+    """Remove a stored key passphrase from all available secret backends."""
 
     candidates = _get_key_path_lookup_candidates(key_path)
     if not candidates:
         return False
 
-    # Try keyring first (macOS)
-    if keyring and is_macos():
-        removed_any = False
-        for candidate in candidates:
-            try:
-                keyring.delete_password('sshPilot', candidate)
-                removed_any = True
-            except Exception as e:
-                logger.debug(f"Failed to delete passphrase from keyring: {e}")
-        if removed_any:
-            return True
+    from .secret_storage import get_secret_manager, passphrase_spec
 
-    # Fall back to libsecret (Linux)
-    schema = get_secret_schema()
-    if not schema:
-        return False
+    manager = get_secret_manager()
     removed_any = False
     for candidate in candidates:
-        attributes = {
-            "application": "sshPilot",
-            "type": "key_passphrase",
-            "key_path": candidate,
-        }
-        try:
-            if Secret.password_clear_sync(schema, attributes, None):
-                removed_any = True
-        except Exception:
-            continue
+        if manager.delete(passphrase_spec(candidate)):
+            removed_any = True
     return removed_any
 
 def ensure_passphrase_askpass() -> str:

@@ -267,16 +267,28 @@ class StartupInfo:
         else:
             storage['keyring'] = {'available': False, 'accessible': False}
         
-        # Determine effective backend
+        # Determine effective backend via the pluggable secret manager (respects
+        # the configured selection, including 'pass').
         effective_backend = 'none'
-        if not is_macos() and storage.get('libsecret', {}).get('accessible'):
-            effective_backend = 'libsecret'
-        elif storage.get('keyring', {}).get('accessible'):
-            backend_name = storage.get('keyring', {}).get('backend', 'unknown')
-            effective_backend = f"keyring ({backend_name})"
-        
+        try:
+            from .secret_storage import get_secret_manager
+            manager = get_secret_manager()
+            try:
+                from .config import Config
+                manager.set_selected(Config().get_setting('secrets.backend', 'auto'))
+            except Exception:
+                pass
+            effective_backend = manager.active_backend_name
+            storage['available_backends'] = manager.available_backends()
+        except Exception:
+            if not is_macos() and storage.get('libsecret', {}).get('accessible'):
+                effective_backend = 'libsecret'
+            elif storage.get('keyring', {}).get('accessible'):
+                backend_name = storage.get('keyring', {}).get('backend', 'unknown')
+                effective_backend = f"keyring ({backend_name})"
+
         storage['effective_backend'] = effective_backend
-        
+
         return storage
     
     def _get_config_info(self):

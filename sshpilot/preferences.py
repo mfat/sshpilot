@@ -1758,6 +1758,36 @@ class PreferencesWindow(Adw.Window):
 
             advanced_page.add(operation_group)
 
+            # Secret storage backend selection
+            secrets_group = Adw.PreferencesGroup(
+                title="Secret Storage",
+                description="Where sshPilot stores passwords and key passphrases. "
+                            "Switching does not migrate existing secrets.",
+            )
+            self.secret_backend_row = Adw.ComboRow()
+            self.secret_backend_row.set_title("Secret storage backend")
+            try:
+                from .secret_storage import get_secret_manager
+                available = get_secret_manager().available_backends()
+            except Exception:
+                available = []
+            # Model: "Automatic" + each available backend name.
+            self._secret_backend_ids = ['auto'] + available
+            secret_model = Gtk.StringList()
+            secret_model.append("Automatic")
+            for name in available:
+                secret_model.append(name)
+            self.secret_backend_row.set_model(secret_model)
+            current_backend = str(self.config.get_setting('secrets.backend', 'auto'))
+            try:
+                current_index = self._secret_backend_ids.index(current_backend)
+            except ValueError:
+                current_index = 0
+            self.secret_backend_row.set_selected(current_index)
+            self.secret_backend_row.connect('notify::selected', self.on_secret_backend_changed)
+            secrets_group.add(self.secret_backend_row)
+            advanced_page.add(secrets_group)
+
             # Application behavior group
             behavior_group = Adw.PreferencesGroup(title="Application Behavior")
             
@@ -2219,6 +2249,21 @@ class PreferencesWindow(Adw.Window):
                 self.shortcuts_editor_page.set_pass_through_enabled(active)
             except Exception as exc:
                 logger.debug("Failed to propagate pass-through state to shortcut editor: %s", exc)
+
+    def on_secret_backend_changed(self, combo, _pspec):
+        """Persist the selected secret storage backend and apply it live."""
+        try:
+            index = combo.get_selected()
+            ids = getattr(self, '_secret_backend_ids', ['auto'])
+            name = ids[index] if 0 <= index < len(ids) else 'auto'
+            self.config.set_setting('secrets.backend', name)
+            from .secret_storage import get_secret_manager
+            get_secret_manager().set_selected(name)
+            # Propagate to child processes (e.g. the askpass helper).
+            os.environ['SSHPILOT_SECRET_BACKEND'] = name
+            logger.info("Secret storage backend set to: %s", name)
+        except Exception as exc:
+            logger.error("Failed to update secret storage backend: %s", exc)
 
     def on_copy_on_select_toggled(self, switch, _pspec):
         """Persist the terminal copy-on-selection preference."""

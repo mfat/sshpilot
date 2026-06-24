@@ -10,6 +10,14 @@ class DummySecretModule:
     class SchemaFlags:
         NONE = 0
 
+    class ServiceFlags:
+        NONE = 0
+
+    class Service:
+        @staticmethod
+        def get_sync(_flags):
+            return object()
+
     COLLECTION_DEFAULT = object()
 
     class Schema:
@@ -40,15 +48,19 @@ def _reset_dummy_store():
 
 
 def test_lookup_passphrase_handles_home_relative_alias(monkeypatch, tmp_path):
-    from sshpilot import askpass_utils
+    from sshpilot import askpass_utils, secret_storage
 
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    monkeypatch.delenv("SSHPILOT_SECRET_BACKEND", raising=False)
 
-    monkeypatch.setattr(askpass_utils, "Secret", DummySecretModule, raising=False)
-    monkeypatch.setattr(askpass_utils, "keyring", None, raising=False)
-    monkeypatch.setattr(askpass_utils, "is_macos", lambda: False, raising=False)
-    monkeypatch.setattr(askpass_utils, "_SCHEMA", None, raising=False)
+    # Storage now lives in secret_storage; patch the backend layer there and
+    # rebuild the manager singleton against the dummy libsecret.
+    monkeypatch.setattr(secret_storage, "Secret", DummySecretModule, raising=False)
+    monkeypatch.setattr(secret_storage, "keyring", None, raising=False)
+    monkeypatch.setattr(secret_storage, "is_macos", lambda: False, raising=False)
+    monkeypatch.setattr(secret_storage, "_SCHEMA", None, raising=False)
+    monkeypatch.setattr(secret_storage, "_MANAGER", None, raising=False)
 
     key_path = "~/.ssh/example_key"
     absolute_path = os.path.realpath(os.path.expanduser(key_path))
@@ -61,15 +73,17 @@ def test_lookup_passphrase_handles_home_relative_alias(monkeypatch, tmp_path):
 
 
 def test_clear_passphrase_removes_legacy_alias(monkeypatch, tmp_path):
-    from sshpilot import askpass_utils
+    from sshpilot import askpass_utils, secret_storage
 
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    monkeypatch.delenv("SSHPILOT_SECRET_BACKEND", raising=False)
 
-    monkeypatch.setattr(askpass_utils, "Secret", DummySecretModule, raising=False)
-    monkeypatch.setattr(askpass_utils, "keyring", None, raising=False)
-    monkeypatch.setattr(askpass_utils, "is_macos", lambda: False, raising=False)
-    monkeypatch.setattr(askpass_utils, "_SCHEMA", None, raising=False)
+    monkeypatch.setattr(secret_storage, "Secret", DummySecretModule, raising=False)
+    monkeypatch.setattr(secret_storage, "keyring", None, raising=False)
+    monkeypatch.setattr(secret_storage, "is_macos", lambda: False, raising=False)
+    monkeypatch.setattr(secret_storage, "_SCHEMA", None, raising=False)
+    monkeypatch.setattr(secret_storage, "_MANAGER", None, raising=False)
 
     legacy_key_path = "~/.ssh/key_symlink"
     canonical_path = os.path.realpath(os.path.expanduser(legacy_key_path))
