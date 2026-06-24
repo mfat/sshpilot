@@ -221,20 +221,73 @@ class PropertiesDialog(Adw.Window):
 
     @staticmethod
     def _format_owner(uid, gid) -> str:
-        """Format uid/gid, resolving to names locally when possible."""
+        """Format uid/gid, resolving to names on the local machine."""
         if uid is None or gid is None:
             return "—"
         user, group = str(uid), str(gid)
         try:
             import pwd
+
             user = pwd.getpwuid(int(uid)).pw_name
         except Exception:
             pass
         try:
             import grp
+
             group = grp.getgrgid(int(gid)).gr_name
         except Exception:
             pass
+        return f"{user} : {group}"
+
+    @staticmethod
+    def _lookup_name_in_passwd(content: str, uid: int) -> Optional[str]:
+        target = str(int(uid))
+        for line in content.splitlines():
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split(":")
+            if len(parts) >= 3 and parts[2] == target:
+                return parts[0]
+        return None
+
+    @staticmethod
+    def _lookup_name_in_group(content: str, gid: int) -> Optional[str]:
+        target = str(int(gid))
+        for line in content.splitlines():
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split(":")
+            if len(parts) >= 3 and parts[2] == target:
+                return parts[0]
+        return None
+
+    @staticmethod
+    def _read_remote_text(sftp, path: str) -> Optional[str]:
+        try:
+            with sftp.open(path, "r") as fh:
+                data = fh.read()
+        except Exception:
+            return None
+        if isinstance(data, bytes):
+            return data.decode("utf-8", errors="replace")
+        return data
+
+    @classmethod
+    def _format_remote_owner(cls, sftp, uid, gid) -> str:
+        """Resolve owner/group from the remote host, not the local passwd database."""
+        if uid is None or gid is None:
+            return "—"
+        user, group = str(uid), str(gid)
+        passwd_text = cls._read_remote_text(sftp, "/etc/passwd")
+        if passwd_text:
+            name = cls._lookup_name_in_passwd(passwd_text, int(uid))
+            if name:
+                user = name
+        group_text = cls._read_remote_text(sftp, "/etc/group")
+        if group_text:
+            name = cls._lookup_name_in_group(group_text, int(gid))
+            if name:
+                group = name
         return f"{user} : {group}"
 
     def _create_created_row(self) -> Gtk.Widget:
@@ -309,26 +362,36 @@ class PropertiesDialog(Adw.Window):
                     # Get file attributes from SFTP asynchronously
                     def _get_attr():
                         assert self._sftp_manager._sftp is not None
-                        logger.debug(f"PropertiesDialog: Background thread calling stat({remote_path})")
-                        attr = self._sftp_manager._sftp.stat(remote_path)
-                        logger.debug(f"PropertiesDialog: stat() returned: {attr}, st_mode={getattr(attr, 'st_mode', None)}")
-                        return attr
+                        sftp = self._sftp_manager._sftp
+                        logger.debug(
+                            "PropertiesDialog: Background thread calling stat(%s)",
+                            remote_path,
+                        )
+                        attr = sftp.stat(remote_path)
+                        logger.debug(
+                            "PropertiesDialog: stat() returned: %s, st_mode=%s",
+                            attr,
+                            getattr(attr, "st_mode", None),
+                        )
+                        uid = getattr(attr, "st_uid", None)
+                        gid = getattr(attr, "st_gid", None)
+                        owner_text = (
+                            self._format_remote_owner(sftp, uid, gid)
+                            if uid is not None and gid is not None
+                            else None
+                        )
+                        return attr, owner_text
                     
                     def _update_permissions(future):
                         owner_text = None
                         modified_text = None
                         try:
-                            attr = future.result()
+                            attr, owner_text = future.result()
                             if attr and hasattr(attr, 'st_mode') and attr.st_mode:
                                 mode = attr.st_mode
                                 new_text = f"{_mode_to_str(mode)} ({_mode_to_octal(mode)})"
                             else:
                                 new_text = "Create and Delete Files" if self._entry.is_dir else "Read and Write"
-                            # Owner/group and precise mtime from the same stat.
-                            uid = getattr(attr, 'st_uid', None)
-                            gid = getattr(attr, 'st_gid', None)
-                            if uid is not None and gid is not None:
-                                owner_text = self._format_owner(uid, gid)
                             mtime = getattr(attr, 'st_mtime', None)
                             if mtime:
                                 modified_text = _human_time(mtime)
