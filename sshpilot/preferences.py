@@ -904,7 +904,44 @@ class PreferencesWindow(Adw.Window):
             keyboard_group.add(self.pass_through_switch)
 
             terminal_page.add(keyboard_group)
-            
+
+            # Mouse behavior group
+            mouse_group = Adw.PreferencesGroup(title="Mouse")
+
+            self.copy_on_select_switch = Adw.SwitchRow()
+            self.copy_on_select_switch.set_title("Copy on selection")
+            self.copy_on_select_switch.set_subtitle(
+                "Automatically copy selected text to the clipboard"
+            )
+            try:
+                copy_on_select_active = bool(
+                    self.config.get_setting('terminal.copy_on_select', False)
+                )
+            except Exception:
+                copy_on_select_active = False
+            self.copy_on_select_switch.set_active(copy_on_select_active)
+            self.copy_on_select_switch.connect('notify::active', self.on_copy_on_select_toggled)
+            mouse_group.add(self.copy_on_select_switch)
+
+            self.paste_on_right_click_switch = Adw.SwitchRow()
+            self.paste_on_right_click_switch.set_title("Paste on right-click")
+            self.paste_on_right_click_switch.set_subtitle(
+                "Right-click pastes; Shift+right-click opens the menu"
+            )
+            try:
+                paste_on_right_click_active = bool(
+                    self.config.get_setting('terminal.paste_on_right_click', False)
+                )
+            except Exception:
+                paste_on_right_click_active = False
+            self.paste_on_right_click_switch.set_active(paste_on_right_click_active)
+            self.paste_on_right_click_switch.connect(
+                'notify::active', self.on_paste_on_right_click_toggled
+            )
+            mouse_group.add(self.paste_on_right_click_switch)
+
+            terminal_page.add(mouse_group)
+
             # Preferred Terminal group (shown when external terminals are available)
             if not should_hide_external_terminal_options():
                 terminal_choice_group = Adw.PreferencesGroup(title="Preferred Terminal")
@@ -2182,6 +2219,20 @@ class PreferencesWindow(Adw.Window):
                 self.shortcuts_editor_page.set_pass_through_enabled(active)
             except Exception as exc:
                 logger.debug("Failed to propagate pass-through state to shortcut editor: %s", exc)
+
+    def on_copy_on_select_toggled(self, switch, _pspec):
+        """Persist the terminal copy-on-selection preference."""
+        try:
+            self.config.set_setting('terminal.copy_on_select', bool(switch.get_active()))
+        except Exception as exc:
+            logger.error("Failed to update copy-on-select mode: %s", exc)
+
+    def on_paste_on_right_click_toggled(self, switch, _pspec):
+        """Persist the terminal paste-on-right-click preference."""
+        try:
+            self.config.set_setting('terminal.paste_on_right_click', bool(switch.get_active()))
+        except Exception as exc:
+            logger.error("Failed to update paste-on-right-click mode: %s", exc)
 
     def _set_shortcut_controls_enabled(self, enabled: bool):
         for widget in (getattr(self, '_shortcuts_row', None), getattr(self, '_shortcuts_button', None)):

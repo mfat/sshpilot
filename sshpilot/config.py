@@ -163,6 +163,8 @@ class Config(GObject.Object):
                 'audible_bell': False,
                 'term': None,
                 'pass_through_mode': False,
+                'copy_on_select': False,
+                'paste_on_right_click': False,
                 'encoding': 'UTF-8',
             },
             'ui': {

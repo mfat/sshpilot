@@ -2190,6 +2190,13 @@ class TerminalWidget(Gtk.Box):
                 except Exception as e:
                     logger.warning(f"Could not connect contents-changed: {e}")
 
+                # Copy-on-select: when enabled in preferences, mirror the
+                # selection into the clipboard automatically.
+                try:
+                    self.vte.connect('selection-changed', self._on_selection_changed)
+                except Exception as e:
+                    logger.warning(f"Could not connect selection-changed: {e}")
+
                 # Key controller – tracks Ctrl state for Ctrl+click URL opening.
                 # Reading it from the click event is unreliable; a dedicated key
                 # controller is more robust.
@@ -3072,6 +3079,29 @@ class TerminalWidget(Gtk.Box):
                     logger.debug(f"Context menu gesture: button={btn}, x={x}, y={y}")
                     if btn not in (Gdk.BUTTON_SECONDARY, 3):
                         logger.debug(f"Not a right-click button: {btn}")
+                        return
+                    # Paste-on-right-click: when enabled, a plain right-click
+                    # pastes the clipboard; Shift+right-click still opens the menu.
+                    try:
+                        paste_on_rc = bool(
+                            self.config.get_setting('terminal.paste_on_right_click', False)
+                        )
+                    except Exception:
+                        paste_on_rc = False
+                    shift_held = False
+                    try:
+                        state = gest.get_current_event_state()
+                        shift_held = bool(state & Gdk.ModifierType.SHIFT_MASK)
+                    except Exception:
+                        shift_held = False
+                    if paste_on_rc and not shift_held:
+                        gest.set_state(Gtk.EventSequenceState.CLAIMED)
+                        try:
+                            if self.backend:
+                                self.backend.grab_focus()
+                        except Exception:
+                            pass
+                        self.paste_text()
                         return
                     # Stop event propagation to prevent other context menus
                     gest.set_state(Gtk.EventSequenceState.CLAIMED)
@@ -4211,6 +4241,21 @@ class TerminalWidget(Gtk.Box):
         """Handle terminal bell"""
         # Could implement visual bell or notification here
         pass
+
+    def _on_selection_changed(self, *_args):
+        """Copy-on-select: mirror the terminal selection into the clipboard when
+        the preference is enabled. Silent (no toast — the signal fires on every
+        change during a drag-select), and only when a selection actually exists
+        (the signal also fires on deselect)."""
+        try:
+            if not self.config.get_setting('terminal.copy_on_select', False):
+                return
+            if self.backend and self.backend.get_has_selection():
+                self.backend.copy_clipboard()
+            elif self.vte is not None and self.vte.get_has_selection():
+                self.vte.copy_clipboard_format(Vte.Format.TEXT)
+        except Exception:
+            logger.debug("copy-on-select failed", exc_info=True)
 
     def copy_text(self):
         """Copy selected text to clipboard"""
