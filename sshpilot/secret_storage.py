@@ -14,8 +14,14 @@ Built-in backends:
 
 Selection (``SecretManager.set_selected`` / config ``secrets.backend``):
 - ``auto``  — platform default: macOS → keyring; Linux → libsecret then keyring.
-- a name    — that backend first, then the platform defaults as read-only
-  fall-through so secrets saved under a previous backend still resolve.
+- a name    — that backend first, then the platform defaults as store fallback.
+
+Operations:
+- ``store`` — first available backend in the selected order (with fallback on
+  failure).
+- ``lookup`` / ``delete`` — selected order first, then every other registered
+  backend that is available (e.g. ``pass`` while on ``auto``), so secrets are
+  not orphaned when the user switches backends.
 
 The module is GTK-free so it can be imported by the ``--askpass`` subprocess; it
 lazily imports ``Secret`` and ``keyring``.
@@ -31,8 +37,8 @@ import logging
 import os
 import shutil
 import subprocess
-from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Optional
+from dataclasses import dataclass
+from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +113,16 @@ class SecretSpec:
     pass_path: str
 
 
+def _pass_segment(value: str) -> str:
+    """Make a string safe as a single ``pass`` path segment.
+
+    ``pass`` treats ``/`` as a directory separator, so a hostname, username or key
+    path containing slashes would scatter entries across the store (or escape it).
+    Replace path separators and control characters with ``_``.
+    """
+    return "".join("_" if (ch in "/\\" or ord(ch) < 0x20) else ch for ch in value)
+
+
 def password_spec(host: str, username: str) -> SecretSpec:
     """Spec for a host login password (also used by plugin secrets)."""
     account = f"{username}@{host}"
@@ -120,7 +136,7 @@ def password_spec(host: str, username: str) -> SecretSpec:
             "username": username,
         },
         label=f"{SERVICE_NAME}: {account}",
-        pass_path=f"sshpilot/password/{account}",
+        pass_path=f"sshpilot/password/{_pass_segment(account)}",
     )
 
 
@@ -136,7 +152,7 @@ def passphrase_spec(canonical_key_path: str) -> SecretSpec:
             "key_path": canonical_key_path,
         },
         label=f"SSH Key Passphrase: {os.path.basename(canonical_key_path)}",
-        pass_path=f"sshpilot/passphrase/{canonical_key_path.lstrip('/')}",
+        pass_path=f"sshpilot/passphrase/{_pass_segment(canonical_key_path)}",
     )
 
 
@@ -150,6 +166,10 @@ class SecretBackend:
     when their dependency is missing (``is_available()`` reports readiness)."""
 
     name: str = "base"
+
+    def describe(self) -> str:
+        """Human/diagnostic label (may include sub-backend detail)."""
+        return self.name
 
     def is_available(self) -> bool:
         raise NotImplementedError
@@ -215,6 +235,14 @@ class LibSecretBackend(SecretBackend):
 class KeyringBackend(SecretBackend):
     name = "keyring"
 
+    def describe(self) -> str:
+        if keyring is None:
+            return "keyring"
+        try:
+            return f"keyring:{keyring.get_keyring().__class__.__name__}"
+        except Exception:
+            return "keyring"
+
     def is_available(self) -> bool:
         if keyring is None:
             return False
@@ -254,9 +282,15 @@ class PassBackend(SecretBackend):
 
     Entries are stored at ``spec.pass_path`` (e.g. ``sshpilot/password/u@h``).
     Requires ``pass`` on PATH and an initialized store; gpg-agent handles unlock.
+
+    Note: like the synchronous libsecret calls, a ``pass`` operation can block the
+    calling thread while gpg-agent shows a pinentry prompt. A timeout guards
+    against an indefinite hang; running secret I/O off the main thread is future
+    work.
     """
 
     name = "pass"
+    _TIMEOUT = 120  # seconds — generous enough for a pinentry prompt
 
     def __init__(self, pass_path: str = "pass") -> None:
         self._bin = shutil.which(pass_path) or None
@@ -277,6 +311,7 @@ class PassBackend(SecretBackend):
             capture_output=True,
             env=os.environ.copy(),
             check=False,
+            timeout=self._TIMEOUT,
         )
 
     def store(self, spec: SecretSpec, secret: str) -> bool:
@@ -317,11 +352,13 @@ class PassBackend(SecretBackend):
 class SecretManager:
     """Selects and orchestrates secret backends.
 
-    - ``store`` writes to the first available backend in the selected order,
-      falling back on failure (mirrors the old libsecret→keyring fallback).
-    - ``lookup`` tries the selected backend first, then the platform defaults, so
-      secrets stored under a previous backend still resolve.
-    - ``delete`` clears from every available backend.
+    - ``store`` — :meth:`_ordered_backends` only: first available backend in the
+      selected order, falling back on failure (mirrors the old libsecret→keyring
+      fallback).
+    - ``lookup`` / ``delete`` — :meth:`_all_available_backends`: selected order
+      first, then any other registered backend that is available, so secrets
+      stored under a non-selected backend (e.g. ``pass`` while on ``auto``) still
+      resolve and can be cleared.
     """
 
     def __init__(self) -> None:
@@ -369,6 +406,19 @@ class SecretManager:
                 result.append(backend)
         return result
 
+    def _all_available_backends(self) -> List[SecretBackend]:
+        """Backends to consult for read/clear: the selected+legacy order first,
+        then any other registered backend that is available (e.g. ``pass`` while
+        on ``auto``) so secrets stored under a non-selected backend are never
+        orphaned."""
+        result = self._ordered_backends()
+        seen = {b.name for b in result}
+        for name, backend in self._backends.items():
+            if name not in seen and backend.is_available():
+                result.append(backend)
+                seen.add(name)
+        return result
+
     def available_backends(self) -> List[str]:
         """Names of all registered backends that are currently usable."""
         return [n for n, b in self._backends.items() if b.is_available()]
@@ -378,6 +428,12 @@ class SecretManager:
         """The backend that ``store`` would use right now (for diagnostics/UI)."""
         backends = self._ordered_backends()
         return backends[0].name if backends else "none"
+
+    def active_backend_label(self) -> str:
+        """Like :attr:`active_backend_name` but with sub-backend detail (e.g.
+        ``keyring:KWalletKeyring``) for logs/support."""
+        backends = self._ordered_backends()
+        return backends[0].describe() if backends else "none"
 
     # -- operations ------------------------------------------------------
     def store(self, spec: SecretSpec, secret: str) -> bool:
@@ -389,7 +445,7 @@ class SecretManager:
         return False
 
     def lookup(self, spec: SecretSpec) -> Optional[str]:
-        for backend in self._ordered_backends():
+        for backend in self._all_available_backends():
             value = backend.lookup(spec)
             if value:
                 return value
@@ -397,7 +453,7 @@ class SecretManager:
 
     def delete(self, spec: SecretSpec) -> bool:
         removed = False
-        for backend in self._ordered_backends():
+        for backend in self._all_available_backends():
             if backend.delete(spec):
                 removed = True
         return removed

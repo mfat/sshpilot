@@ -20,34 +20,18 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple, Union, Set
 
 from .ssh_config_utils import resolve_ssh_config_files, get_effective_ssh_config, expand_ssh_tokens
-from .platform_utils import is_macos, get_config_dir, get_ssh_dir
+from .platform_utils import get_config_dir, get_ssh_dir
 from .key_utils import _is_private_key
 from .ssh_connection_builder import build_ssh_connection, ConnectionContext
 
-try:
-    import gi
-    gi.require_version('Secret', '1')
-    from gi.repository import Secret
-except Exception:
-    Secret = None
-try:
-    import keyring
-except Exception:
-    keyring = None
 import socket
 import time
 from gi.repository import GObject, GLib
 from .askpass_utils import (
     clear_passphrase,
-    get_secret_schema,
     lookup_passphrase,
     store_passphrase,
 )
-
-if Secret is not None:
-    _SECRET_SCHEMA = get_secret_schema()
-else:
-    _SECRET_SCHEMA = None
 
 # Set up asyncio event loop for GTK integration
 if os.name == 'posix':
@@ -834,11 +818,8 @@ class ConnectionManager(GObject.Object):
         self.ssh_config_path = ''
         self.known_hosts_path = ''
 
-        # Track credential storage state
-        self.libsecret_available = False
+        # Diagnostic label of the active secret backend (set during init).
         self.secure_storage_backend = 'uninitialized'
-        self._keyring_backend_name: Optional[str] = None
-        self._keyring_used = False
 
         # Initialize SSH config paths
         self.set_isolated_mode(isolated_mode)
@@ -967,37 +948,6 @@ class ConnectionManager(GObject.Object):
             return identifier
         return f"connection-{id(connection)}"
 
-    def _get_keyring_backend_name(self) -> str:
-        """Return a descriptive name for the active keyring backend."""
-
-        if self._keyring_backend_name:
-            return self._keyring_backend_name
-        if keyring is None:
-            return 'unavailable'
-        try:
-            backend = keyring.get_keyring()
-            self._keyring_backend_name = backend.__class__.__name__
-        except Exception:
-            self._keyring_backend_name = 'unavailable'
-        return self._keyring_backend_name
-
-    def _should_use_keyring_fallback(self, *, force: bool = False) -> bool:
-        """Return True when we should consult the cross-platform keyring."""
-
-        if keyring is None:
-            return False
-        if force:
-            return True
-        if self.secure_storage_backend in ('uninitialized', 'none'):
-            return True
-        if self.secure_storage_backend.startswith('keyring'):
-            return True
-        if self._keyring_used:
-            return True
-        if is_macos():
-            return True
-        return False
-
     def set_isolated_mode(self, isolated: bool):
         """Switch between standard and isolated SSH configuration"""
         self.isolated_mode = bool(isolated)
@@ -1107,7 +1057,6 @@ class ConnectionManager(GObject.Object):
         
         # Initialize secure storage via the pluggable secret manager.
         self.secure_storage_backend = 'none'
-        self.libsecret_available = False
         try:
             from .secret_storage import get_secret_manager
             manager = get_secret_manager()
@@ -1120,8 +1069,7 @@ class ConnectionManager(GObject.Object):
             # Propagate the selection to child processes (e.g. the askpass helper)
             # so they resolve the same backend.
             os.environ['SSHPILOT_SECRET_BACKEND'] = str(selected or 'auto')
-            self.libsecret_available = 'libsecret' in manager.available_backends()
-            self.secure_storage_backend = manager.active_backend_name
+            self.secure_storage_backend = manager.active_backend_label()
             logger.info(
                 "Secure storage backend: %s (selected=%s)",
                 self.secure_storage_backend, selected,
@@ -1794,9 +1742,10 @@ class ConnectionManager(GObject.Object):
     # --- Plugin secrets ----------------------------------------------------
     #
     # Namespaced per plugin id so a plugin can never read another plugin's
-    # (or a connection's) secrets. Reuses the store_password() dual-backend
-    # path with a reserved host identifier: real SSH hosts are stored under
-    # their hostname, plugin secrets under 'sshpilot-plugin/<id>'.
+    # (or a connection's) secrets. Reuses the store_password() path — which routes
+    # through the configurable secret backend (see secret_storage.py) — with a
+    # reserved host identifier: real SSH hosts are stored under their hostname,
+    # plugin secrets under 'sshpilot-plugin/<id>'.
 
     @staticmethod
     def _plugin_secret_host(plugin_id: str) -> str:

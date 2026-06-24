@@ -12,11 +12,15 @@ from sshpilot.secret_storage import (
 
 
 class FakeBackend(SecretBackend):
-    def __init__(self, name, available=True):
+    def __init__(self, name, available=True, label=None):
         self.name = name
         self._available = available
+        self._label = label
         self.fail_store = False
         self.data = {}
+
+    def describe(self):
+        return self._label or self.name
 
     def is_available(self):
         return self._available
@@ -74,7 +78,7 @@ def test_passphrase_spec_legacy_format():
         'type': 'key_passphrase',
         'key_path': '/home/u/.ssh/id_ed25519',
     }
-    assert spec.pass_path == 'sshpilot/passphrase/home/u/.ssh/id_ed25519'
+    assert spec.pass_path == 'sshpilot/passphrase/_home_u_.ssh_id_ed25519'
 
 
 # --- manager semantics -------------------------------------------------------
@@ -144,6 +148,55 @@ def test_unavailable_backends_skipped(manager):
     assert mgr.active_backend_name == 'keyring'
 
 
+def test_lookup_and_delete_reach_nonselected_available_backend(manager):
+    # A secret living only in an available backend that is NOT part of the
+    # selected/legacy order (e.g. `pass` while on `auto`) must still resolve and
+    # delete — otherwise switching backends orphans secrets.
+    mgr, primary, fallback = manager
+    extra = mgr._backends['pass']
+    extra._available = True
+    spec = password_spec('h', 'u')
+    extra.data[spec.keyring_account] = 'in-pass'
+    assert mgr.lookup(spec) == 'in-pass'        # auto order is libsecret,keyring
+    assert mgr.delete(spec) is True
+    assert spec.keyring_account not in extra.data
+
+
+def test_active_backend_label_uses_describe(monkeypatch):
+    monkeypatch.setattr(ss, 'is_macos', lambda: False)
+    mgr = SecretManager()
+    mgr._backends = {
+        'libsecret': FakeBackend('libsecret', label='libsecret'),
+        'keyring': FakeBackend('keyring', label='keyring:KWalletKeyring'),
+    }
+    assert mgr.active_backend_label() == 'libsecret'
+    mgr.set_selected('keyring')
+    assert mgr.active_backend_label() == 'keyring:KWalletKeyring'
+
+
+def test_keyring_backend_describe(monkeypatch):
+    class _Backend:
+        pass
+
+    class FakeKeyring:
+        @staticmethod
+        def get_keyring():
+            return _Backend()
+
+    monkeypatch.setattr(ss, 'keyring', FakeKeyring)
+    assert ss.KeyringBackend().describe() == 'keyring:_Backend'
+
+
+def test_pass_path_sanitized_but_keyring_account_raw():
+    spec = password_spec('ho/st', 'us/er')
+    assert spec.pass_path == 'sshpilot/password/us_er@ho_st'   # no stray '/'
+    assert spec.keyring_account == 'us/er@ho/st'               # legacy key unchanged
+
+    pspec = passphrase_spec('/home/u/.ssh/id_ed25519')
+    assert pspec.pass_path == 'sshpilot/passphrase/_home_u_.ssh_id_ed25519'
+    assert pspec.keyring_account == '/home/u/.ssh/id_ed25519'  # legacy key unchanged
+
+
 # --- pass backend argv -------------------------------------------------------
 
 def test_pass_backend_argv(monkeypatch):
@@ -154,7 +207,7 @@ def test_pass_backend_argv(monkeypatch):
         stdout = b'secretvalue\n'
         stderr = b''
 
-    def fake_run(argv, input=None, capture_output=None, env=None, check=None):
+    def fake_run(argv, input=None, capture_output=None, env=None, check=None, timeout=None):
         calls.append((list(argv), input))
         return _Result()
 

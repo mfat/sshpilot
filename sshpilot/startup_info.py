@@ -278,7 +278,7 @@ class StartupInfo:
                 manager.set_selected(Config().get_setting('secrets.backend', 'auto'))
             except Exception:
                 pass
-            effective_backend = manager.active_backend_name
+            effective_backend = manager.active_backend_label()
             storage['available_backends'] = manager.available_backends()
         except Exception:
             if not is_macos() and storage.get('libsecret', {}).get('accessible'):

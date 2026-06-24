@@ -200,8 +200,9 @@ self.connect("unmap", lambda *_: self.ctx.release_multiplex(self._nick))
 ### Events — `ctx.events`
 - `subscribe(event, callback)` / `unsubscribe(event, callback)` — see [Events](#5-events). Constants are also on `ctx.events` (e.g. `ctx.events.APP_STARTED`).
 
-### Secrets — `ctx.secrets` (keyring-backed, scoped to your plugin id)
+### Secrets — `ctx.secrets` (secret-backend-backed, scoped to your plugin id)
 - `get(key) -> str | None`, `set(key, value)`, `delete(key) -> bool`. Use for credentials/tokens. No other plugin can read your secrets.
+- Storage goes through the app's configurable secret backend (`secrets.backend`): libsecret / OS keychain via keyring / `pass` / a registered custom backend. Your plugin doesn't choose the backend — the user does; the API is the same regardless.
 
 ### Settings — `ctx.settings` (app config, scoped to your plugin id)
 - `get(key, default=None)`, `set(key, value)`. For non-secret preferences; stored under `plugins.<id>.<key>`.
@@ -338,7 +339,7 @@ dependency, not a private sshPilot API.
 Both are auto-scoped by your plugin id — no manual namespacing, no collisions.
 
 ```python
-ctx.secrets.set("api_token", token)        # keyring (libsecret / OS keychain)
+ctx.secrets.set("api_token", token)        # configurable backend (libsecret / OS keychain / pass)
 token = ctx.secrets.get("api_token")
 
 ctx.settings.set("region", "fra1")          # app config: plugins.<id>.region

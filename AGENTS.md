@@ -77,11 +77,17 @@ identically. Modes:
 - **Askpass disabled** (the `use-askpass` setting is off): set no `SSH_ASKPASS`;
   ssh prompts natively on the TTY.
 
-Credentials are stored/retrieved via libsecret/keyring
-(`connection_manager.get_password` / `askpass_utils.lookup_passphrase`). The
-askpass helper (`askpass_utils.py`) is the program ssh invokes; it looks the
-passphrase up in the keyring and, failing that, shows a GTK prompt. Keyring
-autofill + the askpass prompt are advertised features — keep them working.
+Credentials are stored/retrieved through a **pluggable secret backend**
+(`secret_storage.py`): `connection_manager.get_password` /
+`askpass_utils.lookup_passphrase` delegate to `SecretManager`. The backend is
+selectable via the `secrets.backend` setting — `auto` (platform default:
+libsecret then keyring on Linux, keyring on macOS), or an explicit `libsecret` /
+`keyring` / `pass` (passwordstore.org) / registered custom backend. Reads/deletes
+fall through to every available backend so secrets aren't orphaned when the
+selection changes. The askpass helper (`askpass_utils.py`) is the program ssh
+invokes; it looks the passphrase up via the selected backend and, failing that,
+shows a GTK prompt. Keyring autofill + the askpass prompt are advertised features
+— keep them working.
 
 ### Advanced SSH options (Preferences → command)
 Preferences ▸ SSH Settings persists each advanced option under the `ssh.*`

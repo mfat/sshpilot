@@ -1771,14 +1771,20 @@ class PreferencesWindow(Adw.Window):
                 available = get_secret_manager().available_backends()
             except Exception:
                 available = []
-            # Model: "Automatic" + each available backend name.
-            self._secret_backend_ids = ['auto'] + available
+            current_backend = str(self.config.get_setting('secrets.backend', 'auto'))
+            # Model: "Automatic" + each available backend. Always include the saved
+            # backend even when it is currently unavailable, so the UI reflects the
+            # real config (and matches the manager, which honors config) instead of
+            # silently showing "Automatic".
+            self._secret_backend_ids = ['auto'] + list(available)
             secret_model = Gtk.StringList()
             secret_model.append("Automatic")
             for name in available:
                 secret_model.append(name)
+            if current_backend not in self._secret_backend_ids:
+                self._secret_backend_ids.append(current_backend)
+                secret_model.append(f"{current_backend} (unavailable)")
             self.secret_backend_row.set_model(secret_model)
-            current_backend = str(self.config.get_setting('secrets.backend', 'auto'))
             try:
                 current_index = self._secret_backend_ids.index(current_backend)
             except ValueError:
