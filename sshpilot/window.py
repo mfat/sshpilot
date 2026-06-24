@@ -240,7 +240,10 @@ def list_remote_files(
     safe_path = _normalize_remote_path(remote_path)
 
     command_path = _quote_remote_path_for_shell(safe_path)
-    list_command = f"LC_ALL=C ls -1p --color=never -- {command_path}"
+    # -L dereferences symlinks when classifying, so a symlink that points to a
+    # directory is marked with a trailing "/" (and thus shown/navigated as a
+    # folder). -p alone leaves symlinked dirs unmarked. See issue #1002.
+    list_command = f"LC_ALL=C ls -1pL --color=never -- {command_path}"
     wrapped_command = (
         "set -f; "
         "printf '__SSHPILOT_BEGIN__\\n'; "

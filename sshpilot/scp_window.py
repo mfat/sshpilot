@@ -698,8 +698,6 @@ class ScpWindowController:
                 refresh_button.set_sensitive(False)
                 list_box.set_sensitive(False)
 
-                is_directory = bool(getattr(selected_row, 'remote_is_dir', False))
-
                 def _worker():
                     # If using password authentication, strip askpass environment
                     # (askpass is only for passphrases, not passwords)
@@ -711,12 +709,18 @@ class ScpWindowController:
                     
                     # SSH_ASKPASS will handle passphrase retrieval from storage or GUI dialog if needed
                     download_details: Dict[str, Any] = {}
+                    # Always recurse: `scp -r` on a regular file just copies the
+                    # file, so it is safe for both files and directories. Relying
+                    # on the remote `ls -p` listing to decide recursion was
+                    # unreliable (e.g. symlinked directories), causing directory
+                    # downloads to run without `-r` and fail with "not a regular
+                    # file" (issue #1002).
                     success = download_file(
                         host_value,
                         username,
                         remote_path,
                         str(destination_dir),
-                        recursive=is_directory,
+                        recursive=True,
                         port=port,
                         password=session_password,
                         known_hosts_path=known_hosts_path,
