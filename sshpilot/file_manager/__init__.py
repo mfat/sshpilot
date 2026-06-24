@@ -11,7 +11,11 @@ extracted the heavy widget classes: ``AsyncSFTPManager`` (4c-i) and
 ``sshpilot.file_manager_window`` and will move in 4c-iii.
 """
 
+import logging
+
 from .exceptions import TransferCancelledException
+
+logger = logging.getLogger(__name__)
 from .format_utils import _human_size, _human_time, _mode_to_octal, _mode_to_str
 from .pane import (
     FilePane,
@@ -71,6 +75,7 @@ def create_file_manager_backend(*args, backend=None, **kwargs):
     """
 
     name = _resolve_backend_name(backend)
+    logger.info("File manager backend: %s", name)
     if name == "openssh":
         from .openssh_backend import OpenSSHSFTPManager
 

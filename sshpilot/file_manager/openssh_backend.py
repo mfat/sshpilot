@@ -522,6 +522,20 @@ class OpenSSHSFTPManager(GObject.GObject):
         except Exception as exc:  # pragma: no cover - best effort
             logger.debug("Error shutting down executor: %s", exc)
 
+    @property
+    def _sftp(self) -> Optional[OpenSSHSFTPClient]:
+        """Compatibility alias for the live SFTP client.
+
+        Some window/dialog code probes ``manager._sftp`` (a paramiko detail) for
+        liveness and for ``stat()``. The OpenSSH client exposes the same
+        ``.stat()`` (returning attrs with ``st_mode``/``st_size``/``st_mtime``),
+        so aliasing it keeps the backend a drop-in replacement.
+        """
+        return self._client
+
+    def is_connected(self) -> bool:
+        return self._client is not None
+
     # -- path helpers -----------------------------------------------------
     def _client_or_raise(self) -> OpenSSHSFTPClient:
         if self._client is None:

@@ -306,6 +306,30 @@ def test_manager_listdir_emits_directory_loaded(backend_modules, monkeypatch):
     manager.close()
 
 
+def test_manager_sftp_alias_and_is_connected(backend_modules, monkeypatch):
+    """Window/dialog code probes manager._sftp (paramiko detail) for liveness and
+    stat(); the OpenSSH backend must alias it to the live client."""
+    _, ob, proto = backend_modules
+    manager = ob.OpenSSHSFTPManager(
+        "h", "u", 22,
+        dispatcher=lambda cb, args=(), kwargs=None: cb(*args, **(kwargs or {})),
+    )
+    # Not connected yet.
+    assert manager._sftp is None
+    assert manager.is_connected() is False
+
+    client, server = _make_client(ob, proto)
+    manager._client = client
+    manager._home = "/home/alice"
+
+    assert manager._sftp is client
+    assert manager.is_connected() is True
+    # The aliased client exposes .stat() with st_mode (what PropertiesDialog reads).
+    attr = manager._sftp.stat("/home/alice/notes.txt")
+    assert attr.st_mode & 0o170000 == 0o100000  # regular file
+    manager.close()
+
+
 def test_manager_mkdir_future(backend_modules, monkeypatch):
     _, ob, proto = backend_modules
     manager, server, emitted = _make_manager(ob, proto, monkeypatch)
