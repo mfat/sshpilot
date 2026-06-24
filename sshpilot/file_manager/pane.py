@@ -2044,6 +2044,16 @@ class FilePane(Gtk.Box):
             if entry.is_dir:
                 self.emit("path-changed", os.path.join(self._current_path, entry.name))
 
+    def _entries_for_drag_at_position(self, position: int) -> List[FileEntry]:
+        """Return entries included in a drag starting at *position*."""
+        if not (0 <= position < len(self._entries)):
+            return []
+        entry = self._entries[position]
+        selected_indices = self._get_selected_indices()
+        if position in selected_indices and len(selected_indices) > 1:
+            return [self._entries[index] for index in selected_indices]
+        return [entry]
+
     def _on_drag_prepare(self, drag_source: Gtk.DragSource, x: float, y: float) -> Gdk.ContentProvider:
         """Prepare drag data when drag operation starts."""
         # Get the widget that initiated the drag
@@ -2059,6 +2069,7 @@ class FilePane(Gtk.Box):
         # parsing.  Consumers expect the payload under the "payload" key.
         payload_dict: Optional[Dict[str, Any]] = None
         if position is not None and 0 <= position < len(self._entries):
+            drag_entries = self._entries_for_drag_at_position(position)
             entry = self._entries[position]
             entry_path = os.path.join(self._current_path or "", entry.name)
             payload_dict = {
@@ -2067,6 +2078,13 @@ class FilePane(Gtk.Box):
                 "position": position,
                 "entry_name": entry.name,
                 "entry_path": entry_path,
+                "entries": [
+                    {
+                        "entry_name": drag_entry.name,
+                        "entry_path": os.path.join(self._current_path or "", drag_entry.name),
+                    }
+                    for drag_entry in drag_entries
+                ],
             }
 
         drag_data = {
@@ -2206,39 +2224,76 @@ class FilePane(Gtk.Box):
             self.show_toast("Dragged item is no longer available")
             return False
 
-        entry = next(
-            (item for item in getattr(source_pane, "_entries", []) if item.name == entry_name),
-            None,
-        )
-        if entry is None:
-            logger.debug("Drop rejected: entry %s not found in source pane", entry_name)
-            self.show_toast("Dragged item is no longer available")
-            return False
+        raw_entries = payload.get("entries")
+        if not isinstance(raw_entries, list) or not raw_entries:
+            raw_entries = [
+                {
+                    "entry_name": entry_name,
+                    "entry_path": stored_entry_path,
+                }
+            ]
 
-        current_entry_path = os.path.join(current_source_path or "", entry.name)
-        stored_entry_path_norm = _normalise_path(stored_entry_path)
-        current_entry_path_norm = _normalise_path(current_entry_path)
-        if (
-            stored_entry_path_norm is not None
-            and current_entry_path_norm is not None
-            and stored_entry_path_norm != current_entry_path_norm
-        ):
-            logger.debug(
-                "Drop rejected: entry path changed (expected=%s, current=%s)",
-                stored_entry_path_norm,
-                current_entry_path_norm,
+        resolved_items: List[Tuple[str, FileEntry]] = []
+        source_entries = getattr(source_pane, "_entries", [])
+        for item in raw_entries:
+            if not isinstance(item, dict):
+                logger.debug("Drop rejected: invalid entry in payload")
+                self.show_toast("Dragged item is no longer available")
+                return False
+
+            item_name = item.get("entry_name")
+            if not isinstance(item_name, str):
+                logger.debug("Drop rejected: invalid entry name in payload")
+                self.show_toast("Dragged item is no longer available")
+                return False
+
+            entry = next(
+                (candidate for candidate in source_entries if candidate.name == item_name),
+                None,
             )
-            self.show_toast("Dragged item is no longer available")
+            if entry is None:
+                logger.debug("Drop rejected: entry %s not found in source pane", item_name)
+                self.show_toast("Dragged item is no longer available")
+                return False
+
+            item_entry_path = item.get("entry_path")
+            if item_entry_path is not None and not isinstance(item_entry_path, str):
+                item_entry_path = None
+
+            current_entry_path = os.path.join(current_source_path or "", entry.name)
+            item_entry_path_norm = _normalise_path(item_entry_path)
+            current_entry_path_norm = _normalise_path(current_entry_path)
+            if (
+                item_entry_path_norm is not None
+                and current_entry_path_norm is not None
+                and item_entry_path_norm != current_entry_path_norm
+            ):
+                logger.debug(
+                    "Drop rejected: entry path changed (expected=%s, current=%s)",
+                    item_entry_path_norm,
+                    current_entry_path_norm,
+                )
+                self.show_toast("Dragged item is no longer available")
+                return False
+
+            if item_entry_path is not None:
+                source_file_path = item_entry_path
+            elif expected_source_path is not None:
+                source_file_path = os.path.join(expected_source_path, entry.name)
+            else:
+                source_file_path = current_entry_path
+
+            resolved_items.append((source_file_path, entry))
+
+        if not resolved_items:
+            logger.debug("Drop rejected: no entries resolved from payload")
             return False
 
-        if stored_entry_path is not None:
-            source_file_path = stored_entry_path
-        elif expected_source_path is not None:
-            source_file_path = os.path.join(expected_source_path, entry.name)
-        else:
-            source_file_path = current_entry_path
-
-        logger.debug(f"Drop operation: {entry.name} from {source_file_path}")
+        logger.debug(
+            "Drop operation: %d item(s) starting with %s",
+            len(resolved_items),
+            resolved_items[0][1].name,
+        )
 
         # If the user dropped onto a folder in this pane, route the file INTO
         # that folder rather than into the pane's current directory.
@@ -2253,11 +2308,11 @@ class FilePane(Gtk.Box):
         if self._is_remote and not source_pane._is_remote:
             # Local to remote - upload
             logger.debug("Starting upload operation")
-            self._handle_upload_from_drag(source_file_path, entry, target_folder)
+            self._handle_upload_from_drag(resolved_items, target_folder)
         elif not self._is_remote and source_pane._is_remote:
             # Remote to local - download
             logger.debug("Starting download operation")
-            self._handle_download_from_drag(source_file_path, entry, target_folder)
+            self._handle_download_from_drag(resolved_items, target_folder)
         else:
             # Same type of pane - not supported for now
             logger.debug("Drop rejected: same pane type")
@@ -2265,22 +2320,18 @@ class FilePane(Gtk.Box):
 
         return True
 
-    def _handle_upload_from_drag(self, source_path: str, entry: FileEntry,
-                                  target_folder: Optional[FileEntry] = None) -> None:
+    def _handle_upload_from_drag(
+        self,
+        items: List[Tuple[str, FileEntry]],
+        target_folder: Optional[FileEntry] = None,
+    ) -> None:
         """Handle upload operation from drag and drop.
 
-        When *target_folder* is supplied, the file is uploaded INTO that
+        When *target_folder* is supplied, the files are uploaded INTO that
         folder rather than into the pane's current directory.
         """
         try:
             import pathlib
-            source_path_obj = pathlib.Path(source_path)
-            # Build destination — drop-on-folder means destination parent is
-            # current_path/target_folder, not current_path itself.
-            dest_parent = self._current_path
-            if target_folder is not None:
-                dest_parent = posixpath.join(self._current_path, target_folder.name)
-            destination_path = posixpath.join(dest_parent, entry.name)
 
             # Get the file manager window to access the SFTP manager
             window = self._get_file_manager_window()
@@ -2290,32 +2341,37 @@ class FilePane(Gtk.Box):
 
             manager = window._manager
 
-            # Check for file conflicts first
-            files_to_transfer = [(str(source_path_obj), destination_path)]
+            dest_parent = self._current_path
+            if target_folder is not None:
+                dest_parent = posixpath.join(self._current_path, target_folder.name)
+
+            files_to_transfer: List[Tuple[str, str]] = []
+            for source_path, entry in items:
+                destination_path = posixpath.join(dest_parent, entry.name)
+                files_to_transfer.append((source_path, destination_path))
+
+            total_files = len(files_to_transfer)
 
             def _proceed_with_upload(resolved_files: List[Tuple[str, str]]) -> None:
                 for local_path_str, dest_path in resolved_files:
                     path_obj = pathlib.Path(local_path_str)
+                    entry_name = path_obj.name
 
-                    if entry.is_dir:
-                        # Upload directory
+                    if path_obj.is_dir():
                         future = manager.upload_directory(path_obj, dest_path)
                     else:
-                        # Upload file
                         future = manager.upload(path_obj, dest_path)
 
-                    # Show progress dialog for upload
                     window._show_progress_dialog(
-                        "upload", entry.name, future,
+                        "upload", entry_name, future,
+                        total_files=total_files,
                         source_path=str(path_obj),
                         destination_path=dest_path,
                     )
-                    # Don't try to highlight the dropped file if it landed in
-                    # a subfolder — it won't appear in the current listing.
                     window._attach_refresh(
                         future,
                         refresh_remote=self,
-                        highlight_name=None if target_folder is not None else entry.name,
+                        highlight_name=None if target_folder is not None else entry_name,
                     )
 
             window._check_file_conflicts(files_to_transfer, "upload", _proceed_with_upload)
@@ -2323,19 +2379,22 @@ class FilePane(Gtk.Box):
         except Exception as e:
             self.show_toast(f"Upload failed: {str(e)}")
 
-    def _handle_download_from_drag(self, source_path: str, entry: FileEntry,
-                                    target_folder: Optional[FileEntry] = None) -> None:
+    def _handle_download_from_drag(
+        self,
+        items: List[Tuple[str, FileEntry]],
+        target_folder: Optional[FileEntry] = None,
+    ) -> None:
         """Handle download operation from drag and drop.
 
-        When *target_folder* is supplied, the file is downloaded INTO that
+        When *target_folder* is supplied, the files are downloaded INTO that
         folder rather than into the pane's current directory.
         """
         try:
             import pathlib
+
             dest_parent = pathlib.Path(self._current_path)
             if target_folder is not None:
                 dest_parent = dest_parent / target_folder.name
-            destination_path = dest_parent / entry.name
 
             # Get the file manager window to access the SFTP manager
             window = self._get_file_manager_window()
@@ -2345,31 +2404,36 @@ class FilePane(Gtk.Box):
 
             manager = window._manager
 
-            # Check for file conflicts first
-            files_to_transfer = [(source_path, str(destination_path))]
+            files_to_transfer: List[Tuple[str, str]] = []
+            entry_by_name: Dict[str, FileEntry] = {}
+            for source_path, entry in items:
+                destination_path = dest_parent / entry.name
+                files_to_transfer.append((source_path, str(destination_path)))
+                entry_by_name[entry.name] = entry
+
+            total_files = len(files_to_transfer)
 
             def _proceed_with_download(resolved_files: List[Tuple[str, str]]) -> None:
                 for source, target_path_str in resolved_files:
                     target_path = pathlib.Path(target_path_str)
+                    entry_name = target_path.name
+                    entry = entry_by_name.get(entry_name)
 
-                    if entry.is_dir:
-                        # Download directory
+                    if entry is not None and entry.is_dir:
                         future = manager.download_directory(source, target_path)
                     else:
-                        # Download file
                         future = manager.download(source, target_path)
 
-                    # Show progress dialog for download
                     window._show_progress_dialog(
-                        "download", entry.name, future,
+                        "download", entry_name, future,
+                        total_files=total_files,
                         source_path=source,
                         destination_path=str(target_path),
                     )
-                    # Skip highlight when target was a subfolder.
                     window._attach_refresh(
                         future,
                         refresh_local_path=str(self._current_path),
-                        highlight_name=None if target_folder is not None else entry.name,
+                        highlight_name=None if target_folder is not None else entry_name,
                     )
 
             window._check_file_conflicts(files_to_transfer, "download", _proceed_with_download)
