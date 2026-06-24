@@ -103,7 +103,7 @@ class PropertiesDialog(Adw.Window):
         
         # Icon — use the file-type-aware icon resolved from the entry's name.
         from sshpilot import icon_utils
-        from .file_type_icons import get_icon_for_name
+        from ..file_type_icons import get_icon_for_name
         icon_name = get_icon_for_name(self._entry.name, self._entry.is_dir)
         icon = icon_utils.new_image_from_icon_name(icon_name)
         # Set a larger custom size instead of using predefined sizes
