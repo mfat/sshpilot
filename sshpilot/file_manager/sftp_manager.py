@@ -49,23 +49,9 @@ def _existing_identity_files(raw: Any) -> List[str]:
     return result
 
 
-@dataclasses.dataclass
-class FileEntry:
-    """Light weight description of a directory entry."""
-
-    name: str
-    is_dir: bool
-    size: int
-    modified: float
-    item_count: Optional[int] = None  # Number of items in directory (for folders only)
-
-
-class _MainThreadDispatcher:
-    """Helper that marshals callbacks back to the GTK main loop."""
-
-    @staticmethod
-    def dispatch(func: Callable, *args, **kwargs) -> None:
-        GLib.idle_add(lambda: func(*args, **kwargs))
+# FileEntry and _MainThreadDispatcher now live in common.py (backend-agnostic,
+# paramiko-free) and are re-exported here for backward compatibility.
+from .common import FileEntry, _MainThreadDispatcher  # noqa: E402,F401
 
 
 # ---------------------------------------------------------------------------

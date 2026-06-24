@@ -55,6 +55,7 @@ from .platform_utils import is_flatpak, is_macos
 from .text_editor import RemoteFileEditorWindow
 from .file_manager import (
     AsyncSFTPManager,
+    create_file_manager_backend,
     DOCS_JSON,
     FileEntry,
     FilePane,
@@ -433,7 +434,7 @@ class FileManagerWindow(Adw.Window):
                         exc
                     )
 
-        self._manager = AsyncSFTPManager(
+        self._manager = create_file_manager_backend(
             host,
             username,
             port,
