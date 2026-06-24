@@ -96,7 +96,6 @@ The bundle includes all required dependencies:
 ### Python Packages (from requirements.txt)
 - PyGObject>=3.42
 - pycairo>=1.20.0
-- paramiko>=3.4
 - cryptography>=42.0
 - keyring>=24.3
 - psutil>=5.9.0

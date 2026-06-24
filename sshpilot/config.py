@@ -225,9 +225,6 @@ class Config(GObject.Object):
             'file_manager': {
                 'force_internal': False,
                 'open_externally': False,
-                # Built-in file manager backend: 'paramiko' (in-process, default)
-                # or 'openssh' (drives the native `ssh -s sftp` subprocess).
-                'backend': 'paramiko',
                 'sftp_keepalive_interval': 30,
                 'sftp_keepalive_count_max': 5,
                 'sftp_connect_timeout': 20,
@@ -983,16 +980,9 @@ class Config(GObject.Object):
                 return default_value
             return max(0, min(4, coerced))
 
-        def _get_backend() -> str:
-            default_value = str(defaults.get('backend', 'paramiko'))
-            raw_value = self.get_setting('file_manager.backend', default_value)
-            value = str(raw_value or default_value).strip().lower()
-            return value if value in {'paramiko', 'openssh'} else default_value
-
         return {
             'force_internal': _get_bool('force_internal'),
             'open_externally': _get_bool('open_externally'),
-            'backend': _get_backend(),
             'sftp_keepalive_interval': _get_non_negative_int('sftp_keepalive_interval'),
             'sftp_keepalive_count_max': _get_non_negative_int('sftp_keepalive_count_max'),
             'sftp_connect_timeout': _get_non_negative_int('sftp_connect_timeout'),

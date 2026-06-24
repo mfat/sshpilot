@@ -1,59 +1,27 @@
-"""The file-manager backend factory picks the configured implementation."""
+"""The file-manager backend factory builds the OpenSSH backend (the only one)."""
 
-from tests.test_file_manager_auth import _load_file_manager_module
-
-
-def test_resolve_backend_name_validation(monkeypatch):
-    _load_file_manager_module(monkeypatch)
-    import sshpilot.file_manager as fm
-
-    assert fm._resolve_backend_name("openssh") == "openssh"
-    assert fm._resolve_backend_name("Paramiko") == "paramiko"
-    assert fm._resolve_backend_name("bogus") == "paramiko"
-    # No explicit value → reads config; the stub Config lacks the helper, so it
-    # falls back to the paramiko default.
-    assert fm._resolve_backend_name(None) == "paramiko"
+from tests._fm_harness import _load_file_manager_module
 
 
-def test_factory_returns_selected_backend(monkeypatch):
+def test_factory_returns_openssh_backend(monkeypatch):
     _load_file_manager_module(monkeypatch)
     import sshpilot.file_manager as fm
     from sshpilot.file_manager.openssh_backend import OpenSSHSFTPManager
-    from sshpilot.file_manager.sftp_manager import AsyncSFTPManager
 
-    paramiko_backend = fm.create_file_manager_backend(
-        "host", "user", 22, backend="paramiko"
-    )
-    openssh_backend = fm.create_file_manager_backend(
-        "host", "user", 22, backend="openssh"
-    )
+    backend = fm.create_file_manager_backend("host", "user", 22)
     try:
-        assert isinstance(paramiko_backend, AsyncSFTPManager)
-        assert isinstance(openssh_backend, OpenSSHSFTPManager)
-        # Default (no explicit backend) → paramiko.
-        default_backend = fm.create_file_manager_backend("host", "user", 22)
-        assert isinstance(default_backend, AsyncSFTPManager)
-        default_backend.close()
+        assert isinstance(backend, OpenSSHSFTPManager)
     finally:
-        paramiko_backend.close()
-        openssh_backend.close()
+        backend.close()
 
 
-def test_config_backend_getter_validates():
-    """Config.get_file_manager_config normalizes the backend value.
-
-    Uses the real Config (no stub harness) so we exercise the actual getter.
-    """
+def test_config_has_no_backend_key():
+    """The file-manager backend setting is gone (single backend)."""
     from sshpilot.config import Config
 
     cfg = object.__new__(Config)  # avoid full init / gsettings
+    cfg.get_setting = lambda key, default=None: default
+    cfg.get_default_config = lambda: {"file_manager": {}}
 
-    def fake_get_setting(key, default=None):
-        return "OpenSSH" if key == "file_manager.backend" else default
-
-    cfg.get_setting = fake_get_setting
-    cfg.get_default_config = lambda: {"file_manager": {"backend": "paramiko"}}
-    assert cfg.get_file_manager_config()["backend"] == "openssh"
-
-    cfg.get_setting = lambda key, default=None: ("nonsense" if key == "file_manager.backend" else default)
-    assert cfg.get_file_manager_config()["backend"] == "paramiko"
+    fm_config = cfg.get_file_manager_config()
+    assert "backend" not in fm_config

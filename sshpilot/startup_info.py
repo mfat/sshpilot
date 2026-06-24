@@ -166,13 +166,6 @@ class StartupInfo:
         except Exception:
             libs['pygobject'] = {'available': False, 'version': None}
         
-        # Paramiko
-        try:
-            import paramiko
-            libs['paramiko'] = {'available': True, 'version': paramiko.__version__}
-        except Exception:
-            libs['paramiko'] = {'available': False, 'version': None}
-        
         # Cryptography
         try:
             import cryptography

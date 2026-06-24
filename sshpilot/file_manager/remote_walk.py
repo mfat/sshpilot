@@ -1,15 +1,18 @@
-"""Paramiko helpers for inspecting and walking remote SFTP trees."""
+"""Helpers for inspecting and walking remote SFTP trees.
+
+Backend-agnostic: they duck-type any SFTP client exposing ``stat`` /
+``listdir_attr`` and attributes with ``st_mode``/``filename`` (the OpenSSH SFTP
+client and its ``SFTPAttributes``).
+"""
 
 from __future__ import annotations
 
 import errno
 import os
-from typing import Iterable, List, Tuple
-
-import paramiko
+from typing import Any, Iterable, List, Tuple
 
 
-def _sftp_path_exists(sftp: paramiko.SFTPClient, path: str) -> bool:
+def _sftp_path_exists(sftp: Any, path: str) -> bool:
     """Return ``True`` if *path* exists on the remote SFTP server."""
 
     try:
@@ -28,14 +31,14 @@ def _sftp_path_exists(sftp: paramiko.SFTPClient, path: str) -> bool:
     return True
 
 
-def stat_isdir(attr: paramiko.SFTPAttributes) -> bool:
+def stat_isdir(attr: Any) -> bool:
     """Return ``True`` when the attribute represents a directory."""
 
     return bool(attr.st_mode & 0o40000)
 
 
 def walk_remote(
-    sftp: paramiko.SFTPClient, root: str
+    sftp: Any, root: str
 ) -> Iterable[Tuple[str, List[str], List[str]]]:
     """Yield a remote directory tree similar to :func:`os.walk`."""
 

@@ -43,6 +43,8 @@ FXP_HANDLE = 102
 FXP_DATA = 103
 FXP_NAME = 104
 FXP_ATTRS = 105
+FXP_EXTENDED = 200
+FXP_EXTENDED_REPLY = 201
 
 # -- status codes -----------------------------------------------------------
 FX_OK = 0

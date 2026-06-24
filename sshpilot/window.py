@@ -7410,7 +7410,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             return
         try:
             from .authorized_keys_window import AuthorizedKeysWindow
-            from .file_manager_window import AsyncSFTPManager
+            from .file_manager import create_file_manager_backend
         except Exception as exc:
             logger.error("authorized_keys editor unavailable: %s", exc)
             return
@@ -7436,7 +7436,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 initial_password = None
 
         try:
-            manager = AsyncSFTPManager(
+            manager = create_file_manager_backend(
                 str(host_value or ''),
                 str(username or ''),
                 int(port_value),

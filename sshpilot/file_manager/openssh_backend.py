@@ -19,6 +19,7 @@ import pathlib
 import subprocess
 import threading
 import time
+from collections import deque
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -51,9 +52,13 @@ class OpenSSHSFTPClient:
     stdin/stdout). A background thread reads responses and wakes the matching
     request by id, so requests can pipeline and never block the reader."""
 
-    def __init__(self, stdin, stdout) -> None:
+    def __init__(self, stdin, stdout, on_close=None) -> None:
         self._stdin = stdin
         self._stdout = stdout
+        # Optional transport teardown that makes the read side EOF so the reader
+        # thread unblocks (e.g. terminate the ssh subprocess, or close the test
+        # socketpair). Set by the owner of the transport.
+        self._on_close = on_close
         self._write_lock = threading.Lock()
         self._id_lock = threading.Lock()
         self._next_id = 0
@@ -118,28 +123,30 @@ class OpenSSHSFTPClient:
 
     def close(self) -> None:
         self._closed = True
-        # Close the write side (unblocks a peer blocked on read).
+        # Tear down the transport first: this EOFs our read side so the reader
+        # thread returns from its blocked readinto() instead of us yanking the
+        # fd out from under the file objects (which caused EBADF on finalize).
+        if self._on_close is not None:
+            try:
+                self._on_close()
+            except Exception:  # pragma: no cover - best effort
+                pass
+        # Close the write side (also signals EOF to the peer).
         try:
             self._stdin.close()
         except Exception:  # pragma: no cover - best effort
             pass
-        # Interrupt the reader thread blocked in readinto() by closing its
-        # underlying fd directly. Calling ``self._stdout.close()`` instead would
-        # deadlock: BufferedReader.close() needs the same buffer lock the blocked
-        # readinto() holds.
-        try:
-            os.close(self._stdout.fileno())
-        except Exception:  # pragma: no cover - best effort
-            pass
-        # Wake any in-flight requests so callers don't hang waiting on a reply
-        # that will never come.
+        # Wake any in-flight requests so callers don't hang on a reply that will
+        # never come.
         for slot in list(self._pending.values()):
             slot.event.set()
         self._pending.clear()
-        # The reader is a daemon thread; don't block teardown waiting for a read
-        # that may not unblock until the transport (subprocess) is torn down.
+        # The reader (a daemon) exits once the read side EOFs. We do NOT close
+        # ``self._stdout`` here — if the reader were still mid-read,
+        # BufferedReader.close() would deadlock on the buffer lock; its owner
+        # closes it after the reader has stopped.
         if self._reader is not None:
-            self._reader.join(timeout=0.2)
+            self._reader.join(timeout=1.0)
 
     # -- request/response -------------------------------------------------
     def _request(self, ptype: int, payload: bytes) -> Tuple[int, bytes]:
@@ -229,9 +236,12 @@ class OpenSSHSFTPClient:
             raise proto.SFTPError(code, message)
         raise proto.SFTPError(proto.FX_BAD_MESSAGE, "expected HANDLE")
 
-    def mkdir(self, path: str) -> None:
+    def mkdir(self, path: str, mode: Optional[int] = None) -> None:
+        attr = None
+        if mode is not None:
+            attr = proto.SFTPAttributes(st_mode=int(mode) & 0o7777)
         self._expect_ok(
-            self._request(proto.FXP_MKDIR, proto.pack_string(path) + proto.encode_attrs(None))
+            self._request(proto.FXP_MKDIR, proto.pack_string(path) + proto.encode_attrs(attr))
         )
 
     def rmdir(self, path: str) -> None:
@@ -240,6 +250,8 @@ class OpenSSHSFTPClient:
     def remove(self, path: str) -> None:
         self._expect_ok(self._request(proto.FXP_REMOVE, proto.pack_string(path)))
 
+    unlink = remove  # paramiko alias
+
     def rename(self, old: str, new: str) -> None:
         self._expect_ok(
             self._request(
@@ -247,9 +259,55 @@ class OpenSSHSFTPClient:
             )
         )
 
-    def open(self, path: str, pflags: int, attr: Optional[proto.SFTPAttributes] = None) -> bytes:
+    def posix_rename(self, old: str, new: str) -> None:
+        """Atomic rename that overwrites the target (OpenSSH extension).
+
+        Regular SFTP RENAME fails if the destination exists; ``posix-rename``
+        replaces it, which is what callers (e.g. authorized_keys install) need.
+        """
+        payload = (
+            proto.pack_string("posix-rename@openssh.com")
+            + proto.pack_string(old)
+            + proto.pack_string(new)
+        )
+        self._expect_ok(self._request(proto.FXP_EXTENDED, payload))
+
+    def chmod(self, path: str, mode: int) -> None:
+        attr = proto.SFTPAttributes(st_mode=int(mode) & 0o7777)
+        self._expect_ok(
+            self._request(proto.FXP_SETSTAT, proto.pack_string(path) + proto.encode_attrs(attr))
+        )
+
+    def normalize(self, path: str) -> str:
+        """paramiko alias for realpath."""
+        return self.realpath(path)
+
+    def open_handle(
+        self, path: str, pflags: int, attr: Optional[proto.SFTPAttributes] = None
+    ) -> bytes:
+        """Low-level OPEN → returns an SFTP handle (bytes)."""
         payload = proto.pack_string(path) + proto.pack_uint32(pflags) + proto.encode_attrs(attr)
         return self._handle(self._request(proto.FXP_OPEN, payload))
+
+    def open(self, path: str, mode: str = "r", bufsize: int = -1) -> "OpenSSHSFTPFile":
+        """Paramiko-compatible ``open`` returning a seek-tracking file object, so
+        code written against paramiko's ``SFTPClient.open(path, mode)`` (e.g. the
+        window's remote copy/paste) works against this client unchanged."""
+        m = mode.replace("b", "")
+        if m in ("w", "x"):
+            pflags = proto.FXF_WRITE | proto.FXF_CREAT | proto.FXF_TRUNC
+        elif m == "a":
+            pflags = proto.FXF_WRITE | proto.FXF_CREAT | proto.FXF_APPEND
+        elif m in ("r+", "w+"):
+            pflags = proto.FXF_READ | proto.FXF_WRITE | proto.FXF_CREAT
+        else:  # "r"
+            pflags = proto.FXF_READ
+        handle = self.open_handle(path, pflags)
+        return OpenSSHSFTPFile(self, handle)
+
+    # paramiko's SFTPClient exposes both ``open`` and ``file`` (an alias).
+    def file(self, path: str, mode: str = "r", bufsize: int = -1) -> "OpenSSHSFTPFile":
+        return self.open(path, mode, bufsize)
 
     def read(self, handle: bytes, offset: int, length: int) -> bytes:
         payload = proto.pack_string(handle) + proto.pack_uint64(offset) + proto.pack_uint32(length)
@@ -274,6 +332,50 @@ class OpenSSHSFTPClient:
             self._expect_ok(self._request(proto.FXP_CLOSE, proto.pack_string(handle)))
         except Exception as exc:  # pragma: no cover - best effort
             logger.debug("SFTP close handle failed: %s", exc)
+
+
+class OpenSSHSFTPFile:
+    """A minimal paramiko-``SFTPFile``-compatible wrapper over a handle.
+
+    Tracks its own offset so ``read()``/``write()`` behave like a stream, which
+    is what the window's remote copy/paste expects.
+    """
+
+    def __init__(self, client: "OpenSSHSFTPClient", handle: bytes) -> None:
+        self._client = client
+        self._handle = handle
+        self._offset = 0
+        self._closed = False
+
+    def read(self, size: Optional[int] = None) -> bytes:
+        if size is not None:
+            data = self._client.read(self._handle, self._offset, size)
+            self._offset += len(data)
+            return data
+        # Read to EOF.
+        chunks = []
+        while True:
+            chunk = self._client.read(self._handle, self._offset, _CHUNK)
+            if not chunk:
+                break
+            self._offset += len(chunk)
+            chunks.append(chunk)
+        return b"".join(chunks)
+
+    def write(self, data: bytes) -> None:
+        self._client.write(self._handle, self._offset, data)
+        self._offset += len(data)
+
+    def close(self) -> None:
+        if not self._closed:
+            self._closed = True
+            self._client.close_handle(self._handle)
+
+    def __enter__(self) -> "OpenSSHSFTPFile":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
 
 
 def _is_dir(attr: proto.SFTPAttributes) -> bool:
@@ -335,6 +437,14 @@ class OpenSSHSFTPManager(GObject.GObject):
         self._proc: Optional[subprocess.Popen] = None
         self._sshpass_cleanup: Optional[Callable[[], None]] = None
         self._home: Optional[str] = None
+        self._stderr_lines: "deque[str]" = deque(maxlen=200)
+        self._stderr_thread: Optional[threading.Thread] = None
+        # SFTP-level keepalive (mirrors the paramiko backend).
+        self._keepalive_interval = 0
+        self._keepalive_count_max = 0
+        self._keepalive_thread: Optional[threading.Thread] = None
+        self._keepalive_stop: Optional[threading.Event] = None
+        self._keepalive_failures = 0
 
     # -- shared plumbing (mirrors AsyncSFTPManager) -----------------------
     def _submit(
@@ -449,6 +559,7 @@ class OpenSSHSFTPManager(GObject.GObject):
         return argv, env, cleanup
 
     def _connect_impl(self) -> None:
+        self._read_keepalive_config()
         argv, env, cleanup = self._build_argv()
         logger.debug("OpenSSH SFTP backend launching: %s", " ".join(argv))
         proc = subprocess.Popen(
@@ -459,21 +570,26 @@ class OpenSSHSFTPManager(GObject.GObject):
             env=env,
             bufsize=0,
         )
-        client = OpenSSHSFTPClient(proc.stdin, proc.stdout)
+        # Drain stderr continuously so verbose ssh output can't fill the pipe
+        # buffer and block the ssh process mid-session.
+        self._start_stderr_drain(proc)
+        # On client.close() terminate the ssh subprocess so its stdout EOFs and
+        # the reader thread unblocks cleanly (no fd surgery).
+        client = OpenSSHSFTPClient(
+            proc.stdin, proc.stdout, on_close=lambda: self._terminate_proc(proc)
+        )
         try:
             client.start()
         except Exception as exc:
             # Handshake never completed — the ssh process likely failed auth or
-            # the host has no sftp subsystem. Classify from stderr.
-            stderr = b""
+            # the host has no sftp subsystem. Classify from the drained stderr.
             try:
                 proc.wait(timeout=self._connect_timeout())
-                stderr = proc.stderr.read() or b""
             except Exception:  # pragma: no cover - defensive
                 proc.kill()
             if cleanup is not None:
                 cleanup()
-            raise self._classify_handshake_failure(stderr, exc)
+            raise self._classify_handshake_failure(self._drained_stderr(), exc)
 
         with self._lock:
             self._proc = proc
@@ -483,9 +599,34 @@ class OpenSSHSFTPManager(GObject.GObject):
             self._home = client.realpath(".")
         except Exception:  # pragma: no cover - home is best-effort
             self._home = None
+        self._start_keepalive_worker()
 
-    def _classify_handshake_failure(self, stderr: bytes, exc: Exception) -> Exception:
-        text = (stderr or b"").decode("utf-8", "replace").strip()
+    def _start_stderr_drain(self, proc: subprocess.Popen) -> None:
+        self._stderr_lines.clear()
+
+        def _drain() -> None:
+            try:
+                for raw in iter(proc.stderr.readline, b""):
+                    line = raw.decode("utf-8", "replace").rstrip()
+                    if line:
+                        self._stderr_lines.append(line)
+                        logger.debug("ssh stderr: %s", line)
+            except Exception:  # pragma: no cover - best effort
+                pass
+
+        self._stderr_thread = threading.Thread(
+            target=_drain, name="sftp-stderr", daemon=True
+        )
+        self._stderr_thread.start()
+
+    def _drained_stderr(self) -> str:
+        # Give the drain thread a moment to flush the final lines.
+        if self._stderr_thread is not None:
+            self._stderr_thread.join(timeout=0.5)
+        return "\n".join(self._stderr_lines).strip()
+
+    def _classify_handshake_failure(self, text: str, exc: Exception) -> Exception:
+        text = (text or "").strip()
         lowered = text.lower()
         if "permission denied" in lowered or "password" in lowered or "publickey" in lowered:
             return PermissionError(text or "Authentication failed")
@@ -496,8 +637,84 @@ class OpenSSHSFTPManager(GObject.GObject):
             return IOError(friendly or text)
         return exc
 
+    def _read_keepalive_config(self) -> None:
+        cfg = self._ssh_config or {}
+        fm = cfg.get("file_manager") if isinstance(cfg, dict) else None
+        if not isinstance(fm, dict):
+            return
+
+        def _coerce(value):
+            try:
+                return max(0, int(value))
+            except (TypeError, ValueError):
+                return 0
+
+        self._keepalive_interval = _coerce(fm.get("sftp_keepalive_interval"))
+        self._keepalive_count_max = _coerce(fm.get("sftp_keepalive_count_max"))
+
+    def _start_keepalive_worker(self) -> None:
+        if self._keepalive_interval <= 0:
+            return
+        stop = threading.Event()
+        self._keepalive_stop = stop
+        self._keepalive_failures = 0
+        interval = self._keepalive_interval
+
+        def _worker() -> None:
+            while not stop.wait(interval):
+                err = None
+                with self._lock:
+                    client = self._client
+                    if client is None:
+                        break
+                    try:
+                        client.realpath(".")  # cheap liveness probe
+                    except Exception as exc:
+                        err = exc
+                if err is None:
+                    self._keepalive_failures = 0
+                    continue
+                self._keepalive_failures += 1
+                count_max = self._keepalive_count_max
+                logger.debug(
+                    "OpenSSH keepalive failed (%s/%s): %s",
+                    self._keepalive_failures, count_max, err,
+                )
+                if count_max >= 0 and self._keepalive_failures > count_max:
+                    self._dispatcher(
+                        self.emit,
+                        ("operation-error",
+                         "SFTP keepalive failed too many times; connection may be down"),
+                        {},
+                    )
+                    break
+
+        self._keepalive_thread = threading.Thread(
+            target=_worker, name="sftp-keepalive", daemon=True
+        )
+        self._keepalive_thread.start()
+
+    def _stop_keepalive_worker(self) -> None:
+        if self._keepalive_stop is not None:
+            self._keepalive_stop.set()
+        self._keepalive_thread = None
+        self._keepalive_stop = None
+
+    @staticmethod
+    def _terminate_proc(proc: subprocess.Popen) -> None:
+        """Stop the ssh subprocess (EOFs its pipes so the reader/stderr threads
+        unblock). Idempotent and quiet."""
+        if proc is None:
+            return
+        try:
+            if proc.poll() is None:
+                proc.terminate()
+        except Exception:  # pragma: no cover - best effort
+            pass
+
     def close(self) -> None:
         logger.info("OpenSSHSFTPManager.close() called")
+        self._stop_keepalive_worker()
         with self._lock:
             client = self._client
             proc = self._proc
@@ -505,6 +722,9 @@ class OpenSSHSFTPManager(GObject.GObject):
             self._client = None
             self._proc = None
             self._sshpass_cleanup = None
+        # Terminate the subprocess first so the reader/stderr threads EOF and
+        # stop, then close the client (joins the reader) — no fd surgery.
+        self._terminate_proc(proc)
         if client is not None:
             try:
                 client.close()
@@ -512,9 +732,21 @@ class OpenSSHSFTPManager(GObject.GObject):
                 logger.debug("Error closing SFTP client: %s", exc)
         if proc is not None:
             try:
-                proc.terminate()
-            except Exception as exc:  # pragma: no cover - best effort
-                logger.debug("Error terminating ssh subprocess: %s", exc)
+                proc.wait(timeout=2)
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:  # pragma: no cover - best effort
+                    pass
+            # Close the proc's own pipe objects once the readers have stopped,
+            # so their finalizers don't later double-close the fds.
+            for attr in ("stdout", "stderr", "stdin"):
+                stream = getattr(proc, attr, None)
+                try:
+                    if stream is not None:
+                        stream.close()
+                except Exception:  # pragma: no cover - best effort
+                    pass
         if cleanup is not None:
             try:
                 cleanup()
@@ -537,7 +769,11 @@ class OpenSSHSFTPManager(GObject.GObject):
         return self._client
 
     def is_connected(self) -> bool:
-        return self._client is not None
+        if self._client is None:
+            return False
+        proc = self._proc
+        # The subprocess must still be alive; a dead ssh means a stale session.
+        return proc is not None and proc.poll() is None
 
     # -- path helpers -----------------------------------------------------
     def _client_or_raise(self) -> OpenSSHSFTPClient:
@@ -632,6 +868,29 @@ class OpenSSHSFTPManager(GObject.GObject):
 
         self._submit(lambda: _count_chunk(0))
 
+    def directory_size(self, path: str) -> Future:
+        """Future resolving to the recursive byte size of a remote directory."""
+
+        def _sum(client: OpenSSHSFTPClient, target: str) -> int:
+            total = 0
+            for attr in client.listdir_attr(target):
+                child = target.rstrip("/") + "/" + attr.filename
+                if _is_dir(attr):
+                    try:
+                        total += _sum(client, child)
+                    except Exception:  # unreadable subdir → skip
+                        pass
+                else:
+                    total += int(attr.st_size or 0)
+            return total
+
+        def _impl() -> int:
+            with self._lock:
+                client = self._client_or_raise()
+                return _sum(client, self._expand(path))
+
+        return self._submit(_impl)
+
     # -- simple operations ------------------------------------------------
     def mkdir(self, path: str) -> Future:
         def _impl() -> None:
@@ -646,7 +905,7 @@ class OpenSSHSFTPManager(GObject.GObject):
                 client = self._client_or_raise()
                 if self._remote_exists(client, path):
                     raise FileExistsError(path)
-                handle = client.open(
+                handle = client.open_handle(
                     path, proto.FXF_WRITE | proto.FXF_CREAT | proto.FXF_EXCL
                 )
                 client.close_handle(handle)
@@ -702,7 +961,7 @@ class OpenSSHSFTPManager(GObject.GObject):
             total = int(client.stat(source).st_size or 0)
         except Exception:
             total = 0
-        handle = client.open(source, proto.FXF_READ)
+        handle = client.open_handle(source, proto.FXF_READ)
         offset = 0
         try:
             with open(destination, "wb") as fh:
@@ -769,7 +1028,7 @@ class OpenSSHSFTPManager(GObject.GObject):
         grand_total: int,
     ) -> int:
         total = source.stat().st_size
-        handle = client.open(
+        handle = client.open_handle(
             destination, proto.FXF_WRITE | proto.FXF_CREAT | proto.FXF_TRUNC
         )
         offset = 0

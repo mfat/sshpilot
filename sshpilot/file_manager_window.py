@@ -38,7 +38,6 @@ from concurrent.futures import Future, ThreadPoolExecutor, CancelledError
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 
-import paramiko
 from gi.repository import Adw, Gio, GLib, GObject, Gdk, Gtk, Pango
 
 # Try to import GtkSourceView for syntax highlighting
@@ -54,7 +53,6 @@ except (ImportError, ValueError, AttributeError):
 from .platform_utils import is_flatpak, is_macos
 from .text_editor import RemoteFileEditorWindow
 from .file_manager import (
-    AsyncSFTPManager,
     create_file_manager_backend,
     DOCS_JSON,
     FileEntry,
@@ -524,11 +522,11 @@ class FileManagerWindow(Adw.Window):
         logger.debug("FileManagerWindow close-request received, cleaning up")
         try:
             if hasattr(self, '_manager') and self._manager is not None:
-                logger.debug("Closing AsyncSFTPManager")
+                logger.debug("Closing file manager backend")
                 self._manager.close()
                 self._manager = None
         except Exception as exc:
-            logger.error(f"Error closing AsyncSFTPManager: {exc}", exc_info=True)
+            logger.error(f"Error closing file manager backend: {exc}", exc_info=True)
         
         # Clear progress dialog if it exists
         self._clear_progress_toast()
@@ -693,14 +691,14 @@ class FileManagerWindow(Adw.Window):
         GLib.idle_add(show_error)
 
     def _cleanup_manager(self) -> None:
-        """Close the AsyncSFTPManager and clear UI state."""
+        """Close the file manager backend and clear UI state."""
         manager = getattr(self, "_manager", None)
         if manager is not None:
             try:
-                logger.info("Cleaning up AsyncSFTPManager resources")
+                logger.info("Cleaning up file manager backend resources")
                 manager.close()
             except Exception as exc:
-                logger.error(f"Error closing AsyncSFTPManager: {exc}", exc_info=True)
+                logger.error(f"Error closing file manager backend: {exc}", exc_info=True)
             finally:
                 self._manager = None
         self._clear_progress_toast()
@@ -2703,7 +2701,7 @@ class FileManagerWindow(Adw.Window):
         future.add_done_callback(_cleanup)
 
     @staticmethod
-    def _ensure_remote_directory(sftp: paramiko.SFTPClient, path: str) -> None:
+    def _ensure_remote_directory(sftp: Any, path: str) -> None:
         if not path:
             return
         components = []
@@ -2717,7 +2715,7 @@ class FileManagerWindow(Adw.Window):
                 continue
 
     @staticmethod
-    def _remote_path_exists(sftp: paramiko.SFTPClient, path: str) -> bool:
+    def _remote_path_exists(sftp: Any, path: str) -> bool:
         return _sftp_path_exists(sftp, path)
 
     @staticmethod
@@ -2734,7 +2732,7 @@ class FileManagerWindow(Adw.Window):
         return dest_norm.startswith(f"{source_prefix}/")
 
     def _copy_remote_file(
-        self, sftp: paramiko.SFTPClient, source_path: str, destination_path: str
+        self, sftp: Any, source_path: str, destination_path: str
     ) -> None:
         if self._remote_path_exists(sftp, destination_path):
             raise FileExistsError(f"{posixpath.basename(destination_path)} already exists")
@@ -2747,7 +2745,7 @@ class FileManagerWindow(Adw.Window):
                 dst_file.write(chunk)
 
     def _copy_remote_directory(
-        self, sftp: paramiko.SFTPClient, source_path: str, destination_path: str
+        self, sftp: Any, source_path: str, destination_path: str
     ) -> None:
         if self._is_remote_descendant(source_path, destination_path):
             raise ValueError(
@@ -3058,7 +3056,6 @@ def launch_file_manager_window(
 
 
 __all__ = [
-    "AsyncSFTPManager",
     "FileEntry",
     "FileManagerWindow",
     "SFTPProgressDialog",

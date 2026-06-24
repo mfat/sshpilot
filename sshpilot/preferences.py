@@ -526,8 +526,6 @@ class PreferencesWindow(Adw.Window):
         self._user_initiated_encoding_change = False
         self.force_internal_file_manager_row = None
         self.open_file_manager_externally_row = None
-        self.file_manager_backend_row = None
-        self._fm_backend_ids = ['paramiko', 'openssh']
 
         self._config_signal_id = None
 
@@ -2012,27 +2010,6 @@ class PreferencesWindow(Adw.Window):
 
                 file_manager_group.add(self.open_file_manager_externally_row)
 
-                # Backend selection (paramiko default; openssh = native sftp).
-                self._fm_backend_ids = ['paramiko', 'openssh']
-                self.file_manager_backend_row = Adw.ComboRow()
-                self.file_manager_backend_row.set_title("File Manager Backend")
-                self.file_manager_backend_row.set_subtitle(
-                    "Paramiko (default) or OpenSSH (experimental: native ssh -s sftp)"
-                )
-                backend_model = Gtk.StringList()
-                backend_model.append("Paramiko (default)")
-                backend_model.append("OpenSSH (experimental)")
-                self.file_manager_backend_row.set_model(backend_model)
-                current_fm_backend = str(
-                    self.config.get_setting('file_manager.backend', 'paramiko') or 'paramiko'
-                ).strip().lower()
-                try:
-                    backend_index = self._fm_backend_ids.index(current_fm_backend)
-                except ValueError:
-                    backend_index = 0
-                self.file_manager_backend_row.set_selected(backend_index)
-                file_manager_group.add(self.file_manager_backend_row)
-
                 file_manager_defaults = {}
                 try:
                     defaults = self.config.get_default_config()
@@ -2112,7 +2089,7 @@ class PreferencesWindow(Adw.Window):
                 self.sftp_connect_timeout_row.set_title("SFTP Connection Timeout (seconds)")
                 self.sftp_connect_timeout_row.set_subtitle(
                     "Time allowed for the built-in file manager to establish a "
-                    "session; 0 uses the Paramiko default."
+                    "session; 0 uses the default."
                 )
                 self.sftp_connect_timeout_row.set_value(connect_timeout_value)
                 sftp_advanced_group.add(self.sftp_connect_timeout_row)
@@ -3713,11 +3690,6 @@ class PreferencesWindow(Adw.Window):
                     'file_manager.open_externally',
                     bool(self.open_file_manager_externally_row.get_active()),
                 )
-            if getattr(self, 'file_manager_backend_row', None) is not None:
-                idx = self.file_manager_backend_row.get_selected()
-                ids = getattr(self, '_fm_backend_ids', ['paramiko', 'openssh'])
-                backend_id = ids[idx] if 0 <= idx < len(ids) else 'paramiko'
-                self.config.set_setting('file_manager.backend', backend_id)
             if getattr(self, 'sftp_keepalive_interval_row', None) is not None:
                 interval_value = int(self.sftp_keepalive_interval_row.get_value())
                 if interval_value < 0:
@@ -3792,14 +3764,6 @@ class PreferencesWindow(Adw.Window):
             self.config.set_setting('file_manager.open_externally', default_open_external)
             if getattr(self, 'open_file_manager_externally_row', None) is not None:
                 self.open_file_manager_externally_row.set_active(default_open_external)
-            default_backend = str(file_manager_defaults.get('backend', 'paramiko') or 'paramiko')
-            self.config.set_setting('file_manager.backend', default_backend)
-            if getattr(self, 'file_manager_backend_row', None) is not None:
-                ids = getattr(self, '_fm_backend_ids', ['paramiko', 'openssh'])
-                try:
-                    self.file_manager_backend_row.set_selected(ids.index(default_backend))
-                except ValueError:
-                    self.file_manager_backend_row.set_selected(0)
             keepalive_interval_default = int(file_manager_defaults.get('sftp_keepalive_interval', 0) or 0)
             self.config.set_setting('file_manager.sftp_keepalive_interval', max(0, keepalive_interval_default))
             if getattr(self, 'sftp_keepalive_interval_row', None) is not None:

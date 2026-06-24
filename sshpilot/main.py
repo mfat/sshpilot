@@ -23,7 +23,6 @@ def _clamp_thirdparty_loggers() -> None:
     """
     for noisy in (
         'keyring', 'keyring.backend',
-        'paramiko', 'paramiko.transport', 'paramiko.transport.sftp',
         'gi', 'PIL', 'urllib3', 'asyncio',
     ):
         logging.getLogger(noisy).setLevel(logging.WARNING)
@@ -511,7 +510,6 @@ class SshPilotApplication(Adw.Application):
         # Master ``sshpilot.log`` always receives everything (it's what bug
         # reports cite). The category files are filtered convenience views.
         _SSH_CATEGORY_NAMES: tuple = (
-            'paramiko',
             'sshpilot.connection_manager',
             'sshpilot.terminal',
             'sshpilot.terminal_manager',
@@ -534,7 +532,7 @@ class SshPilotApplication(Adw.Application):
             return False
 
         class _SshCategoryFilter(logging.Filter):
-            """Pass paramiko + our SSH/connection/terminal modules."""
+            """Pass our SSH/connection/terminal modules."""
 
             def filter(self, record: logging.LogRecord) -> bool:
                 return _matches_any(record.name or '', _SSH_CATEGORY_NAMES)
@@ -630,16 +628,11 @@ class SshPilotApplication(Adw.Application):
         root_logger.setLevel(effective_level)
 
         # Reapply third-party clamp. At default level they stay at WARNING
-        # (so we don't drown the user in keyring/paramiko/PIL chatter). In
-        # verbose mode the user has opted into the firehose — paramiko goes
-        # to DEBUG so the SSH log file actually shows the protocol trace
-        # ([chan 0] listdir, SFTP packets, etc.); other 3rd-party libraries
-        # only get one notch up to INFO because their DEBUG levels are
-        # rarely useful for sshPilot bug reports.
+        # (so we don't drown the user in keyring/PIL chatter). In verbose mode
+        # 3rd-party libraries get one notch up to INFO because their DEBUG
+        # levels are rarely useful for sshPilot bug reports.
         _clamp_thirdparty_loggers()
         if verbose:
-            for noisy in ('paramiko', 'paramiko.transport', 'paramiko.transport.sftp'):
-                logging.getLogger(noisy).setLevel(logging.DEBUG)
             for noisy in ('keyring', 'gi', 'PIL', 'urllib3', 'asyncio'):
                 logging.getLogger(noisy).setLevel(logging.INFO)
 

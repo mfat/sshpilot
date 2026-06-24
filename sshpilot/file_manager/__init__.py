@@ -2,7 +2,7 @@
 
 Step 4 of the refactor plan extracts the monolithic ``file_manager_window``
 module into focused submodules.  Phase 4a moved the low-coupling helpers
-(portal/docs handling, format helpers, paramiko walk helpers, the
+(portal/docs handling, format helpers, remote walk helpers, the
 cancellation exception).  Phase 4b moved the standalone dialogs and
 pane-level UI controls (``SFTPProgressDialog``, ``PathEntry``,
 ``PaneControls``, ``PaneToolbar``, ``PropertiesDialog``).  Phase 4c
@@ -26,7 +26,7 @@ from .pane import (
     _MIN_ICON_LEVEL,
 )
 from .pane_controls import PaneControls, PaneToolbar, PathEntry
-from .sftp_manager import AsyncSFTPManager, FileEntry, _MainThreadDispatcher
+from .common import FileEntry, _MainThreadDispatcher
 from .portal_docs import (
     DOCS_JSON,
     _ensure_cfg_dir,
@@ -50,41 +50,20 @@ from .properties_dialog import PropertiesDialog
 from .remote_walk import _sftp_path_exists, stat_isdir, walk_remote
 
 
-def _resolve_backend_name(explicit=None) -> str:
-    """Return the configured file-manager backend ('paramiko' | 'openssh')."""
+def create_file_manager_backend(*args, **kwargs):
+    """Construct the file-manager backend.
 
-    if explicit:
-        name = str(explicit).strip().lower()
-        return name if name in {"paramiko", "openssh"} else "paramiko"
-    try:
-        from ..config import Config
-
-        backend = Config().get_file_manager_config().get("backend", "paramiko")
-    except Exception:
-        backend = "paramiko"
-    name = str(backend or "paramiko").strip().lower()
-    return name if name in {"paramiko", "openssh"} else "paramiko"
-
-
-def create_file_manager_backend(*args, backend=None, **kwargs):
-    """Construct the configured file-manager backend.
-
-    Both backends share the same constructor signature and public contract, so
-    the window can use either interchangeably. The backend is chosen by the
-    ``file_manager.backend`` setting unless overridden via ``backend=``.
+    The OpenSSH SFTP backend (driving the native ``ssh -s sftp`` subprocess) is
+    the only backend; this factory remains as the single construction point.
     """
 
-    name = _resolve_backend_name(backend)
-    logger.info("File manager backend: %s", name)
-    if name == "openssh":
-        from .openssh_backend import OpenSSHSFTPManager
+    from .openssh_backend import OpenSSHSFTPManager
 
-        return OpenSSHSFTPManager(*args, **kwargs)
-    return AsyncSFTPManager(*args, **kwargs)
+    logger.info("File manager backend: openssh")
+    return OpenSSHSFTPManager(*args, **kwargs)
 
 
 __all__ = [
-    "AsyncSFTPManager",
     "create_file_manager_backend",
     "DOCS_JSON",
     "FileEntry",

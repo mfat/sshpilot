@@ -5,10 +5,11 @@ an in-memory SFTP v3 server (over a socketpair), plus the manager's op mapping.
 import socket
 import threading
 import time
+import types
 
 import pytest
 
-from tests.test_file_manager_auth import _load_file_manager_module
+from tests._fm_harness import _load_file_manager_module
 
 
 # ---------------------------------------------------------------------------
@@ -189,6 +190,18 @@ class _FakeSFTPServer(threading.Thread):
                     new = r.text()
                     self.fs[new] = self.fs.pop(old)
                     self._status(rid, p.FX_OK)
+                elif ptype == p.FXP_SETSTAT:
+                    r.text()  # path (mode ignored by this fake)
+                    self._status(rid, p.FX_OK)
+                elif ptype == p.FXP_EXTENDED:
+                    name = r.text()
+                    if name == "posix-rename@openssh.com":
+                        old = r.text()
+                        new = r.text()
+                        self.fs[new] = self.fs.pop(old)  # overwrite allowed
+                        self._status(rid, p.FX_OK)
+                    else:
+                        self._status(rid, p.FX_OP_UNSUPPORTED)
                 else:
                     self._status(rid, p.FX_OP_UNSUPPORTED)
         except (EOFError, OSError, ValueError):
@@ -205,7 +218,19 @@ def backend_modules(monkeypatch):
 
 def _make_client(ob, proto):
     csock, ssock = socket.socketpair()
-    client = ob.OpenSSHSFTPClient(csock.makefile("wb"), csock.makefile("rb"))
+
+    def _teardown():
+        # EOF both ends so the client reader and the server thread both unblock.
+        for s in (csock, ssock):
+            try:
+                s.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            s.close()
+
+    client = ob.OpenSSHSFTPClient(
+        csock.makefile("wb"), csock.makefile("rb"), on_close=_teardown
+    )
     server = _FakeSFTPServer(proto, ssock.makefile("rb"), ssock.makefile("wb"))
     server.start()
     client.start()
@@ -228,15 +253,36 @@ def test_client_read_write_roundtrip(backend_modules):
     _, ob, proto = backend_modules
     client, server = _make_client(ob, proto)
     # Read existing file.
-    handle = client.open("/home/alice/notes.txt", proto.FXF_READ)
+    handle = client.open_handle("/home/alice/notes.txt", proto.FXF_READ)
     assert client.read(handle, 0, 100) == b"hello world"
     assert client.read(handle, 11, 100) == b""  # EOF
     client.close_handle(handle)
     # Write a new file.
-    wh = client.open("/home/alice/new.txt", proto.FXF_WRITE | proto.FXF_CREAT | proto.FXF_TRUNC)
+    wh = client.open_handle("/home/alice/new.txt", proto.FXF_WRITE | proto.FXF_CREAT | proto.FXF_TRUNC)
     client.write(wh, 0, b"abc")
     client.close_handle(wh)
     assert bytes(server.fs["/home/alice/new.txt"][1]) == b"abc"
+    client.close()
+
+
+def test_client_open_file_shim_copy(backend_modules):
+    """The paramiko-style open(path, mode) file object lets the window's remote
+    copy/paste (src.open('rb').read() → dst.open('wb').write()) work unchanged."""
+    _, ob, proto = backend_modules
+    client, server = _make_client(ob, proto)
+    # Replicate _copy_remote_file's loop.
+    with client.open("/home/alice/notes.txt", "rb") as src, client.open(
+        "/home/alice/copy.txt", "wb"
+    ) as dst:
+        while True:
+            chunk = src.read(32768)
+            if not chunk:
+                break
+            dst.write(chunk)
+    assert bytes(server.fs["/home/alice/copy.txt"][1]) == b"hello world"
+    # read() with no size returns to EOF.
+    with client.open("/home/alice/notes.txt", "rb") as f:
+        assert f.read() == b"hello world"
     client.close()
 
 
@@ -249,6 +295,32 @@ def test_client_mkdir_remove_rename(backend_modules):
     assert "/home/alice/renamed.txt" in server.fs
     client.remove("/home/alice/renamed.txt")
     assert "/home/alice/renamed.txt" not in server.fs
+    client.close()
+
+
+def test_client_paramiko_surface_parity(backend_modules):
+    """The OpenSSH client must expose the paramiko-SFTPClient methods other app
+    code relies on (authorized_keys editor): file/normalize/mkdir(mode)/chmod/
+    posix_rename."""
+    _, ob, proto = backend_modules
+    client, server = _make_client(ob, proto)
+
+    assert client.normalize(".") == "/home/alice"  # alias for realpath
+    client.mkdir("/home/alice/.ssh", 0o700)        # mode arg accepted
+    assert server.fs["/home/alice/.ssh"][0] == "dir"
+    client.chmod("/home/alice/.ssh", 0o700)        # SETSTAT, no error
+
+    # file() is an alias for open(); write then read back.
+    with client.file("/home/alice/.ssh/authorized_keys.tmp", "w") as fh:
+        fh.write(b"ssh-ed25519 AAAA user@host\n")
+    # posix_rename overwrites an existing destination (atomic install).
+    server.fs["/home/alice/.ssh/authorized_keys"] = ("file", bytearray(b"old"))
+    client.posix_rename(
+        "/home/alice/.ssh/authorized_keys.tmp",
+        "/home/alice/.ssh/authorized_keys",
+    )
+    assert bytes(server.fs["/home/alice/.ssh/authorized_keys"][1]) == b"ssh-ed25519 AAAA user@host\n"
+    assert "/home/alice/.ssh/authorized_keys.tmp" not in server.fs
     client.close()
 
 
@@ -321,12 +393,26 @@ def test_manager_sftp_alias_and_is_connected(backend_modules, monkeypatch):
     client, server = _make_client(ob, proto)
     manager._client = client
     manager._home = "/home/alice"
+    manager._proc = types.SimpleNamespace(poll=lambda: None)  # live subprocess
 
     assert manager._sftp is client
     assert manager.is_connected() is True
+    # A dead subprocess means a stale session, even if the client object lingers.
+    manager._proc = types.SimpleNamespace(poll=lambda: 1)
+    assert manager.is_connected() is False
+    manager._proc = types.SimpleNamespace(poll=lambda: None)
     # The aliased client exposes .stat() with st_mode (what PropertiesDialog reads).
     attr = manager._sftp.stat("/home/alice/notes.txt")
     assert attr.st_mode & 0o170000 == 0o100000  # regular file
+    manager.close()
+
+
+def test_manager_directory_size(backend_modules, monkeypatch):
+    """directory_size recursively sums file bytes (notes.txt=11 + sub/inner.txt=5)."""
+    _, ob, proto = backend_modules
+    manager, server, emitted = _make_manager(ob, proto, monkeypatch)
+    total = manager.directory_size("/home/alice").result(timeout=5)
+    assert total == len(b"hello world") + len(b"inner")
     manager.close()
 
 
@@ -360,6 +446,32 @@ def test_manager_listdir_defers_counts(backend_modules, monkeypatch):
         if e[0] == "directory-counts":
             counts.update(e[2])
     assert counts.get("sub") == 1
+    manager.close()
+
+
+def test_keepalive_emits_operation_error_after_failures(backend_modules, monkeypatch):
+    """The keepalive worker probes the client and surfaces a 'connection may be
+    down' error after exceeding the configured failure count."""
+    _, ob, proto = backend_modules
+    manager = ob.OpenSSHSFTPManager(
+        "h", "u", 22,
+        dispatcher=lambda cb, args=(), kwargs=None: cb(*args, **(kwargs or {})),
+        ssh_config={"file_manager": {"sftp_keepalive_interval": 1,
+                                     "sftp_keepalive_count_max": 0}},
+    )
+    emitted = []
+    monkeypatch.setattr(manager, "emit", lambda *a: emitted.append(a))
+
+    class _DeadClient:
+        def realpath(self, _p):
+            raise IOError("probe failed")
+
+    manager._client = _DeadClient()
+    manager._read_keepalive_config()
+    assert manager._keepalive_interval == 1
+    # First probe fails → failures(1) > count_max(0) → emit "connection may be down".
+    manager._start_keepalive_worker()
+    assert _wait_for(lambda: any(e[0] == "operation-error" for e in emitted), timeout=4)
     manager.close()
 
 

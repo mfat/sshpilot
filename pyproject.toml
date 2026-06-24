@@ -18,11 +18,19 @@ classifiers = [
 dependencies = [
     "PyGObject>=3.42",
     "pycairo>=1.20.0",
-    "paramiko>=3.4",
     "cryptography>=42.0",
     "keyring>=24.3",
     "psutil>=5.9.0",
     "certifi>=2023.7.22",
+]
+
+[project.optional-dependencies]
+# Test-only: test_combined_auth.py uses paramiko as a mock SSH server to
+# validate the native auth path. paramiko is NOT a runtime dependency — the
+# file manager uses the native OpenSSH `ssh -s sftp` subprocess.
+test = [
+    "pytest>=7.0",
+    "paramiko>=3.4",
 ]
 # Note: This package also requires system dependencies that must be installed separately:
 # - GTK4, libadwaita, VTE (for terminal backend)

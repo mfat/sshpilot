@@ -26,7 +26,7 @@ gi.require_version('Adw', '1')
 gi.require_version('Gio', '2.0')
 from gi.repository import Gtk, Adw, Gio, GLib
 
-from sshpilot.file_manager_window import AsyncSFTPManager
+from sshpilot.file_manager import create_file_manager_backend
 from sshpilot.connection_manager import ConnectionManager
 from sshpilot.config import Config
 
@@ -99,7 +99,7 @@ class SFTPTester:
                 self.connection.auth_method = 0
                 logger.info("Temporarily set auth_method to 0 (key-based) for testing")
             
-            self.manager = AsyncSFTPManager(
+            self.manager = create_file_manager_backend(
                 host=self.connection.hostname or self.connection.host,
                 username=self.connection.username,
                 port=self.connection.port or 22,

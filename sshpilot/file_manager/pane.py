@@ -29,7 +29,7 @@ from .portal_docs import (
     _save_doc,
 )
 from .properties_dialog import PropertiesDialog
-from .sftp_manager import AsyncSFTPManager, FileEntry
+from .common import FileEntry
 
 
 logger = logging.getLogger(__name__)
