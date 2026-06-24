@@ -55,27 +55,13 @@ ls -la sshpilot/ || echo "sshpilot directory check"
 # Install the main executable
 install -D -m 755 run.py %{buildroot}%{_bindir}/sshpilot
 
-# Install Python modules
+# Install the whole sshpilot package. Copy the entire tree (not 'sshpilot/*.py')
+# so every subpackage ships: file_manager/, plugins/, vendor/ (incl. pyxtermjs
+# html/LICENSE) and resources/. Then drop the dev-only example plugins + caches.
 install -d %{buildroot}%{python3_sitelib}/sshpilot
-cp -a sshpilot/*.py %{buildroot}%{python3_sitelib}/sshpilot/
-
-# Plugin subpackage (loader, registry, built-in protocols + their plugin.json).
-# Example plugins are dev references only — never shipped.
-cp -a sshpilot/plugins %{buildroot}%{python3_sitelib}/sshpilot/
+cp -a sshpilot/. %{buildroot}%{python3_sitelib}/sshpilot/
 rm -rf %{buildroot}%{python3_sitelib}/sshpilot/plugins/examples
-find %{buildroot}%{python3_sitelib}/sshpilot/plugins -name __pycache__ -type d -prune -exec rm -rf {} +
-
-# Install resources
-install -d %{buildroot}%{python3_sitelib}/sshpilot/resources
-cp -a sshpilot/resources/* %{buildroot}%{python3_sitelib}/sshpilot/resources/
-
-# Install vendored pyxtermjs module
-install -d %{buildroot}%{python3_sitelib}/sshpilot/vendor
-cp -a sshpilot/vendor/__init__.py %{buildroot}%{python3_sitelib}/sshpilot/vendor/
-install -d %{buildroot}%{python3_sitelib}/sshpilot/vendor/pyxtermjs
-cp -a sshpilot/vendor/pyxtermjs/*.py %{buildroot}%{python3_sitelib}/sshpilot/vendor/pyxtermjs/
-cp -a sshpilot/vendor/pyxtermjs/*.html %{buildroot}%{python3_sitelib}/sshpilot/vendor/pyxtermjs/ 2>/dev/null || true
-cp -a sshpilot/vendor/pyxtermjs/LICENSE %{buildroot}%{python3_sitelib}/sshpilot/vendor/pyxtermjs/ 2>/dev/null || true
+find %{buildroot}%{python3_sitelib}/sshpilot -name __pycache__ -type d -prune -exec rm -rf {} +
 
 # Install desktop file and icon
 install -D -m 644 io.github.mfat.sshpilot.desktop %{buildroot}%{_datadir}/applications/io.github.mfat.sshpilot.desktop
