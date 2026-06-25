@@ -16,7 +16,6 @@ from sshpilot.sidebar import (
     _group_into_decision,
     _group_reorder_half,
     _group_reorder_zone,
-    _group_row_rel_y,
     _listbox_reposition_row,
     _placeholder_insert_index,
     _resolve_group_color_by_id,
@@ -363,16 +362,6 @@ def test_group_in_nest_zone():
     assert _group_in_nest_zone(row, 110) is False   # rel=10, top third
     assert _group_in_nest_zone(row, 135) is False   # rel=35, bottom third
     assert _group_in_nest_zone(row, 145) is False   # past header
-
-
-def test_group_row_rel_y_pins_baseline_against_placeholder_shift():
-    """Zone math must not thrash when a reorder gap shifts the row downward."""
-    row = _AllocRow(100, 40, header_height=40)
-    window = types.SimpleNamespace()
-
-    assert _group_row_rel_y(window, row, 120) == 20
-    row._alloc.y = 118  # placeholder inserted above shifted the row down
-    assert _group_row_rel_y(window, row, 120) == 20
 
 
 def test_group_drop_zone_delegates_to_reorder_zone():

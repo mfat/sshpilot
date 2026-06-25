@@ -1801,30 +1801,19 @@ def _on_connection_list_motion(window, target, x, y):
                     window._drop_indicator_row is row
                     and window._drop_indicator_position == "on_group"
                 )
+                in_nest_zone = _group_in_nest_zone(row, y)
                 header_h = _group_header_height(row)
-                rel = _group_row_rel_y(window, row, y)
+                rel = y - row.get_allocation().y
                 past_header = rel > header_h
 
                 if decision == "nest" and (
-                    _group_in_nest_zone(row, y, window=window)
-                    or (nesting_active and past_header)
+                    in_nest_zone or (nesting_active and past_header)
                 ):
                     _show_drop_indicator_on_group(window, row)
                 else:
-                    zone = _group_reorder_zone(
-                        row, y, nesting_active=nesting_active, window=window,
-                    )
-                    if zone == "into":
-                        zone = "below"
+                    zone = _group_reorder_zone(row, y)
                     _apply_group_reorder_indicator(window, row, zone)
-
-            # Dragging a group over a connection row → reorder gap at that row.
-            elif (hasattr(window, "_dragged_group_id")
-                  and hasattr(row, "connection")):
-                alloc = row.get_allocation()
-                zone = "above" if y < alloc.y + alloc.height / 2 else "below"
-                _show_drop_indicator(window, row, zone)
-
+            
             # Dragging a connection onto a group header adds it to that group.
             elif (hasattr(row, "group_id")
                   and getattr(window, "_dragged_connections", None)):
@@ -1858,10 +1847,7 @@ def _show_drop_indicator(window, row, position):
         # list parts around it — no overlap), instead of painting a line inside
         # the target row. Clear any lingering group 'into' highlight first.
         if window._drop_indicator_row and hasattr(window._drop_indicator_row, 'hide_drop_indicators'):
-            # Also clear when same row is switching away from "on_group" (nest
-            # highlight); the `is not row` guard would skip it otherwise.
-            if (window._drop_indicator_row is not row
-                    or window._drop_indicator_position == "on_group"):
+            if window._drop_indicator_row is not row:
                 window._drop_indicator_row.hide_drop_indicators()
         _position_drop_placeholder(window, row, position)
     except Exception as e:
@@ -1886,22 +1872,6 @@ def _row_at_y_or_nearest(window, y):
     return None
 
 
-def _group_row_rel_y(window, row, y: float) -> float:
-    """Cursor Y relative to a stable row baseline.
-
-    The reorder placeholder is a real list row; inserting it above/below the
-    target shifts ``row.get_allocation().y`` and would thrash zone detection.
-    Pin the baseline on first hover of a row until the cursor leaves it.
-    """
-    if window is not None:
-        zone_row = getattr(window, "_drop_zone_row", None)
-        if zone_row is not row:
-            window._drop_zone_row = row
-            window._drop_zone_base_y = row.get_allocation().y
-        return y - window._drop_zone_base_y
-    return y - row.get_allocation().y
-
-
 def _group_header_height(row) -> float:
     """Stable header height for zone math (ignores expanded nest chrome)."""
     try:
@@ -1915,9 +1885,7 @@ def _group_header_height(row) -> float:
         return 0.0
 
 
-def _group_reorder_zone(
-    row, y, nesting_active: bool = False, window=None,
-) -> str:
+def _group_reorder_zone(row, y, nesting_active: bool = False) -> str:
     """Reorder split for a group row: whole header is above/below by half.
 
     Past the header is a sibling seam (``below``) unless nest mode is active.
@@ -1926,7 +1894,7 @@ def _group_reorder_zone(
         header_h = _group_header_height(row)
         if header_h <= 0:
             return "above"
-        rel = _group_row_rel_y(window, row, y)
+        rel = y - row.get_allocation().y
         if rel > header_h:
             return "into" if nesting_active else "below"
         return "above" if rel < header_h / 2 else "below"
@@ -1934,17 +1902,17 @@ def _group_reorder_zone(
         return "above"
 
 
-def _group_in_nest_zone(row, y, window=None) -> bool:
+def _group_in_nest_zone(row, y) -> bool:
     """True when ``y`` is within the header excluding small top/bottom edge strips."""
     try:
         header_h = _group_header_height(row)
         if header_h <= 0:
             return True
-        rel = _group_row_rel_y(window, row, y)
+        rel = y - row.get_allocation().y
         if rel < 0 or rel > header_h:
             return False
         edge = min(10, header_h / 4)
-        return edge < rel < header_h - edge
+        return edge <= rel < header_h - edge
     except Exception:
         return False
 
@@ -2059,12 +2027,12 @@ def _apply_group_reorder_indicator(window, row, zone: str) -> None:
         _show_drop_indicator(window, row, zone)
 
 
-def _group_drop_zone(row, y, nesting_active: bool = False, window=None) -> str:
+def _group_drop_zone(row, y, nesting_active: bool = False) -> str:
     """Legacy zone helper; motion uses ``_group_reorder_zone`` instead.
 
     Kept for drop-time recomputation when no indicator was captured.
     """
-    return _group_reorder_zone(row, y, nesting_active=nesting_active, window=window)
+    return _group_reorder_zone(row, y, nesting_active=nesting_active)
 
 
 def _group_reorder_half(row, y) -> str:
@@ -2276,15 +2244,11 @@ def _clear_drop_indicator(window):
 
         window._drop_indicator_row = None
         window._drop_indicator_position = None
-        window._drop_zone_row = None
-        window._drop_zone_base_y = None
     except Exception as e:
         logger.error(f"Error clearing drop indicator: {e}")
         _remove_drop_placeholder(window)
         window._drop_indicator_row = None
         window._drop_indicator_position = None
-        window._drop_zone_row = None
-        window._drop_zone_base_y = None
 
 
 def _sidebar_allows_inplace_dnd(window) -> bool:
@@ -2763,21 +2727,10 @@ def _on_connection_list_drop(window, target, value, x, y):
             if group_id:
                 # Prefer the row motion last highlighted; only fall back to a
                 # fresh hit-test when there was no prior motion (rare).
-                if indicator_row is not None:
-                    if (hasattr(indicator_row, "group_id")
-                            and not getattr(indicator_row, "is_tag_group", False)):
-                        target_row = indicator_row
-                    elif hasattr(indicator_row, "connection"):
-                        # Indicator landed on a connection row; reorder the
-                        # dragged group relative to the connection's parent group.
-                        conn_nick = indicator_row.connection.nickname
-                        parent_id = window.group_manager.get_connection_group(conn_nick)
-                        target_row = _find_group_row_by_id(window, parent_id) if parent_id else None
-                        if target_row is None:
-                            indicator_pos = None
-                    else:
-                        target_row = _row_at_y_or_nearest(window, y)
-                        indicator_pos = None
+                if (indicator_row is not None
+                        and hasattr(indicator_row, "group_id")
+                        and not getattr(indicator_row, "is_tag_group", False)):
+                    target_row = indicator_row
                 else:
                     target_row = _row_at_y_or_nearest(window, y)
                     indicator_pos = None  # stale relative to this row; recompute below
@@ -2798,7 +2751,12 @@ def _on_connection_list_drop(window, target, value, x, y):
                             elif indicator_pos in ("above", "below"):
                                 zone = indicator_pos
                             else:
-                                zone = _group_reorder_half(target_row, y)
+                                zone = _group_reorder_zone(
+                                    target_row, y,
+                                    nesting_active=(indicator_pos == "on_group"),
+                                )
+                                if zone == "into" and indicator_pos != "on_group":
+                                    zone = _group_reorder_half(target_row, y)
 
                             if zone == "into":
                                 # Nest the source into the target — unless it is
