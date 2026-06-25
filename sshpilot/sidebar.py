@@ -1813,7 +1813,7 @@ def _on_connection_list_motion(window, target, x, y):
                         row, y, nesting_active=nesting_active, window=window,
                     )
                     if zone == "into":
-                        zone = "above" if rel < header_h / 2 else "below"
+                        zone = "below"
                     _apply_group_reorder_indicator(window, row, zone)
 
             # Dragging a group over a connection row → reorder gap at that row.
