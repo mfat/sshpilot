@@ -8,7 +8,7 @@ from typing import Dict, List, Optional
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Gtk, Gdk, GObject, GLib, Adw, Graphene, Pango
+from gi.repository import Gtk, Gdk, GObject, GLib, Adw, Graphene, Gsk, Pango
 
 from gettext import gettext as _
 
@@ -34,6 +34,14 @@ _DEFAULT_ROW_WIDGET_MARGIN_START = -1
 _GROUP_DISPLAY_OPTIONS = {"fullwidth", "nested"}
 _GROUP_ROW_INDENT_WIDTH = 20
 _MIN_VALID_MARGIN = 0
+
+# Drop indicator (between-rows reorder bar) drawing parameters.
+_DROP_BAR_HEIGHT = 10        # widget height reserved when shown
+_DROP_BAR_THICKNESS = 4      # thickness of the pill bar
+_DROP_BAR_INSET_LEFT = 6     # left inset (kept small so the bar spans nearly full width)
+_DROP_BAR_INSET_RIGHT = 8    # right inset
+_DROP_BAR_CAP_RADIUS = 4     # radius of the leading round cap (caret node)
+_DROP_BAR_FALLBACK_ACCENT = "#3584e4"  # Adwaita blue when no theme accent
 
 
 def _install_sidebar_color_css():
@@ -263,28 +271,92 @@ def _set_tint_card_color(row: Gtk.Widget, rgba: Gdk.RGBA):
 # ---------------------------------------------------------------------------
 
 
+def _drag_bar_geometry(width, height):
+    """Geometry for the drop bar + leading cap, given the widget size.
+
+    Returns ``(bar_x, bar_y, bar_w, bar_h, cap_cx, cap_cy, cap_r)``. The bar is a
+    horizontal pill inset from both edges; the cap is a filled node at its
+    leading (left) end. Degenerate widths clamp to a non-negative bar.
+    """
+    bar_h = min(_DROP_BAR_THICKNESS, height)
+    bar_y = max(0, (height - bar_h) / 2)
+    bar_x = _DROP_BAR_INSET_LEFT
+    bar_w = max(0, width - _DROP_BAR_INSET_LEFT - _DROP_BAR_INSET_RIGHT)
+    cap_r = min(_DROP_BAR_CAP_RADIUS, height / 2)
+    cap_cx = bar_x
+    cap_cy = height / 2
+    return (bar_x, bar_y, bar_w, bar_h, cap_cx, cap_cy, cap_r)
+
+
 class DragIndicator(Gtk.Widget):
-    """Custom widget to show drop indicator line"""
-    
+    """Custom widget showing the between-rows drop position.
+
+    Draws a thick rounded accent bar with a soft glow and a round leading cap
+    (the insertion caret), rather than a faint hairline. Shared by GroupRow and
+    ConnectionRow; it only renders space when made visible during a drag.
+    """
+
     def __init__(self):
         super().__init__()
-        self.set_size_request(-1, 3)  # 3px height
+        self.set_size_request(-1, _DROP_BAR_HEIGHT)
         self.set_visible(False)
-    
+
+    def _accent_color(self):
+        """Theme accent (accent_bg_color), falling back to Adwaita blue."""
+        rgba = None
+        try:
+            found, looked = self.get_style_context().lookup_color("accent_bg_color")
+            if found:
+                rgba = looked
+        except Exception:
+            rgba = None
+        if rgba is None:
+            rgba = Gdk.RGBA()
+            rgba.parse(_DROP_BAR_FALLBACK_ACCENT)
+        return rgba
+
     def do_snapshot(self, snapshot):
-        """Draw the horizontal line"""
         width = self.get_width()
         height = self.get_height()
-        
-        # Create a Graphene rectangle for the drop indicator
-        rect = Graphene.Rect()
-        rect.init(8, height // 2 - 1, width - 16, 2)  # x, y, width, height
-        
-        # Use accent color for the drop indicator
-        color = Gdk.RGBA()
-        color.parse("#3584e4")  # Adwaita blue
-        
-        snapshot.append_color(color, rect)
+        if width <= 0 or height <= 0:
+            return
+
+        (bar_x, bar_y, bar_w, bar_h,
+         cap_cx, cap_cy, cap_r) = _drag_bar_geometry(width, height)
+        if bar_w <= 0:
+            return
+
+        accent = self._accent_color()
+        glow = Gdk.RGBA()
+        glow.red, glow.green, glow.blue, glow.alpha = (
+            accent.red, accent.green, accent.blue, 0.5,
+        )
+
+        bar_rect = Graphene.Rect()
+        bar_rect.init(bar_x, bar_y, bar_w, bar_h)
+        bar_rounded = Gsk.RoundedRect()
+        bar_rounded.init_from_rect(bar_rect, bar_h / 2)
+
+        # Soft glow under the bar.
+        try:
+            snapshot.append_outset_shadow(bar_rounded, glow, 0, 0, 1, 6)
+        except Exception:
+            pass
+
+        # Pill-shaped accent bar.
+        snapshot.push_rounded_clip(bar_rounded)
+        snapshot.append_color(accent, bar_rect)
+        snapshot.pop()
+
+        # Round leading cap (the insertion caret node).
+        if cap_r > 0:
+            cap_rect = Graphene.Rect()
+            cap_rect.init(cap_cx - cap_r, cap_cy - cap_r, cap_r * 2, cap_r * 2)
+            cap_rounded = Gsk.RoundedRect()
+            cap_rounded.init_from_rect(cap_rect, cap_r)
+            snapshot.push_rounded_clip(cap_rounded)
+            snapshot.append_color(accent, cap_rect)
+            snapshot.pop()
 
 
 class GroupRow(Gtk.ListBoxRow):
@@ -1591,6 +1663,7 @@ def setup_connection_list_dnd(window):
 
     window._drop_indicator_row = None
     window._drop_indicator_position = None
+    window._drop_placeholder_row = None
     window._ungrouped_area_row = None
     window._ungrouped_area_visible = False
     window._connection_autoscroll_timeout_id = 0
@@ -1623,6 +1696,11 @@ def _on_connection_list_motion(window, target, x, y):
         row = _row_at_y_or_nearest(window, y)
         if not row:
             _clear_drop_indicator(window)
+            return Gdk.DragAction.MOVE
+
+        if getattr(row, "drop_placeholder", False):
+            # Hovering the gap itself — leave it where it is (rows shift under
+            # the cursor as the placeholder inserts; recomputing would thrash).
             return Gdk.DragAction.MOVE
 
         if getattr(row, "ungrouped_area", False):
@@ -1708,21 +1786,13 @@ def _on_connection_list_leave(window, target):
 
 def _show_drop_indicator(window, row, position):
     try:
-        # Only update if the indicator has changed
-        if (window._drop_indicator_row != row or
-            window._drop_indicator_position != position):
-            
-            # Clear any existing indicators
-            if window._drop_indicator_row and hasattr(window._drop_indicator_row, 'hide_drop_indicators'):
+        # Between-rows reorder: open a real gap with the placeholder row (the
+        # list parts around it — no overlap), instead of painting a line inside
+        # the target row. Clear any lingering group 'into' highlight first.
+        if window._drop_indicator_row and hasattr(window._drop_indicator_row, 'hide_drop_indicators'):
+            if window._drop_indicator_row is not row:
                 window._drop_indicator_row.hide_drop_indicators()
-            
-            # Show indicator on the target row
-            if hasattr(row, 'show_drop_indicator'):
-                show_top = (position == "above")
-                row.show_drop_indicator(show_top)
-
-            window._drop_indicator_row = row
-            window._drop_indicator_position = position
+        _position_drop_placeholder(window, row, position)
     except Exception as e:
         logger.error(f"Error showing drop indicator: {e}")
 
@@ -1785,11 +1855,14 @@ def _show_drop_indicator_on_group(window, row):
         # Only update if the indicator has changed
         if (window._drop_indicator_row != row or
             window._drop_indicator_position != "on_group"):
-            
+
+            # A gap and the 'Add to Group' highlight must never show together.
+            _remove_drop_placeholder(window)
+
             # Clear any existing indicators
             if window._drop_indicator_row and hasattr(window._drop_indicator_row, 'hide_drop_indicators'):
                 window._drop_indicator_row.hide_drop_indicators()
-            
+
             # Show group highlight indicator instead of line indicators
             if hasattr(row, 'show_group_highlight'):
                 row.show_group_highlight(True)
@@ -1831,6 +1904,81 @@ def _create_ungrouped_area(window):
     return ungrouped_row
 
 
+def _placeholder_insert_index(target_index, position):
+    """List index where the insertion placeholder goes for a given target.
+
+    'above' lands at the target's own slot; 'below' one past it.
+    """
+    return target_index if position == "above" else target_index + 1
+
+
+def _create_drop_placeholder(window):
+    """Cached slim placeholder row that opens a gap between rows during a drag.
+
+    Mirrors Nautilus's reorder placeholder: a real, non-interactive list row
+    inserted at the drop position so the list parts around it (clean gap, no
+    overlap). Its visible content is the accent-bar DragIndicator.
+    """
+    if getattr(window, "_drop_placeholder_row", None) is not None:
+        return window._drop_placeholder_row
+
+    bar = DragIndicator()
+    bar.set_visible(True)  # only ever in the tree mid-drag
+
+    placeholder = Gtk.ListBoxRow()
+    placeholder.set_child(bar)
+    placeholder.set_selectable(False)
+    placeholder.set_activatable(False)
+    placeholder.add_css_class("drop-placeholder-row")
+    placeholder.set_size_request(-1, _DROP_BAR_HEIGHT + 2)
+    placeholder.drop_placeholder = True
+
+    window._drop_placeholder_row = placeholder
+    return placeholder
+
+
+def _position_drop_placeholder(window, target_row, position):
+    """Insert/move the gap placeholder relative to ``target_row``.
+
+    Records the real target row + position for the WYSIWYG drop; the placeholder
+    itself is purely visual.
+    """
+    try:
+        placeholder = _create_drop_placeholder(window)
+
+        # Already showing the same gap → nothing to do (avoids churn/flicker).
+        if (placeholder.get_parent() is not None
+                and window._drop_indicator_row is target_row
+                and window._drop_indicator_position == position):
+            return
+
+        # Remove first so target_row.get_index() reflects the natural layout
+        # (the placeholder may currently sit above the target). Same as Nautilus.
+        if placeholder.get_parent() is not None:
+            window.connection_list.remove(placeholder)
+
+        target_index = target_row.get_index()
+        if target_index < 0:
+            return
+        insert_index = _placeholder_insert_index(target_index, position)
+
+        window.connection_list.insert(placeholder, insert_index)
+        window._drop_indicator_row = target_row
+        window._drop_indicator_position = position
+    except Exception as e:
+        logger.error(f"Error positioning drop placeholder: {e}")
+
+
+def _remove_drop_placeholder(window):
+    """Remove the gap placeholder from the list (keeping the cached widget)."""
+    try:
+        placeholder = getattr(window, "_drop_placeholder_row", None)
+        if placeholder is not None and placeholder.get_parent() is not None:
+            window.connection_list.remove(placeholder)
+    except Exception as e:
+        logger.error(f"Error removing drop placeholder: {e}")
+
+
 def _show_ungrouped_area(window):
     try:
         if window._ungrouped_area_visible:
@@ -1860,6 +2008,7 @@ def _hide_ungrouped_area(window):
 
 def _clear_drop_indicator(window):
     try:
+        _remove_drop_placeholder(window)
         if window._drop_indicator_row and hasattr(window._drop_indicator_row, 'hide_drop_indicators'):
             window._drop_indicator_row.hide_drop_indicators()
 
@@ -1868,6 +2017,7 @@ def _clear_drop_indicator(window):
     except Exception as e:
         logger.error(f"Error clearing drop indicator: {e}")
         # Ensure cleanup even if there's an error
+        _remove_drop_placeholder(window)
         window._drop_indicator_row = None
         window._drop_indicator_position = None
 
@@ -1932,22 +2082,26 @@ def _on_connection_list_drop(window, target, value, x, y):
                     connection_nicknames.append(nickname)
 
             if connection_nicknames:
-                target_row = window.connection_list.get_row_at_y(int(y))
+                # Act on what motion highlighted (the placeholder gap / 'Add to
+                # Group' highlight), not a fresh y recompute — keeps the drop
+                # consistent with what the user saw. Fall back to a hit-test only
+                # when there was no prior motion.
+                target_row = indicator_row
+                if target_row is None or target_row.get_parent() is None:
+                    target_row = window.connection_list.get_row_at_y(int(y))
+                # Reorder position for connection targets; group/tag targets use
+                # 'on_group' (move into / add tag), which is not above/below.
+                position = indicator_pos if indicator_pos in ("above", "below") else "below"
 
                 if not target_row:
                     for nickname in connection_nicknames:
                         window.group_manager.move_connection(nickname, None)
                         changes_made = True
-                elif getattr(target_row, "ungrouped_area", False):
+                elif getattr(target_row, "ungrouped_area", False) or indicator_pos == "ungrouped":
                     for nickname in connection_nicknames:
                         window.group_manager.move_connection(nickname, None)
                         changes_made = True
                 else:
-                    row_y = target_row.get_allocation().y
-                    row_height = target_row.get_allocation().height
-                    relative_y = y - row_y
-                    position = "above" if relative_y < row_height / 2 else "below"
-
                     if getattr(target_row, "is_tag_group", False):
                         # Dropping onto a tag group adds the tag to the dragged
                         # connections (copy semantics — GroupManager untouched;

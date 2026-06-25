@@ -4,7 +4,12 @@ import sshpilot.sidebar as sidebar_module
 import sshpilot.window as window_module
 from sshpilot.sidebar import (
     GroupRow,
+    _DROP_BAR_INSET_LEFT,
+    _DROP_BAR_INSET_RIGHT,
+    _DROP_BAR_THICKNESS,
+    _drag_bar_geometry,
     _group_drop_zone,
+    _placeholder_insert_index,
     _resolve_group_color_by_id,
     _row_at_y_or_nearest,
     _would_create_group_cycle,
@@ -240,6 +245,34 @@ def test_group_row_indentation_honors_display_mode():
     root.set_indentation(0)
     assert root.widget_margin == 0
     assert root._content.margin == 12
+
+
+def test_drag_bar_geometry():
+    width, height = 200, 10
+    bar_x, bar_y, bar_w, bar_h, cap_cx, cap_cy, cap_r = _drag_bar_geometry(width, height)
+
+    # Bar is inset from both edges and vertically centered.
+    assert bar_x == _DROP_BAR_INSET_LEFT
+    assert bar_w == width - _DROP_BAR_INSET_LEFT - _DROP_BAR_INSET_RIGHT
+    assert bar_h == _DROP_BAR_THICKNESS
+    assert bar_y == (height - bar_h) / 2
+
+    # Cap is a node centered on the leading (left) end of the bar.
+    assert cap_cx == bar_x
+    assert cap_cy == height / 2
+    assert cap_r > 0
+
+    # Degenerate narrow widget clamps the bar width to non-negative.
+    _, _, narrow_w, _, _, _, _ = _drag_bar_geometry(4, 10)
+    assert narrow_w == 0
+
+
+def test_placeholder_insert_index():
+    # 'above' lands at the target's own slot; 'below' one past it.
+    assert _placeholder_insert_index(3, "above") == 3
+    assert _placeholder_insert_index(3, "below") == 4
+    assert _placeholder_insert_index(0, "above") == 0
+    assert _placeholder_insert_index(0, "below") == 1
 
 
 def test_would_create_group_cycle():

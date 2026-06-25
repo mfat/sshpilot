@@ -1237,6 +1237,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
               background-color: shade(@accent_bg_color, 0.90);
             }
             
+            /* Reorder placeholder: a slim transparent gap row whose child
+               DragIndicator draws the accent bar; the list parts around it. */
+            .drop-placeholder-row {
+              background: transparent;
+              min-height: 0;
+              padding: 0;
+            }
+
             /* Group drop target highlight */
             .drop-target-group {
               background: alpha(@accent_bg_color, 0.25);
