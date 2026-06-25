@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:5.4.3}
+Version:        %{?version}%{!?version:5.4.4}
 Release:        1%{?dist}
 Summary:        Manage your servers with ease
 
@@ -85,6 +85,12 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/io.github.mfat.sshpil
 %{_datadir}/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg
 
 %changelog
+* Fri Jun 26 2026 mFat <newmfat@gmail.com> - 5.4.4
+- Added support for nested groups
+- Improvements to Drag & Drop experience in connection list
+- Fixed scp failing to download directories
+- Bug fixes
+
 * Wed Jun 24 2026 mFat <newmfat@gmail.com> - 5.4.3
 - Bug fixes
 - Performance improvements for SFTP file manager
