@@ -103,7 +103,7 @@ from .plugins.api import Capability
 from .plugins.registry import capabilities_for
 from .ssh_utils import ensure_writable_ssh_home
 from .scp_utils import assemble_scp_transfer_args, classify_sftp_error, download_file, upload_file
-from .ssh_password_exec import run_ssh_with_password, run_scp_with_password
+from .ssh_password_exec import run_ssh_with_password
 
 logger = logging.getLogger(__name__)
 
