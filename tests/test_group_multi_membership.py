@@ -156,3 +156,34 @@ def test_multi_membership_survives_reload():
 
     assert set(gm2.get_connection_groups("srv")) == {a, b}
     assert "srv" not in gm2.root_connections
+
+
+def test_place_group_reorders_root_sibling_by_tree_index():
+    gm = GroupManager(DummyConfig())
+    a = gm.create_group("A")
+    b = gm.create_group("B")
+    c = gm.create_group("C")
+    gm._update_group_orders([a, b, c], None)
+
+    # Move C between A and B → (root, index(B)) == 1
+    assert gm.place_group(c, None, 1) is True
+    assert gm.get_ordered_siblings(None) == [a, c, b]
+
+
+def test_place_group_nests_at_end_of_target():
+    gm = GroupManager(DummyConfig())
+    parent = gm.create_group("Parent")
+    child = gm.create_group("Child")
+    gm._update_group_orders([parent, child], None)
+
+    assert gm.place_group(child, parent, 0) is True
+    assert gm.groups[child]["parent_id"] == parent
+    assert gm.get_ordered_siblings(parent) == [child]
+
+
+def test_place_group_rejects_cycle():
+    gm = GroupManager(DummyConfig())
+    a = gm.create_group("A")
+    b = gm.create_group("B")
+    gm.place_group(b, a, 0)
+    assert gm.place_group(a, b, 0) is False
