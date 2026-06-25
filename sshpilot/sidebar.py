@@ -44,8 +44,6 @@ _DROP_BAR_CAP_RADIUS = 4     # radius of the leading round cap (caret node)
 _DROP_BAR_FALLBACK_ACCENT = "#3584e4"  # Adwaita blue when no theme accent
 # Generous hit band for seams between sibling group subtrees (reorder targets).
 _GROUP_SEAM_HIT_PX = 16
-# Top/bottom fraction of a sibling group row reserved for reorder (centre = nest).
-_GROUP_SIBLING_REORDER_BAND = 0.28
 
 def _install_sidebar_color_css():
     global _COLOR_CSS_INSTALLED
@@ -1713,6 +1711,9 @@ def setup_connection_list_dnd(window):
 
     window._drop_indicator_row = None
     window._drop_indicator_position = None
+    window._drop_group_parent_id = None
+    window._drop_group_index = None
+    window._drop_group_tree_target_set = False
     window._drop_placeholder_row = None
     window._ungrouped_area_row = None
     window._ungrouped_area_visible = False
@@ -1812,45 +1813,28 @@ def _on_connection_list_motion(window, target, x, y):
 
                 listbox = window.connection_list
                 direct_row = _listbox_row_at_y(listbox, y)
+                seam = _group_reorder_seam_at_y(
+                    window, y, window._dragged_group_id
+                )
 
-                # Stay on the current highlight while the pointer remains on target.
-                if window._drop_indicator_row is row:
+                if seam is None and window._drop_indicator_row is row:
                     pos = window._drop_indicator_position
-                    if pos == "on_group":
-                        if (_pointer_over_group_row(row, y, listbox)
-                                and _sibling_reorder_band_zone(
-                                    window, row, y, listbox,
-                                    window._dragged_group_id,
-                                ) is None):
-                            return Gdk.DragAction.MOVE
-                    elif pos in ("above", "below"):
-                        band = _sibling_reorder_band_zone(
-                            window, row, y, listbox, window._dragged_group_id
-                        )
-                        if band == pos or direct_row is None:
-                            return Gdk.DragAction.MOVE
+                    if pos == "on_group" and direct_row is row:
+                        return Gdk.DragAction.MOVE
+                    if pos in ("above", "below") and (
+                        direct_row is None or direct_row is row
+                    ):
+                        return Gdk.DragAction.MOVE
 
-                if direct_row is row and decision == "nest":
-                    band = _sibling_reorder_band_zone(
-                        window, row, y, listbox, window._dragged_group_id
-                    )
-                    if band is not None:
-                        _apply_group_reorder_indicator(window, row, band)
-                    else:
-                        _show_drop_indicator_on_group(window, row)
+                # Sibling seams take priority: reorder uses tree (parent, index);
+                # nest only when the pointer is on a row and not at a seam.
+                if seam is not None:
+                    seam_row, seam_zone = seam
+                    _apply_group_reorder_indicator(window, seam_row, seam_zone)
+                elif direct_row is row and decision == "nest":
+                    _show_drop_indicator_on_group(window, row)
                 elif direct_row is None:
-                    # True gap between rows — reorder via seam, else margin slack.
-                    seam = _group_reorder_seam_at_y(
-                        window, y, window._dragged_group_id
-                    )
-                    if seam is not None:
-                        seam_row, seam_zone = seam
-                        _apply_group_reorder_indicator(window, seam_row, seam_zone)
-                    elif _pointer_over_group_row(row, y, listbox) and decision == "nest":
-                        _show_drop_indicator_on_group(window, row)
-                    else:
-                        zone = _group_reorder_position_from_y(row, y, listbox)
-                        _apply_group_reorder_indicator(window, row, zone)
+                    _clear_drop_indicator(window)
                 elif decision == "reorder":
                     zone = _group_reorder_position_from_y(row, y, listbox)
                     _apply_group_reorder_indicator(window, row, zone)
@@ -2002,38 +1986,39 @@ def _group_reorder_position_from_y(row, y, listbox=None) -> str:
         return "above"
 
 
-def _groups_are_siblings(window, group_a: str, group_b: str) -> bool:
-    """True when both groups share the same parent in GroupManager."""
-    groups = window.group_manager.groups
-    ga = groups.get(group_a, {})
-    gb = groups.get(group_b, {})
-    return ga.get("parent_id") == gb.get("parent_id")
+def _set_group_tree_drop_target(window, parent_id, index: int) -> None:
+    window._drop_group_parent_id = parent_id
+    window._drop_group_index = index
+    window._drop_group_tree_target_set = True
 
 
-def _sibling_reorder_band_zone(
-    window, row, y, listbox, dragged_group_id, band: float | None = None
-) -> str | None:
-    """For sibling group rows: top/bottom bands reorder, centre is for nesting.
+def _tree_target_insert_before(manager, group_id: str) -> tuple:
+    parent_id, idx = manager.sibling_index(group_id)
+    return parent_id, idx
 
-    Returns ``'above'`` / ``'below'`` or ``None`` when ``y`` is in the nest band.
-    """
-    if not _groups_are_siblings(window, dragged_group_id, row.group_id):
-        return None
-    if band is None:
-        band = _GROUP_SIBLING_REORDER_BAND
+
+def _tree_target_insert_after(manager, group_id: str) -> tuple:
+    parent_id, idx = manager.sibling_index(group_id)
+    return parent_id, idx + 1
+
+
+def _tree_target_nest_into(manager, group_id: str) -> tuple:
+    return group_id, len(manager.get_ordered_siblings(group_id))
+
+
+def _record_group_reorder_tree_target(window, ref_group_id: str, position: str) -> None:
+    """Map a visual above/below highlight to ``(parent_id, child_index)``."""
+    if not hasattr(window, "_dragged_group_id"):
+        return
+    manager = window.group_manager
     try:
-        y0, y1 = _group_header_bounds_in_listbox(row, listbox)
-        h = y1 - y0
-        if h <= 0:
-            return None
-        t = (y - y0) / h
-        if t < band:
-            return "above"
-        if t > (1.0 - band):
-            return "below"
-    except Exception:
-        return None
-    return None
+        if position == "above":
+            parent_id, index = _tree_target_insert_before(manager, ref_group_id)
+        else:
+            parent_id, index = _tree_target_insert_after(manager, ref_group_id)
+        _set_group_tree_drop_target(window, parent_id, index)
+    except ValueError:
+        pass
 
 
 def _sibling_group_rows(window, parent_id):
@@ -2103,37 +2088,6 @@ def _group_reorder_seam_at_y(window, y, dragged_group_id):
                     return nxt, "above"
 
     return None
-
-
-def _resolve_group_drop_zone(window, target_row, y, indicator_pos, dragged_group_id) -> str:
-    """Map motion highlight or drop coordinates to nest ('into') or reorder."""
-    if indicator_pos == "on_group":
-        return "into"
-    if indicator_pos in ("above", "below"):
-        return indicator_pos
-    listbox = window.connection_list
-    if _listbox_row_at_y(listbox, y) is target_row:
-        decision = _group_into_decision(
-            window.group_manager.groups, dragged_group_id, target_row.group_id
-        )
-        if decision == "nest":
-            band = _sibling_reorder_band_zone(
-                window, target_row, y, listbox, dragged_group_id
-            )
-            if band is not None:
-                return band
-            return "into"
-    seam = _group_reorder_seam_at_y(window, y, dragged_group_id)
-    if seam is not None:
-        _seam_row, seam_zone = seam
-        return seam_zone
-    if _pointer_over_group_row(target_row, y, listbox):
-        decision = _group_into_decision(
-            window.group_manager.groups, dragged_group_id, target_row.group_id
-        )
-        if decision == "nest":
-            return "into"
-    return _group_reorder_position_from_y(target_row, y, listbox)
 
 
 def _group_has_visible_children(row) -> bool:
@@ -2229,6 +2183,10 @@ def _show_group_end_drop(window):
     window.connection_list.insert(placeholder, _group_section_end_index(window))
     window._drop_indicator_row = last
     window._drop_indicator_position = "below"
+    if hasattr(window, "_dragged_group_id"):
+        manager = window.group_manager
+        parent_id, index = _tree_target_insert_after(manager, last.group_id)
+        _set_group_tree_drop_target(window, parent_id, index)
 
 
 def _apply_group_reorder_indicator(window, row, zone: str) -> None:
@@ -2292,6 +2250,10 @@ def _show_drop_indicator_on_group(window, row):
 
             window._drop_indicator_row = row
             window._drop_indicator_position = "on_group"
+            if hasattr(window, "_dragged_group_id"):
+                manager = window.group_manager
+                parent_id, index = _tree_target_nest_into(manager, row.group_id)
+                _set_group_tree_drop_target(window, parent_id, index)
     except Exception as e:
         logger.error(f"Error showing group drop indicator: {e}")
 
@@ -2385,6 +2347,12 @@ def _position_drop_placeholder(window, target_row, position):
         window.connection_list.insert(placeholder, insert_index)
         window._drop_indicator_row = target_row
         window._drop_indicator_position = position
+        if (hasattr(window, "_dragged_group_id")
+                and hasattr(target_row, "group_id")
+                and position in ("above", "below")):
+            _record_group_reorder_tree_target(
+                window, target_row.group_id, position
+            )
     except Exception as e:
         logger.error(f"Error positioning drop placeholder: {e}")
 
@@ -2436,11 +2404,17 @@ def _clear_drop_indicator(window):
 
         window._drop_indicator_row = None
         window._drop_indicator_position = None
+        window._drop_group_parent_id = None
+        window._drop_group_index = None
+        window._drop_group_tree_target_set = False
     except Exception as e:
         logger.error(f"Error clearing drop indicator: {e}")
         _remove_drop_placeholder(window)
         window._drop_indicator_row = None
         window._drop_indicator_position = None
+        window._drop_group_parent_id = None
+        window._drop_group_index = None
+        window._drop_group_tree_target_set = False
 
 
 def _sidebar_allows_inplace_dnd(window) -> bool:
@@ -2736,6 +2710,9 @@ def _on_connection_list_drop(window, target, value, x, y):
         # ungrouped-area row shift allocations between the last motion and drop.
         indicator_row = getattr(window, "_drop_indicator_row", None)
         indicator_pos = getattr(window, "_drop_indicator_position", None)
+        drop_parent_id = getattr(window, "_drop_group_parent_id", None)
+        drop_index = getattr(window, "_drop_group_index", None)
+        drop_tree_target_set = getattr(window, "_drop_group_tree_target_set", False)
         _clear_drop_indicator(window)
         _hide_ungrouped_area(window)
         _stop_connection_autoscroll(window)
@@ -2931,37 +2908,58 @@ def _on_connection_list_drop(window, target, value, x, y):
                         and not getattr(target_row, "is_tag_group", False)):
                     target_group_id = target_row.group_id
                     if target_group_id != group_id:
-                        # Validate that the target group exists
                         if target_group_id in window.group_manager.groups:
-                            source_group = window.group_manager.groups.get(group_id)
-                            target_group = window.group_manager.groups.get(target_group_id)
+                            manager = window.group_manager
+                            source_group = manager.groups.get(group_id)
 
-                            zone = _resolve_group_drop_zone(
-                                window, target_row, y, indicator_pos, group_id
-                            )
-
-                            if zone == "into":
-                                # Nest the source into the target — unless it is
-                                # already a direct child (that re-parent is a
-                                # no-op and would falsely trigger a rebuild).
-                                if source_group and source_group.get("parent_id") == target_group_id:
+                            if indicator_pos == "on_group":
+                                if (source_group
+                                        and source_group.get("parent_id") == target_group_id):
                                     pass
-                                elif _move_group(window, group_id, target_group_id):
+                                else:
+                                    parent_id, index = _tree_target_nest_into(
+                                        manager, target_group_id
+                                    )
+                                    old_parent = (
+                                        source_group.get("parent_id")
+                                        if source_group else None
+                                    )
+                                    if manager.place_group(group_id, parent_id, index):
+                                        changes_made = True
+                                        group_nested = True
+                                        group_reparented = old_parent != parent_id
+                            elif drop_tree_target_set:
+                                old_parent = (
+                                    source_group.get("parent_id")
+                                    if source_group else None
+                                )
+                                if manager.place_group(
+                                    group_id, drop_parent_id, drop_index
+                                ):
                                     changes_made = True
-                                    group_nested = True
-                                    group_reparented = True
-                            else:
-                                # Make the source a sibling of the target
-                                # (above/below). Reparent first when they differ
-                                # so reorder_group sees a shared parent; this also
-                                # un-nests when the target sits at the root level.
-                                if (source_group and target_group and
-                                        source_group.get('parent_id') != target_group.get('parent_id')):
-                                    if _move_group(window, group_id, target_group.get('parent_id')):
+                                    if old_parent != drop_parent_id:
                                         group_reparented = True
-                                window.group_manager.reorder_group(group_id, target_group_id, zone)
-                                changes_made = True
-                                group_id_applied = group_id
+                                    else:
+                                        group_id_applied = group_id
+                            elif indicator_pos in ("above", "below"):
+                                if indicator_pos == "above":
+                                    parent_id, index = _tree_target_insert_before(
+                                        manager, target_group_id
+                                    )
+                                else:
+                                    parent_id, index = _tree_target_insert_after(
+                                        manager, target_group_id
+                                    )
+                                old_parent = (
+                                    source_group.get("parent_id")
+                                    if source_group else None
+                                )
+                                if manager.place_group(group_id, parent_id, index):
+                                    changes_made = True
+                                    if old_parent != parent_id:
+                                        group_reparented = True
+                                    else:
+                                        group_id_applied = group_id
                         else:
                             logger.warning(f"Target group '{target_group_id}' does not exist")
 
@@ -3004,57 +3002,6 @@ def _get_target_group_at_position(window, x, y):
         return None
     except Exception:
         return None
-
-
-def _would_create_group_cycle(window, group_id, target_parent_id) -> bool:
-    """True if nesting ``group_id`` under ``target_parent_id`` would loop.
-
-    A cycle happens when the target is the group itself or one of its
-    descendants (which would then contain its own ancestor).
-    """
-    if target_parent_id == group_id:
-        return True
-    current_parent = target_parent_id
-    while current_parent:
-        if current_parent == group_id:
-            return True
-        current_parent = window.group_manager.groups.get(current_parent, {}).get('parent_id')
-    return False
-
-
-def _move_group(window, group_id, target_parent_id):
-    try:
-        if group_id not in window.group_manager.groups:
-            return False
-
-        # Prevent circular references (self or descendant target)
-        if _would_create_group_cycle(window, group_id, target_parent_id):
-            logger.warning(
-                f"Cannot move group '{group_id}' to '{target_parent_id}' (would create a cycle)"
-            )
-            return False
-
-        group = window.group_manager.groups[group_id]
-        old_parent_id = group.get("parent_id")
-
-        # Remove from old parent's children
-        if old_parent_id and old_parent_id in window.group_manager.groups:
-            if group_id in window.group_manager.groups[old_parent_id]["children"]:
-                window.group_manager.groups[old_parent_id]["children"].remove(group_id)
-
-        # Update parent reference
-        group["parent_id"] = target_parent_id
-        
-        # Add to new parent's children
-        if target_parent_id and target_parent_id in window.group_manager.groups:
-            if group_id not in window.group_manager.groups[target_parent_id]["children"]:
-                window.group_manager.groups[target_parent_id]["children"].append(group_id)
-
-        window.group_manager._save_groups()
-        return True
-    except Exception as e:
-        logger.error(f"Error moving group: {e}")
-        return False
 
 
 def _update_connection_autoscroll(window, y):
