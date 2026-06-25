@@ -1620,7 +1620,7 @@ def _on_connection_list_motion(window, target, x, y):
         _show_ungrouped_area(window)
         _update_connection_autoscroll(window, y)
 
-        row = window.connection_list.get_row_at_y(int(y))
+        row = _row_at_y_or_nearest(window, y)
         if not row:
             _clear_drop_indicator(window)
             return Gdk.DragAction.MOVE
@@ -1727,11 +1727,29 @@ def _show_drop_indicator(window, row, position):
         logger.error(f"Error showing drop indicator: {e}")
 
 
-def _group_drop_zone(row, y) -> str:
-    """Split a group row into thirds: 'above' / 'into' / 'below'.
+def _row_at_y_or_nearest(window, y):
+    """get_row_at_y, but bridge the inter-row margin gaps that return None.
 
-    Top third reorders above, bottom third reorders below, and the middle
-    third nests the dragged group into the target.
+    Sidebar rows carry a small vertical margin, so a cursor landing in the gap
+    between two rows yields no row. Probe a few pixels either side so targeting
+    stays reliable right up to the row edges.
+    """
+    lb = window.connection_list
+    row = lb.get_row_at_y(int(y))
+    if row is not None:
+        return row
+    for dy in (-4, 4, -8, 8):
+        row = lb.get_row_at_y(int(y) + dy)
+        if row is not None:
+            return row
+    return None
+
+
+def _group_drop_zone(row, y) -> str:
+    """Split a group row into 'above' / 'into' / 'below'.
+
+    Nesting is the primary intent when dropping a group onto a group, so the
+    middle 50% nests ('into') and only the outer quarters reorder (above/below).
     """
     try:
         row_y = row.get_allocation().y
@@ -1739,9 +1757,9 @@ def _group_drop_zone(row, y) -> str:
         if row_height <= 0:
             return "into"
         relative_y = y - row_y
-        if relative_y < row_height / 3:
+        if relative_y < row_height * 0.25:
             return "above"
-        if relative_y > 2 * row_height / 3:
+        if relative_y > row_height * 0.75:
             return "below"
         return "into"
     except Exception:
@@ -1843,6 +1861,12 @@ def _clear_drop_indicator(window):
 
 def _on_connection_list_drop(window, target, value, x, y):
     try:
+        # Capture what motion last highlighted before clearing it, so the drop
+        # performs exactly the action the user saw (WYSIWYG). Re-deriving the
+        # target/zone from y here is unreliable: autoscroll and the mid-drag
+        # ungrouped-area row shift allocations between the last motion and drop.
+        indicator_row = getattr(window, "_drop_indicator_row", None)
+        indicator_pos = getattr(window, "_drop_indicator_position", None)
         _clear_drop_indicator(window)
         _hide_ungrouped_area(window)
         _stop_connection_autoscroll(window)
@@ -2007,7 +2031,16 @@ def _on_connection_list_drop(window, target, value, x, y):
         elif drop_type == "group":
             group_id = value.get("group_id")
             if group_id:
-                target_row = window.connection_list.get_row_at_y(int(y))
+                # Prefer the row motion last highlighted; only fall back to a
+                # fresh hit-test when there was no prior motion (rare).
+                if (indicator_row is not None
+                        and hasattr(indicator_row, "group_id")
+                        and not getattr(indicator_row, "is_tag_group", False)):
+                    target_row = indicator_row
+                else:
+                    target_row = _row_at_y_or_nearest(window, y)
+                    indicator_pos = None  # stale relative to this row; recompute below
+
                 if (target_row and hasattr(target_row, "group_id")
                         and not getattr(target_row, "is_tag_group", False)):
                     target_group_id = target_row.group_id
@@ -2016,18 +2049,25 @@ def _on_connection_list_drop(window, target, value, x, y):
                         if target_group_id in window.group_manager.groups:
                             source_group = window.group_manager.groups.get(group_id)
                             target_group = window.group_manager.groups.get(target_group_id)
-                            zone = _group_drop_zone(target_row, y)
+
+                            # Map the captured highlight to an action; recompute
+                            # from y only when no indicator position is available.
+                            if indicator_pos == "on_group":
+                                zone = "into"
+                            elif indicator_pos in ("above", "below"):
+                                zone = indicator_pos
+                            else:
+                                zone = _group_drop_zone(target_row, y)
 
                             if zone == "into":
-                                # Middle third nests the source into the target.
+                                # Nest the source into the target.
                                 if _move_group(window, group_id, target_group_id):
                                     changes_made = True
                             else:
-                                # Top/bottom thirds make the source a sibling of
-                                # the target (above/below). Reparent first when
-                                # they differ so reorder_group sees a shared
-                                # parent; this also un-nests when the target sits
-                                # at the root level.
+                                # Make the source a sibling of the target
+                                # (above/below). Reparent first when they differ
+                                # so reorder_group sees a shared parent; this also
+                                # un-nests when the target sits at the root level.
                                 if (source_group and target_group and
                                         source_group.get('parent_id') != target_group.get('parent_id')):
                                     _move_group(window, group_id, target_group.get('parent_id'))
