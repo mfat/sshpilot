@@ -4135,13 +4135,20 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         tag_row._member_rows = member_rows
 
     def _build_grouped_list(self, hierarchy, connections_dict, level):
-        """Recursively build the grouped connection list"""
+        """Recursively build the grouped connection list.
+
+        Returns the list of top-level GroupRows created at this level so the
+        caller can register them as children for in-place expand/collapse.
+        """
+        created_rows = []
         for group_info in hierarchy:
             # Add group row
             group_row = GroupRow(group_info, self.group_manager, connections_dict)
             group_row.connect('group-toggled', self._on_group_toggled)
+            if hasattr(group_row, "set_indentation"):
+                group_row.set_indentation(level)
             self.connection_list.append(group_row)
-            
+
             # Build direct connection rows once, then let expand/collapse toggle
             # their visibility in place to avoid full-list flicker.
             for conn_nickname in group_info.get('connections', []):
@@ -4154,29 +4161,23 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     )
                     if row is not None and hasattr(group_row, "add_member_row"):
                         group_row.add_member_row(row)
-            
-            # Recursively add child groups
+
+            # Recursively add child groups and register them directly so a
+            # parent collapse hides nested subgroups in place.
             if group_info.get('children'):
-                child_rows_before = []
-                child = self.connection_list.get_first_child()
-                while child:
-                    child_rows_before.append(child)
-                    child = child.get_next_sibling()
-                self._build_grouped_list(group_info['children'], connections_dict, level + 1)
-                child = self.connection_list.get_first_child()
-                while child:
-                    if (
-                        child not in child_rows_before
-                        and hasattr(child, "group_id")
-                        and getattr(child, "group_id", None) in (group_info.get('children') or [])
-                    ):
-                        if hasattr(group_row, "add_child_group_row"):
-                            group_row.add_child_group_row(child)
-                    child = child.get_next_sibling()
+                child_group_rows = self._build_grouped_list(
+                    group_info['children'], connections_dict, level + 1
+                )
+                if hasattr(group_row, "add_child_group_row"):
+                    for child_row in child_group_rows:
+                        group_row.add_child_group_row(child_row)
 
             if hasattr(group_row, "apply_descendant_visibility"):
                 group_row.apply_descendant_visibility(True)
-    
+
+            created_rows.append(group_row)
+        return created_rows
+
     def _on_group_toggled(self, group_row, group_id, expanded):
         """Handle group expand/collapse"""
         if hasattr(group_row, "apply_descendant_visibility"):

@@ -1,4 +1,9 @@
-from sshpilot.sidebar import GroupRow
+import sshpilot.window as window_module
+from sshpilot.sidebar import (
+    GroupRow,
+    _resolve_group_color_by_id,
+    _would_create_group_cycle,
+)
 from sshpilot.window import MainWindow
 
 
@@ -78,3 +83,123 @@ def test_group_activation_toggles_via_single_row_activated_path():
     window.on_connection_activated(None, _GroupRowStub())
 
     assert "toggle" in called
+
+
+def test_build_grouped_list_registers_and_hides_nested_groups(monkeypatch):
+    """A nested child group is registered and hidden when the parent collapses."""
+    created = {}
+
+    class _FakeGroupRow:
+        # Reuse the real visibility recursion under test.
+        apply_descendant_visibility = GroupRow.apply_descendant_visibility
+
+        def __init__(self, group_info, group_manager, connections_dict=None):
+            self.group_info = group_info
+            self.group_id = group_info["id"]
+            self._member_rows = []
+            self._child_group_rows = []
+            self.visible = True
+            created[self.group_id] = self
+
+        def connect(self, *args, **kwargs):
+            pass
+
+        def set_indentation(self, level):
+            self.indent = level
+
+        def add_member_row(self, row):
+            self._member_rows.append(row)
+
+        def add_child_group_row(self, row):
+            self._child_group_rows.append(row)
+
+        def set_visible(self, visible):
+            self.visible = bool(visible)
+
+    monkeypatch.setattr(window_module, "GroupRow", _FakeGroupRow)
+
+    window = MainWindow.__new__(MainWindow)
+    window.group_manager = object()
+    window.connection_list = []
+    window.add_connection_row = (
+        lambda conn, level, display_group_id=None: _VisibleStub()
+    )
+
+    hierarchy = [
+        {
+            "id": "parent",
+            "expanded": True,
+            "connections": ["c1"],
+            "children": [
+                {
+                    "id": "child",
+                    "expanded": False,
+                    "connections": ["c2"],
+                    "children": [],
+                }
+            ],
+        }
+    ]
+    connections_dict = {"c1": object(), "c2": object()}
+
+    returned = window._build_grouped_list(hierarchy, connections_dict, 0)
+
+    parent = created["parent"]
+    child = created["child"]
+
+    # Top-level rows are returned; the child is registered under the parent.
+    assert returned == [parent]
+    assert parent._child_group_rows == [child]
+    assert parent.indent == 0 and child.indent == 1
+    assert len(parent._member_rows) == 1 and len(child._member_rows) == 1
+
+    # Collapsing the parent hides the child group row and its members.
+    parent.group_info["expanded"] = False
+    parent.apply_descendant_visibility(True)
+    assert child.visible is False
+    assert child._member_rows[0].visible is False
+    assert parent._member_rows[0].visible is False
+
+
+def test_resolve_group_color_retain_own_else_inherit(monkeypatch):
+    # The harness stubs GTK, so parse the colour string identity-style and
+    # exercise the walk-up logic (retain own colour, else inherit parent's).
+    import sshpilot.sidebar as sidebar_module
+
+    monkeypatch.setattr(sidebar_module, "_parse_color", lambda value: value or None)
+
+    class _FakeManager:
+        groups = {
+            "parent": {"id": "parent", "parent_id": None, "color": "red"},
+            "child": {"id": "child", "parent_id": "parent", "color": None},
+            "child_own": {"id": "child_own", "parent_id": "parent", "color": "green"},
+            "orphan": {"id": "orphan", "parent_id": None, "color": None},
+        }
+
+    mgr = _FakeManager()
+
+    # Colourless child inherits the parent's colour.
+    assert _resolve_group_color_by_id(mgr, "child") == "red"
+    # Child with its own colour keeps it.
+    assert _resolve_group_color_by_id(mgr, "child_own") == "green"
+    # No colour anywhere up the chain → None.
+    assert _resolve_group_color_by_id(mgr, "orphan") is None
+
+
+def test_would_create_group_cycle():
+    class _Window:
+        pass
+
+    class _Manager:
+        groups = {
+            "a": {"id": "a", "parent_id": None},
+            "b": {"id": "b", "parent_id": "a"},
+        }
+
+    window = _Window()
+    window.group_manager = _Manager()
+
+    assert _would_create_group_cycle(window, "a", "a") is True   # into itself
+    assert _would_create_group_cycle(window, "a", "b") is True   # into descendant
+    assert _would_create_group_cycle(window, "b", "a") is False  # valid nest
+    assert _would_create_group_cycle(window, "a", None) is False  # to root

@@ -120,6 +120,38 @@ def _parse_color(value: Optional[str]) -> Optional[Gdk.RGBA]:
     return None
 
 
+def _resolve_group_color_by_id(manager, group_id) -> Optional[Gdk.RGBA]:
+    """Walk the group's parent chain and return the first colour found.
+
+    A group keeps its own colour when set; otherwise it inherits the nearest
+    coloured ancestor's colour. Returns ``None`` when no ancestor has a colour.
+    """
+    if not manager:
+        return None
+
+    visited = set()
+    while group_id:
+        if group_id in visited:
+            break
+        visited.add(group_id)
+
+        try:
+            group_info = manager.groups.get(group_id)
+        except Exception:
+            group_info = None
+
+        if not group_info:
+            break
+
+        color = _parse_color(group_info.get('color'))
+        if color:
+            return color
+
+        group_id = group_info.get('parent_id')
+
+    return None
+
+
 def _get_color_display_mode(config) -> str:
     try:
         mode = str(config.get_setting('ui.group_color_display', 'fill')).lower()
@@ -291,6 +323,9 @@ class GroupRow(Gtk.ListBoxRow):
         content.set_margin_end(12)
         content.set_margin_top(6)
         content.set_margin_bottom(6)
+        # Kept so set_indentation() can offset nested group headers.
+        self._content = content
+        self._content_margin_base = 12
 
         from sshpilot import icon_utils
         icon = icon_utils.new_image_from_icon_name("folder-symbolic")
@@ -483,6 +518,17 @@ class GroupRow(Gtk.ListBoxRow):
         self._update_display()
         self.emit("group-toggled", self.group_id, expanded)
 
+    def set_indentation(self, level: int) -> None:
+        """Indent a nested group header to match its depth in the tree."""
+        try:
+            level = max(0, int(level or 0))
+        except (TypeError, ValueError):
+            level = 0
+        content = getattr(self, '_content', None)
+        if content is not None:
+            base = getattr(self, '_content_margin_base', 12)
+            content.set_margin_start(base + level * _GROUP_ROW_INDENT_WIDTH)
+
     def add_member_row(self, row: Gtk.ListBoxRow) -> None:
         """Track a direct member row for in-place expand/collapse."""
         self._member_rows.append(row)
@@ -573,7 +619,9 @@ class GroupRow(Gtk.ListBoxRow):
     def _apply_group_color_style(self):
         config = getattr(self.group_manager, 'config', None)
         mode = _get_color_display_mode(config) if config else 'fill'
-        rgba = _parse_color(self.group_info.get('color'))
+        # Keep our own colour when set; otherwise inherit the nearest coloured
+        # ancestor so nested groups read as part of their parent.
+        rgba = _resolve_group_color_by_id(self.group_manager, self.group_id)
 
         if mode == 'badge':
             self.remove_css_class("tinted")
@@ -1068,28 +1116,7 @@ class ConnectionRow(Gtk.ListBoxRow):
         except Exception:
             group_id = None
 
-        visited = set()
-        while group_id:
-            if group_id in visited:
-                break
-            visited.add(group_id)
-
-            group_info = None
-            try:
-                group_info = manager.groups.get(group_id)
-            except Exception:
-                group_info = None
-
-            if not group_info:
-                break
-
-            color = _parse_color(group_info.get('color'))
-            if color:
-                return color
-
-            group_id = group_info.get('parent_id')
-
-        return None
+        return _resolve_group_color_by_id(manager, group_id)
 
     def _apply_group_color_style(self):
         mode = _get_color_display_mode(getattr(self, 'config', None))
@@ -1586,9 +1613,17 @@ def _on_connection_list_motion(window, target, x, y):
                 if row.group_id == window._dragged_group_id:
                     _clear_drop_indicator(window)
                     return Gdk.DragAction.MOVE
-                
-                # Only show indicator if this is a different group
-                _show_drop_indicator(window, row, position)
+
+                # Three-zone drop: top/bottom thirds reorder, middle nests in.
+                zone = _group_drop_zone(row, y)
+                if zone == "into":
+                    # Suppress the nest affordance when it would create a cycle.
+                    if _would_create_group_cycle(window, window._dragged_group_id, row.group_id):
+                        _clear_drop_indicator(window)
+                    else:
+                        _show_drop_indicator_on_group(window, row)
+                else:
+                    _show_drop_indicator(window, row, zone)
             
             # Handle mixed drag scenarios (dragging connection over group, etc.)
             elif (hasattr(row, "connection") and hasattr(window, "_dragged_group_id")):
@@ -1642,6 +1677,27 @@ def _show_drop_indicator(window, row, position):
             window._drop_indicator_position = position
     except Exception as e:
         logger.error(f"Error showing drop indicator: {e}")
+
+
+def _group_drop_zone(row, y) -> str:
+    """Split a group row into thirds: 'above' / 'into' / 'below'.
+
+    Top third reorders above, bottom third reorders below, and the middle
+    third nests the dragged group into the target.
+    """
+    try:
+        row_y = row.get_allocation().y
+        row_height = row.get_allocation().height
+        if row_height <= 0:
+            return "into"
+        relative_y = y - row_y
+        if relative_y < row_height / 3:
+            return "above"
+        if relative_y > 2 * row_height / 3:
+            return "below"
+        return "into"
+    except Exception:
+        return "into"
 
 
 def _show_drop_indicator_on_group(window, row):
@@ -1910,25 +1966,25 @@ def _on_connection_list_drop(window, target, value, x, y):
                     if target_group_id != group_id:
                         # Validate that the target group exists
                         if target_group_id in window.group_manager.groups:
-                            # Calculate position for reordering
-                            row_y = target_row.get_allocation().y
-                            row_height = target_row.get_allocation().height
-                            relative_y = y - row_y
-                            position = "above" if relative_y < row_height / 2 else "below"
-                            
-                            # Check if both groups are at the same level (can be reordered)
                             source_group = window.group_manager.groups.get(group_id)
                             target_group = window.group_manager.groups.get(target_group_id)
-                            
-                            if (source_group and target_group and 
-                                source_group.get('parent_id') == target_group.get('parent_id')):
-                                # Same level - reorder
-                                window.group_manager.reorder_group(group_id, target_group_id, position)
-                                changes_made = True
-                            else:
-                                # Different levels - move to new parent (existing functionality)
+                            zone = _group_drop_zone(target_row, y)
+
+                            if zone == "into":
+                                # Middle third nests the source into the target.
                                 if _move_group(window, group_id, target_group_id):
                                     changes_made = True
+                            else:
+                                # Top/bottom thirds make the source a sibling of
+                                # the target (above/below). Reparent first when
+                                # they differ so reorder_group sees a shared
+                                # parent; this also un-nests when the target sits
+                                # at the root level.
+                                if (source_group and target_group and
+                                        source_group.get('parent_id') != target_group.get('parent_id')):
+                                    _move_group(window, group_id, target_group.get('parent_id'))
+                                window.group_manager.reorder_group(group_id, target_group_id, zone)
+                                changes_made = True
                         else:
                             logger.warning(f"Target group '{target_group_id}' does not exist")
 
@@ -1956,23 +2012,33 @@ def _get_target_group_at_position(window, x, y):
         return None
 
 
+def _would_create_group_cycle(window, group_id, target_parent_id) -> bool:
+    """True if nesting ``group_id`` under ``target_parent_id`` would loop.
+
+    A cycle happens when the target is the group itself or one of its
+    descendants (which would then contain its own ancestor).
+    """
+    if target_parent_id == group_id:
+        return True
+    current_parent = target_parent_id
+    while current_parent:
+        if current_parent == group_id:
+            return True
+        current_parent = window.group_manager.groups.get(current_parent, {}).get('parent_id')
+    return False
+
+
 def _move_group(window, group_id, target_parent_id):
     try:
         if group_id not in window.group_manager.groups:
             return False
 
-        # Prevent circular references
-        if target_parent_id == group_id:
-            logger.warning(f"Cannot move group '{group_id}' to itself")
+        # Prevent circular references (self or descendant target)
+        if _would_create_group_cycle(window, group_id, target_parent_id):
+            logger.warning(
+                f"Cannot move group '{group_id}' to '{target_parent_id}' (would create a cycle)"
+            )
             return False
-        
-        # Check if target_parent_id is a descendant of group_id (would create circular reference)
-        current_parent = target_parent_id
-        while current_parent:
-            if current_parent == group_id:
-                logger.warning(f"Cannot move group '{group_id}' to its descendant '{target_parent_id}'")
-                return False
-            current_parent = window.group_manager.groups.get(current_parent, {}).get('parent_id')
 
         group = window.group_manager.groups[group_id]
         old_parent_id = group.get("parent_id")
