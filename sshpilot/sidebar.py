@@ -2249,6 +2249,285 @@ def _clear_drop_indicator(window):
         window._drop_indicator_position = None
 
 
+def _sidebar_allows_inplace_dnd(window) -> bool:
+    """True when the hosts hierarchy view is shown without an active search."""
+    if getattr(window, "_sidebar_view", "hosts") != "hosts":
+        return False
+    search_entry = getattr(window, "search_entry", None)
+    if search_entry is not None:
+        try:
+            if search_entry.get_text().strip():
+                return False
+        except Exception:
+            pass
+    return True
+
+
+def _iter_host_group_rows(window):
+    """Yield real (non-tag) group rows in the connection list."""
+    connection_list = getattr(window, "connection_list", None)
+    if connection_list is None:
+        return
+    child = connection_list.get_first_child()
+    while child:
+        if hasattr(child, "group_id") and not getattr(child, "is_tag_group", False):
+            yield child
+        child = child.get_next_sibling()
+
+
+def _find_group_row_by_id(window, group_id: Optional[str]):
+    if not group_id:
+        return None
+    for row in _iter_host_group_rows(window):
+        if row.group_id == group_id:
+            return row
+    return None
+
+
+def _collect_group_subtree_rows(group_row) -> List[Gtk.ListBoxRow]:
+    """Return a group header and every descendant row in list order."""
+    rows: List[Gtk.ListBoxRow] = [group_row]
+    for member in getattr(group_row, "_member_rows", None) or []:
+        rows.append(member)
+    for child in getattr(group_row, "_child_group_rows", None) or []:
+        rows.extend(_collect_group_subtree_rows(child))
+    return rows
+
+
+def _listbox_reposition_row(listbox, row, insert_index: int) -> None:
+    if row.get_parent() is not None:
+        listbox.remove(row)
+    listbox.insert(row, insert_index)
+
+
+def _detach_connection_member_rows(window, nickname: str, *, except_group_id=None) -> None:
+    """Remove ``nickname`` from every group's tracked member rows."""
+    for group_row in _iter_host_group_rows(window):
+        if except_group_id is not None and group_row.group_id == except_group_id:
+            continue
+        members = getattr(group_row, "_member_rows", None) or []
+        group_row._member_rows = [
+            row for row in members
+            if getattr(getattr(row, "connection", None), "nickname", None) != nickname
+        ]
+
+
+def _connection_has_single_row(window, nickname: str) -> bool:
+    manager = getattr(window, "connection_manager", None)
+    if manager is None or not hasattr(manager, "find_connection_by_nickname"):
+        return False
+    connection = manager.find_connection_by_nickname(nickname)
+    if connection is None:
+        return False
+    rows = window._rows_for_connection(connection) if hasattr(window, "_rows_for_connection") else []
+    return len(rows) == 1
+
+
+def _sync_group_member_rows(window, group_id: str) -> bool:
+    """Reorder / re-home member rows for one group without a full rebuild."""
+    group_row = _find_group_row_by_id(window, group_id)
+    if group_row is None:
+        return False
+
+    group = window.group_manager.groups.get(group_id)
+    if not group:
+        return False
+
+    desired_nicks = list(group.get("connections", []))
+    indent_level = getattr(group_row, "_indent_level", 0) + 1
+    row_by_nick: Dict[str, Gtk.ListBoxRow] = {}
+
+    for nick in desired_nicks:
+        if not _connection_has_single_row(window, nick):
+            return False
+        connection = window.connection_manager.find_connection_by_nickname(nick)
+        row = window._rows_for_connection(connection)[0]
+        row_by_nick[nick] = row
+        if hasattr(row, "set_display_group_id"):
+            row.set_display_group_id(group_id)
+        if hasattr(row, "set_indentation"):
+            row.set_indentation(indent_level)
+
+    for nick in desired_nicks:
+        _detach_connection_member_rows(window, nick, except_group_id=group_id)
+
+    insert_at = group_row.get_index() + 1
+    ordered_rows = []
+    for nick in desired_nicks:
+        row = row_by_nick[nick]
+        ordered_rows.append(row)
+        if row.get_index() != insert_at:
+            _listbox_reposition_row(window.connection_list, row, insert_at)
+        insert_at += 1
+
+    group_row._member_rows = ordered_rows
+    return True
+
+
+def _root_connections_start_index(window) -> int:
+    """List index where ungrouped (root) connection rows begin."""
+    insert_at = 0
+    root_group_ids = sorted(
+        (
+            gid
+            for gid, group in window.group_manager.groups.items()
+            if group.get("parent_id") is None
+        ),
+        key=lambda gid: window.group_manager.groups[gid].get("order", 0),
+    )
+    for gid in root_group_ids:
+        group_row = _find_group_row_by_id(window, gid)
+        if group_row is None:
+            return -1
+        for subtree_row in _collect_group_subtree_rows(group_row):
+            insert_at = max(insert_at, subtree_row.get_index() + 1)
+    return insert_at
+
+
+def _sync_root_connection_rows(window) -> bool:
+    """Reorder ungrouped connection rows at the end of the hosts list."""
+    nicknames = list(window.group_manager.root_connections)
+    start_index = _root_connections_start_index(window)
+    if start_index < 0:
+        return False
+
+    ordered_rows = []
+    for nick in nicknames:
+        if not _connection_has_single_row(window, nick):
+            return False
+        connection = window.connection_manager.find_connection_by_nickname(nick)
+        row = window._rows_for_connection(connection)[0]
+        _detach_connection_member_rows(window, nick)
+        if hasattr(row, "set_display_group_id"):
+            row.set_display_group_id(None)
+        if hasattr(row, "set_indentation"):
+            row.set_indentation(0)
+        ordered_rows.append(row)
+
+    insert_at = start_index
+    for row in ordered_rows:
+        if row.get_index() != insert_at:
+            _listbox_reposition_row(window.connection_list, row, insert_at)
+        insert_at += 1
+    return True
+
+
+def _apply_child_group_order(window, parent_id: str) -> bool:
+    """Reorder child group subtrees under ``parent_id`` to match GroupManager."""
+    parent_row = _find_group_row_by_id(window, parent_id)
+    if parent_row is None:
+        return False
+
+    parent_group = window.group_manager.groups.get(parent_id)
+    if not parent_group:
+        return False
+
+    child_ids = list(parent_group.get("children", []))
+    insert_at = parent_row.get_index() + 1
+    for member in getattr(parent_row, "_member_rows", None) or []:
+        insert_at = max(insert_at, member.get_index() + 1)
+
+    ordered_child_rows = []
+    for child_id in child_ids:
+        child_row = _find_group_row_by_id(window, child_id)
+        if child_row is None:
+            return False
+        ordered_child_rows.append(child_row)
+        for subtree_row in _collect_group_subtree_rows(child_row):
+            if subtree_row.get_index() != insert_at:
+                _listbox_reposition_row(window.connection_list, subtree_row, insert_at)
+            insert_at += 1
+
+    parent_row._child_group_rows = ordered_child_rows
+    return True
+
+
+def _apply_root_group_order(window) -> bool:
+    """Reorder top-level group subtrees to match GroupManager."""
+    root_ids = sorted(
+        (
+            gid
+            for gid, group in window.group_manager.groups.items()
+            if group.get("parent_id") is None
+        ),
+        key=lambda gid: window.group_manager.groups[gid].get("order", 0),
+    )
+
+    insert_at = 0
+    for gid in root_ids:
+        group_row = _find_group_row_by_id(window, gid)
+        if group_row is None:
+            return False
+        for subtree_row in _collect_group_subtree_rows(group_row):
+            if subtree_row.get_index() != insert_at:
+                _listbox_reposition_row(window.connection_list, subtree_row, insert_at)
+            insert_at += 1
+    return True
+
+
+def _groups_needing_member_resync(window, nicknames: List[str]) -> set:
+    """Return group ids whose member rows may be stale after a connection move."""
+    needed = set()
+    nick_set = set(nicknames)
+    for group_row in _iter_host_group_rows(window):
+        group_id = group_row.group_id
+        group = window.group_manager.groups.get(group_id, {})
+        group_nicks = set(group.get("connections", []))
+        member_nicks = {
+            getattr(getattr(row, "connection", None), "nickname", None)
+            for row in (getattr(group_row, "_member_rows", None) or [])
+        }
+        if group_nicks & nick_set or member_nicks & nick_set:
+            needed.add(group_id)
+    return needed
+
+
+def _apply_connection_dnd_in_place(window, connection_nicknames: List[str]) -> bool:
+    if not _sidebar_allows_inplace_dnd(window):
+        return False
+    if not connection_nicknames:
+        return False
+
+    for nick in connection_nicknames:
+        if not _connection_has_single_row(window, nick):
+            return False
+
+    groups_to_sync = _groups_needing_member_resync(window, connection_nicknames)
+    needs_root_sync = any(
+        window.group_manager.get_connection_group(nick) is None
+        for nick in connection_nicknames
+    )
+
+    for group_id in groups_to_sync:
+        if not _sync_group_member_rows(window, group_id):
+            return False
+    if needs_root_sync and not _sync_root_connection_rows(window):
+        return False
+    return True
+
+
+def _apply_group_dnd_in_place(
+    window,
+    source_group_id: str,
+    *,
+    nested: bool,
+    reparented: bool,
+) -> bool:
+    if nested or reparented:
+        return False
+    if not _sidebar_allows_inplace_dnd(window):
+        return False
+
+    source = window.group_manager.groups.get(source_group_id)
+    if not source:
+        return False
+
+    parent_id = source.get("parent_id")
+    if parent_id:
+        return _apply_child_group_order(window, parent_id)
+    return _apply_root_group_order(window)
+
+
 def _on_connection_list_drop(window, target, value, x, y):
     try:
         # Capture what motion last highlighted before clearing it, so the drop
@@ -2284,6 +2563,10 @@ def _on_connection_list_drop(window, target, value, x, y):
 
         drop_type = value.get("type")
         changes_made = False
+        group_nested = False
+        group_reparented = False
+        connection_nicknames_applied: List[str] = []
+        tag_drop = False
 
         if drop_type == "connection":
             connection_nicknames: List[str] = []
@@ -2324,10 +2607,12 @@ def _on_connection_list_drop(window, target, value, x, y):
                     for nickname in connection_nicknames:
                         window.group_manager.move_connection(nickname, None)
                         changes_made = True
+                    connection_nicknames_applied = list(connection_nicknames)
                 elif getattr(target_row, "ungrouped_area", False) or indicator_pos == "ungrouped":
                     for nickname in connection_nicknames:
                         window.group_manager.move_connection(nickname, None)
                         changes_made = True
+                    connection_nicknames_applied = list(connection_nicknames)
                 else:
                     if getattr(target_row, "is_tag_group", False):
                         # Dropping onto a tag group adds the tag to the dragged
@@ -2348,6 +2633,8 @@ def _on_connection_list_drop(window, target, value, x, y):
                             if changed:
                                 cfg.set_connection_tags(nickname, tags)
                                 changes_made = True
+                        if changes_made:
+                            tag_drop = True
                     elif hasattr(target_row, "group_id"):
                         target_group_id = target_row.group_id
 
@@ -2383,6 +2670,8 @@ def _on_connection_list_drop(window, target, value, x, y):
                                 if window.group_manager.get_connection_group(nickname) != target_group_id:
                                     window.group_manager.move_connection(nickname, target_group_id)
                                     changes_made = True
+                        if changes_made:
+                            connection_nicknames_applied = list(connection_nicknames)
                     else:
                         # Member rows under virtual tag groups are not drop
                         # targets (a drop here would move the connection into
@@ -2421,9 +2710,12 @@ def _on_connection_list_drop(window, target, value, x, y):
                                     )
                                     reference = nickname
                                     changes_made = True
+                            if changes_made:
+                                connection_nicknames_applied = list(connection_nicknames)
 
         elif drop_type == "group":
             group_id = value.get("group_id")
+            group_id_applied = None
             if group_id:
                 # Prefer the row motion last highlighted; only fall back to a
                 # fresh hit-test when there was no prior motion (rare).
@@ -2466,6 +2758,8 @@ def _on_connection_list_drop(window, target, value, x, y):
                                     pass
                                 elif _move_group(window, group_id, target_group_id):
                                     changes_made = True
+                                    group_nested = True
+                                    group_reparented = True
                             else:
                                 # Make the source a sibling of the target
                                 # (above/below). Reparent first when they differ
@@ -2473,15 +2767,34 @@ def _on_connection_list_drop(window, target, value, x, y):
                                 # un-nests when the target sits at the root level.
                                 if (source_group and target_group and
                                         source_group.get('parent_id') != target_group.get('parent_id')):
-                                    _move_group(window, group_id, target_group.get('parent_id'))
+                                    if _move_group(window, group_id, target_group.get('parent_id')):
+                                        group_reparented = True
                                 window.group_manager.reorder_group(group_id, target_group_id, zone)
                                 changes_made = True
+                                group_id_applied = group_id
                         else:
                             logger.warning(f"Target group '{target_group_id}' does not exist")
 
-        # Only rebuild the connection list once if changes were made
+        # Reflect model changes in the list without a full rebuild when possible.
         if changes_made:
-            window.rebuild_connection_list()
+            applied = False
+            try:
+                if drop_type == "connection" and connection_nicknames_applied and not tag_drop:
+                    applied = _apply_connection_dnd_in_place(
+                        window, connection_nicknames_applied
+                    )
+                elif drop_type == "group" and group_id_applied:
+                    applied = _apply_group_dnd_in_place(
+                        window,
+                        group_id_applied,
+                        nested=group_nested,
+                        reparented=group_reparented,
+                    )
+            except Exception:
+                logger.debug("In-place DnD update failed; rebuilding list", exc_info=True)
+                applied = False
+            if not applied:
+                window.rebuild_connection_list()
             return True
 
         return False
