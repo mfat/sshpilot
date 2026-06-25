@@ -1901,13 +1901,16 @@ def _group_reorder_zone(row, y, nesting_active: bool = False) -> str:
 
 
 def _group_in_nest_zone(row, y) -> bool:
-    """True when ``y`` is anywhere within the group header."""
+    """True when ``y`` is within the header excluding small top/bottom edge strips."""
     try:
         header_h = _group_header_height(row)
         if header_h <= 0:
             return True
         rel = y - row.get_allocation().y
-        return 0 <= rel <= header_h
+        if rel < 0 or rel > header_h:
+            return False
+        edge = min(10, header_h / 4)
+        return edge <= rel < header_h - edge
     except Exception:
         return False
 
