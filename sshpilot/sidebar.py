@@ -1750,17 +1750,30 @@ def _group_drop_zone(row, y) -> str:
 
     Nesting is the primary intent when dropping a group onto a group, so the
     middle 50% nests ('into') and only the outer quarters reorder (above/below).
+
+    The zone is measured against the stable HEADER height (the content box),
+    not the live row allocation: showing the "Add to Group" box grows the row,
+    and computing thresholds from that inflated height makes a held cursor flip
+    zones, which oscillates the box on/off. Both ``row_top`` and ``header_h``
+    are independent of the box, so for a fixed cursor the result is stable.
     """
     try:
-        row_y = row.get_allocation().y
-        row_height = row.get_allocation().height
-        if row_height <= 0:
+        alloc = row.get_allocation()
+        row_top = alloc.y
+        content = getattr(row, "_content", None)
+        header_h = content.get_allocation().height if content is not None else 0
+        if header_h <= 0:
+            header_h = alloc.height          # fallback before first allocation
+        if header_h <= 0:
             return "into"
-        relative_y = y - row_y
-        if relative_y < row_height * 0.25:
+
+        rel = y - row_top
+        if rel < header_h * 0.25:
             return "above"
-        if relative_y > row_height * 0.75:
-            return "below"
+        if rel > header_h * 0.75:
+            # Lower quarter of the header reorders below; anything past the
+            # header (the expanded "Add to Group" area) keeps nesting.
+            return "below" if rel <= header_h else "into"
         return "into"
     except Exception:
         return "into"

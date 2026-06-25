@@ -262,26 +262,41 @@ def test_would_create_group_cycle():
 
 
 class _AllocRow:
-    def __init__(self, y, height, group_id="dst"):
+    def __init__(self, y, height, group_id="dst", header_height=None):
         self.group_id = group_id
         self._alloc = types.SimpleNamespace(y=y, height=height)
+        h = height if header_height is None else header_height
+        # Stable header box, independent of the (possibly inflated) row height.
+        self._content = types.SimpleNamespace(
+            get_allocation=lambda: types.SimpleNamespace(y=y, height=h)
+        )
 
     def get_allocation(self):
         return self._alloc
 
 
-def test_group_drop_zone_into_dominates_middle_half():
-    row = _AllocRow(100, 40)  # spans y=100..140; quarters at 110 and 130
+def test_group_drop_zone_uses_stable_header_height():
+    # Live row is tall (as if the "Add to Group" box is shown), header is 40.
+    row = _AllocRow(100, 120, header_height=40)  # header spans y=100..140
 
-    # Outer quarters reorder.
-    assert _group_drop_zone(row, 102) == "above"
-    assert _group_drop_zone(row, 138) == "below"
-    # Middle 50% nests, including the boundaries (not strictly inside the edges).
+    # Outer quarters of the HEADER reorder.
+    assert _group_drop_zone(row, 102) == "above"   # rel=2 < 10
+    assert _group_drop_zone(row, 138) == "below"   # rel=38 in (30, 40]
+    # Middle 50% of the header nests, unaffected by the inflated live height.
     assert _group_drop_zone(row, 110) == "into"
     assert _group_drop_zone(row, 120) == "into"
     assert _group_drop_zone(row, 130) == "into"
+    # Cursor past the header (over the expanded box) keeps nesting.
+    assert _group_drop_zone(row, 180) == "into"    # rel=80 > header 40
+
+    # Anti-flicker invariant: the same cursor stays 'into' whether the row is
+    # inflated (box shown) or collapsed (box hidden) — the box can't flip zones.
+    collapsed = _AllocRow(100, 40, header_height=40)
+    assert _group_drop_zone(collapsed, 120) == "into"
+    assert _group_drop_zone(row, 120) == "into"
+
     # Degenerate allocation falls back to 'into'.
-    assert _group_drop_zone(_AllocRow(0, 0), 0) == "into"
+    assert _group_drop_zone(_AllocRow(0, 0, header_height=0), 0) == "into"
 
 
 def test_row_at_y_or_nearest_bridges_margin_gap():
