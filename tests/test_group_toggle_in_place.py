@@ -9,6 +9,8 @@ from sshpilot.sidebar import (
     _DROP_BAR_THICKNESS,
     _drag_bar_geometry,
     _group_drop_zone,
+    _group_into_decision,
+    _group_reorder_half,
     _placeholder_insert_index,
     _resolve_group_color_by_id,
     _row_at_y_or_nearest,
@@ -265,6 +267,30 @@ def test_drag_bar_geometry():
     # Degenerate narrow widget clamps the bar width to non-negative.
     _, _, narrow_w, _, _, _, _ = _drag_bar_geometry(4, 10)
     assert narrow_w == 0
+
+
+def test_group_into_decision():
+    groups = {
+        "a": {"id": "a", "parent_id": None},
+        "b": {"id": "b", "parent_id": None},
+        "c": {"id": "c", "parent_id": "b"},   # c nested in b
+    }
+    # Dragging c over its current parent b → reorder out (not a no-op nest).
+    assert _group_into_decision(groups, "c", "b") == "reorder"
+    # Dragging c over an unrelated root group a → a real nest.
+    assert _group_into_decision(groups, "c", "a") == "nest"
+    # Dragging b over its own descendant c → cycle → invalid.
+    assert _group_into_decision(groups, "b", "c") == "invalid"
+    # Onto itself → invalid.
+    assert _group_into_decision(groups, "c", "c") == "invalid"
+
+
+def test_group_reorder_half():
+    row = _AllocRow(100, 40, header_height=40)  # header spans y=100..140
+    assert _group_reorder_half(row, 105) == "above"   # upper half
+    assert _group_reorder_half(row, 135) == "below"   # lower half
+    # Past the header still resolves (no 'into'); lower half → below.
+    assert _group_reorder_half(row, 180) == "below"
 
 
 def test_placeholder_insert_index():

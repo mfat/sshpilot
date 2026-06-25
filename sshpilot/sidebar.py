@@ -1730,12 +1730,21 @@ def _on_connection_list_motion(window, target, x, y):
                     _clear_drop_indicator(window)
                     return Gdk.DragAction.MOVE
 
-                # Three-zone drop: top/bottom thirds reorder, middle nests in.
+                # Three-zone drop: top/bottom reorder, middle nests in — but a
+                # nest that would loop or that just re-parents to the current
+                # parent (a no-op) is remapped so the user gets a usable target.
                 zone = _group_drop_zone(row, y)
                 if zone == "into":
-                    # Suppress the nest affordance when it would create a cycle.
-                    if _would_create_group_cycle(window, window._dragged_group_id, row.group_id):
+                    decision = _group_into_decision(
+                        window.group_manager.groups,
+                        window._dragged_group_id,
+                        row.group_id,
+                    )
+                    if decision == "invalid":
                         _clear_drop_indicator(window)
+                    elif decision == "reorder":
+                        # Already a child of this group → let them reorder out.
+                        _show_drop_indicator(window, row, _group_reorder_half(row, y))
                     else:
                         _show_drop_indicator_on_group(window, row)
                 else:
@@ -1837,6 +1846,48 @@ def _group_drop_zone(row, y) -> str:
         return "into"
     except Exception:
         return "into"
+
+
+def _group_reorder_half(row, y) -> str:
+    """'above' / 'below' split at the header midpoint (no 'into' zone).
+
+    Used when the whole row should reorder rather than nest. Measured from the
+    stable header height so it doesn't flicker if the row geometry changes.
+    """
+    try:
+        alloc = row.get_allocation()
+        content = getattr(row, "_content", None)
+        header_h = content.get_allocation().height if content is not None else alloc.height
+        if header_h <= 0:
+            header_h = alloc.height
+        if header_h <= 0:
+            return "above"
+        return "above" if (y - alloc.y) < header_h / 2 else "below"
+    except Exception:
+        return "above"
+
+
+def _group_into_decision(groups, dragged_id, target_id) -> str:
+    """How to treat an 'into' hover when dragging ``dragged_id`` over ``target_id``.
+
+    Returns ``"invalid"`` (target is the dragged group or a descendant — would
+    create a cycle), ``"reorder"`` (dragged is already a direct child of target,
+    so nesting is a no-op — reorder instead), or ``"nest"`` (a real nest).
+    """
+    if not dragged_id or not target_id or target_id == dragged_id:
+        return "invalid"
+    # Walk target's ancestry: if we reach the dragged group, target is a
+    # descendant and nesting would loop.
+    cur = target_id
+    seen = set()
+    while cur is not None and cur not in seen:
+        if cur == dragged_id:
+            return "invalid"
+        seen.add(cur)
+        cur = groups.get(cur, {}).get("parent_id")
+    if groups.get(dragged_id, {}).get("parent_id") == target_id:
+        return "reorder"
+    return "nest"
 
 
 def _show_drop_indicator_on_group(window, row):
@@ -2217,8 +2268,12 @@ def _on_connection_list_drop(window, target, value, x, y):
                                 zone = _group_drop_zone(target_row, y)
 
                             if zone == "into":
-                                # Nest the source into the target.
-                                if _move_group(window, group_id, target_group_id):
+                                # Nest the source into the target — unless it is
+                                # already a direct child (that re-parent is a
+                                # no-op and would falsely trigger a rebuild).
+                                if source_group and source_group.get("parent_id") == target_group_id:
+                                    pass
+                                elif _move_group(window, group_id, target_group_id):
                                     changes_made = True
                             else:
                                 # Make the source a sibling of the target
