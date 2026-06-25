@@ -327,21 +327,11 @@ class DragIndicator(Gtk.Widget):
             return
 
         accent = self._accent_color()
-        glow = Gdk.RGBA()
-        glow.red, glow.green, glow.blue, glow.alpha = (
-            accent.red, accent.green, accent.blue, 0.5,
-        )
 
         bar_rect = Graphene.Rect()
         bar_rect.init(bar_x, bar_y, bar_w, bar_h)
         bar_rounded = Gsk.RoundedRect()
         bar_rounded.init_from_rect(bar_rect, bar_h / 2)
-
-        # Soft glow under the bar.
-        try:
-            snapshot.append_outset_shadow(bar_rounded, glow, 0, 0, 1, 6)
-        except Exception:
-            pass
 
         # Pill-shaped accent bar.
         snapshot.push_rounded_clip(bar_rounded)
