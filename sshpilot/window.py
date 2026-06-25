@@ -5180,8 +5180,20 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     def show_preferences(self):
         """Show preferences dialog"""
         logger.info("Show preferences dialog")
+        existing = getattr(self, '_preferences_window', None)
+        if existing is not None:
+            try:
+                existing.present()
+                return
+            except Exception:
+                self._preferences_window = None
         try:
             preferences_window = PreferencesWindow(self, self.config)
+            self._preferences_window = preferences_window
+            preferences_window.connect(
+                'close-request',
+                lambda _w: (setattr(self, '_preferences_window', None), False)[1],
+            )
             preferences_window.present()
         except Exception as e:
             logger.error(f"Failed to show preferences dialog: {e}")
