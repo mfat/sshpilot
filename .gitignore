@@ -50,3 +50,4 @@ sshpilot/vendor/pyxtermjs/index.html
 # runtime — they are not shipped from this repo. (Anchored so it never matches
 # the sshpilot/plugins/ code package.)
 /plugins/
+/.mimocode

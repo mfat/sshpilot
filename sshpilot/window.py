@@ -76,7 +76,13 @@ from .sshcopyid_window import SshCopyIdWindow, SshCopyIdRunner
 from .scp_window import ScpWindowController, SCPConnectionProfile
 from .groups import GroupManager
 from .session_manager import SessionManager
-from .sidebar import GroupRow, TagGroupRow, ConnectionRow, build_sidebar
+from .sidebar import (
+    GroupRow,
+    TagGroupRow,
+    ConnectionRow,
+    build_sidebar,
+    reset_connection_list_drag_session,
+)
 from .tag_groups import (
     UNTAGGED_KEY,
     compute_tag_groups,
@@ -1186,6 +1192,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
               transform: scale(0.98);
             }
 
+            /* Gap between sidebar list rows (GtkListBox has no spacing property) */
+            .navigation-sidebar row {
+              margin: 4px 8px;
+            }
+
             /* Selected sidebar row: always use the accent so selection is
                visible in dark mode by default. libadwaita's default
                navigation-sidebar selection is a neutral shade that is nearly
@@ -1232,6 +1243,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
               background-color: shade(@accent_bg_color, 0.90);
             }
             
+            /* Reorder placeholder: a slim transparent gap row whose child
+               DragIndicator draws the accent bar; the list parts around it. */
+            .drop-placeholder-row {
+              background: transparent;
+              min-height: 0;
+              padding: 0;
+            }
+
             /* Group drop target highlight */
             .drop-target-group {
               background: alpha(@accent_bg_color, 0.25);
@@ -3929,6 +3948,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     
     def rebuild_connection_list(self):
         """Rebuild the connection list with groups"""
+        reset_connection_list_drag_session(self)
+
         # Save current scroll position
         scroll_position = None
         if hasattr(self, 'connection_scrolled') and self.connection_scrolled:
@@ -4130,37 +4151,53 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         tag_row._member_rows = member_rows
 
     def _build_grouped_list(self, hierarchy, connections_dict, level):
-        """Recursively build the grouped connection list"""
+        """Recursively build the grouped connection list.
+
+        Returns the list of top-level GroupRows created at this level so the
+        caller can register them as children for in-place expand/collapse.
+        """
+        created_rows = []
         for group_info in hierarchy:
             # Add group row
             group_row = GroupRow(group_info, self.group_manager, connections_dict)
             group_row.connect('group-toggled', self._on_group_toggled)
+            if hasattr(group_row, "set_indentation"):
+                group_row.set_indentation(level)
             self.connection_list.append(group_row)
-            
-            # Add connections in this group if expanded
-            if group_info.get('expanded', True):
-                group_connections = []
-                for conn_nickname in group_info.get('connections', []):
-                    if conn_nickname in connections_dict:
-                        group_connections.append(connections_dict[conn_nickname])
-                
-                # Use the order from the group's connections list (preserves custom ordering)
-                for conn_nickname in group_info.get('connections', []):
-                    if conn_nickname in connections_dict:
-                        conn = connections_dict[conn_nickname]
-                        self.add_connection_row(
-                            conn,
-                            level + 1,
-                            display_group_id=group_info.get('id'),
-                        )
-            
-            # Recursively add child groups
+
+            # Build direct connection rows once, then let expand/collapse toggle
+            # their visibility in place to avoid full-list flicker.
+            for conn_nickname in group_info.get('connections', []):
+                if conn_nickname in connections_dict:
+                    conn = connections_dict[conn_nickname]
+                    row = self.add_connection_row(
+                        conn,
+                        level + 1,
+                        display_group_id=group_info.get('id'),
+                    )
+                    if row is not None and hasattr(group_row, "add_member_row"):
+                        group_row.add_member_row(row)
+
+            # Recursively add child groups and register them directly so a
+            # parent collapse hides nested subgroups in place.
             if group_info.get('children'):
-                self._build_grouped_list(group_info['children'], connections_dict, level + 1)
-    
+                child_group_rows = self._build_grouped_list(
+                    group_info['children'], connections_dict, level + 1
+                )
+                if hasattr(group_row, "add_child_group_row"):
+                    for child_row in child_group_rows:
+                        group_row.add_child_group_row(child_row)
+
+            if hasattr(group_row, "apply_descendant_visibility"):
+                group_row.apply_descendant_visibility(True)
+
+            created_rows.append(group_row)
+        return created_rows
+
     def _on_group_toggled(self, group_row, group_id, expanded):
         """Handle group expand/collapse"""
-        self.rebuild_connection_list()
+        if hasattr(group_row, "apply_descendant_visibility"):
+            group_row.apply_descendant_visibility(True)
 
         # Reselect the toggled group so focus doesn't jump to another row
         for row in self.connection_list:
@@ -7384,10 +7421,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             if normalized not in {'fullwidth', 'nested'}:
                 normalized = 'nested'
 
-            for rows in self.connection_rows.values():
-                for row in (rows if isinstance(rows, list) else [rows]):
-                    if hasattr(row, 'refresh_group_display_mode'):
-                        row.refresh_group_display_mode(normalized)
+            # Covers both connection rows and group headers (nested groups
+            # honor the same fullwidth/nested layout).
+            for row in self.connection_list:
+                if hasattr(row, 'refresh_group_display_mode'):
+                    row.refresh_group_display_mode(normalized)
 
     def on_window_size_changed(self, window, param):
         """Handle window size change"""
