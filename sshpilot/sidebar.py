@@ -323,9 +323,12 @@ class GroupRow(Gtk.ListBoxRow):
         content.set_margin_end(12)
         content.set_margin_top(6)
         content.set_margin_bottom(6)
-        # Kept so set_indentation() can offset nested group headers.
+        # Kept so set_indentation() can offset nested group headers and honor
+        # the fullwidth/nested Group Layout preference.
         self._content = content
         self._content_margin_base = 12
+        self._indent_level = 0
+        self._group_display_mode = None
 
         from sshpilot import icon_utils
         icon = icon_utils.new_image_from_icon_name("folder-symbolic")
@@ -521,13 +524,58 @@ class GroupRow(Gtk.ListBoxRow):
     def set_indentation(self, level: int) -> None:
         """Indent a nested group header to match its depth in the tree."""
         try:
-            level = max(0, int(level or 0))
+            self._indent_level = max(0, int(level or 0))
         except (TypeError, ValueError):
-            level = 0
+            self._indent_level = 0
+        self._apply_group_display_mode()
+
+    def refresh_group_display_mode(self, new_mode: Optional[str] = None) -> None:
+        """Re-apply indentation when the Group Layout preference changes."""
+        if new_mode:
+            normalized = str(new_mode).lower()
+            if normalized in _GROUP_DISPLAY_OPTIONS:
+                self._group_display_mode = normalized
+        else:
+            self._group_display_mode = None
+        self._apply_group_display_mode()
+
+    def _get_group_display_mode(self) -> str:
+        if self._group_display_mode in _GROUP_DISPLAY_OPTIONS:
+            return self._group_display_mode
+
+        mode = 'nested'
+        config = getattr(self.group_manager, 'config', None)
+        if config:
+            try:
+                value = str(config.get_setting('ui.group_row_display', mode)).lower()
+                if value in _GROUP_DISPLAY_OPTIONS:
+                    mode = value
+            except Exception:
+                pass
+
+        self._group_display_mode = mode
+        return mode
+
+    def _apply_group_display_mode(self) -> None:
         content = getattr(self, '_content', None)
-        if content is not None:
-            base = getattr(self, '_content_margin_base', 12)
-            content.set_margin_start(base + level * _GROUP_ROW_INDENT_WIDTH)
+        if content is None:
+            return
+
+        base = getattr(self, '_content_margin_base', 12)
+        indent_px = max(0, getattr(self, '_indent_level', 0)) * _GROUP_ROW_INDENT_WIDTH
+
+        if indent_px <= 0:
+            self.set_margin_start(0)
+            content.set_margin_start(base)
+            return
+
+        if self._get_group_display_mode() == 'fullwidth':
+            # Row spans full width; only the header content is indented.
+            self.set_margin_start(0)
+            content.set_margin_start(base + indent_px)
+        else:  # nested: the whole header card shifts right
+            self.set_margin_start(indent_px)
+            content.set_margin_start(base)
 
     def add_member_row(self, row: Gtk.ListBoxRow) -> None:
         """Track a direct member row for in-place expand/collapse."""

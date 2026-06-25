@@ -7405,10 +7405,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             if normalized not in {'fullwidth', 'nested'}:
                 normalized = 'nested'
 
-            for rows in self.connection_rows.values():
-                for row in (rows if isinstance(rows, list) else [rows]):
-                    if hasattr(row, 'refresh_group_display_mode'):
-                        row.refresh_group_display_mode(normalized)
+            # Covers both connection rows and group headers (nested groups
+            # honor the same fullwidth/nested layout).
+            for row in self.connection_list:
+                if hasattr(row, 'refresh_group_display_mode'):
+                    row.refresh_group_display_mode(normalized)
 
     def on_window_size_changed(self, window, param):
         """Handle window size change"""
