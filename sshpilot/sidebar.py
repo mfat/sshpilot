@@ -550,6 +550,13 @@ class GroupRow(Gtk.ListBoxRow):
 
     def _on_drag_begin(self, source, drag):
         try:
+            icon = Gtk.DragIcon.get_for_drag(drag)
+            image = Gtk.Image.new_from_icon_name("folder-symbolic")
+            image.set_icon_size(Gtk.IconSize.LARGE)
+            icon.set_child(image)
+        except Exception as e:
+            logger.debug(f"Could not set group drag icon: {e}")
+        try:
             window = self.get_root()
             if window:
                 if hasattr(window, "_dragged_connections"):
@@ -1401,15 +1408,10 @@ class ConnectionRow(Gtk.ListBoxRow):
 
     def _on_drag_begin(self, source, drag):
         try:
-            display = Gdk.Display.get_default()
-            icon_theme = Gtk.IconTheme.get_for_display(display)
-            paintable = icon_theme.lookup_icon(
-                "computer-symbolic",
-                None, 32, 1,
-                Gtk.TextDirection.NONE,
-                Gtk.IconLookupFlags.PRELOAD,
-            )
-            source.set_icon(paintable, 16, 16)
+            icon = Gtk.DragIcon.get_for_drag(drag)
+            image = Gtk.Image.new_from_icon_name("computer-symbolic")
+            image.set_icon_size(Gtk.IconSize.LARGE)
+            icon.set_child(image)
         except Exception as e:
             logger.debug(f"Could not set drag icon: {e}")
         try:
