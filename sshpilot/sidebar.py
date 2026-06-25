@@ -2357,8 +2357,14 @@ def _sync_group_member_rows(window, group_id: str) -> bool:
         row = row_by_nick[nick]
         ordered_rows.append(row)
         if row.get_index() != insert_at:
-            _listbox_reposition_row(window.connection_list, row, insert_at)
-        insert_at += 1
+            current_idx = row.get_index()
+            # Removing the row shifts all subsequent indices down by 1, so
+            # when the row sits before insert_at the effective target is T-1.
+            effective = insert_at - 1 if current_idx < insert_at else insert_at
+            _listbox_reposition_row(window.connection_list, row, effective)
+            insert_at = effective + 1
+        else:
+            insert_at += 1
 
     group_row._member_rows = ordered_rows
     return True
