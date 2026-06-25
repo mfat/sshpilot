@@ -1901,16 +1901,13 @@ def _group_reorder_zone(row, y, nesting_active: bool = False) -> str:
 
 
 def _group_in_nest_zone(row, y) -> bool:
-    """True when ``y`` is in the header's middle third (Add to Group)."""
+    """True when ``y`` is anywhere within the group header."""
     try:
         header_h = _group_header_height(row)
         if header_h <= 0:
             return True
         rel = y - row.get_allocation().y
-        if rel < 0 or rel > header_h:
-            return False
-        third = header_h / 3
-        return third <= rel < 2 * third
+        return 0 <= rel <= header_h
     except Exception:
         return False
 
