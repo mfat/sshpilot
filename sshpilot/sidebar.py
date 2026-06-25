@@ -275,6 +275,8 @@ class GroupRow(Gtk.ListBoxRow):
         self._color_badge_provider = None
         self._tint_provider = None
         self._color_badge_provider = None
+        self._member_rows = []
+        self._child_group_rows = []
 
         # Main container with drop indicators
         main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -469,14 +471,10 @@ class GroupRow(Gtk.ListBoxRow):
             logger.error(f"Error in group drag end: {e}")
 
     def _setup_double_click_gesture(self):
-        gesture = Gtk.GestureClick()
-        gesture.set_button(1)
-        gesture.connect("pressed", self._on_double_click)
-        self.add_controller(gesture)
-
-    def _on_double_click(self, gesture, n_press, x, y):
-        if n_press == 2:
-            self._toggle_expand()
+        # Double-click is handled centrally by the ListBox row-activated path
+        # (see MainWindow.on_connection_activated). Keeping a second row-local
+        # gesture here causes duplicate toggle paths.
+        pass
 
     def _toggle_expand(self):
         expanded = not self.group_info.get("expanded", True)
@@ -484,6 +482,27 @@ class GroupRow(Gtk.ListBoxRow):
         self.group_manager.set_group_expanded(self.group_id, expanded)
         self._update_display()
         self.emit("group-toggled", self.group_id, expanded)
+
+    def add_member_row(self, row: Gtk.ListBoxRow) -> None:
+        """Track a direct member row for in-place expand/collapse."""
+        self._member_rows.append(row)
+
+    def add_child_group_row(self, row: "GroupRow") -> None:
+        """Track a direct child group row for in-place expand/collapse."""
+        self._child_group_rows.append(row)
+
+    def apply_descendant_visibility(self, parent_visible: bool = True) -> None:
+        """Show or hide child rows without rebuilding the whole sidebar."""
+        expanded = bool(self.group_info.get("expanded", True))
+        descendants_visible = parent_visible and expanded
+
+        for row in getattr(self, "_member_rows", None) or []:
+            row.set_visible(descendants_visible)
+
+        for row in getattr(self, "_child_group_rows", None) or []:
+            row.set_visible(descendants_visible)
+            if hasattr(row, "apply_descendant_visibility"):
+                row.apply_descendant_visibility(descendants_visible)
 
     def _on_edit_clicked(self, button):
         """Handle edit button click"""

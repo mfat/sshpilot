@@ -1186,6 +1186,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
               transform: scale(0.98);
             }
 
+            /* Gap between sidebar list rows (GtkListBox has no spacing property) */
+            .navigation-sidebar row {
+              margin: 4px 8px;
+            }
+
             /* Selected sidebar row: always use the accent so selection is
                visible in dark mode by default. libadwaita's default
                navigation-sidebar selection is a neutral shade that is nearly
@@ -4137,30 +4142,45 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             group_row.connect('group-toggled', self._on_group_toggled)
             self.connection_list.append(group_row)
             
-            # Add connections in this group if expanded
-            if group_info.get('expanded', True):
-                group_connections = []
-                for conn_nickname in group_info.get('connections', []):
-                    if conn_nickname in connections_dict:
-                        group_connections.append(connections_dict[conn_nickname])
-                
-                # Use the order from the group's connections list (preserves custom ordering)
-                for conn_nickname in group_info.get('connections', []):
-                    if conn_nickname in connections_dict:
-                        conn = connections_dict[conn_nickname]
-                        self.add_connection_row(
-                            conn,
-                            level + 1,
-                            display_group_id=group_info.get('id'),
-                        )
+            # Build direct connection rows once, then let expand/collapse toggle
+            # their visibility in place to avoid full-list flicker.
+            for conn_nickname in group_info.get('connections', []):
+                if conn_nickname in connections_dict:
+                    conn = connections_dict[conn_nickname]
+                    row = self.add_connection_row(
+                        conn,
+                        level + 1,
+                        display_group_id=group_info.get('id'),
+                    )
+                    if row is not None and hasattr(group_row, "add_member_row"):
+                        group_row.add_member_row(row)
             
             # Recursively add child groups
             if group_info.get('children'):
+                child_rows_before = []
+                child = self.connection_list.get_first_child()
+                while child:
+                    child_rows_before.append(child)
+                    child = child.get_next_sibling()
                 self._build_grouped_list(group_info['children'], connections_dict, level + 1)
+                child = self.connection_list.get_first_child()
+                while child:
+                    if (
+                        child not in child_rows_before
+                        and hasattr(child, "group_id")
+                        and getattr(child, "group_id", None) in (group_info.get('children') or [])
+                    ):
+                        if hasattr(group_row, "add_child_group_row"):
+                            group_row.add_child_group_row(child)
+                    child = child.get_next_sibling()
+
+            if hasattr(group_row, "apply_descendant_visibility"):
+                group_row.apply_descendant_visibility(True)
     
     def _on_group_toggled(self, group_row, group_id, expanded):
         """Handle group expand/collapse"""
-        self.rebuild_connection_list()
+        if hasattr(group_row, "apply_descendant_visibility"):
+            group_row.apply_descendant_visibility(True)
 
         # Reselect the toggled group so focus doesn't jump to another row
         for row in self.connection_list:
