@@ -9,12 +9,15 @@ from sshpilot.sidebar import (
     _DROP_BAR_THICKNESS,
     _drag_bar_geometry,
     _group_drop_zone,
+    _group_in_nest_zone,
     _group_into_decision,
     _group_reorder_half,
+    _group_reorder_zone,
     _placeholder_insert_index,
     _resolve_group_color_by_id,
     _row_at_y_or_nearest,
     _would_create_group_cycle,
+    reset_connection_list_drag_session,
 )
 from sshpilot.window import MainWindow
 
@@ -334,28 +337,31 @@ class _AllocRow:
         return self._alloc
 
 
-def test_group_drop_zone_uses_stable_header_height():
-    # Live row is tall (as if the "Add to Group" box is shown), header is 40.
+def test_group_reorder_zone():
     row = _AllocRow(100, 120, header_height=40)  # header spans y=100..140
 
-    # Outer quarters of the HEADER reorder.
-    assert _group_drop_zone(row, 102) == "above"   # rel=2 < 10
-    assert _group_drop_zone(row, 138) == "below"   # rel=38 in (30, 40]
-    # Middle 50% of the header nests, unaffected by the inflated live height.
-    assert _group_drop_zone(row, 110) == "into"
-    assert _group_drop_zone(row, 120) == "into"
-    assert _group_drop_zone(row, 130) == "into"
-    # Cursor past the header (over the expanded box) keeps nesting.
-    assert _group_drop_zone(row, 180) == "into"    # rel=80 > header 40
+    # Whole header splits by half for reorder.
+    assert _group_reorder_zone(row, 110) == "above"   # rel=10
+    assert _group_reorder_zone(row, 125) == "below"   # rel=25
+    # Past the header is a sibling seam unless nest mode is active.
+    assert _group_reorder_zone(row, 145) == "below"
+    assert _group_reorder_zone(row, 145, nesting_active=True) == "into"
 
-    # Anti-flicker invariant: the same cursor stays 'into' whether the row is
-    # inflated (box shown) or collapsed (box hidden) — the box can't flip zones.
     collapsed = _AllocRow(100, 40, header_height=40)
-    assert _group_drop_zone(collapsed, 120) == "into"
-    assert _group_drop_zone(row, 120) == "into"
+    assert _group_reorder_zone(collapsed, 120) == "below"   # rel=20, past header
 
-    # Degenerate allocation falls back to 'into'.
-    assert _group_drop_zone(_AllocRow(0, 0, header_height=0), 0) == "into"
+
+def test_group_in_nest_zone():
+    row = _AllocRow(100, 40, header_height=40)
+    assert _group_in_nest_zone(row, 120) is True    # rel=20, middle third
+    assert _group_in_nest_zone(row, 110) is False   # rel=10, top third
+    assert _group_in_nest_zone(row, 135) is False   # rel=35, bottom third
+    assert _group_in_nest_zone(row, 145) is False   # past header
+
+
+def test_group_drop_zone_delegates_to_reorder_zone():
+    row = _AllocRow(100, 40, header_height=40)
+    assert _group_drop_zone(row, 110) == _group_reorder_zone(row, 110)
 
 
 def test_row_at_y_or_nearest_bridges_margin_gap():
@@ -424,3 +430,151 @@ def test_group_drop_follows_captured_indicator(monkeypatch):
     assert sidebar_module._on_connection_list_drop(window, None, value, 0, 99999) is True
     assert moved == []
     assert window.group_manager.reordered == [("src", "dst", "above")]
+
+
+def test_group_motion_shows_reorder_gap_on_header(monkeypatch):
+    """Dragging a group over another group's header top/bottom shows a reorder gap."""
+    shown = []
+    monkeypatch.setattr(
+        sidebar_module,
+        "_show_drop_indicator",
+        lambda w, row, position: shown.append((row.group_id, position)),
+    )
+    monkeypatch.setattr(sidebar_module, "_show_drop_indicator_on_group", lambda w, r: None)
+    monkeypatch.setattr(sidebar_module, "_show_ungrouped_area", lambda w: None)
+    monkeypatch.setattr(sidebar_module, "_update_connection_autoscroll", lambda w, y: None)
+    monkeypatch.setattr(sidebar_module.GLib, "get_monotonic_time", lambda: 100_000)
+
+    row = _AllocRow(100, 40, group_id="b", header_height=40)
+    row.is_tag_group = False
+    row.show_drop_indicator = lambda top: None
+    row.hide_drop_indicators = lambda: None
+
+    class _Manager:
+        groups = {
+            "a": {"id": "a", "parent_id": None},
+            "b": {"id": "b", "parent_id": None},
+            "c": {"id": "c", "parent_id": None},
+        }
+
+    window = types.SimpleNamespace()
+    window._dragged_group_id = "c"
+    window._drag_in_progress = True
+    window._drop_indicator_row = None
+    window._drop_indicator_position = None
+    window.group_manager = _Manager()
+    window.connection_list = types.SimpleNamespace(
+        set_selection_mode=lambda mode: None,
+        get_row_at_y=lambda y: row,
+    )
+
+    sidebar_module._on_connection_list_motion(window, None, 0, 110)
+
+    assert shown == [("b", "above")]
+
+
+def test_group_motion_shows_nest_on_header_center(monkeypatch):
+    """Dragging a group over the middle third of a header shows Add to Group."""
+    nested = []
+    monkeypatch.setattr(
+        sidebar_module,
+        "_show_drop_indicator_on_group",
+        lambda w, row: nested.append(row.group_id),
+    )
+    monkeypatch.setattr(sidebar_module, "_show_drop_indicator", lambda w, row, pos: None)
+    monkeypatch.setattr(sidebar_module, "_show_ungrouped_area", lambda w: None)
+    monkeypatch.setattr(sidebar_module, "_update_connection_autoscroll", lambda w, y: None)
+    monkeypatch.setattr(sidebar_module.GLib, "get_monotonic_time", lambda: 100_000)
+
+    row = _AllocRow(100, 40, group_id="b", header_height=40)
+    row.is_tag_group = False
+    row.show_drop_indicator = lambda top: None
+    row.hide_drop_indicators = lambda: None
+
+    class _Manager:
+        groups = {
+            "a": {"id": "a", "parent_id": None},
+            "b": {"id": "b", "parent_id": None},
+            "c": {"id": "c", "parent_id": None},
+        }
+
+    window = types.SimpleNamespace()
+    window._dragged_group_id = "c"
+    window._drag_in_progress = True
+    window._drop_indicator_row = None
+    window._drop_indicator_position = None
+    window.group_manager = _Manager()
+    window.connection_list = types.SimpleNamespace(
+        set_selection_mode=lambda mode: None,
+        get_row_at_y=lambda y: row,
+    )
+
+    sidebar_module._on_connection_list_motion(window, None, 0, 120)
+
+    assert nested == ["b"]
+
+
+def test_group_drop_ignores_connection_target(monkeypatch):
+    """A group drop whose target is a connection row does nothing."""
+    monkeypatch.setattr(sidebar_module, "_clear_drop_indicator", lambda w: None)
+    monkeypatch.setattr(sidebar_module, "_hide_ungrouped_area", lambda w: None)
+    monkeypatch.setattr(sidebar_module, "_stop_connection_autoscroll", lambda w: None)
+
+    moved = []
+    monkeypatch.setattr(
+        sidebar_module,
+        "_move_group",
+        lambda w, gid, parent: (moved.append((gid, parent)), True)[1],
+    )
+
+    class _ConnRow:
+        connection = object()
+
+    conn_row = _ConnRow()
+    monkeypatch.setattr(sidebar_module, "_row_at_y_or_nearest", lambda w, y: conn_row)
+
+    class _Manager:
+        def __init__(self):
+            self.groups = {"src": {"id": "src", "parent_id": None}}
+            self.reordered = []
+
+        def reorder_group(self, *args):
+            self.reordered.append(args)
+
+    window = types.SimpleNamespace()
+    window._drop_indicator_row = conn_row
+    window._drop_indicator_position = None
+    window.group_manager = _Manager()
+    window.rebuilt = []
+    window.rebuild_connection_list = lambda: window.rebuilt.append(True)
+
+    value = {"type": "group", "group_id": "src"}
+    assert sidebar_module._on_connection_list_drop(window, None, value, 0, 50) is False
+    assert moved == []
+    assert window.group_manager.reordered == []
+    assert window.rebuilt == []
+
+
+def test_reset_drag_session_clears_leaked_group_id(monkeypatch):
+    monkeypatch.setattr(sidebar_module, "_clear_drop_indicator", lambda w: None)
+    monkeypatch.setattr(sidebar_module, "_stop_connection_autoscroll", lambda w: None)
+
+    class _List:
+        def __init__(self):
+            self.selection_mode = None
+
+        def set_selection_mode(self, mode):
+            self.selection_mode = mode
+
+    window = types.SimpleNamespace()
+    window._dragged_group_id = "leaked"
+    window._ungrouped_area_visible = True
+    window._ungrouped_area_row = None
+    window._drag_in_progress = True
+    window.connection_list = _List()
+
+    reset_connection_list_drag_session(window)
+
+    assert not hasattr(window, "_dragged_group_id")
+    assert window._ungrouped_area_visible is False
+    assert window._drag_in_progress is False

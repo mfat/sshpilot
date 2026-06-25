@@ -76,7 +76,13 @@ from .sshcopyid_window import SshCopyIdWindow, SshCopyIdRunner
 from .scp_window import ScpWindowController, SCPConnectionProfile
 from .groups import GroupManager
 from .session_manager import SessionManager
-from .sidebar import GroupRow, TagGroupRow, ConnectionRow, build_sidebar
+from .sidebar import (
+    GroupRow,
+    TagGroupRow,
+    ConnectionRow,
+    build_sidebar,
+    reset_connection_list_drag_session,
+)
 from .tag_groups import (
     UNTAGGED_KEY,
     compute_tag_groups,
@@ -3942,6 +3948,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     
     def rebuild_connection_list(self):
         """Rebuild the connection list with groups"""
+        reset_connection_list_drag_session(self)
+
         # Save current scroll position
         scroll_position = None
         if hasattr(self, 'connection_scrolled') and self.connection_scrolled:
