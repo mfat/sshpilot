@@ -232,7 +232,8 @@ def run_scp_with_password(host: str, user: str, password: str,
                           extra_ssh_opts: list[str] | None = None,
                           inherit_env: dict | None = None,
                           use_publickey: bool = False,
-                          legacy: bool = False) -> subprocess.CompletedProcess:
+                          legacy: bool = False,
+                          recursive: bool = False) -> subprocess.CompletedProcess:
     tmpdir = _mk_priv_dir()
     fifo = os.path.join(tmpdir, "pw.fifo")
     os.mkfifo(fifo, 0o600)
@@ -269,7 +270,8 @@ def run_scp_with_password(host: str, user: str, password: str,
     )
 
     legacy_flag = ["-O"] if legacy else []
-    base_cmd = [scpbin, "-v", *legacy_flag, "-P", str(port), *ssh_opts, *transfer_sources, transfer_destination]
+    recursive_flag = ["-r"] if recursive else []
+    base_cmd = [scpbin, "-v", *legacy_flag, *recursive_flag, "-P", str(port), *ssh_opts, *transfer_sources, transfer_destination]
 
     if sshpass:
         cmd = [sshpass, "-f", fifo, *base_cmd]

@@ -300,6 +300,7 @@ def download_file(
                     [remote_file],
                     local_path,
                     direction='download',
+                    recursive=recursive,
                     port=port,
                     known_hosts_path=known_hosts_path,
                     extra_ssh_opts=extra_ssh_opts or [],
