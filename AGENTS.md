@@ -313,8 +313,13 @@ sudo dnf install python3-gobject gtk4 libadwaita vte291-gtk4 gtksourceview5 libs
 CLI flags (`sshpilot/main.py::main`):
 - `--verbose` / `-v` — detailed (debug) logging; `--quiet` / `-q` — warnings & errors only.
 - GTK/GLib/Gdk/Pango/VTE **warnings & criticals are captured into the log files by
-  default** via `_install_gtk_log_capture()` (`GLib.log_set_handler`, logged under the
-  `gtk` logger; also echoed to stderr). The `Gtk-CRITICAL`/`Gtk-WARNING` lines name the
+  default** via `_install_gtk_log_capture()` (logged under the `gtk` logger; also echoed
+  to stderr). It installs **both** interception points because GTK/GLib use two logging
+  paths: `GLib.log_set_handler` for legacy `g_log`/`g_warning` (e.g. GLib's child-watch
+  warning) **and** `GLib.log_set_writer_func` for GTK4's **structured** logging
+  (`g_log_structured`, e.g. `gtk_widget_measure` / `AdwMessageDialog` warnings) which
+  bypasses legacy handlers. The writer delegates to `g_log_writer_default` so stderr +
+  `G_DEBUG=fatal-warnings` still work. The `Gtk-CRITICAL`/`Gtk-WARNING` lines name the
   exact bad widget/render operation — look here first for UI / widget-lifecycle /
   rendering bugs.
 - **Uncaught Python exceptions are logged by default** via `_install_exception_hooks()`

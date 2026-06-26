@@ -1205,6 +1205,14 @@ def _install_exception_hooks():
 
 
 _gtk_log_handler_ids: list = []
+_gtk_log_writer_installed = False
+
+
+def _gtk_level_to_py(level, level_map):
+    for flag, py_level in level_map:
+        if level & flag:
+            return py_level
+    return logging.WARNING
 
 
 def _install_gtk_log_capture(verbose: bool = False):
@@ -1214,13 +1222,21 @@ def _install_gtk_log_capture(verbose: bool = False):
     that name the exact bad widget operation behind UI corruption and many
     crashes) normally go only to stderr. This forwards them to a ``gtk`` Python
     logger so they are durably captured in ``sshpilot.log``, while still echoing
-    to the terminal. GTK4's ``g_warning``/``g_critical`` use the legacy
-    ``g_log`` path that ``g_log_set_handler`` intercepts.
+    to the terminal.
+
+    Two interception points are needed because GTK/GLib use two logging paths:
+    * legacy ``g_log`` / ``g_warning`` (e.g. GLib's child-watch warning) is caught
+      by ``g_log_set_handler`` per domain;
+    * GTK4 emits its own warnings via **structured** logging
+      (``g_log_structured``), which bypasses legacy handlers — those are caught by
+      a ``g_log_set_writer_func``. The writer also catches legacy messages from
+      any domain we did not register a handler for.
 
     Warnings, criticals, errors and messages are always captured; ``verbose``
     additionally captures lower-severity GTK/GLib info & debug messages.
     """
-    if _gtk_log_handler_ids:  # already installed (idempotent)
+    global _gtk_log_writer_installed
+    if _gtk_log_handler_ids or _gtk_log_writer_installed:  # idempotent
         return
     gtk_logger = logging.getLogger('gtk')
     level_map = (
@@ -1232,14 +1248,22 @@ def _install_gtk_log_capture(verbose: bool = False):
         (GLib.LogLevelFlags.LEVEL_DEBUG, logging.DEBUG),
     )
 
+    # Which levels we forward to the Python logger. Warnings & above (plus
+    # message) always; info/debug only in verbose mode to avoid log spam.
+    forward_mask = (
+        GLib.LogLevelFlags.LEVEL_WARNING
+        | GLib.LogLevelFlags.LEVEL_CRITICAL
+        | GLib.LogLevelFlags.LEVEL_ERROR
+        | GLib.LogLevelFlags.LEVEL_MESSAGE
+    )
+    if verbose:
+        forward_mask |= GLib.LogLevelFlags.LEVEL_INFO | GLib.LogLevelFlags.LEVEL_DEBUG
+
+    # --- legacy g_log handlers (per domain) ------------------------------
     def _handler(domain, level, message, _user=None):
-        py_level = logging.WARNING
-        for flag, lvl in level_map:
-            if level & flag:
-                py_level = lvl
-                break
         try:
-            gtk_logger.log(py_level, "%s: %s", domain or 'GLib', message)
+            gtk_logger.log(_gtk_level_to_py(level, level_map),
+                           "%s: %s", domain or 'GLib', message)
         except Exception:
             pass
         # Preserve terminal visibility (we replaced the default stderr handler).
@@ -1248,24 +1272,37 @@ def _install_gtk_log_capture(verbose: bool = False):
         except Exception:
             pass
 
-    levels = (
-        GLib.LogLevelFlags.LEVEL_WARNING
-        | GLib.LogLevelFlags.LEVEL_CRITICAL
-        | GLib.LogLevelFlags.LEVEL_ERROR
-        | GLib.LogLevelFlags.LEVEL_MESSAGE
-        | GLib.LogLevelFlags.FLAG_FATAL
-        | GLib.LogLevelFlags.FLAG_RECURSION
-    )
-    if verbose:
-        levels |= GLib.LogLevelFlags.LEVEL_INFO | GLib.LogLevelFlags.LEVEL_DEBUG
+    handler_levels = forward_mask | GLib.LogLevelFlags.FLAG_FATAL | GLib.LogLevelFlags.FLAG_RECURSION
     for domain in ('Gtk', 'Gdk', 'GLib', 'GLib-GObject', 'GLib-GIO', 'Gio',
                    'Pango', 'GdkPixbuf', 'Adwaita', 'Vte', None):
         try:
-            hid = GLib.log_set_handler(domain, levels, _handler)
+            hid = GLib.log_set_handler(domain, handler_levels, _handler)
             _gtk_log_handler_ids.append((domain, hid))
         except Exception:
             logging.getLogger(__name__).debug(
                 "Could not set GLib log handler for domain %r", domain, exc_info=True)
+
+    # --- structured-logging writer (GTK4's own warnings) -----------------
+    def _writer(level, fields, user_data=None):
+        try:
+            if int(level) & int(forward_mask):
+                text = GLib.log_writer_format_fields(level, fields, False).strip()
+                gtk_logger.log(_gtk_level_to_py(level, level_map), "%s", text)
+        except Exception:
+            pass
+        # Delegate to the default writer so stderr output AND fatal-warnings
+        # (G_DEBUG=fatal-warnings / log_set_always_fatal) still work.
+        try:
+            return GLib.log_writer_default(level, fields, user_data)
+        except Exception:
+            return GLib.LogWriterOutput.HANDLED
+
+    try:
+        GLib.log_set_writer_func(_writer)
+        _gtk_log_writer_installed = True
+    except Exception:
+        logging.getLogger(__name__).debug(
+            "Could not set GLib structured-log writer", exc_info=True)
 
 
 def _enable_fatal_gtk_warnings():
