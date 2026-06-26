@@ -533,13 +533,34 @@ class ScpWindowController:
             destination_group = Adw.PreferencesGroup()
             destination_group.set_title(_('Destination'))
 
-            local_row = Adw.EntryRow(title=_('Local destination'))
+            # Under Flatpak the destination is a portal-granted folder shown as a
+            # read-only label — an ActionRow, which has no edit affordance, so it
+            # doesn't masquerade as a typeable field; the "Choose download folder"
+            # button sets it. Outside Flatpak it is an editable EntryRow the user
+            # can type a path into.
+            if is_flatpak():
+                local_row = Adw.ActionRow(title=_('Local destination'))
+                try:
+                    local_row.set_subtitle_selectable(True)
+                except Exception:
+                    pass
+            else:
+                local_row = Adw.EntryRow(title=_('Local destination'))
 
-            # Under Flatpak the EntryRow only shows a human-friendly label; scp
-            # must receive the portal-mounted path (writable inside the sandbox),
-            # not the raw host path. ``resolved_destination`` holds that portal
-            # path plus a clean display string for status/toast messages. Outside
-            # Flatpak ``path`` stays None and the entry text is used directly.
+            def _set_local_text(text: str) -> None:
+                if isinstance(local_row, Adw.EntryRow):
+                    local_row.set_text(text)
+                else:
+                    local_row.set_subtitle(text)
+
+            def _get_local_text() -> str:
+                if isinstance(local_row, Adw.EntryRow):
+                    return local_row.get_text()
+                return local_row.get_subtitle() or ''
+
+            # ``resolved_destination`` holds the portal-mounted path (writable in
+            # the sandbox) plus a clean display string for status/toast messages.
+            # Outside Flatpak ``path`` stays None and the entry text is used.
             resolved_destination = {'path': None, 'display': None}
 
             def _set_flatpak_path_bar_visible(visible: bool) -> None:
@@ -547,15 +568,8 @@ class ScpWindowController:
                 destination_group.set_visible(visible)
 
             if is_flatpak():
-                # A free-text ~/Downloads is unreachable in the sandbox, so the
-                # destination must be a portal-granted folder. The field is
-                # read-only; the Request Access button sets/changes it.
-                try:
-                    local_row.set_editable(False)
-                except Exception:
-                    pass
-                # Auto-restore the last granted folder so the user need not click
-                # Request Access every session (parity with the file manager).
+                # Auto-restore the last granted folder so the user need not pick a
+                # destination every session (parity with the file manager).
                 try:
                     restored = restore_granted_folder()
                 except Exception as exc:
@@ -564,16 +578,16 @@ class ScpWindowController:
                 if restored:
                     resolved_destination['path'] = restored['path']
                     resolved_destination['display'] = restored['display']
-                    local_row.set_text(restored['display'])
+                    _set_local_text(restored['display'])
                     local_row.set_sensitive(True)
                     _set_flatpak_path_bar_visible(True)
                 else:
-                    # No saved grant: hide the path bar until Request Access succeeds.
-                    local_row.set_text('')
+                    # No saved grant: hide the path bar until a folder is chosen.
+                    _set_local_text('')
                     local_row.set_sensitive(False)
                     _set_flatpak_path_bar_visible(False)
             else:
-                local_row.set_text(str(default_download_dir))
+                _set_local_text(str(default_download_dir))
                 try:
                     local_editable = local_row.get_editable()
                     if local_editable and hasattr(local_editable, 'set_placeholder_text'):
@@ -581,16 +595,16 @@ class ScpWindowController:
                 except Exception:
                     pass
 
-            local_row.set_show_apply_button(False)
+            if isinstance(local_row, Adw.EntryRow):
+                local_row.set_show_apply_button(False)
             destination_group.add(local_row)
 
             # Outside Flatpak: a flat folder-icon suffix opens the picker. Under
-            # Flatpak the row is greyed until access is granted (which would also
-            # disable a suffix button), so the picker is triggered by a separate,
-            # always-enabled "Request Access" button below the row instead.
+            # Flatpak the row is a read-only label, so the picker is triggered by a
+            # separate, always-enabled "Choose download folder" button below it.
             request_access_button = None
             if is_flatpak():
-                request_access_button = Gtk.Button(label=_('Request Access'))
+                request_access_button = Gtk.Button(label=_('Choose download folder'))
                 request_access_button.set_halign(Gtk.Align.CENTER)
                 request_access_button.add_css_class('suggested-action')
                 request_access_button.set_margin_top(6)
@@ -617,7 +631,7 @@ class ScpWindowController:
                 # Under Flatpak the row shows a display string (e.g. a basename),
                 # not a real path; use the previously resolved portal path as the
                 # initial folder instead. Outside Flatpak the row text is a path.
-                initial_candidate = resolved_destination.get('path') or local_row.get_text().strip()
+                initial_candidate = resolved_destination.get('path') or _get_local_text().strip()
                 if initial_candidate:
                     try:
                         expanded = os.path.expanduser(initial_candidate)
@@ -659,7 +673,7 @@ class ScpWindowController:
                             resolved_destination['path'] = granted['path']
                             resolved_destination['display'] = granted['display']
                             # Show the full real path, not the portal mount basename.
-                            local_row.set_text(granted['display'])
+                            _set_local_text(granted['display'])
                             local_row.set_sensitive(True)
                             _set_flatpak_path_bar_visible(True)
                         else:
@@ -671,7 +685,7 @@ class ScpWindowController:
                     default_download_dir = path
                     resolved_destination['path'] = None
                     resolved_destination['display'] = None
-                    local_row.set_text(path)
+                    _set_local_text(path)
 
                 try:
                     file_dialog.select_folder(dialog, None, _on_destination_chosen)
@@ -793,11 +807,11 @@ class ScpWindowController:
                 elif is_flatpak():
                     # No portal-granted destination yet: the user must grant one.
                     status_label.set_text(
-                        _('Click Request Access to choose a destination folder first.')
+                        _('Click “Choose download folder” to pick a destination first.')
                     )
                     return
                 else:
-                    destination_text = local_row.get_text().strip()
+                    destination_text = _get_local_text().strip()
                     if not destination_text:
                         destination_text = str(default_download_dir)
                     try:
