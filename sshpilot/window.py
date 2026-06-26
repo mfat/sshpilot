@@ -1124,11 +1124,17 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         return False  # one-shot
 
     def _on_previous_crash_response(self, dialog, response):
+        # NB: self.activate_action is shadowed by a SimpleAction attribute
+        # (window.py: self.activate_action = Gio.SimpleAction.new(...)), so the
+        # GtkWidget.activate_action() method is not callable here. Invoke the
+        # handler / action object directly instead.
         try:
             if response == 'report':
-                self.activate_action('report-problem', None)
+                self.on_report_problem_action()
             elif response == 'logs':
-                self.activate_action('view-logs', None)
+                action = getattr(self, 'view_logs_action', None)
+                if action is not None:
+                    action.activate(None)
         except Exception as exc:
             logger.debug("Crash dialog response failed: %s", exc, exc_info=True)
 
