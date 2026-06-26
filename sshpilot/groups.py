@@ -384,64 +384,101 @@ class GroupManager:
             connections.insert(target_index + 1, connection_nickname)
 
         self._save_groups()
+    
+    def get_ordered_siblings(self, parent_id: Optional[str]) -> List[str]:
+        """Return ordered child group ids for ``parent_id`` (``None`` = root level)."""
+        if parent_id:
+            parent = self.groups.get(parent_id)
+            if not parent:
+                return []
+            return list(parent.get('children', []))
+        root_ids = [
+            gid for gid, ginfo in self.groups.items()
+            if ginfo.get('parent_id') is None
+        ]
+        return sorted(root_ids, key=lambda gid: self.groups[gid].get('order', 0))
+
+    def sibling_index(self, group_id: str) -> tuple:
+        """Return ``(parent_id, index)`` of ``group_id`` among its siblings."""
+        group = self.groups.get(group_id)
+        if not group:
+            raise ValueError(f"Unknown group '{group_id}'")
+        parent_id = group.get('parent_id')
+        siblings = self.get_ordered_siblings(parent_id)
+        return parent_id, siblings.index(group_id)
+
+    def _write_sibling_order(self, parent_id: Optional[str], ordered_ids: List[str]) -> None:
+        if parent_id:
+            if parent_id in self.groups:
+                self.groups[parent_id]['children'] = list(ordered_ids)
+        else:
+            self._update_group_orders(ordered_ids, None)
+
+    def _is_descendant(self, ancestor_id: str, node_id: Optional[str]) -> bool:
+        """True if ``node_id`` is ``ancestor_id`` or nested under it."""
+        if not node_id:
+            return False
+        cur = node_id
+        seen = set()
+        while cur and cur not in seen:
+            if cur == ancestor_id:
+                return True
+            seen.add(cur)
+            cur = self.groups.get(cur, {}).get('parent_id')
+        return False
+
+    def place_group(self, group_id: str, parent_id: Optional[str], index: int) -> bool:
+        """Move ``group_id`` to ``index`` among ``parent_id``'s children (root if ``None``).
+
+        The flattened sidebar is a view; all placement is tree-relative.
+        """
+        if group_id not in self.groups:
+            return False
+        if parent_id is not None and parent_id not in self.groups:
+            return False
+        if parent_id is not None and self._is_descendant(group_id, parent_id):
+            return False
+
+        group = self.groups[group_id]
+        old_parent = group.get('parent_id')
+
+        old_siblings = self.get_ordered_siblings(old_parent)
+        old_index = (
+            old_siblings.index(group_id) if group_id in old_siblings else None
+        )
+
+        if group_id in old_siblings:
+            old_siblings.remove(group_id)
+            self._write_sibling_order(old_parent, old_siblings)
+        if old_parent and old_parent in self.groups:
+            children = self.groups[old_parent].get('children', [])
+            if group_id in children:
+                children.remove(group_id)
+
+        group['parent_id'] = parent_id
+
+        new_siblings = self.get_ordered_siblings(parent_id)
+        if group_id in new_siblings:
+            new_siblings.remove(group_id)
+
+        if old_parent == parent_id and old_index is not None and old_index < index:
+            index -= 1
+        index = max(0, min(int(index), len(new_siblings)))
+        new_siblings.insert(index, group_id)
+        self._write_sibling_order(parent_id, new_siblings)
+
+        self._save_groups()
+        return True
 
     def reorder_group(self, source_group_id: str, target_group_id: str, position: str):
-        """Reorder a group relative to another group at the same level"""
-        # Get both groups
-        source_group = self.groups.get(source_group_id)
-        target_group = self.groups.get(target_group_id)
-        
-        if not source_group or not target_group:
-            return
-        
-        # Both groups must have the same parent (be at the same level)
-        source_parent = source_group.get('parent_id')
-        target_parent = target_group.get('parent_id')
-        
-        if source_parent != target_parent:
-            return
-        
-        # Get the list of groups at this level
-        if source_parent:
-            parent_group = self.groups.get(source_parent)
-            if not parent_group:
-                return
-            groups_list = parent_group['children']
-        else:
-            # Root level groups - we need to maintain order differently
-            # For now, use the order field in the group data
-            root_groups = [gid for gid, ginfo in self.groups.items() 
-                          if ginfo.get('parent_id') is None]
-            root_groups.sort(key=lambda gid: self.groups[gid].get('order', 0))
-            groups_list = root_groups
-        
-        # Remove source group from its current position
-        if source_group_id in groups_list:
-            groups_list.remove(source_group_id)
-        
-        # Find target position
+        """Reorder a group relative to another group at the same level."""
         try:
-            target_index = groups_list.index(target_group_id)
+            parent_id, target_index = self.sibling_index(target_group_id)
         except ValueError:
-            # Target not found, append to end
-            groups_list.append(source_group_id)
-            self._update_group_orders(groups_list, source_parent)
-            self._save_groups()
             return
-        
-        # Insert at appropriate position
-        if position == 'above':
-            groups_list.insert(target_index, source_group_id)
-        else:  # 'below'
-            groups_list.insert(target_index + 1, source_group_id)
-        
-        # Update the parent's children list or root group orders
-        if source_parent:
-            parent_group['children'] = groups_list
-        else:
-            self._update_group_orders(groups_list, None)
-        
-        self._save_groups()
+        if position == 'below':
+            target_index += 1
+        self.place_group(source_group_id, parent_id, target_index)
     
     def _update_group_orders(self, groups_list, parent_id):
         """Update the order field for groups at a given level"""

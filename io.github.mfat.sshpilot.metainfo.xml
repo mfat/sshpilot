@@ -60,6 +60,11 @@
 
 
 
+    <release version="5.4.5" date="2026-06-26">
+      <description>
+        <p>Improved drag and drop and group nesting experience</p>
+      </description>
+    </release>
     <release version="5.4.4" date="2026-06-26">
       <description>
         <p>Added support for nested groups</p>

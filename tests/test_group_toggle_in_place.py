@@ -7,22 +7,23 @@ from sshpilot.sidebar import (
     _DROP_BAR_INSET_LEFT,
     _DROP_BAR_INSET_RIGHT,
     _DROP_BAR_THICKNESS,
+    _GROUP_SEAM_HIT_PX,
     _apply_connection_dnd_in_place,
     _apply_group_dnd_in_place,
     _collect_group_subtree_rows,
     _drag_bar_geometry,
-    _group_drop_zone,
-    _group_in_nest_zone,
     _group_into_decision,
-    _group_reorder_half,
-    _group_reorder_zone,
-    _group_row_rel_y,
+    _group_reorder_position_from_y,
+    _group_reorder_seam_at_y,
     _listbox_reposition_row,
     _placeholder_insert_index,
+    _pointer_over_group_header,
+    _pointer_over_group_row,
+    _record_group_reorder_tree_target,
     _resolve_group_color_by_id,
     _row_at_y_or_nearest,
     _sync_group_member_rows,
-    _would_create_group_cycle,
+    _tree_target_insert_before,
     reset_connection_list_drag_session,
 )
 from sshpilot.window import MainWindow
@@ -294,12 +295,255 @@ def test_group_into_decision():
     assert _group_into_decision(groups, "c", "c") == "invalid"
 
 
-def test_group_reorder_half():
-    row = _AllocRow(100, 40, header_height=40)  # header spans y=100..140
-    assert _group_reorder_half(row, 105) == "above"   # upper half
-    assert _group_reorder_half(row, 135) == "below"   # lower half
-    # Past the header still resolves (no 'into'); lower half → below.
-    assert _group_reorder_half(row, 180) == "below"
+def test_group_reorder_position_from_y():
+    row = _AllocRow(100, 80, header_height=40)  # header y=100..140, row taller
+    lb = row._listbox
+    assert _group_reorder_position_from_y(row, 115, lb) == "above"   # above header mid
+    assert _group_reorder_position_from_y(row, 125, lb) == "below"   # below header mid
+    assert _group_reorder_position_from_y(row, 160, lb) == "below"   # past header, row margin
+
+
+def test_pointer_over_group_row():
+    row = _AllocRow(100, 80, header_height=40)
+    lb = _StubListBox(row)
+    row.bind_listbox(lb)
+    assert _pointer_over_group_row(row, 120, lb) is True
+    assert _pointer_over_group_row(row, 179, lb) is True
+    assert _pointer_over_group_row(row, 93, lb) is False   # above row + margin slack
+    assert _pointer_over_group_row(row, 186, lb) is False  # below row + margin slack
+
+
+def test_pointer_over_group_header():
+    row = _AllocRow(100, 80, header_height=40)
+    lb = row._listbox
+    assert _pointer_over_group_header(row, 120, lb) is True
+    assert _pointer_over_group_header(row, 110, lb) is True
+    assert _pointer_over_group_header(row, 139, lb) is True
+    assert _pointer_over_group_header(row, 145, lb) is False   # past header content
+    assert _pointer_over_group_header(row, 95, lb) is False    # above header content
+
+
+def test_pointer_over_group_header_not_top_row():
+    """Header hit-test must use listbox coordinates, not parent-relative content y."""
+    row = _AllocRow(200, 52, header_height=40)  # second root group
+    lb = row._listbox
+    assert _pointer_over_group_header(row, 220, lb) is True
+    assert _pointer_over_group_header(row, 50, lb) is False
+
+
+def test_group_reorder_seam_between_siblings(monkeypatch):
+    """Seam between collapsed sibling groups resolves to reorder above the lower one."""
+    a = _AllocRow(0, 48, group_id="a", header_height=40)
+    b = _AllocRow(56, 48, group_id="b", header_height=40)  # 8px gap after A
+    c = _AllocRow(112, 48, group_id="c", header_height=40)
+    listbox = object()
+    for row in (a, b, c):
+        row.bind_listbox(listbox)
+        row._member_rows = []
+        row._child_group_rows = []
+
+    class _Manager:
+        groups = {
+            "a": {"id": "a", "parent_id": None},
+            "b": {"id": "b", "parent_id": None},
+            "c": {"id": "c", "parent_id": None},
+        }
+
+    window = types.SimpleNamespace()
+    window.group_manager = _Manager()
+    window.connection_list = listbox
+
+    monkeypatch.setattr(
+        sidebar_module,
+        "_iter_host_group_rows",
+        lambda w: iter([a, b, c]),
+    )
+    # Midpoint of the gap between A (ends ~48) and B (starts 56) is 52.
+    seam = _group_reorder_seam_at_y(window, 52, "c")
+    assert seam == (b, "above")
+    # Centre of B's header should not match the A–B seam.
+    assert _group_reorder_seam_at_y(window, 72, "c") is None
+
+
+def test_group_reorder_seam_contiguous_rows(monkeypatch):
+    """Seam still resolves when rows touch (no inter-row gap)."""
+    a = _AllocRow(0, 48, group_id="a", header_height=40)
+    b = _AllocRow(48, 48, group_id="b", header_height=40)  # flush with A
+    c = _AllocRow(96, 48, group_id="c", header_height=40)
+    listbox = _StubListBox(a, b, c)
+    for row in (a, b, c):
+        row.bind_listbox(listbox)
+        row._member_rows = []
+        row._child_group_rows = []
+
+    class _Manager:
+        groups = {
+            "a": {"id": "a", "parent_id": None},
+            "b": {"id": "b", "parent_id": None},
+            "c": {"id": "c", "parent_id": None},
+        }
+
+    window = types.SimpleNamespace()
+    window.group_manager = _Manager()
+    window.connection_list = listbox
+
+    monkeypatch.setattr(
+        sidebar_module,
+        "_iter_host_group_rows",
+        lambda w: iter([a, b, c]),
+    )
+    # Top of B's row (direct_row would be B, not None).
+    seam = _group_reorder_seam_at_y(window, 50, "c")
+    assert seam == (b, "above")
+
+
+def test_group_motion_shows_reorder_at_sibling_seam(monkeypatch):
+    """Dragging C near the seam between A and B shows a reorder gap above B."""
+    shown = []
+    monkeypatch.setattr(
+        sidebar_module,
+        "_show_drop_indicator",
+        lambda w, row, position: shown.append((row.group_id, position)),
+    )
+    monkeypatch.setattr(sidebar_module, "_show_drop_indicator_on_group", lambda w, r: None)
+    monkeypatch.setattr(sidebar_module, "_show_ungrouped_area", lambda w: None)
+    monkeypatch.setattr(sidebar_module, "_update_connection_autoscroll", lambda w, y: None)
+    monkeypatch.setattr(sidebar_module.GLib, "get_monotonic_time", lambda: 100_000)
+
+    a = _AllocRow(0, 48, group_id="a", header_height=40)
+    b = _AllocRow(56, 48, group_id="b", header_height=40)
+    c_row = _AllocRow(112, 48, group_id="c", header_height=40)
+    for row in (a, b, c_row):
+        row.is_tag_group = False
+        row.show_drop_indicator = lambda top: None
+        row.hide_drop_indicators = lambda: None
+        row._member_rows = []
+        row._child_group_rows = []
+
+    class _Manager:
+        groups = {
+            "a": {"id": "a", "parent_id": None},
+            "b": {"id": "b", "parent_id": None},
+            "c": {"id": "c", "parent_id": None},
+        }
+
+    class _ConnList(_StubListBox):
+        def __init__(self):
+            super().__init__(a, b, c_row)
+
+    window = types.SimpleNamespace()
+    window._dragged_group_id = "c"
+    window._drag_in_progress = True
+    window._drop_indicator_row = None
+    window._drop_indicator_position = None
+    window.group_manager = _Manager()
+    window.connection_list = _ConnList()
+    for row in (a, b, c_row):
+        row.bind_listbox(window.connection_list)
+
+    monkeypatch.setattr(
+        sidebar_module, "_iter_host_group_rows", lambda w: iter([a, b, c_row])
+    )
+
+    sidebar_module._on_connection_list_motion(window, None, 0, 52)
+
+    assert shown == [("b", "above")]
+
+
+def test_group_motion_reorder_on_contiguous_row_boundary(monkeypatch):
+    """Reorder above B when y hits B's row at the A/B boundary (no list gap)."""
+    shown = []
+    monkeypatch.setattr(
+        sidebar_module,
+        "_show_drop_indicator",
+        lambda w, row, position: shown.append((row.group_id, position)),
+    )
+    monkeypatch.setattr(sidebar_module, "_show_drop_indicator_on_group", lambda w, r: None)
+    monkeypatch.setattr(sidebar_module, "_show_ungrouped_area", lambda w: None)
+    monkeypatch.setattr(sidebar_module, "_update_connection_autoscroll", lambda w, y: None)
+    monkeypatch.setattr(sidebar_module.GLib, "get_monotonic_time", lambda: 100_000)
+
+    a = _AllocRow(0, 48, group_id="a", header_height=40)
+    b = _AllocRow(48, 48, group_id="b", header_height=40)
+    c_row = _AllocRow(96, 48, group_id="c", header_height=40)
+    for row in (a, b, c_row):
+        row.is_tag_group = False
+        row.show_drop_indicator = lambda top: None
+        row.hide_drop_indicators = lambda: None
+        row._member_rows = []
+        row._child_group_rows = []
+
+    class _Manager:
+        groups = {
+            "a": {"id": "a", "parent_id": None},
+            "b": {"id": "b", "parent_id": None},
+            "c": {"id": "c", "parent_id": None},
+        }
+
+    window = types.SimpleNamespace()
+    window._dragged_group_id = "c"
+    window._drag_in_progress = True
+    window._drop_indicator_row = b
+    window._drop_indicator_position = "on_group"  # was nesting on B
+    window.group_manager = _Manager()
+    window.connection_list = _StubListBox(a, b, c_row)
+    for row in (a, b, c_row):
+        row.bind_listbox(window.connection_list)
+    monkeypatch.setattr(
+        sidebar_module, "_iter_host_group_rows", lambda w: iter([a, b, c_row])
+    )
+
+    sidebar_module._on_connection_list_motion(window, None, 0, 50)
+
+    assert shown == [("b", "above")]
+
+
+def test_group_motion_shows_reorder_at_gap_not_inside_row(monkeypatch):
+    """Dragging a group into the gap between siblings shows reorder, not nest."""
+    shown = []
+    monkeypatch.setattr(
+        sidebar_module,
+        "_show_drop_indicator",
+        lambda w, row, position: shown.append((row.group_id, position)),
+    )
+    monkeypatch.setattr(sidebar_module, "_show_drop_indicator_on_group", lambda w, r: None)
+    monkeypatch.setattr(sidebar_module, "_show_ungrouped_area", lambda w: None)
+    monkeypatch.setattr(sidebar_module, "_update_connection_autoscroll", lambda w, y: None)
+    monkeypatch.setattr(sidebar_module.GLib, "get_monotonic_time", lambda: 100_000)
+
+    a = _AllocRow(0, 48, group_id="a", header_height=40)
+    row = _AllocRow(56, 48, group_id="b", header_height=40)
+    c_row = _AllocRow(112, 48, group_id="c", header_height=40)
+    for r in (a, row, c_row):
+        r.is_tag_group = False
+        r.show_drop_indicator = lambda top: None
+        r.hide_drop_indicators = lambda: None
+        r._member_rows = []
+        r._child_group_rows = []
+
+    class _Manager:
+        groups = {
+            "a": {"id": "a", "parent_id": None},
+            "b": {"id": "b", "parent_id": None},
+            "c": {"id": "c", "parent_id": None},
+        }
+
+    window = types.SimpleNamespace()
+    window._dragged_group_id = "c"
+    window._drag_in_progress = True
+    window._drop_indicator_row = None
+    window._drop_indicator_position = None
+    window.group_manager = _Manager()
+    window.connection_list = _StubListBox(a, row, c_row)
+    for r in (a, row, c_row):
+        r.bind_listbox(window.connection_list)
+    monkeypatch.setattr(
+        sidebar_module, "_iter_host_group_rows", lambda w: iter([a, row, c_row])
+    )
+
+    sidebar_module._on_connection_list_motion(window, None, 0, 52)
+
+    assert shown == [("b", "above")]
 
 
 def test_placeholder_insert_index():
@@ -310,23 +554,21 @@ def test_placeholder_insert_index():
     assert _placeholder_insert_index(0, "below") == 1
 
 
-def test_would_create_group_cycle():
-    class _Window:
+class _StubListBox:
+    """Minimal listbox stub with allocation-based ``get_row_at_y``."""
+
+    def __init__(self, *rows):
+        self._rows = list(rows)
+
+    def get_row_at_y(self, y):
+        for row in self._rows:
+            alloc = row.get_allocation()
+            if alloc.y <= int(y) < alloc.y + alloc.height:
+                return row
+        return None
+
+    def set_selection_mode(self, mode):
         pass
-
-    class _Manager:
-        groups = {
-            "a": {"id": "a", "parent_id": None},
-            "b": {"id": "b", "parent_id": "a"},
-        }
-
-    window = _Window()
-    window.group_manager = _Manager()
-
-    assert _would_create_group_cycle(window, "a", "a") is True   # into itself
-    assert _would_create_group_cycle(window, "a", "b") is True   # into descendant
-    assert _would_create_group_cycle(window, "b", "a") is False  # valid nest
-    assert _would_create_group_cycle(window, "a", None) is False  # to root
 
 
 class _AllocRow:
@@ -334,50 +576,42 @@ class _AllocRow:
         self.group_id = group_id
         self._alloc = types.SimpleNamespace(y=y, height=height)
         h = height if header_height is None else header_height
-        # Stable header box, independent of the (possibly inflated) row height.
-        self._content = types.SimpleNamespace(
-            get_allocation=lambda: types.SimpleNamespace(y=y, height=h)
-        )
+        self._listbox = object()
+        self._header_y = y
+        self._header_h = h
+        self._content = _AllocRowContent(self)
+
+    def get_parent(self):
+        return self._listbox
 
     def get_allocation(self):
         return self._alloc
 
+    def translate_coordinates(self, dest, _x, _y):
+        if dest is self._listbox:
+            return True, 0, self._alloc.y
+        return False, 0, 0
 
-def test_group_reorder_zone():
-    row = _AllocRow(100, 120, header_height=40)  # header spans y=100..140
-
-    # Whole header splits by half for reorder.
-    assert _group_reorder_zone(row, 110) == "above"   # rel=10
-    assert _group_reorder_zone(row, 125) == "below"   # rel=25
-    # Past the header is a sibling seam unless nest mode is active.
-    assert _group_reorder_zone(row, 145) == "below"
-    assert _group_reorder_zone(row, 145, nesting_active=True) == "into"
-
-    collapsed = _AllocRow(100, 40, header_height=40)
-    assert _group_reorder_zone(collapsed, 120) == "below"   # rel=20, past header
+    def bind_listbox(self, listbox) -> None:
+        """Use the real connection list so translate_coordinates targets match."""
+        self._listbox = listbox
 
 
-def test_group_in_nest_zone():
-    row = _AllocRow(100, 40, header_height=40)
-    assert _group_in_nest_zone(row, 120) is True    # rel=20, middle third
-    assert _group_in_nest_zone(row, 110) is False   # rel=10, top third
-    assert _group_in_nest_zone(row, 135) is False   # rel=35, bottom third
-    assert _group_in_nest_zone(row, 145) is False   # past header
+class _AllocRowContent:
+    def __init__(self, row):
+        self._row = row
 
+    def get_allocation(self):
+        # Parent-relative: header sits at top of row child area.
+        return types.SimpleNamespace(y=0, height=self._row._header_h)
 
-def test_group_row_rel_y_pins_baseline_against_placeholder_shift():
-    """Zone math must not thrash when a reorder gap shifts the row downward."""
-    row = _AllocRow(100, 40, header_height=40)
-    window = types.SimpleNamespace()
-
-    assert _group_row_rel_y(window, row, 120) == 20
-    row._alloc.y = 118  # placeholder inserted above shifted the row down
-    assert _group_row_rel_y(window, row, 120) == 20
-
-
-def test_group_drop_zone_delegates_to_reorder_zone():
-    row = _AllocRow(100, 40, header_height=40)
-    assert _group_drop_zone(row, 110) == _group_reorder_zone(row, 110)
+    def translate_coordinates(self, dest, _x, _y):
+        row = self._row
+        if dest is row._listbox:
+            return True, 0, row._header_y
+        if dest is row:
+            return True, 0, row._header_y - row._alloc.y
+        return False, 0, 0
 
 
 def test_row_at_y_or_nearest_bridges_margin_gap():
@@ -405,12 +639,7 @@ def test_group_drop_follows_captured_indicator(monkeypatch):
     monkeypatch.setattr(sidebar_module, "_hide_ungrouped_area", lambda w: None)
     monkeypatch.setattr(sidebar_module, "_stop_connection_autoscroll", lambda w: None)
 
-    moved = []
-    monkeypatch.setattr(
-        sidebar_module,
-        "_move_group",
-        lambda w, gid, parent: (moved.append((gid, parent)), True)[1],
-    )
+    placed = []
 
     class _Manager:
         def __init__(self):
@@ -418,15 +647,26 @@ def test_group_drop_follows_captured_indicator(monkeypatch):
                 "src": {"id": "src", "parent_id": None},
                 "dst": {"id": "dst", "parent_id": None},
             }
-            self.reordered = []
 
-        def reorder_group(self, source, target, position):
-            self.reordered.append((source, target, position))
+        def get_ordered_siblings(self, parent_id):
+            if parent_id == "dst":
+                return []
+            return ["src", "dst"]
 
-    def _make_window(position):
+        def place_group(self, group_id, parent_id, index):
+            placed.append((group_id, parent_id, index))
+            return True
+
+    def _make_window(position, parent_id=None, index=None, tree_set=False):
         window = types.SimpleNamespace()
-        window._drop_indicator_row = _AllocRow(0, 40, group_id="dst")
+        indicator_row = _AllocRow(0, 40, group_id="dst")
+        window._drop_indicator_row = indicator_row
         window._drop_indicator_position = position
+        window._drop_group_parent_id = parent_id
+        window._drop_group_index = index
+        window._drop_group_tree_target_set = tree_set
+        window.connection_list = object()
+        indicator_row.bind_listbox(window.connection_list)
         window.group_manager = _Manager()
         window.rebuilt = []
         window.rebuild_connection_list = lambda: window.rebuilt.append(True)
@@ -434,22 +674,70 @@ def test_group_drop_follows_captured_indicator(monkeypatch):
 
     value = {"type": "group", "group_id": "src"}
 
-    # 'on_group' highlight → nest, even though y is far past the target row.
+    # 'on_group' highlight → nest at end of dst's children.
     window = _make_window("on_group")
     assert sidebar_module._on_connection_list_drop(window, None, value, 0, 99999) is True
-    assert moved == [("src", "dst")]
-    assert window.group_manager.reordered == []
+    assert placed == [("src", "dst", 0)]
 
-    # 'above' highlight → reorder as sibling (shared root parent, no reparent).
-    moved.clear()
-    window = _make_window("above")
+    # Reorder uses captured tree coordinates, not visible row indices.
+    placed.clear()
+    window = _make_window("above", parent_id=None, index=1, tree_set=True)
     assert sidebar_module._on_connection_list_drop(window, None, value, 0, 99999) is True
-    assert moved == []
-    assert window.group_manager.reordered == [("src", "dst", "above")]
+    assert placed == [("src", None, 1)]
 
 
-def test_group_motion_shows_reorder_gap_on_header(monkeypatch):
-    """Dragging a group over another group's header top/bottom shows a reorder gap."""
+def test_record_group_reorder_tree_target_before_root_sibling():
+    """Insert before root group B → (root, index(B)), not a visible row index."""
+
+    class _Manager:
+        groups = {
+            "a": {"id": "a", "parent_id": None, "order": 0},
+            "b": {"id": "b", "parent_id": None, "order": 1},
+            "c": {"id": "c", "parent_id": None, "order": 2},
+        }
+
+        def sibling_index(self, group_id):
+            order = sorted(
+                self.groups,
+                key=lambda gid: self.groups[gid].get("order", 0),
+            )
+            return None, order.index(group_id)
+
+    window = types.SimpleNamespace()
+    window.group_manager = _Manager()
+    window._dragged_group_id = "c"
+
+    _record_group_reorder_tree_target(window, "b", "above")
+    assert window._drop_group_parent_id is None
+    assert window._drop_group_index == 1
+    assert window._drop_group_tree_target_set is True
+
+    _record_group_reorder_tree_target(window, "b", "below")
+    assert window._drop_group_index == 2
+
+
+def test_tree_target_insert_before_nested_child():
+    """Insert before X under A → (A, 0)."""
+
+    class _Manager:
+        groups = {
+            "a": {"id": "a", "parent_id": None, "children": ["x", "y"]},
+            "x": {"id": "x", "parent_id": "a"},
+            "y": {"id": "y", "parent_id": "a"},
+        }
+
+        def sibling_index(self, group_id):
+            parent = self.groups[group_id]["parent_id"]
+            siblings = self.groups[parent]["children"]
+            return parent, siblings.index(group_id)
+
+    manager = _Manager()
+    assert _tree_target_insert_before(manager, "x") == ("a", 0)
+    assert _tree_target_insert_before(manager, "y") == ("a", 1)
+
+
+def test_group_motion_shows_reorder_at_sibling_seam(monkeypatch):
+    """Dragging C into the gap before B shows reorder above B (tree index 1)."""
     shown = []
     monkeypatch.setattr(
         sidebar_module,
@@ -461,17 +749,29 @@ def test_group_motion_shows_reorder_gap_on_header(monkeypatch):
     monkeypatch.setattr(sidebar_module, "_update_connection_autoscroll", lambda w, y: None)
     monkeypatch.setattr(sidebar_module.GLib, "get_monotonic_time", lambda: 100_000)
 
-    row = _AllocRow(100, 40, group_id="b", header_height=40)
-    row.is_tag_group = False
-    row.show_drop_indicator = lambda top: None
-    row.hide_drop_indicators = lambda: None
+    a = _AllocRow(0, 48, group_id="a", header_height=40)
+    row = _AllocRow(56, 48, group_id="b", header_height=40)
+    c_row = _AllocRow(112, 48, group_id="c", header_height=40)
+    for r in (a, row, c_row):
+        r.is_tag_group = False
+        r.show_drop_indicator = lambda top: None
+        r.hide_drop_indicators = lambda: None
+        r._member_rows = []
+        r._child_group_rows = []
 
     class _Manager:
         groups = {
-            "a": {"id": "a", "parent_id": None},
-            "b": {"id": "b", "parent_id": None},
-            "c": {"id": "c", "parent_id": None},
+            "a": {"id": "a", "parent_id": None, "order": 0},
+            "b": {"id": "b", "parent_id": None, "order": 1},
+            "c": {"id": "c", "parent_id": None, "order": 2},
         }
+
+        def sibling_index(self, group_id):
+            order = sorted(
+                self.groups,
+                key=lambda gid: self.groups[gid].get("order", 0),
+            )
+            return None, order.index(group_id)
 
     window = types.SimpleNamespace()
     window._dragged_group_id = "c"
@@ -479,18 +779,21 @@ def test_group_motion_shows_reorder_gap_on_header(monkeypatch):
     window._drop_indicator_row = None
     window._drop_indicator_position = None
     window.group_manager = _Manager()
-    window.connection_list = types.SimpleNamespace(
-        set_selection_mode=lambda mode: None,
-        get_row_at_y=lambda y: row,
+    window.connection_list = _StubListBox(a, row, c_row)
+    for r in (a, row, c_row):
+        r.bind_listbox(window.connection_list)
+    monkeypatch.setattr(
+        sidebar_module, "_iter_host_group_rows", lambda w: iter([a, row, c_row])
     )
 
-    sidebar_module._on_connection_list_motion(window, None, 0, 110)
+    # Seam between A and B (midpoint ~52, within hit px of B header top 56).
+    sidebar_module._on_connection_list_motion(window, None, 0, 52)
 
     assert shown == [("b", "above")]
 
 
-def test_group_motion_shows_nest_on_header_center(monkeypatch):
-    """Dragging a group over the middle third of a header shows Add to Group."""
+def test_group_motion_shows_nest_inside_row(monkeypatch):
+    """Dragging a group anywhere inside a folder row shows Add to Group."""
     nested = []
     monkeypatch.setattr(
         sidebar_module,
@@ -503,9 +806,14 @@ def test_group_motion_shows_nest_on_header_center(monkeypatch):
     monkeypatch.setattr(sidebar_module.GLib, "get_monotonic_time", lambda: 100_000)
 
     row = _AllocRow(100, 40, group_id="b", header_height=40)
-    row.is_tag_group = False
-    row.show_drop_indicator = lambda top: None
-    row.hide_drop_indicators = lambda: None
+    a = _AllocRow(0, 48, group_id="a", header_height=40)
+    c_row = _AllocRow(200, 48, group_id="c", header_height=40)
+    for r in (a, row, c_row):
+        r.is_tag_group = False
+        r.show_drop_indicator = lambda top: None
+        r.hide_drop_indicators = lambda: None
+        r._member_rows = []
+        r._child_group_rows = []
 
     class _Manager:
         groups = {
@@ -520,9 +828,11 @@ def test_group_motion_shows_nest_on_header_center(monkeypatch):
     window._drop_indicator_row = None
     window._drop_indicator_position = None
     window.group_manager = _Manager()
-    window.connection_list = types.SimpleNamespace(
-        set_selection_mode=lambda mode: None,
-        get_row_at_y=lambda y: row,
+    window.connection_list = _StubListBox(a, row, c_row)
+    for r in (a, row, c_row):
+        r.bind_listbox(window.connection_list)
+    monkeypatch.setattr(
+        sidebar_module, "_iter_host_group_rows", lambda w: iter([a, row, c_row])
     )
 
     sidebar_module._on_connection_list_motion(window, None, 0, 120)
@@ -536,15 +846,18 @@ def test_group_drop_ignores_connection_target(monkeypatch):
     monkeypatch.setattr(sidebar_module, "_hide_ungrouped_area", lambda w: None)
     monkeypatch.setattr(sidebar_module, "_stop_connection_autoscroll", lambda w: None)
 
-    moved = []
-    monkeypatch.setattr(
-        sidebar_module,
-        "_move_group",
-        lambda w, gid, parent: (moved.append((gid, parent)), True)[1],
-    )
+    placed = []
 
     class _ConnRow:
         connection = object()
+
+    class _Manager:
+        def __init__(self):
+            self.groups = {"src": {"id": "src", "parent_id": None}}
+
+        def place_group(self, *args):
+            placed.append(args)
+            return True
 
     conn_row = _ConnRow()
     monkeypatch.setattr(sidebar_module, "_row_at_y_or_nearest", lambda w, y: conn_row)
@@ -566,8 +879,7 @@ def test_group_drop_ignores_connection_target(monkeypatch):
 
     value = {"type": "group", "group_id": "src"}
     assert sidebar_module._on_connection_list_drop(window, None, value, 0, 50) is False
-    assert moved == []
-    assert window.group_manager.reordered == []
+    assert placed == []
     assert window.rebuilt == []
 
 
@@ -765,7 +1077,6 @@ def test_group_drop_reorder_skips_rebuild_when_inplace_succeeds(monkeypatch):
     monkeypatch.setattr(sidebar_module, "_clear_drop_indicator", lambda w: None)
     monkeypatch.setattr(sidebar_module, "_hide_ungrouped_area", lambda w: None)
     monkeypatch.setattr(sidebar_module, "_stop_connection_autoscroll", lambda w: None)
-    monkeypatch.setattr(sidebar_module, "_move_group", lambda *args: True)
 
     applied = []
     monkeypatch.setattr(
@@ -781,12 +1092,15 @@ def test_group_drop_reorder_skips_rebuild_when_inplace_succeeds(monkeypatch):
                 "dst": {"id": "dst", "parent_id": None},
             }
 
-        def reorder_group(self, source, target, position):
-            pass
+        def place_group(self, group_id, parent_id, index):
+            return True
 
     window = types.SimpleNamespace()
     window._drop_indicator_row = _AllocRow(0, 40, group_id="dst")
     window._drop_indicator_position = "above"
+    window._drop_group_parent_id = None
+    window._drop_group_index = 1
+    window._drop_group_tree_target_set = True
     window.group_manager = _Manager()
     window.rebuilt = []
     window.rebuild_connection_list = lambda: window.rebuilt.append(True)

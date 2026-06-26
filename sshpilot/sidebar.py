@@ -42,6 +42,8 @@ _DROP_BAR_INSET_LEFT = 6     # left inset (kept small so the bar spans nearly fu
 _DROP_BAR_INSET_RIGHT = 8    # right inset
 _DROP_BAR_CAP_RADIUS = 4     # radius of the leading round cap (caret node)
 _DROP_BAR_FALLBACK_ACCENT = "#3584e4"  # Adwaita blue when no theme accent
+# Generous hit band for seams between sibling group subtrees (reorder targets).
+_GROUP_SEAM_HIT_PX = 16
 
 def _install_sidebar_color_css():
     global _COLOR_CSS_INSTALLED
@@ -487,15 +489,14 @@ class GroupRow(Gtk.ListBoxRow):
         
         drop_label = Gtk.Label()
         drop_label.set_markup("<b>Add to Group</b>")
-        drop_label.add_css_class("accent")
         self.drop_target_indicator.append(drop_label)
         
         self.drop_target_indicator.set_visible(False)
+        self.drop_target_indicator.set_can_target(False)
 
-        # Add content to main_box
         main_box.append(content)
         main_box.append(self.drop_target_indicator)
-        
+
         # Drop indicator (bottom)
         self.drop_indicator_bottom = DragIndicator()
         main_box.append(self.drop_indicator_bottom)
@@ -563,7 +564,6 @@ class GroupRow(Gtk.ListBoxRow):
                     delattr(window, "_dragged_connections")
                 # Track which group is being dragged
                 window._dragged_group_id = self.group_id
-                _show_ungrouped_area(window)
         except Exception as e:
             logger.error(f"Error in group drag begin: {e}")
 
@@ -822,7 +822,7 @@ class GroupRow(Gtk.ListBoxRow):
         self.show_group_highlight(False)
 
     def show_group_highlight(self, show: bool):
-        """Show/hide group highlight for 'add to group' drop indication"""
+        """Show/hide group highlight for 'add to group' drop indication."""
         if show:
             self.add_css_class("drop-target-group")
             self.drop_target_indicator.set_visible(True)
@@ -1701,6 +1701,9 @@ def setup_connection_list_dnd(window):
 
     window._drop_indicator_row = None
     window._drop_indicator_position = None
+    window._drop_group_parent_id = None
+    window._drop_group_index = None
+    window._drop_group_tree_target_set = False
     window._drop_placeholder_row = None
     window._ungrouped_area_row = None
     window._ungrouped_area_visible = False
@@ -1728,7 +1731,8 @@ def _on_connection_list_motion(window, target, x, y):
                 return Gdk.DragAction.MOVE
         window._last_motion_time = current_time
 
-        _show_ungrouped_area(window)
+        if getattr(window, "_dragged_connections", None):
+            _show_ungrouped_area(window)
         _update_connection_autoscroll(window, y)
 
         row = _row_at_y_or_nearest(window, y)
@@ -1797,38 +1801,54 @@ def _on_connection_list_motion(window, target, x, y):
                     _clear_drop_indicator(window)
                     return Gdk.DragAction.MOVE
 
-                nesting_active = (
-                    window._drop_indicator_row is row
-                    and window._drop_indicator_position == "on_group"
+                listbox = window.connection_list
+                direct_row = _listbox_row_at_y(listbox, y)
+                _dragged_parent = window.group_manager.groups.get(
+                    window._dragged_group_id, {}
+                ).get("parent_id")
+
+                seam = _group_reorder_seam_at_y(
+                    window, y, window._dragged_group_id
                 )
-                header_h = _group_header_height(row)
-                rel = _group_row_rel_y(window, row, y)
-                past_header = rel > header_h
 
-                if decision == "nest" and (
-                    _group_in_nest_zone(row, y, window=window)
-                    or (nesting_active and past_header)
-                ):
+                if seam is None and window._drop_indicator_row is row:
+                    pos = window._drop_indicator_position
+                    if pos == "on_group" and direct_row is row:
+                        return Gdk.DragAction.MOVE
+                    # Only short-circuit an "above"/"below" indicator when the
+                    # pointer is in a gap (direct_row=None). When on-row, let
+                    # the display logic run so the indicator can transition from
+                    # seam ("above") to nest ("on_group") as pointer moves deeper.
+                    if pos in ("above", "below") and direct_row is None:
+                        return Gdk.DragAction.MOVE
+
+                # Seam has priority in gaps and during unnesting; nest wins on-row.
+                if seam is not None:
+                    seam_row, seam_zone = seam
+                    _apply_group_reorder_indicator(window, seam_row, seam_zone)
+                elif direct_row is row and decision == "nest":
                     _show_drop_indicator_on_group(window, row)
+                elif direct_row is None:
+                    _clear_drop_indicator(window)
+                elif decision == "reorder":
+                    # seam is None and pointer is on the parent row but NOT
+                    # near any unnesting seam → nothing sensible to show.
+                    if row.group_id == _dragged_parent:
+                        _clear_drop_indicator(window)
+                    else:
+                        zone = _group_reorder_position_from_y(row, y, listbox)
+                        _apply_group_reorder_indicator(window, row, zone)
                 else:
-                    zone = _group_reorder_zone(
-                        row, y, nesting_active=nesting_active, window=window,
-                    )
-                    if zone == "into":
-                        zone = "below"
+                    zone = _group_reorder_position_from_y(row, y, listbox)
                     _apply_group_reorder_indicator(window, row, zone)
-
-            # Dragging a group over a connection row → reorder gap at that row.
-            elif (hasattr(window, "_dragged_group_id")
-                  and hasattr(row, "connection")):
-                alloc = row.get_allocation()
-                zone = "above" if y < alloc.y + alloc.height / 2 else "below"
-                _show_drop_indicator(window, row, zone)
-
-            # Dragging a connection onto a group header adds it to that group.
+            
+            # Dragging a connection onto a group row adds it to that group.
             elif (hasattr(row, "group_id")
                   and getattr(window, "_dragged_connections", None)):
-                _show_drop_indicator_on_group(window, row)
+                if _pointer_over_group_row(row, y, window.connection_list):
+                    _show_drop_indicator_on_group(window, row)
+                else:
+                    _clear_drop_indicator(window)
             else:
                 _clear_drop_indicator(window)
         else:
@@ -1858,10 +1878,7 @@ def _show_drop_indicator(window, row, position):
         # list parts around it — no overlap), instead of painting a line inside
         # the target row. Clear any lingering group 'into' highlight first.
         if window._drop_indicator_row and hasattr(window._drop_indicator_row, 'hide_drop_indicators'):
-            # Also clear when same row is switching away from "on_group" (nest
-            # highlight); the `is not row` guard would skip it otherwise.
-            if (window._drop_indicator_row is not row
-                    or window._drop_indicator_position == "on_group"):
+            if window._drop_indicator_row is not row:
                 window._drop_indicator_row.hide_drop_indicators()
         _position_drop_placeholder(window, row, position)
     except Exception as e:
@@ -1886,67 +1903,208 @@ def _row_at_y_or_nearest(window, y):
     return None
 
 
-def _group_row_rel_y(window, row, y: float) -> float:
-    """Cursor Y relative to a stable row baseline.
-
-    The reorder placeholder is a real list row; inserting it above/below the
-    target shifts ``row.get_allocation().y`` and would thrash zone detection.
-    Pin the baseline on first hover of a row until the cursor leaves it.
-    """
-    if window is not None:
-        zone_row = getattr(window, "_drop_zone_row", None)
-        if zone_row is not row:
-            window._drop_zone_row = row
-            window._drop_zone_base_y = row.get_allocation().y
-        return y - window._drop_zone_base_y
-    return y - row.get_allocation().y
-
-
-def _group_header_height(row) -> float:
-    """Stable header height for zone math (ignores expanded nest chrome)."""
+def _group_header_bounds_in_listbox(row, listbox) -> tuple:
+    """Return ``(y0, y1)`` of the folder header in ``listbox`` coordinates."""
     try:
-        alloc = row.get_allocation()
         content = getattr(row, "_content", None)
-        header_h = content.get_allocation().height if content is not None else 0
-        if header_h <= 0:
-            header_h = alloc.height
-        return float(header_h or 0)
+        if content is not None and listbox is not None:
+            ok, _x0, y0 = content.translate_coordinates(listbox, 0, 0)
+            if ok:
+                h = content.get_allocation().height
+                if h > 0:
+                    return float(y0), float(y0 + h)
+        if content is not None:
+            ok, _x0, y_off = content.translate_coordinates(row, 0, 0)
+            if ok:
+                h = content.get_allocation().height
+                if h > 0:
+                    row_y = row.get_allocation().y
+                    top = row_y + y_off
+                    return float(top), float(top + h)
+        alloc = row.get_allocation()
+        return float(alloc.y), float(alloc.y + alloc.height)
     except Exception:
-        return 0.0
+        alloc = row.get_allocation()
+        return float(alloc.y), float(alloc.y + alloc.height)
 
 
-def _group_reorder_zone(
-    row, y, nesting_active: bool = False, window=None,
-) -> str:
-    """Reorder split for a group row: whole header is above/below by half.
-
-    Past the header is a sibling seam (``below``) unless nest mode is active.
-    """
+def _row_allocation_contains_y(row, y, listbox, margin: int = 0) -> bool:
+    """True when ``y`` falls inside the row allocation (± ``margin``) in listbox coords."""
     try:
-        header_h = _group_header_height(row)
-        if header_h <= 0:
-            return "above"
-        rel = _group_row_rel_y(window, row, y)
-        if rel > header_h:
-            return "into" if nesting_active else "below"
-        return "above" if rel < header_h / 2 else "below"
+        ok, _x0, y0 = row.translate_coordinates(listbox, 0, 0)
+        h = row.get_allocation().height
+        if not ok or h <= 0:
+            alloc = row.get_allocation()
+            y0, h = alloc.y, alloc.height
+        return (y0 - margin) <= y < (y0 + h + margin)
+    except Exception:
+        return False
+
+
+def _pointer_over_group_row(row, y, listbox=None) -> bool:
+    """True when the pointer is on ``row`` (Gtk hit-test or allocation slack)."""
+    listbox = listbox or row.get_parent()
+    if listbox is None:
+        return False
+    try:
+        if listbox.get_row_at_y(int(y)) is row:
+            return True
+        # CSS row margins sit outside the allocation; allow a little slack.
+        return _row_allocation_contains_y(row, y, listbox, margin=6)
+    except Exception:
+        return False
+
+
+def _listbox_row_at_y(listbox, y):
+    """Row under ``y`` without gap-bridging probes."""
+    try:
+        return listbox.get_row_at_y(int(y))
+    except Exception:
+        return None
+
+
+def _pointer_over_group_header(row, y, listbox=None) -> bool:
+    """True when ``y`` is over the folder header content (legacy helper)."""
+    listbox = listbox or row.get_parent()
+    if listbox is None:
+        return False
+    try:
+        y0, y1 = _group_header_bounds_in_listbox(row, listbox)
+        return y0 <= y < y1
+    except Exception:
+        return False
+
+
+def _group_reorder_position_from_y(row, y, listbox=None) -> str:
+    """'above' / 'below' for gap reorder from list y (uses header midpoint)."""
+    listbox = listbox or row.get_parent()
+    try:
+        y0, y1 = _group_header_bounds_in_listbox(row, listbox)
+        mid = (y0 + y1) / 2
+        return "above" if y < mid else "below"
     except Exception:
         return "above"
 
 
-def _group_in_nest_zone(row, y, window=None) -> bool:
-    """True when ``y`` is within the header excluding small top/bottom edge strips."""
+def _set_group_tree_drop_target(window, parent_id, index: int) -> None:
+    window._drop_group_parent_id = parent_id
+    window._drop_group_index = index
+    window._drop_group_tree_target_set = True
+
+
+def _tree_target_insert_before(manager, group_id: str) -> tuple:
+    parent_id, idx = manager.sibling_index(group_id)
+    return parent_id, idx
+
+
+def _tree_target_insert_after(manager, group_id: str) -> tuple:
+    parent_id, idx = manager.sibling_index(group_id)
+    return parent_id, idx + 1
+
+
+def _tree_target_nest_into(manager, group_id: str) -> tuple:
+    return group_id, len(manager.get_ordered_siblings(group_id))
+
+
+def _record_group_reorder_tree_target(window, ref_group_id: str, position: str) -> None:
+    """Map a visual above/below highlight to ``(parent_id, child_index)``."""
+    if not hasattr(window, "_dragged_group_id"):
+        return
+    manager = window.group_manager
     try:
-        header_h = _group_header_height(row)
-        if header_h <= 0:
-            return True
-        rel = _group_row_rel_y(window, row, y)
-        if rel < 0 or rel > header_h:
-            return False
-        edge = min(10, header_h / 4)
-        return edge < rel < header_h - edge
-    except Exception:
-        return False
+        if position == "above":
+            parent_id, index = _tree_target_insert_before(manager, ref_group_id)
+        else:
+            parent_id, index = _tree_target_insert_after(manager, ref_group_id)
+        _set_group_tree_drop_target(window, parent_id, index)
+    except ValueError:
+        pass
+
+
+def _sibling_group_rows(window, parent_id):
+    """Group header rows sharing ``parent_id``, in sidebar list order."""
+    rows = []
+    for row in _iter_host_group_rows(window):
+        if getattr(row, "is_tag_group", False):
+            continue
+        group = window.group_manager.groups.get(row.group_id)
+        if group and group.get("parent_id") == parent_id:
+            rows.append(row)
+    return rows
+
+
+def _subtree_bottom_y(row) -> float:
+    """Bottom edge of a group subtree in listbox coordinates."""
+    rows = _collect_group_subtree_rows(row)
+    last = rows[-1] if rows else row
+    alloc = last.get_allocation()
+    return float(alloc.y + alloc.height)
+
+
+def _group_reorder_seam_at_y(window, y, dragged_group_id):
+    """If ``y`` is near a sibling seam, return ``(target_row, zone)`` for reorder.
+
+    Checks seams at the dragged group's own level first, then walks up ancestor
+    levels so dragging a nested group to a gap between its ancestor's siblings
+    shows the unnesting indicator with the same generous ±16 px hit area.
+    """
+    dragged = window.group_manager.groups.get(dragged_group_id)
+    if not dragged:
+        return None
+
+    listbox = window.connection_list
+    hit = _GROUP_SEAM_HIT_PX
+
+    def _scan(parent_id):
+        siblings = _sibling_group_rows(window, parent_id)
+        if len(siblings) < 2:
+            return None
+        for i, row in enumerate(siblings):
+            if row.group_id == dragged_group_id:
+                continue
+            y0, _y1 = _group_header_bounds_in_listbox(row, listbox)
+            if i == 0:
+                if abs(y - y0) <= hit:
+                    return row, "above"
+            else:
+                prev = siblings[i - 1]
+                seam = (_subtree_bottom_y(prev) + y0) / 2.0
+                if abs(y - seam) <= hit:
+                    return row, "above"
+            if i < len(siblings) - 1:
+                nxt = siblings[i + 1]
+                bottom = _subtree_bottom_y(row)
+                if nxt.group_id == dragged_group_id:
+                    drag_row = _find_group_row_by_id(window, dragged_group_id)
+                    if drag_row is not None:
+                        dy0, _ = _group_header_bounds_in_listbox(drag_row, listbox)
+                        seam = (bottom + dy0) / 2.0
+                        if abs(y - seam) <= hit:
+                            return row, "below"
+                else:
+                    ny0, _ = _group_header_bounds_in_listbox(nxt, listbox)
+                    seam = (bottom + ny0) / 2.0
+                    if abs(y - seam) <= hit:
+                        return nxt, "above"
+        return None
+
+    own_parent = dragged.get("parent_id")
+    result = _scan(own_parent)
+    if result is not None:
+        return result
+
+    current = own_parent
+    while current is not None:
+        parent_group = window.group_manager.groups.get(current)
+        if not parent_group:
+            break
+        ancestor_parent = parent_group.get("parent_id")
+        result = _scan(ancestor_parent)
+        if result is not None:
+            return result
+        current = ancestor_parent
+
+    return None
 
 
 def _group_has_visible_children(row) -> bool:
@@ -2042,6 +2200,10 @@ def _show_group_end_drop(window):
     window.connection_list.insert(placeholder, _group_section_end_index(window))
     window._drop_indicator_row = last
     window._drop_indicator_position = "below"
+    if hasattr(window, "_dragged_group_id"):
+        manager = window.group_manager
+        parent_id, index = _tree_target_insert_after(manager, last.group_id)
+        _set_group_tree_drop_target(window, parent_id, index)
 
 
 def _apply_group_reorder_indicator(window, row, zone: str) -> None:
@@ -2057,33 +2219,6 @@ def _apply_group_reorder_indicator(window, row, zone: str) -> None:
             _clear_drop_indicator(window)
     else:
         _show_drop_indicator(window, row, zone)
-
-
-def _group_drop_zone(row, y, nesting_active: bool = False, window=None) -> str:
-    """Legacy zone helper; motion uses ``_group_reorder_zone`` instead.
-
-    Kept for drop-time recomputation when no indicator was captured.
-    """
-    return _group_reorder_zone(row, y, nesting_active=nesting_active, window=window)
-
-
-def _group_reorder_half(row, y) -> str:
-    """'above' / 'below' split at the header midpoint (no 'into' zone).
-
-    Used when the whole row should reorder rather than nest. Measured from the
-    stable header height so it doesn't flicker if the row geometry changes.
-    """
-    try:
-        alloc = row.get_allocation()
-        content = getattr(row, "_content", None)
-        header_h = content.get_allocation().height if content is not None else alloc.height
-        if header_h <= 0:
-            header_h = alloc.height
-        if header_h <= 0:
-            return "above"
-        return "above" if (y - alloc.y) < header_h / 2 else "below"
-    except Exception:
-        return "above"
 
 
 def _group_into_decision(groups, dragged_id, target_id) -> str:
@@ -2132,6 +2267,10 @@ def _show_drop_indicator_on_group(window, row):
 
             window._drop_indicator_row = row
             window._drop_indicator_position = "on_group"
+            if hasattr(window, "_dragged_group_id"):
+                manager = window.group_manager
+                parent_id, index = _tree_target_nest_into(manager, row.group_id)
+                _set_group_tree_drop_target(window, parent_id, index)
     except Exception as e:
         logger.error(f"Error showing group drop indicator: {e}")
 
@@ -2225,6 +2364,12 @@ def _position_drop_placeholder(window, target_row, position):
         window.connection_list.insert(placeholder, insert_index)
         window._drop_indicator_row = target_row
         window._drop_indicator_position = position
+        if (hasattr(window, "_dragged_group_id")
+                and hasattr(target_row, "group_id")
+                and position in ("above", "below")):
+            _record_group_reorder_tree_target(
+                window, target_row.group_id, position
+            )
     except Exception as e:
         logger.error(f"Error positioning drop placeholder: {e}")
 
@@ -2276,15 +2421,17 @@ def _clear_drop_indicator(window):
 
         window._drop_indicator_row = None
         window._drop_indicator_position = None
-        window._drop_zone_row = None
-        window._drop_zone_base_y = None
+        window._drop_group_parent_id = None
+        window._drop_group_index = None
+        window._drop_group_tree_target_set = False
     except Exception as e:
         logger.error(f"Error clearing drop indicator: {e}")
         _remove_drop_placeholder(window)
         window._drop_indicator_row = None
         window._drop_indicator_position = None
-        window._drop_zone_row = None
-        window._drop_zone_base_y = None
+        window._drop_group_parent_id = None
+        window._drop_group_index = None
+        window._drop_group_tree_target_set = False
 
 
 def _sidebar_allows_inplace_dnd(window) -> bool:
@@ -2580,6 +2727,9 @@ def _on_connection_list_drop(window, target, value, x, y):
         # ungrouped-area row shift allocations between the last motion and drop.
         indicator_row = getattr(window, "_drop_indicator_row", None)
         indicator_pos = getattr(window, "_drop_indicator_position", None)
+        drop_parent_id = getattr(window, "_drop_group_parent_id", None)
+        drop_index = getattr(window, "_drop_group_index", None)
+        drop_tree_target_set = getattr(window, "_drop_group_tree_target_set", False)
         _clear_drop_indicator(window)
         _hide_ungrouped_area(window)
         _stop_connection_autoscroll(window)
@@ -2763,21 +2913,10 @@ def _on_connection_list_drop(window, target, value, x, y):
             if group_id:
                 # Prefer the row motion last highlighted; only fall back to a
                 # fresh hit-test when there was no prior motion (rare).
-                if indicator_row is not None:
-                    if (hasattr(indicator_row, "group_id")
-                            and not getattr(indicator_row, "is_tag_group", False)):
-                        target_row = indicator_row
-                    elif hasattr(indicator_row, "connection"):
-                        # Indicator landed on a connection row; reorder the
-                        # dragged group relative to the connection's parent group.
-                        conn_nick = indicator_row.connection.nickname
-                        parent_id = window.group_manager.get_connection_group(conn_nick)
-                        target_row = _find_group_row_by_id(window, parent_id) if parent_id else None
-                        if target_row is None:
-                            indicator_pos = None
-                    else:
-                        target_row = _row_at_y_or_nearest(window, y)
-                        indicator_pos = None
+                if (indicator_row is not None
+                        and hasattr(indicator_row, "group_id")
+                        and not getattr(indicator_row, "is_tag_group", False)):
+                    target_row = indicator_row
                 else:
                     target_row = _row_at_y_or_nearest(window, y)
                     indicator_pos = None  # stale relative to this row; recompute below
@@ -2786,42 +2925,58 @@ def _on_connection_list_drop(window, target, value, x, y):
                         and not getattr(target_row, "is_tag_group", False)):
                     target_group_id = target_row.group_id
                     if target_group_id != group_id:
-                        # Validate that the target group exists
                         if target_group_id in window.group_manager.groups:
-                            source_group = window.group_manager.groups.get(group_id)
-                            target_group = window.group_manager.groups.get(target_group_id)
+                            manager = window.group_manager
+                            source_group = manager.groups.get(group_id)
 
-                            # Map the captured highlight to an action; recompute
-                            # from y only when no indicator position is available.
                             if indicator_pos == "on_group":
-                                zone = "into"
-                            elif indicator_pos in ("above", "below"):
-                                zone = indicator_pos
-                            else:
-                                zone = _group_reorder_half(target_row, y)
-
-                            if zone == "into":
-                                # Nest the source into the target — unless it is
-                                # already a direct child (that re-parent is a
-                                # no-op and would falsely trigger a rebuild).
-                                if source_group and source_group.get("parent_id") == target_group_id:
+                                if (source_group
+                                        and source_group.get("parent_id") == target_group_id):
                                     pass
-                                elif _move_group(window, group_id, target_group_id):
+                                else:
+                                    parent_id, index = _tree_target_nest_into(
+                                        manager, target_group_id
+                                    )
+                                    old_parent = (
+                                        source_group.get("parent_id")
+                                        if source_group else None
+                                    )
+                                    if manager.place_group(group_id, parent_id, index):
+                                        changes_made = True
+                                        group_nested = True
+                                        group_reparented = old_parent != parent_id
+                            elif drop_tree_target_set:
+                                old_parent = (
+                                    source_group.get("parent_id")
+                                    if source_group else None
+                                )
+                                if manager.place_group(
+                                    group_id, drop_parent_id, drop_index
+                                ):
                                     changes_made = True
-                                    group_nested = True
-                                    group_reparented = True
-                            else:
-                                # Make the source a sibling of the target
-                                # (above/below). Reparent first when they differ
-                                # so reorder_group sees a shared parent; this also
-                                # un-nests when the target sits at the root level.
-                                if (source_group and target_group and
-                                        source_group.get('parent_id') != target_group.get('parent_id')):
-                                    if _move_group(window, group_id, target_group.get('parent_id')):
+                                    if old_parent != drop_parent_id:
                                         group_reparented = True
-                                window.group_manager.reorder_group(group_id, target_group_id, zone)
-                                changes_made = True
-                                group_id_applied = group_id
+                                    else:
+                                        group_id_applied = group_id
+                            elif indicator_pos in ("above", "below"):
+                                if indicator_pos == "above":
+                                    parent_id, index = _tree_target_insert_before(
+                                        manager, target_group_id
+                                    )
+                                else:
+                                    parent_id, index = _tree_target_insert_after(
+                                        manager, target_group_id
+                                    )
+                                old_parent = (
+                                    source_group.get("parent_id")
+                                    if source_group else None
+                                )
+                                if manager.place_group(group_id, parent_id, index):
+                                    changes_made = True
+                                    if old_parent != parent_id:
+                                        group_reparented = True
+                                    else:
+                                        group_id_applied = group_id
                         else:
                             logger.warning(f"Target group '{target_group_id}' does not exist")
 
@@ -2864,57 +3019,6 @@ def _get_target_group_at_position(window, x, y):
         return None
     except Exception:
         return None
-
-
-def _would_create_group_cycle(window, group_id, target_parent_id) -> bool:
-    """True if nesting ``group_id`` under ``target_parent_id`` would loop.
-
-    A cycle happens when the target is the group itself or one of its
-    descendants (which would then contain its own ancestor).
-    """
-    if target_parent_id == group_id:
-        return True
-    current_parent = target_parent_id
-    while current_parent:
-        if current_parent == group_id:
-            return True
-        current_parent = window.group_manager.groups.get(current_parent, {}).get('parent_id')
-    return False
-
-
-def _move_group(window, group_id, target_parent_id):
-    try:
-        if group_id not in window.group_manager.groups:
-            return False
-
-        # Prevent circular references (self or descendant target)
-        if _would_create_group_cycle(window, group_id, target_parent_id):
-            logger.warning(
-                f"Cannot move group '{group_id}' to '{target_parent_id}' (would create a cycle)"
-            )
-            return False
-
-        group = window.group_manager.groups[group_id]
-        old_parent_id = group.get("parent_id")
-
-        # Remove from old parent's children
-        if old_parent_id and old_parent_id in window.group_manager.groups:
-            if group_id in window.group_manager.groups[old_parent_id]["children"]:
-                window.group_manager.groups[old_parent_id]["children"].remove(group_id)
-
-        # Update parent reference
-        group["parent_id"] = target_parent_id
-        
-        # Add to new parent's children
-        if target_parent_id and target_parent_id in window.group_manager.groups:
-            if group_id not in window.group_manager.groups[target_parent_id]["children"]:
-                window.group_manager.groups[target_parent_id]["children"].append(group_id)
-
-        window.group_manager._save_groups()
-        return True
-    except Exception as e:
-        logger.error(f"Error moving group: {e}")
-        return False
 
 
 def _update_connection_autoscroll(window, y):

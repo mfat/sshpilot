@@ -1257,8 +1257,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
               border-radius: 8px;
               box-shadow: 0 0 0 2px @accent_bg_color inset,
                           0 2px 8px alpha(@accent_bg_color, 0.4);
-              transform: scale(1.02);
-              transition: all 0.2s ease-in-out;
+              transition: background-color 0.15s ease-in-out,
+                          box-shadow 0.15s ease-in-out;
             }
             
             /* Drop target indicator styling */
@@ -1272,9 +1272,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
               font-size: 0.9em;
               animation: drop-indicator-bounce 0.6s ease-in-out;
             }
-            
+
             @keyframes drop-indicator-bounce {
-              0% { 
+              0% {
                 transform: translateY(-10px) scale(0.8);
                 opacity: 0;
               }
