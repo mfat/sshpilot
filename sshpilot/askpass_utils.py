@@ -909,6 +909,24 @@ def clear_sudo_password(host: str, username: str) -> bool:
         return False
 
 
+# Substrings in sudo's stderr when the user cannot use sudo at all (as opposed to
+# merely needing a password or having entered a wrong one). Used to tell "no sudo
+# access on this host" apart from "wrong/needs password".
+_SUDO_NOT_ALLOWED_MARKERS = (
+    "is not in the sudoers",
+    "is not allowed to execute",
+    "is not allowed to run sudo",
+    "unknown user",
+)
+
+
+def is_sudo_denied_error(text: str) -> bool:
+    """True if ``text`` (sudo stderr/stdout) indicates the user has no sudo
+    access at all, rather than a wrong or missing password."""
+    low = (text or "").lower()
+    return any(marker in low for marker in _SUDO_NOT_ALLOWED_MARKERS)
+
+
 def ensure_passphrase_askpass() -> str:
     """Ensure the askpass shell wrapper exists and return its path.
 

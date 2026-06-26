@@ -528,7 +528,12 @@ class OpenSSHSFTPManager(GObject.GObject):
         else:
             self.emit("connection-error", message)
 
-    def _build_argv(self) -> Tuple[List[str], Dict[str, str], Optional[Callable[[], None]]]:
+    def _build_argv(
+        self,
+        *,
+        remote_command: str = "sftp",
+        extra_args: Tuple[str, ...] = ("-s",),
+    ) -> Tuple[List[str], Dict[str, str], Optional[Callable[[], None]]]:
         from ..ssh_connection_builder import ConnectionContext, build_ssh_connection
 
         app_config = None
@@ -553,8 +558,8 @@ class OpenSSHSFTPManager(GObject.GObject):
             config=app_config,
             command_type="ssh",
             native_mode=True,
-            extra_args=["-s"],            # request a subsystem...
-            remote_command="sftp",        # ...named "sftp" (after the host)
+            extra_args=list(extra_args),  # e.g. ["-s"] to request a subsystem...
+            remote_command=remote_command,  # ...named "sftp" (after the host)
         )
         prepared = build_ssh_connection(ctx)
         argv = list(prepared.command)
@@ -565,6 +570,48 @@ class OpenSSHSFTPManager(GObject.GObject):
 
             argv, cleanup = wrap_argv_with_sshpass(argv, prepared.password, env=env)
         return argv, env, cleanup
+
+    @property
+    def host(self) -> str:
+        """Hostname this session is connected to (keyring identity)."""
+        return self._host
+
+    @property
+    def username(self) -> str:
+        """Login user for this session (keyring identity)."""
+        return self._username
+
+    def run_command(
+        self, command: str, *, input: Optional[bytes] = None, timeout: float = 30
+    ) -> Tuple[int, bytes, str]:
+        """Run a one-shot command on this host over the same SSH/auth path as the
+        SFTP session and capture its output. ``input`` (bytes) is fed to stdin —
+        e.g. a sudo password for ``sudo -S`` plus file content for ``tee``. Binary
+        safe (no text decoding of stdout). Returns
+        ``(exit_code, stdout_bytes, stderr_text)``; ``exit_code == -1`` means it
+        could not be launched. **Blocking** — call via :meth:`run_command_async`."""
+        argv, env, cleanup = self._build_argv(
+            remote_command=command, extra_args=())
+        try:
+            proc = subprocess.run(
+                argv, env=env, input=input, capture_output=True, timeout=timeout)
+            stderr = (proc.stderr or b"").decode("utf-8", "replace")
+            return proc.returncode, (proc.stdout or b""), stderr
+        except subprocess.TimeoutExpired:
+            return -1, b"", "Command timed out"
+        except Exception as exc:  # noqa: BLE001 — surface as a failed result
+            return -1, b"", str(exc)
+        finally:
+            if cleanup is not None:
+                cleanup()
+
+    def run_command_async(
+        self, command: str, *, input: Optional[bytes] = None, timeout: float = 30
+    ) -> Future:
+        """Run :meth:`run_command` on the backend executor; returns a ``Future``
+        resolving to ``(exit_code, stdout_bytes, stderr_text)``."""
+        return self._executor.submit(
+            self.run_command, command, input=input, timeout=timeout)
 
     def _connect_impl(self) -> None:
         self._read_keepalive_config()

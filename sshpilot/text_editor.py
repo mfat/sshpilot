@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import pathlib
 import re
+import shlex
 import tempfile
 from concurrent.futures import Future
 from typing import Any, Callable, TYPE_CHECKING, Optional
@@ -157,6 +158,14 @@ class RemoteFileEditorWindow(Adw.Window):
         self._zoom_level = 1.0  # Current zoom level (1.0 = 100%)
         self._zoom_css_provider: Optional[Gtk.CssProvider] = None
 
+        # "Edit as root" state (remote files only): when on, the file is read via
+        # ``sudo cat`` and saved via ``sudo tee`` over the same SSH/auth path.
+        self._root_mode = False
+        self._sudo_password: Optional[str] = None  # session cache for this editor
+        self._root_button: Optional[Gtk.ToggleButton] = None
+        self._root_banner: Optional[Adw.Banner] = None
+        self._root_toggle_guard = False  # suppress re-entrant ``toggled`` signals
+
         # Track whether GtkSource is actually usable on this platform
         self._gtksource_enabled = _HAS_GTKSOURCE
 
@@ -211,7 +220,16 @@ class RemoteFileEditorWindow(Adw.Window):
         self._save_button.set_sensitive(False)
         self._save_button.connect("clicked", self._on_save_clicked)
         header_bar.pack_end(self._save_button)
-        
+
+        # "Edit as root" toggle — remote files only. Reads/saves the file via
+        # sudo over the same SSH/auth path (see _on_root_toggled).
+        if not self._is_local and self._sftp_manager is not None:
+            self._root_button = Gtk.ToggleButton(label="Edit as root")
+            self._root_button.set_tooltip_text(
+                "Re-read and save this file as root (sudo)")
+            self._root_button.connect("toggled", self._on_root_toggled)
+            header_bar.pack_end(self._root_button)
+
         from sshpilot import icon_utils
 
         # Sidebar show/hide toggle — leftmost, before undo/redo (only for
@@ -363,6 +381,13 @@ class RemoteFileEditorWindow(Adw.Window):
         
         # Create a vertical box to hold toolbar and scrolled window
         content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        # Permission-denied prompt offering to retry as root (remote files only).
+        if self._root_button is not None:
+            self._root_banner = Adw.Banner(title="Permission denied")
+            self._root_banner.set_button_label("Edit as root")
+            self._root_banner.connect("button-clicked", self._on_banner_root_clicked)
+            self._root_banner.set_revealed(False)
+            content_box.append(self._root_banner)
         content_box.append(self._search_toolbar)
         content_box.append(scrolled)
         
@@ -647,7 +672,7 @@ class RemoteFileEditorWindow(Adw.Window):
                 GLib.idle_add(self._load_file_content)
             except Exception as e:
                 logger.error(f"Failed to download file for editing: {e}", exc_info=True)
-                GLib.idle_add(self._show_error, f"Failed to download file: {e}")
+                GLib.idle_add(self._on_remote_load_error, str(e))
         
         # Download file (use _file_path which contains the remote path for remote files)
         future = self._sftp_manager.download(self._file_path, self._temp_file)
@@ -762,7 +787,10 @@ class RemoteFileEditorWindow(Adw.Window):
         base = self._title_text or self._file_name
         if getattr(self, "_title_widget", None) is not None:
             self._title_widget.set_title(f"• {base}" if modified else base)
-            self._title_widget.set_subtitle(self._pretty_path())
+            subtitle = self._pretty_path()
+            if getattr(self, "_root_mode", False):
+                subtitle = f"{subtitle}  —  editing as root"
+            self._title_widget.set_subtitle(subtitle)
 
     # ---------- Host/Match outline sidebar ----------
 
@@ -947,9 +975,12 @@ class RemoteFileEditorWindow(Adw.Window):
     
     def _upload_file(self) -> None:
         """Upload the modified file back to the remote server."""
+        if self._root_mode:
+            self._upload_file_root()
+            return
         self._show_toast("Uploading…", timeout=-1)  # Show until upload completes
         self._save_button.set_sensitive(False)
-        
+
         def upload_complete(future: Future) -> None:
             try:
                 future.result()
@@ -994,9 +1025,249 @@ class RemoteFileEditorWindow(Adw.Window):
     
     def _on_upload_error(self, error: str) -> None:
         """Handle upload error."""
-        self._show_toast(f"Upload failed: {error}", timeout=4)
         self._save_button.set_sensitive(True)
+        # A login-user upload that hits permission-denied: offer root instead of
+        # a dead-end error (no-op when already in root mode / for local files).
+        if self._looks_permission_denied(error) and self._offer_root_banner():
+            self._show_toast("Permission denied — try “Edit as root”.", timeout=4)
+            return
+        self._show_toast(f"Upload failed: {error}", timeout=4)
         self._show_error(f"Failed to upload file: {error}")
+
+    # ================================================================
+    # Edit as root (remote files only): sudo cat to read, sudo tee to save,
+    # over the same SSH/auth path as the SFTP session.
+    # ================================================================
+    @staticmethod
+    def _root_read_cmd(path: str, *, has_pw: bool) -> str:
+        """Remote command to read ``path`` as root. ``sudo -S -p ''`` reads the
+        password from stdin; ``sudo -n`` is the passwordless path."""
+        sudo = "sudo -S -p ''" if has_pw else "sudo -n"
+        return f"{sudo} -- cat -- {shlex.quote(path)}"
+
+    @staticmethod
+    def _root_write_cmd(path: str, *, has_pw: bool) -> str:
+        """Remote command to write stdin to ``path`` as root via ``tee`` (which
+        preserves an existing file's owner/mode). ``> /dev/null`` keeps the file
+        content from being echoed back over the SSH channel."""
+        sudo = "sudo -S -p ''" if has_pw else "sudo -n"
+        return f"{sudo} -- tee -- {shlex.quote(path)} > /dev/null"
+
+    def _root_host_user(self) -> tuple[str, str]:
+        """(host, username) keyring identity — shared with the SSH login and the
+        docker console, so a saved sudo password is reused across all three."""
+        mgr = self._sftp_manager
+        return (getattr(mgr, "host", "") or "",
+                getattr(mgr, "username", "") or "")
+
+    @staticmethod
+    def _looks_permission_denied(text: str) -> bool:
+        low = (text or "").lower()
+        return ("permission denied" in low or "access denied" in low
+                or "operation not permitted" in low)
+
+    def _offer_root_banner(self) -> bool:
+        """Reveal the 'edit as root' banner; returns True if it was shown."""
+        if self._root_button is None or self._root_mode or self._root_banner is None:
+            return False
+        self._root_banner.set_revealed(True)
+        return True
+
+    def _on_banner_root_clicked(self, _banner: Adw.Banner) -> None:
+        self._root_banner.set_revealed(False)
+        if self._root_button is not None and not self._root_button.get_active():
+            self._root_button.set_active(True)  # fires _on_root_toggled
+
+    def _on_remote_load_error(self, message: str) -> None:
+        if self._looks_permission_denied(message) and self._offer_root_banner():
+            self._show_toast("Permission denied — try “Edit as root”.", timeout=4)
+            return
+        self._show_error(f"Failed to download file: {message}")
+
+    def _set_root_active(self, active: bool) -> None:
+        """Set the toggle without re-triggering the ``toggled`` handler."""
+        self._root_toggle_guard = True
+        try:
+            if self._root_button is not None:
+                self._root_button.set_active(active)
+        finally:
+            self._root_toggle_guard = False
+
+    def _update_root_ui(self) -> None:
+        self._set_root_active(self._root_mode)
+        if self._root_button is not None:
+            if self._root_mode:
+                self._root_button.add_css_class("destructive-action")
+            else:
+                self._root_button.remove_css_class("destructive-action")
+        if self._root_mode and self._root_banner is not None:
+            self._root_banner.set_revealed(False)
+        self._update_title()
+
+    def _on_root_toggled(self, button: Gtk.ToggleButton) -> None:
+        if self._root_toggle_guard:
+            return
+        if button.get_active():
+            if self._buffer.get_modified():
+                dlg = Adw.AlertDialog.new(
+                    "Discard changes?",
+                    "Editing as root re-reads the file from the host and discards "
+                    "your unsaved changes.")
+                dlg.add_response("cancel", "Cancel")
+                dlg.add_response("discard", "Discard and continue")
+                dlg.set_response_appearance(
+                    "discard", Adw.ResponseAppearance.DESTRUCTIVE)
+
+                def _resp(_d, r):
+                    if r == "discard":
+                        self._begin_root_load()
+                    else:
+                        self._set_root_active(False)
+
+                dlg.connect("response", _resp)
+                dlg.present(self)
+                return
+            self._begin_root_load()
+        else:
+            # Back to the normal login-user view.
+            self._root_mode = False
+            self._update_root_ui()
+            self._download_and_load()
+
+    def _begin_root_load(self) -> None:
+        host, user = self._root_host_user()
+        pw = self._sudo_password
+        from_keyring = False
+        if not pw:
+            from .askpass_utils import lookup_sudo_password
+            kp = lookup_sudo_password(host, user)
+            if kp:
+                pw, from_keyring = kp, True
+        self._show_toast("Reading as root…", timeout=-1)
+        self._run_root_read(pw, from_keyring)
+
+    def _run_root_read(self, pw: Optional[str], from_keyring: bool) -> None:
+        cmd = self._root_read_cmd(self._file_path, has_pw=bool(pw))
+        data = (pw + "\n").encode("utf-8") if pw else None
+        future = self._sftp_manager.run_command_async(cmd, input=data)
+
+        def _done(fut: Future) -> None:
+            try:
+                rc, out, err = fut.result()
+            except Exception as e:  # noqa: BLE001
+                rc, out, err = -1, b"", str(e)
+            GLib.idle_add(self._root_read_done, rc, out, err, pw, from_keyring)
+
+        future.add_done_callback(_done)
+
+    def _root_read_done(self, rc: int, out: bytes, err: str,
+                        pw: Optional[str], from_keyring: bool) -> None:
+        from .askpass_utils import is_sudo_denied_error, clear_sudo_password
+        if rc == 0:
+            self._sudo_password = pw  # None == passwordless sudo
+            self._root_mode = True
+            try:
+                with open(self._temp_file, "wb") as f:
+                    f.write(out)
+            except Exception as e:  # noqa: BLE001
+                self._root_mode = False
+                self._update_root_ui()
+                self._show_error(f"Failed to read file as root: {e}")
+                return
+            self._update_root_ui()
+            self._load_file_content()
+            self._show_toast("Editing as root", timeout=2)
+            return
+        if is_sudo_denied_error(err):
+            self._sudo_password = None
+            self._root_mode = False
+            self._update_root_ui()
+            self._show_toast(
+                "Your user isn't allowed to run sudo on this host.", timeout=4)
+            return
+        # Wrong or missing password — drop a stale keyring entry, then prompt.
+        if from_keyring:
+            host, user = self._root_host_user()
+            clear_sudo_password(host, user)
+        self._sudo_password = None
+        self._prompt_root_password(
+            retry=lambda p: self._run_root_read(p, False),
+            on_cancel=self._cancel_root_mode)
+
+    def _cancel_root_mode(self) -> None:
+        self._root_mode = False
+        self._update_root_ui()
+
+    def _prompt_root_password(self, *, retry: Callable[[str], None],
+                             on_cancel: Callable[[], None]) -> None:
+        """Ask for the host's sudo password (GUI, modal) and either retry the
+        operation with it or back off. Reuses the shared password dialog +
+        keyring 'on_store' path used by the docker console."""
+        host, user = self._root_host_user()
+        from .window import show_ssh_password_dialog
+        from .askpass_utils import store_sudo_password
+        on_store = (lambda p: store_sudo_password(host, user, p)) if host else None
+        password = show_ssh_password_dialog(
+            from_widget=self,
+            display_name=host or self._file_name,
+            host=host,
+            username=user,
+            heading="Sudo password required",
+            body=(f"Editing “{self._file_name}” as root needs a sudo password"
+                  + (f" on “{host}”" if host else "") + ".\n\n"
+                  "Enter your sudo password:"),
+            store_label="Save sudo password",
+            on_store=on_store,
+        )
+        if not password:
+            on_cancel()
+            return
+        retry(password)
+
+    def _upload_file_root(self) -> None:
+        self._show_toast("Saving as root…", timeout=-1)
+        self._save_button.set_sensitive(False)
+        try:
+            with open(self._temp_file, "rb") as f:
+                data = f.read()
+        except Exception as e:  # noqa: BLE001
+            self._on_upload_error(str(e))
+            return
+        pw = self._sudo_password
+        cmd = self._root_write_cmd(self._file_path, has_pw=bool(pw))
+        stdin = ((pw + "\n").encode("utf-8") + data) if pw else data
+        future = self._sftp_manager.run_command_async(cmd, input=stdin)
+
+        def _done(fut: Future) -> None:
+            try:
+                rc, _out, err = fut.result()
+            except Exception as e:  # noqa: BLE001
+                rc, err = -1, str(e)
+            GLib.idle_add(self._root_write_done, rc, err)
+
+        future.add_done_callback(_done)
+
+    def _root_write_done(self, rc: int, err: str) -> None:
+        from .askpass_utils import is_sudo_denied_error, clear_sudo_password
+        if rc == 0:
+            self._on_upload_success()
+            return
+        if is_sudo_denied_error(err):
+            self._on_upload_error(
+                "Your user isn't allowed to run sudo on this host.")
+            return
+        # Wrong/missing password — clear stale keyring, re-prompt, retry the save.
+        host, user = self._root_host_user()
+        clear_sudo_password(host, user)
+        self._sudo_password = None
+
+        def _retry(p: str) -> None:
+            self._sudo_password = p
+            self._upload_file_root()
+
+        self._prompt_root_password(
+            retry=_retry,
+            on_cancel=lambda: self._on_upload_error("Sudo password required."))
     
     def _on_close_clicked(self, _button: Gtk.Button) -> None:
         """Handle close button click."""
