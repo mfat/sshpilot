@@ -268,6 +268,30 @@ def test_load_first_doc_path_returns_most_recent_usable(monkeypatch):
     assert portal_path == "/run/user/1000/doc/HOME/home"
 
 
+def test_load_grant_for_host_matches_home(monkeypatch):
+    """Startup can prefer the grant whose real host path is the user's home."""
+    config = {
+        "DESK": {"path": "/run/user/1000/doc/DESK/Desktop"},
+        "HOME": {"path": "/run/user/1000/doc/HOME/mahdi"},
+    }
+    host_by_path = {
+        "/run/user/1000/doc/DESK/Desktop": "/home/mahdi/Desktop",
+        "/run/user/1000/doc/HOME/mahdi": "/home/mahdi",
+    }
+    monkeypatch.setattr(portal_docs, "_load_doc_config", lambda: config)
+    monkeypatch.setattr(portal_docs, "_lookup_document_path", lambda doc_id: config[doc_id]["path"])
+    monkeypatch.setattr(portal_docs, "_is_usable_grant", lambda p: True)
+    monkeypatch.setattr(portal_docs, "_portal_path_to_host", lambda p: host_by_path.get(p))
+
+    result = portal_docs._load_grant_for_host("/home/mahdi")
+    assert result is not None
+    assert result[1] == "HOME"
+
+    # No grant maps to the requested host → None.
+    assert portal_docs._load_grant_for_host("/home/other") is None
+    assert portal_docs._load_grant_for_host("") is None
+
+
 def test_resolve_rejects_invalid_destination(patched_portal, monkeypatch):
     """Picking ``/`` (or any non-portal folder) yields no grant."""
     monkeypatch.setattr(os.path, "isdir", lambda p: True)

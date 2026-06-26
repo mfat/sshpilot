@@ -522,6 +522,29 @@ def _load_first_doc_path():
     return None
 
 
+def _load_grant_for_host(target_host: str):
+    """Return ``(portal_path, doc_id, entry)`` for the granted folder whose real
+    host path equals ``target_host``, or ``None``.
+
+    Lets a window start on a specific folder (e.g. the user's home) when it has
+    been granted via the portal — the only way to reach it inside the sandbox.
+    Entries are tried newest-first so the most recent grant of that folder wins.
+    """
+    if not target_host:
+        return None
+    target = os.path.normpath(target_host)
+    config = _load_doc_config()
+    for doc_id in reversed(list(config)):
+        entry = config[doc_id]
+        portal_path = _lookup_document_path(doc_id)
+        if not portal_path or not _is_usable_grant(portal_path):
+            continue
+        host = _portal_path_to_host(portal_path)
+        if host and os.path.normpath(host) == target:
+            return portal_path, doc_id, entry
+    return None
+
+
 def _pretty_path_for_display(path: str) -> str:
     """Convert a filesystem path to a human-friendly display string.
 
