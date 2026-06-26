@@ -1815,18 +1815,19 @@ def _on_connection_list_motion(window, target, x, y):
                     pos = window._drop_indicator_position
                     if pos == "on_group" and direct_row is row:
                         return Gdk.DragAction.MOVE
-                    if pos in ("above", "below") and (
-                        direct_row is None or direct_row is row
-                    ):
+                    # Only short-circuit an "above"/"below" indicator when the
+                    # pointer is in a gap (direct_row=None). When on-row, let
+                    # the display logic run so the indicator can transition from
+                    # seam ("above") to nest ("on_group") as pointer moves deeper.
+                    if pos in ("above", "below") and direct_row is None:
                         return Gdk.DragAction.MOVE
 
-                # Nesting wins when the pointer is directly on a nestable row;
-                # seams only fire in gaps or during reorder (unnesting).
-                if direct_row is row and decision == "nest":
-                    _show_drop_indicator_on_group(window, row)
-                elif seam is not None:
+                # Seam has priority in gaps and during unnesting; nest wins on-row.
+                if seam is not None:
                     seam_row, seam_zone = seam
                     _apply_group_reorder_indicator(window, seam_row, seam_zone)
+                elif direct_row is row and decision == "nest":
+                    _show_drop_indicator_on_group(window, row)
                 elif direct_row is None:
                     _clear_drop_indicator(window)
                 elif decision == "reorder":
