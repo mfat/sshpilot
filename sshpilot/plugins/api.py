@@ -495,7 +495,9 @@ class PluginContext:
         return self._host.open_connection(nickname) if self._host is not None else False
 
     def open_command_terminal(self, nickname: str, remote_command: str,
-                              *, title: Optional[str] = None) -> bool:
+                              *, title: Optional[str] = None,
+                              pty_prompt: Optional[str] = None,
+                              pty_response: Optional[str] = None) -> bool:
         """Open a new terminal tab that runs ``remote_command`` on the host of
         the connection ``nickname`` (API >= 1.6).
 
@@ -506,11 +508,18 @@ class PluginContext:
         show, e.g. ``docker logs -f``, ``docker exec -it <c> sh``, or live
         ``docker stats``. ``title`` overrides the tab title.
 
+        ``pty_prompt``/``pty_response`` arm a one-shot auto-fill: the first time
+        ``pty_prompt`` appears in the terminal output, ``pty_response`` (plus a
+        newline) is typed into the PTY — used to answer a remote ``sudo``
+        password prompt without the secret ever touching a command line.
+
         Returns False if the connection is unknown, the command is empty, or the
         UI isn't ready. Valid after ``app_started``."""
         if self._host is None:
             return False
-        return self._host.open_command_terminal(nickname, remote_command, title=title)
+        return self._host.open_command_terminal(
+            nickname, remote_command, title=title,
+            pty_prompt=pty_prompt, pty_response=pty_response)
 
     # --- groups -------------------------------------------------------
     def create_group(self, name: str, color: Optional[str] = None) -> Optional[str]:
@@ -572,7 +581,8 @@ class PluginContext:
 
     # --- remote commands & ssh config ---------------------------------
     def run_command(self, nickname: str, command: str, *,
-                    timeout: float = 30) -> "CommandResult":
+                    timeout: float = 30,
+                    input: Optional[str] = None) -> "CommandResult":
         """Run a one-shot command on a saved connection and capture its output.
 
         Reuses the app's single SSH/auth path (``build_ssh_connection`` +
@@ -580,7 +590,10 @@ class PluginContext:
         identities and stored credentials all apply. **Blocking** — call from a
         worker thread and marshal UI work back via ``run_on_ui_thread``.
         Returns a ``CommandResult`` (``exit_code == -1`` means it could not be
-        launched)."""
+        launched).
+
+        ``input`` is written to the remote command's stdin (e.g. a password for
+        ``sudo -S``); the SSH transport itself is non-interactive (no PTY)."""
         import os
         import subprocess
         from ..ssh_connection_builder import (
@@ -611,7 +624,7 @@ class PluginContext:
                     argv, prepared.password, env=env)
             result = subprocess.run(
                 argv, env=env, capture_output=True, text=True,
-                timeout=timeout, check=False)
+                timeout=timeout, check=False, input=input)
             return CommandResult(result.returncode, result.stdout, result.stderr)
         except subprocess.TimeoutExpired:
             return CommandResult(-1, "", "Command timed out")

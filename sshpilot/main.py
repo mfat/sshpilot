@@ -7,6 +7,8 @@ Main application entry point
 import sys
 import os
 import gc
+import faulthandler
+import resource
 import logging
 import argparse
 from logging.handlers import RotatingFileHandler
@@ -134,7 +136,12 @@ class SshPilotApplication(Adw.Application):
 
         # Set up logging
         self.setup_logging()
-        
+
+        # Arm fatal-signal diagnostics now that logging is configured but before
+        # any window/GTK activity, so a future shutdown segfault leaves an
+        # all-thread Python traceback in crash.log.
+        _enable_crash_diagnostics()
+
         # Print startup information
         print_startup_info(isolated=isolated, verbose=verbose)
         
@@ -363,6 +370,15 @@ class SshPilotApplication(Adw.Application):
             askpass_server.stop()
         except Exception as exc:
             logger.debug(f"Failed to stop askpass prompt server: {exc}")
+
+        # Tear down any open embedded file-manager tabs synchronously, before
+        # the window/interpreter are finalized. Their widgets carry Python
+        # 'destroy' handlers that segfault if invoked during GC finalization.
+        try:
+            if self.window is not None and hasattr(self.window, '_teardown_all_file_manager_tabs'):
+                self.window._teardown_all_file_manager_tabs()
+        except Exception:
+            logger.debug("Failed to tear down file manager tabs on shutdown", exc_info=True)
 
         # Close all file manager windows
         try:
@@ -1045,6 +1061,43 @@ class SshPilotApplication(Adw.Application):
 
         except Exception as e:
             logger.error(f"Failed to apply color overrides: {e}")
+
+_crash_log_fp = None  # module-global so the fd stays open for the process lifetime
+
+
+def _enable_crash_diagnostics():
+    """Dump all-thread Python tracebacks (and leave a core) on fatal signals.
+
+    A shutdown segfault has been observed where a GObject in a surviving
+    reference cycle is finalized during interpreter teardown (Py_FinalizeEx)
+    and PyGObject tries to run a Python signal handler after the interpreter is
+    gone. A core only shows C frames; faulthandler dumps the exact Python
+    handler (file/line) of every thread, which is what pinpoints the culprit.
+    """
+    global _crash_log_fp
+    try:
+        from .platform_utils import get_state_dir
+        log_dir = get_state_dir()
+        os.makedirs(log_dir, exist_ok=True)
+        path = os.path.join(log_dir, 'crash.log')
+        _crash_log_fp = open(path, 'a', buffering=1)
+        faulthandler.enable(file=_crash_log_fp, all_threads=True)
+        logging.getLogger(__name__).info("Crash diagnostics enabled → %s", path)
+    except Exception:
+        try:
+            faulthandler.enable()  # fall back to stderr
+        except Exception:
+            pass
+    # Best-effort: ensure a core is produced even if the soft limit is 0.
+    try:
+        _soft, hard = resource.getrlimit(resource.RLIMIT_CORE)
+        resource.setrlimit(
+            resource.RLIMIT_CORE,
+            (resource.RLIM_INFINITY if hard in (0, resource.RLIM_INFINITY) else hard, hard),
+        )
+    except Exception:
+        pass
+
 
 def main():
     """Main entry point"""

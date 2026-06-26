@@ -29,6 +29,8 @@ from .scp_utils import (
     insert_legacy_scp_flag,
     upload_file,
 )
+from .platform_utils import is_flatpak
+from .file_manager.portal_docs import resolve_granted_folder, restore_granted_folder
 
 logger = logging.getLogger(__name__)
 
@@ -527,32 +529,87 @@ class ScpWindowController:
             destination_group.set_title(_('Destination'))
 
             local_row = Adw.EntryRow(title=_('Local destination'))
-            local_row.set_text(str(default_download_dir))
-            try:
-                local_editable = local_row.get_editable()
-                if local_editable and hasattr(local_editable, 'set_placeholder_text'):
-                    local_editable.set_placeholder_text(_('Example: ~/Downloads'))
-            except Exception:
-                pass
 
-            picker_button = icon_utils.new_button_from_icon_name('folder-symbolic')
-            picker_button.set_tooltip_text(_('Choose destination folder'))
-            picker_button.add_css_class('flat')
-            local_row.add_suffix(picker_button)
+            # Under Flatpak the EntryRow only shows a human-friendly label; scp
+            # must receive the portal-mounted path (writable inside the sandbox),
+            # not the raw host path. ``resolved_destination`` holds that portal
+            # path plus a clean display string for status/toast messages. Outside
+            # Flatpak ``path`` stays None and the entry text is used directly.
+            resolved_destination = {'path': None, 'display': None}
+
+            if is_flatpak():
+                # A free-text ~/Downloads is unreachable in the sandbox, so the
+                # destination must be a portal-granted folder. The field is
+                # read-only; the Request Access button sets/changes it.
+                try:
+                    local_row.set_editable(False)
+                except Exception:
+                    pass
+                # Auto-restore the last granted folder so the user need not click
+                # Request Access every session (parity with the file manager).
+                try:
+                    restored = restore_granted_folder()
+                except Exception as exc:
+                    logger.debug(f'Could not restore granted folder: {exc}')
+                    restored = None
+                if restored:
+                    resolved_destination['path'] = restored['path']
+                    resolved_destination['display'] = restored['display']
+                    local_row.set_text(restored['display'])
+                    local_row.set_sensitive(True)
+                else:
+                    # No usable saved grant → empty and greyed until access granted.
+                    local_row.set_text('')
+                    local_row.set_sensitive(False)
+            else:
+                local_row.set_text(str(default_download_dir))
+                try:
+                    local_editable = local_row.get_editable()
+                    if local_editable and hasattr(local_editable, 'set_placeholder_text'):
+                        local_editable.set_placeholder_text(_('Example: ~/Downloads'))
+                except Exception:
+                    pass
+
             local_row.set_show_apply_button(False)
             destination_group.add(local_row)
 
+            # Outside Flatpak: a flat folder-icon suffix opens the picker. Under
+            # Flatpak the row is greyed until access is granted (which would also
+            # disable a suffix button), so the picker is triggered by a separate,
+            # always-enabled "Request Access" button below the row instead.
+            request_access_button = None
+            if is_flatpak():
+                request_access_button = Gtk.Button(label=_('Request Access'))
+                request_access_button.set_halign(Gtk.Align.CENTER)
+                request_access_button.add_css_class('suggested-action')
+                request_access_button.set_margin_top(6)
+                destination_group_box = Gtk.Box(
+                    orientation=Gtk.Orientation.VERTICAL, spacing=0
+                )
+                destination_group_box.append(destination_group)
+                destination_group_box.append(request_access_button)
+                destination_child = destination_group_box
+            else:
+                picker_button = icon_utils.new_button_from_icon_name('folder-symbolic')
+                picker_button.set_tooltip_text(_('Choose destination folder'))
+                picker_button.add_css_class('flat')
+                local_row.add_suffix(picker_button)
+                destination_child = destination_group
+
             destination_wrapper = Adw.Clamp()
-            destination_wrapper.set_child(destination_group)
+            destination_wrapper.set_child(destination_child)
             content_box.append(destination_wrapper)
 
 
             def _open_destination_picker():
                 file_dialog = Gtk.FileDialog(title=_('Select destination folder'))
-                current_text = local_row.get_text().strip()
-                if current_text:
+                # Under Flatpak the row shows a display string (e.g. a basename),
+                # not a real path; use the previously resolved portal path as the
+                # initial folder instead. Outside Flatpak the row text is a path.
+                initial_candidate = resolved_destination.get('path') or local_row.get_text().strip()
+                if initial_candidate:
                     try:
-                        expanded = os.path.expanduser(current_text)
+                        expanded = os.path.expanduser(initial_candidate)
                         if os.path.isdir(expanded):
                             file_dialog.set_initial_folder(Gio.File.new_for_path(expanded))
                     except Exception:
@@ -581,7 +638,27 @@ class ScpWindowController:
                     if not path:
                         return
 
+                    if is_flatpak():
+                        # Grant persistent access via the Document portal and use
+                        # the portal-mounted path (writable in the sandbox) as the
+                        # scp destination — mirrors the file manager's folder
+                        # picker. The raw host path is not reachable by scp.
+                        granted = resolve_granted_folder(folder)
+                        if granted:
+                            resolved_destination['path'] = granted['path']
+                            resolved_destination['display'] = granted['display']
+                            # Show the full real path, not the portal mount basename.
+                            local_row.set_text(granted['display'])
+                            local_row.set_sensitive(True)
+                        else:
+                            status_label.set_text(
+                                _('Could not get write access to the selected folder.')
+                            )
+                        return
+
                     default_download_dir = path
+                    resolved_destination['path'] = None
+                    resolved_destination['display'] = None
                     local_row.set_text(path)
 
                 try:
@@ -592,7 +669,10 @@ class ScpWindowController:
                         _('Could not open destination chooser: {error}').format(error=str(err))
                     )
 
-            picker_button.connect('clicked', lambda *_: _open_destination_picker())
+            if request_access_button is not None:
+                request_access_button.connect('clicked', lambda *_: _open_destination_picker())
+            else:
+                picker_button.connect('clicked', lambda *_: _open_destination_picker())
 
             button_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
             button_box.set_halign(Gtk.Align.END)
@@ -630,7 +710,7 @@ class ScpWindowController:
 
             list_box.connect('row-selected', _on_rows_changed)
 
-            def _finish_download(success: bool, destination: Path, remote_name: str, friendly_error: Optional[str] = None):
+            def _finish_download(success: bool, destination_display: str, remote_name: str, friendly_error: Optional[str] = None):
                 list_box.set_sensitive(True)
                 refresh_button.set_sensitive(True)
                 selected_row = list_box.get_selected_row()
@@ -640,14 +720,14 @@ class ScpWindowController:
                     status_label.set_text(
                         _('Downloaded {name} to {dest}').format(
                             name=remote_name,
-                            dest=str(destination),
+                            dest=destination_display,
                         )
                     )
                     if hasattr(self.window, 'toast_overlay'):
                         toast = Adw.Toast.new(
                             _('Downloaded {name} to {dest}').format(
                                 name=remote_name,
-                                dest=str(destination),
+                                dest=destination_display,
                             )
                         )
                         toast.set_timeout(3)
@@ -674,24 +754,53 @@ class ScpWindowController:
                 else:
                     remote_path = _remote_join(current_dir, remote_name)
 
-                destination_text = local_row.get_text().strip()
-                if not destination_text:
-                    destination_text = str(default_download_dir)
-                try:
-                    destination_dir = Path(destination_text).expanduser()
-                except Exception:
-                    destination_dir = Path(destination_text)
-
-                try:
-                    destination_dir.mkdir(parents=True, exist_ok=True)
-                except Exception as exc:
-                    status_label.set_text(
-                        _('Cannot access {dest}: {error}').format(
-                            dest=str(destination_dir),
-                            error=str(exc),
+                # ``dest_display`` is the user-facing label (real folder path);
+                # ``destination_dir`` is what scp actually writes to (a portal
+                # path under Flatpak). They differ in the sandbox and must not be
+                # conflated in any message.
+                if resolved_destination['path']:
+                    # Flatpak: scp writes to the portal-mounted path. It already
+                    # exists (the portal exported the granted folder); never
+                    # mkdir it, or we'd recreate an inaccessible phantom path in
+                    # the sandbox tmpfs and silently lose the transfer.
+                    destination_dir = Path(resolved_destination['path'])
+                    dest_display = (
+                        resolved_destination['display']
+                        or _pretty_path_for_display(str(destination_dir))
+                    )
+                    if not destination_dir.is_dir():
+                        status_label.set_text(
+                            _('Cannot access {dest}. Choose the destination folder again.').format(
+                                dest=dest_display,
+                            )
                         )
+                        return
+                elif is_flatpak():
+                    # No portal-granted destination yet: the user must grant one.
+                    status_label.set_text(
+                        _('Click Request Access to choose a destination folder first.')
                     )
                     return
+                else:
+                    destination_text = local_row.get_text().strip()
+                    if not destination_text:
+                        destination_text = str(default_download_dir)
+                    try:
+                        destination_dir = Path(destination_text).expanduser()
+                    except Exception:
+                        destination_dir = Path(destination_text)
+                    dest_display = str(destination_dir)
+
+                    try:
+                        destination_dir.mkdir(parents=True, exist_ok=True)
+                    except Exception as exc:
+                        status_label.set_text(
+                            _('Cannot access {dest}: {error}').format(
+                                dest=dest_display,
+                                error=str(exc),
+                            )
+                        )
+                        return
 
                 status_label.set_text(_('Downloading…'))
                 download_button.set_sensitive(False)
@@ -735,7 +844,7 @@ class ScpWindowController:
                         result_details=download_details,
                     )
                     friendly_error = download_details.get('friendly') if not success else None
-                    GLib.idle_add(_finish_download, success, destination_dir, remote_name, friendly_error)
+                    GLib.idle_add(_finish_download, success, dest_display, remote_name, friendly_error)
 
                 threading.Thread(target=_worker, daemon=True).start()
 

@@ -25,6 +25,7 @@ from .pane_controls import PaneToolbar
 from .portal_docs import (
     _grant_persistent_access,
     _load_first_doc_path,
+    _portal_grant_root,
     _pretty_path_for_display,
     _save_doc,
 )
@@ -2482,6 +2483,12 @@ class FilePane(Gtk.Box):
 
     def _on_up_clicked(self, _button) -> None:
         parent = os.path.dirname(self._current_path.rstrip('/')) or '/'
+        # Don't navigate above a portal grant's accessible root
+        # (/run/user/<uid>/doc/<id>): it is unreadable in the sandbox and would
+        # display as the bare doc id.
+        grant_root = _portal_grant_root(self._current_path)
+        if grant_root and len(parent) < len(grant_root):
+            return
         # Avoid navigating past root repeatedly
         if parent != self._current_path:
             self.emit("path-changed", parent)

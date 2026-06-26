@@ -185,16 +185,19 @@ the authoritative reference; this is the practical map.
 - **Remote commands & config (API ≥ 1.5):** `ctx.run_command(nickname, command)`
   runs a one-shot command on a saved host and returns a `CommandResult`
   (`exit_code`/`stdout`/`stderr`) — it reuses the app's SSH/auth path
-  (`~/.ssh/config`, ProxyJump, stored credentials). `ctx.get_effective_ssh_config(nickname)`
+  (`~/.ssh/config`, ProxyJump, stored credentials). Optional `input=` writes to
+  the remote command's stdin (e.g. a password for `sudo -S`). `ctx.get_effective_ssh_config(nickname)`
   returns the resolved `ssh -G` options. `run_command` blocks — call it from a
   worker thread and marshal results back with `ctx.run_on_ui_thread`.
 - **Streamed/interactive commands (API ≥ 1.6):**
-  `ctx.open_command_terminal(nickname, remote_command, title=None)` opens a new
-  terminal tab that runs `remote_command` on the host — over the same native
-  SSH/auth path, no new transport. Use it for streamed or interactive output
-  `run_command` can't show (e.g. `docker logs -f`, `docker exec -it <c> sh`,
-  `top`). Returns `False` if the connection is unknown / command empty / UI not
-  ready.
+  `ctx.open_command_terminal(nickname, remote_command, title=None,
+  pty_prompt=None, pty_response=None)` opens a new terminal tab that runs
+  `remote_command` on the host — over the same native SSH/auth path, no new
+  transport. Use it for streamed or interactive output `run_command` can't show
+  (e.g. `docker logs -f`, `docker exec -it <c> sh`, `top`). Optional
+  `pty_prompt`/`pty_response` auto-type a one-shot response when the prompt
+  appears in the terminal (e.g. a remote sudo password). Returns `False` if the
+  connection is unknown / command empty / UI not ready.
 - **Connection multiplexing for polling (API ≥ 1.9):** if your plugin makes
   repeated `run_command` calls to a host (a dashboard, a stats/watch loop), each
   call otherwise pays a fresh connect + auth handshake. Call

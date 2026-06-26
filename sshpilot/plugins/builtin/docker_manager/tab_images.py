@@ -110,7 +110,7 @@ class ImagesTabMixin:
             return
 
         def on_ok(ref: str) -> None:
-            ok = self.ctx.open_command_terminal(
+            ok = self._open_command_terminal(
                 nick, client.pull_command(ref), title=f"pull: {ref}")
             if not ok:
                 self._toast("Could not start pull")
