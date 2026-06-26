@@ -949,3 +949,69 @@ def test_resolve_sudo_passwordless():
     # `sudo -n` succeeds -> passwordless, no prompt, no cached password.
     rc = lambda *a, **k: FakeResult()
     assert page._resolve_sudo(rc, "web", "docker") == (True, None, None)
+
+
+def test_resolve_sudo_not_sudoers():
+    _gtk_or_skip()
+    from sshpilot.plugins.builtin.docker_manager.page import DockerConsolePage
+
+    page = DockerConsolePage(_sudo_ctx({}), initial_host="web")
+
+    def rc(nick, command, *, timeout=None, input=None):
+        if command.startswith("sudo -n"):
+            return FakeResult(
+                exit_code=1,
+                stderr="webuser is not in the sudoers file.  This incident will be reported.",
+            )
+        return FakeResult()
+
+    assert page._resolve_sudo(rc, "web", "docker") == (True, "not_sudoers", None)
+
+
+def test_resolve_sudo_clears_stale_keyring_on_failed_verify(monkeypatch):
+    _gtk_or_skip()
+    from sshpilot.plugins.builtin.docker_manager.page import DockerConsolePage
+
+    page = DockerConsolePage(_sudo_ctx({}), initial_host="web")
+    cleared = []
+
+    def rc(nick, command, *, timeout=None, input=None):
+        if command.startswith("sudo -n"):
+            return FakeResult(exit_code=1, stderr="sudo: a password is required")
+        if command.startswith("sudo -S"):
+            return FakeResult(exit_code=1, stderr="Sorry, try again.")
+        return FakeResult()
+
+    monkeypatch.setattr(
+        page, "_lookup_stored_sudo", lambda nick: "stale")
+    monkeypatch.setattr(
+        page, "_clear_stored_sudo", lambda nick: cleared.append(nick))
+
+    assert page._resolve_sudo(rc, "web", "docker") == (True, "needs_password", None)
+    assert cleared == ["web"]
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("user is not in the sudoers file", True),
+    ("is not allowed to execute", True),
+    ("sudo: a password is required", False),
+    ("Sorry, try again.", False),
+])
+def test_is_sudo_denied_error(text, expected):
+    assert DockerClient.is_sudo_denied_error(text) is expected
+
+
+def test_sudo_verify_failure_kind():
+    _gtk_or_skip()
+    from sshpilot.plugins.builtin.docker_manager.page import DockerConsolePage
+
+    def rc_wrong(nick, command, *, timeout=None, input=None):
+        return FakeResult(exit_code=1, stderr="Sorry, try again.")
+
+    def rc_denied(nick, command, *, timeout=None, input=None):
+        return FakeResult(exit_code=1, stderr="user is not in the sudoers file")
+
+    assert DockerConsolePage._sudo_verify_failure_kind(
+        rc_wrong, "web", "docker", "bad") == "wrong_password"
+    assert DockerConsolePage._sudo_verify_failure_kind(
+        rc_denied, "web", "docker", "bad") == "not_sudoers"

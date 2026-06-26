@@ -40,6 +40,15 @@ class DockerClient:
         "got permission denied",
     )
 
+    # Substrings in sudo stderr when the user cannot use sudo at all (as opposed
+    # to merely needing a password or entering a wrong one).
+    _SUDO_NOT_ALLOWED_MARKERS = (
+        "is not in the sudoers",
+        "is not allowed to execute",
+        "is not allowed to run sudo",
+        "unknown user",
+    )
+
     # Sentinel used as sudo's prompt (``sudo -p``) for interactive terminal
     # commands. Locale-independent, so the terminal can reliably detect it and
     # auto-type the password (see ``ctx.open_command_terminal`` pty auto-fill).
@@ -68,6 +77,11 @@ class DockerClient:
     def is_permission_error(cls, text: str) -> bool:
         low = (text or "").lower()
         return any(marker in low for marker in cls._PERMISSION_MARKERS)
+
+    @classmethod
+    def is_sudo_denied_error(cls, text: str) -> bool:
+        low = (text or "").lower()
+        return any(marker in low for marker in cls._SUDO_NOT_ALLOWED_MARKERS)
 
     # Captured commands: ``sudo -S`` (read the password from stdin) when a
     # password is required, else ``sudo -n`` — non-interactive so it fails fast

@@ -75,7 +75,6 @@ class StatsTabMixin:
         nick = self._current_nickname()
         if client is None or not nick:
             return
-        self._warn_sudo_interactive(nick)
         ok = self._open_command_terminal(
             nick, client.stats_stream_command(), title=f"stats: {nick}")
         if not ok:
