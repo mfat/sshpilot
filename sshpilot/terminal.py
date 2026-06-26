@@ -135,10 +135,10 @@ class SSHProcessManager:
                 # Force kill if still alive
                 os.killpg(pgid, signal.SIGKILL)
 
-            try:
-                os.waitpid(pid, os.WNOHANG)
-            except (ChildProcessError, OSError):
-                pass
+            # Do NOT waitpid() here: the terminal child is spawned by VTE, which
+            # owns a GLib child-watch source and reaps it via waitid(). Reaping
+            # it ourselves makes GLib's waitid() fail with ECHILD and emit a
+            # GLib-WARNING (fatal under G_DEBUG=fatal-warnings). VTE reaps it.
             return True
         except Exception:
             return False
@@ -3806,16 +3806,14 @@ class TerminalWidget(Gtk.Box):
             except ProcessLookupError:
                 logger.debug(f"Process {pid} already terminated")
                 return
-                
-            # Wait for process to terminate
-            try:
-                os.waitpid(pid, os.WNOHANG)
-            except (ChildProcessError, OSError):
-                pass
-                
+
+            # Reaping is left to VTE's GLib child-watch source (which spawned
+            # this child); calling waitpid() here would make GLib's waitid()
+            # fail with ECHILD and emit a GLib-WARNING.
+
         except Exception as e:
             logger.error(f"Error terminating process {pid}: {e}")
-    
+
     def _cleanup_process(self, pid):
         """Clean up a process by PID"""
         if not pid:
@@ -3877,10 +3875,9 @@ class TerminalWidget(Gtk.Box):
             except ProcessLookupError:
                 pass
 
-            try:
-                os.waitpid(pid, os.WNOHANG)
-            except (ChildProcessError, OSError):
-                pass
+            # Reaping is left to VTE's GLib child-watch source (it spawned this
+            # child); waitpid() here would make GLib's waitid() fail with ECHILD
+            # and emit a GLib-WARNING (fatal under G_DEBUG=fatal-warnings).
             return True
 
         except Exception as e:
