@@ -347,6 +347,11 @@ sshPilot writes rotating logs under the state directory
 | `ssh.log` | SSH / connection / terminal messages |
 | `crash.log` | Fatal-signal tracebacks, captured automatically. The previous run's crash is kept as `crash.log.previous` and offered on next launch and via **Help ▸ Report a Problem**. |
 
+GTK warnings and uncaught exceptions are routed through the logging system, so they show
+up in **Help ▸ View Logs** (filter by *Warning*/*Error*, or pick the **Crash** category to
+read the last crash report). From there you can **Copy** a bug-report bundle (logs + crash
+report) or **Export Diagnostics…**.
+
 **Help ▸ Export Diagnostics…** saves a single ZIP (logs + system info + a *redacted*
 `config.json`) that you can attach to a bug report — secrets are stripped and your saved
 connections / SSH config are not included.

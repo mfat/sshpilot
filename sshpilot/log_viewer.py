@@ -42,6 +42,7 @@ _CATEGORY_MASTER = 'master'
 _CATEGORY_APP = 'app'
 _CATEGORY_SSH = 'ssh'
 _CATEGORY_ASKPASS = 'askpass'
+_CATEGORY_CRASH = 'crash'
 
 
 # Level-filter dropdown options. The integer is the *minimum* logging level
@@ -99,6 +100,9 @@ def _resolve_log_path(category: str = _CATEGORY_MASTER) -> str:
         except Exception as exc:
             logger.debug("Could not resolve askpass log path: %s", exc)
             return ''
+    if category == _CATEGORY_CRASH:
+        # Prefer a non-empty crash report (rotated previous run, else live).
+        return _resolve_crash_path() or os.path.join(get_state_dir(), 'crash.log')
     # Master / fallback.
     return os.path.join(get_state_dir(), 'sshpilot.log')
 
@@ -355,6 +359,7 @@ class LogViewerWindow(Adw.Window):
             (_CATEGORY_APP,     _("App"),     _resolve_log_path(_CATEGORY_APP)),
             (_CATEGORY_SSH,     _("SSH"),     _resolve_log_path(_CATEGORY_SSH)),
             (_CATEGORY_ASKPASS, _("Askpass"), _resolve_log_path(_CATEGORY_ASKPASS)),
+            (_CATEGORY_CRASH,   _("Crash"),   _resolve_log_path(_CATEGORY_CRASH)),
         ]
         self._current_category: str = _CATEGORY_MASTER
         self._log_path: str = self._categories[0][2]
@@ -460,6 +465,7 @@ class LogViewerWindow(Adw.Window):
             ("open-folder", self._do_open_folder),
             ("save-as", self._do_save_as),
             ("toggle-full", self._do_toggle_full),
+            ("export-diagnostics", self._do_export_diagnostics),
         ):
             act = Gio.SimpleAction.new(name, None)
             act.connect("activate", lambda _a, _p, h=handler: h())
@@ -471,6 +477,7 @@ class LogViewerWindow(Adw.Window):
         menu_model.append(_("Refresh"), "logview.refresh")
         menu_model.append(_("Open Log Folder"), "logview.open-folder")
         menu_model.append(_("Save Log As…"), "logview.save-as")
+        menu_model.append(_("Export Diagnostics…"), "logview.export-diagnostics")
         menu_model.append(_("Toggle Full File"), "logview.toggle-full")
         menu_button.set_menu_model(menu_model)
         header.pack_end(menu_button)
@@ -985,6 +992,36 @@ class LogViewerWindow(Adw.Window):
                     folder, exc, inner_exc,
                 )
 
+    def _do_export_diagnostics(self) -> None:
+        """Save a full diagnostics ZIP (logs + system info + redacted config).
+
+        Delegates to the parent window's handler (which shows a success dialog
+        with "Open Folder"); falls back to a minimal self-contained save.
+        """
+        parent = self.get_transient_for()
+        if parent is not None and hasattr(parent, 'on_export_diagnostics_action'):
+            parent.on_export_diagnostics_action()
+            return
+        from datetime import datetime
+        dialog = Gtk.FileDialog.new()
+        dialog.set_title(_("Export Diagnostics"))
+        dialog.set_initial_name(
+            "sshpilot-diagnostics-%s.zip" % datetime.now().strftime('%Y%m%d-%H%M%S'))
+
+        def _on_save(d, result):
+            try:
+                gfile = d.save_finish(result)
+            except GLib.Error:
+                return
+            if gfile is None:
+                return
+            try:
+                build_diagnostics_zip(gfile.get_path())
+            except Exception as exc:
+                logger.error("Export diagnostics failed: %s", exc, exc_info=True)
+
+        dialog.save(self, None, _on_save)
+
     def _do_save_as(self) -> None:
         """Let the user save a copy of the current log file via Gtk.FileDialog."""
         if not os.path.isfile(self._log_path):
@@ -1028,6 +1065,9 @@ class LogViewerWindow(Adw.Window):
         cat_id, _label, path = self._categories[idx]
         if cat_id == self._current_category:
             return
+        # Re-resolve the crash path so we always point at the freshest report.
+        if cat_id == _CATEGORY_CRASH:
+            path = _resolve_log_path(_CATEGORY_CRASH)
         self._current_category = cat_id
         self._log_path = path or self._log_path
         # Reset the "show full file" toggle on category switch — easy to
@@ -1042,13 +1082,11 @@ class LogViewerWindow(Adw.Window):
     def _on_copy_clicked(self, _btn) -> None:
         """Build the diagnostic bundle and put it on the clipboard.
 
-        Always sources from the master ``sshpilot.log`` so bug reports
-        contain the full picture, regardless of which category the user is
-        currently viewing.
+        Always sources from the master ``sshpilot.log`` (plus the crash report
+        if present) so bug reports contain the full picture, regardless of which
+        category the user is currently viewing.
         """
-        master_path = _resolve_log_path(_CATEGORY_MASTER)
-        master_lines, master_total = _tail_file(master_path, self._tail_lines)
-        bundle = _build_diagnostic_bundle(master_lines, master_total, master_path)
+        bundle = build_report_bundle()
         try:
             display = self.get_display() or Gdk.Display.get_default()
             if display is not None:
