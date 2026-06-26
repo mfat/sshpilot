@@ -111,3 +111,13 @@ if 'gi' not in sys.modules:
         submodule = _DummyGIModule(f'gi.repository.{name}')
         setattr(repository, name, submodule)
         sys.modules[f'gi.repository.{name}'] = submodule
+
+
+# ``terminal_manager.py`` does a hard top-level ``import cairo``; the slim/no-GTK
+# CI image ships ``gi`` (or the stub above) but not the ``cairo`` package, so any
+# test importing ``sshpilot.window`` / ``sshpilot.main`` would die at collection.
+# Provide a dummy so the import resolves (cairo's API is only touched inside
+# runtime drawing callbacks, never at module import time). Guarded so a real
+# cairo (local dev) is never shadowed.
+if 'cairo' not in sys.modules:
+    sys.modules['cairo'] = _DummyGIModule('cairo')
