@@ -30,12 +30,7 @@ from .scp_utils import (
     upload_file,
 )
 from .platform_utils import is_flatpak
-from .file_manager.portal_docs import (
-    _grant_persistent_access,
-    _lookup_document_path,
-    _pretty_path_for_display,
-    _host_path_for_doc,
-)
+from .file_manager.portal_docs import resolve_granted_folder
 
 logger = logging.getLogger(__name__)
 
@@ -573,7 +568,8 @@ class ScpWindowController:
             if is_flatpak():
                 request_access_button = Gtk.Button(label=_('Request Access'))
                 request_access_button.set_halign(Gtk.Align.CENTER)
-                request_access_button.add_css_class('suggested-action')
+                # Keep ``suggested-action`` for the primary Download CTA only; a
+                # plain button here avoids two competing accent buttons.
                 request_access_button.set_margin_top(6)
                 destination_group_box = Gtk.Box(
                     orientation=Gtk.Orientation.VERTICAL, spacing=0
@@ -595,10 +591,13 @@ class ScpWindowController:
 
             def _open_destination_picker():
                 file_dialog = Gtk.FileDialog(title=_('Select destination folder'))
-                current_text = local_row.get_text().strip()
-                if current_text:
+                # Under Flatpak the row shows a display string (e.g. a basename),
+                # not a real path; use the previously resolved portal path as the
+                # initial folder instead. Outside Flatpak the row text is a path.
+                initial_candidate = resolved_destination.get('path') or local_row.get_text().strip()
+                if initial_candidate:
                     try:
-                        expanded = os.path.expanduser(current_text)
+                        expanded = os.path.expanduser(initial_candidate)
                         if os.path.isdir(expanded):
                             file_dialog.set_initial_folder(Gio.File.new_for_path(expanded))
                     except Exception:
@@ -632,19 +631,12 @@ class ScpWindowController:
                         # the portal-mounted path (writable in the sandbox) as the
                         # scp destination — mirrors the file manager's folder
                         # picker. The raw host path is not reachable by scp.
-                        doc_id = _grant_persistent_access(folder)
-                        if doc_id:
-                            # Portal-mounted path is sandbox-writable → goes to scp.
-                            portal_path = _lookup_document_path(doc_id) or path
-                            # Real host path (GetHostPaths) is for display only;
-                            # ``path`` from the picker is itself a portal path, so
-                            # fall back to its basename when GetHostPaths fails.
-                            host_path = _host_path_for_doc(doc_id)
-                            display = _pretty_path_for_display(host_path or path)
-                            resolved_destination['path'] = portal_path
-                            resolved_destination['display'] = display
+                        granted = resolve_granted_folder(folder)
+                        if granted:
+                            resolved_destination['path'] = granted['path']
+                            resolved_destination['display'] = granted['display']
                             # Show the full real path, not the portal mount basename.
-                            local_row.set_text(display)
+                            local_row.set_text(granted['display'])
                             local_row.set_sensitive(True)
                         else:
                             status_label.set_text(

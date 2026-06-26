@@ -596,7 +596,7 @@ class DockerConsolePage(
             self.ctx.settings.set(f"runtime:{nick}", runtime)
             if status == "not_sudoers":
                 self._disable_sudo(nick)
-                self._toast("Your user does not have sudo access on this host.")
+                self._toast("Your user isn't allowed to run Docker with sudo on this host.")
                 self._refresh_visible()
                 return
             # A password is required and we don't have a working one — keep sudo
@@ -638,23 +638,25 @@ class DockerConsolePage(
         return True, "needs_password", None
 
     @staticmethod
-    def _verify_sudo(rc: Any, nick: str, runtime: str, password: str) -> bool:
-        """True if ``password`` lets ``sudo -S docker ps`` succeed on the host."""
+    def _check_sudo(rc: Any, nick: str, runtime: str, password: str):
+        """Single ``sudo -S`` ping → ``(ok, status)``: ``status`` is ``None`` when
+        it succeeds, else ``not_sudoers`` or ``wrong_password``. One ping so a
+        wrong password isn't tried twice against PAM faillock."""
         chk = DockerClient(rc, nick, runtime, use_sudo=True,
                            sudo_password=password).ping()
-        return getattr(chk, "exit_code", 1) == 0
-
-    @staticmethod
-    def _sudo_verify_failure_kind(rc: Any, nick: str, runtime: str,
-                                  password: str) -> str:
-        """After a failed verify: ``not_sudoers`` vs ``wrong_password``."""
-        chk = DockerClient(rc, nick, runtime, use_sudo=True,
-                           sudo_password=password).ping()
+        if getattr(chk, "exit_code", 1) == 0:
+            return True, None
         text = ((getattr(chk, "stderr", "") or "")
                 + (getattr(chk, "stdout", "") or ""))
         if DockerClient.is_sudo_denied_error(text):
-            return "not_sudoers"
-        return "wrong_password"
+            return False, "not_sudoers"
+        return False, "wrong_password"
+
+    @staticmethod
+    def _verify_sudo(rc: Any, nick: str, runtime: str, password: str) -> bool:
+        """True if ``password`` lets ``sudo -S docker ps`` succeed on the host."""
+        ok, _ = DockerConsolePage._check_sudo(rc, nick, runtime, password)
+        return ok
 
     def _lookup_stored_sudo(self, nick: str) -> str:
         host, user = self._host_user_for(nick)
@@ -705,9 +707,8 @@ class DockerConsolePage(
         rc = self.ctx.run_command
 
         def verify():
-            if self._verify_sudo(rc, nick, runtime, password):
-                return "ok"
-            return self._sudo_verify_failure_kind(rc, nick, runtime, password)
+            ok, kind = self._check_sudo(rc, nick, runtime, password)
+            return "ok" if ok else kind
 
         def after(result: Optional[str], _err: Optional[Exception]) -> None:
             if result == "ok":
@@ -717,7 +718,7 @@ class DockerConsolePage(
             elif result == "not_sudoers":
                 self._clear_stored_sudo(nick)
                 self._disable_sudo(nick)
-                self._toast("Your user does not have sudo access on this host.")
+                self._toast("Your user isn't allowed to run Docker with sudo on this host.")
             else:
                 # Wrong password — drop any stale keyring entry so it doesn't
                 # silently autofill the bad value next time, and back off sudo.

@@ -196,7 +196,13 @@ def _lookup_document_path(doc_id: str):
     if not is_flatpak():
         return None
 
-    # GetHostPaths returns the real host path for the doc id (sandbox version 5+).
+    # Prefer the portal mount when it exists — that is the sandbox-writable path
+    # this function promises to return. ``_host_path_for_doc`` (GetHostPaths) is
+    # the real host path and is only a display-oriented last resort.
+    portal_path = _portal_doc_path(doc_id)
+    if os.path.isdir(portal_path):
+        return portal_path
+
     return _host_path_for_doc(doc_id)
 
 
@@ -242,6 +248,47 @@ def _lookup_path_from_config(doc_id: str):
 def _portal_doc_path(doc_id: str) -> str:
     """Get the portal mount path for a document ID."""
     return f"/run/user/{os.getuid()}/doc/{doc_id}"
+
+
+def resolve_granted_folder(gfile) -> Optional[Dict[str, str]]:
+    """Grant persistent access to ``gfile`` and resolve a usable destination.
+
+    Returns a dict with ``path`` (the sandbox-writable folder to hand to scp),
+    ``display`` (a human-friendly string for status/toast text) and ``doc_id``
+    (the portal document id), or ``None`` if access could not be granted.
+
+    The picker's own path is preferred — under Flatpak it is already
+    sandbox-writable (the file manager uses it directly). The portal mount
+    (``/run/user/<uid>/doc/<doc_id>``) is only a fallback for the case where the
+    picker path is not a usable directory. The grant is persisted via
+    ``_save_doc`` so it survives across sessions and so later lookups resolve to
+    the writable path instead of the real (unreachable) host path.
+    """
+    path = gfile.get_path()
+    if not path:
+        return None
+
+    doc_id = _grant_persistent_access(gfile)
+    if not doc_id:
+        return None
+
+    portal_path = path
+    if not os.path.isdir(portal_path):
+        constructed = _portal_doc_path(doc_id)
+        if os.path.isdir(constructed):
+            portal_path = constructed
+
+    try:
+        _save_doc(path, doc_id)
+    except Exception as exc:  # pragma: no cover - persistence is best-effort
+        logger.debug(f"Could not persist granted folder: {exc}")
+
+    # GetHostPaths gives the real host path for display; fall back to the
+    # picker path (itself a portal path) when it is unavailable.
+    host_path = _host_path_for_doc(doc_id)
+    display = _pretty_path_for_display(host_path or path)
+
+    return {"path": portal_path, "display": display, "doc_id": doc_id}
 
 
 def _load_doc_config() -> Dict[str, Dict[str, str]]:

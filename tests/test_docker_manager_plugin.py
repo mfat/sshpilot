@@ -1001,9 +1001,12 @@ def test_is_sudo_denied_error(text, expected):
     assert DockerClient.is_sudo_denied_error(text) is expected
 
 
-def test_sudo_verify_failure_kind():
+def test_check_sudo():
     _gtk_or_skip()
     from sshpilot.plugins.builtin.docker_manager.page import DockerConsolePage
+
+    def rc_ok(nick, command, *, timeout=None, input=None):
+        return FakeResult()
 
     def rc_wrong(nick, command, *, timeout=None, input=None):
         return FakeResult(exit_code=1, stderr="Sorry, try again.")
@@ -1011,7 +1014,9 @@ def test_sudo_verify_failure_kind():
     def rc_denied(nick, command, *, timeout=None, input=None):
         return FakeResult(exit_code=1, stderr="user is not in the sudoers file")
 
-    assert DockerConsolePage._sudo_verify_failure_kind(
-        rc_wrong, "web", "docker", "bad") == "wrong_password"
-    assert DockerConsolePage._sudo_verify_failure_kind(
-        rc_denied, "web", "docker", "bad") == "not_sudoers"
+    assert DockerConsolePage._check_sudo(
+        rc_ok, "web", "docker", "good") == (True, None)
+    assert DockerConsolePage._check_sudo(
+        rc_wrong, "web", "docker", "bad") == (False, "wrong_password")
+    assert DockerConsolePage._check_sudo(
+        rc_denied, "web", "docker", "bad") == (False, "not_sudoers")
