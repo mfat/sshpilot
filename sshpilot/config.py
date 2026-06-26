@@ -155,6 +155,12 @@ class Config(GObject.Object):
         return {
             'config_version': CONFIG_VERSION,
             'shortcuts': {},
+            # Built-in plugins that are off by default on a fresh install (the
+            # user can enable them in Preferences ▸ Plugins). Only seeded when the
+            # config file is first created; existing configs are left untouched.
+            'plugins': {
+                'disabled': ['docker-manager'],
+            },
             'terminal': {
                 'theme': 'default',
                 'font': 'Monospace 12',

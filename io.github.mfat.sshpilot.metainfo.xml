@@ -60,6 +60,13 @@
 
 
 
+    <release version="5.4.6" date="2026-06-27">
+      <description>
+        <p>Fixes SCP bug in Flatpak</p>
+        <p>Adds &quot;Edit as Root&quot; button to text editor. Edit eny remote files with sudo</p>
+        <p>Better logging and diagnostics suite</p>
+      </description>
+    </release>
     <release version="5.4.5" date="2026-06-26">
       <description>
         <p>Improved drag and drop and group nesting experience</p>

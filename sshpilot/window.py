@@ -496,6 +496,8 @@ def show_ssh_password_dialog(
     connection_manager: Optional[Any] = None,
     heading: Optional[str] = None,
     body: Optional[str] = None,
+    store_label: Optional[str] = None,
+    on_store: Optional[Any] = None,
 ) -> Optional[str]:
     """Show the standard in-app SSH **password** dialog (blocking).
 
@@ -540,6 +542,13 @@ def show_ssh_password_dialog(
         ``ctx.connection_manager`` from a plugin context.
     heading, body
         Optional overrides for dialog title and message (e.g. auth-retry text).
+    store_label, on_store
+        Custom storage hook for the **Store** checkbox. When *on_store* is given,
+        the checkbox is labelled *store_label* and ``on_store(password)`` is
+        called when the user ticks it — instead of the built-in
+        ``connection_manager.store_password`` path. Used to persist a sudo
+        password under its own keyring schema without touching the SSH-password
+        store.
 
     Returns
     -------
@@ -608,6 +617,8 @@ def show_ssh_password_dialog(
         connection_manager=connection_manager,
         heading=heading,
         body=body,
+        store_label=store_label,
+        on_store=on_store,
     )
 
 
@@ -622,6 +633,8 @@ def _show_password_passphrase_dialog(
     *,
     heading: Optional[str] = None,
     body: Optional[str] = None,
+    store_label: Optional[str] = None,
+    on_store: Optional[Any] = None,
 ) -> Optional[str]:
     """Show a graphical password or passphrase dialog.
     
@@ -672,10 +685,12 @@ def _show_password_passphrase_dialog(
             body = _("Please enter your password:")
     if prompt_type == "passphrase":
         placeholder = _("Passphrase")
-        store_label = _("Store passphrase")
+        default_store_label = _("Store passphrase")
     else:
         placeholder = _("Password")
-        store_label = _("Store password")
+        default_store_label = _("Store password")
+    if not store_label:
+        store_label = default_store_label
     
     # Create password/passphrase dialog
     dialog = Adw.MessageDialog(
@@ -750,7 +765,13 @@ def _show_password_passphrase_dialog(
                 
                 # Store password/passphrase if checkbox is checked
                 if store_checked[0]:
-                    if prompt_type == "passphrase" and key_path:
+                    if on_store is not None:
+                        # Caller-supplied storage hook (e.g. sudo-password keyring).
+                        try:
+                            on_store(entered_password)
+                        except Exception as e:
+                            logger.debug(f"Failed to store via on_store hook: {e}")
+                    elif prompt_type == "passphrase" and key_path:
                         # Store passphrase
                         try:
                             from .askpass_utils import store_passphrase
@@ -1059,6 +1080,194 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         GLib.timeout_add(500, self._on_startup_complete)
         # Note: "hide sidebar on startup" is applied at split-view creation
         # (before the window is presented) so it never flashes visible.
+
+        # If the previous run crashed, surface it once the UI has settled.
+        GLib.timeout_add(1200, self._check_previous_crash)
+
+    def _check_previous_crash(self):
+        """If the previous run left a crash report, offer to view/report it."""
+        try:
+            app = self.get_application()
+            crash_path = getattr(app, '_previous_crash_report', None) if app else None
+            if not crash_path:
+                return False
+            # Consume so the prompt only appears once per crash.
+            app._previous_crash_report = None
+            self._pending_crash_report = crash_path
+
+            heading = _("SSH Pilot closed unexpectedly")
+            body = _(
+                "An error report from your previous session was saved. "
+                "Sending it helps us find and fix the problem."
+            )
+            if hasattr(Adw, 'AlertDialog'):
+                dialog = Adw.AlertDialog(heading=heading, body=body)
+                present = lambda d: d.present(self)
+            else:
+                dialog = Adw.MessageDialog(
+                    transient_for=self, modal=True, heading=heading, body=body)
+                present = lambda d: d.present()
+            dialog.add_response('dismiss', _("Not Now"))
+            dialog.add_response('logs', _("View Logs…"))
+            dialog.add_response('report', _("Report a Problem…"))
+            dialog.set_default_response('report')
+            dialog.set_close_response('dismiss')
+            try:
+                dialog.set_response_appearance(
+                    'report', Adw.ResponseAppearance.SUGGESTED)
+            except Exception:
+                pass
+            dialog.connect('response', self._on_previous_crash_response)
+            present(dialog)
+        except Exception as exc:
+            logger.debug("Previous-crash check failed: %s", exc, exc_info=True)
+        return False  # one-shot
+
+    def _on_previous_crash_response(self, dialog, response):
+        # NB: self.activate_action is shadowed by a SimpleAction attribute
+        # (window.py: self.activate_action = Gio.SimpleAction.new(...)), so the
+        # GtkWidget.activate_action() method is not callable here. Invoke the
+        # handler / action object directly instead.
+        try:
+            if response == 'report':
+                self.on_report_problem_action()
+            elif response == 'logs':
+                action = getattr(self, 'view_logs_action', None)
+                if action is not None:
+                    action.activate(None)
+        except Exception as exc:
+            logger.debug("Crash dialog response failed: %s", exc, exc_info=True)
+
+    def on_report_problem_action(self, action=None, param=None):
+        """Copy a diagnostic bundle (incl. crash report), then confirm before
+        opening the new-issue page so the user can paste it."""
+        try:
+            from .log_viewer import build_report_bundle
+            crash_path = getattr(self, '_pending_crash_report', None)
+            bundle = build_report_bundle(crash_path)
+        except Exception as exc:
+            logger.error("Could not build problem report: %s", exc, exc_info=True)
+            bundle = ''
+        copied = False
+        try:
+            display = self.get_display() or Gdk.Display.get_default()
+            if display is not None and bundle:
+                display.get_clipboard().set(bundle)
+                copied = True
+        except Exception as exc:
+            logger.error("Could not copy report to clipboard: %s", exc)
+
+        heading = _("Report a Problem")
+        if copied:
+            body = _(
+                "Diagnostic information has been copied to your clipboard.\n\n"
+                "Press OK to open the issue page, then paste (Ctrl+V) it into "
+                "the report."
+            )
+        else:
+            body = _(
+                "Press OK to open the issue page. You can attach your logs from "
+                "Help ▸ View Logs."
+            )
+
+        if hasattr(Adw, 'AlertDialog'):
+            dialog = Adw.AlertDialog(heading=heading, body=body)
+            present = lambda d: d.present(self)
+        else:
+            dialog = Adw.MessageDialog(
+                transient_for=self, modal=True, heading=heading, body=body)
+            present = lambda d: d.present()
+        dialog.add_response('cancel', _("Cancel"))
+        dialog.add_response('open', _("OK"))
+        dialog.set_default_response('open')
+        dialog.set_close_response('cancel')
+        try:
+            dialog.set_response_appearance('open', Adw.ResponseAppearance.SUGGESTED)
+        except Exception:
+            pass
+        dialog.connect('response', self._on_report_problem_response)
+        present(dialog)
+
+    def _on_report_problem_response(self, dialog, response):
+        if response != 'open':
+            return
+        try:
+            Gtk.show_uri(self, 'https://github.com/mfat/sshpilot/issues/new',
+                         Gdk.CURRENT_TIME)
+        except Exception as exc:
+            logger.error("Could not open issue tracker: %s", exc)
+
+    def on_export_diagnostics_action(self, action=None, param=None):
+        """Save a ZIP of logs + system info + redacted config for bug reports."""
+        from datetime import datetime
+        file_dialog = Gtk.FileDialog()
+        file_dialog.set_title(_("Export Diagnostics"))
+        file_dialog.set_initial_name(
+            "sshpilot-diagnostics-%s.zip" % datetime.now().strftime('%Y%m%d-%H%M%S'))
+        try:
+            docs = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOCUMENTS)
+            if docs:
+                file_dialog.set_initial_folder(Gio.File.new_for_path(docs))
+        except Exception:
+            pass
+
+        def _on_save(dialog, result):
+            try:
+                gfile = dialog.save_finish(result)
+            except GLib.Error as exc:
+                if getattr(exc, 'code', None) != 2:  # 2 = dismissed
+                    logger.error("Export diagnostics dialog failed: %s", exc)
+                return
+            if gfile is None:
+                return
+            path = gfile.get_path()
+
+            def _work():
+                try:
+                    from .log_viewer import build_diagnostics_zip
+                    build_diagnostics_zip(path)
+                    GLib.idle_add(self._on_export_diagnostics_done, True, None, path)
+                except Exception as exc:
+                    logger.error("Export diagnostics failed: %s", exc, exc_info=True)
+                    GLib.idle_add(self._on_export_diagnostics_done, False, str(exc), path)
+
+            import threading
+            threading.Thread(target=_work, daemon=True).start()
+
+        file_dialog.save(self, None, _on_save)
+
+    def _on_export_diagnostics_done(self, ok, error, path):
+        if ok:
+            dialog = Adw.MessageDialog(
+                transient_for=self, modal=True,
+                heading=_("Diagnostics Exported"),
+                body=_("Saved to:\n{}\n\nSecrets are redacted. Your saved connections "
+                       "and SSH config are not included; a maintainer can request them "
+                       "separately if needed.").format(path),
+            )
+            dialog.add_response('open', _("Open Folder"))
+            dialog.add_response('ok', _("OK"))
+            dialog.set_default_response('ok')
+            dialog.connect(
+                'response',
+                lambda d, r: self._open_containing_folder(path) if r == 'open' else None)
+        else:
+            dialog = Adw.MessageDialog(
+                transient_for=self, modal=True,
+                heading=_("Export Failed"),
+                body=_("Could not export diagnostics:\n{}").format(error or _("Unknown error")),
+            )
+            dialog.add_response('ok', _("OK"))
+        dialog.present()
+        return False
+
+    def _open_containing_folder(self, path):
+        try:
+            folder = os.path.dirname(path) or '.'
+            uri = Gio.File.new_for_path(folder).get_uri()
+            Gio.AppInfo.launch_default_for_uri(uri, None)
+        except Exception as exc:
+            logger.debug("Could not open containing folder: %s", exc)
 
     def _restore_startup_session(self, startup_behavior):
         """Restore a session on startup based on the configured behavior."""
@@ -3555,6 +3764,19 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Track selected tab to keep row selection in sync
         self.tab_view.connect('notify::selected-page', self.on_tab_selected)
 
+        # Context-aware right-click tab menu (official AdwTabView mechanism:
+        # set_menu_model + setup-menu signal). A single menu model holds every
+        # item; the setup-menu handler enables only the actions relevant to the
+        # right-clicked tab type, and each item is hidden when its action is
+        # disabled (hidden-when="action-disabled"). The model/popover is built
+        # once and cached by AdwTabBox, so per-tab differences must come from
+        # action state, not from swapping the model.
+        self._tab_menu_page = None
+        self._tab_menu_xy = None
+        self._build_tab_context_menus()
+        self.tab_view.set_menu_model(self._tab_menu_model)
+        self.tab_view.connect('setup-menu', self._on_tab_setup_menu)
+
         # Whenever the window layout changes, propagate toolbar height to
         # any TerminalWidget so the reconnect banner exactly matches.
         try:
@@ -3635,6 +3857,16 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         rename_gesture.set_button(1)
         rename_gesture.connect('pressed', self._on_tab_bar_pressed)
         self.tab_bar.add_controller(rename_gesture)
+
+        # Suppress the context menu on the pinned Start tab. This capture-phase
+        # gesture runs before AdwTabBox's own (bubble-phase) right-click handler,
+        # so we can clear the view's menu model just-in-time when the click lands
+        # on the Start tab — AdwTabBox.do_popup early-returns on a NULL model.
+        menu_guard = Gtk.GestureClick()
+        menu_guard.set_button(Gdk.BUTTON_SECONDARY)
+        menu_guard.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        menu_guard.connect('pressed', self._on_tab_bar_secondary_press)
+        self.tab_bar.add_controller(menu_guard)
 
         # Create tab content box
         self.tab_content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -3919,6 +4151,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         help_menu.append('Documentation', 'app.help')
         help_menu.append('Check for Updates', 'win.check-for-updates')
         help_menu.append('View Logs…', 'win.view-logs')
+        help_menu.append('Report a Problem…', 'win.report-problem')
+        help_menu.append('Export Diagnostics…', 'win.export-diagnostics')
         menu.append_submenu('Help', help_menu)
 
         menu.append('About', 'app.about')
@@ -6591,6 +6825,462 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             if hasattr(terminal, 'connection'):
                 page.set_title(terminal.connection.nickname)
 
+    # ── tab context menu (right-click) ─────────────────────────────────────────
+
+    # All tab-menu action names, in display order within their sections.
+    _TAB_MENU_ACTIONS = (
+        'tabmenu-duplicate', 'tabmenu-rename',
+        'tabmenu-reconnect', 'tabmenu-manage-files',
+        'tabmenu-open-system-terminal', 'tabmenu-new-local',
+        'tabmenu-fm-new-window',
+        'tabmenu-layout-horizontal', 'tabmenu-layout-vertical',
+        'tabmenu-layout-default', 'tabmenu-layout-compact',
+        'tabmenu-close', 'tabmenu-close-others', 'tabmenu-close-right',
+    )
+
+    def _build_tab_context_menus(self) -> None:
+        """Build the single tab context menu model and register its actions.
+
+        AdwTabBox builds the popover once from this model and caches it, so the
+        same model serves every tab type. Per-tab differences are produced by
+        enabling only the relevant actions in _on_tab_setup_menu; every item
+        carries hidden-when="action-disabled" so disabled items vanish rather
+        than grey out. Each win.<name> action operates on the right-clicked
+        page captured in setup-menu (self._tab_menu_page).
+        """
+        handlers = {
+            'tabmenu-duplicate': self._on_tabmenu_duplicate,
+            'tabmenu-rename': self._on_tabmenu_rename,
+            'tabmenu-reconnect': self._on_tabmenu_reconnect,
+            'tabmenu-manage-files': self._on_tabmenu_manage_files,
+            'tabmenu-open-system-terminal': self._on_tabmenu_open_system_terminal,
+            'tabmenu-new-local': self._on_tabmenu_new_local,
+            'tabmenu-fm-new-window': self._on_tabmenu_fm_new_window,
+            'tabmenu-layout-horizontal': self._on_tabmenu_layout_horizontal,
+            'tabmenu-layout-vertical': self._on_tabmenu_layout_vertical,
+            'tabmenu-layout-default': self._on_tabmenu_layout_default,
+            'tabmenu-layout-compact': self._on_tabmenu_layout_compact,
+            'tabmenu-close': self._on_tabmenu_close,
+            'tabmenu-close-others': self._on_tabmenu_close_others,
+            'tabmenu-close-right': self._on_tabmenu_close_right,
+        }
+        for name, handler in handlers.items():
+            action = Gio.SimpleAction.new(name, None)
+            action.connect('activate', handler)
+            self.add_action(action)
+
+        def _item(label, action_name):
+            item = Gio.MenuItem.new(label, 'win.' + action_name)
+            # Hide the item entirely when its action is disabled, so each tab
+            # type shows only its applicable items.
+            item.set_attribute_value(
+                'hidden-when', GLib.Variant('s', 'action-disabled')
+            )
+            return item
+
+        menu = Gio.Menu()
+
+        sec1 = Gio.Menu()
+        sec1.append_item(_item(_('Duplicate'), 'tabmenu-duplicate'))
+        sec1.append_item(_item(_('Rename Tab…'), 'tabmenu-rename'))
+        menu.append_section(None, sec1)
+
+        sec2 = Gio.Menu()
+        sec2.append_item(_item(_('Reconnect'), 'tabmenu-reconnect'))
+        sec2.append_item(_item(_('Manage Files'), 'tabmenu-manage-files'))
+        sec2.append_item(_item(_('Open in System Terminal'), 'tabmenu-open-system-terminal'))
+        sec2.append_item(_item(_('New Local Tab'), 'tabmenu-new-local'))
+        sec2.append_item(_item(_('Open in New Window'), 'tabmenu-fm-new-window'))
+        menu.append_section(None, sec2)
+
+        sec3 = Gio.Menu()
+        sec3.append_item(_item(_('Side by Side'), 'tabmenu-layout-horizontal'))
+        sec3.append_item(_item(_('Top / Bottom'), 'tabmenu-layout-vertical'))
+        sec3.append_item(_item(_('Default layout'), 'tabmenu-layout-default'))
+        sec3.append_item(_item(_('Compact layout'), 'tabmenu-layout-compact'))
+        menu.append_section(None, sec3)
+
+        sec4 = Gio.Menu()
+        sec4.append_item(_item(_('Close'), 'tabmenu-close'))
+        sec4.append_item(_item(_('Close Other Tabs'), 'tabmenu-close-others'))
+        sec4.append_item(_item(_('Close Tabs to the Right'), 'tabmenu-close-right'))
+        menu.append_section(None, sec4)
+
+        self._tab_menu_model = menu
+
+    def _on_tab_bar_secondary_press(self, gesture, n_press, x, y):
+        """Expose or hide the tab menu model before AdwTabBox builds the menu.
+
+        Runs in the capture phase, ahead of AdwTabBox's own right-click handler.
+        The pinned Start tab gets a NULL model (no menu); every other tab gets
+        the full model. Pinned AdwTab widgets carry the "pinned" CSS class.
+        """
+        # Remember where the menu was opened so "Rename Tab…" can anchor its
+        # popover at the right-clicked tab (tab_bar coordinate space).
+        self._tab_menu_xy = (x, y)
+        try:
+            widget = self.tab_bar.pick(x, y, Gtk.PickFlags.DEFAULT)
+            on_pinned = False
+            while widget is not None and widget is not self.tab_bar:
+                if widget.has_css_class('pinned'):
+                    on_pinned = True
+                    break
+                widget = widget.get_parent()
+            self.tab_view.set_menu_model(
+                None if on_pinned else self._tab_menu_model
+            )
+        except Exception:
+            logger.debug("Tab menu guard failed", exc_info=True)
+            self.tab_view.set_menu_model(self._tab_menu_model)
+
+    def _on_tab_setup_menu(self, tab_view, page):
+        """Enable the actions applicable to the right-clicked tab type.
+
+        page is None when the menu closes; keep _tab_menu_page so the
+        just-activated action still targets the right tab.
+        """
+        if page is None:
+            return
+        self._tab_menu_page = page
+
+        if self._is_start_tab_page(page):
+            enabled = set()  # belt-and-braces; the capture guard already hid it
+        else:
+            enabled = self._enabled_tab_actions(page.get_child())
+
+        for name in self._TAB_MENU_ACTIONS:
+            action = self.lookup_action(name)
+            if action is not None:
+                action.set_enabled(name in enabled)
+
+    def _file_manager_embed_for_child(self, child):
+        """Return the FileManagerTabEmbed in a tab's child subtree, or None.
+
+        File-manager tabs wrap the embed inside a placeholder GtkBox, so a
+        direct isinstance() check on the page child is insufficient.
+        """
+        from .file_manager_integration import FileManagerTabEmbed
+        if child is None:
+            return None
+        if isinstance(child, FileManagerTabEmbed):
+            return child
+        w = child.get_first_child() if hasattr(child, 'get_first_child') else None
+        while w is not None:
+            found = self._file_manager_embed_for_child(w)
+            if found is not None:
+                return found
+            w = w.get_next_sibling()
+        return None
+
+    def _teardown_file_manager_embed(self, embed) -> None:
+        """Destroy an embedded file manager synchronously, outside GC.
+
+        The embed carries Python 'destroy' signal handlers (its own _on_destroy
+        plus the tracking lambda from _track_internal_file_manager_window) that
+        form reference cycles. If the embed is finalized by the garbage
+        collector, PyGObject invokes those Python handlers mid-collection, which
+        segfaults. Disconnecting the handlers and disposing the controller here
+        (at tab close / shutdown, outside GC) avoids that.
+        """
+        if embed is None:
+            return
+        controller = getattr(embed, '_controller', None)
+        try:
+            destroy_id = GObject.signal_lookup('destroy', Gtk.Widget.__gtype__)
+            GObject.signal_handlers_disconnect_matched(
+                embed, GObject.SignalMatchType.ID, destroy_id, 0, None, None, None)
+        except Exception:
+            logger.debug('Could not disconnect FM embed destroy handlers', exc_info=True)
+        if controller is not None:
+            try:
+                if controller in self._internal_file_manager_windows:
+                    self._internal_file_manager_windows.remove(controller)
+            except Exception:
+                pass
+            try:
+                if hasattr(controller, '_cleanup_manager'):
+                    controller._cleanup_manager()
+            except Exception:
+                logger.debug('FM controller cleanup failed', exc_info=True)
+            try:
+                controller.destroy()
+            except Exception:
+                logger.debug('FM controller destroy failed', exc_info=True)
+        try:
+            embed._controller = None
+        except Exception:
+            pass
+
+    def _teardown_all_file_manager_tabs(self) -> None:
+        """Tear down every open file-manager tab synchronously (app shutdown)."""
+        try:
+            pages = [self.tab_view.get_nth_page(i)
+                     for i in range(self.tab_view.get_n_pages())]
+        except Exception:
+            return
+        for page in pages:
+            try:
+                embed = self._file_manager_embed_for_child(page.get_child())
+            except Exception:
+                embed = None
+            if embed is not None:
+                self._teardown_file_manager_embed(embed)
+
+    def _enabled_tab_actions(self, child) -> set:
+        """Return the set of tab-menu action names to enable for child.
+
+        Applies the same capability/preference gating as the sidebar menu for
+        Manage Files, Open in System Terminal and (file manager) New Window.
+        """
+        from .split_view import SplitViewTab
+
+        common = {'tabmenu-rename', 'tabmenu-close',
+                  'tabmenu-close-others', 'tabmenu-close-right'}
+
+        if isinstance(child, SplitViewTab):
+            return common | {
+                'tabmenu-layout-horizontal', 'tabmenu-layout-vertical',
+                'tabmenu-layout-default', 'tabmenu-layout-compact',
+            }
+
+        if self._file_manager_embed_for_child(child) is not None:
+            enabled = set(common)
+            if not should_hide_file_manager_options():
+                enabled.add('tabmenu-fm-new-window')
+            return enabled
+
+        if isinstance(child, TerminalWidget):
+            try:
+                is_local = child._is_local_terminal()
+            except Exception:
+                is_local = False
+            enabled = common | {'tabmenu-duplicate'}
+            if is_local:
+                enabled.add('tabmenu-new-local')
+                return enabled
+            enabled.add('tabmenu-reconnect')
+            conn = self.terminal_to_connection.get(child)
+            caps = capabilities_for(conn) if conn else frozenset()
+            if Capability.FILE_TRANSFER in caps and not should_hide_file_manager_options():
+                enabled.add('tabmenu-manage-files')
+            if getattr(conn, 'protocol', 'ssh') == 'ssh' and not should_hide_external_terminal_options():
+                enabled.add('tabmenu-open-system-terminal')
+            return enabled
+
+        return set()
+
+    # ── tab context menu action handlers ───────────────────────────────────────
+
+    def _tab_menu_target(self):
+        """Return (page, child) for the current tab menu target, or (None, None)."""
+        page = getattr(self, '_tab_menu_page', None)
+        if page is None:
+            return None, None
+        try:
+            child = page.get_child()
+        except Exception:
+            child = None
+        return page, child
+
+    def _on_tabmenu_duplicate(self, action, param=None):
+        try:
+            page, child = self._tab_menu_target()
+            if not isinstance(child, TerminalWidget):
+                return
+            if child._is_local_terminal():
+                self.terminal_manager.show_local_terminal()
+                return
+            conn = self.terminal_to_connection.get(child)
+            if conn is not None:
+                self.terminal_manager.connect_to_host(conn, force_new=True)
+        except Exception as exc:
+            logger.error("Tab duplicate failed: %s", exc)
+
+    def _on_tabmenu_rename(self, action, param=None):
+        try:
+            page, _child = self._tab_menu_target()
+            if page is not None:
+                self._rename_tab_page(page)
+        except Exception as exc:
+            logger.error("Tab rename failed: %s", exc)
+
+    def _rename_tab_page(self, page) -> None:
+        """Select the page and open the inline rename popover anchored to the tab bar."""
+        try:
+            self.tab_view.set_selected_page(page)
+        except Exception:
+            pass
+        # Anchor at the right-clicked position (captured when the menu opened);
+        # fall back near the start of the tab bar for keyboard-triggered menus.
+        xy = getattr(self, '_tab_menu_xy', None)
+        if xy is not None:
+            x, y = xy
+        else:
+            x = max(0, min(40, self.tab_bar.get_width() // 2))
+            y = self.tab_bar.get_height()
+        self._show_tab_rename_popover(page, x, y)
+
+    def _on_tabmenu_reconnect(self, action, param=None):
+        try:
+            page, child = self._tab_menu_target()
+            if isinstance(child, TerminalWidget) and hasattr(child, '_on_reconnect_clicked'):
+                child._on_reconnect_clicked()
+        except Exception as exc:
+            logger.error("Tab reconnect failed: %s", exc)
+
+    def _on_tabmenu_manage_files(self, action, param=None):
+        try:
+            page, child = self._tab_menu_target()
+            if not isinstance(child, TerminalWidget):
+                return
+            conn = self.terminal_to_connection.get(child)
+            if conn is not None:
+                self._open_manage_files_for_connection(conn)
+        except Exception as exc:
+            logger.error("Tab manage files failed: %s", exc)
+
+    def _on_tabmenu_open_system_terminal(self, action, param=None):
+        try:
+            page, child = self._tab_menu_target()
+            if not isinstance(child, TerminalWidget):
+                return
+            conn = self.terminal_to_connection.get(child)
+            if conn is not None:
+                self.open_in_system_terminal(conn)
+        except Exception as exc:
+            logger.error("Tab open in system terminal failed: %s", exc)
+
+    def _on_tabmenu_new_local(self, action, param=None):
+        try:
+            self.terminal_manager.show_local_terminal()
+        except Exception as exc:
+            logger.error("Tab new local terminal failed: %s", exc)
+
+    def _on_tabmenu_close(self, action, param=None):
+        try:
+            page, _child = self._tab_menu_target()
+            if page is not None:
+                self.tab_view.close_page(page)
+        except Exception as exc:
+            logger.error("Tab close failed: %s", exc)
+
+    def _on_tabmenu_close_others(self, action, param=None):
+        try:
+            page, _child = self._tab_menu_target()
+            if page is not None:
+                self.tab_view.close_other_pages(page)
+        except Exception as exc:
+            logger.error("Tab close others failed: %s", exc)
+
+    def _on_tabmenu_close_right(self, action, param=None):
+        try:
+            page, _child = self._tab_menu_target()
+            if page is not None:
+                self.tab_view.close_pages_after(page)
+        except Exception as exc:
+            logger.error("Tab close to the right failed: %s", exc)
+
+    def _apply_split_layout_to_target(self, mode):
+        page, child = self._tab_menu_target()
+        from .split_view import SplitViewTab
+        if isinstance(child, SplitViewTab):
+            child.set_layout_mode(mode)
+
+    def _on_tabmenu_layout_horizontal(self, action, param=None):
+        try:
+            self._apply_split_layout_to_target('horizontal')
+        except Exception as exc:
+            logger.error("Tab layout horizontal failed: %s", exc)
+
+    def _on_tabmenu_layout_vertical(self, action, param=None):
+        try:
+            self._apply_split_layout_to_target('vertical')
+        except Exception as exc:
+            logger.error("Tab layout vertical failed: %s", exc)
+
+    def _on_tabmenu_layout_default(self, action, param=None):
+        try:
+            page, child = self._tab_menu_target()
+            from .split_view import SplitViewTab
+            if isinstance(child, SplitViewTab):
+                child.fill_panes_to_viewport()
+        except Exception as exc:
+            logger.error("Tab layout default failed: %s", exc)
+
+    def _on_tabmenu_layout_compact(self, action, param=None):
+        try:
+            page, child = self._tab_menu_target()
+            from .split_view import SplitViewTab
+            if isinstance(child, SplitViewTab):
+                child.reset_all_row_heights(0.3)
+        except Exception as exc:
+            logger.error("Tab layout compact failed: %s", exc)
+
+    def _on_tabmenu_fm_new_window(self, action, param=None):
+        try:
+            page, child = self._tab_menu_target()
+            embed = self._file_manager_embed_for_child(child)
+            if embed is None:
+                return
+            controller = getattr(embed, '_controller', None)
+            conn = getattr(controller, '_connection', None) if controller else None
+            if conn is None:
+                logger.debug("File manager tab has no connection for new window")
+                return
+            self._launch_external_file_manager(conn)
+        except Exception as exc:
+            logger.error("Tab file manager new window failed: %s", exc)
+
+    def _launch_external_file_manager(self, connection) -> None:
+        """Open a standalone (external) file manager window for connection.
+
+        Same path used by the file_manager.open_externally preference.
+        """
+        nickname = (
+            getattr(connection, 'nickname', None)
+            or getattr(connection, 'hostname', None)
+            or getattr(connection, 'host', None)
+            or getattr(connection, 'username', 'Remote Host')
+        )
+        host_value = _get_connection_host(connection) or _get_connection_alias(connection)
+        username = getattr(connection, 'username', '') or ''
+        port_value = getattr(connection, 'port', 22)
+        effective_port = port_value if port_value and port_value != 22 else None
+
+        ssh_config = None
+        if hasattr(self, 'config') and self.config is not None:
+            try:
+                ssh_config = self.config.get_ssh_config()
+            except Exception as exc:
+                logger.debug("Failed to read SSH configuration for file manager: %s", exc)
+                ssh_config = None
+
+        def error_callback(error_msg):
+            message = error_msg or "Failed to open file manager"
+            logger.error(f"Failed to open file manager for {nickname}: {message}")
+            self._show_manage_files_error(str(nickname), message)
+
+        success, error_msg, window = launch_remote_file_manager(
+            user=str(username or ''),
+            host=str(host_value or ''),
+            port=effective_port,
+            nickname=str(nickname),
+            parent_window=self,
+            error_callback=error_callback,
+            connection=connection,
+            connection_manager=self.connection_manager,
+            ssh_config=ssh_config,
+        )
+
+        if success:
+            logger.info(f"Started external file manager for {nickname}")
+            if window is not None:
+                self._track_internal_file_manager_window(window)
+        else:
+            message = error_msg or "Failed to start file manager process"
+            logger.error(f"Failed to start file manager process for {nickname}: {message}")
+            self._show_manage_files_error(str(nickname), message)
+
     def capture_session(self) -> dict:
         """Capture the current set of open tabs as a serializable session dict.
 
@@ -7170,6 +7860,20 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             if tab_view.get_n_pages() <= 1:
                 self.show_start_tab()
             return
+
+        # Tear down an embedded file manager synchronously (outside GC) so its
+        # Python 'destroy' handlers never run during a garbage collection,
+        # which segfaults. Covers ×, Close, Close Other Tabs, Close to Right.
+        try:
+            embed = (
+                self._file_manager_embed_for_child(page.get_child())
+                if page is not None and hasattr(page, 'get_child')
+                else None
+            )
+            if embed is not None:
+                self._teardown_file_manager_embed(embed)
+        except Exception:
+            logger.debug('File manager tab teardown on detach failed', exc_info=True)
 
         # Cleanup terminal-to-connection maps when a page is detached
         detached_connection = None

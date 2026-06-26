@@ -309,7 +309,47 @@ sudo dnf install python3-gobject gtk4 libadwaita vte291-gtk4 gtksourceview5 libs
 - Supports both built-in terminal and external terminal options
 
 ## Debugging
-- Use `--verbose` flag for detailed logging
+
+CLI flags (`sshpilot/main.py::main`):
+- `--verbose` / `-v` — detailed (debug) logging; `--quiet` / `-q` — warnings & errors only.
+- GTK/GLib/Gdk/Pango/VTE **warnings & criticals are captured into the log files by
+  default** via `_install_gtk_log_capture()` (logged under the `gtk` logger; also echoed
+  to stderr). It installs **both** interception points because GTK/GLib use two logging
+  paths: `GLib.log_set_handler` for legacy `g_log`/`g_warning` (e.g. GLib's child-watch
+  warning) **and** `GLib.log_set_writer_func` for GTK4's **structured** logging
+  (`g_log_structured`, e.g. `gtk_widget_measure` / `AdwMessageDialog` warnings) which
+  bypasses legacy handlers. The writer delegates to `g_log_writer_default` so stderr +
+  `G_DEBUG=fatal-warnings` still work. The `Gtk-CRITICAL`/`Gtk-WARNING` lines name the
+  exact bad widget/render operation — look here first for UI / widget-lifecycle /
+  rendering bugs.
+- **Uncaught Python exceptions are logged by default** via `_install_exception_hooks()`
+  (`sys.excepthook` — also covers PyGObject GLib/GTK callback exceptions —
+  `threading.excepthook`, and `sys.unraisablehook` for `__del__`/finalizer errors).
+- `--log-gtk-warnings` — *additionally* capture lower-severity GTK/GLib **info & debug**
+  messages (deep GTK tracing); warnings/criticals are captured without it.
+- `--fatal-warnings` — `GLib.log_set_always_fatal(WARNING|CRITICAL)` via
+  `_enable_fatal_gtk_warnings()`; the resulting `abort()` is caught by faulthandler and the
+  exact stack is written to `crash.log`. Aggressive (aborts on benign warnings too) — use
+  in a focused repro.
+- `--diagnostics` — shorthand for `--verbose --log-gtk-warnings` (use when filing a bug).
+
+Logs live under `platform_utils.get_state_dir()` (`~/.local/state/sshpilot/`, or the
+Flatpak path): `sshpilot.log` (master, rotating 10 MB × 5), `app.log`, `ssh.log`, and
+`crash.log`. **`crash.log`** is the faulthandler dump, armed in
+`SshPilotApplication.__init__` by `_enable_crash_diagnostics()` (all-thread Python
+tracebacks + a C stack on Python 3.12+). It is rotated on the next launch: a non-empty
+`crash.log` means the previous run crashed, so it is moved to `crash.log.previous` and
+surfaced via the startup "closed unexpectedly" dialog and **Help ▸ Report a Problem**
+(`window.on_report_problem_action` → `log_viewer.build_report_bundle`). For a crash with
+no Python frame (pure GTK), use the `coredumpctl` core + `py-bt` (needs `python3-dbg`);
+GTK frames need GTK debug symbols to resolve.
+
+**Help ▸ Export Diagnostics…** (`win.export-diagnostics` →
+`window.on_export_diagnostics_action` → `log_viewer.build_diagnostics_zip`) writes a ZIP
+with `logs/` (all log files incl. crash reports), `system-info.txt` (`StartupInfo`),
+`version.txt`, and a **redacted** `config.json` (`log_viewer._redact_config` strips
+password/passphrase/secret/token/credential/api-key/private-key values + PEM blobs).
+Saved connections / `ssh_config` are intentionally excluded for privacy.
 
 
 ## Memory and Preferences

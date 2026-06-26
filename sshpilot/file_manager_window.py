@@ -75,6 +75,7 @@ from .file_manager import (
     _human_time,
     _load_doc_config,
     _load_first_doc_path,
+    _load_grant_for_host,
     _lookup_doc_entry,
     _lookup_document_path,
     _lookup_path_from_config,
@@ -1074,9 +1075,14 @@ class FileManagerWindow(Adw.Window):
             self._manager.listdir(path)
 
     def _restore_flatpak_folder(self) -> bool:
-        """Restore Flatpak folder access after window initialization is complete."""
+        """Open the local pane on a granted folder after window init.
+
+        Prefer the user's home folder when it has been granted (the sandbox can't
+        reach ``~`` otherwise); fall back to the most recently granted folder.
+        """
         try:
-            portal_result = _load_first_doc_path()
+            home = os.path.expanduser("~")
+            portal_result = _load_grant_for_host(home) or _load_first_doc_path()
             if portal_result:
                 portal_path, doc_id, entry = portal_result
                 logger.debug(f"Scheduled restoration of: {portal_path} (doc_id={doc_id})")

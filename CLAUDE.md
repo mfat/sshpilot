@@ -2,6 +2,11 @@
 - Always use: `feature/[description]` or `fix/[description]`
 - Description must reflect the actual task — no jokes, puns, or random names
 
+## Diagnostics
+- CLI flags for capturing logs (`--verbose`, `--log-gtk-warnings`, `--fatal-warnings`,
+  `--diagnostics`), the log-file layout, and the auto-captured `crash.log` are documented
+  in `AGENTS.md` → **Debugging**. Read that before touching logging or crash handling.
+
 ## How the app connects and authenticates (read before touching this)
 The full reference is in `AGENTS.md` → **SSH Connection & Authentication
 Architecture**. The essentials:

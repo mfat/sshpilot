@@ -107,8 +107,8 @@ def error_text(err: Exception) -> str:
     if DockerClient.is_permission_error(str(err)):
         msg += (
             "\n\nDocker needs elevated access. Enable the “sudo” toggle "
-            "above (requires passwordless sudo), or add your user to the "
-            "“docker” group on the host."
+            "above (you may be prompted for your sudo password), or add your "
+            "user to the “docker” group on the host."
         )
     return msg
 

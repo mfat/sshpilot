@@ -7,7 +7,10 @@ Main application entry point
 import sys
 import os
 import gc
+import faulthandler
+import resource
 import logging
+import threading
 import argparse
 from logging.handlers import RotatingFileHandler
 
@@ -109,7 +112,8 @@ class SshPilotApplication(Adw.Application):
     """Main application class for sshPilot"""
 
     def __init__(self, verbose: bool = False, quiet: bool = False,
-                 isolated: bool = False):
+                 isolated: bool = False, log_gtk_warnings: bool = False,
+                 fatal_warnings: bool = False):
         super().__init__(
             application_id='io.github.mfat.sshpilot',
             flags=Gio.ApplicationFlags.FLAGS_NONE
@@ -134,7 +138,25 @@ class SshPilotApplication(Adw.Application):
 
         # Set up logging
         self.setup_logging()
-        
+
+        # Arm fatal-signal diagnostics now that logging is configured but before
+        # any window/GTK activity, so a future shutdown segfault leaves an
+        # all-thread Python traceback in crash.log. Returns a preserved report
+        # from a previous crash (or None) for the window to surface on startup.
+        self._previous_crash_report = _enable_crash_diagnostics()
+
+        # Log uncaught Python exceptions (main thread, worker threads, and GLib
+        # callbacks) into the log files so they land in bug reports.
+        _install_exception_hooks()
+
+        # Capture GTK/GLib warnings & criticals into the log files by default —
+        # they name the exact bad widget/render operation. --log-gtk-warnings /
+        # --diagnostics additionally capture lower-severity (info/debug) GTK
+        # messages; --fatal-warnings makes them fatal (for pinpointing crashes).
+        _install_gtk_log_capture(verbose=log_gtk_warnings)
+        if fatal_warnings:
+            _enable_fatal_gtk_warnings()
+
         # Print startup information
         print_startup_info(isolated=isolated, verbose=verbose)
         
@@ -363,6 +385,15 @@ class SshPilotApplication(Adw.Application):
             askpass_server.stop()
         except Exception as exc:
             logger.debug(f"Failed to stop askpass prompt server: {exc}")
+
+        # Tear down any open embedded file-manager tabs synchronously, before
+        # the window/interpreter are finalized. Their widgets carry Python
+        # 'destroy' handlers that segfault if invoked during GC finalization.
+        try:
+            if self.window is not None and hasattr(self.window, '_teardown_all_file_manager_tabs'):
+                self.window._teardown_all_file_manager_tabs()
+        except Exception:
+            logger.debug("Failed to tear down file manager tabs on shutdown", exc_info=True)
 
         # Close all file manager windows
         try:
@@ -1046,6 +1077,249 @@ class SshPilotApplication(Adw.Application):
         except Exception as e:
             logger.error(f"Failed to apply color overrides: {e}")
 
+_crash_log_fp = None  # module-global so the fd stays open for the process lifetime
+
+
+def _enable_crash_diagnostics():
+    """Dump all-thread Python tracebacks (and leave a core) on fatal signals.
+
+    A shutdown segfault has been observed where a GObject in a surviving
+    reference cycle is finalized during interpreter teardown (Py_FinalizeEx)
+    and PyGObject tries to run a Python signal handler after the interpreter is
+    gone. A core only shows C frames; faulthandler dumps the exact Python
+    handler (file/line) of every thread, which is what pinpoints the culprit.
+
+    ``crash.log`` is only ever written when a run crashes, so a non-empty
+    ``crash.log`` at startup means the *previous* run crashed. We rotate it to
+    ``crash.log.previous`` and return that path so the UI can offer to report
+    it; this run then starts with a fresh, empty ``crash.log``.
+
+    Returns the path of a preserved previous-crash report, or ``None``.
+    """
+    global _crash_log_fp
+    previous_crash = None
+    try:
+        from .platform_utils import get_state_dir
+        log_dir = get_state_dir()
+        os.makedirs(log_dir, exist_ok=True)
+        path = os.path.join(log_dir, 'crash.log')
+        # Preserve a crash report left behind by the previous run.
+        try:
+            if os.path.exists(path) and os.path.getsize(path) > 0:
+                preserved = os.path.join(log_dir, 'crash.log.previous')
+                os.replace(path, preserved)
+                previous_crash = preserved
+        except Exception:
+            logging.getLogger(__name__).debug(
+                "Could not rotate previous crash.log", exc_info=True)
+        # Fresh log for this run so the next startup's detection stays clean.
+        _crash_log_fp = open(path, 'w', buffering=1)
+        faulthandler.enable(file=_crash_log_fp, all_threads=True)
+        logging.getLogger(__name__).info("Crash diagnostics enabled → %s", path)
+    except Exception:
+        try:
+            faulthandler.enable()  # fall back to stderr
+        except Exception:
+            pass
+    # Best-effort: ensure a core is produced even if the soft limit is 0.
+    try:
+        _soft, hard = resource.getrlimit(resource.RLIMIT_CORE)
+        resource.setrlimit(
+            resource.RLIMIT_CORE,
+            (resource.RLIM_INFINITY if hard in (0, resource.RLIM_INFINITY) else hard, hard),
+        )
+    except Exception:
+        pass
+    return previous_crash
+
+
+_exception_hooks_installed = False
+
+
+def _install_exception_hooks():
+    """Log uncaught Python exceptions so they land in the log files / bug reports.
+
+    Covers the main thread (``sys.excepthook`` — also used by PyGObject for
+    exceptions raised inside GLib/GTK callbacks), worker threads
+    (``threading.excepthook``), and unraisable exceptions such as those from
+    ``__del__``/GObject finalizers (``sys.unraisablehook``). The previous hooks
+    are still chained so default stderr output is preserved.
+    """
+    global _exception_hooks_installed
+    if _exception_hooks_installed:
+        return
+    _exception_hooks_installed = True
+    log = logging.getLogger('sshpilot')
+
+    prev_excepthook = sys.excepthook
+
+    def _excepthook(exc_type, exc_value, exc_tb):
+        if not issubclass(exc_type, (KeyboardInterrupt, SystemExit)):
+            try:
+                log.critical("Unhandled exception",
+                             exc_info=(exc_type, exc_value, exc_tb))
+            except Exception:
+                pass
+        try:
+            prev_excepthook(exc_type, exc_value, exc_tb)
+        except Exception:
+            pass
+
+    sys.excepthook = _excepthook
+
+    def _thread_excepthook(args):
+        if issubclass(args.exc_type, SystemExit):
+            return
+        try:
+            log.critical("Unhandled exception in thread %r",
+                         getattr(args.thread, 'name', '?'),
+                         exc_info=(args.exc_type, args.exc_value, args.exc_traceback))
+        except Exception:
+            pass
+
+    try:
+        threading.excepthook = _thread_excepthook
+    except Exception:
+        pass
+
+    prev_unraisable = getattr(sys, 'unraisablehook', None)
+
+    def _unraisablehook(unraisable):
+        try:
+            log.error("Unraisable exception in %r",
+                      getattr(unraisable, 'object', None),
+                      exc_info=(unraisable.exc_type, unraisable.exc_value,
+                                unraisable.exc_traceback))
+        except Exception:
+            pass
+        if prev_unraisable is not None:
+            try:
+                prev_unraisable(unraisable)
+            except Exception:
+                pass
+
+    try:
+        sys.unraisablehook = _unraisablehook
+    except Exception:
+        pass
+
+
+_gtk_log_handler_ids: list = []
+_gtk_log_writer_installed = False
+
+
+def _gtk_level_to_py(level, level_map):
+    for flag, py_level in level_map:
+        if level & flag:
+            return py_level
+    return logging.WARNING
+
+
+def _install_gtk_log_capture(verbose: bool = False):
+    """Route GTK/GLib log messages into the rotating log files (and stderr).
+
+    GTK/GLib warnings & criticals (the ``Gtk-CRITICAL`` / ``Gtk-WARNING`` lines
+    that name the exact bad widget operation behind UI corruption and many
+    crashes) normally go only to stderr. This forwards them to a ``gtk`` Python
+    logger so they are durably captured in ``sshpilot.log``, while still echoing
+    to the terminal.
+
+    Two interception points are needed because GTK/GLib use two logging paths:
+    * legacy ``g_log`` / ``g_warning`` (e.g. GLib's child-watch warning) is caught
+      by ``g_log_set_handler`` per domain;
+    * GTK4 emits its own warnings via **structured** logging
+      (``g_log_structured``), which bypasses legacy handlers — those are caught by
+      a ``g_log_set_writer_func``. The writer also catches legacy messages from
+      any domain we did not register a handler for.
+
+    Warnings, criticals, errors and messages are always captured; ``verbose``
+    additionally captures lower-severity GTK/GLib info & debug messages.
+    """
+    global _gtk_log_writer_installed
+    if _gtk_log_handler_ids or _gtk_log_writer_installed:  # idempotent
+        return
+    gtk_logger = logging.getLogger('gtk')
+    level_map = (
+        (GLib.LogLevelFlags.LEVEL_ERROR, logging.CRITICAL),
+        (GLib.LogLevelFlags.LEVEL_CRITICAL, logging.ERROR),
+        (GLib.LogLevelFlags.LEVEL_WARNING, logging.WARNING),
+        (GLib.LogLevelFlags.LEVEL_MESSAGE, logging.INFO),
+        (GLib.LogLevelFlags.LEVEL_INFO, logging.INFO),
+        (GLib.LogLevelFlags.LEVEL_DEBUG, logging.DEBUG),
+    )
+
+    # Which levels we forward to the Python logger. Warnings & above (plus
+    # message) always; info/debug only in verbose mode to avoid log spam.
+    forward_mask = (
+        GLib.LogLevelFlags.LEVEL_WARNING
+        | GLib.LogLevelFlags.LEVEL_CRITICAL
+        | GLib.LogLevelFlags.LEVEL_ERROR
+        | GLib.LogLevelFlags.LEVEL_MESSAGE
+    )
+    if verbose:
+        forward_mask |= GLib.LogLevelFlags.LEVEL_INFO | GLib.LogLevelFlags.LEVEL_DEBUG
+
+    # --- legacy g_log handlers (per domain) ------------------------------
+    def _handler(domain, level, message, _user=None):
+        try:
+            gtk_logger.log(_gtk_level_to_py(level, level_map),
+                           "%s: %s", domain or 'GLib', message)
+        except Exception:
+            pass
+        # Preserve terminal visibility (we replaced the default stderr handler).
+        try:
+            sys.stderr.write("%s: %s\n" % (domain or 'GLib', message))
+        except Exception:
+            pass
+
+    handler_levels = forward_mask | GLib.LogLevelFlags.FLAG_FATAL | GLib.LogLevelFlags.FLAG_RECURSION
+    for domain in ('Gtk', 'Gdk', 'GLib', 'GLib-GObject', 'GLib-GIO', 'Gio',
+                   'Pango', 'GdkPixbuf', 'Adwaita', 'Vte', None):
+        try:
+            hid = GLib.log_set_handler(domain, handler_levels, _handler)
+            _gtk_log_handler_ids.append((domain, hid))
+        except Exception:
+            logging.getLogger(__name__).debug(
+                "Could not set GLib log handler for domain %r", domain, exc_info=True)
+
+    # --- structured-logging writer (GTK4's own warnings) -----------------
+    def _writer(level, fields, user_data=None):
+        try:
+            if int(level) & int(forward_mask):
+                text = GLib.log_writer_format_fields(level, fields, False).strip()
+                gtk_logger.log(_gtk_level_to_py(level, level_map), "%s", text)
+        except Exception:
+            pass
+        # Delegate to the default writer so stderr output AND fatal-warnings
+        # (G_DEBUG=fatal-warnings / log_set_always_fatal) still work.
+        try:
+            return GLib.log_writer_default(level, fields, user_data)
+        except Exception:
+            return GLib.LogWriterOutput.HANDLED
+
+    try:
+        GLib.log_set_writer_func(_writer)
+        _gtk_log_writer_installed = True
+    except Exception:
+        logging.getLogger(__name__).debug(
+            "Could not set GLib structured-log writer", exc_info=True)
+
+
+def _enable_fatal_gtk_warnings():
+    """Make the first GTK/GLib warning or critical abort with a backtrace.
+
+    The resulting abort() raises SIGABRT, which the already-armed faulthandler
+    dumps into crash.log (all-thread traceback) — pinpointing the exact stack at
+    the offending warning. Aggressive: also aborts on benign warnings.
+    """
+    try:
+        GLib.log_set_always_fatal(
+            GLib.LogLevelFlags.LEVEL_WARNING | GLib.LogLevelFlags.LEVEL_CRITICAL)
+    except Exception:
+        logging.getLogger(__name__).debug(
+            "Could not enable fatal GTK warnings", exc_info=True)
+
+
 def main():
     """Main entry point"""
     # Fast-path: handle --askpass before starting the GTK application.
@@ -1056,7 +1330,28 @@ def main():
         prompt = sys.argv[2] if len(sys.argv) > 2 else ""
         sys.exit(run_askpass_and_write(prompt))
 
-    parser = argparse.ArgumentParser(description="sshPilot SSH connection manager")
+    parser = argparse.ArgumentParser(
+        prog="sshpilot",
+        description="sshPilot — SSH connection manager",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Logs are written under the state directory\n"
+            "(~/.local/state/sshpilot, or the Flatpak equivalent\n"
+            "~/.var/app/io.github.mfat.sshpilot/.local/state/sshpilot):\n"
+            "  sshpilot.log   all messages (rotating, 10 MB x 5)\n"
+            "  app.log        application messages\n"
+            "  ssh.log        SSH / connection / terminal messages\n"
+            "  crash.log      fatal-signal tracebacks (captured automatically);\n"
+            "                 the previous run's crash is kept as crash.log.previous\n"
+            "                 and offered via the startup dialog / Help > Report a Problem\n"
+            "\n"
+            "GTK/GLib warnings & criticals and uncaught Python exceptions are\n"
+            "always recorded in the logs. Extra diagnostics:\n"
+            "  --diagnostics        use this when filing a bug (verbose + GTK info/debug)\n"
+            "  --log-gtk-warnings   also capture lower-severity GTK/GLib info & debug\n"
+            "  --fatal-warnings     abort at the first GTK/GLib warning with a backtrace\n"
+        ),
+    )
     verbosity = parser.add_mutually_exclusive_group()
     verbosity.add_argument(
         "--verbose", "-v", action="store_true",
@@ -1067,11 +1362,36 @@ def main():
         help="Only show warnings and errors (overrides config)",
     )
     parser.add_argument("--isolated", action="store_true", help="Use isolated SSH configuration")
+
+    diagnostics = parser.add_argument_group(
+        "diagnostics", "Capture extra logs to help diagnose bugs")
+    diagnostics.add_argument(
+        "--log-gtk-warnings", action="store_true",
+        help="Also capture lower-severity GTK/GLib info & debug messages. "
+             "Warnings & criticals are captured into the log files by default; "
+             "use this for deep GTK/widget tracing.",
+    )
+    diagnostics.add_argument(
+        "--fatal-warnings", action="store_true",
+        help="Abort on the first GTK/GLib warning or critical, writing a full "
+             "backtrace to crash.log and the terminal. Pinpoints the exact "
+             "operation behind a UI corruption or crash. Aggressive: also "
+             "aborts on benign warnings.",
+    )
+    diagnostics.add_argument(
+        "--diagnostics", action="store_true",
+        help="Shorthand for --verbose --log-gtk-warnings. Recommended when "
+             "filing a bug report.",
+    )
     args = parser.parse_args()
+
+    verbose = args.verbose or args.diagnostics
     app = SshPilotApplication(
-        verbose=args.verbose,
+        verbose=verbose,
         quiet=args.quiet,
         isolated=args.isolated,
+        log_gtk_warnings=args.log_gtk_warnings or args.diagnostics,
+        fatal_warnings=args.fatal_warnings,
     )
     return app.run(None)  # Pass None to use default command line arguments
 

@@ -264,20 +264,12 @@ class ContainersTabMixin:
             force_label="Force (-f) — remove even if running",
         )
 
-    def _warn_sudo_interactive(self, nick: str) -> None:
-        """Interactive ops use plain ``sudo`` (the PTY prompts). If the probe found
-        even ``sudo -n`` denied, warn so a sudo password prompt isn't mistaken for
-        a cryptic docker error."""
-        if self._sudo_denied and self._use_sudo_for(nick):
-            self._toast("sudo needs a password — the terminal will prompt for it.")
-
     def _open_shell(self, cid: str, name: str) -> None:
         client = self._client()
         nick = self._current_nickname()
         if client is None or not nick:
             return
-        self._warn_sudo_interactive(nick)
-        ok = self.ctx.open_command_terminal(
+        ok = self._open_command_terminal(
             nick, client.exec_shell_command(cid), title=f"sh: {name}"
         )
         if not ok:
@@ -288,12 +280,11 @@ class ContainersTabMixin:
         nick = self._current_nickname()
         if client is None or not nick:
             return
-        self._warn_sudo_interactive(nick)
         cmd = client.logs_follow_command(
             cid, tail=int(self._tail_spin.get_value()),
             timestamps=self._ts_switch.get_active(),
         )
-        ok = self.ctx.open_command_terminal(nick, cmd, title=f"logs: {name}")
+        ok = self._open_command_terminal(nick, cmd, title=f"logs: {name}")
         if not ok:
             self._toast("Could not open logs")
 

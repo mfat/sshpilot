@@ -40,35 +40,82 @@ class DockerClient:
         "got permission denied",
     )
 
+    # Substrings in sudo stderr when the user cannot use sudo at all (as opposed
+    # to merely needing a password or entering a wrong one).
+    _SUDO_NOT_ALLOWED_MARKERS = (
+        "is not in the sudoers",
+        "is not allowed to execute",
+        "is not allowed to run sudo",
+        "unknown user",
+    )
+
+    # Sentinel used as sudo's prompt (``sudo -p``) for interactive terminal
+    # commands. Locale-independent, so the terminal can reliably detect it and
+    # auto-type the password (see ``ctx.open_command_terminal`` pty auto-fill).
+    SUDO_PROMPT = "[sshPilot] sudo password:"
+
     def __init__(self, run_command: RunCommand, nickname: str,
                  runtime: str = "docker", *, use_sudo: bool = False,
+                 sudo_password: Optional[str] = None,
                  timeout: float = 30) -> None:
         self._run_command = run_command
         self.nickname = nickname
         self.runtime = runtime or "docker"
         self.use_sudo = use_sudo
+        # When set (with ``use_sudo``) the host needs a password for sudo:
+        # captured commands feed it to ``sudo -S`` over stdin, interactive
+        # commands use ``sudo -p`` so the terminal can auto-type it.
+        self.sudo_password = sudo_password
         self.timeout = timeout
+
+    @property
+    def _password_mode(self) -> bool:
+        """sudo is enabled *and* a password must be supplied (not passwordless)."""
+        return self.use_sudo and self.sudo_password is not None
 
     @classmethod
     def is_permission_error(cls, text: str) -> bool:
         low = (text or "").lower()
         return any(marker in low for marker in cls._PERMISSION_MARKERS)
 
-    # ``sudo -n`` for captured commands: non-interactive, so it fails fast
+    @classmethod
+    def is_sudo_denied_error(cls, text: str) -> bool:
+        low = (text or "").lower()
+        return any(marker in low for marker in cls._SUDO_NOT_ALLOWED_MARKERS)
+
+    # Captured commands: ``sudo -S`` (read the password from stdin) when a
+    # password is required, else ``sudo -n`` — non-interactive so it fails fast
     # (rather than hanging on a password prompt) when passwordless sudo isn't
-    # configured. Interactive terminal commands use plain ``sudo`` so the PTY
-    # can prompt for a password.
+    # configured. Interactive terminal commands use ``sudo -p <sentinel>`` so the
+    # terminal can detect the prompt and auto-type the password, else plain
+    # ``sudo`` so the PTY can prompt.
     def _captured_runtime(self) -> str:
-        return f"sudo -n {self.runtime}" if self.use_sudo else self.runtime
+        if not self.use_sudo:
+            return self.runtime
+        if self._password_mode:
+            return f"sudo -S -p '' {self.runtime}"
+        return f"sudo -n {self.runtime}"
 
     def _interactive_runtime(self) -> str:
-        return f"sudo {self.runtime}" if self.use_sudo else self.runtime
+        if not self.use_sudo:
+            return self.runtime
+        if self._password_mode:
+            return f"sudo -p {shlex.quote(self.SUDO_PROMPT)} {self.runtime}"
+        return f"sudo {self.runtime}"
+
+    def _run(self, command: str, *, timeout: Optional[float] = None) -> Any:
+        """Invoke the injected ``run_command``, feeding the sudo password to
+        ``sudo -S`` over stdin only in password mode (so plain ``run_command``
+        implementations that take no ``input`` keep working)."""
+        kwargs: dict = {"timeout": timeout if timeout is not None else self.timeout}
+        if self._password_mode:
+            kwargs["input"] = f"{self.sudo_password}\n"
+        return self._run_command(self.nickname, command, **kwargs)
 
     # -- low level ----------------------------------------------------
     def _exec(self, args: str, *, timeout: Optional[float] = None) -> Any:
         """Run ``<runtime> <args>`` on the host and return the CommandResult."""
-        return self._run_command(self.nickname, f"{self._captured_runtime()} {args}",
-                                 timeout=timeout if timeout is not None else self.timeout)
+        return self._run(f"{self._captured_runtime()} {args}", timeout=timeout)
 
     def _exec_json(self, args: str, *, timeout: Optional[float] = None) -> List[dict]:
         res = self._exec(args, timeout=timeout)
@@ -333,9 +380,13 @@ class DockerClient:
     def read_file(self, path: str) -> str:
         """Read a host file (e.g. a compose file) via ``cat`` — NOT a docker
         command, so it is not runtime-prefixed (sudo still honoured)."""
-        prefix = "sudo -n " if self.use_sudo else ""
-        res = self._run_command(self.nickname, f"{prefix}cat {shlex.quote(path)}",
-                                timeout=self.timeout)
+        if self._password_mode:
+            prefix = "sudo -S -p '' "
+        elif self.use_sudo:
+            prefix = "sudo -n "
+        else:
+            prefix = ""
+        res = self._run(f"{prefix}cat {shlex.quote(path)}")
         if getattr(res, "exit_code", 1) != 0:
             raise DockerError((res.stderr or res.stdout or "read failed").strip())
         return res.stdout or ""
