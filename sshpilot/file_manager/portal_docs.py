@@ -42,7 +42,7 @@ def _ensure_cfg_dir():
     os.makedirs(cfg_dir, exist_ok=True)
 
 
-def _save_doc(folder_path: str, doc_id: str, *, host_display: Optional[str] = None):
+def _save_doc(folder_path: str, doc_id: str):
     """Save document ID, display name, and actual path to JSON config."""
     _ensure_cfg_dir()
     data = {}
@@ -53,7 +53,7 @@ def _save_doc(folder_path: str, doc_id: str, *, host_display: Optional[str] = No
         except Exception:
             data = {}
     data[doc_id] = {
-        "display": host_display or Gio.File.new_for_path(folder_path).get_parse_name(),
+        "display": Gio.File.new_for_path(folder_path).get_parse_name(),
         "path": folder_path  # Store the actual path for non-Flatpak lookup
     }
     with open(DOCS_JSON, "w", encoding="utf-8") as f:
@@ -194,9 +194,8 @@ def _host_path_for_doc(doc_id: str) -> Optional[str]:
 
 def _lookup_document_path(doc_id: str):
     """Look up the current path for a document ID."""
-    portal_only = is_flatpak()
     # Always try config lookup first since Document portal seems unreliable
-    config_path = _lookup_path_from_config(doc_id, portal_only=portal_only)
+    config_path = _lookup_path_from_config(doc_id)
     if config_path and os.path.exists(config_path):
         logger.debug(f"Found valid path from config for {doc_id}: {config_path}")
         return config_path
@@ -206,17 +205,16 @@ def _lookup_document_path(doc_id: str):
         return None
 
     # Prefer the portal mount when it exists — that is the sandbox-writable path
-    # this function promises to return. Never fall back to GetHostPaths here: the
-    # host path (e.g. ``/home/user``) may exist inside the sandbox but is not the
-    # portal export, so scp would write to the wrong place.
+    # this function promises to return. ``_host_path_for_doc`` (GetHostPaths) is
+    # the real host path and is only a display-oriented last resort.
     portal_path = _portal_doc_path(doc_id)
     if os.path.isdir(portal_path):
         return portal_path
 
-    return None
+    return _host_path_for_doc(doc_id)
 
 
-def _lookup_path_from_config(doc_id: str, *, portal_only: bool = False):
+def _lookup_path_from_config(doc_id: str):
     """Look up the original path from our config."""
     try:
         entry = _lookup_doc_entry(doc_id)
@@ -225,26 +223,24 @@ def _lookup_path_from_config(doc_id: str, *, portal_only: bool = False):
             # First try the 'path' field (new format)
             if 'path' in entry:
                 path = entry['path']
-                if path and (not portal_only or _portal_grant_root(path)):
-                    if os.path.exists(path):
-                        return path
+                if os.path.exists(path):
+                    return path
 
             # Fallback to 'display' field (old format)
             display = entry.get('display', '')
             if display:
                 # If it's a portal path, try it directly
                 if '/doc/' in display:
-                    if not portal_only or _portal_grant_root(display):
-                        if os.path.exists(display):
-                            return display
-                elif not portal_only:
-                    # Host-oriented display strings are not writable portal paths.
-                    if display.startswith('~'):
-                        expanded = os.path.expanduser(display)
-                        if os.path.exists(expanded):
-                            return expanded
-                    elif os.path.exists(display):
+                    if os.path.exists(display):
                         return display
+                # If it starts with ~, expand it
+                elif display.startswith('~'):
+                    expanded = os.path.expanduser(display)
+                    if os.path.exists(expanded):
+                        return expanded
+                # Try as-is
+                elif os.path.exists(display):
+                    return display
 
             # Last resort: try to construct portal path from doc_id
             if is_flatpak():
@@ -260,21 +256,6 @@ def _lookup_path_from_config(doc_id: str, *, portal_only: bool = False):
 def _portal_doc_path(doc_id: str) -> str:
     """Get the portal mount path for a document ID."""
     return f"/run/user/{os.getuid()}/doc/{doc_id}"
-
-
-def _resolve_portal_writable_path(picker_path: str, doc_id: str) -> Optional[str]:
-    """Return the sandbox-writable document-portal path for a grant.
-
-    The file picker may return a host path (e.g. ``/home/user``) that exists
-    inside the Flatpak sandbox but is not the portal export. Always prefer a
-    path under ``/run/user/<uid>/doc/<id>`` for actual reads/writes.
-    """
-    if picker_path and _portal_grant_root(picker_path) and os.path.isdir(picker_path):
-        return picker_path
-    mount = _portal_doc_path(doc_id)
-    if os.path.isdir(mount):
-        return mount
-    return None
 
 
 def _host_path_from_xattr(path: str) -> Optional[str]:
@@ -361,90 +342,6 @@ def _real_host_path(portal_path: str, doc_id: str) -> Optional[str]:
     return _portal_path_to_host(portal_path) or _host_path_for_doc(doc_id)
 
 
-_MEANINGLESS_DISPLAY_PATHS = frozenset({"/", "/home"})
-
-
-def _is_meaningful_display(display: str) -> bool:
-    if not display or display in _MEANINGLESS_DISPLAY_PATHS:
-        return False
-    if _portal_grant_root(display) or "/doc/" in display:
-        return False
-    return True
-
-
-def _host_path_for_display(path: str) -> Optional[str]:
-    """Return a human host path for display when ``path`` is not a portal mount."""
-    if not path:
-        return None
-    if _portal_grant_root(path) or "/doc/" in path:
-        host = _portal_path_to_host(path)
-        if host and host not in _MEANINGLESS_DISPLAY_PATHS:
-            return _pretty_path_for_display(host)
-        return None
-    if os.path.isabs(path):
-        pretty = _pretty_path_for_display(path)
-        if _is_meaningful_display(pretty):
-            return pretty
-    return None
-
-
-def _display_path_for_grant(
-    portal_path: str,
-    doc_id: str,
-    *,
-    picker_path: Optional[str] = None,
-) -> str:
-    """Derive a human-friendly display path for a portal grant."""
-    if picker_path:
-        from_picker = _host_path_for_display(picker_path)
-        if from_picker:
-            return from_picker
-
-    entry = _lookup_doc_entry(doc_id)
-    if entry:
-        stored_display = (entry.get("display") or "").strip()
-        if _is_meaningful_display(stored_display):
-            return stored_display
-
-    host_path = _real_host_path(portal_path, doc_id)
-    if host_path and host_path not in _MEANINGLESS_DISPLAY_PATHS:
-        return _pretty_path_for_display(host_path)
-
-    reconstructed = _portal_path_to_host(portal_path)
-    if reconstructed and reconstructed not in _MEANINGLESS_DISPLAY_PATHS:
-        return _pretty_path_for_display(reconstructed)
-
-    if entry:
-        stored_path = entry.get("path") or ""
-        from_stored = _host_path_for_display(stored_path)
-        if from_stored:
-            return from_stored
-
-    pretty = _pretty_path_for_display(portal_path)
-    if _is_meaningful_display(pretty):
-        return pretty
-    return ""
-
-
-def is_portal_grant_usable(portal_path: Optional[str]) -> bool:
-    """Return whether ``portal_path`` is a live, writable document-portal grant."""
-    if not portal_path or not _portal_grant_root(portal_path):
-        return False
-    try:
-        return os.path.isdir(portal_path) and os.access(portal_path, os.W_OK)
-    except Exception:
-        return False
-
-
-def is_flatpak_destination_grant(grant: Optional[Dict[str, str]]) -> bool:
-    """Return whether a restored or fresh grant is safe to use for SCP downloads."""
-    if not grant:
-        return False
-    if not is_portal_grant_usable(grant.get("path")):
-        return False
-    return _is_meaningful_display((grant.get("display") or "").strip())
-
-
 def resolve_granted_folder(gfile) -> Optional[Dict[str, str]]:
     """Grant persistent access to ``gfile`` and resolve a usable destination.
 
@@ -467,18 +364,21 @@ def resolve_granted_folder(gfile) -> Optional[Dict[str, str]]:
     if not doc_id:
         return None
 
-    portal_path = _resolve_portal_writable_path(path, doc_id)
-    if not portal_path:
-        return None
-
-    display = _display_path_for_grant(portal_path, doc_id, picker_path=path)
-    if not display:
-        return None
+    portal_path = path
+    if not os.path.isdir(portal_path):
+        constructed = _portal_doc_path(doc_id)
+        if os.path.isdir(constructed):
+            portal_path = constructed
 
     try:
-        _save_doc(portal_path, doc_id, host_display=display)
+        _save_doc(path, doc_id)
     except Exception as exc:  # pragma: no cover - persistence is best-effort
         logger.debug(f"Could not persist granted folder: {exc}")
+
+    # Resolve the real host path (xattr → GetHostPaths) for a friendly display;
+    # fall back to the picker path (itself a portal path) when unavailable.
+    host_path = _real_host_path(path, doc_id)
+    display = _pretty_path_for_display(host_path or path)
 
     return {"path": portal_path, "display": display, "doc_id": doc_id}
 
@@ -508,11 +408,8 @@ def restore_granted_folder() -> Optional[Dict[str, str]]:
         # path (xattr → GetHostPaths), not the stored entry — ``_save_doc``
         # persisted the display from the portal path, which would show the raw
         # ``/run/user/<uid>/doc/<id>/<name>`` mount instead of the friendly path.
-        display = _display_path_for_grant(portal_path, doc_id)
-        if not display or not is_flatpak_destination_grant(
-            {"path": portal_path, "display": display, "doc_id": doc_id}
-        ):
-            continue
+        host_path = _real_host_path(portal_path, doc_id)
+        display = _pretty_path_for_display(host_path or portal_path)
         return {"path": portal_path, "display": display, "doc_id": doc_id}
 
     return None
@@ -580,8 +477,6 @@ def _pretty_path_for_display(path: str) -> str:
     ``/home/user/Desktop/segs``) via the ``user.document-portal.host-path`` xattr;
     only if that is unavailable does it fall back to the folder name.
     """
-    if not path:
-        return ""
     try:
         gfile = Gio.File.new_for_path(path)
         parse_name = gfile.get_parse_name()
