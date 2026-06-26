@@ -147,6 +147,43 @@ def _grant_persistent_access(gfile):
     return None
 
 
+def _host_path_for_doc(doc_id: str) -> Optional[str]:
+    """Return the real host path for ``doc_id`` via the Document portal's
+    ``GetHostPaths`` (Flatpak only).
+
+    For DISPLAY purposes — the returned path (e.g. ``/home/user/Downloads``) is
+    the user's real folder and is NOT necessarily accessible inside the sandbox.
+    Use ``_lookup_document_path`` for the portal-mounted, writable path.
+    """
+    if not doc_id or not is_flatpak():
+        return None
+    try:
+        bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+        proxy = Gio.DBusProxy.new_sync(
+            bus,
+            Gio.DBusProxyFlags.NONE,
+            None,
+            "org.freedesktop.portal.Desktop",
+            "/org/freedesktop/portal/documents",
+            "org.freedesktop.portal.Documents",
+            None,
+        )
+        result = proxy.call_sync(
+            "GetHostPaths",
+            GLib.Variant("(as)", ([doc_id],)),
+            Gio.DBusCallFlags.NONE,
+            -1,
+            None,
+        )
+        if result:
+            paths_dict = result.get_child_value(0).unpack()
+            if doc_id in paths_dict:
+                return paths_dict[doc_id].decode("utf-8")
+    except Exception as e:
+        logger.debug(f"GetHostPaths failed for {doc_id}: {e}")
+    return None
+
+
 def _lookup_document_path(doc_id: str):
     """Look up the current path for a document ID."""
     # Always try config lookup first since Document portal seems unreliable
@@ -159,43 +196,8 @@ def _lookup_document_path(doc_id: str):
     if not is_flatpak():
         return None
 
-    try:
-        # Get the Document portal (only in Flatpak)
-        bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
-        proxy = Gio.DBusProxy.new_sync(
-            bus,
-            Gio.DBusProxyFlags.NONE,
-            None,
-            "org.freedesktop.portal.Desktop",
-            "/org/freedesktop/portal/documents",
-            "org.freedesktop.portal.Documents",
-            None
-        )
-
-        # Use GetHostPaths to get the path from doc_id
-        # GetHostPaths(IN as doc_ids, OUT a{say} paths)
-        # This method is available inside the sandbox (version 5+)
-        result = proxy.call_sync(
-            "GetHostPaths",
-            GLib.Variant("(as)", ([doc_id],)),
-            Gio.DBusCallFlags.NONE,
-            -1,
-            None
-        )
-
-        if result:
-            # Result is a dictionary: {doc_id: path_bytes}
-            paths_dict = result.get_child_value(0).unpack()
-            if doc_id in paths_dict:
-                path_bytes = paths_dict[doc_id]
-                path = path_bytes.decode('utf-8')
-                logger.debug(f"Document portal GetHostPaths for {doc_id}: {path}")
-                return path
-
-    except Exception as e:
-        logger.debug(f"Document portal GetHostPaths failed for {doc_id}: {e}")
-
-    return None
+    # GetHostPaths returns the real host path for the doc id (sandbox version 5+).
+    return _host_path_for_doc(doc_id)
 
 
 def _lookup_path_from_config(doc_id: str):
