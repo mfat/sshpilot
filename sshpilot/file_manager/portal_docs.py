@@ -257,6 +257,42 @@ def _portal_doc_path(doc_id: str) -> str:
     return f"/run/user/{os.getuid()}/doc/{doc_id}"
 
 
+def _host_path_from_xattr(path: str) -> Optional[str]:
+    """Return the real host path recorded on a portal mount via the
+    ``user.document-portal.host-path`` extended attribute (Flatpak only).
+
+    This is the document portal's filesystem-level equivalent of
+    ``GetHostPaths`` — more robust than the D-Bus call (no bus plumbing, no
+    interface-version dependency). ``path`` must be the actual exported entry
+    (the portal mount **with** basename). Returns ``None`` if the attribute is
+    absent or unreadable (e.g. non-Linux, not a portal path).
+    """
+    if not path:
+        return None
+    getxattr = getattr(os, "getxattr", None)
+    if getxattr is None:
+        return None
+    try:
+        raw = getxattr(path, "user.document-portal.host-path")
+    except OSError:
+        return None
+    try:
+        host = bytes(raw).split(b"\x00", 1)[0].decode("utf-8", "surrogateescape")
+    except Exception:  # pragma: no cover - defensive decode guard
+        return None
+    return host or None
+
+
+def _real_host_path(portal_path: str, doc_id: str) -> Optional[str]:
+    """Resolve the real host path for a granted folder, for DISPLAY only.
+
+    Prefers the ``user.document-portal.host-path`` xattr off the portal mount
+    (``portal_path``, which must carry the basename), then falls back to the
+    Documents portal ``GetHostPaths`` D-Bus call.
+    """
+    return _host_path_from_xattr(portal_path) or _host_path_for_doc(doc_id)
+
+
 def resolve_granted_folder(gfile) -> Optional[Dict[str, str]]:
     """Grant persistent access to ``gfile`` and resolve a usable destination.
 
@@ -290,9 +326,9 @@ def resolve_granted_folder(gfile) -> Optional[Dict[str, str]]:
     except Exception as exc:  # pragma: no cover - persistence is best-effort
         logger.debug(f"Could not persist granted folder: {exc}")
 
-    # GetHostPaths gives the real host path for display; fall back to the
-    # picker path (itself a portal path) when it is unavailable.
-    host_path = _host_path_for_doc(doc_id)
+    # Resolve the real host path (xattr → GetHostPaths) for a friendly display;
+    # fall back to the picker path (itself a portal path) when unavailable.
+    host_path = _real_host_path(path, doc_id)
     display = _pretty_path_for_display(host_path or path)
 
     return {"path": portal_path, "display": display, "doc_id": doc_id}
@@ -320,10 +356,10 @@ def restore_granted_folder() -> Optional[Dict[str, str]]:
         if not portal_path or not os.path.isdir(portal_path):
             continue
         # Mirror the fresh-grant flow: derive the display from the real host
-        # path (GetHostPaths), not the stored entry — ``_save_doc`` persisted
-        # the display from the portal path, which would show the raw
+        # path (xattr → GetHostPaths), not the stored entry — ``_save_doc``
+        # persisted the display from the portal path, which would show the raw
         # ``/run/user/<uid>/doc/<id>/<name>`` mount instead of the friendly path.
-        host_path = _host_path_for_doc(doc_id)
+        host_path = _real_host_path(portal_path, doc_id)
         display = _pretty_path_for_display(host_path or portal_path)
         return {"path": portal_path, "display": display, "doc_id": doc_id}
 

@@ -25,6 +25,8 @@ def patched_portal(monkeypatch):
     """Stub the D-Bus-backed helpers so resolution logic is testable offline."""
     monkeypatch.setattr(portal_docs, "is_flatpak", lambda: True)
     monkeypatch.setattr(portal_docs, "_grant_persistent_access", lambda gfile: "DOCID")
+    # No xattr in tests → exercise the GetHostPaths branch deterministically.
+    monkeypatch.setattr(portal_docs, "_host_path_from_xattr", lambda path: None)
     # GetHostPaths always returns the real host path (the wrong target for scp).
     monkeypatch.setattr(portal_docs, "_host_path_for_doc", lambda doc_id: "/home/user/Downloads")
     monkeypatch.setattr(portal_docs, "_pretty_path_for_display", lambda p: p)
@@ -113,6 +115,7 @@ def test_restore_returns_most_recent_grant(monkeypatch):
         portal_docs, "_lookup_document_path", lambda doc_id: f"/run/user/1000/doc/{doc_id}/x"
     )
     monkeypatch.setattr(os.path, "isdir", lambda p: True)
+    monkeypatch.setattr(portal_docs, "_host_path_from_xattr", lambda path: None)
     # GetHostPaths yields the friendly host path used for display.
     monkeypatch.setattr(portal_docs, "_host_path_for_doc", lambda doc_id: f"/home/user/{doc_id}")
     monkeypatch.setattr(portal_docs, "_pretty_path_for_display", lambda p: p)
@@ -138,6 +141,7 @@ def test_restore_skips_unresolvable_and_falls_through(monkeypatch):
     )
     # Newest ("NEW") no longer mounts; older ("OLD") still does.
     monkeypatch.setattr(os.path, "isdir", lambda p: p.endswith("/OLD"))
+    monkeypatch.setattr(portal_docs, "_host_path_from_xattr", lambda path: None)
     monkeypatch.setattr(portal_docs, "_host_path_for_doc", lambda doc_id: f"/home/user/{doc_id}")
     monkeypatch.setattr(portal_docs, "_pretty_path_for_display", lambda p: p)
 
@@ -153,12 +157,57 @@ def test_restore_display_falls_back_to_portal_path_without_host(monkeypatch):
     monkeypatch.setattr(portal_docs, "_load_doc_config", lambda: config)
     monkeypatch.setattr(portal_docs, "_lookup_document_path", lambda doc_id: "/run/user/1000/doc/DOCID")
     monkeypatch.setattr(os.path, "isdir", lambda p: True)
+    monkeypatch.setattr(portal_docs, "_host_path_from_xattr", lambda path: None)
     monkeypatch.setattr(portal_docs, "_host_path_for_doc", lambda doc_id: None)
     monkeypatch.setattr(portal_docs, "_pretty_path_for_display", lambda p: f"PRETTY:{p}")
 
     result = portal_docs.restore_granted_folder()
 
     assert result["display"] == "PRETTY:/run/user/1000/doc/DOCID"
+
+
+def test_restore_display_prefers_xattr_host_path(monkeypatch):
+    """When the xattr is present, its host path drives the display (no D-Bus)."""
+    config = {"DOCID": {"path": "/run/user/1000/doc/DOCID/segs"}}
+    monkeypatch.setattr(portal_docs, "_load_doc_config", lambda: config)
+    monkeypatch.setattr(portal_docs, "_lookup_document_path", lambda doc_id: "/run/user/1000/doc/DOCID/segs")
+    monkeypatch.setattr(os.path, "isdir", lambda p: True)
+    monkeypatch.setattr(portal_docs, "_host_path_from_xattr", lambda path: "/home/mahdi/Desktop/segs")
+
+    def _should_not_be_called(doc_id):
+        raise AssertionError("GetHostPaths must not run when the xattr resolves")
+
+    monkeypatch.setattr(portal_docs, "_host_path_for_doc", _should_not_be_called)
+    monkeypatch.setattr(portal_docs, "_pretty_path_for_display", lambda p: p)
+
+    result = portal_docs.restore_granted_folder()
+
+    assert result["display"] == "/home/mahdi/Desktop/segs"
+
+
+def test_host_path_from_xattr_reads_and_normalises(monkeypatch):
+    """``_host_path_from_xattr`` decodes the attr and strips the trailing NUL."""
+    calls = {}
+
+    def _getxattr(path, name):
+        calls["path"] = path
+        calls["name"] = name
+        return b"/home/mahdi/Desktop/segs\x00"
+
+    monkeypatch.setattr(os, "getxattr", _getxattr, raising=False)
+
+    assert portal_docs._host_path_from_xattr("/run/user/1000/doc/DOCID/segs") == "/home/mahdi/Desktop/segs"
+    assert calls["name"] == "user.document-portal.host-path"
+
+
+def test_host_path_from_xattr_absent_returns_none(monkeypatch):
+    def _getxattr(path, name):
+        raise OSError("no such attribute")
+
+    monkeypatch.setattr(os, "getxattr", _getxattr, raising=False)
+
+    assert portal_docs._host_path_from_xattr("/run/user/1000/doc/DOCID/segs") is None
+    assert portal_docs._host_path_from_xattr("") is None
 
 
 def test_restore_returns_none_when_empty_or_unresolvable(monkeypatch):
