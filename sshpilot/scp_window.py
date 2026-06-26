@@ -568,8 +568,7 @@ class ScpWindowController:
             if is_flatpak():
                 request_access_button = Gtk.Button(label=_('Request Access'))
                 request_access_button.set_halign(Gtk.Align.CENTER)
-                # Keep ``suggested-action`` for the primary Download CTA only; a
-                # plain button here avoids two competing accent buttons.
+                request_access_button.add_css_class('suggested-action')
                 request_access_button.set_margin_top(6)
                 destination_group_box = Gtk.Box(
                     orientation=Gtk.Orientation.VERTICAL, spacing=0
