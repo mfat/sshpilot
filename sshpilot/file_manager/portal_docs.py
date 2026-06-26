@@ -163,7 +163,9 @@ def _host_path_for_doc(doc_id: str) -> Optional[str]:
             bus,
             Gio.DBusProxyFlags.NONE,
             None,
-            "org.freedesktop.portal.Desktop",
+            # GetHostPaths lives on the Documents portal, which is a *separate*
+            # bus name from the Desktop portal (org.freedesktop.portal.Desktop).
+            "org.freedesktop.portal.Documents",
             "/org/freedesktop/portal/documents",
             "org.freedesktop.portal.Documents",
             None,
@@ -176,9 +178,14 @@ def _host_path_for_doc(doc_id: str) -> Optional[str]:
             None,
         )
         if result:
+            # Returns a{say}: doc_id -> host path. The ``ay`` value may unpack as
+            # bytes or a list of ints depending on PyGObject, and the portal
+            # NUL-terminates the path — normalise both.
             paths_dict = result.get_child_value(0).unpack()
-            if doc_id in paths_dict:
-                return paths_dict[doc_id].decode("utf-8")
+            raw = paths_dict.get(doc_id)
+            if raw is not None:
+                host = bytes(raw).split(b"\x00", 1)[0].decode("utf-8", "surrogateescape")
+                return host or None
     except Exception as e:
         logger.debug(f"GetHostPaths failed for {doc_id}: {e}")
     return None
