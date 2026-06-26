@@ -496,6 +496,8 @@ def show_ssh_password_dialog(
     connection_manager: Optional[Any] = None,
     heading: Optional[str] = None,
     body: Optional[str] = None,
+    store_label: Optional[str] = None,
+    on_store: Optional[Any] = None,
 ) -> Optional[str]:
     """Show the standard in-app SSH **password** dialog (blocking).
 
@@ -540,6 +542,13 @@ def show_ssh_password_dialog(
         ``ctx.connection_manager`` from a plugin context.
     heading, body
         Optional overrides for dialog title and message (e.g. auth-retry text).
+    store_label, on_store
+        Custom storage hook for the **Store** checkbox. When *on_store* is given,
+        the checkbox is labelled *store_label* and ``on_store(password)`` is
+        called when the user ticks it — instead of the built-in
+        ``connection_manager.store_password`` path. Used to persist a sudo
+        password under its own keyring schema without touching the SSH-password
+        store.
 
     Returns
     -------
@@ -608,6 +617,8 @@ def show_ssh_password_dialog(
         connection_manager=connection_manager,
         heading=heading,
         body=body,
+        store_label=store_label,
+        on_store=on_store,
     )
 
 
@@ -622,6 +633,8 @@ def _show_password_passphrase_dialog(
     *,
     heading: Optional[str] = None,
     body: Optional[str] = None,
+    store_label: Optional[str] = None,
+    on_store: Optional[Any] = None,
 ) -> Optional[str]:
     """Show a graphical password or passphrase dialog.
     
@@ -672,10 +685,12 @@ def _show_password_passphrase_dialog(
             body = _("Please enter your password:")
     if prompt_type == "passphrase":
         placeholder = _("Passphrase")
-        store_label = _("Store passphrase")
+        default_store_label = _("Store passphrase")
     else:
         placeholder = _("Password")
-        store_label = _("Store password")
+        default_store_label = _("Store password")
+    if not store_label:
+        store_label = default_store_label
     
     # Create password/passphrase dialog
     dialog = Adw.MessageDialog(
@@ -750,7 +765,13 @@ def _show_password_passphrase_dialog(
                 
                 # Store password/passphrase if checkbox is checked
                 if store_checked[0]:
-                    if prompt_type == "passphrase" and key_path:
+                    if on_store is not None:
+                        # Caller-supplied storage hook (e.g. sudo-password keyring).
+                        try:
+                            on_store(entered_password)
+                        except Exception as e:
+                            logger.debug(f"Failed to store via on_store hook: {e}")
+                    elif prompt_type == "passphrase" and key_path:
                         # Store passphrase
                         try:
                             from .askpass_utils import store_passphrase

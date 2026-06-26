@@ -467,7 +467,9 @@ class PluginHost:
             return False
 
     def open_command_terminal(self, nickname: str, remote_command: str,
-                              *, title: Optional[str] = None) -> bool:
+                              *, title: Optional[str] = None,
+                              pty_prompt: Optional[str] = None,
+                              pty_response: Optional[str] = None) -> bool:
         if self._window is None:
             logger.warning("open_command_terminal(%r) before window is ready", nickname)
             return False
@@ -494,6 +496,7 @@ class PluginHost:
                 clone, force_new=True,
                 remote_command=str(remote_command), tab_title=title,
                 force_tty=True,  # a command in a terminal tab always wants a PTY
+                pty_prompt=pty_prompt, pty_response=pty_response,
             )
             return True
         except Exception:

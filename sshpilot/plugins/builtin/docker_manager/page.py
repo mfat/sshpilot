@@ -87,10 +87,17 @@ class DockerConsolePage(
         self._busy_cids: set[str] = set()
         # Set when the runtime probe found docker access denied even with sudo.
         self._sudo_denied = False
+        # Verified sudo passwords per host (session cache). Populated by the
+        # access probe (keyring autofill) or the GUI prompt; fed to ``sudo -S``
+        # on captured commands and auto-typed into the PTY for interactive ones.
+        self._sudo_passwords: dict[str, str] = {}
         # Container list filter text (search box).
         self._container_query = ""
         # Guards the runtime dropdown against feedback loops when synced in code.
         self._syncing_runtime = False
+        # Same guard for the sudo checkbox: programmatic set_active() must not
+        # re-enter the probe/prompt flow via the "toggled" handler.
+        self._syncing_sudo = False
         # Pulsing Docker-mark loading indicators (stopped on unmap).
         self._pulse_widgets: List[Gtk.Image] = []
         # Open destructive confirm (AlertDialog/MessageDialog); dismissed on host
@@ -253,12 +260,48 @@ class DockerConsolePage(
     def _use_sudo_for(self, nickname: str) -> bool:
         return bool(self.ctx.settings.get(f"sudo:{nickname}", False))
 
+    def _sudo_password_for(self, nickname: str) -> Optional[str]:
+        """Verified sudo password for this host, if one is needed/known."""
+        return self._sudo_passwords.get(nickname) if nickname else None
+
+    def _connection_for(self, nickname: str) -> Optional[Any]:
+        for c in self._connections:
+            if getattr(c, "nickname", None) == nickname:
+                return c
+        try:
+            return self.ctx.connection_manager.find_connection_by_nickname(nickname)
+        except Exception:
+            return None
+
+    def _host_user_for(self, nickname: str) -> tuple[Optional[str], str]:
+        """(host, username) used as the keyring identity for the sudo password —
+        the same host/username the SSH login password is keyed by."""
+        conn = self._connection_for(nickname)
+        if conn is None:
+            return nickname, ""
+        host = (getattr(conn, "hostname", None) or getattr(conn, "host", None)
+                or nickname)
+        return host, (getattr(conn, "username", None) or "")
+
     def _client(self) -> Optional[DockerClient]:
         nick = self._current_nickname()
         if not nick:
             return None
         return DockerClient(self.ctx.run_command, nick, self._runtime_for(nick),
-                            use_sudo=self._use_sudo_for(nick))
+                            use_sudo=self._use_sudo_for(nick),
+                            sudo_password=self._sudo_password_for(nick))
+
+    def _open_command_terminal(self, nick: str, cmd: str,
+                               title: Optional[str] = None) -> bool:
+        """Open a terminal tab for an interactive Docker command, arming the
+        PTY auto-fill when this host's sudo needs a password (so the prompt the
+        ``sudo -p`` sentinel produces is answered without the user typing it)."""
+        pw = self._sudo_password_for(nick) if self._use_sudo_for(nick) else None
+        if pw:
+            return self.ctx.open_command_terminal(
+                nick, cmd, title=title,
+                pty_prompt=DockerClient.SUDO_PROMPT, pty_response=pw)
+        return self.ctx.open_command_terminal(nick, cmd, title=title)
 
     def _toast(self, message: str) -> None:
         try:
@@ -404,11 +447,30 @@ class DockerConsolePage(
         self._update_host_button_label()
         self._on_host_changed()
 
+    def _set_sudo_check(self, active: bool) -> None:
+        """Set the sudo checkbox programmatically without firing ``_on_sudo_toggled``."""
+        self._syncing_sudo = True
+        try:
+            self._sudo_check.set_active(bool(active))
+        finally:
+            self._syncing_sudo = False
+
     def _on_sudo_toggled(self, check: Gtk.CheckButton) -> None:
+        if self._syncing_sudo:
+            return
         nick = self._current_nickname()
-        if nick:
-            self.ctx.settings.set(f"sudo:{nick}", bool(check.get_active()))
-        self._refresh_visible()
+        if not nick:
+            self._refresh_visible()
+            return
+        active = bool(check.get_active())
+        self.ctx.settings.set(f"sudo:{nick}", active)
+        if active:
+            # Re-probe so a password-required host prompts via the GUI dialog
+            # instead of silently failing every captured `sudo -n` command.
+            self._on_host_changed()
+        else:
+            self._sudo_passwords.pop(nick, None)
+            self._refresh_visible()
 
     # --- SSH multiplexing (ControlMaster) ------------------------------
     def _multiplex_enabled(self) -> bool:
@@ -467,7 +529,7 @@ class DockerConsolePage(
             return
         self._dismiss_active_confirm()
         self.ctx.settings.set("last_host", nick)
-        self._sudo_check.set_active(self._use_sudo_for(nick))
+        self._set_sudo_check(self._use_sudo_for(nick))
         self._syncing_runtime = True
         self._runtime_drop.set_selected(self._runtime_mode_index(nick))
         self._syncing_runtime = False
@@ -501,36 +563,141 @@ class DockerConsolePage(
 
         # Detect docker vs podman, then probe access: if a plain `ps` is denied by
         # the daemon socket but `sudo -n ps` works, switch this host to sudo.
+        # If even `sudo -n` is denied (password required), try a keyring-stored
+        # sudo password; if none works, ask the user (handled in ``done``).
         # An explicit runtime override skips auto-detect.
+        want_sudo = self._use_sudo_for(nick)
+
         def probe():
             runtime = (mode if mode in ("docker", "podman")
                        else DockerClient(rc, nick).detect_runtime() or "docker")
+            # The user explicitly asked for sudo: don't second-guess it on a plain
+            # `ps` — the only open question is whether sudo needs a password.
+            if want_sudo:
+                return (runtime, *self._resolve_sudo(rc, nick, runtime))
+            # sudo not requested: try plain, and fall back to sudo only on a
+            # docker-socket *permission* error (user not in the 'docker' group).
             plain = DockerClient(rc, nick, runtime, use_sudo=False).ping()
             if getattr(plain, "exit_code", 0) == 0:
-                return runtime, False, None
+                return runtime, False, None, None
             text = (getattr(plain, "stderr", "") or "") + (getattr(plain, "stdout", "") or "")
             if DockerClient.is_permission_error(text):
-                sudo = DockerClient(rc, nick, runtime, use_sudo=True).ping()
-                if getattr(sudo, "exit_code", 1) == 0:
-                    return runtime, True, None
-                return runtime, False, "denied"  # sudo needs a password
-            return runtime, False, None  # other error — let the refresh surface it
+                return (runtime, *self._resolve_sudo(rc, nick, runtime))
+            return runtime, False, None, None  # other error — refresh surfaces it
 
         def done(result, _err: Optional[Exception]) -> None:
             self._sudo_denied = False
-            if result:
-                runtime, use_sudo, status = result
-                self.ctx.settings.set(f"runtime:{nick}", runtime)
-                if use_sudo:
-                    self.ctx.settings.set(f"sudo:{nick}", True)
-                    self._sudo_check.set_active(True)
-                elif status == "denied":
-                    self._sudo_denied = True
-                    self._toast("Docker access denied. Add your user to the "
-                                "'docker' group, or enable passwordless sudo.")
+            if not result:
+                self._refresh_visible()
+                return
+            runtime, use_sudo, status, pw = result
+            self.ctx.settings.set(f"runtime:{nick}", runtime)
+            # A password is required and we don't have a working one — keep sudo
+            # on and ask the user (handles both the explicit opt-in and the
+            # permission-denied auto-enable).
+            if status == "needs_password":
+                self.ctx.settings.set(f"sudo:{nick}", True)
+                self._set_sudo_check(True)
+                self._prompt_for_sudo_password(nick, runtime)
+                return
+            if use_sudo:
+                self.ctx.settings.set(f"sudo:{nick}", True)
+                self._set_sudo_check(True)
+                if status == "password" and pw is not None:
+                    self._sudo_passwords[nick] = pw
             self._refresh_visible()
 
         self._run_async(probe, done)
+
+    def _resolve_sudo(self, rc: Any, nick: str, runtime: str):
+        """Decide how sudo authenticates on this host (runs on a worker thread):
+        ``(use_sudo, status, password)`` — passwordless, a verified cached/stored
+        password, or ``needs_password`` (prompt the user)."""
+        sudo = DockerClient(rc, nick, runtime, use_sudo=True).ping()  # sudo -n
+        if getattr(sudo, "exit_code", 1) == 0:
+            return True, None, None  # passwordless sudo
+        # sudo needs a password — try a cached/stored one before prompting.
+        pw = self._sudo_passwords.get(nick) or self._lookup_stored_sudo(nick)
+        if pw and self._verify_sudo(rc, nick, runtime, pw):
+            return True, "password", pw
+        return True, "needs_password", None
+
+    @staticmethod
+    def _verify_sudo(rc: Any, nick: str, runtime: str, password: str) -> bool:
+        """True if ``password`` lets ``sudo -S docker ps`` succeed on the host."""
+        chk = DockerClient(rc, nick, runtime, use_sudo=True,
+                           sudo_password=password).ping()
+        return getattr(chk, "exit_code", 1) == 0
+
+    def _lookup_stored_sudo(self, nick: str) -> str:
+        host, user = self._host_user_for(nick)
+        if not host:
+            return ""
+        try:
+            from ....askpass_utils import lookup_sudo_password
+            return lookup_sudo_password(host, user)
+        except Exception:
+            return ""
+
+    def _prompt_for_sudo_password(self, nick: str, runtime: str) -> None:
+        """Ask for the host's sudo password (GUI), verify it, then enable sudo.
+        Runs on the UI thread; verification is offloaded to a worker."""
+        host, user = self._host_user_for(nick)
+        from ....window import show_ssh_password_dialog
+        from ....askpass_utils import store_sudo_password
+
+        on_store = (lambda p: store_sudo_password(host, user, p)) if host else None
+        password = show_ssh_password_dialog(
+            from_widget=self,
+            display_name=nick,
+            host=host,
+            username=user,
+            heading="Sudo password required",
+            body=(f"“{nick}” needs a sudo password to access Docker.\n\n"
+                  "Enter your sudo password:"),
+            store_label="Save sudo password",
+            on_store=on_store,
+        )
+        if not password:
+            # Cancelled — back off sudo so a host that works without it (or just
+            # shows the real permission error) isn't stuck looping on `sudo -n`.
+            self._disable_sudo(nick)
+            self._refresh_visible()
+            return
+
+        rc = self.ctx.run_command
+
+        def verify():
+            return self._verify_sudo(rc, nick, runtime, password)
+
+        def after(ok: Optional[bool], _err: Optional[Exception]) -> None:
+            if ok:
+                self._sudo_passwords[nick] = password
+                self.ctx.settings.set(f"sudo:{nick}", True)
+                self._set_sudo_check(True)
+                self._sudo_denied = False
+            else:
+                # Wrong password — drop any stale keyring entry so it doesn't
+                # silently autofill the bad value next time, and back off sudo.
+                if host:
+                    try:
+                        from ....askpass_utils import clear_sudo_password
+                        clear_sudo_password(host, user)
+                    except Exception:
+                        pass
+                self._disable_sudo(nick)
+                self._toast("Sudo password incorrect.")
+            self._refresh_visible()
+
+        self._run_async(verify, after)
+
+    def _disable_sudo(self, nick: str) -> None:
+        """Turn sudo off for a host and drop its cached password (used when the
+        user cancels or the password is wrong)."""
+        self._sudo_passwords.pop(nick, None)
+        self.ctx.settings.set(f"sudo:{nick}", False)
+        self._set_sudo_check(False)
+        self._sudo_denied = False
 
     # ================================================================
     # auto-refresh lifecycle

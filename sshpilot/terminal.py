@@ -1417,7 +1417,13 @@ class TerminalWidget(Gtk.Box):
 
         logger.debug(f"Terminal spawned with PID: {pid}")
         self.process_pid = pid
-        
+
+        # Arm the one-shot PTY auto-fill (e.g. answer a remote sudo prompt).
+        try:
+            self._install_pty_autofill()
+        except Exception:
+            logger.debug("Could not arm PTY auto-fill", exc_info=True)
+
         try:
             # Get and store process group ID
             self.process_pgid = os.getpgid(pid)
@@ -1668,6 +1674,74 @@ class TerminalWidget(Gtk.Box):
         except Exception:
             pass
         return ''
+
+    # -- one-shot PTY auto-fill (e.g. answer a remote sudo password prompt) ----
+    def _install_pty_autofill(self):
+        """Arm a watcher that types a canned response the first time a known
+        prompt appears in the terminal. Used to answer a remote ``sudo`` password
+        prompt: the secret travels through the encrypted PTY exactly as if typed,
+        never on a command line. No-op unless ``_pty_autofill`` is set."""
+        autofill = getattr(self, '_pty_autofill', None)
+        if not autofill or not autofill[0]:
+            return
+        self._pty_autofill_done = False
+        vte = getattr(self, 'vte', None)
+        if vte is None:
+            return
+        try:
+            self._pty_autofill_handler = vte.connect(
+                'contents-changed', self._on_pty_autofill_changed)
+        except Exception:
+            logger.debug("Could not connect PTY auto-fill watcher", exc_info=True)
+            return
+        # Safety: give up after 30s so we never linger or leak the handler if the
+        # prompt never shows (e.g. cached sudo credentials, wrong command).
+        self._pty_autofill_timeout_id = GLib.timeout_add_seconds(
+            30, self._cancel_pty_autofill)
+
+    def _on_pty_autofill_changed(self, _vte):
+        if getattr(self, '_pty_autofill_done', True):
+            return False
+        autofill = getattr(self, '_pty_autofill', None)
+        if not autofill:
+            return False
+        prompt, response = autofill
+        if prompt not in (self._scrape_recent_terminal_text(max_chars=4000) or ''):
+            return False
+        # Matched — type the response once, then stop watching.
+        self._pty_autofill_done = True
+        try:
+            data = (response + '\n').encode('utf-8')
+            if getattr(self, 'backend', None) is not None and hasattr(self.backend, 'feed_child'):
+                self.backend.feed_child(data)
+            elif getattr(self, 'vte', None) is not None:
+                self.vte.feed_child(data)
+        except Exception:
+            logger.debug("PTY auto-fill feed failed", exc_info=True)
+        self._cancel_pty_autofill()
+        return False
+
+    def _cancel_pty_autofill(self):
+        """Disconnect the auto-fill watcher and drop the cached response."""
+        self._pty_autofill_done = True
+        self._pty_autofill = None
+        handler_id = getattr(self, '_pty_autofill_handler', None)
+        if handler_id:
+            try:
+                vte = getattr(self, 'vte', None)
+                if vte is not None:
+                    vte.disconnect(handler_id)
+            except Exception:
+                pass
+            self._pty_autofill_handler = None
+        tid = getattr(self, '_pty_autofill_timeout_id', None)
+        if tid:
+            try:
+                GLib.source_remove(tid)
+            except Exception:
+                pass
+            self._pty_autofill_timeout_id = None
+        return False  # one-shot GLib timeout
 
     def _classify_exit(self, exit_code, was_connected, extra_text=''):
         """Map an ssh exit into (ConnectionState, reason) from the exit code and

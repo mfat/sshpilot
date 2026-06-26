@@ -277,7 +277,7 @@ class ContainersTabMixin:
         if client is None or not nick:
             return
         self._warn_sudo_interactive(nick)
-        ok = self.ctx.open_command_terminal(
+        ok = self._open_command_terminal(
             nick, client.exec_shell_command(cid), title=f"sh: {name}"
         )
         if not ok:
@@ -293,7 +293,7 @@ class ContainersTabMixin:
             cid, tail=int(self._tail_spin.get_value()),
             timestamps=self._ts_switch.get_active(),
         )
-        ok = self.ctx.open_command_terminal(nick, cmd, title=f"logs: {name}")
+        ok = self._open_command_terminal(nick, cmd, title=f"logs: {name}")
         if not ok:
             self._toast("Could not open logs")
 
