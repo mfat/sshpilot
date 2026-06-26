@@ -30,7 +30,11 @@ from .scp_utils import (
     upload_file,
 )
 from .platform_utils import is_flatpak
-from .file_manager.portal_docs import resolve_granted_folder, restore_granted_folder
+from .file_manager.portal_docs import (
+    is_flatpak_destination_grant,
+    resolve_granted_folder,
+    restore_granted_folder,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -545,6 +549,25 @@ class ScpWindowController:
                     local_row.set_editable(False)
                 except Exception:
                     pass
+
+                def _apply_flatpak_destination(grant: Optional[Dict[str, str]]) -> None:
+                    if is_flatpak_destination_grant(grant):
+                        resolved_destination['path'] = grant['path']
+                        resolved_destination['display'] = grant['display']
+                        local_row.set_text(grant['display'])
+                        try:
+                            local_row.remove_css_class('dim-label')
+                        except Exception:
+                            pass
+                    else:
+                        resolved_destination['path'] = None
+                        resolved_destination['display'] = None
+                        local_row.set_text('')
+                        try:
+                            local_row.add_css_class('dim-label')
+                        except Exception:
+                            pass
+
                 # Auto-restore the last granted folder so the user need not pick
                 # one every session (parity with the file manager).
                 try:
@@ -552,12 +575,7 @@ class ScpWindowController:
                 except Exception as exc:
                     logger.debug(f'Could not restore granted folder: {exc}')
                     restored = None
-                if restored:
-                    resolved_destination['path'] = restored['path']
-                    resolved_destination['display'] = restored['display']
-                    local_row.set_text(restored['display'])
-                else:
-                    local_row.set_text('')
+                _apply_flatpak_destination(restored)
                 try:
                     local_editable = local_row.get_editable()
                     if local_editable and hasattr(local_editable, 'set_placeholder_text'):
@@ -630,11 +648,9 @@ class ScpWindowController:
                         # picker. The raw host path is not reachable by scp.
                         granted = resolve_granted_folder(folder)
                         if granted:
-                            resolved_destination['path'] = granted['path']
-                            resolved_destination['display'] = granted['display']
-                            # Show the full real path, not the portal mount basename.
-                            local_row.set_text(granted['display'])
+                            _apply_flatpak_destination(granted)
                         else:
+                            _apply_flatpak_destination(None)
                             status_label.set_text(
                                 _('Could not get write access to the selected folder.')
                             )

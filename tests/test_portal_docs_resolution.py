@@ -81,7 +81,7 @@ def test_lookup_document_path_prefers_portal_mount(monkeypatch):
     """``_lookup_document_path`` must honor its docstring: return the writable
     portal mount when present, not the host path from GetHostPaths."""
     monkeypatch.setattr(portal_docs, "is_flatpak", lambda: True)
-    monkeypatch.setattr(portal_docs, "_lookup_path_from_config", lambda doc_id: None)
+    monkeypatch.setattr(portal_docs, "_lookup_path_from_config", lambda doc_id, portal_only=False: None)
     host_called = {"hit": False}
 
     def _host(doc_id):
@@ -96,14 +96,45 @@ def test_lookup_document_path_prefers_portal_mount(monkeypatch):
     assert host_called["hit"] is False
 
 
-def test_lookup_document_path_falls_back_to_host(monkeypatch):
-    """When no portal mount exists, GetHostPaths is the last resort (display)."""
+def test_lookup_document_path_never_returns_host_in_flatpak(monkeypatch):
+    """When no portal mount exists, do not return GetHostPaths (display-only)."""
     monkeypatch.setattr(portal_docs, "is_flatpak", lambda: True)
-    monkeypatch.setattr(portal_docs, "_lookup_path_from_config", lambda doc_id: None)
+    monkeypatch.setattr(portal_docs, "_lookup_path_from_config", lambda doc_id, portal_only=False: None)
     monkeypatch.setattr(portal_docs, "_host_path_for_doc", lambda doc_id: "/home/user/Downloads")
     monkeypatch.setattr(os.path, "isdir", lambda p: False)
 
-    assert portal_docs._lookup_document_path("DOCID") == "/home/user/Downloads"
+    assert portal_docs._lookup_document_path("DOCID") is None
+
+
+def test_resolve_uses_portal_mount_when_picker_returns_host_path(patched_portal, monkeypatch):
+    """Host picker paths must not be used for scp — fall back to the portal mount."""
+    mount = f"/run/user/{os.getuid()}/doc/DOCID"
+    monkeypatch.setattr(os.path, "isdir", lambda p: p == mount)
+
+    result = portal_docs.resolve_granted_folder(_FakeGFile("/home/mahdi"))
+
+    assert result is not None
+    assert result["path"] == mount
+    assert result["display"] == "/home/mahdi"
+    assert patched_portal == {"DOCID": mount}
+
+
+def test_restore_ignores_stale_host_path_in_config(monkeypatch):
+    """Restored grants must use the portal mount, not a saved host path."""
+    mount = f"/run/user/{os.getuid()}/doc/HOMEID"
+    config = {"HOMEID": {"path": "/home/mahdi", "display": "/home/mahdi"}}
+    monkeypatch.setattr(portal_docs, "is_flatpak", lambda: True)
+    monkeypatch.setattr(portal_docs, "_load_doc_config", lambda: config)
+    monkeypatch.setattr(os.path, "isdir", lambda p: p == mount)
+    monkeypatch.setattr(os, "access", lambda p, mode: p == mount)
+    monkeypatch.setattr(portal_docs, "_host_path_from_xattr", lambda p: None)
+    monkeypatch.setattr(portal_docs, "_host_path_for_doc", lambda doc_id: "/")
+
+    result = portal_docs.restore_granted_folder()
+
+    assert result is not None
+    assert result["path"] == mount
+    assert result["display"] == "/home/mahdi"
 
 
 def test_restore_returns_most_recent_grant(monkeypatch):
@@ -118,6 +149,7 @@ def test_restore_returns_most_recent_grant(monkeypatch):
         portal_docs, "_lookup_document_path", lambda doc_id: f"/run/user/1000/doc/{doc_id}/New"
     )
     monkeypatch.setattr(os.path, "isdir", lambda p: True)
+    monkeypatch.setattr(os, "access", lambda p, mode: True)
     # Host-path resolver (xattr → GetHostPaths) is tested separately.
     monkeypatch.setattr(portal_docs, "_real_host_path", lambda portal_path, doc_id: f"/home/user/{doc_id}")
     monkeypatch.setattr(portal_docs, "_pretty_path_for_display", lambda p: p)
@@ -143,6 +175,7 @@ def test_restore_skips_unresolvable_and_falls_through(monkeypatch):
     )
     # Newest ("NEW") no longer mounts; older ("OLD") still does.
     monkeypatch.setattr(os.path, "isdir", lambda p: p.endswith("/OLD"))
+    monkeypatch.setattr(os, "access", lambda p, mode: True)
     monkeypatch.setattr(portal_docs, "_real_host_path", lambda portal_path, doc_id: f"/home/user/{doc_id}")
     monkeypatch.setattr(portal_docs, "_pretty_path_for_display", lambda p: p)
 
@@ -152,18 +185,17 @@ def test_restore_skips_unresolvable_and_falls_through(monkeypatch):
     assert result["doc_id"] == "OLD"
 
 
-def test_restore_display_falls_back_to_portal_path_without_host(monkeypatch):
-    """If the host path can't be resolved, display falls back to the portal path."""
+def test_restore_skips_grant_when_host_display_unresolvable(monkeypatch):
+    """If only a raw portal mount would be shown, do not auto-restore."""
     config = {"DOCID": {"path": "/run/user/1000/doc/DOCID/Downloads"}}
     monkeypatch.setattr(portal_docs, "_load_doc_config", lambda: config)
     monkeypatch.setattr(portal_docs, "_lookup_document_path", lambda doc_id: "/run/user/1000/doc/DOCID")
     monkeypatch.setattr(os.path, "isdir", lambda p: True)
+    monkeypatch.setattr(os, "access", lambda p, mode: True)
     monkeypatch.setattr(portal_docs, "_real_host_path", lambda portal_path, doc_id: None)
     monkeypatch.setattr(portal_docs, "_pretty_path_for_display", lambda p: f"PRETTY:{p}")
 
-    result = portal_docs.restore_granted_folder()
-
-    assert result["display"] == "PRETTY:/run/user/1000/doc/DOCID"
+    assert portal_docs.restore_granted_folder() is None
 
 
 def test_host_path_from_xattr_reads_and_normalises(monkeypatch):
@@ -268,22 +300,36 @@ def test_portal_path_to_host_entry_xattr_wins_over_gethostpaths(monkeypatch):
     assert portal_docs._portal_path_to_host("/run/user/1000/doc/ID/segs/sub") == "/home/mahdi/Desktop/segs/sub"
 
 
-def test_restore_home_folder_grant_shows_home_not_slash(monkeypatch):
-    """Bare portal mount root with GetHostPaths '/' is a home-folder grant."""
+def test_restore_home_folder_grant_uses_saved_display(monkeypatch):
+    """Bare portal mount with GetHostPaths '/' uses the saved host display."""
     mount = f"/run/user/{os.getuid()}/doc/HOMEID"
-    config = {"HOMEID": {"path": mount, "display": "/"}}
+    config = {"HOMEID": {"path": mount, "display": "/home/mahdi"}}
     monkeypatch.setattr(portal_docs, "_load_doc_config", lambda: config)
     monkeypatch.setattr(portal_docs, "_lookup_document_path", lambda doc_id: mount)
     monkeypatch.setattr(os.path, "isdir", lambda p: True)
+    monkeypatch.setattr(os, "access", lambda p, mode: True)
     monkeypatch.setattr(portal_docs, "_host_path_from_xattr", lambda p: None)
     monkeypatch.setattr(portal_docs, "_host_path_for_doc", lambda doc_id: "/")
-    monkeypatch.setattr(os.path, "expanduser", lambda p: "/home/mahdi" if p == "~" else p)
 
     result = portal_docs.restore_granted_folder()
 
     assert result is not None
     assert result["path"] == mount
     assert result["display"] == "/home/mahdi"
+
+
+def test_restore_skips_grant_with_meaningless_display(monkeypatch):
+    """Stale grants that only resolve to ``/home`` are not auto-restored."""
+    mount = f"/run/user/{os.getuid()}/doc/HOMEID"
+    config = {"HOMEID": {"path": mount, "display": "/home"}}
+    monkeypatch.setattr(portal_docs, "_load_doc_config", lambda: config)
+    monkeypatch.setattr(portal_docs, "_lookup_document_path", lambda doc_id: mount)
+    monkeypatch.setattr(os.path, "isdir", lambda p: True)
+    monkeypatch.setattr(os, "access", lambda p, mode: True)
+    monkeypatch.setattr(portal_docs, "_host_path_from_xattr", lambda p: None)
+    monkeypatch.setattr(portal_docs, "_host_path_for_doc", lambda doc_id: "/")
+
+    assert portal_docs.restore_granted_folder() is None
 
 
 def test_restore_returns_none_when_empty_or_unresolvable(monkeypatch):
