@@ -7,6 +7,7 @@ This is an alternative to the Gtk.ListBox-based sidebar. It is read-only
 
 import logging
 from gi.repository import Gtk, Gio, GObject, Pango
+from .search_utils import connection_matches
 
 logger = logging.getLogger(__name__)
 
@@ -134,7 +135,7 @@ def _on_activate(listview, position, window):
         tree_row.set_expanded(not tree_row.get_expanded())
 
 
-def build_tree_model(window):
+def build_tree_model(window, filter_text=''):
     """Build a Gtk.TreeListModel from the window's current groups/connections."""
     gm = window.group_manager
     conns_by_nickname = {
@@ -142,18 +143,41 @@ def build_tree_model(window):
         for c in window.connection_manager.get_connections()
     }
 
+    ft = filter_text.strip().lower() if filter_text else ''
+
+    def _conn_matches(conn):
+        return not ft or connection_matches(conn, ft)
+
+    def _group_name_matches(ginfo):
+        return not ft or ft in (ginfo.get('name') or '').lower()
+
+    def _group_has_any_match(gid):
+        if not ft:
+            return True
+        ginfo = gm.groups.get(gid, {})
+        if _group_name_matches(ginfo):
+            return True
+        for nickname in (ginfo.get('connections') or []):
+            conn = conns_by_nickname.get(nickname)
+            if conn and _conn_matches(conn):
+                return True
+        for cgid in (gm.get_ordered_siblings(gid) or []):
+            if _group_has_any_match(cgid):
+                return True
+        return False
+
     root = Gio.ListStore.new(GObject.Object)
 
     # Root-level groups in order
     for gid in (gm.get_ordered_siblings(None) or []):
         ginfo = gm.groups.get(gid)
-        if ginfo:
+        if ginfo and _group_has_any_match(gid):
             root.append(SidebarGroupItem(gid, ginfo))
 
     # Ungrouped connections
     for nickname in (gm.root_connections or []):
         conn = conns_by_nickname.get(nickname)
-        if conn:
+        if conn and _conn_matches(conn):
             root.append(SidebarConnectionItem(conn))
 
     def create_children(item):
@@ -162,22 +186,23 @@ def build_tree_model(window):
         gid = item.group_id
         ginfo = item.group_info
         children = Gio.ListStore.new(GObject.Object)
+        parent_name_matched = _group_name_matches(ginfo)
 
         # Child groups in order
         for cgid in (gm.get_ordered_siblings(gid) or []):
             cginfo = gm.groups.get(cgid)
-            if cginfo:
+            if cginfo and (parent_name_matched or _group_has_any_match(cgid)):
                 children.append(SidebarGroupItem(cgid, cginfo))
 
         # Connections in this group
         for nickname in (ginfo.get('connections') or []):
             conn = conns_by_nickname.get(nickname)
-            if conn:
+            if conn and (parent_name_matched or _conn_matches(conn)):
                 children.append(SidebarConnectionItem(conn))
 
         return children if children.get_n_items() > 0 else None
 
-    return Gtk.TreeListModel.new(root, False, False, create_children)
+    return Gtk.TreeListModel.new(root, False, bool(ft), create_children)
 
 
 def build_tree_list_view(window, tree_model):

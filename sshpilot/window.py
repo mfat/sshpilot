@@ -2038,7 +2038,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         """Rebuild the Gtk.ListView-based tree view from current data."""
         try:
             from .sidebar_tree import build_tree_model, build_tree_list_view
-            model = build_tree_model(self)
+            filter_text = ''
+            try:
+                if self.search_container.get_visible():
+                    filter_text = self.search_entry.get_text().strip().lower()
+            except Exception:
+                pass
+            model = build_tree_model(self, filter_text)
             listview = build_tree_list_view(self, model)
             self.tree_scrolled.set_child(listview)
         except Exception:
