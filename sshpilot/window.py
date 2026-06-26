@@ -6815,8 +6815,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         menu.append_section(None, sec2)
 
         sec3 = Gio.Menu()
-        sec3.append_item(_item(_('Horizontal'), 'tabmenu-layout-horizontal'))
-        sec3.append_item(_item(_('Vertical/Grid'), 'tabmenu-layout-vertical'))
+        sec3.append_item(_item(_('Side by Side'), 'tabmenu-layout-horizontal'))
+        sec3.append_item(_item(_('Top / Bottom'), 'tabmenu-layout-vertical'))
         sec3.append_item(_item(_('Default layout'), 'tabmenu-layout-default'))
         sec3.append_item(_item(_('Compact layout'), 'tabmenu-layout-compact'))
         menu.append_section(None, sec3)
