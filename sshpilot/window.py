@@ -2029,6 +2029,32 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             except Exception:
                 logger.debug("Failed to apply header-bar button visibility for %s", attr, exc_info=True)
 
+    def _on_tree_view_toggled(self, btn, *args):
+        active = btn.get_active()
+        self.config.set_setting('ui.sidebar_tree_view', active)
+        self.apply_sidebar_view_mode()
+
+    def _rebuild_tree_view(self):
+        """Rebuild the Gtk.ListView-based tree view from current data."""
+        try:
+            from .sidebar_tree import build_tree_model, build_tree_list_view
+            model = build_tree_model(self)
+            listview = build_tree_list_view(self, model)
+            self.tree_scrolled.set_child(listview)
+        except Exception:
+            logger.exception('Failed to rebuild tree view')
+
+    def apply_sidebar_view_mode(self):
+        """Switch the sidebar between list and tree view based on the config key."""
+        if not hasattr(self, 'sidebar_stack'):
+            return
+        use_tree = self.config.get_setting('ui.sidebar_tree_view', False)
+        if use_tree:
+            self._rebuild_tree_view()
+            self.sidebar_stack.set_visible_child_name('tree')
+        else:
+            self.sidebar_stack.set_visible_child_name('list')
+
     def update_sidebar_display(self):
         """Update sidebar display based on current preferences."""
         if not hasattr(self, 'connection_list'):
@@ -2431,6 +2457,22 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception:
             pass
         header.append(hide_button)
+
+        # Tree view toggle button
+        self.tree_view_toggle_btn = Gtk.ToggleButton()
+        self.tree_view_toggle_btn.add_css_class('flat')
+        self._expand_sidebar_toolbar_button(self.tree_view_toggle_btn)
+        icon_utils.set_button_icon(self.tree_view_toggle_btn, 'view-list-symbolic')
+        self.tree_view_toggle_btn.set_tooltip_text('Toggle Tree View')
+        self.tree_view_toggle_btn.set_active(
+            self.config.get_setting('ui.sidebar_tree_view', False)
+        )
+        self.tree_view_toggle_btn.connect('toggled', self._on_tree_view_toggled)
+        try:
+            self.tree_view_toggle_btn.set_can_focus(False)
+        except Exception:
+            pass
+        header.append(self.tree_view_toggle_btn)
 
         # Sidebar view toggle (hosts hierarchy <-> dedicated tags view).
         # A ToggleButton so Adwaita renders the active state; the tag icon
@@ -2987,8 +3029,20 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             )
         
         self.connection_scrolled.set_child(self.connection_list)
-        sidebar_box.append(self.connection_scrolled)
-        
+
+        self.tree_scrolled = Gtk.ScrolledWindow()
+        self.tree_scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        self.tree_scrolled.set_vexpand(True)
+        self.tree_scrolled.set_hexpand(True)
+
+        self.sidebar_stack = Gtk.Stack()
+        self.sidebar_stack.set_transition_type(Gtk.StackTransitionType.NONE)
+        self.sidebar_stack.set_vexpand(True)
+        self.sidebar_stack.set_hexpand(True)
+        self.sidebar_stack.add_named(self.connection_scrolled, "list")
+        self.sidebar_stack.add_named(self.tree_scrolled, "tree")
+        sidebar_box.append(self.sidebar_stack)
+
         # Sidebar toolbar
         toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         toolbar.set_hexpand(True)
@@ -4085,6 +4139,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             vadj = self.connection_scrolled.get_vadjustment()
             if vadj:
                 GLib.idle_add(lambda: vadj.set_value(scroll_position))
+
+        # Keep tree view in sync; also switches the stack on first load
+        if self.config.get_setting('ui.sidebar_tree_view', False):
+            self.apply_sidebar_view_mode()
+
     def _build_tags_view(self, connections, connections_dict, filter_text=None):
         """Render the dedicated tags view: one section per tag, then Untagged.
 
