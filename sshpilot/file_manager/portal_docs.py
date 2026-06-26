@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from typing import Dict, List, Optional
 
 from gi.repository import Gio, GLib
@@ -283,14 +284,62 @@ def _host_path_from_xattr(path: str) -> Optional[str]:
     return host or None
 
 
+_PORTAL_GRANT_ROOT_RE = re.compile(r"^/run/user/\d+/doc/[^/]+")
+
+
+def _portal_grant_root(path: str) -> Optional[str]:
+    """Return the portal grant's accessible root (``/run/user/<uid>/doc/<id>``)
+    for any path inside it, or ``None`` if ``path`` is not a portal path.
+
+    This is the sandbox-accessible boundary of a document-portal grant: paths at
+    or below it are reachable, anything above it (``/run/user/<uid>/doc`` and up)
+    is not.
+    """
+    if not path:
+        return None
+    match = _PORTAL_GRANT_ROOT_RE.match(path)
+    return match.group(0) if match else None
+
+
+def _portal_path_to_host(path: str) -> Optional[str]:
+    """Resolve a ``/doc/`` portal path (possibly a subpath of a grant) to its
+    full real host path.
+
+    Walks up from ``path`` to the grant root reading the
+    ``user.document-portal.host-path`` xattr (only guaranteed on the granted
+    entry, not its descendants), collecting tail segments to re-append. The xattr
+    is usually absent on the bare mount root, so when the walk reaches the grant
+    root without a hit, fall back to ``GetHostPaths`` for the doc id. Returns
+    ``None`` for non-portal paths or when nothing resolves.
+    """
+    root = _portal_grant_root(path)
+    if not root:
+        return None
+    cur = path
+    tail: List[str] = []
+    while True:
+        host = _host_path_from_xattr(cur)
+        if host:
+            return os.path.join(host, *reversed(tail)) if tail else host
+        if cur == root:
+            break
+        tail.append(os.path.basename(cur))
+        cur = os.path.dirname(cur)
+    # Reached the grant root with no xattr — resolve the doc id via GetHostPaths.
+    host = _host_path_for_doc(os.path.basename(root))
+    if host:
+        return os.path.join(host, *reversed(tail)) if tail else host
+    return None
+
+
 def _real_host_path(portal_path: str, doc_id: str) -> Optional[str]:
     """Resolve the real host path for a granted folder, for DISPLAY only.
 
     Prefers the ``user.document-portal.host-path`` xattr off the portal mount
-    (``portal_path``, which must carry the basename), then falls back to the
-    Documents portal ``GetHostPaths`` D-Bus call.
+    (walking up to the granted entry when ``portal_path`` is a subpath), then
+    falls back to the Documents portal ``GetHostPaths`` D-Bus call.
     """
-    return _host_path_from_xattr(portal_path) or _host_path_for_doc(doc_id)
+    return _portal_path_to_host(portal_path) or _host_path_for_doc(doc_id)
 
 
 def resolve_granted_folder(gfile) -> Optional[Dict[str, str]]:
@@ -424,14 +473,19 @@ def _pretty_path_for_display(path: str) -> str:
     """Convert a filesystem path to a human-friendly display string.
 
     Uses GFile's parse_name for human-readable presentation (often shows "~" etc.).
-    For document portal paths, shows just the folder name instead of the full mount path.
+    For document portal paths, resolves the real host path (e.g.
+    ``/home/user/Desktop/segs``) via the ``user.document-portal.host-path`` xattr;
+    only if that is unavailable does it fall back to the folder name.
     """
     try:
         gfile = Gio.File.new_for_path(path)
         parse_name = gfile.get_parse_name()
 
-        # If it's a doc mount, show a human-friendly version
+        # If it's a doc mount, show the real host path when resolvable.
         if "/doc/" in path and parse_name.startswith("/run/"):
+            host = _portal_path_to_host(path)
+            if host:
+                return host
             # Extract the final directory name from the portal path
             basename = gfile.get_basename()
             if basename:
