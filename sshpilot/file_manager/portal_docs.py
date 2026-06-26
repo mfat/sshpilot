@@ -316,19 +316,28 @@ def _portal_grant_root(path: str) -> Optional[str]:
     return match.group(0) if match else None
 
 
-def _is_valid_destination(path: str) -> bool:
-    """Whether ``path`` is usable as a download destination.
+def _is_usable_grant(path: str) -> bool:
+    """Whether ``path`` is a still-usable granted folder for browsing/restore.
 
-    Must be an existing, writable directory. Under Flatpak it must also be a
-    portal mount (``/run/user/<uid>/doc/<id>/…``): a bare host path like ``/``
-    is not sandbox-writable in a host-backed way — scp writing there lands in the
-    ephemeral sandbox root, "succeeds", and silently loses the file.
+    Must be an existing, sandbox-reachable directory. Under Flatpak it must be a
+    portal mount (``/run/user/<uid>/doc/<id>/…``); a bare host path like ``/`` is
+    not a real grant. Does NOT require write access (read-only browsing is fine).
     """
     if not path or not os.path.isdir(path):
         return False
     if is_flatpak() and _portal_grant_root(path) is None:
         return False
-    return os.access(path, os.W_OK)
+    return True
+
+
+def _is_valid_destination(path: str) -> bool:
+    """A usable grant (see :func:`_is_usable_grant`) that is also **writable** —
+    required for a download destination.
+
+    Under Flatpak a bare host path like ``/`` is rejected: scp writing there lands
+    in the ephemeral sandbox root, "succeeds", and silently loses the file.
+    """
+    return _is_usable_grant(path) and os.access(path, os.W_OK)
 
 
 def _portal_path_to_host(path: str) -> Optional[str]:
@@ -485,7 +494,13 @@ def _lookup_doc_entry(doc_id: str) -> Optional[Dict[str, str]]:
 
 
 def _load_first_doc_path():
-    """Load the first valid document portal path from saved config."""
+    """Load the most recently granted, still-usable portal path from config.
+
+    Entries are tried in reverse insertion order (newest first) so the file
+    manager restores the *last* folder the user granted, and unusable entries
+    (e.g. a stale ``/`` grant, or a folder no longer mounted) are skipped.
+    Returns ``(portal_path, doc_id, entry)`` or ``None``.
+    """
     logger.debug(f"Looking for config file: {DOCS_JSON}")
 
     config = _load_doc_config()
@@ -493,10 +508,11 @@ def _load_first_doc_path():
         logger.debug("Config file does not exist or is empty")
         return None
 
-    for doc_id, entry in config.items():
+    for doc_id in reversed(list(config)):
+        entry = config[doc_id]
         logger.debug(f"Looking up document ID: {doc_id}")
         portal_path = _lookup_document_path(doc_id)
-        if portal_path and os.path.isdir(portal_path):
+        if portal_path and _is_usable_grant(portal_path):
             logger.debug(f"Found valid portal path: {portal_path}")
             return portal_path, doc_id, entry
 

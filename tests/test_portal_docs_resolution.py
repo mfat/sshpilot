@@ -236,6 +236,38 @@ def test_grant_non_flatpak_uses_stable_md5(monkeypatch):
     assert portal_docs._grant_persistent_access(_FakeGFile("/home/mahdi/Downloads")) == expected
 
 
+def test_is_usable_grant_allows_readonly(monkeypatch):
+    """Browsing grants don't require write access; only portal mounts qualify."""
+    monkeypatch.setattr(os.path, "isdir", lambda p: True)
+    monkeypatch.setattr(portal_docs, "is_flatpak", lambda: True)
+    # No W_OK required (read-only is fine for browsing/restore).
+    monkeypatch.setattr(os, "access", lambda p, mode: False)
+    assert portal_docs._is_usable_grant("/run/user/1000/doc/ID/segs") is True
+    assert portal_docs._is_usable_grant("/") is False
+    assert portal_docs._is_usable_grant("/home/mahdi") is False
+
+
+def test_load_first_doc_path_returns_most_recent_usable(monkeypatch):
+    """The file manager restores the last granted folder, skipping a stale ``/``."""
+    config = {
+        "OLD": {"path": "/run/user/1000/doc/OLD/old"},
+        "HOME": {"path": "/run/user/1000/doc/HOME/home"},
+        "ROOT": {"path": "/"},
+    }
+    monkeypatch.setattr(portal_docs, "_load_doc_config", lambda: config)
+    monkeypatch.setattr(portal_docs, "_lookup_document_path", lambda doc_id: config[doc_id]["path"])
+    monkeypatch.setattr(portal_docs, "is_flatpak", lambda: True)
+    monkeypatch.setattr(os.path, "isdir", lambda p: True)
+
+    result = portal_docs._load_first_doc_path()
+
+    assert result is not None
+    portal_path, doc_id, entry = result
+    # "/" (last inserted) is skipped; HOME is the most-recent usable grant.
+    assert doc_id == "HOME"
+    assert portal_path == "/run/user/1000/doc/HOME/home"
+
+
 def test_resolve_rejects_invalid_destination(patched_portal, monkeypatch):
     """Picking ``/`` (or any non-portal folder) yields no grant."""
     monkeypatch.setattr(os.path, "isdir", lambda p: True)
