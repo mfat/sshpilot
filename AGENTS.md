@@ -309,7 +309,30 @@ sudo dnf install python3-gobject gtk4 libadwaita vte291-gtk4 gtksourceview5 libs
 - Supports both built-in terminal and external terminal options
 
 ## Debugging
-- Use `--verbose` flag for detailed logging
+
+CLI flags (`sshpilot/main.py::main`):
+- `--verbose` / `-v` — detailed (debug) logging; `--quiet` / `-q` — warnings & errors only.
+- `--log-gtk-warnings` — forward GTK/GLib/Gdk/Pango/VTE warnings & criticals to the log
+  files (and stderr) via `_install_gtk_log_capture()` (`GLib.log_set_handler`, logged
+  under the `gtk` logger). The `Gtk-CRITICAL`/`Gtk-WARNING` lines name the exact bad
+  widget/render operation, so this is the first thing to enable for UI / widget-lifecycle
+  / rendering bugs.
+- `--fatal-warnings` — `GLib.log_set_always_fatal(WARNING|CRITICAL)` via
+  `_enable_fatal_gtk_warnings()`; the resulting `abort()` is caught by faulthandler and the
+  exact stack is written to `crash.log`. Aggressive (aborts on benign warnings too) — use
+  in a focused repro.
+- `--diagnostics` — shorthand for `--verbose --log-gtk-warnings` (use when filing a bug).
+
+Logs live under `platform_utils.get_state_dir()` (`~/.local/state/sshpilot/`, or the
+Flatpak path): `sshpilot.log` (master, rotating 10 MB × 5), `app.log`, `ssh.log`, and
+`crash.log`. **`crash.log`** is the faulthandler dump, armed in
+`SshPilotApplication.__init__` by `_enable_crash_diagnostics()` (all-thread Python
+tracebacks + a C stack on Python 3.12+). It is rotated on the next launch: a non-empty
+`crash.log` means the previous run crashed, so it is moved to `crash.log.previous` and
+surfaced via the startup "closed unexpectedly" dialog and **Help ▸ Report a Problem**
+(`window.on_report_problem_action` → `log_viewer.build_report_bundle`). For a crash with
+no Python frame (pure GTK), use the `coredumpctl` core + `py-bt` (needs `python3-dbg`);
+GTK frames need GTK debug symbols to resolve.
 
 
 ## Memory and Preferences

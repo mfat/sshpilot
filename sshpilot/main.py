@@ -111,7 +111,8 @@ class SshPilotApplication(Adw.Application):
     """Main application class for sshPilot"""
 
     def __init__(self, verbose: bool = False, quiet: bool = False,
-                 isolated: bool = False):
+                 isolated: bool = False, log_gtk_warnings: bool = False,
+                 fatal_warnings: bool = False):
         super().__init__(
             application_id='io.github.mfat.sshpilot',
             flags=Gio.ApplicationFlags.FLAGS_NONE
@@ -142,6 +143,13 @@ class SshPilotApplication(Adw.Application):
         # all-thread Python traceback in crash.log. Returns a preserved report
         # from a previous crash (or None) for the window to surface on startup.
         self._previous_crash_report = _enable_crash_diagnostics()
+
+        # Optional GTK/GLib log capture (--log-gtk-warnings / --diagnostics) and
+        # fatal-warnings mode (--fatal-warnings) for pinpointing UI/widget bugs.
+        if log_gtk_warnings or fatal_warnings:
+            _install_gtk_log_capture()
+        if fatal_warnings:
+            _enable_fatal_gtk_warnings()
 
         # Print startup information
         print_startup_info(isolated=isolated, verbose=verbose)
@@ -1119,6 +1127,78 @@ def _enable_crash_diagnostics():
     return previous_crash
 
 
+_gtk_log_handler_ids: list = []
+
+
+def _install_gtk_log_capture():
+    """Route GTK/GLib log messages into the rotating log files (and stderr).
+
+    GTK/GLib warnings & criticals (the ``Gtk-CRITICAL`` / ``Gtk-WARNING`` lines
+    that name the exact bad widget operation behind UI corruption and many
+    crashes) normally go only to stderr. This forwards them to a ``gtk`` Python
+    logger so they are durably captured in ``sshpilot.log``, while still echoing
+    to the terminal. GTK4's ``g_warning``/``g_critical`` use the legacy
+    ``g_log`` path that ``g_log_set_handler`` intercepts.
+    """
+    gtk_logger = logging.getLogger('gtk')
+    level_map = (
+        (GLib.LogLevelFlags.LEVEL_ERROR, logging.CRITICAL),
+        (GLib.LogLevelFlags.LEVEL_CRITICAL, logging.ERROR),
+        (GLib.LogLevelFlags.LEVEL_WARNING, logging.WARNING),
+        (GLib.LogLevelFlags.LEVEL_MESSAGE, logging.INFO),
+        (GLib.LogLevelFlags.LEVEL_INFO, logging.INFO),
+        (GLib.LogLevelFlags.LEVEL_DEBUG, logging.DEBUG),
+    )
+
+    def _handler(domain, level, message, _user=None):
+        py_level = logging.WARNING
+        for flag, lvl in level_map:
+            if level & flag:
+                py_level = lvl
+                break
+        try:
+            gtk_logger.log(py_level, "%s: %s", domain or 'GLib', message)
+        except Exception:
+            pass
+        # Preserve terminal visibility (we replaced the default stderr handler).
+        try:
+            sys.stderr.write("%s: %s\n" % (domain or 'GLib', message))
+        except Exception:
+            pass
+
+    levels = (
+        GLib.LogLevelFlags.LEVEL_WARNING
+        | GLib.LogLevelFlags.LEVEL_CRITICAL
+        | GLib.LogLevelFlags.LEVEL_ERROR
+        | GLib.LogLevelFlags.LEVEL_MESSAGE
+        | GLib.LogLevelFlags.FLAG_FATAL
+        | GLib.LogLevelFlags.FLAG_RECURSION
+    )
+    for domain in ('Gtk', 'Gdk', 'GLib', 'GLib-GObject', 'GLib-GIO', 'Gio',
+                   'Pango', 'GdkPixbuf', 'Adwaita', 'Vte', None):
+        try:
+            hid = GLib.log_set_handler(domain, levels, _handler)
+            _gtk_log_handler_ids.append((domain, hid))
+        except Exception:
+            logging.getLogger(__name__).debug(
+                "Could not set GLib log handler for domain %r", domain, exc_info=True)
+
+
+def _enable_fatal_gtk_warnings():
+    """Make the first GTK/GLib warning or critical abort with a backtrace.
+
+    The resulting abort() raises SIGABRT, which the already-armed faulthandler
+    dumps into crash.log (all-thread traceback) — pinpointing the exact stack at
+    the offending warning. Aggressive: also aborts on benign warnings.
+    """
+    try:
+        GLib.log_set_always_fatal(
+            GLib.LogLevelFlags.LEVEL_WARNING | GLib.LogLevelFlags.LEVEL_CRITICAL)
+    except Exception:
+        logging.getLogger(__name__).debug(
+            "Could not enable fatal GTK warnings", exc_info=True)
+
+
 def main():
     """Main entry point"""
     # Fast-path: handle --askpass before starting the GTK application.
@@ -1129,7 +1209,27 @@ def main():
         prompt = sys.argv[2] if len(sys.argv) > 2 else ""
         sys.exit(run_askpass_and_write(prompt))
 
-    parser = argparse.ArgumentParser(description="sshPilot SSH connection manager")
+    parser = argparse.ArgumentParser(
+        prog="sshpilot",
+        description="sshPilot — SSH connection manager",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Logs are written under the state directory\n"
+            "(~/.local/state/sshpilot, or the Flatpak equivalent\n"
+            "~/.var/app/io.github.mfat.sshpilot/.local/state/sshpilot):\n"
+            "  sshpilot.log   all messages (rotating, 10 MB x 5)\n"
+            "  app.log        application messages\n"
+            "  ssh.log        SSH / connection / terminal messages\n"
+            "  crash.log      fatal-signal tracebacks (captured automatically);\n"
+            "                 the previous run's crash is kept as crash.log.previous\n"
+            "                 and offered via the startup dialog / Help > Report a Problem\n"
+            "\n"
+            "Diagnostics tips:\n"
+            "  --diagnostics        use this when filing a bug (verbose + GTK warnings)\n"
+            "  --log-gtk-warnings   record GTK/GLib warnings & criticals (UI/widget/render bugs)\n"
+            "  --fatal-warnings     abort at the first GTK/GLib warning with a backtrace\n"
+        ),
+    )
     verbosity = parser.add_mutually_exclusive_group()
     verbosity.add_argument(
         "--verbose", "-v", action="store_true",
@@ -1140,11 +1240,36 @@ def main():
         help="Only show warnings and errors (overrides config)",
     )
     parser.add_argument("--isolated", action="store_true", help="Use isolated SSH configuration")
+
+    diagnostics = parser.add_argument_group(
+        "diagnostics", "Capture extra logs to help diagnose bugs")
+    diagnostics.add_argument(
+        "--log-gtk-warnings", action="store_true",
+        help="Record GTK/GLib/Gdk/Pango/VTE warnings & criticals into the log "
+             "files (and the terminal). Helps diagnose UI, widget-lifecycle and "
+             "rendering issues that are otherwise only printed to stderr.",
+    )
+    diagnostics.add_argument(
+        "--fatal-warnings", action="store_true",
+        help="Abort on the first GTK/GLib warning or critical, writing a full "
+             "backtrace to crash.log and the terminal. Pinpoints the exact "
+             "operation behind a UI corruption or crash. Aggressive: also "
+             "aborts on benign warnings.",
+    )
+    diagnostics.add_argument(
+        "--diagnostics", action="store_true",
+        help="Shorthand for --verbose --log-gtk-warnings. Recommended when "
+             "filing a bug report.",
+    )
     args = parser.parse_args()
+
+    verbose = args.verbose or args.diagnostics
     app = SshPilotApplication(
-        verbose=args.verbose,
+        verbose=verbose,
         quiet=args.quiet,
         isolated=args.isolated,
+        log_gtk_warnings=args.log_gtk_warnings or args.diagnostics,
+        fatal_warnings=args.fatal_warnings,
     )
     return app.run(None)  # Pass None to use default command line arguments
 

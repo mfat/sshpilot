@@ -334,6 +334,37 @@ Enable verbose debugging output with the `--verbose` flag:
 python3 run.py --verbose
 ```
 
+##### Diagnostics & logging
+
+sshPilot writes rotating logs under the state directory
+(`~/.local/state/sshpilot/`, or the Flatpak equivalent under
+`~/.var/app/io.github.mfat.sshpilot/.local/state/sshpilot/`):
+
+| File | Contents |
+| --- | --- |
+| `sshpilot.log` | All messages (rotating, 10 MB × 5) |
+| `app.log` | Application messages |
+| `ssh.log` | SSH / connection / terminal messages |
+| `crash.log` | Fatal-signal tracebacks, captured automatically. The previous run's crash is kept as `crash.log.previous` and offered on next launch and via **Help ▸ Report a Problem**. |
+
+Extra flags for capturing diagnostics when filing a bug:
+
+```bash
+python3 run.py --diagnostics        # shorthand for --verbose --log-gtk-warnings
+python3 run.py --log-gtk-warnings   # record GTK/GLib warnings & criticals into the logs
+python3 run.py --fatal-warnings     # abort at the first GTK/GLib warning with a backtrace
+```
+
+- `--log-gtk-warnings` records the `Gtk-CRITICAL` / `Gtk-WARNING` lines (which name the
+  exact bad widget/render operation) into the log files instead of only printing them to
+  the terminal — useful for UI, widget-lifecycle and rendering bugs.
+- `--fatal-warnings` turns the first such warning into a fatal abort with a full backtrace
+  (written to `crash.log` and the terminal), pinpointing the offending operation. It is
+  aggressive and will also abort on benign warnings, so use it in a focused repro session.
+- `--diagnostics` is the recommended one-stop flag when reporting a bug.
+
+Run `python3 run.py --help` for the full list.
+
 Prefer to keep PyGObject out of system packages? The **pure-venv** approach
 (pip-built PyGObject/pycairo in a plain venv) is documented in the
 [full source-install guide](documentation/running-from-source.md#approach-b--pure-venv-pip-built-pygobject).
