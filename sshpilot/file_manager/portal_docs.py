@@ -291,6 +291,38 @@ def resolve_granted_folder(gfile) -> Optional[Dict[str, str]]:
     return {"path": portal_path, "display": display, "doc_id": doc_id}
 
 
+def restore_granted_folder() -> Optional[Dict[str, str]]:
+    """Resolve the most recently granted folder from saved config, if usable.
+
+    Read-side counterpart to :func:`resolve_granted_folder`, returning the same
+    ``{path, display, doc_id}`` dict shape (or ``None``). Used to auto-restore a
+    previously granted destination when a window reopens, without re-prompting
+    the user via the portal.
+
+    Entries are tried in reverse insertion order (most-recently-saved first), so
+    the "last granted" folder wins. Each candidate is resolved to a
+    sandbox-writable path via ``_lookup_document_path`` and validated with
+    ``os.path.isdir``; the first one that resolves is returned.
+    """
+    config = _load_doc_config()
+    if not config:
+        return None
+
+    for doc_id in reversed(list(config)):
+        portal_path = _lookup_document_path(doc_id)
+        if not portal_path or not os.path.isdir(portal_path):
+            continue
+        # Mirror the fresh-grant flow: derive the display from the real host
+        # path (GetHostPaths), not the stored entry — ``_save_doc`` persisted
+        # the display from the portal path, which would show the raw
+        # ``/run/user/<uid>/doc/<id>/<name>`` mount instead of the friendly path.
+        host_path = _host_path_for_doc(doc_id)
+        display = _pretty_path_for_display(host_path or portal_path)
+        return {"path": portal_path, "display": display, "doc_id": doc_id}
+
+    return None
+
+
 def _load_doc_config() -> Dict[str, Dict[str, str]]:
     """Load the granted folders configuration file."""
 

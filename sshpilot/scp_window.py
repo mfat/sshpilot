@@ -30,7 +30,7 @@ from .scp_utils import (
     upload_file,
 )
 from .platform_utils import is_flatpak
-from .file_manager.portal_docs import resolve_granted_folder
+from .file_manager.portal_docs import resolve_granted_folder, restore_granted_folder
 
 logger = logging.getLogger(__name__)
 
@@ -539,15 +539,28 @@ class ScpWindowController:
 
             if is_flatpak():
                 # A free-text ~/Downloads is unreachable in the sandbox, so the
-                # destination must be a portal-granted folder. The field starts
-                # read-only, greyed out and empty; the Request Access button is
-                # the only way to set a destination (and fills in the real path).
+                # destination must be a portal-granted folder. The field is
+                # read-only; the Request Access button sets/changes it.
                 try:
                     local_row.set_editable(False)
                 except Exception:
                     pass
-                local_row.set_text('')
-                local_row.set_sensitive(False)
+                # Auto-restore the last granted folder so the user need not click
+                # Request Access every session (parity with the file manager).
+                try:
+                    restored = restore_granted_folder()
+                except Exception as exc:
+                    logger.debug(f'Could not restore granted folder: {exc}')
+                    restored = None
+                if restored:
+                    resolved_destination['path'] = restored['path']
+                    resolved_destination['display'] = restored['display']
+                    local_row.set_text(restored['display'])
+                    local_row.set_sensitive(True)
+                else:
+                    # No usable saved grant → empty and greyed until access granted.
+                    local_row.set_text('')
+                    local_row.set_sensitive(False)
             else:
                 local_row.set_text(str(default_download_dir))
                 try:

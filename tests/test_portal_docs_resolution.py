@@ -99,3 +99,72 @@ def test_lookup_document_path_falls_back_to_host(monkeypatch):
     monkeypatch.setattr(os.path, "isdir", lambda p: False)
 
     assert portal_docs._lookup_document_path("DOCID") == "/home/user/Downloads"
+
+
+def test_restore_returns_most_recent_grant(monkeypatch):
+    """``restore_granted_folder`` returns the last-saved valid grant, with the
+    display derived from the real host path (not the raw portal mount)."""
+    config = {
+        "OLD": {"display": "/run/user/1000/doc/OLD/Old", "path": "/run/user/1000/doc/OLD/Old"},
+        "NEW": {"display": "/run/user/1000/doc/NEW/New", "path": "/run/user/1000/doc/NEW/New"},
+    }
+    monkeypatch.setattr(portal_docs, "_load_doc_config", lambda: config)
+    monkeypatch.setattr(
+        portal_docs, "_lookup_document_path", lambda doc_id: f"/run/user/1000/doc/{doc_id}/x"
+    )
+    monkeypatch.setattr(os.path, "isdir", lambda p: True)
+    # GetHostPaths yields the friendly host path used for display.
+    monkeypatch.setattr(portal_docs, "_host_path_for_doc", lambda doc_id: f"/home/user/{doc_id}")
+    monkeypatch.setattr(portal_docs, "_pretty_path_for_display", lambda p: p)
+
+    result = portal_docs.restore_granted_folder()
+
+    assert result == {
+        "path": "/run/user/1000/doc/NEW/x",
+        "display": "/home/user/NEW",
+        "doc_id": "NEW",
+    }
+
+
+def test_restore_skips_unresolvable_and_falls_through(monkeypatch):
+    """An entry whose path no longer resolves is skipped for an older valid one."""
+    config = {
+        "OLD": {"display": "~/Old", "path": "/home/user/Old"},
+        "NEW": {"display": "~/New", "path": "/home/user/New"},
+    }
+    monkeypatch.setattr(portal_docs, "_load_doc_config", lambda: config)
+    monkeypatch.setattr(
+        portal_docs, "_lookup_document_path", lambda doc_id: f"/run/user/1000/doc/{doc_id}"
+    )
+    # Newest ("NEW") no longer mounts; older ("OLD") still does.
+    monkeypatch.setattr(os.path, "isdir", lambda p: p.endswith("/OLD"))
+    monkeypatch.setattr(portal_docs, "_host_path_for_doc", lambda doc_id: f"/home/user/{doc_id}")
+    monkeypatch.setattr(portal_docs, "_pretty_path_for_display", lambda p: p)
+
+    result = portal_docs.restore_granted_folder()
+
+    assert result is not None
+    assert result["doc_id"] == "OLD"
+
+
+def test_restore_display_falls_back_to_portal_path_without_host(monkeypatch):
+    """If GetHostPaths is unavailable, display falls back to the portal path."""
+    config = {"DOCID": {"path": "/run/user/1000/doc/DOCID/Downloads"}}
+    monkeypatch.setattr(portal_docs, "_load_doc_config", lambda: config)
+    monkeypatch.setattr(portal_docs, "_lookup_document_path", lambda doc_id: "/run/user/1000/doc/DOCID")
+    monkeypatch.setattr(os.path, "isdir", lambda p: True)
+    monkeypatch.setattr(portal_docs, "_host_path_for_doc", lambda doc_id: None)
+    monkeypatch.setattr(portal_docs, "_pretty_path_for_display", lambda p: f"PRETTY:{p}")
+
+    result = portal_docs.restore_granted_folder()
+
+    assert result["display"] == "PRETTY:/run/user/1000/doc/DOCID"
+
+
+def test_restore_returns_none_when_empty_or_unresolvable(monkeypatch):
+    monkeypatch.setattr(portal_docs, "_load_doc_config", lambda: {})
+    assert portal_docs.restore_granted_folder() is None
+
+    monkeypatch.setattr(portal_docs, "_load_doc_config", lambda: {"D": {"display": "x"}})
+    monkeypatch.setattr(portal_docs, "_lookup_document_path", lambda doc_id: None)
+    assert portal_docs.restore_granted_folder() is None
