@@ -1803,6 +1803,10 @@ def _on_connection_list_motion(window, target, x, y):
 
                 listbox = window.connection_list
                 direct_row = _listbox_row_at_y(listbox, y)
+                _dragged_parent = window.group_manager.groups.get(
+                    window._dragged_group_id, {}
+                ).get("parent_id")
+
                 seam = _group_reorder_seam_at_y(
                     window, y, window._dragged_group_id
                 )
@@ -1826,8 +1830,13 @@ def _on_connection_list_motion(window, target, x, y):
                 elif direct_row is None:
                     _clear_drop_indicator(window)
                 elif decision == "reorder":
-                    zone = _group_reorder_position_from_y(row, y, listbox)
-                    _apply_group_reorder_indicator(window, row, zone)
+                    # seam is None and pointer is on the parent row but NOT
+                    # near any unnesting seam → nothing sensible to show.
+                    if row.group_id == _dragged_parent:
+                        _clear_drop_indicator(window)
+                    else:
+                        zone = _group_reorder_position_from_y(row, y, listbox)
+                        _apply_group_reorder_indicator(window, row, zone)
                 else:
                     zone = _group_reorder_position_from_y(row, y, listbox)
                     _apply_group_reorder_indicator(window, row, zone)
