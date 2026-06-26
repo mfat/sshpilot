@@ -2044,48 +2044,65 @@ def _subtree_bottom_y(row) -> float:
 def _group_reorder_seam_at_y(window, y, dragged_group_id):
     """If ``y`` is near a sibling seam, return ``(target_row, zone)`` for reorder.
 
-    Collapsed group headers fill their whole row, so reorder between siblings
-    must key off the seams between subtrees — not thin header edge bands.
+    Checks seams at the dragged group's own level first, then walks up ancestor
+    levels so dragging a nested group to a gap between its ancestor's siblings
+    shows the unnesting indicator with the same generous ±16 px hit area.
     """
     dragged = window.group_manager.groups.get(dragged_group_id)
     if not dragged:
-        return None
-    siblings = _sibling_group_rows(window, dragged.get("parent_id"))
-    if len(siblings) < 2:
         return None
 
     listbox = window.connection_list
     hit = _GROUP_SEAM_HIT_PX
 
-    for i, row in enumerate(siblings):
-        if row.group_id == dragged_group_id:
-            continue
-        y0, _y1 = _group_header_bounds_in_listbox(row, listbox)
-
-        if i == 0:
-            if abs(y - y0) <= hit:
-                return row, "above"
-        else:
-            prev = siblings[i - 1]
-            seam = (_subtree_bottom_y(prev) + y0) / 2.0
-            if abs(y - seam) <= hit:
-                return row, "above"
-
-        if i < len(siblings) - 1:
-            nxt = siblings[i + 1]
-            bottom = _subtree_bottom_y(row)
-            if nxt.group_id == dragged_group_id:
-                drag_row = _find_group_row_by_id(window, dragged_group_id)
-                if drag_row is not None:
-                    dy0, _ = _group_header_bounds_in_listbox(drag_row, listbox)
-                    seam = (bottom + dy0) / 2.0
-                    if abs(y - seam) <= hit:
-                        return row, "below"
+    def _scan(parent_id):
+        siblings = _sibling_group_rows(window, parent_id)
+        if len(siblings) < 2:
+            return None
+        for i, row in enumerate(siblings):
+            if row.group_id == dragged_group_id:
+                continue
+            y0, _y1 = _group_header_bounds_in_listbox(row, listbox)
+            if i == 0:
+                if abs(y - y0) <= hit:
+                    return row, "above"
             else:
-                ny0, _ = _group_header_bounds_in_listbox(nxt, listbox)
-                seam = (bottom + ny0) / 2.0
+                prev = siblings[i - 1]
+                seam = (_subtree_bottom_y(prev) + y0) / 2.0
                 if abs(y - seam) <= hit:
-                    return nxt, "above"
+                    return row, "above"
+            if i < len(siblings) - 1:
+                nxt = siblings[i + 1]
+                bottom = _subtree_bottom_y(row)
+                if nxt.group_id == dragged_group_id:
+                    drag_row = _find_group_row_by_id(window, dragged_group_id)
+                    if drag_row is not None:
+                        dy0, _ = _group_header_bounds_in_listbox(drag_row, listbox)
+                        seam = (bottom + dy0) / 2.0
+                        if abs(y - seam) <= hit:
+                            return row, "below"
+                else:
+                    ny0, _ = _group_header_bounds_in_listbox(nxt, listbox)
+                    seam = (bottom + ny0) / 2.0
+                    if abs(y - seam) <= hit:
+                        return nxt, "above"
+        return None
+
+    own_parent = dragged.get("parent_id")
+    result = _scan(own_parent)
+    if result is not None:
+        return result
+
+    current = own_parent
+    while current is not None:
+        parent_group = window.group_manager.groups.get(current)
+        if not parent_group:
+            break
+        ancestor_parent = parent_group.get("parent_id")
+        result = _scan(ancestor_parent)
+        if result is not None:
+            return result
+        current = ancestor_parent
 
     return None
 
