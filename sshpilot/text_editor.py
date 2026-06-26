@@ -164,6 +164,7 @@ class RemoteFileEditorWindow(Adw.Window):
         self._sudo_password: Optional[str] = None  # session cache for this editor
         self._root_button: Optional[Gtk.ToggleButton] = None
         self._root_banner: Optional[Adw.Banner] = None
+        self._root_banner_action = "read"  # why the banner is shown: read|save
         self._root_toggle_guard = False  # suppress re-entrant ``toggled`` signals
 
         # Track whether GtkSource is actually usable on this platform
@@ -986,9 +987,14 @@ class RemoteFileEditorWindow(Adw.Window):
                 future.result()
                 GLib.idle_add(self._on_upload_success)
             except Exception as e:
-                logger.error(f"Failed to upload file: {e}", exc_info=True)
+                # A permission-denied write is expected for root-owned files; we
+                # surface the "Edit as root" banner, so don't log a scary trace.
+                if self._looks_permission_denied(str(e)):
+                    logger.info("Upload denied (offering Edit as root): %s", e)
+                else:
+                    logger.error(f"Failed to upload file: {e}", exc_info=True)
                 GLib.idle_add(self._on_upload_error, str(e))
-        
+
         future = self._sftp_manager.upload(self._temp_file, self._file_path)
         future.add_done_callback(upload_complete)
     
@@ -1028,7 +1034,7 @@ class RemoteFileEditorWindow(Adw.Window):
         self._save_button.set_sensitive(True)
         # A login-user upload that hits permission-denied: offer root instead of
         # a dead-end error (no-op when already in root mode / for local files).
-        if self._looks_permission_denied(error) and self._offer_root_banner():
+        if self._looks_permission_denied(error) and self._offer_root_banner("save"):
             self._show_toast("Permission denied — try “Edit as root”.", timeout=4)
             return
         self._show_toast(f"Upload failed: {error}", timeout=4)
@@ -1066,23 +1072,46 @@ class RemoteFileEditorWindow(Adw.Window):
         return ("permission denied" in low or "access denied" in low
                 or "operation not permitted" in low)
 
-    def _offer_root_banner(self) -> bool:
-        """Reveal the 'edit as root' banner; returns True if it was shown."""
+    def _offer_root_banner(self, action: str) -> bool:
+        """Reveal the 'edit as root' banner; returns True if it was shown.
+        ``action`` records why (``read`` = couldn't load; ``save`` = couldn't
+        write) so the banner button does the right thing."""
         if self._root_button is None or self._root_mode or self._root_banner is None:
             return False
+        self._root_banner_action = action
         self._root_banner.set_revealed(True)
         return True
 
     def _on_banner_root_clicked(self, _banner: Adw.Banner) -> None:
         self._root_banner.set_revealed(False)
+        if self._root_banner_action == "save":
+            # The user's edits are already in the temp file — keep them and finish
+            # the save as root (no re-read, which would discard the edits).
+            self._root_mode = True
+            self._update_root_ui()
+            self._upload_file_root()
+            return
+        # Load failed: re-read the file as root (same as toggling on).
         if self._root_button is not None and not self._root_button.get_active():
             self._root_button.set_active(True)  # fires _on_root_toggled
 
     def _on_remote_load_error(self, message: str) -> None:
-        if self._looks_permission_denied(message) and self._offer_root_banner():
+        if self._looks_permission_denied(message) and self._offer_root_banner("read"):
             self._show_toast("Permission denied — try “Edit as root”.", timeout=4)
             return
         self._show_error(f"Failed to download file: {message}")
+
+    def _resolve_root_pw(self) -> tuple[Optional[str], bool]:
+        """``(password, from_keyring)``: prefer the in-session password, fall back
+        to the shared keyring entry, else ``(None, False)`` (passwordless/prompt).
+        ``from_keyring`` lets callers clear only a stored password that proves
+        wrong — never a freshly prompted one."""
+        if self._sudo_password:
+            return self._sudo_password, False
+        host, user = self._root_host_user()
+        from .askpass_utils import lookup_sudo_password
+        kp = lookup_sudo_password(host, user)
+        return (kp, True) if kp else (None, False)
 
     def _set_root_active(self, active: bool) -> None:
         """Set the toggle without re-triggering the ``toggled`` handler."""
@@ -1135,14 +1164,7 @@ class RemoteFileEditorWindow(Adw.Window):
             self._download_and_load()
 
     def _begin_root_load(self) -> None:
-        host, user = self._root_host_user()
-        pw = self._sudo_password
-        from_keyring = False
-        if not pw:
-            from .askpass_utils import lookup_sudo_password
-            kp = lookup_sudo_password(host, user)
-            if kp:
-                pw, from_keyring = kp, True
+        pw, from_keyring = self._resolve_root_pw()
         self._show_toast("Reading as root…", timeout=-1)
         self._run_root_read(pw, from_keyring)
 
@@ -1233,7 +1255,7 @@ class RemoteFileEditorWindow(Adw.Window):
         except Exception as e:  # noqa: BLE001
             self._on_upload_error(str(e))
             return
-        pw = self._sudo_password
+        pw, from_keyring = self._resolve_root_pw()
         cmd = self._root_write_cmd(self._file_path, has_pw=bool(pw))
         stdin = ((pw + "\n").encode("utf-8") + data) if pw else data
         future = self._sftp_manager.run_command_async(cmd, input=stdin)
@@ -1243,22 +1265,26 @@ class RemoteFileEditorWindow(Adw.Window):
                 rc, _out, err = fut.result()
             except Exception as e:  # noqa: BLE001
                 rc, err = -1, str(e)
-            GLib.idle_add(self._root_write_done, rc, err)
+            GLib.idle_add(self._root_write_done, rc, err, pw, from_keyring)
 
         future.add_done_callback(_done)
 
-    def _root_write_done(self, rc: int, err: str) -> None:
+    def _root_write_done(self, rc: int, err: str,
+                        pw: Optional[str], from_keyring: bool) -> None:
         from .askpass_utils import is_sudo_denied_error, clear_sudo_password
         if rc == 0:
+            self._sudo_password = pw  # cache the working password for next save
             self._on_upload_success()
             return
         if is_sudo_denied_error(err):
             self._on_upload_error(
                 "Your user isn't allowed to run sudo on this host.")
             return
-        # Wrong/missing password — clear stale keyring, re-prompt, retry the save.
-        host, user = self._root_host_user()
-        clear_sudo_password(host, user)
+        # Wrong/missing password — drop only a keyring entry that was actually
+        # wrong, then re-prompt and retry the save with the entered password.
+        if from_keyring:
+            host, user = self._root_host_user()
+            clear_sudo_password(host, user)
         self._sudo_password = None
 
         def _retry(p: str) -> None:
