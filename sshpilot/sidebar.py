@@ -1820,13 +1820,13 @@ def _on_connection_list_motion(window, target, x, y):
                     ):
                         return Gdk.DragAction.MOVE
 
-                # Sibling seams take priority: reorder uses tree (parent, index);
-                # nest only when the pointer is on a row and not at a seam.
-                if seam is not None:
+                # Nesting wins when the pointer is directly on a nestable row;
+                # seams only fire in gaps or during reorder (unnesting).
+                if direct_row is row and decision == "nest":
+                    _show_drop_indicator_on_group(window, row)
+                elif seam is not None:
                     seam_row, seam_zone = seam
                     _apply_group_reorder_indicator(window, seam_row, seam_zone)
-                elif direct_row is row and decision == "nest":
-                    _show_drop_indicator_on_group(window, row)
                 elif direct_row is None:
                     _clear_drop_indicator(window)
                 elif decision == "reorder":
