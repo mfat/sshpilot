@@ -30,7 +30,12 @@ from .scp_utils import (
     upload_file,
 )
 from .platform_utils import is_flatpak
-from .file_manager.portal_docs import resolve_granted_folder, restore_granted_folder
+from .file_manager.portal_docs import (
+    _is_valid_destination,
+    _pretty_path_for_display,
+    resolve_granted_folder,
+    restore_granted_folder,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -537,6 +542,10 @@ class ScpWindowController:
             # Flatpak ``path`` stays None and the entry text is used directly.
             resolved_destination = {'path': None, 'display': None}
 
+            def _set_flatpak_path_bar_visible(visible: bool) -> None:
+                local_row.set_visible(visible)
+                destination_group.set_visible(visible)
+
             if is_flatpak():
                 # A free-text ~/Downloads is unreachable in the sandbox, so the
                 # destination must be a portal-granted folder. The field is
@@ -557,10 +566,12 @@ class ScpWindowController:
                     resolved_destination['display'] = restored['display']
                     local_row.set_text(restored['display'])
                     local_row.set_sensitive(True)
+                    _set_flatpak_path_bar_visible(True)
                 else:
-                    # No usable saved grant → empty and greyed until access granted.
+                    # No saved grant: hide the path bar until Request Access succeeds.
                     local_row.set_text('')
                     local_row.set_sensitive(False)
+                    _set_flatpak_path_bar_visible(False)
             else:
                 local_row.set_text(str(default_download_dir))
                 try:
@@ -650,6 +661,7 @@ class ScpWindowController:
                             # Show the full real path, not the portal mount basename.
                             local_row.set_text(granted['display'])
                             local_row.set_sensitive(True)
+                            _set_flatpak_path_bar_visible(True)
                         else:
                             status_label.set_text(
                                 _('Could not get write access to the selected folder.')
@@ -768,7 +780,10 @@ class ScpWindowController:
                         resolved_destination['display']
                         or _pretty_path_for_display(str(destination_dir))
                     )
-                    if not destination_dir.is_dir():
+                    # Require a real, writable portal mount. A bogus target like
+                    # ``/`` would let scp "succeed" into the ephemeral sandbox root
+                    # and silently lose the file.
+                    if not _is_valid_destination(str(destination_dir)):
                         status_label.set_text(
                             _('Cannot access {dest}. Choose the destination folder again.').format(
                                 dest=dest_display,

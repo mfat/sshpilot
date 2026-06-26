@@ -6,6 +6,7 @@ host path returned by GetHostPaths, which is unreachable inside the sandbox.
 """
 
 import os
+import types
 
 import pytest
 
@@ -29,8 +30,15 @@ def patched_portal(monkeypatch):
     # always yields the real host path (the wrong target for scp — display only).
     monkeypatch.setattr(portal_docs, "_real_host_path", lambda portal_path, doc_id: "/home/user/Downloads")
     monkeypatch.setattr(portal_docs, "_pretty_path_for_display", lambda p: p)
+    # Portal paths in tests don't exist on disk → make them count as writable.
+    monkeypatch.setattr(os, "access", lambda p, mode: True)
     saved = {}
-    monkeypatch.setattr(portal_docs, "_save_doc", lambda path, doc_id: saved.setdefault(doc_id, path))
+
+    def _save(path, doc_id):
+        saved.pop(doc_id, None)
+        saved[doc_id] = path
+
+    monkeypatch.setattr(portal_docs, "_save_doc", _save)
     return saved
 
 
@@ -113,7 +121,7 @@ def test_restore_returns_most_recent_grant(monkeypatch):
     monkeypatch.setattr(
         portal_docs, "_lookup_document_path", lambda doc_id: f"/run/user/1000/doc/{doc_id}/New"
     )
-    monkeypatch.setattr(os.path, "isdir", lambda p: True)
+    monkeypatch.setattr(portal_docs, "_is_valid_destination", lambda p: True)
     # Host-path resolver (xattr → GetHostPaths) is tested separately.
     monkeypatch.setattr(portal_docs, "_real_host_path", lambda portal_path, doc_id: f"/home/user/{doc_id}")
     monkeypatch.setattr(portal_docs, "_pretty_path_for_display", lambda p: p)
@@ -127,8 +135,8 @@ def test_restore_returns_most_recent_grant(monkeypatch):
     }
 
 
-def test_restore_skips_unresolvable_and_falls_through(monkeypatch):
-    """An entry whose path no longer resolves is skipped for an older valid one."""
+def test_restore_skips_invalid_and_falls_through(monkeypatch):
+    """An entry that isn't a valid destination is skipped for an older valid one."""
     config = {
         "OLD": {"path": "/run/user/1000/doc/OLD/Old"},
         "NEW": {"path": "/run/user/1000/doc/NEW/New"},
@@ -137,8 +145,8 @@ def test_restore_skips_unresolvable_and_falls_through(monkeypatch):
     monkeypatch.setattr(
         portal_docs, "_lookup_document_path", lambda doc_id: f"/run/user/1000/doc/{doc_id}"
     )
-    # Newest ("NEW") no longer mounts; older ("OLD") still does.
-    monkeypatch.setattr(os.path, "isdir", lambda p: p.endswith("/OLD"))
+    # Newest ("NEW") is no longer usable; older ("OLD") still is.
+    monkeypatch.setattr(portal_docs, "_is_valid_destination", lambda p: p.endswith("/OLD"))
     monkeypatch.setattr(portal_docs, "_real_host_path", lambda portal_path, doc_id: f"/home/user/{doc_id}")
     monkeypatch.setattr(portal_docs, "_pretty_path_for_display", lambda p: p)
 
@@ -148,18 +156,115 @@ def test_restore_skips_unresolvable_and_falls_through(monkeypatch):
     assert result["doc_id"] == "OLD"
 
 
+def test_restore_skips_root_grant_for_real_folder(monkeypatch):
+    """A stale ``/`` grant (last inserted) is skipped for a real portal mount."""
+    config = {
+        "HOME": {"path": "/run/user/1000/doc/c8bb62d1/home"},
+        "ROOT": {"path": "/"},
+    }
+    monkeypatch.setattr(portal_docs, "_load_doc_config", lambda: config)
+    monkeypatch.setattr(portal_docs, "_lookup_document_path", lambda doc_id: config[doc_id]["path"])
+    monkeypatch.setattr(portal_docs, "is_flatpak", lambda: True)
+    monkeypatch.setattr(os.path, "isdir", lambda p: True)  # both "/" and the mount exist
+    monkeypatch.setattr(os, "access", lambda p, mode: True)
+    monkeypatch.setattr(portal_docs, "_real_host_path", lambda portal_path, doc_id: "/home")
+    monkeypatch.setattr(portal_docs, "_pretty_path_for_display", lambda p: p)
+
+    result = portal_docs.restore_granted_folder()
+
+    # "/" is not a portal mount → rejected; the home grant wins.
+    assert result is not None
+    assert result["doc_id"] == "HOME"
+    assert result["path"] == "/run/user/1000/doc/c8bb62d1/home"
+
+
 def test_restore_display_falls_back_to_portal_path_without_host(monkeypatch):
     """If the host path can't be resolved, display falls back to the portal path."""
     config = {"DOCID": {"path": "/run/user/1000/doc/DOCID/Downloads"}}
     monkeypatch.setattr(portal_docs, "_load_doc_config", lambda: config)
     monkeypatch.setattr(portal_docs, "_lookup_document_path", lambda doc_id: "/run/user/1000/doc/DOCID")
-    monkeypatch.setattr(os.path, "isdir", lambda p: True)
+    monkeypatch.setattr(portal_docs, "_is_valid_destination", lambda p: True)
     monkeypatch.setattr(portal_docs, "_real_host_path", lambda portal_path, doc_id: None)
     monkeypatch.setattr(portal_docs, "_pretty_path_for_display", lambda p: f"PRETTY:{p}")
 
     result = portal_docs.restore_granted_folder()
 
     assert result["display"] == "PRETTY:/run/user/1000/doc/DOCID"
+
+
+def test_is_valid_destination(monkeypatch):
+    monkeypatch.setattr(os.path, "isdir", lambda p: p != "/nonexistent")
+    monkeypatch.setattr(os, "access", lambda p, mode: True)
+
+    # Under Flatpak: only portal mounts are valid; "/" and host paths are not.
+    monkeypatch.setattr(portal_docs, "is_flatpak", lambda: True)
+    assert portal_docs._is_valid_destination("/run/user/1000/doc/ID/Downloads") is True
+    assert portal_docs._is_valid_destination("/") is False
+    assert portal_docs._is_valid_destination("/home/mahdi/Downloads") is False
+    assert portal_docs._is_valid_destination("/nonexistent") is False
+    assert portal_docs._is_valid_destination("") is False
+
+    # Non-Flatpak: any existing writable dir is fine.
+    monkeypatch.setattr(portal_docs, "is_flatpak", lambda: False)
+    assert portal_docs._is_valid_destination("/home/mahdi/Downloads") is True
+
+    # Read-only dir is rejected even when it is a portal mount.
+    monkeypatch.setattr(portal_docs, "is_flatpak", lambda: True)
+    monkeypatch.setattr(os, "access", lambda p, mode: False)
+    assert portal_docs._is_valid_destination("/run/user/1000/doc/ID/Downloads") is False
+
+
+def test_grant_reuses_filechooser_portal_doc_id(monkeypatch):
+    """When the picker returns a portal path, reuse its real doc id (no D-Bus,
+    no md5 fallback)."""
+    monkeypatch.setattr(portal_docs, "is_flatpak", lambda: True)
+
+    def _boom(*a, **k):
+        raise AssertionError("D-Bus AddFull must not run for an exported portal path")
+
+    monkeypatch.setattr(portal_docs.Gio, "bus_get_sync", _boom)
+
+    doc_id = portal_docs._grant_persistent_access(_FakeGFile("/run/user/1000/doc/c0b2576c/mahdi"))
+    assert doc_id == "c0b2576c"
+
+
+def test_grant_non_flatpak_uses_stable_md5(monkeypatch):
+    monkeypatch.setattr(portal_docs, "is_flatpak", lambda: False)
+    import hashlib
+
+    expected = hashlib.md5(b"/home/mahdi/Downloads").hexdigest()[:16]
+    assert portal_docs._grant_persistent_access(_FakeGFile("/home/mahdi/Downloads")) == expected
+
+
+def test_resolve_rejects_invalid_destination(patched_portal, monkeypatch):
+    """Picking ``/`` (or any non-portal folder) yields no grant."""
+    monkeypatch.setattr(os.path, "isdir", lambda p: True)
+    # "/" is a dir but not a portal mount → invalid; nothing persisted.
+    result = portal_docs.resolve_granted_folder(_FakeGFile("/"))
+    assert result is None
+    assert patched_portal == {}
+
+
+def test_save_doc_moves_regrant_to_most_recent(monkeypatch, tmp_path):
+    docs_json = tmp_path / "granted-folders.json"
+    monkeypatch.setattr(portal_docs, "DOCS_JSON", str(docs_json))
+    monkeypatch.setattr(portal_docs, "_ensure_cfg_dir", lambda: None)
+
+    class _Gio:
+        @staticmethod
+        def new_for_path(p):
+            return types.SimpleNamespace(get_parse_name=lambda: p)
+
+    monkeypatch.setattr(portal_docs.Gio, "File", _Gio)
+
+    portal_docs._save_doc("/a", "A")
+    portal_docs._save_doc("/b", "B")
+    portal_docs._save_doc("/a", "A")  # re-grant A → should move to the end
+
+    import json
+
+    data = json.loads(docs_json.read_text())
+    assert list(data) == ["B", "A"]
 
 
 def test_host_path_from_xattr_reads_and_normalises(monkeypatch):

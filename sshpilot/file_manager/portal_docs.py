@@ -52,6 +52,9 @@ def _save_doc(folder_path: str, doc_id: str):
                 data = json.load(f)
         except Exception:
             data = {}
+    # Move a re-granted folder to the end so it counts as the most recent grant
+    # (restore_granted_folder() picks the last-inserted valid entry).
+    data.pop(doc_id, None)
     data[doc_id] = {
         "display": Gio.File.new_for_path(folder_path).get_parse_name(),
         "path": folder_path  # Store the actual path for non-Flatpak lookup
@@ -75,14 +78,26 @@ def _grant_persistent_access(gfile):
         logger.warning("Cannot grant persistent access without a path")
         return None
 
+    # The GTK FileChooser portal already exported the selection into the document
+    # store and handed us a ``/run/user/<uid>/doc/<id>/…`` path. Use that real doc
+    # id directly instead of re-adding it — this avoids the AddFull round-trip
+    # entirely and yields the genuine portal id (so GetHostPaths/_portal_doc_path
+    # work), rather than an md5 fallback.
+    portal_root = _portal_grant_root(path)
+    if portal_root:
+        doc_id = os.path.basename(portal_root)
+        logger.debug("Reusing FileChooser-portal doc id: %s", doc_id)
+        return doc_id
+
     try:
-        # Get the Document portal (only in Flatpak)
+        # Get the Document portal (only in Flatpak). NB: this lives on the
+        # ``org.freedesktop.portal.Documents`` bus name, NOT ``…portal.Desktop``.
         bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
         proxy = Gio.DBusProxy.new_sync(
             bus,
             Gio.DBusProxyFlags.NONE,
             None,
-            "org.freedesktop.portal.Desktop",
+            "org.freedesktop.portal.Documents",
             "/org/freedesktop/portal/documents",
             "org.freedesktop.portal.Documents",
             None
@@ -301,6 +316,21 @@ def _portal_grant_root(path: str) -> Optional[str]:
     return match.group(0) if match else None
 
 
+def _is_valid_destination(path: str) -> bool:
+    """Whether ``path`` is usable as a download destination.
+
+    Must be an existing, writable directory. Under Flatpak it must also be a
+    portal mount (``/run/user/<uid>/doc/<id>/…``): a bare host path like ``/``
+    is not sandbox-writable in a host-backed way — scp writing there lands in the
+    ephemeral sandbox root, "succeeds", and silently loses the file.
+    """
+    if not path or not os.path.isdir(path):
+        return False
+    if is_flatpak() and _portal_grant_root(path) is None:
+        return False
+    return os.access(path, os.W_OK)
+
+
 def _portal_path_to_host(path: str) -> Optional[str]:
     """Resolve a ``/doc/`` portal path (possibly a subpath of a grant) to its
     full real host path.
@@ -370,6 +400,12 @@ def resolve_granted_folder(gfile) -> Optional[Dict[str, str]]:
         if os.path.isdir(constructed):
             portal_path = constructed
 
+    # Reject unusable destinations (e.g. the host root ``/``, a read-only folder):
+    # persisting them would only resurface as a phantom-success download target.
+    if not _is_valid_destination(portal_path):
+        logger.debug("Granted folder %r is not a usable destination", portal_path)
+        return None
+
     try:
         _save_doc(path, doc_id)
     except Exception as exc:  # pragma: no cover - persistence is best-effort
@@ -394,7 +430,8 @@ def restore_granted_folder() -> Optional[Dict[str, str]]:
     Entries are tried in reverse insertion order (most-recently-saved first), so
     the "last granted" folder wins. Each candidate is resolved to a
     sandbox-writable path via ``_lookup_document_path`` and validated with
-    ``os.path.isdir``; the first one that resolves is returned.
+    ``_is_valid_destination`` (skips e.g. a stale ``/`` grant); the first usable
+    one is returned.
     """
     config = _load_doc_config()
     if not config:
@@ -402,7 +439,7 @@ def restore_granted_folder() -> Optional[Dict[str, str]]:
 
     for doc_id in reversed(list(config)):
         portal_path = _lookup_document_path(doc_id)
-        if not portal_path or not os.path.isdir(portal_path):
+        if not portal_path or not _is_valid_destination(portal_path):
             continue
         # Mirror the fresh-grant flow: derive the display from the real host
         # path (xattr → GetHostPaths), not the stored entry — ``_save_doc``
