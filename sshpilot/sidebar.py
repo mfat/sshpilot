@@ -489,7 +489,6 @@ class GroupRow(Gtk.ListBoxRow):
         
         drop_label = Gtk.Label()
         drop_label.set_markup("<b>Add to Group</b>")
-        drop_label.add_css_class("accent")
         self.drop_target_indicator.append(drop_label)
         
         self.drop_target_indicator.set_visible(False)
