@@ -493,6 +493,7 @@ class GroupRow(Gtk.ListBoxRow):
         self.drop_target_indicator.append(drop_label)
         
         self.drop_target_indicator.set_visible(False)
+        self.drop_target_indicator.set_opacity(0.0)
         self.drop_target_indicator.set_can_target(False)
 
         main_box.append(content)
@@ -827,8 +828,10 @@ class GroupRow(Gtk.ListBoxRow):
         if show:
             self.add_css_class("drop-target-group")
             self.drop_target_indicator.set_visible(True)
+            self.drop_target_indicator.set_opacity(1.0)
         else:
             self.remove_css_class("drop-target-group")
+            self.drop_target_indicator.set_opacity(0.0)
             self.drop_target_indicator.set_visible(False)
 
     def apply_row_style(self, flat: bool | None = None) -> None:

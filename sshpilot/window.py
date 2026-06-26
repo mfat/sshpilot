@@ -1270,11 +1270,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
               margin: 4px 8px;
               font-weight: bold;
               font-size: 0.9em;
-              animation: drop-indicator-bounce 0.6s ease-in-out;
+              transition: opacity 0.15s ease-in-out;
             }
-
+            
             @keyframes drop-indicator-bounce {
-              0% {
+              0% { 
                 transform: translateY(-10px) scale(0.8);
                 opacity: 0;
               }
