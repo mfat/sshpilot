@@ -497,19 +497,13 @@ class GroupRow(Gtk.ListBoxRow):
         self.drop_target_indicator.set_can_target(False)
 
         main_box.append(content)
+        main_box.append(self.drop_target_indicator)
 
         # Drop indicator (bottom)
         self.drop_indicator_bottom = DragIndicator()
         main_box.append(self.drop_indicator_bottom)
 
-        # Overlay keeps the “Add to Group” chip from changing row height mid-drag.
-        overlay = Gtk.Overlay()
-        overlay.set_child(main_box)
-        overlay.add_overlay(self.drop_target_indicator)
-        self.drop_target_indicator.set_halign(Gtk.Align.CENTER)
-        self.drop_target_indicator.set_valign(Gtk.Align.CENTER)
-
-        self.set_child(overlay)
+        self.set_child(main_box)
         self.set_selectable(True)
         self.set_can_focus(True)
 
