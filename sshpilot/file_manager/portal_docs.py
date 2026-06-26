@@ -42,7 +42,7 @@ def _ensure_cfg_dir():
     os.makedirs(cfg_dir, exist_ok=True)
 
 
-def _save_doc(folder_path: str, doc_id: str):
+def _save_doc(folder_path: str, doc_id: str, *, host_display: Optional[str] = None):
     """Save document ID, display name, and actual path to JSON config."""
     _ensure_cfg_dir()
     data = {}
@@ -53,7 +53,7 @@ def _save_doc(folder_path: str, doc_id: str):
         except Exception:
             data = {}
     data[doc_id] = {
-        "display": Gio.File.new_for_path(folder_path).get_parse_name(),
+        "display": host_display or Gio.File.new_for_path(folder_path).get_parse_name(),
         "path": folder_path  # Store the actual path for non-Flatpak lookup
     }
     with open(DOCS_JSON, "w", encoding="utf-8") as f:
@@ -342,6 +342,34 @@ def _real_host_path(portal_path: str, doc_id: str) -> Optional[str]:
     return _portal_path_to_host(portal_path) or _host_path_for_doc(doc_id)
 
 
+def _display_path_for_grant(portal_path: str, doc_id: str) -> str:
+    """Derive a human-friendly display path for a portal grant.
+
+    Home-folder grants often resolve to ``/`` via ``GetHostPaths`` when only the
+    bare portal mount root is available (e.g. after restart). Map that to the
+    user's home directory for display instead of showing ``/``.
+    """
+    host_path = _real_host_path(portal_path, doc_id)
+    if host_path == "/":
+        home = os.path.expanduser("~")
+        if home and home != "/":
+            return _pretty_path_for_display(home)
+        host_path = None
+    elif host_path:
+        return _pretty_path_for_display(host_path)
+
+    entry = _lookup_doc_entry(doc_id)
+    if entry:
+        stored_display = (entry.get("display") or "").strip()
+        if stored_display and stored_display != "/":
+            return stored_display
+        stored_path = entry.get("path") or ""
+        if stored_path and not _portal_grant_root(stored_path) and "/doc/" not in stored_path:
+            return _pretty_path_for_display(stored_path)
+
+    return _pretty_path_for_display(portal_path)
+
+
 def resolve_granted_folder(gfile) -> Optional[Dict[str, str]]:
     """Grant persistent access to ``gfile`` and resolve a usable destination.
 
@@ -370,15 +398,11 @@ def resolve_granted_folder(gfile) -> Optional[Dict[str, str]]:
         if os.path.isdir(constructed):
             portal_path = constructed
 
+    display = _display_path_for_grant(path, doc_id)
     try:
-        _save_doc(path, doc_id)
+        _save_doc(path, doc_id, host_display=display)
     except Exception as exc:  # pragma: no cover - persistence is best-effort
         logger.debug(f"Could not persist granted folder: {exc}")
-
-    # Resolve the real host path (xattr → GetHostPaths) for a friendly display;
-    # fall back to the picker path (itself a portal path) when unavailable.
-    host_path = _real_host_path(path, doc_id)
-    display = _pretty_path_for_display(host_path or path)
 
     return {"path": portal_path, "display": display, "doc_id": doc_id}
 
@@ -408,8 +432,7 @@ def restore_granted_folder() -> Optional[Dict[str, str]]:
         # path (xattr → GetHostPaths), not the stored entry — ``_save_doc``
         # persisted the display from the portal path, which would show the raw
         # ``/run/user/<uid>/doc/<id>/<name>`` mount instead of the friendly path.
-        host_path = _real_host_path(portal_path, doc_id)
-        display = _pretty_path_for_display(host_path or portal_path)
+        display = _display_path_for_grant(portal_path, doc_id)
         return {"path": portal_path, "display": display, "doc_id": doc_id}
 
     return None
@@ -477,6 +500,10 @@ def _pretty_path_for_display(path: str) -> str:
     ``/home/user/Desktop/segs``) via the ``user.document-portal.host-path`` xattr;
     only if that is unavailable does it fall back to the folder name.
     """
+    if path == "/":
+        home = os.path.expanduser("~")
+        if home and home != "/":
+            path = home
     try:
         gfile = Gio.File.new_for_path(path)
         parse_name = gfile.get_parse_name()

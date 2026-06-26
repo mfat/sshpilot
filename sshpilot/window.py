@@ -1081,6 +1081,116 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Note: "hide sidebar on startup" is applied at split-view creation
         # (before the window is presented) so it never flashes visible.
 
+        # If the previous run crashed, surface it once the UI has settled.
+        GLib.timeout_add(1200, self._check_previous_crash)
+
+    def _check_previous_crash(self):
+        """If the previous run left a crash report, offer to view/report it."""
+        try:
+            app = self.get_application()
+            crash_path = getattr(app, '_previous_crash_report', None) if app else None
+            if not crash_path:
+                return False
+            # Consume so the prompt only appears once per crash.
+            app._previous_crash_report = None
+            self._pending_crash_report = crash_path
+
+            heading = _("SSH Pilot closed unexpectedly")
+            body = _(
+                "An error report from your previous session was saved. "
+                "Sending it helps us find and fix the problem."
+            )
+            if hasattr(Adw, 'AlertDialog'):
+                dialog = Adw.AlertDialog(heading=heading, body=body)
+                present = lambda d: d.present(self)
+            else:
+                dialog = Adw.MessageDialog(
+                    transient_for=self, modal=True, heading=heading, body=body)
+                present = lambda d: d.present()
+            dialog.add_response('dismiss', _("Not Now"))
+            dialog.add_response('logs', _("View Logs…"))
+            dialog.add_response('report', _("Report a Problem…"))
+            dialog.set_default_response('report')
+            dialog.set_close_response('dismiss')
+            try:
+                dialog.set_response_appearance(
+                    'report', Adw.ResponseAppearance.SUGGESTED)
+            except Exception:
+                pass
+            dialog.connect('response', self._on_previous_crash_response)
+            present(dialog)
+        except Exception as exc:
+            logger.debug("Previous-crash check failed: %s", exc, exc_info=True)
+        return False  # one-shot
+
+    def _on_previous_crash_response(self, dialog, response):
+        try:
+            if response == 'report':
+                self.activate_action('report-problem', None)
+            elif response == 'logs':
+                self.activate_action('view-logs', None)
+        except Exception as exc:
+            logger.debug("Crash dialog response failed: %s", exc, exc_info=True)
+
+    def on_report_problem_action(self, action=None, param=None):
+        """Copy a diagnostic bundle (incl. crash report), then confirm before
+        opening the new-issue page so the user can paste it."""
+        try:
+            from .log_viewer import build_report_bundle
+            crash_path = getattr(self, '_pending_crash_report', None)
+            bundle = build_report_bundle(crash_path)
+        except Exception as exc:
+            logger.error("Could not build problem report: %s", exc, exc_info=True)
+            bundle = ''
+        copied = False
+        try:
+            display = self.get_display() or Gdk.Display.get_default()
+            if display is not None and bundle:
+                display.get_clipboard().set(bundle)
+                copied = True
+        except Exception as exc:
+            logger.error("Could not copy report to clipboard: %s", exc)
+
+        heading = _("Report a Problem")
+        if copied:
+            body = _(
+                "Diagnostic information has been copied to your clipboard.\n\n"
+                "Press OK to open the issue page, then paste (Ctrl+V) it into "
+                "the report."
+            )
+        else:
+            body = _(
+                "Press OK to open the issue page. You can attach your logs from "
+                "Help ▸ View Logs."
+            )
+
+        if hasattr(Adw, 'AlertDialog'):
+            dialog = Adw.AlertDialog(heading=heading, body=body)
+            present = lambda d: d.present(self)
+        else:
+            dialog = Adw.MessageDialog(
+                transient_for=self, modal=True, heading=heading, body=body)
+            present = lambda d: d.present()
+        dialog.add_response('cancel', _("Cancel"))
+        dialog.add_response('open', _("OK"))
+        dialog.set_default_response('open')
+        dialog.set_close_response('cancel')
+        try:
+            dialog.set_response_appearance('open', Adw.ResponseAppearance.SUGGESTED)
+        except Exception:
+            pass
+        dialog.connect('response', self._on_report_problem_response)
+        present(dialog)
+
+    def _on_report_problem_response(self, dialog, response):
+        if response != 'open':
+            return
+        try:
+            Gtk.show_uri(self, 'https://github.com/mfat/sshpilot/issues/new',
+                         Gdk.CURRENT_TIME)
+        except Exception as exc:
+            logger.error("Could not open issue tracker: %s", exc)
+
     def _restore_startup_session(self, startup_behavior):
         """Restore a session on startup based on the configured behavior."""
         try:
@@ -3584,6 +3694,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # once and cached by AdwTabBox, so per-tab differences must come from
         # action state, not from swapping the model.
         self._tab_menu_page = None
+        self._tab_menu_xy = None
         self._build_tab_context_menus()
         self.tab_view.set_menu_model(self._tab_menu_model)
         self.tab_view.connect('setup-menu', self._on_tab_setup_menu)
@@ -3962,6 +4073,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         help_menu.append('Documentation', 'app.help')
         help_menu.append('Check for Updates', 'win.check-for-updates')
         help_menu.append('View Logs…', 'win.view-logs')
+        help_menu.append('Report a Problem…', 'win.report-problem')
         menu.append_submenu('Help', help_menu)
 
         menu.append('About', 'app.about')
@@ -6724,6 +6836,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         The pinned Start tab gets a NULL model (no menu); every other tab gets
         the full model. Pinned AdwTab widgets carry the "pinned" CSS class.
         """
+        # Remember where the menu was opened so "Rename Tab…" can anchor its
+        # popover at the right-clicked tab (tab_bar coordinate space).
+        self._tab_menu_xy = (x, y)
         try:
             widget = self.tab_bar.pick(x, y, Gtk.PickFlags.DEFAULT)
             on_pinned = False
@@ -6916,11 +7031,15 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             self.tab_view.set_selected_page(page)
         except Exception:
             pass
-        # Anchor near the start of the tab bar; the popover has no arrow.
-        width = self.tab_bar.get_width()
-        height = self.tab_bar.get_height()
-        x = max(0, min(40, width // 2))
-        self._show_tab_rename_popover(page, x, height)
+        # Anchor at the right-clicked position (captured when the menu opened);
+        # fall back near the start of the tab bar for keyboard-triggered menus.
+        xy = getattr(self, '_tab_menu_xy', None)
+        if xy is not None:
+            x, y = xy
+        else:
+            x = max(0, min(40, self.tab_bar.get_width() // 2))
+            y = self.tab_bar.get_height()
+        self._show_tab_rename_popover(page, x, y)
 
     def _on_tabmenu_reconnect(self, action, param=None):
         try:

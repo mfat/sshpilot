@@ -139,8 +139,9 @@ class SshPilotApplication(Adw.Application):
 
         # Arm fatal-signal diagnostics now that logging is configured but before
         # any window/GTK activity, so a future shutdown segfault leaves an
-        # all-thread Python traceback in crash.log.
-        _enable_crash_diagnostics()
+        # all-thread Python traceback in crash.log. Returns a preserved report
+        # from a previous crash (or None) for the window to surface on startup.
+        self._previous_crash_report = _enable_crash_diagnostics()
 
         # Print startup information
         print_startup_info(isolated=isolated, verbose=verbose)
@@ -1073,14 +1074,32 @@ def _enable_crash_diagnostics():
     and PyGObject tries to run a Python signal handler after the interpreter is
     gone. A core only shows C frames; faulthandler dumps the exact Python
     handler (file/line) of every thread, which is what pinpoints the culprit.
+
+    ``crash.log`` is only ever written when a run crashes, so a non-empty
+    ``crash.log`` at startup means the *previous* run crashed. We rotate it to
+    ``crash.log.previous`` and return that path so the UI can offer to report
+    it; this run then starts with a fresh, empty ``crash.log``.
+
+    Returns the path of a preserved previous-crash report, or ``None``.
     """
     global _crash_log_fp
+    previous_crash = None
     try:
         from .platform_utils import get_state_dir
         log_dir = get_state_dir()
         os.makedirs(log_dir, exist_ok=True)
         path = os.path.join(log_dir, 'crash.log')
-        _crash_log_fp = open(path, 'a', buffering=1)
+        # Preserve a crash report left behind by the previous run.
+        try:
+            if os.path.exists(path) and os.path.getsize(path) > 0:
+                preserved = os.path.join(log_dir, 'crash.log.previous')
+                os.replace(path, preserved)
+                previous_crash = preserved
+        except Exception:
+            logging.getLogger(__name__).debug(
+                "Could not rotate previous crash.log", exc_info=True)
+        # Fresh log for this run so the next startup's detection stays clean.
+        _crash_log_fp = open(path, 'w', buffering=1)
         faulthandler.enable(file=_crash_log_fp, all_threads=True)
         logging.getLogger(__name__).info("Crash diagnostics enabled → %s", path)
     except Exception:
@@ -1097,6 +1116,7 @@ def _enable_crash_diagnostics():
         )
     except Exception:
         pass
+    return previous_crash
 
 
 def main():

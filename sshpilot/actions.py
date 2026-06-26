@@ -1840,6 +1840,12 @@ def register_window_actions(window):
     window.view_logs_action.connect('activate', _on_view_logs_action_factory(window))
     window.add_action(window.view_logs_action)
 
+    # Report a Problem — copies a diagnostic bundle (incl. crash report) to the
+    # clipboard and opens the GitHub new-issue page.
+    window.report_problem_action = Gio.SimpleAction.new('report-problem', None)
+    window.report_problem_action.connect('activate', window.on_report_problem_action)
+    window.add_action(window.report_problem_action)
+
     # Application theme (header bar menu)
     if hasattr(window, '_apply_app_theme'):
         theme_action = Gio.SimpleAction.new('set-app-theme', GLib.VariantType.new('s'))

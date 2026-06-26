@@ -200,6 +200,53 @@ def _build_diagnostic_bundle(log_lines: List[str], total_lines: int,
     return "\n".join(lines)
 
 
+def _resolve_crash_path(explicit: Optional[str] = None) -> str:
+    """Return the most relevant crash report path, or '' if none has content.
+
+    Prefers an explicit path (e.g. the rotated ``crash.log.previous`` handed to
+    us after a detected crash), then falls back to the live ``crash.log``.
+    """
+    candidates = []
+    if explicit:
+        candidates.append(explicit)
+    state = get_state_dir()
+    candidates.append(os.path.join(state, 'crash.log.previous'))
+    candidates.append(os.path.join(state, 'crash.log'))
+    for path in candidates:
+        try:
+            if path and os.path.isfile(path) and os.path.getsize(path) > 0:
+                return path
+        except Exception:
+            continue
+    return ''
+
+
+def build_report_bundle(crash_path: Optional[str] = None, tail_lines: int = 400) -> str:
+    """Clipboard-ready bug report: platform info + master log tail + crash report.
+
+    Reuses the master-log diagnostic bundle and, when a crash report exists,
+    appends its tail inside the same code block so a single paste carries
+    everything a maintainer needs.
+    """
+    master_path = _resolve_log_path(_CATEGORY_MASTER)
+    master_lines, master_total = _tail_file(master_path, tail_lines)
+    bundle = _build_diagnostic_bundle(master_lines, master_total, master_path)
+
+    crash = _resolve_crash_path(crash_path)
+    if not crash:
+        return bundle
+
+    crash_lines, crash_total = _tail_file(crash, 200)
+    extra: List[str] = ["", "```"]
+    extra.append(f"Crash report: {crash}")
+    if crash_total and len(crash_lines) < crash_total:
+        extra.append(f"Showing last {len(crash_lines)} of {crash_total} lines")
+    extra.append("-" * 48)
+    extra.extend(crash_lines or ["(crash report is empty or unreadable)"])
+    extra.append("```")
+    return bundle + "\n" + "\n".join(extra)
+
+
 class LogViewerWindow(Adw.Window):
     """Main window's "Help → View Logs" target.
 

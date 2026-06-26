@@ -30,7 +30,11 @@ def patched_portal(monkeypatch):
     monkeypatch.setattr(portal_docs, "_real_host_path", lambda portal_path, doc_id: "/home/user/Downloads")
     monkeypatch.setattr(portal_docs, "_pretty_path_for_display", lambda p: p)
     saved = {}
-    monkeypatch.setattr(portal_docs, "_save_doc", lambda path, doc_id: saved.setdefault(doc_id, path))
+    monkeypatch.setattr(
+        portal_docs,
+        "_save_doc",
+        lambda path, doc_id, host_display=None: saved.setdefault(doc_id, path),
+    )
     return saved
 
 
@@ -262,6 +266,24 @@ def test_portal_path_to_host_entry_xattr_wins_over_gethostpaths(monkeypatch):
     monkeypatch.setattr(portal_docs, "_host_path_for_doc", _should_not_run)
 
     assert portal_docs._portal_path_to_host("/run/user/1000/doc/ID/segs/sub") == "/home/mahdi/Desktop/segs/sub"
+
+
+def test_restore_home_folder_grant_shows_home_not_slash(monkeypatch):
+    """Bare portal mount root with GetHostPaths '/' is a home-folder grant."""
+    mount = f"/run/user/{os.getuid()}/doc/HOMEID"
+    config = {"HOMEID": {"path": mount, "display": "/"}}
+    monkeypatch.setattr(portal_docs, "_load_doc_config", lambda: config)
+    monkeypatch.setattr(portal_docs, "_lookup_document_path", lambda doc_id: mount)
+    monkeypatch.setattr(os.path, "isdir", lambda p: True)
+    monkeypatch.setattr(portal_docs, "_host_path_from_xattr", lambda p: None)
+    monkeypatch.setattr(portal_docs, "_host_path_for_doc", lambda doc_id: "/")
+    monkeypatch.setattr(os.path, "expanduser", lambda p: "/home/mahdi" if p == "~" else p)
+
+    result = portal_docs.restore_granted_folder()
+
+    assert result is not None
+    assert result["path"] == mount
+    assert result["display"] == "/home/mahdi"
 
 
 def test_restore_returns_none_when_empty_or_unresolvable(monkeypatch):

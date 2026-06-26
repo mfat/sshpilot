@@ -540,13 +540,13 @@ class ScpWindowController:
             if is_flatpak():
                 # A free-text ~/Downloads is unreachable in the sandbox, so the
                 # destination must be a portal-granted folder. The field is
-                # read-only; the Request Access button sets/changes it.
+                # read-only; the browse suffix sets/changes it.
                 try:
                     local_row.set_editable(False)
                 except Exception:
                     pass
-                # Auto-restore the last granted folder so the user need not click
-                # Request Access every session (parity with the file manager).
+                # Auto-restore the last granted folder so the user need not pick
+                # one every session (parity with the file manager).
                 try:
                     restored = restore_granted_folder()
                 except Exception as exc:
@@ -556,11 +556,14 @@ class ScpWindowController:
                     resolved_destination['path'] = restored['path']
                     resolved_destination['display'] = restored['display']
                     local_row.set_text(restored['display'])
-                    local_row.set_sensitive(True)
                 else:
-                    # No usable saved grant → empty and greyed until access granted.
                     local_row.set_text('')
-                    local_row.set_sensitive(False)
+                try:
+                    local_editable = local_row.get_editable()
+                    if local_editable and hasattr(local_editable, 'set_placeholder_text'):
+                        local_editable.set_placeholder_text(_('Select destination folder'))
+                except Exception:
+                    pass
             else:
                 local_row.set_text(str(default_download_dir))
                 try:
@@ -573,31 +576,13 @@ class ScpWindowController:
             local_row.set_show_apply_button(False)
             destination_group.add(local_row)
 
-            # Outside Flatpak: a flat folder-icon suffix opens the picker. Under
-            # Flatpak the row is greyed until access is granted (which would also
-            # disable a suffix button), so the picker is triggered by a separate,
-            # always-enabled "Request Access" button below the row instead.
-            request_access_button = None
-            if is_flatpak():
-                request_access_button = Gtk.Button(label=_('Request Access'))
-                request_access_button.set_halign(Gtk.Align.CENTER)
-                request_access_button.add_css_class('suggested-action')
-                request_access_button.set_margin_top(6)
-                destination_group_box = Gtk.Box(
-                    orientation=Gtk.Orientation.VERTICAL, spacing=0
-                )
-                destination_group_box.append(destination_group)
-                destination_group_box.append(request_access_button)
-                destination_child = destination_group_box
-            else:
-                picker_button = icon_utils.new_button_from_icon_name('folder-symbolic')
-                picker_button.set_tooltip_text(_('Choose destination folder'))
-                picker_button.add_css_class('flat')
-                local_row.add_suffix(picker_button)
-                destination_child = destination_group
+            picker_button = icon_utils.new_button_from_icon_name('folder-symbolic')
+            picker_button.set_tooltip_text(_('Choose destination folder'))
+            picker_button.add_css_class('flat')
+            local_row.add_suffix(picker_button)
 
             destination_wrapper = Adw.Clamp()
-            destination_wrapper.set_child(destination_child)
+            destination_wrapper.set_child(destination_group)
             content_box.append(destination_wrapper)
 
 
@@ -649,7 +634,6 @@ class ScpWindowController:
                             resolved_destination['display'] = granted['display']
                             # Show the full real path, not the portal mount basename.
                             local_row.set_text(granted['display'])
-                            local_row.set_sensitive(True)
                         else:
                             status_label.set_text(
                                 _('Could not get write access to the selected folder.')
@@ -669,10 +653,7 @@ class ScpWindowController:
                         _('Could not open destination chooser: {error}').format(error=str(err))
                     )
 
-            if request_access_button is not None:
-                request_access_button.connect('clicked', lambda *_: _open_destination_picker())
-            else:
-                picker_button.connect('clicked', lambda *_: _open_destination_picker())
+            picker_button.connect('clicked', lambda *_: _open_destination_picker())
 
             button_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
             button_box.set_halign(Gtk.Align.END)
@@ -778,7 +759,7 @@ class ScpWindowController:
                 elif is_flatpak():
                     # No portal-granted destination yet: the user must grant one.
                     status_label.set_text(
-                        _('Click Request Access to choose a destination folder first.')
+                        _('Select a destination folder first.')
                     )
                     return
                 else:
