@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:5.4.4}
+Version:        %{?version}%{!?version:5.4.5}
 Release:        1%{?dist}
 Summary:        Manage your servers with ease
 
@@ -85,6 +85,9 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/io.github.mfat.sshpil
 %{_datadir}/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg
 
 %changelog
+* Fri Jun 26 2026 mFat <newmfat@gmail.com> - 5.4.5
+- Improved drag and drop and group nesting experience
+
 * Fri Jun 26 2026 mFat <newmfat@gmail.com> - 5.4.4
 - Added support for nested groups
 - Improvements to Drag & Drop experience in connection list
