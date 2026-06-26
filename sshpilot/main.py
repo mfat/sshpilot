@@ -10,6 +10,7 @@ import gc
 import faulthandler
 import resource
 import logging
+import threading
 import argparse
 from logging.handlers import RotatingFileHandler
 
@@ -144,10 +145,15 @@ class SshPilotApplication(Adw.Application):
         # from a previous crash (or None) for the window to surface on startup.
         self._previous_crash_report = _enable_crash_diagnostics()
 
-        # Optional GTK/GLib log capture (--log-gtk-warnings / --diagnostics) and
-        # fatal-warnings mode (--fatal-warnings) for pinpointing UI/widget bugs.
-        if log_gtk_warnings or fatal_warnings:
-            _install_gtk_log_capture()
+        # Log uncaught Python exceptions (main thread, worker threads, and GLib
+        # callbacks) into the log files so they land in bug reports.
+        _install_exception_hooks()
+
+        # Capture GTK/GLib warnings & criticals into the log files by default —
+        # they name the exact bad widget/render operation. --log-gtk-warnings /
+        # --diagnostics additionally capture lower-severity (info/debug) GTK
+        # messages; --fatal-warnings makes them fatal (for pinpointing crashes).
+        _install_gtk_log_capture(verbose=log_gtk_warnings)
         if fatal_warnings:
             _enable_fatal_gtk_warnings()
 
@@ -1127,10 +1133,81 @@ def _enable_crash_diagnostics():
     return previous_crash
 
 
+_exception_hooks_installed = False
+
+
+def _install_exception_hooks():
+    """Log uncaught Python exceptions so they land in the log files / bug reports.
+
+    Covers the main thread (``sys.excepthook`` — also used by PyGObject for
+    exceptions raised inside GLib/GTK callbacks), worker threads
+    (``threading.excepthook``), and unraisable exceptions such as those from
+    ``__del__``/GObject finalizers (``sys.unraisablehook``). The previous hooks
+    are still chained so default stderr output is preserved.
+    """
+    global _exception_hooks_installed
+    if _exception_hooks_installed:
+        return
+    _exception_hooks_installed = True
+    log = logging.getLogger('sshpilot')
+
+    prev_excepthook = sys.excepthook
+
+    def _excepthook(exc_type, exc_value, exc_tb):
+        if not issubclass(exc_type, (KeyboardInterrupt, SystemExit)):
+            try:
+                log.critical("Unhandled exception",
+                             exc_info=(exc_type, exc_value, exc_tb))
+            except Exception:
+                pass
+        try:
+            prev_excepthook(exc_type, exc_value, exc_tb)
+        except Exception:
+            pass
+
+    sys.excepthook = _excepthook
+
+    def _thread_excepthook(args):
+        if issubclass(args.exc_type, SystemExit):
+            return
+        try:
+            log.critical("Unhandled exception in thread %r",
+                         getattr(args.thread, 'name', '?'),
+                         exc_info=(args.exc_type, args.exc_value, args.exc_traceback))
+        except Exception:
+            pass
+
+    try:
+        threading.excepthook = _thread_excepthook
+    except Exception:
+        pass
+
+    prev_unraisable = getattr(sys, 'unraisablehook', None)
+
+    def _unraisablehook(unraisable):
+        try:
+            log.error("Unraisable exception in %r",
+                      getattr(unraisable, 'object', None),
+                      exc_info=(unraisable.exc_type, unraisable.exc_value,
+                                unraisable.exc_traceback))
+        except Exception:
+            pass
+        if prev_unraisable is not None:
+            try:
+                prev_unraisable(unraisable)
+            except Exception:
+                pass
+
+    try:
+        sys.unraisablehook = _unraisablehook
+    except Exception:
+        pass
+
+
 _gtk_log_handler_ids: list = []
 
 
-def _install_gtk_log_capture():
+def _install_gtk_log_capture(verbose: bool = False):
     """Route GTK/GLib log messages into the rotating log files (and stderr).
 
     GTK/GLib warnings & criticals (the ``Gtk-CRITICAL`` / ``Gtk-WARNING`` lines
@@ -1139,7 +1216,12 @@ def _install_gtk_log_capture():
     logger so they are durably captured in ``sshpilot.log``, while still echoing
     to the terminal. GTK4's ``g_warning``/``g_critical`` use the legacy
     ``g_log`` path that ``g_log_set_handler`` intercepts.
+
+    Warnings, criticals, errors and messages are always captured; ``verbose``
+    additionally captures lower-severity GTK/GLib info & debug messages.
     """
+    if _gtk_log_handler_ids:  # already installed (idempotent)
+        return
     gtk_logger = logging.getLogger('gtk')
     level_map = (
         (GLib.LogLevelFlags.LEVEL_ERROR, logging.CRITICAL),
@@ -1174,6 +1256,8 @@ def _install_gtk_log_capture():
         | GLib.LogLevelFlags.FLAG_FATAL
         | GLib.LogLevelFlags.FLAG_RECURSION
     )
+    if verbose:
+        levels |= GLib.LogLevelFlags.LEVEL_INFO | GLib.LogLevelFlags.LEVEL_DEBUG
     for domain in ('Gtk', 'Gdk', 'GLib', 'GLib-GObject', 'GLib-GIO', 'Gio',
                    'Pango', 'GdkPixbuf', 'Adwaita', 'Vte', None):
         try:
@@ -1224,9 +1308,10 @@ def main():
             "                 the previous run's crash is kept as crash.log.previous\n"
             "                 and offered via the startup dialog / Help > Report a Problem\n"
             "\n"
-            "Diagnostics tips:\n"
-            "  --diagnostics        use this when filing a bug (verbose + GTK warnings)\n"
-            "  --log-gtk-warnings   record GTK/GLib warnings & criticals (UI/widget/render bugs)\n"
+            "GTK/GLib warnings & criticals and uncaught Python exceptions are\n"
+            "always recorded in the logs. Extra diagnostics:\n"
+            "  --diagnostics        use this when filing a bug (verbose + GTK info/debug)\n"
+            "  --log-gtk-warnings   also capture lower-severity GTK/GLib info & debug\n"
             "  --fatal-warnings     abort at the first GTK/GLib warning with a backtrace\n"
         ),
     )
@@ -1245,9 +1330,9 @@ def main():
         "diagnostics", "Capture extra logs to help diagnose bugs")
     diagnostics.add_argument(
         "--log-gtk-warnings", action="store_true",
-        help="Record GTK/GLib/Gdk/Pango/VTE warnings & criticals into the log "
-             "files (and the terminal). Helps diagnose UI, widget-lifecycle and "
-             "rendering issues that are otherwise only printed to stderr.",
+        help="Also capture lower-severity GTK/GLib info & debug messages. "
+             "Warnings & criticals are captured into the log files by default; "
+             "use this for deep GTK/widget tracing.",
     )
     diagnostics.add_argument(
         "--fatal-warnings", action="store_true",

@@ -10,8 +10,12 @@ Lives under the main window's Help submenu (``win.view-logs``).
 from __future__ import annotations
 
 import collections
+import glob
+import json
 import logging
 import os
+import re
+import zipfile
 from gettext import gettext as _
 from typing import List, Optional
 
@@ -245,6 +249,83 @@ def build_report_bundle(crash_path: Optional[str] = None, tail_lines: int = 400)
     extra.extend(crash_lines or ["(crash report is empty or unreadable)"])
     extra.append("```")
     return bundle + "\n" + "\n".join(extra)
+
+
+# Keys whose values are redacted from the config copy in the diagnostics ZIP.
+# Secrets normally live in the OS keyring, not config.json — this is
+# defence-in-depth so a bug-report bundle never leaks credentials.
+_SECRET_KEY_RE = re.compile(
+    r'(pass(word|phrase)?|secret|token|credential|api[_-]?key|private[_-]?key)', re.I)
+
+
+def _redact_config(obj):
+    """Recursively replace secret-ish values with a placeholder."""
+    if isinstance(obj, dict):
+        out = {}
+        for key, value in obj.items():
+            if isinstance(key, str) and _SECRET_KEY_RE.search(key):
+                out[key] = "***REDACTED***"
+            else:
+                out[key] = _redact_config(value)
+        return out
+    if isinstance(obj, list):
+        return [_redact_config(item) for item in obj]
+    if isinstance(obj, str) and 'PRIVATE KEY-----' in obj:
+        return "***REDACTED***"
+    return obj
+
+
+def build_diagnostics_zip(dest_path: str) -> str:
+    """Write a self-contained diagnostics ZIP to dest_path and return it.
+
+    Contents: logs/ (all log files incl. crash reports), system-info.txt
+    (platform/runtime/tool details), version.txt, and a redacted config.json.
+    Connection lists / ssh_config are intentionally excluded for privacy.
+    """
+    from .platform_utils import get_config_dir, APP_ID
+
+    state = get_state_dir()
+    with zipfile.ZipFile(dest_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+        # Log files (current + rotated backups + crash reports).
+        seen = set()
+        for name in ('sshpilot.log', 'app.log', 'ssh.log',
+                     'crash.log', 'crash.log.previous'):
+            path = os.path.join(state, name)
+            if os.path.isfile(path):
+                zf.write(path, arcname='logs/' + name)
+                seen.add(path)
+        for path in sorted(glob.glob(os.path.join(state, '*.log.*'))):
+            if path not in seen and os.path.isfile(path):
+                zf.write(path, arcname='logs/' + os.path.basename(path))
+
+        # System / runtime info.
+        try:
+            from .startup_info import StartupInfo
+            info = StartupInfo().info
+        except Exception as exc:  # pragma: no cover - defensive
+            info = {"error": "could not collect system info: %s" % exc}
+        zf.writestr('system-info.txt', json.dumps(info, indent=2, default=str))
+
+        # Version.
+        try:
+            from . import __version__ as version
+        except Exception:
+            version = "unknown"
+        zf.writestr('version.txt',
+                    "sshPilot %s\napplication-id: %s\n" % (version, APP_ID))
+
+        # Redacted config.
+        cfg_path = os.path.join(get_config_dir(), 'config.json')
+        try:
+            if os.path.isfile(cfg_path):
+                with open(cfg_path, 'r', encoding='utf-8') as fh:
+                    data = json.load(fh)
+                zf.writestr('config.json',
+                            json.dumps(_redact_config(data), indent=2, default=str))
+        except Exception as exc:
+            zf.writestr('config.json', "(could not read/redact config: %s)" % exc)
+
+    return dest_path
 
 
 class LogViewerWindow(Adw.Window):

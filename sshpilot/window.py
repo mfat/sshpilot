@@ -1197,6 +1197,78 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception as exc:
             logger.error("Could not open issue tracker: %s", exc)
 
+    def on_export_diagnostics_action(self, action=None, param=None):
+        """Save a ZIP of logs + system info + redacted config for bug reports."""
+        from datetime import datetime
+        file_dialog = Gtk.FileDialog()
+        file_dialog.set_title(_("Export Diagnostics"))
+        file_dialog.set_initial_name(
+            "sshpilot-diagnostics-%s.zip" % datetime.now().strftime('%Y%m%d-%H%M%S'))
+        try:
+            docs = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOCUMENTS)
+            if docs:
+                file_dialog.set_initial_folder(Gio.File.new_for_path(docs))
+        except Exception:
+            pass
+
+        def _on_save(dialog, result):
+            try:
+                gfile = dialog.save_finish(result)
+            except GLib.Error as exc:
+                if getattr(exc, 'code', None) != 2:  # 2 = dismissed
+                    logger.error("Export diagnostics dialog failed: %s", exc)
+                return
+            if gfile is None:
+                return
+            path = gfile.get_path()
+
+            def _work():
+                try:
+                    from .log_viewer import build_diagnostics_zip
+                    build_diagnostics_zip(path)
+                    GLib.idle_add(self._on_export_diagnostics_done, True, None, path)
+                except Exception as exc:
+                    logger.error("Export diagnostics failed: %s", exc, exc_info=True)
+                    GLib.idle_add(self._on_export_diagnostics_done, False, str(exc), path)
+
+            import threading
+            threading.Thread(target=_work, daemon=True).start()
+
+        file_dialog.save(self, None, _on_save)
+
+    def _on_export_diagnostics_done(self, ok, error, path):
+        if ok:
+            dialog = Adw.MessageDialog(
+                transient_for=self, modal=True,
+                heading=_("Diagnostics Exported"),
+                body=_("Saved to:\n{}\n\nSecrets are redacted. Your saved connections "
+                       "and SSH config are not included; a maintainer can request them "
+                       "separately if needed.").format(path),
+            )
+            dialog.add_response('open', _("Open Folder"))
+            dialog.add_response('ok', _("OK"))
+            dialog.set_default_response('ok')
+            dialog.connect(
+                'response',
+                lambda d, r: self._open_containing_folder(path) if r == 'open' else None)
+        else:
+            dialog = Adw.MessageDialog(
+                transient_for=self, modal=True,
+                heading=_("Export Failed"),
+                body=_("Could not export diagnostics:\n{}").format(error or _("Unknown error")),
+            )
+            dialog.add_response('ok', _("OK"))
+        dialog.present()
+        return False
+
+    def _open_containing_folder(self, path):
+        try:
+            folder = os.path.dirname(path) or '.'
+            uri = Gio.File.new_for_path(folder).get_uri()
+            Gio.AppInfo.launch_default_for_uri(uri, None)
+        except Exception as exc:
+            logger.debug("Could not open containing folder: %s", exc)
+
     def _restore_startup_session(self, startup_behavior):
         """Restore a session on startup based on the configured behavior."""
         try:
@@ -4080,6 +4152,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         help_menu.append('Check for Updates', 'win.check-for-updates')
         help_menu.append('View Logs…', 'win.view-logs')
         help_menu.append('Report a Problem…', 'win.report-problem')
+        help_menu.append('Export Diagnostics…', 'win.export-diagnostics')
         menu.append_submenu('Help', help_menu)
 
         menu.append('About', 'app.about')

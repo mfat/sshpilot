@@ -312,11 +312,16 @@ sudo dnf install python3-gobject gtk4 libadwaita vte291-gtk4 gtksourceview5 libs
 
 CLI flags (`sshpilot/main.py::main`):
 - `--verbose` / `-v` — detailed (debug) logging; `--quiet` / `-q` — warnings & errors only.
-- `--log-gtk-warnings` — forward GTK/GLib/Gdk/Pango/VTE warnings & criticals to the log
-  files (and stderr) via `_install_gtk_log_capture()` (`GLib.log_set_handler`, logged
-  under the `gtk` logger). The `Gtk-CRITICAL`/`Gtk-WARNING` lines name the exact bad
-  widget/render operation, so this is the first thing to enable for UI / widget-lifecycle
-  / rendering bugs.
+- GTK/GLib/Gdk/Pango/VTE **warnings & criticals are captured into the log files by
+  default** via `_install_gtk_log_capture()` (`GLib.log_set_handler`, logged under the
+  `gtk` logger; also echoed to stderr). The `Gtk-CRITICAL`/`Gtk-WARNING` lines name the
+  exact bad widget/render operation — look here first for UI / widget-lifecycle /
+  rendering bugs.
+- **Uncaught Python exceptions are logged by default** via `_install_exception_hooks()`
+  (`sys.excepthook` — also covers PyGObject GLib/GTK callback exceptions —
+  `threading.excepthook`, and `sys.unraisablehook` for `__del__`/finalizer errors).
+- `--log-gtk-warnings` — *additionally* capture lower-severity GTK/GLib **info & debug**
+  messages (deep GTK tracing); warnings/criticals are captured without it.
 - `--fatal-warnings` — `GLib.log_set_always_fatal(WARNING|CRITICAL)` via
   `_enable_fatal_gtk_warnings()`; the resulting `abort()` is caught by faulthandler and the
   exact stack is written to `crash.log`. Aggressive (aborts on benign warnings too) — use
@@ -333,6 +338,13 @@ surfaced via the startup "closed unexpectedly" dialog and **Help ▸ Report a Pr
 (`window.on_report_problem_action` → `log_viewer.build_report_bundle`). For a crash with
 no Python frame (pure GTK), use the `coredumpctl` core + `py-bt` (needs `python3-dbg`);
 GTK frames need GTK debug symbols to resolve.
+
+**Help ▸ Export Diagnostics…** (`win.export-diagnostics` →
+`window.on_export_diagnostics_action` → `log_viewer.build_diagnostics_zip`) writes a ZIP
+with `logs/` (all log files incl. crash reports), `system-info.txt` (`StartupInfo`),
+`version.txt`, and a **redacted** `config.json` (`log_viewer._redact_config` strips
+password/passphrase/secret/token/credential/api-key/private-key values + PEM blobs).
+Saved connections / `ssh_config` are intentionally excluded for privacy.
 
 
 ## Memory and Preferences
