@@ -3,26 +3,12 @@ import os
 import sys
 
 
-# conftest.py already installs ``gi.repository`` with auto-creating
-# ``_DummyGIModule`` stubs for Gtk/Gio/GLib/etc. We only need to add the
-# specific behaviours this test relies on, without replacing the whole module
-# (which would clobber attributes other tests depend on, see #985).
-from gi.repository import Gio, GLib, GObject
-
-
-class DummySettingsSchemaSource:
-    @staticmethod
-    def get_default():
-        return None
-
-
-# Config() must produce a real instance; the default _DummyGIModule stub
-# returns ``object()`` for any class call, so override Object with a real
-# subclassable type just for this test.
-GObject.Object = type('GObject', (object,), {})
-Gio.SettingsSchemaSource = DummySettingsSchemaSource
-GLib.get_user_config_dir = lambda: os.path.join(os.environ.get("HOME", ""), ".config")
-
+# conftest.py installs gi.repository stubs and makes GObject.Object a real,
+# subclassable base, so Config() yields a real instance without any per-module
+# stub surgery. (This file used to rebind GObject.Object / Gio.SettingsSchemaSource
+# / GLib.get_user_config_dir at import time, which leaked across the shared stub
+# and made the suite order-dependent — see #985.) The one test that needs a
+# specific GLib.get_user_config_dir patches it function-scoped via monkeypatch.
 
 # Ensure project root is importable
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
