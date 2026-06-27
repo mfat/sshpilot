@@ -7,7 +7,6 @@ import asyncio
 import copy
 import os
 import logging
-import math
 import posixpath
 import re
 import shlex
@@ -93,6 +92,7 @@ from .tag_groups import (
 
 from .welcome_page import WelcomePage
 from .actions import WindowActions, register_window_actions
+from .window_broadcast import WindowBroadcastMixin
 from . import shutdown
 from .search_utils import connection_matches
 from .shortcut_utils import get_primary_modifier_label
@@ -821,7 +821,7 @@ _get_connection_host = get_connection_host
 _get_connection_alias = get_connection_alias
 _format_connection_host_display = format_connection_host_display
 
-class MainWindow(Adw.ApplicationWindow, WindowActions):
+class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowActions):
     """Main application window"""
 
     def __init__(self, *args, isolated: bool = False, **kwargs):
@@ -2571,7 +2571,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         add_button.add_css_class('flat')
         self._expand_sidebar_toolbar_button(add_button)
         add_button.set_tooltip_text(
-            f'Add Connection ({get_primary_modifier_label()}+N)'
+            f'Add Connection ({get_primary_modifier_label()}+Shift+N)'
         )
         add_button.connect('clicked', self.on_add_connection_clicked)
         try:
@@ -2978,23 +2978,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     logger.debug("Simple right-click detected - showing context menu for selected row")
 
                     # Try to detect the clicked row, but fall back to selected row if detection fails
-                    row = None
-                    try:
-                        # First try to find the row that was actually clicked using pick method
-                        # This is safe now because we're not doing any selection operations
-                        picked_widget = self.connection_list.pick(x, y, Gtk.PickFlags.DEFAULT)
-                        widget = picked_widget
-                        while widget is not None:
-                            if isinstance(widget, Gtk.ListBoxRow):
-                                row = widget
-                                logger.debug("Using clicked row for context menu")
-                                break
-                            widget = widget.get_parent()
-                            if widget == self.connection_list:
-                                break
-                    except Exception as e:
-                        logger.debug(f"Failed to detect clicked row: {e}")
-                    
+                    row = self._pick_connection_list_row(x, y)
+                    if row is not None:
+                        logger.debug("Using clicked row for context menu")
+
                     # Fallback to selected row if click detection failed
                     if not row:
                         try:
@@ -3121,7 +3108,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     return
 
 
-                row, _, _ = self._resolve_connection_list_event(x, y)
+                row = self._pick_connection_list_row(x, y)
 
                 if not row:
                     try:
@@ -3371,199 +3358,30 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception as e:
             logger.error(f"Failed to toggle pin for {len(conns)} connection(s): {e}")
 
-    def _resolve_connection_list_event(
-        self,
-        x: float,
-        y: float,
-        scrolled_window: Optional[Gtk.ScrolledWindow] = None,
-    ) -> Tuple[Optional[Gtk.ListBoxRow], float, float]:
-        """Resolve the target row and viewport coordinates for a pointer event on the connection list."""
+    def _pick_connection_list_row(
+        self, x: float, y: float
+    ) -> Optional[Gtk.ListBoxRow]:
+        """Return the ListBoxRow under a pointer event on the connection list.
 
+        The coordinates come from a gesture attached to ``connection_list``
+        itself, so they are already in the ListBox's content space. ``pick()``
+        resolves the row directly with no scroll adjustment, which is why both
+        the right-click and middle-click handlers must share this path: any
+        manual vadjustment math would double-count the scroll offset and select
+        a row further down the list (see issue #1013).
+        """
         try:
-            event_x = float(x)
-            event_y = float(y)
-        except (TypeError, ValueError):
-            return None, 0.0, 0.0
-
-        adjusted_x = event_x
-        adjusted_y = event_y
-        hadjust_value = 0.0
-        vadjust_value = 0.0
-
-
-        if scrolled_window is None:
-            try:
-                scrolled_window = self.connection_list.get_ancestor(Gtk.ScrolledWindow)
-            except Exception:
-                scrolled_window = None
-
-        if scrolled_window is not None:
-            try:
-                hadjustment = scrolled_window.get_hadjustment()
-            except Exception:
-                hadjustment = None
-            else:
-                if hadjustment is not None:
-                    try:
-                        hadjust_value = float(hadjustment.get_value())
-                    except Exception:
-                        hadjust_value = 0.0
-                    else:
-                        adjusted_x = event_x + hadjust_value
-
-
-            try:
-                vadjustment = scrolled_window.get_vadjustment()
-            except Exception:
-                vadjustment = None
-            else:
-                if vadjustment is not None:
-                    try:
-                        vadjust_value = float(vadjustment.get_value())
-                    except Exception:
-                        vadjust_value = 0.0
-                    else:
-                        adjusted_y = event_y + vadjust_value
-
-
-        x_candidates: List[float] = [adjusted_x]
-        if not math.isclose(adjusted_x, event_x):
-            x_candidates.append(event_x)
-
-        y_candidates: List[float] = [adjusted_y]
-        if not math.isclose(adjusted_y, event_y):
-            y_candidates.append(event_y)
-
-        row: Optional[Gtk.ListBoxRow] = None
-        pointer_y_source_index = 0
-        for idx, candidate in enumerate(y_candidates):
-
-            try:
-                row = self.connection_list.get_row_at_y(int(candidate))
-            except Exception:
-                row = None
-            if row:
-                pointer_y_source_index = idx
-                break
-            row = self._connection_row_for_coordinate(candidate)
-            if row:
-                pointer_y_source_index = idx
-
-                break
-
-        if not row:
-            return None, x_candidates[0], y_candidates[0]
-
-        pointer_x_list = x_candidates[0]
-        pointer_y_list = y_candidates[pointer_y_source_index]
-
-        pointer_x_viewport = event_x
-        pointer_y_viewport = event_y
-
-        try:
-            allocation = row.get_allocation()
-        except Exception:
-            allocation = None
-
-        if allocation is not None:
-            try:
-                row_left = float(allocation.x)
-                row_top = float(allocation.y)
-                row_right = row_left + max(float(allocation.width) - 1.0, 0.0)
-                row_bottom = row_top + max(float(allocation.height) - 1.0, 0.0)
-            except Exception:
-                row_left = row_top = 0.0
-                row_right = row_bottom = 0.0
-
-
-            if row_right < row_left:
-                row_right = row_left
-            if row_bottom < row_top:
-                row_bottom = row_top
-
-            row_left_viewport = row_left - hadjust_value
-            row_right_viewport = row_right - hadjust_value
-            row_top_viewport = row_top - vadjust_value
-            row_bottom_viewport = row_bottom - vadjust_value
-
-            if row_left_viewport > row_right_viewport:
-                row_left_viewport, row_right_viewport = row_right_viewport, row_left_viewport
-            if row_top_viewport > row_bottom_viewport:
-                row_top_viewport, row_bottom_viewport = row_bottom_viewport, row_top_viewport
-
-            pointer_x_candidates: List[float] = [pointer_x_viewport]
-            pointer_x_from_list = pointer_x_list - hadjust_value
-            if not math.isclose(pointer_x_from_list, pointer_x_viewport):
-                pointer_x_candidates.append(pointer_x_from_list)
-            event_x_minus_adjust = event_x - hadjust_value
-            if hadjust_value and not math.isclose(event_x_minus_adjust, pointer_x_from_list):
-                pointer_x_candidates.append(event_x_minus_adjust)
-
-            for candidate in pointer_x_candidates:
-                if row_left_viewport <= candidate <= row_right_viewport:
-                    pointer_x_viewport = candidate
-                    break
-            else:
-                midpoint_x = row_left_viewport + (row_right_viewport - row_left_viewport) / 2.0
-                if row_left_viewport <= row_right_viewport:
-                    pointer_x_viewport = max(
-                        row_left_viewport, min(pointer_x_viewport, row_right_viewport)
-                    )
-                else:
-                    pointer_x_viewport = midpoint_x
-
-            pointer_y_candidates: List[float] = [pointer_y_viewport]
-            pointer_y_from_list = pointer_y_list - vadjust_value
-            if not math.isclose(pointer_y_from_list, pointer_y_viewport):
-                pointer_y_candidates.append(pointer_y_from_list)
-            event_y_minus_adjust = event_y - vadjust_value
-            if vadjust_value and not math.isclose(event_y_minus_adjust, pointer_y_from_list):
-                pointer_y_candidates.append(event_y_minus_adjust)
-
-            for candidate in pointer_y_candidates:
-                if row_top_viewport <= candidate <= row_bottom_viewport:
-                    pointer_y_viewport = candidate
-                    break
-            else:
-                midpoint_y = row_top_viewport + (row_bottom_viewport - row_top_viewport) / 2.0
-                if row_top_viewport <= row_bottom_viewport:
-                    pointer_y_viewport = max(
-                        row_top_viewport, min(pointer_y_viewport, row_bottom_viewport)
-                    )
-                else:
-                    pointer_y_viewport = midpoint_y
-
-        return row, pointer_x_viewport, pointer_y_viewport
-
-
-    def _connection_row_for_coordinate(self, coord: float) -> Optional[Gtk.ListBoxRow]:
-        """Return the listbox row whose allocation includes the given list-space coordinate."""
-        try:
-            target = float(coord)
-        except (TypeError, ValueError):
+            widget = self.connection_list.pick(x, y, Gtk.PickFlags.DEFAULT)
+        except Exception as e:
+            logger.debug(f"Failed to pick connection list row: {e}")
             return None
 
-        try:
-            child = self.connection_list.get_first_child()
-        except Exception:
-            return None
-
-        while child is not None:
-            try:
-                if isinstance(child, Gtk.ListBoxRow):
-                    allocation = child.get_allocation()
-                    row_top = allocation.y
-                    row_bottom = allocation.y + max(allocation.height - 1, 0)
-                    if row_bottom < row_top:
-                        row_bottom = row_top
-                    if row_top <= target <= row_bottom:
-                        return child
-            except Exception:
-                pass
-            try:
-                child = child.get_next_sibling()
-            except Exception:
+        while widget is not None:
+            if isinstance(widget, Gtk.ListBoxRow):
+                return widget
+            if widget == self.connection_list:
                 break
+            widget = widget.get_parent()
 
         return None
 
@@ -3875,10 +3693,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         from sshpilot import icon_utils as _iu
         self.split_view_button = Gtk.Button()
         _iu.set_button_icon(self.split_view_button, 'view-grid-symbolic')
-        from .shortcut_utils import get_primary_modifier_label as _gpm
-        self.split_view_button.set_tooltip_text(
-            _('New Split View ({primary}+Shift+S)').format(primary=_gpm())
-        )
+        self.split_view_button.set_tooltip_text(_('New Split View'))
         self.split_view_button.add_css_class('flat')
         self.split_view_button.connect('clicked', self.on_open_split_view_clicked)
         self.header_bar.pack_start(self.split_view_button)
@@ -3895,7 +3710,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self._cmd_blocks_toggle_btn = Gtk.ToggleButton()
         _cmd_icon_utils.set_button_icon(self._cmd_blocks_toggle_btn, 'system-run-symbolic')
         self._cmd_blocks_toggle_btn.add_css_class('flat')
-        self._cmd_blocks_toggle_btn.set_tooltip_text(_('Commands (Ctrl+Alt+S)'))
+        self._cmd_blocks_toggle_btn.set_tooltip_text(_('Commands'))
         self._updating_cmd_toggle = False
 
         def _on_cmd_toggle_btn_toggled(btn):
@@ -4695,7 +4510,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 
                 # Show toast notification
                 toast = Adw.Toast.new(
-                    f"Switched to connection list — ↑/↓ navigate, Enter open, {get_primary_modifier_label()}+Enter new tab, {get_primary_modifier_label()}+Shift+L back to terminal"
+                    f"Switched to connection list — ↑/↓ navigate, Enter open, {get_primary_modifier_label()}+Enter new tab"
                 )
                 toast.set_timeout(3)  # seconds
                 if hasattr(self, 'toast_overlay'):
@@ -5866,34 +5681,28 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
         section.add_group(group_tabs)
 
-        # Split view shortcuts (hardcoded — not registered as actions)
+        # Split view shortcuts — registered, customizable actions; show their
+        # current (possibly overridden) accelerators like every other group.
         group_split = Gtk.ShortcutsGroup(title=_('Split View'))
-        group_split.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Focus pane left'), accelerator='<Ctrl><Alt>h'))
-        group_split.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Focus pane down'), accelerator='<Ctrl><Alt>j'))
-        group_split.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Focus pane up'), accelerator='<Ctrl><Alt>k'))
-        group_split.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Focus pane right'), accelerator='<Ctrl><Alt>l'))
-        group_split.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Resize pane left'), accelerator='<Ctrl><Alt><Shift>h'))
-        group_split.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Resize pane down'), accelerator='<Ctrl><Alt><Shift>j'))
-        group_split.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Resize pane up'), accelerator='<Ctrl><Alt><Shift>k'))
-        group_split.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Resize pane right'), accelerator='<Ctrl><Alt><Shift>l'))
-        group_split.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Side-by-side layout'), accelerator='<Ctrl><Shift>backslash'))
-        group_split.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Top / bottom layout'), accelerator='<Ctrl><Shift>minus'))
-        group_split.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Add pane'), accelerator='<Ctrl><Shift>n'))
-        group_split.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Close focused pane'), accelerator='<Ctrl><Shift>w'))
-        group_split.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Focus pane 1–4'), accelerator='<Alt>1'))
+        split_actions = [
+            ('split-focus-left', _('Focus pane left')),
+            ('split-focus-down', _('Focus pane down')),
+            ('split-focus-up', _('Focus pane up')),
+            ('split-focus-right', _('Focus pane right')),
+            ('split-resize-left', _('Resize pane left')),
+            ('split-resize-down', _('Resize pane down')),
+            ('split-resize-up', _('Resize pane up')),
+            ('split-resize-right', _('Resize pane right')),
+            ('split-layout-horizontal', _('Side-by-side layout')),
+            ('split-layout-vertical', _('Top / bottom layout')),
+            ('split-add-pane', _('Add pane')),
+        ]
+        for action_name, title in split_actions:
+            shortcuts = current_shortcuts.get(action_name)
+            if shortcuts:
+                accelerator = ' '.join(shortcuts)
+                group_split.add_shortcut(Gtk.ShortcutsShortcut(
+                    title=title, accelerator=accelerator))
         section.add_group(group_split)
 
     def _get_safe_current_shortcuts(self):
@@ -5926,94 +5735,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             logger.debug(f"Error getting current shortcuts: {e}")
         
         return shortcuts
-
-    def _add_fallback_shortcuts(self, section, primary):
-        """Add fallback static shortcuts if dynamic generation fails"""
-        # General shortcuts
-        group_general = Gtk.ShortcutsGroup()
-        group_general.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Toggle Sidebar'), accelerator='F9'))
-        group_general.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('SSH Config Editor'), accelerator=f"{primary}<Shift>e"))
-        group_general.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Settings'), accelerator=f"{primary}comma"))
-        group_general.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Documentation'), accelerator='F1'))
-        group_general.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Keyboard Shortcuts'), accelerator=f"{primary}question"))
-        group_general.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Quit'), accelerator=f"{primary}<Shift>q"))
-        section.add_group(group_general)
-
-        # Connection management shortcuts
-        group_connections = Gtk.ShortcutsGroup()
-        group_connections.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('New Connection'), accelerator=f"{primary}n"))
-        group_connections.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Search Connections'), accelerator=f"{primary}f"))
-        group_connections.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Focus Connection List'), accelerator=f"{primary}<Shift>l"))
-        group_connections.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Manage Files'), accelerator=f"{primary}<Shift>o"))
-        section.add_group(group_connections)
-
-        # Terminal shortcuts
-        group_terminal = Gtk.ShortcutsGroup()
-        group_terminal.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Local Terminal'), accelerator=f"{primary}<Shift>t"))
-        group_terminal.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Search in Terminal'), accelerator=f"{primary}<Shift>f"))
-        group_terminal.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Broadcast Command'), accelerator=f"{primary}<Shift>b"))
-        section.add_group(group_terminal)
-
-        # Tab navigation shortcuts
-        group_tabs = Gtk.ShortcutsGroup()
-        group_tabs.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Open New Tab'), accelerator=f"{primary}<Alt>n"))
-        group_tabs.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Next Tab'), accelerator=f"{primary}Page_Down"))
-        group_tabs.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Previous Tab'), accelerator=f"{primary}Page_Up"))
-        group_tabs.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Move Tab Left'), accelerator=f"{primary}<Shift>Page_Up"))
-        group_tabs.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Move Tab Right'), accelerator=f"{primary}<Shift>Page_Down"))
-        group_tabs.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Close Tab'), accelerator=f"{primary}<Shift>w"))
-        group_tabs.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Tab Overview'), accelerator=f"{primary}<Shift>Tab"))
-        section.add_group(group_tabs)
-
-        # Split view shortcuts
-        group_split = Gtk.ShortcutsGroup(title=_('Split View'))
-        group_split.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Focus pane left'), accelerator='<Ctrl><Alt>h'))
-        group_split.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Focus pane down'), accelerator='<Ctrl><Alt>j'))
-        group_split.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Focus pane up'), accelerator='<Ctrl><Alt>k'))
-        group_split.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Focus pane right'), accelerator='<Ctrl><Alt>l'))
-        group_split.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Resize pane left'), accelerator='<Ctrl><Alt><Shift>h'))
-        group_split.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Resize pane down'), accelerator='<Ctrl><Alt><Shift>j'))
-        group_split.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Resize pane up'), accelerator='<Ctrl><Alt><Shift>k'))
-        group_split.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Resize pane right'), accelerator='<Ctrl><Alt><Shift>l'))
-        group_split.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Side-by-side layout'), accelerator='<Ctrl><Shift>backslash'))
-        group_split.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Top / bottom layout'), accelerator='<Ctrl><Shift>minus'))
-        group_split.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Add pane'), accelerator='<Ctrl><Shift>n'))
-        group_split.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Close focused pane'), accelerator='<Ctrl><Shift>w'))
-        group_split.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Focus pane 1–4'), accelerator='<Alt>1'))
-        section.add_group(group_split)
 
     def toggle_list_focus(self):
         """Toggle focus between connection list and terminal"""
@@ -6089,40 +5810,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
 
     # Signal handlers
-    def on_connection_click(self, gesture, n_press, x, y):
-        """Handle clicks on the connection list"""
-        # Get the row that was clicked
-        row, _, _ = self._resolve_connection_list_event(x, y)
-        if row is None:
-            return
-
-        if n_press == 1:  # Single click - just select
-            try:
-                self.connection_list.grab_focus()
-            except Exception:
-                pass
-            try:
-                state = gesture.get_current_event_state()
-            except Exception:
-                state = 0
-
-            multi_mask = (
-                Gdk.ModifierType.CONTROL_MASK
-                | Gdk.ModifierType.SHIFT_MASK
-                | getattr(Gdk.ModifierType, 'PRIMARY_ACCELERATOR_MASK', 0)
-            )
-
-            if state & multi_mask:
-                # Allow default multi-selection behavior
-                return
-
-            self._select_only_row(row)
-            gesture.set_state(Gtk.EventSequenceState.CLAIMED)
-        elif n_press == 2:  # Double click - connect
-            if hasattr(row, 'connection'):
-                self._cycle_connection_tabs_or_open(row.connection)
-            gesture.set_state(Gtk.EventSequenceState.CLAIMED)
-
     def on_connection_activated(self, list_box, row):
         """Handle connection activation (Enter key)"""
         self._return_to_tab_view_if_welcome()
@@ -7188,7 +6875,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         try:
             page, _child = self._tab_menu_target()
             if page is not None:
-                self.tab_view.close_other_pages(page)
+                self._confirm_then_bulk_close(
+                    page,
+                    lambda: self.tab_view.close_other_pages(page),
+                    after_only=False,
+                )
         except Exception as exc:
             logger.error("Tab close others failed: %s", exc)
 
@@ -7196,7 +6887,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         try:
             page, _child = self._tab_menu_target()
             if page is not None:
-                self.tab_view.close_pages_after(page)
+                self._confirm_then_bulk_close(
+                    page,
+                    lambda: self.tab_view.close_pages_after(page),
+                    after_only=True,
+                )
         except Exception as exc:
             logger.error("Tab close to the right failed: %s", exc)
 
@@ -7396,6 +7091,96 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         finally:
             self._suppress_close_confirmation = False
         self.show_start_tab()
+
+    def _bulk_close_target_pages(self, target_page, after_only: bool):
+        """Pages that close_other_pages / close_pages_after would remove.
+
+        get_pages() yields pages in tab order, so "after target" is every page
+        seen once the target has been passed. The target itself and the pinned
+        Start tab are excluded, matching libadwaita's semantics.
+        """
+        pages, seen_target = [], False
+        for p in list(self.tab_view.get_pages()):
+            if p is target_page:
+                seen_target = True
+                continue
+            if self._is_start_tab_page(p):
+                continue
+            if after_only and not seen_target:
+                continue
+            pages.append(p)
+        return pages
+
+    def _count_sessions_in_pages(self, pages) -> int:
+        """Number of live terminal sessions across the given pages."""
+        from .split_view import SplitViewTab
+        total = 0
+        for p in pages:
+            child = p.get_child() if hasattr(p, 'get_child') else None
+            if isinstance(child, SplitViewTab):
+                total += sum(pane.get_terminal_count() for pane in child._panes)
+            elif child in self.terminal_to_connection:
+                total += 1
+        return total
+
+    def _run_suppressed_close(self, close_fn):
+        """Run a bulk close with the per-tab disconnect confirmation suppressed.
+
+        The bulk close emits close-page once per page; suppressing keeps
+        on_tab_close from spawning a modal dialog for each (issue #1014). The
+        closes run synchronously, so the flag is safely reset afterwards.
+        Sessions still tear down via TerminalWidget._on_destroy.
+        """
+        self._suppress_close_confirmation = True
+        try:
+            close_fn()
+        finally:
+            self._suppress_close_confirmation = False
+
+    def _on_bulk_close_response(self, dialog, response_id, close_fn):
+        """Handle the single confirmation dialog for a bulk tab close."""
+        if response_id == 'close':
+            self._run_suppressed_close(close_fn)
+        dialog.destroy()
+
+    def _confirm_then_bulk_close(self, target_page, close_fn, after_only: bool):
+        """Close other / to-the-right tabs, honoring confirm-disconnect.
+
+        When the preference is on and live sessions would be disconnected, ask
+        once for the whole batch rather than once per tab. On confirm the batch
+        closes with per-tab confirmation suppressed; on cancel nothing happens.
+        """
+        pages = self._bulk_close_target_pages(target_page, after_only)
+        if not pages:
+            return
+
+        confirm = bool(
+            getattr(self, 'config', None)
+            and self.config.get_setting('confirm-disconnect', True)
+        )
+        n_sessions = self._count_sessions_in_pages(pages)
+
+        if confirm and n_sessions > 0:
+            dialog = Adw.MessageDialog(
+                transient_for=self,
+                modal=True,
+                heading=_("Close tabs?"),
+                body=_("This will close {t} tab(s) and disconnect {n} session(s). Continue?").format(
+                    t=len(pages), n=n_sessions
+                ),
+            )
+            dialog.add_response('cancel', _("Cancel"))
+            dialog.add_response('close', _("Close"))
+            dialog.set_response_appearance('close', Adw.ResponseAppearance.DESTRUCTIVE)
+            dialog.set_default_response('close')
+            dialog.set_close_response('cancel')
+            dialog.connect('response', self._on_bulk_close_response, close_fn)
+            dialog.present()
+        else:
+            # Toggle off, or nothing with a live session to disconnect: close
+            # directly. With the toggle off, on_tab_close disconnects each tab
+            # without a dialog.
+            close_fn()
 
     def _restore_split_tab(self, entry):
         """Recreate a split-view tab from a captured entry."""
@@ -9287,172 +9072,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception as e:
             logger.error(f"Failed to open in system terminal: {e}")
 
-    def on_broadcast_send_clicked(self, button):
-        """Handle broadcast banner send button click"""
-        command = self.broadcast_entry.get_text().strip()
-        if command:
-            sent_count, failed_count = self.terminal_manager.broadcast_command(command)
-
-            # Update banner message with result (we'll need to find the title label)
-            # For now, just hide the banner after sending
-            self.broadcast_entry_dirty = False
-            self._schedule_broadcast_hide_timeout()
-        else:
-            # Show error for empty command - could add error styling here
-            self.broadcast_entry_dirty = False
-            self._schedule_broadcast_hide_timeout()
-
-    def on_broadcast_cancel_clicked(self, button):
-        """Handle broadcast banner cancel button click"""
-        self.hide_broadcast_banner()
-    
-    def on_broadcast_entry_activate(self, entry):
-        """Handle Enter key press in broadcast entry"""
-        self.on_broadcast_send_clicked(self.broadcast_send_button)
-    
-    def on_broadcast_entry_key_pressed(self, controller, keyval, keycode, state):
-        """Handle key presses in broadcast entry"""
-        if keyval == Gdk.KEY_Escape:
-            self.hide_broadcast_banner()
-            return True  # Consume the key event
-        self._cancel_broadcast_hide_timeout()
-        return False  # Let other keys pass through
-
-    def on_broadcast_banner_key_pressed(self, controller, keyval, keycode, state):
-        """Handle key presses on the entire broadcast banner"""
-        if keyval == Gdk.KEY_Escape:
-            self.hide_broadcast_banner()
-            return True  # Consume the key event
-        return False  # Let other keys pass through
-    
-    def hide_broadcast_banner(self):
-        """Hide the broadcast banner"""
-        self._cancel_broadcast_hide_timeout()
-        self.broadcast_banner.set_reveal_child(False)
-        self.broadcast_entry_dirty = False
-        self._suppress_broadcast_entry_changed = True
-        try:
-            self.broadcast_entry.set_text("")
-        finally:
-            self._suppress_broadcast_entry_changed = False
-
-        # Focus the active terminal tab after hiding the banner
-        self._focus_active_terminal_tab()
-
-    def _focus_active_terminal_tab(self):
-        """Focus the currently active terminal tab"""
-        try:
-            if hasattr(self, 'tab_view') and self.tab_view:
-                selected_page = self.tab_view.get_selected_page()
-                if selected_page:
-                    terminal_widget = selected_page.get_child()
-                    if terminal_widget:
-                        if hasattr(terminal_widget, 'vte') and hasattr(terminal_widget.vte, 'grab_focus'):
-                            terminal_widget.vte.grab_focus()
-                        elif hasattr(terminal_widget, 'grab_focus'):
-                            terminal_widget.grab_focus()
-        except Exception as e:
-            logger.debug(f"Failed to focus active terminal tab: {e}")
-    
-    def show_broadcast_banner(self):
-        """Show the broadcast banner"""
-        self._cancel_broadcast_hide_timeout()
-        self.broadcast_banner.set_reveal_child(True)
-        self.broadcast_entry_dirty = bool(self.broadcast_entry.get_text())
-        # Focus the entry after a short delay to ensure banner is visible
-        def focus_entry():
-            self.broadcast_entry.grab_focus()
-            return False
-        GLib.idle_add(focus_entry)
-
-    def on_broadcast_entry_changed(self, entry):
-        """Track user edits to the broadcast entry"""
-        if self._suppress_broadcast_entry_changed:
-            return
-        self.broadcast_entry_dirty = True
-        self._cancel_broadcast_hide_timeout()
-
-    def on_broadcast_entry_focus_enter(self, controller, *args):
-        """Cancel hide timeout when the entry gains focus"""
-        self._cancel_broadcast_hide_timeout()
-
-    def on_broadcast_entry_focus_leave(self, controller, *args):
-        """Schedule hiding when the entry loses focus"""
-        if not self.broadcast_banner.get_reveal_child():
-            return
-        self._schedule_broadcast_hide_timeout()
-
-    def _cancel_broadcast_hide_timeout(self):
-        """Cancel any pending hide timeout for the broadcast banner"""
-        if self.broadcast_hide_timeout_id is not None:
-            try:
-                GLib.source_remove(self.broadcast_hide_timeout_id)
-            except Exception:
-                pass
-            finally:
-                self.broadcast_hide_timeout_id = None
-
-    def _schedule_broadcast_hide_timeout(self, timeout_ms: int = 5000):
-        """Schedule hiding the broadcast banner after a delay"""
-        self._cancel_broadcast_hide_timeout()
-
-        def maybe_hide_banner():
-            self.broadcast_hide_timeout_id = None
-            entry_has_focus = False
-            try:
-                entry_has_focus = self.broadcast_entry.has_focus()
-            except Exception:
-                entry_has_focus = False
-
-            if entry_has_focus and self.broadcast_entry_dirty:
-                return False
-
-            self.hide_broadcast_banner()
-            return False
-
-        self.broadcast_hide_timeout_id = GLib.timeout_add(timeout_ms, maybe_hide_banner)
-
-    def on_broadcast_command_action(self, action, param=None):
-        """Handle broadcast command action - shows banner to input command"""
-        try:
-            # Check if there are any SSH terminals open
-            ssh_terminals_count = sum(
-                1 for _ in self.terminal_manager.iter_ssh_terminals()
-            )
-            
-            if ssh_terminals_count == 0:
-                # Show message dialog
-                try:
-                    error_dialog = Adw.MessageDialog(
-                        transient_for=self,
-                        modal=True,
-                        heading=_("No SSH Terminals Open"),
-                        body=_("Connect to your server first!")
-                    )
-                    error_dialog.add_response('ok', _('OK'))
-                    error_dialog.present()
-                except Exception as e:
-                    logger.error(f"Failed to show error dialog: {e}")
-                return
-            
-            # Show the broadcast banner instead of a dialog
-            self.show_broadcast_banner()
-            
-        except Exception as e:
-            logger.error(f"Failed to show broadcast command dialog: {e}")
-            # Show error dialog
-            try:
-                error_dialog = Adw.MessageDialog(
-                    transient_for=self,
-                    modal=True,
-                    heading=_("Error"),
-                    body=_("Failed to open broadcast command dialog: {}").format(str(e))
-                )
-                error_dialog.add_response('ok', _('OK'))
-                error_dialog.present()
-            except Exception:
-                pass
-    
     def on_run_command_action(self, action=None, param=None):
         """Open the command picker for the right-clicked connection(s) or group."""
         panel = getattr(self, 'command_blocks_panel', None)
