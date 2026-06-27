@@ -205,6 +205,12 @@ self.connect("unmap", lambda *_: self.ctx.release_multiplex(self._nick))
 - Storage goes through the app's configurable secret backend (`secrets.backend`): libsecret (also KeePassXC via its Secret Service integration) / OS keychain via keyring / `pass` / Bitwarden / Vaultwarden / a registered custom backend. Your plugin doesn't choose the backend — the user does; the API is the same regardless.
 - If the user selects a session-backed backend (Bitwarden/Vaultwarden) that is locked, or the `agent` "don't store" backend, `get`/`set` may return `None`/fail — handle missing secrets gracefully.
 
+### Identities — `ctx.identities` (SSH identity providers, read-only)
+- `list() -> list[Identity]` — every SSH identity the configured identity providers currently expose (e.g. keys loaded in the system ssh-agent). `is_agent_available() -> bool` — whether the system ssh-agent is reachable.
+- `Identity` fields: `id`, `display_name`, `fingerprint` (str | None), `provider_name`. Import it from `sshpilot.plugins.api`.
+- This is the identity-side parallel of `ctx.secrets`: secrets answer *what password/passphrase*, identities answer *which key/agent*. Keeping them separate lets users mix sources (keys via ssh-agent, passwords via libsecret/Bitwarden) as configuration.
+- Read-only for plugins — choosing/configuring providers is the user's job. See `IDENTITY_PROVIDERS.md` for the provider contract.
+
 ### Settings — `ctx.settings` (app config, scoped to your plugin id)
 - `get(key, default=None)`, `set(key, value)`. For non-secret preferences; stored under `plugins.<id>.<key>`.
 

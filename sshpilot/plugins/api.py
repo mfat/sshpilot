@@ -48,12 +48,19 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 #      shared SSH ControlMaster warm for a host while a surface is open; run_command
 #      then transparently reuses that one connection (no re-auth per call). For
 #      polling surfaces such as the Docker Console.
-API_VERSION: Tuple[int, int] = (1, 9)
+# 1.10: ctx.identities — read-only view of SSH identities from the configured
+#      identity providers (ctx.identities.list() / .is_agent_available()),
+#      paralleling ctx.secrets. See sshpilot.identity / IDENTITY_PROVIDERS.md.
+API_VERSION: Tuple[int, int] = (1, 10)
 
 # Stable event names and event payload types live in host.py; re-exported here
 # so plugins import everything from sshpilot.plugins.api. (host.py imports
 # nothing from this module, so there is no import cycle.)
 from .host import ConnectionInfo, Events, SessionInfo  # noqa: E402,F401
+
+# Re-exported so plugins can type/inspect ctx.identities.list() results without
+# reaching into a private module. (identity.py imports nothing from plugins.)
+from ..identity import Identity  # noqa: E402,F401
 
 
 class Capability(enum.Enum):
@@ -263,6 +270,28 @@ class _SecretStore:
         return bool(self._cm.delete_plugin_secret(self._plugin_id, key))
 
 
+class _IdentityView:
+    """Read-only view of SSH identities (``ctx.identities``).
+
+    Lists the identities the configured identity providers currently expose (e.g.
+    keys loaded in the system ssh-agent), paralleling the credential side. This is
+    observation only — choosing/configuring providers is the user's job, not the
+    plugin's.
+    """
+
+    def list(self) -> List["Identity"]:
+        """All identities across currently-available providers."""
+        from ..identity import get_identity_manager
+
+        return get_identity_manager().list_identities()
+
+    def is_agent_available(self) -> bool:
+        """Whether the system ssh-agent is reachable right now."""
+        from ..identity import get_identity_manager
+
+        return get_identity_manager().system_agent().is_available()
+
+
 class _SettingStore:
     """Per-plugin config access (``ctx.settings``), namespaced under
     ``plugins.<plugin_id>.<key>`` in the app config. For non-secret data;
@@ -437,6 +466,7 @@ class PluginContext:
         self.events = _EventsFacade(host.events, plugin_id) if host is not None else None
         self.ui = _UiFacade(host.ui, plugin_id) if host is not None else None
         self.secrets = _SecretStore(connection_manager, plugin_id)
+        self.identities = _IdentityView()
         self.settings = _SettingStore(app_config, plugin_id)
         # Self-contained helpers (no host needed) — available even in for_spawn.
         self.files = _FilesFacade(self._data_dir)

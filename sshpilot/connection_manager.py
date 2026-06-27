@@ -1792,8 +1792,10 @@ class ConnectionManager(GObject.Object):
     def _ensure_ssh_agent(self) -> bool:
         """Ensure ssh-agent is running and export environment variables"""
         try:
-            # Check if ssh-agent is already running
-            if os.environ.get('SSH_AUTH_SOCK'):
+            # Check if ssh-agent is already running (via the identity provider so
+            # the agent-presence check lives in one place).
+            from .providers.system_agent import SystemAgentProvider
+            if SystemAgentProvider().is_available():
                 logger.debug("SSH agent already running")
                 return True
             
