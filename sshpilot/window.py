@@ -2979,23 +2979,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowActions):
                     logger.debug("Simple right-click detected - showing context menu for selected row")
 
                     # Try to detect the clicked row, but fall back to selected row if detection fails
-                    row = None
-                    try:
-                        # First try to find the row that was actually clicked using pick method
-                        # This is safe now because we're not doing any selection operations
-                        picked_widget = self.connection_list.pick(x, y, Gtk.PickFlags.DEFAULT)
-                        widget = picked_widget
-                        while widget is not None:
-                            if isinstance(widget, Gtk.ListBoxRow):
-                                row = widget
-                                logger.debug("Using clicked row for context menu")
-                                break
-                            widget = widget.get_parent()
-                            if widget == self.connection_list:
-                                break
-                    except Exception as e:
-                        logger.debug(f"Failed to detect clicked row: {e}")
-                    
+                    row = self._pick_connection_list_row(x, y)
+                    if row is not None:
+                        logger.debug("Using clicked row for context menu")
+
                     # Fallback to selected row if click detection failed
                     if not row:
                         try:
@@ -3122,7 +3109,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowActions):
                     return
 
 
-                row, _, _ = self._resolve_connection_list_event(x, y)
+                row = self._pick_connection_list_row(x, y)
 
                 if not row:
                     try:
@@ -3371,6 +3358,33 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowActions):
                 self.welcome_view.refresh_pinned()
         except Exception as e:
             logger.error(f"Failed to toggle pin for {len(conns)} connection(s): {e}")
+
+    def _pick_connection_list_row(
+        self, x: float, y: float
+    ) -> Optional[Gtk.ListBoxRow]:
+        """Return the ListBoxRow under a pointer event on the connection list.
+
+        The coordinates come from a gesture attached to ``connection_list``
+        itself, so they are already in the ListBox's content space. ``pick()``
+        resolves the row directly with no scroll adjustment, which is why both
+        the right-click and middle-click handlers must share this path: any
+        manual vadjustment math would double-count the scroll offset and select
+        a row further down the list (see issue #1013).
+        """
+        try:
+            widget = self.connection_list.pick(x, y, Gtk.PickFlags.DEFAULT)
+        except Exception as e:
+            logger.debug(f"Failed to pick connection list row: {e}")
+            return None
+
+        while widget is not None:
+            if isinstance(widget, Gtk.ListBoxRow):
+                return widget
+            if widget == self.connection_list:
+                break
+            widget = widget.get_parent()
+
+        return None
 
     def _resolve_connection_list_event(
         self,
