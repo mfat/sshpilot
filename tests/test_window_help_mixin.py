@@ -24,7 +24,6 @@ _HELP_METHODS = (
     "_build_shortcuts_window",
     "_add_safe_current_shortcuts",
     "_get_safe_current_shortcuts",
-    "_add_fallback_shortcuts",
 )
 
 

@@ -148,21 +148,11 @@ class WelcomePage(Gtk.Overlay):
         local_terminal_row.connect('activated', lambda *_: self.window.terminal_manager.show_local_terminal())
         getting_started_group.add(local_terminal_row)
 
-        # Command Blocks action row
+        # Command Blocks action row. Shows the current shortcut only if one is
+        # assigned (disabled by default), like the other rows.
         cmd_blocks_accel = self._get_action_accel_display(
             current_shortcuts, 'toggle-command-blocks'
         )
-        if not cmd_blocks_accel:
-            try:
-                app = self.window.get_application()
-                if app:
-                    accels = app.get_accels_for_action('win.toggle-command-blocks')
-                    if accels:
-                        cmd_blocks_accel = self._format_accelerator_display(accels[0])
-            except Exception:
-                pass
-        if not cmd_blocks_accel:
-            cmd_blocks_accel = self._format_accelerator_display('<primary><alt>s')
         command_blocks_row = Adw.ActionRow()
         command_blocks_row.set_title(_('Browse Command Snippets'))
         command_blocks_row.set_activatable(True)
@@ -170,10 +160,11 @@ class WelcomePage(Gtk.Overlay):
         prefix_img = icon_utils.new_image_from_icon_name('system-run-symbolic')
         prefix_img.set_can_focus(False)
         command_blocks_row.add_prefix(prefix_img)
-        shortcut_label = Gtk.Label(label=cmd_blocks_accel)
-        shortcut_label.add_css_class('dim-label')
-        shortcut_label.set_can_focus(False)
-        command_blocks_row.add_suffix(shortcut_label)
+        if cmd_blocks_accel:
+            shortcut_label = Gtk.Label(label=cmd_blocks_accel)
+            shortcut_label.add_css_class('dim-label')
+            shortcut_label.set_can_focus(False)
+            command_blocks_row.add_suffix(shortcut_label)
         command_blocks_row.connect(
             'activated', lambda *_: self._open_command_blocks_sidebar()
         )

@@ -139,7 +139,8 @@ class WindowActions:
             logger.error(f"Failed to duplicate connection: {e}")
 
     def on_open_new_connection_tab_action(self, action, param=None):
-        """Open a tab for each selected connection via global shortcut (Ctrl/⌘+Alt+N)."""
+        """Open a tab for each selected connection (the 'open-new-connection-tab'
+        action; disabled by default on Linux/Windows, assignable in Preferences)."""
         try:
             # Live selection only: a global shortcut should not inherit
             # context-menu targets.
@@ -1788,8 +1789,12 @@ def register_window_actions(window):
         cb_action.connect('activate', lambda a, p: window._toggle_command_blocks_panel())
         window.add_action(cb_action)
         app = window.get_application()
-        if app:
-            app.set_accels_for_action('win.toggle-command-blocks', ['<primary><alt>s'])
+        if app and hasattr(app, 'register_window_shortcut'):
+            # Disabled by default (Ctrl+Alt+S clashed with AltGr layouts / WM
+            # shortcuts). Stays listed/assignable in the editor and respects a
+            # user override via the normal apply path.
+            app.register_window_shortcut('toggle-command-blocks', [])
+        elif app:
             if hasattr(app, '_action_order') and 'toggle-command-blocks' not in app._action_order:
                 app._action_order.append('toggle-command-blocks')
-                app._default_shortcuts['toggle-command-blocks'] = ['<primary><alt>s']
+                app._default_shortcuts['toggle-command-blocks'] = []
