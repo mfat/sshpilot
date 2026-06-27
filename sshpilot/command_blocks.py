@@ -14,6 +14,10 @@ from gi.repository import Gtk, Adw, Gio, GLib, GObject, Gdk, Pango
 
 from .context_menu import IconContextMenu
 
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from .config import Config
+
 logger = logging.getLogger(__name__)
 
 try:
