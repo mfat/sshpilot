@@ -223,15 +223,23 @@ class SshPilotApplication(Adw.Application):
                 self.create_action('manage-files', self.on_manage_files, ['<Meta><Shift>o'])
             logger.debug("Using macOS-specific shortcuts (Meta key = Command key)")
         else:
-            # Linux/Windows shortcuts using Primary key
+            # Linux/Windows shortcuts using Primary key.
+            # Several defaults are disabled ([]) or rebound to avoid clashing with
+            # CLI tools / keyboard layouts; "safe" = combos GNOME Terminal/Ptyxis
+            # also grab (so a terminal never forwards them to the shell). Disabled
+            # actions stay listed/assignable in the shortcut editor.
             self.create_action('quit', self.on_quit_action, ['<primary><shift>q'])
-            self.create_action('new-connection', self.on_new_connection, ['<primary>n'])
-            self.create_action('open-new-connection-tab', self.on_open_new_connection_tab, ['<primary><alt>n'])
-            self.create_action('toggle-list', self.on_toggle_list, ['<primary><shift>l'])
+            # Ctrl+N clashes with readline/apps → rebind to Ctrl+Shift+N.
+            self.create_action('new-connection', self.on_new_connection, ['<primary><shift>n'])
+            # Ctrl+Alt+N clashes with AltGr/WM → disabled by default.
+            self.create_action('open-new-connection-tab', self.on_open_new_connection_tab, [])
+            # Not a terminal-standard combo → disabled by default.
+            self.create_action('toggle-list', self.on_toggle_list, [])
             self.create_action('search', self.on_search, ['<primary>f'])
             self.create_action('terminal-search', self.on_terminal_search, ['<primary><shift>f'])
             self.create_action('new-key', self.on_new_key, ['<primary><shift>k'])
-            self.create_action('edit-ssh-config', self.on_edit_ssh_config, ['<primary><shift>e'])
+            # Not a terminal-standard combo → disabled by default.
+            self.create_action('edit-ssh-config', self.on_edit_ssh_config, [])
             if not should_hide_file_manager_options():
                 self.create_action('manage-files', self.on_manage_files, ['<primary><shift>o'])
             logger.debug("Using Linux/Windows shortcuts (Primary key = Ctrl key)")
@@ -260,7 +268,8 @@ class SshPilotApplication(Adw.Application):
             self.create_action('preferences', self.on_preferences, ['<primary>comma'])
             self.create_action('tab-close', self.on_tab_close, ['<primary><shift>w'])
             self.create_action('broadcast-command', self.on_broadcast_command, ['<primary><shift>b'])
-            self.create_action('new-split-view-tab', self.on_new_split_view_tab, ['<primary><shift>s'])
+            # App-specific combo, not terminal-standard → disabled by default.
+            self.create_action('new-split-view-tab', self.on_new_split_view_tab, [])
         
         self.create_action('about', self.on_about)
         self.create_action('help', self.on_help, ['F1'])
@@ -283,24 +292,18 @@ class SshPilotApplication(Adw.Application):
         else:
             self.create_action('tab-overview', self.on_tab_overview, ['<primary><shift>Tab'])
 
-        # Split-view shortcuts: editor-listed and override-able, but triggered by
-        # SplitViewTab's CAPTURE-phase handler (not global accelerators). Use
-        # literal <Control> (not <Primary>) so macOS keeps Ctrl, matching the
-        # original hardcoded handler. See SplitViewTab._on_key_pressed.
-        for _name, _accel in (
-            ('split-focus-left', '<Control><Alt>h'),
-            ('split-focus-down', '<Control><Alt>j'),
-            ('split-focus-up', '<Control><Alt>k'),
-            ('split-focus-right', '<Control><Alt>l'),
-            ('split-resize-left', '<Control><Alt><Shift>h'),
-            ('split-resize-down', '<Control><Alt><Shift>j'),
-            ('split-resize-up', '<Control><Alt><Shift>k'),
-            ('split-resize-right', '<Control><Alt><Shift>l'),
-            ('split-layout-horizontal', '<Control><Shift>backslash'),
-            ('split-layout-vertical', '<Control><Shift>minus'),
-            ('split-add-pane', '<Control><Shift>n'),
+        # Split-view shortcuts: editor-listed and override-able, triggered by
+        # SplitViewTab's CAPTURE-phase handler (not global accelerators).
+        # Disabled ([]) by default — the original Ctrl+Alt+HJKL / Ctrl+Alt+Shift
+        # / Ctrl+Shift combos clashed with CLI tools and keyboard layouts. They
+        # remain listed in the editor so users can assign their own. See
+        # SplitViewTab._on_key_pressed.
+        for _name in (
+            'split-focus-left', 'split-focus-down', 'split-focus-up', 'split-focus-right',
+            'split-resize-left', 'split-resize-down', 'split-resize-up', 'split-resize-right',
+            'split-layout-horizontal', 'split-layout-vertical', 'split-add-pane',
         ):
-            self.register_custom_shortcut(_name, [_accel])
+            self.register_custom_shortcut(_name, [])
 
         # Connect to signals
         self.connect('shutdown', self.on_shutdown)
@@ -712,7 +715,9 @@ class SshPilotApplication(Adw.Application):
         self.add_action(action)
         if name not in self._action_order:
             self._action_order.append(name)
-        self._default_shortcuts[name] = list(shortcuts) if shortcuts else None
+        # ``[]`` (disabled but still listed/assignable in the editor) must be
+        # preserved distinctly from ``None`` (no shortcut, hidden from editor).
+        self._default_shortcuts[name] = list(shortcuts) if shortcuts is not None else None
         self._apply_shortcut_for_action(name)
 
     def register_window_shortcut(self, name, shortcuts):
@@ -722,7 +727,7 @@ class SshPilotApplication(Adw.Application):
         action to exist yet."""
         if name not in self._action_order:
             self._action_order.append(name)
-        self._default_shortcuts[name] = list(shortcuts) if shortcuts else None
+        self._default_shortcuts[name] = list(shortcuts) if shortcuts is not None else None
         self._apply_shortcut_for_action(name)
 
     def register_custom_shortcut(self, name, shortcuts):
@@ -736,7 +741,7 @@ class SshPilotApplication(Adw.Application):
         accelerators via ``get_effective_shortcuts``."""
         if name not in self._action_order:
             self._action_order.append(name)
-        self._default_shortcuts[name] = list(shortcuts) if shortcuts else None
+        self._default_shortcuts[name] = list(shortcuts) if shortcuts is not None else None
         self._custom_shortcut_names.add(name)
 
     def get_effective_shortcuts(self, name):

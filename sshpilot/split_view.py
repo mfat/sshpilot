@@ -1622,7 +1622,7 @@ class SplitViewTab(Gtk.Box):
 
     # ── keyboard navigation ───────────────────────────────────────────────────
 
-    _RESIZE_STEP = 50  # pixels per Ctrl+Alt+Shift+HJKL keypress
+    _RESIZE_STEP = 50  # pixels per resize-pane keypress
 
     def _on_key_pressed(self, _ctrl, _keyval, _keycode, state) -> bool:
         # Guard: only act when the focused widget is inside THIS SplitViewTab.
@@ -1654,9 +1654,9 @@ class SplitViewTab(Gtk.Box):
         # Config-driven shortcuts: match the live key event against each action's
         # effective accelerators using GTK's own trigger machinery (the same one
         # ShortcutController uses), so Shift/symbol/case normalization — and any
-        # user rebinding — Just Work without manual keyval tables. The defaults
-        # are the original Ctrl+Alt+HJKL / Ctrl+Alt+Shift+HJKL / Ctrl+Shift+\,-,N
-        # bindings (see main.py register_custom_shortcut).
+        # user rebinding — Just Work without manual keyval tables. These actions
+        # are disabled by default (no accelerator); users assign their own in the
+        # shortcut editor (see main.py register_custom_shortcut).
         event = _ctrl.get_current_event()
         app = self.window.get_application() if self.window is not None else None
         if event is not None and app is not None and hasattr(app, 'get_effective_shortcuts'):

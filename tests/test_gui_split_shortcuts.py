@@ -1,9 +1,11 @@
-"""GUI tests for editable split-view shortcuts (issue #1011).
+"""GUI tests for split-view shortcuts (issue #1011 + safe-defaults change).
 
-The split-view shortcuts are now registered in the shortcut registry (so the
-editor lists them and they respect config overrides) but are NOT applied as
-global accelerators — the SplitViewTab CAPTURE handler triggers them. These
-tests assert that registration/override wiring and the editor's editable rows.
+The split-view shortcuts are registered in the shortcut registry (so the editor
+lists them and they respect config overrides) but are NOT applied as global
+accelerators — the SplitViewTab CAPTURE handler triggers them. They are now
+**disabled by default** (empty default) because their original Ctrl+Alt/Ctrl+Shift
+combos clashed with CLI tools / keyboard layouts; they remain listed and
+assignable.
 
 Opt-in only: SSHPILOT_GUI_TESTS=1 pytest -m gui
 """
@@ -17,36 +19,29 @@ requires_gui()
 pytestmark = pytest.mark.gui
 
 
-SPLIT_DEFAULTS = {
-    'split-focus-left': ['<Control><Alt>h'],
-    'split-focus-down': ['<Control><Alt>j'],
-    'split-focus-up': ['<Control><Alt>k'],
-    'split-focus-right': ['<Control><Alt>l'],
-    'split-resize-left': ['<Control><Alt><Shift>h'],
-    'split-resize-down': ['<Control><Alt><Shift>j'],
-    'split-resize-up': ['<Control><Alt><Shift>k'],
-    'split-resize-right': ['<Control><Alt><Shift>l'],
-    'split-layout-horizontal': ['<Control><Shift>backslash'],
-    'split-layout-vertical': ['<Control><Shift>minus'],
-    'split-add-pane': ['<Control><Shift>n'],
-}
+SPLIT_NAMES = [
+    'split-focus-left', 'split-focus-down', 'split-focus-up', 'split-focus-right',
+    'split-resize-left', 'split-resize-down', 'split-resize-up', 'split-resize-right',
+    'split-layout-horizontal', 'split-layout-vertical', 'split-add-pane',
+]
 
 
-def test_split_actions_registered_with_defaults(gui):
+def test_split_actions_registered_but_disabled(gui):
     app = gui.app
     defaults = app.get_registered_shortcut_defaults()
     order = app.get_registered_action_order()
-    for name, accel in SPLIT_DEFAULTS.items():
+    for name in SPLIT_NAMES:
         assert name in order, f'{name} missing from action order'
-        assert defaults.get(name) == accel
-        assert app.get_effective_shortcuts(name) == accel
+        # Disabled by default == empty list (NOT None — None would hide it).
+        assert defaults.get(name) == []
+        assert app.get_effective_shortcuts(name) == []
 
 
 def test_split_actions_not_claimed_globally(gui):
     """Custom shortcuts must never become global accelerators (would block the
     same keys from reaching a normal terminal outside a split view)."""
     app = gui.app
-    for name in SPLIT_DEFAULTS:
+    for name in SPLIT_NAMES:
         assert app.get_accels_for_action(f'win.{name}') == []
         assert app.get_accels_for_action(f'app.{name}') == []
 
@@ -63,58 +58,31 @@ def test_override_applies_and_resets_without_claiming(gui):
     finally:
         app.config.set_shortcut_override(name, None)
         app.apply_shortcut_overrides()
-    assert app.get_effective_shortcuts(name) == ['<Control><Alt>h']
+    # Resets to the (disabled) default, not the old hardcoded accelerator.
+    assert app.get_effective_shortcuts(name) == []
 
 
-def test_split_default_triggers_match_original_keys(gui):
-    """The accelerators the CAPTURE handler builds (via Gtk.ShortcutTrigger)
-    must resolve to the same keyval+modifiers the old hardcoded handler used."""
-    from gi.repository import Gdk, Gtk
-
-    CTRL = Gdk.ModifierType.CONTROL_MASK
-    ALT = Gdk.ModifierType.ALT_MASK
-    SHIFT = Gdk.ModifierType.SHIFT_MASK
-    expected = {
-        'split-focus-left': (Gdk.KEY_h, CTRL | ALT),
-        'split-focus-down': (Gdk.KEY_j, CTRL | ALT),
-        'split-focus-up': (Gdk.KEY_k, CTRL | ALT),
-        'split-focus-right': (Gdk.KEY_l, CTRL | ALT),
-        'split-resize-left': (Gdk.KEY_h, CTRL | ALT | SHIFT),
-        'split-resize-right': (Gdk.KEY_l, CTRL | ALT | SHIFT),
-        'split-layout-horizontal': (Gdk.KEY_backslash, CTRL | SHIFT),
-        'split-layout-vertical': (Gdk.KEY_minus, CTRL | SHIFT),
-        'split-add-pane': (Gdk.KEY_n, CTRL | SHIFT),
-    }
-    for name, (keyval, mods) in expected.items():
-        accel = gui.app.get_effective_shortcuts(name)[0]
-        trigger = Gtk.ShortcutTrigger.parse_string(accel)
-        assert trigger is not None, f'{name}: {accel!r} did not parse'
-        assert trigger.get_keyval() == keyval, name
-        assert trigger.get_modifiers() == mods, name
-
-
-def test_shortcuts_viewer_builds(gui):
-    """The Help → Keyboard Shortcuts viewer builds the (now dynamic) split group
-    without error after focus-by-number was removed."""
+def test_shortcuts_viewer_omits_disabled_split(gui):
+    """The Help → Keyboard Shortcuts viewer builds and omits disabled actions."""
     win = gui.window
     viewer = win._build_shortcuts_window()
     assert viewer is not None
     gui.pump(150)
-    # The viewer derives split shortcuts from the registered actions.
     current = win._get_safe_current_shortcuts()
-    assert current.get('split-focus-left') == ['<Control><Alt>h']
+    # Disabled split shortcuts resolve to [] and are not shown.
+    assert current.get('split-focus-left') == []
 
 
-def test_editor_lists_split_actions_as_editable(gui):
+def test_editor_lists_disabled_split_as_assignable(gui):
     from sshpilot.shortcut_editor import ShortcutsPreferencesPage
 
     page = ShortcutsPreferencesPage(
         parent_widget=gui.window, app=gui.app, config=gui.app.config
     )
-    for name in SPLIT_DEFAULTS:
+    for name in SPLIT_NAMES:
+        # Disabled ([] default) actions are still listed and assignable.
         assert name in page._action_names, f'{name} not collected by editor'
         row_data = page._rows.get(name)
         assert row_data is not None, f'no editable row for {name}'
-        # Editable rows carry an assign button and an enable switch.
         assert row_data.get('assign_button') is not None
         assert row_data.get('switch') is not None
