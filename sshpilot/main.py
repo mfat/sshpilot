@@ -1080,6 +1080,29 @@ class SshPilotApplication(Adw.Application):
 _crash_log_fp = None  # module-global so the fd stays open for the process lifetime
 
 
+def _rotate_previous_crash_log(log_dir):
+    """Move a non-empty ``crash.log`` left by a previous run aside.
+
+    ``crash.log`` is only written when a run crashes, so a non-empty
+    ``crash.log`` in ``log_dir`` means the *previous* run crashed. Rotate it to
+    ``crash.log.previous`` and return that path so the UI can offer to report
+    it. Return ``None`` when there is nothing to preserve. Best-effort: any
+    failure is swallowed and returns ``None`` (the caller still starts a fresh
+    log). This is pure file I/O — it arms no faulthandler — so it is safe to
+    unit-test without colliding with pytest's own faulthandler.
+    """
+    try:
+        path = os.path.join(log_dir, 'crash.log')
+        if os.path.exists(path) and os.path.getsize(path) > 0:
+            preserved = os.path.join(log_dir, 'crash.log.previous')
+            os.replace(path, preserved)
+            return preserved
+    except Exception:
+        logging.getLogger(__name__).debug(
+            "Could not rotate previous crash.log", exc_info=True)
+    return None
+
+
 def _enable_crash_diagnostics():
     """Dump all-thread Python tracebacks (and leave a core) on fatal signals.
 
@@ -1104,14 +1127,7 @@ def _enable_crash_diagnostics():
         os.makedirs(log_dir, exist_ok=True)
         path = os.path.join(log_dir, 'crash.log')
         # Preserve a crash report left behind by the previous run.
-        try:
-            if os.path.exists(path) and os.path.getsize(path) > 0:
-                preserved = os.path.join(log_dir, 'crash.log.previous')
-                os.replace(path, preserved)
-                previous_crash = preserved
-        except Exception:
-            logging.getLogger(__name__).debug(
-                "Could not rotate previous crash.log", exc_info=True)
+        previous_crash = _rotate_previous_crash_log(log_dir)
         # Fresh log for this run so the next startup's detection stays clean.
         _crash_log_fp = open(path, 'w', buffering=1)
         faulthandler.enable(file=_crash_log_fp, all_threads=True)
