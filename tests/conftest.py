@@ -125,7 +125,16 @@ if not _USE_REAL_GTK and 'gi' not in sys.modules:
 
     # Provide concrete stubs for modules referenced in tests
     gobject_module = _DummyGIModule('gi.repository.GObject')
-    setattr(gobject_module, 'Object', _make_dummy_gi_type('Object'))
+    # GObject.Object must be a real, subclassable base with a *normal* metaclass:
+    # app classes like Config/ConnectionManager subclass it and get instantiated
+    # in tests. The auto-stub metaclass (_DummyGITypeMeta) returns a bare
+    # object() from __call__, so a subclass built on it yields object() (with no
+    # methods) when instantiated. Several test modules used to work around this
+    # by rebinding GObject.Object at import time, which leaked across the shared
+    # stub and made the suite order-dependent (see #985). Fixing it once here
+    # makes every GObject subclass instantiate normally regardless of import
+    # order. Other gi types (Gtk/Adw/…) keep the dummy metaclass.
+    setattr(gobject_module, 'Object', type('Object', (object,), {}))
     setattr(
         gobject_module,
         'SignalFlags',
