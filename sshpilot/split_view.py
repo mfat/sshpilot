@@ -754,6 +754,25 @@ class SplitViewTab(Gtk.Box):
         drag_motion.connect("leave", self._on_drag_leave_tab)
         self.add_controller(drag_motion)
 
+        # Customizable split-view shortcuts (action name → callback). The
+        # accelerators live in the shortcut registry/config (see main.py
+        # register_custom_shortcut); _on_key_pressed matches the live event
+        # against their effective accelerators. Built once; the callbacks bind
+        # to this instance with constant arguments.
+        self._split_actions = {
+            'split-focus-left':  lambda: self._navigate_pane('left'),
+            'split-focus-down':  lambda: self._navigate_pane('down'),
+            'split-focus-up':    lambda: self._navigate_pane('up'),
+            'split-focus-right': lambda: self._navigate_pane('right'),
+            'split-resize-left':  lambda: self._resize_active_pane('left'),
+            'split-resize-down':  lambda: self._resize_active_pane('down'),
+            'split-resize-up':    lambda: self._resize_active_pane('up'),
+            'split-resize-right': lambda: self._resize_active_pane('right'),
+            'split-layout-horizontal': lambda: self.set_layout_mode(self.HORIZONTAL),
+            'split-layout-vertical':   lambda: self.set_layout_mode(self.VERTICAL),
+            'split-add-pane': lambda: self.add_pane(),
+        }
+
         # CAPTURE-phase key controller intercepts shortcuts before VTE eats them
         key_ctrl = Gtk.EventControllerKey()
         key_ctrl.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
@@ -1633,44 +1652,30 @@ class SplitViewTab(Gtk.Box):
             | Gdk.ModifierType.META_MASK
         )
 
-        CTRL_ALT    = Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.ALT_MASK
-        CTRL_ALT_SH = CTRL_ALT | Gdk.ModifierType.SHIFT_MASK
-        CTRL_SH     = Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.SHIFT_MASK
+        # Cheap early-out: every customizable split shortcut uses Control or Alt,
+        # so plain typing skips the trigger matching below entirely.
+        if not (mods & (Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.ALT_MASK)):
+            return False
 
-        # Ctrl+Alt+H/J/K/L — focus navigation (vim-style, no GNOME/macOS conflicts)
-        # Ctrl+Alt+Shift+H/J/K/L — resize
-        HJKL_NAV = {
-            Gdk.KEY_h: 'left',  Gdk.KEY_H: 'left',
-            Gdk.KEY_j: 'down',  Gdk.KEY_J: 'down',
-            Gdk.KEY_k: 'up',    Gdk.KEY_K: 'up',
-            Gdk.KEY_l: 'right', Gdk.KEY_L: 'right',
-        }
+        # Config-driven shortcuts: match the live key event against each action's
+        # effective accelerators using GTK's own trigger machinery (the same one
+        # ShortcutController uses), so Shift/symbol/case normalization — and any
+        # user rebinding — Just Work without manual keyval tables. The defaults
+        # are the original Ctrl+Alt+HJKL / Ctrl+Alt+Shift+HJKL / Ctrl+Shift+\,-,N
+        # bindings (see main.py register_custom_shortcut).
+        event = _ctrl.get_current_event()
+        app = self.window.get_application() if self.window is not None else None
+        if event is not None and app is not None and hasattr(app, 'get_effective_shortcuts'):
+            for name, callback in self._split_actions.items():
+                for accel in (app.get_effective_shortcuts(name) or []):
+                    trigger = Gtk.ShortcutTrigger.parse_string(accel)
+                    if trigger is not None and trigger.trigger(event, False) == Gdk.KeyMatch.EXACT:
+                        callback()
+                        return True
 
-        if keyval in HJKL_NAV:
-            d = HJKL_NAV[keyval]
-            if mods == CTRL_ALT:
-                self._navigate_pane(d)
-                return True
-            if mods == CTRL_ALT_SH:
-                self._resize_active_pane(d)
-                return True
-
-        # Accept both the base key and its Shift-transformed variant since GTK4
-        # reports the effective (shifted) keyval: \ → |, - → _
-        if keyval in (Gdk.KEY_backslash, Gdk.KEY_bar) and mods == CTRL_SH:
-            self.set_layout_mode(self.HORIZONTAL)
-            return True
-        if keyval in (Gdk.KEY_minus, Gdk.KEY_underscore) and mods == CTRL_SH:
-            self.set_layout_mode(self.VERTICAL)
-            return True
-        # Ctrl+Shift+N — add pane (Ctrl+Shift+T is taken by local-terminal action)
-        if keyval in (Gdk.KEY_N, Gdk.KEY_n) and mods == CTRL_SH:
-            self.add_pane()
-            return True
-
-        # Alt+1..9 — focus the Nth pane. (Ctrl+Shift+W "close focused pane" is
-        # now handled by the global, context-aware tab-close action so it works
-        # both inside and outside split views without a precedence clash.)
+        # Alt+1..9 — focus the Nth pane. Kept fixed: it is an indexed family, not
+        # a single rebindable accelerator. (Ctrl+Shift+W "close focused pane" is
+        # the global, context-aware tab-close action, customizable on its own.)
         if mods == Gdk.ModifierType.ALT_MASK and keyval in _ALT_NUM_KEYS:
             idx = _ALT_NUM_KEYS[keyval]
             if 0 <= idx < len(self._panes):

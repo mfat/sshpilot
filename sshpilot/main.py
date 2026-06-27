@@ -164,6 +164,12 @@ class SshPilotApplication(Adw.Application):
         self.config = None
         self._default_shortcuts = {}
         self._action_order = []
+        # Names that appear in the shortcut editor and respect config overrides
+        # but are NOT applied via set_accels_for_action — they are triggered by a
+        # dedicated handler (e.g. SplitViewTab's CAPTURE-phase key controller).
+        # Claiming their accelerators globally would stop the keys reaching a
+        # normal terminal outside that context. See register_custom_shortcut.
+        self._custom_shortcut_names = set()
         self._accelerators_enabled = True
         self.accelerators_enabled = True
         self._config_handler = None
@@ -276,7 +282,26 @@ class SshPilotApplication(Adw.Application):
             self.create_action('tab-overview', self.on_tab_overview, ['<Meta><Shift>Tab'])
         else:
             self.create_action('tab-overview', self.on_tab_overview, ['<primary><shift>Tab'])
-        
+
+        # Split-view shortcuts: editor-listed and override-able, but triggered by
+        # SplitViewTab's CAPTURE-phase handler (not global accelerators). Use
+        # literal <Control> (not <Primary>) so macOS keeps Ctrl, matching the
+        # original hardcoded handler. See SplitViewTab._on_key_pressed.
+        for _name, _accel in (
+            ('split-focus-left', '<Control><Alt>h'),
+            ('split-focus-down', '<Control><Alt>j'),
+            ('split-focus-up', '<Control><Alt>k'),
+            ('split-focus-right', '<Control><Alt>l'),
+            ('split-resize-left', '<Control><Alt><Shift>h'),
+            ('split-resize-down', '<Control><Alt><Shift>j'),
+            ('split-resize-up', '<Control><Alt><Shift>k'),
+            ('split-resize-right', '<Control><Alt><Shift>l'),
+            ('split-layout-horizontal', '<Control><Shift>backslash'),
+            ('split-layout-vertical', '<Control><Shift>minus'),
+            ('split-add-pane', '<Control><Shift>n'),
+        ):
+            self.register_custom_shortcut(_name, [_accel])
+
         # Connect to signals
         self.connect('shutdown', self.on_shutdown)
         self.connect('activate', self.on_activate)
@@ -700,7 +725,36 @@ class SshPilotApplication(Adw.Application):
         self._default_shortcuts[name] = list(shortcuts) if shortcuts else None
         self._apply_shortcut_for_action(name)
 
+    def register_custom_shortcut(self, name, shortcuts):
+        """Register a shortcut that appears in the editor and respects config
+        overrides but is NOT applied via ``set_accels_for_action``.
+
+        Used for shortcuts handled by a dedicated controller (e.g. split-view
+        pane navigation, intercepted in the CAPTURE phase before VTE). They must
+        not claim a global accelerator, or the keys would stop reaching a normal
+        terminal outside that context. The owning handler reads the effective
+        accelerators via ``get_effective_shortcuts``."""
+        if name not in self._action_order:
+            self._action_order.append(name)
+        self._default_shortcuts[name] = list(shortcuts) if shortcuts else None
+        self._custom_shortcut_names.add(name)
+
+    def get_effective_shortcuts(self, name):
+        """Return the effective accelerators for an action (override or default)."""
+        default = self._default_shortcuts.get(name)
+        override = None
+        if self.config is not None:
+            try:
+                override = self.config.get_shortcut_override(name)
+            except Exception:
+                override = None
+        return override if override is not None else default
+
     def _apply_shortcut_for_action(self, name: str):
+        # Custom shortcuts (handled by a dedicated controller) are never applied
+        # as global accelerators; the owning handler reads them from config.
+        if name in getattr(self, '_custom_shortcut_names', set()):
+            return
         default = self._default_shortcuts.get(name)
         override = None
         if self.config is not None:
