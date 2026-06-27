@@ -1946,10 +1946,6 @@ class PyXtermTerminalBackend:
             # Escape the search term for JavaScript string
             escaped_term = search_term.replace('\\', '\\\\').replace("'", "\\'").replace('"', '\\"').replace('\n', '\\n').replace('\r', '\\r')
             # Build search options according to ISearchOptions interface
-            search_options = {
-                'caseSensitive': case_sensitive,
-                'regex': is_regex
-            }
             options_json = f"caseSensitive: {str(case_sensitive).lower()}, regex: {str(is_regex).lower()}"
             search_js = f"""
             (function() {{
