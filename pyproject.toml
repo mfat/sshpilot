@@ -45,6 +45,16 @@ test = [
 [tool.setuptools.dynamic]
 version = {attr = "sshpilot.__version__"}
 
+[tool.ty.rules]
+# PyGObject is dynamic and ships no type stubs, so the type checker can't see
+# gi.repository members or attributes assigned in __init__/via GObject. These
+# two categories are pure noise here (700+ false positives) and would drown the
+# real findings — silence them so the typecheck gate surfaces genuine issues.
+# The gate runs non-blocking in CI (.github/workflows/typecheck.yml); tighten
+# module-by-module as real findings are cleared.
+unresolved-import = "ignore"
+unresolved-attribute = "ignore"
+
 [tool.setuptools.packages.find]
 where = [""]
 include = ["sshpilot*"]
