@@ -445,6 +445,27 @@ class BitwardenBackend(SecretBackend):
     def is_available(self) -> bool:
         return bool(self._bin)
 
+    def _status(self) -> Optional[str]:
+        """Return the ``bw status`` state ('unauthenticated'|'locked'|'unlocked')
+        or ``None`` if it can't be determined. Needs no session token."""
+        if not self._bin:
+            return None
+        try:
+            result = self._run(["status"])
+            if result.returncode != 0:
+                return None
+            data = json.loads(result.stdout.decode("utf-8", "replace") or "{}")
+            status = data.get("status")
+            return status if isinstance(status, str) else None
+        except Exception as exc:
+            logger.debug("bw status failed: %s", exc)
+            return None
+
+    def needs_login(self) -> bool:
+        """True when no account is authenticated, so ``bw unlock`` cannot succeed
+        until the user runs ``bw login`` (or ``bw login --apikey``) in a shell."""
+        return self._status() == "unauthenticated"
+
     # -- session lifecycle ----------------------------------------------
     @staticmethod
     def _session_timeout_seconds() -> int:
@@ -506,6 +527,13 @@ class BitwardenBackend(SecretBackend):
                 self._token = token
                 self._touch_deadline()
                 os.environ["BW_SESSION"] = token
+                # `bw unlock` does not refresh the local vault cache (only
+                # `bw login` syncs), so items changed on another device would be
+                # invisible this session. Sync best-effort; failure is harmless.
+                try:
+                    self._run(["sync"], token=token)
+                except Exception:
+                    pass
                 return True
             except Exception as exc:
                 logger.error("bw unlock error: %s", exc)
@@ -595,8 +623,14 @@ class BitwardenBackend(SecretBackend):
         token = self._current_token()
         if not token or not self._bin:
             return None
+        account = spec.keyring_account
         try:
-            result = self._run(["get", "password", spec.keyring_account], token=token)
+            # Resolve the exact item id first (like store/delete) so duplicate
+            # item names don't make `bw get password` fail with "More than one
+            # result"; fall back to the name when no exact match is found.
+            item_id = self._find_item_id(account, token)
+            target = item_id or account
+            result = self._run(["get", "password", target], token=token)
             if result.returncode != 0:
                 return None
             text = result.stdout.decode("utf-8", "replace").strip()
@@ -786,6 +820,18 @@ class SecretManager:
             and backend.is_available()
             and not backend.is_unlocked()
         )
+
+    def selected_needs_login(self) -> bool:
+        """True when the selected session backend has no authenticated account, so
+        the GTK layer should tell the user to run ``bw login`` before unlocking."""
+        backend = self.selected_backend()
+        probe = getattr(backend, "needs_login", None)
+        if backend is None or not callable(probe):
+            return False
+        try:
+            return bool(probe())
+        except Exception:
+            return False
 
     def unlock_selected(self, secret: str) -> bool:
         """Unlock the selected session-backed backend (no-op otherwise)."""

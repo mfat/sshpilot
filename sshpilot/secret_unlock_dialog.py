@@ -69,13 +69,43 @@ def prompt_unlock(parent, *, on_done=None):
     except Exception:
         pass
 
+    def _show_login_required():
+        # `bw unlock` can't succeed without an authenticated account; guide the
+        # user instead of failing silently.
+        msg = _("You are not logged in to {backend}.\n\n"
+                "Run `bw login` (or `bw login --apikey`) in a terminal, "
+                "then try unlocking again.").format(backend=label)
+        if use_alert:
+            info = Adw.AlertDialog(heading=_("Login required"), body=msg)
+        else:
+            info = Adw.MessageDialog(
+                transient_for=parent, modal=True,
+                heading=_("Login required"), body=msg,
+            )
+        info.add_response('ok', _("OK"))
+        info.set_default_response('ok')
+        info.set_close_response('ok')
+        if use_alert:
+            info.present(parent)
+        else:
+            info.present()
+
+    def _finish(success: bool, needs_login: bool):
+        if not success and needs_login:
+            _show_login_required()
+        _report(success)
+        return False
+
     def _worker(password: str):
         ok = False
+        needs_login = False
         try:
             ok = bool(manager.unlock_selected(password))
+            if not ok:
+                needs_login = bool(manager.selected_needs_login())
         except Exception as exc:
             logger.error("Secret backend unlock failed: %s", exc)
-        GLib.idle_add(_report, ok)
+        GLib.idle_add(_finish, ok, needs_login)
 
     def _on_response(_d, response):
         if response != 'unlock':

@@ -383,7 +383,12 @@ def test_bitwarden_unlock_lookup_argv(monkeypatch):
         assert calls[0]['master'] == 'master'
         assert b.is_unlocked() is True
         assert os.environ.get('BW_SESSION') == 'TOKEN123'
+        # unlock refreshes the local cache with a best-effort `bw sync`
+        sync_calls = [c for c in calls if c['argv'][1:] == ['sync']]
+        assert len(sync_calls) == 1
+        assert sync_calls[0]['session'] == 'TOKEN123'
 
+        # No exact item match here -> falls back to looking up by name.
         assert b.lookup(password_spec('h', 'u')) == 'hunter2'
         assert calls[-1]['argv'] == ['/usr/bin/bw', 'get', 'password', 'u@h']
         assert calls[-1]['session'] == 'TOKEN123'
@@ -479,6 +484,58 @@ def test_bitwarden_subprocess_inherits_env_token(monkeypatch):
     b._bin = '/usr/bin/bw'
     assert b.is_unlocked() is True
     assert b.lookup(password_spec('h', 'u')) == 'pw'
+
+
+def test_bitwarden_lookup_resolves_exact_id(monkeypatch):
+    # When an item with the exact name exists, lookup resolves its id first and
+    # fetches the password by id (avoids `bw get password` ambiguity errors).
+    calls = []
+
+    def fake_run(argv, input=None, capture_output=None, env=None, check=None, timeout=None):
+        calls.append(list(argv))
+        if argv[1] == 'unlock':
+            return _Result(0, b'TOK\n')
+        if argv[1:3] == ['list', 'items']:
+            return _Result(0, json.dumps([{'name': 'u@h', 'id': 'ID1'}]).encode())
+        if argv[1:3] == ['get', 'password']:
+            return _Result(0, b'hunter2\n')
+        return _Result(0, b'')
+
+    monkeypatch.setattr(ss.subprocess, 'run', fake_run)
+    monkeypatch.setenv('SSHPILOT_SECRET_SESSION_TIMEOUT', '0')
+    monkeypatch.delenv('BW_SESSION', raising=False)
+
+    b = ss.BitwardenBackend()
+    b._bin = '/usr/bin/bw'
+    try:
+        assert b.unlock('m') is True
+        assert b.lookup(password_spec('h', 'u')) == 'hunter2'
+        assert ['/usr/bin/bw', 'list', 'items', '--search', 'u@h'] in calls
+        assert calls[-1] == ['/usr/bin/bw', 'get', 'password', 'ID1']
+    finally:
+        b.lock()
+
+
+def test_bitwarden_needs_login(monkeypatch):
+    # `bw status` reporting `unauthenticated` surfaces as needs_login(), so the
+    # UI can tell the user to run `bw login` instead of failing silently.
+    monkeypatch.delenv('BW_SESSION', raising=False)
+
+    def fake_run(argv, input=None, capture_output=None, env=None, check=None, timeout=None):
+        if argv[1] == 'status':
+            return _Result(0, json.dumps({'status': 'unauthenticated'}).encode())
+        return _Result(0, b'')
+
+    monkeypatch.setattr(ss.subprocess, 'run', fake_run)
+    b = ss.BitwardenBackend()
+    b._bin = '/usr/bin/bw'
+    assert b.needs_login() is True
+
+    # And the manager exposes it for the selected session backend.
+    mgr = SecretManager()
+    mgr._backends = {'bitwarden': b}
+    mgr.set_selected('bitwarden')
+    assert mgr.selected_needs_login() is True
 
 
 def test_vaultwarden_requires_server(monkeypatch):
