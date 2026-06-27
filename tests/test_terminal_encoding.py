@@ -478,7 +478,7 @@ class TestEncodingIntegration:
         import importlib
         
         # Import the module to get access to the method
-        terminal_backends = importlib.import_module('sshpilot.terminal_backends')
+        importlib.import_module('sshpilot.terminal_backends')
         
         # Create a minimal backend instance to test the method
         # We'll create a mock instance that has the method

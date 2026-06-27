@@ -133,7 +133,7 @@ def _resolve_host_to_ip(host: str, port: int = 22) -> Optional[str]:
     host = host.strip()
     # If it's already an IPv4 address, return as-is
     try:
-        addr = socket.inet_pton(socket.AF_INET, host)
+        socket.inet_pton(socket.AF_INET, host)  # validates; raises OSError if not an IPv4 literal
         return host
     except OSError:
         pass
