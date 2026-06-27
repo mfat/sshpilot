@@ -736,7 +736,7 @@ def test_tree_target_insert_before_nested_child():
     assert _tree_target_insert_before(manager, "y") == ("a", 1)
 
 
-def test_group_motion_shows_reorder_at_sibling_seam(monkeypatch):
+def test_group_motion_shows_reorder_in_gap_before_sibling(monkeypatch):
     """Dragging C into the gap before B shows reorder above B (tree index 1)."""
     shown = []
     monkeypatch.setattr(
