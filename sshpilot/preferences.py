@@ -1511,6 +1511,20 @@ class PreferencesWindow(Adw.Window):
             # Sidebar behavior
             sidebar_behavior_group = Adw.PreferencesGroup(title="Sidebar behavior")
 
+            tile_menu_switch = Adw.SwitchRow()
+            tile_menu_switch.set_title(_("Tile-Style Context Menu"))
+            tile_menu_switch.set_subtitle(
+                _("Show connection actions as a grid of tiles instead of a list")
+            )
+            tile_menu_switch.set_active(
+                bool(self.config.get_setting('ui.use_tile_context_menu', True))
+            )
+            tile_menu_switch.connect(
+                'notify::active',
+                lambda r, _p: self.config.set_setting('ui.use_tile_context_menu', bool(r.get_active())),
+            )
+            sidebar_behavior_group.add(tile_menu_switch)
+
             hide_on_startup_switch = Adw.SwitchRow()
             hide_on_startup_switch.set_title("Hide Sidebar on Startup")
             hide_on_startup_switch.set_subtitle("Start with the sidebar collapsed")
