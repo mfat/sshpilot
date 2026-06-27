@@ -7,17 +7,14 @@ components (terminal, SCP, SFTP, ssh-copy-id) that matches default SSH behavior.
 """
 import os
 import logging
-import subprocess
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Union
 from dataclasses import dataclass
 
-from .ssh_config_utils import get_effective_ssh_config
 from .askpass_utils import (
     get_ssh_env_with_askpass,
     ensure_key_in_agent,
     lookup_passphrase,
 )
-from .ssh_password_exec import run_ssh_with_password
 
 logger = logging.getLogger(__name__)
 

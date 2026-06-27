@@ -5,10 +5,8 @@ Dialog for adding/editing SSH connections
 
 import os
 import logging
-import gettext
 import re
 import ipaddress
-import socket
 import subprocess
 import threading
 import types

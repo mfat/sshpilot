@@ -18,29 +18,19 @@ indicators and toast based feedback.
 
 from __future__ import annotations
 
-import collections
 import dataclasses
-import errno
-import json
-import mimetypes
 import os
 import pathlib
 import posixpath
 import shutil
-import stat
-import threading
 import weakref
-import time
-import re
-import tempfile
-from datetime import datetime
-from concurrent.futures import Future, ThreadPoolExecutor, CancelledError
+from concurrent.futures import Future, CancelledError
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 from gettext import gettext as _
 
 
-from gi.repository import Adw, Gio, GLib, GObject, Gdk, Gtk, Pango
+from gi.repository import Adw, Gio, GLib, GObject, Gdk, Gtk
 
 # Try to import GtkSourceView for syntax highlighting
 try:
@@ -52,41 +42,19 @@ except (ImportError, ValueError, AttributeError):
     _HAS_GTKSOURCE = False
     GtkSource = None
 
-from .platform_utils import is_flatpak, is_macos
+from .platform_utils import is_flatpak
 from .text_editor import RemoteFileEditorWindow
 from .file_manager import (
     create_file_manager_backend,
-    DOCS_JSON,
     FileEntry,
     FilePane,
-    PaneControls,
-    PaneToolbar,
-    PathEntry,
-    PropertiesDialog,
     SFTPProgressDialog,
     TransferCancelledException,
     _HAS_ALERT_DIALOG,
-    _MainThreadDispatcher,
-    _PROGRESS_DIALOG_BASE,
-    _ensure_cfg_dir,
-    _get_docs_json_path,
-    _grant_persistent_access,
-    _human_size,
-    _human_time,
-    _load_doc_config,
     _load_first_doc_path,
     _load_grant_for_host,
-    _lookup_doc_entry,
-    _lookup_document_path,
-    _lookup_path_from_config,
-    _mode_to_octal,
-    _mode_to_str,
-    _portal_doc_path,
-    _pretty_path_for_display,
-    _save_doc,
     _sftp_path_exists,
     stat_isdir,
-    walk_remote,
 )
 
 import logging

@@ -15,8 +15,7 @@ except Exception:
     Vte = None
 
 from .config import Config
-from .connection_manager import Connection, ConnectionManager
-from .key_manager import KeyManager, SSHKey
+from .key_manager import SSHKey
 from .platform_utils import get_ssh_dir
 from .terminal import TerminalWidget
 from .connection_display import (

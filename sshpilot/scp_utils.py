@@ -5,8 +5,7 @@ from __future__ import annotations
 import os
 import logging
 import subprocess
-from typing import Iterable, List, Tuple, Optional, Dict, Any
-import re
+from typing import List, Optional, Dict, Any
 
 from .ssh_connection_builder import (
     _build_base_ssh_command,

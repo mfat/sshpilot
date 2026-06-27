@@ -8,11 +8,10 @@ Tests verify that:
 4. UTF-8/UTF-16 are not wrapped (native xterm.js support)
 """
 
-import os
 import sys
 import types
 from pathlib import Path
-from unittest.mock import Mock, MagicMock, patch, call
+from unittest.mock import Mock
 
 import pytest
 
@@ -173,7 +172,7 @@ _Gdk.Rectangle = Mock
 _Adw.Application = types.SimpleNamespace(get_default=lambda: None)
 
 # Now import the modules we want to test
-from sshpilot.terminal_backends import VTETerminalBackend, PyXtermTerminalBackend
+from sshpilot.terminal_backends import VTETerminalBackend
 
 
 class TestVTETerminalEncoding:
@@ -226,7 +225,6 @@ class TestPyXtermEncoding:
     def test_utf8_encoding_no_luit_wrapper(self, monkeypatch):
         """Test that UTF-8 encoding doesn't wrap command with luit"""
         # Test the encoding wrapping logic directly
-        import shutil
         
         # UTF-8 should not be wrapped (native xterm.js support)
         encoding = 'UTF-8'

@@ -9,7 +9,7 @@ tool and stays entirely within the terminal seam.
 from __future__ import annotations
 
 import os
-import shutil
+import shutil  # noqa: F401  # kept: tests patch this module's `shutil.which`
 from typing import Any, Dict, List
 
 from ...api import (

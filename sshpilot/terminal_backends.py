@@ -1334,7 +1334,6 @@ class PyXtermTerminalBackend:
             raise RuntimeError("pyxterm backend is not available")
 
         import subprocess
-        import threading
         import time
         import os
 
