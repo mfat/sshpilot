@@ -16,4 +16,4 @@ Middle-click a tab to close it!
 Hover your mouse pointer over the right side of a connection to access the file manager
 You can use your favorite terminal from Settings
 When the app starts, just type a host name and press enter to connect!
-In Split View,you can swith between terminals with Alt+1/2/3.. 
+In Split View, you can move focus between panes with Ctrl+Alt+H/J/K/L.

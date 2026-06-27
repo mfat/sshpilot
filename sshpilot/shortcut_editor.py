@@ -361,17 +361,6 @@ class ShortcutsPreferencesPage(PreferencesPageBase):
                 general_group.add(row)
                 logger.debug(f"Added {name} to General group (fallback)")
 
-        # Focus-pane-by-number stays a fixed indexed family (not a single
-        # rebindable accelerator); show it as a read-only note in the editable
-        # Split View group.
-        try:
-            note_row = Adw.ActionRow()
-            note_row.set_title(_('Focus pane by number'))
-            note_row.set_subtitle('Alt+1 … Alt+4')
-            split_group.add(note_row)
-        except Exception:
-            pass
-
         for group in (general_group, connection_group, terminal_group, tab_group, split_group):
             try:
                 group.add_css_class('boxed-list')

@@ -29,12 +29,6 @@ def _connections_from_drop_payload(value) -> List[str]:
     return list(nicknames)
 
 
-# Alt+1..9 → zero-based pane index (number row + numeric keypad).
-_ALT_NUM_KEYS = {}
-for _i in range(1, 10):
-    _ALT_NUM_KEYS[getattr(Gdk, f'KEY_{_i}')] = _i - 1
-    _ALT_NUM_KEYS[getattr(Gdk, f'KEY_KP_{_i}')] = _i - 1
-
 # Installed once per process; scoped to the .add-pane-strip / scroll-spacer
 # style classes so it only affects those widgets and nothing else in the app.
 # Class-only selectors so the rule applies whether the strip is a Gtk.Box or a
@@ -1630,7 +1624,7 @@ class SplitViewTab(Gtk.Box):
 
     _RESIZE_STEP = 50  # pixels per Ctrl+Alt+Shift+HJKL keypress
 
-    def _on_key_pressed(self, _ctrl, keyval, _keycode, state) -> bool:
+    def _on_key_pressed(self, _ctrl, _keyval, _keycode, state) -> bool:
         # Guard: only act when the focused widget is inside THIS SplitViewTab.
         # Adw.TabView keeps all tab-page children realized, so GTK4 may invoke
         # our CAPTURE handler even when a sibling widget (e.g. the connection
@@ -1672,15 +1666,6 @@ class SplitViewTab(Gtk.Box):
                     if trigger is not None and trigger.trigger(event, False) == Gdk.KeyMatch.EXACT:
                         callback()
                         return True
-
-        # Alt+1..9 — focus the Nth pane. Kept fixed: it is an indexed family, not
-        # a single rebindable accelerator. (Ctrl+Shift+W "close focused pane" is
-        # the global, context-aware tab-close action, customizable on its own.)
-        if mods == Gdk.ModifierType.ALT_MASK and keyval in _ALT_NUM_KEYS:
-            idx = _ALT_NUM_KEYS[keyval]
-            if 0 <= idx < len(self._panes):
-                self._focus_pane(self._panes[idx])
-            return True
 
         return False
 

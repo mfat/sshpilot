@@ -93,6 +93,18 @@ def test_split_default_triggers_match_original_keys(gui):
         assert trigger.get_modifiers() == mods, name
 
 
+def test_shortcuts_viewer_builds(gui):
+    """The Help → Keyboard Shortcuts viewer builds the (now dynamic) split group
+    without error after focus-by-number was removed."""
+    win = gui.window
+    viewer = win._build_shortcuts_window()
+    assert viewer is not None
+    gui.pump(150)
+    # The viewer derives split shortcuts from the registered actions.
+    current = win._get_safe_current_shortcuts()
+    assert current.get('split-focus-left') == ['<Control><Alt>h']
+
+
 def test_editor_lists_split_actions_as_editable(gui):
     from sshpilot.shortcut_editor import ShortcutsPreferencesPage
 
