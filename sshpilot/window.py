@@ -7,7 +7,6 @@ import asyncio
 import copy
 import os
 import logging
-import math
 import posixpath
 import re
 import shlex
@@ -2981,23 +2980,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     logger.debug("Simple right-click detected - showing context menu for selected row")
 
                     # Try to detect the clicked row, but fall back to selected row if detection fails
-                    row = None
-                    try:
-                        # First try to find the row that was actually clicked using pick method
-                        # This is safe now because we're not doing any selection operations
-                        picked_widget = self.connection_list.pick(x, y, Gtk.PickFlags.DEFAULT)
-                        widget = picked_widget
-                        while widget is not None:
-                            if isinstance(widget, Gtk.ListBoxRow):
-                                row = widget
-                                logger.debug("Using clicked row for context menu")
-                                break
-                            widget = widget.get_parent()
-                            if widget == self.connection_list:
-                                break
-                    except Exception as e:
-                        logger.debug(f"Failed to detect clicked row: {e}")
-                    
+                    row = self._pick_connection_list_row(x, y)
+                    if row is not None:
+                        logger.debug("Using clicked row for context menu")
+
                     # Fallback to selected row if click detection failed
                     if not row:
                         try:
@@ -3124,7 +3110,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     return
 
 
-                row, _, _ = self._resolve_connection_list_event(x, y)
+                row = self._pick_connection_list_row(x, y)
 
                 if not row:
                     try:
@@ -3374,199 +3360,30 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception as e:
             logger.error(f"Failed to toggle pin for {len(conns)} connection(s): {e}")
 
-    def _resolve_connection_list_event(
-        self,
-        x: float,
-        y: float,
-        scrolled_window: Optional[Gtk.ScrolledWindow] = None,
-    ) -> Tuple[Optional[Gtk.ListBoxRow], float, float]:
-        """Resolve the target row and viewport coordinates for a pointer event on the connection list."""
+    def _pick_connection_list_row(
+        self, x: float, y: float
+    ) -> Optional[Gtk.ListBoxRow]:
+        """Return the ListBoxRow under a pointer event on the connection list.
 
+        The coordinates come from a gesture attached to ``connection_list``
+        itself, so they are already in the ListBox's content space. ``pick()``
+        resolves the row directly with no scroll adjustment, which is why both
+        the right-click and middle-click handlers must share this path: any
+        manual vadjustment math would double-count the scroll offset and select
+        a row further down the list (see issue #1013).
+        """
         try:
-            event_x = float(x)
-            event_y = float(y)
-        except (TypeError, ValueError):
-            return None, 0.0, 0.0
-
-        adjusted_x = event_x
-        adjusted_y = event_y
-        hadjust_value = 0.0
-        vadjust_value = 0.0
-
-
-        if scrolled_window is None:
-            try:
-                scrolled_window = self.connection_list.get_ancestor(Gtk.ScrolledWindow)
-            except Exception:
-                scrolled_window = None
-
-        if scrolled_window is not None:
-            try:
-                hadjustment = scrolled_window.get_hadjustment()
-            except Exception:
-                hadjustment = None
-            else:
-                if hadjustment is not None:
-                    try:
-                        hadjust_value = float(hadjustment.get_value())
-                    except Exception:
-                        hadjust_value = 0.0
-                    else:
-                        adjusted_x = event_x + hadjust_value
-
-
-            try:
-                vadjustment = scrolled_window.get_vadjustment()
-            except Exception:
-                vadjustment = None
-            else:
-                if vadjustment is not None:
-                    try:
-                        vadjust_value = float(vadjustment.get_value())
-                    except Exception:
-                        vadjust_value = 0.0
-                    else:
-                        adjusted_y = event_y + vadjust_value
-
-
-        x_candidates: List[float] = [adjusted_x]
-        if not math.isclose(adjusted_x, event_x):
-            x_candidates.append(event_x)
-
-        y_candidates: List[float] = [adjusted_y]
-        if not math.isclose(adjusted_y, event_y):
-            y_candidates.append(event_y)
-
-        row: Optional[Gtk.ListBoxRow] = None
-        pointer_y_source_index = 0
-        for idx, candidate in enumerate(y_candidates):
-
-            try:
-                row = self.connection_list.get_row_at_y(int(candidate))
-            except Exception:
-                row = None
-            if row:
-                pointer_y_source_index = idx
-                break
-            row = self._connection_row_for_coordinate(candidate)
-            if row:
-                pointer_y_source_index = idx
-
-                break
-
-        if not row:
-            return None, x_candidates[0], y_candidates[0]
-
-        pointer_x_list = x_candidates[0]
-        pointer_y_list = y_candidates[pointer_y_source_index]
-
-        pointer_x_viewport = event_x
-        pointer_y_viewport = event_y
-
-        try:
-            allocation = row.get_allocation()
-        except Exception:
-            allocation = None
-
-        if allocation is not None:
-            try:
-                row_left = float(allocation.x)
-                row_top = float(allocation.y)
-                row_right = row_left + max(float(allocation.width) - 1.0, 0.0)
-                row_bottom = row_top + max(float(allocation.height) - 1.0, 0.0)
-            except Exception:
-                row_left = row_top = 0.0
-                row_right = row_bottom = 0.0
-
-
-            if row_right < row_left:
-                row_right = row_left
-            if row_bottom < row_top:
-                row_bottom = row_top
-
-            row_left_viewport = row_left - hadjust_value
-            row_right_viewport = row_right - hadjust_value
-            row_top_viewport = row_top - vadjust_value
-            row_bottom_viewport = row_bottom - vadjust_value
-
-            if row_left_viewport > row_right_viewport:
-                row_left_viewport, row_right_viewport = row_right_viewport, row_left_viewport
-            if row_top_viewport > row_bottom_viewport:
-                row_top_viewport, row_bottom_viewport = row_bottom_viewport, row_top_viewport
-
-            pointer_x_candidates: List[float] = [pointer_x_viewport]
-            pointer_x_from_list = pointer_x_list - hadjust_value
-            if not math.isclose(pointer_x_from_list, pointer_x_viewport):
-                pointer_x_candidates.append(pointer_x_from_list)
-            event_x_minus_adjust = event_x - hadjust_value
-            if hadjust_value and not math.isclose(event_x_minus_adjust, pointer_x_from_list):
-                pointer_x_candidates.append(event_x_minus_adjust)
-
-            for candidate in pointer_x_candidates:
-                if row_left_viewport <= candidate <= row_right_viewport:
-                    pointer_x_viewport = candidate
-                    break
-            else:
-                midpoint_x = row_left_viewport + (row_right_viewport - row_left_viewport) / 2.0
-                if row_left_viewport <= row_right_viewport:
-                    pointer_x_viewport = max(
-                        row_left_viewport, min(pointer_x_viewport, row_right_viewport)
-                    )
-                else:
-                    pointer_x_viewport = midpoint_x
-
-            pointer_y_candidates: List[float] = [pointer_y_viewport]
-            pointer_y_from_list = pointer_y_list - vadjust_value
-            if not math.isclose(pointer_y_from_list, pointer_y_viewport):
-                pointer_y_candidates.append(pointer_y_from_list)
-            event_y_minus_adjust = event_y - vadjust_value
-            if vadjust_value and not math.isclose(event_y_minus_adjust, pointer_y_from_list):
-                pointer_y_candidates.append(event_y_minus_adjust)
-
-            for candidate in pointer_y_candidates:
-                if row_top_viewport <= candidate <= row_bottom_viewport:
-                    pointer_y_viewport = candidate
-                    break
-            else:
-                midpoint_y = row_top_viewport + (row_bottom_viewport - row_top_viewport) / 2.0
-                if row_top_viewport <= row_bottom_viewport:
-                    pointer_y_viewport = max(
-                        row_top_viewport, min(pointer_y_viewport, row_bottom_viewport)
-                    )
-                else:
-                    pointer_y_viewport = midpoint_y
-
-        return row, pointer_x_viewport, pointer_y_viewport
-
-
-    def _connection_row_for_coordinate(self, coord: float) -> Optional[Gtk.ListBoxRow]:
-        """Return the listbox row whose allocation includes the given list-space coordinate."""
-        try:
-            target = float(coord)
-        except (TypeError, ValueError):
+            widget = self.connection_list.pick(x, y, Gtk.PickFlags.DEFAULT)
+        except Exception as e:
+            logger.debug(f"Failed to pick connection list row: {e}")
             return None
 
-        try:
-            child = self.connection_list.get_first_child()
-        except Exception:
-            return None
-
-        while child is not None:
-            try:
-                if isinstance(child, Gtk.ListBoxRow):
-                    allocation = child.get_allocation()
-                    row_top = allocation.y
-                    row_bottom = allocation.y + max(allocation.height - 1, 0)
-                    if row_bottom < row_top:
-                        row_bottom = row_top
-                    if row_top <= target <= row_bottom:
-                        return child
-            except Exception:
-                pass
-            try:
-                child = child.get_next_sibling()
-            except Exception:
+        while widget is not None:
+            if isinstance(widget, Gtk.ListBoxRow):
+                return widget
+            if widget == self.connection_list:
                 break
+            widget = widget.get_parent()
 
         return None
 
@@ -5773,40 +5590,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
 
     # Signal handlers
-    def on_connection_click(self, gesture, n_press, x, y):
-        """Handle clicks on the connection list"""
-        # Get the row that was clicked
-        row, _, _ = self._resolve_connection_list_event(x, y)
-        if row is None:
-            return
-
-        if n_press == 1:  # Single click - just select
-            try:
-                self.connection_list.grab_focus()
-            except Exception:
-                pass
-            try:
-                state = gesture.get_current_event_state()
-            except Exception:
-                state = 0
-
-            multi_mask = (
-                Gdk.ModifierType.CONTROL_MASK
-                | Gdk.ModifierType.SHIFT_MASK
-                | getattr(Gdk.ModifierType, 'PRIMARY_ACCELERATOR_MASK', 0)
-            )
-
-            if state & multi_mask:
-                # Allow default multi-selection behavior
-                return
-
-            self._select_only_row(row)
-            gesture.set_state(Gtk.EventSequenceState.CLAIMED)
-        elif n_press == 2:  # Double click - connect
-            if hasattr(row, 'connection'):
-                self._cycle_connection_tabs_or_open(row.connection)
-            gesture.set_state(Gtk.EventSequenceState.CLAIMED)
-
     def on_connection_activated(self, list_box, row):
         """Handle connection activation (Enter key)"""
         self._return_to_tab_view_if_welcome()
@@ -6872,7 +6655,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         try:
             page, _child = self._tab_menu_target()
             if page is not None:
-                self.tab_view.close_other_pages(page)
+                self._confirm_then_bulk_close(
+                    page,
+                    lambda: self.tab_view.close_other_pages(page),
+                    after_only=False,
+                )
         except Exception as exc:
             logger.error("Tab close others failed: %s", exc)
 
@@ -6880,7 +6667,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         try:
             page, _child = self._tab_menu_target()
             if page is not None:
-                self.tab_view.close_pages_after(page)
+                self._confirm_then_bulk_close(
+                    page,
+                    lambda: self.tab_view.close_pages_after(page),
+                    after_only=True,
+                )
         except Exception as exc:
             logger.error("Tab close to the right failed: %s", exc)
 
@@ -6984,6 +6775,96 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             message = error_msg or "Failed to start file manager process"
             logger.error(f"Failed to start file manager process for {nickname}: {message}")
             self._show_manage_files_error(str(nickname), message)
+
+    def _bulk_close_target_pages(self, target_page, after_only: bool):
+        """Pages that close_other_pages / close_pages_after would remove.
+
+        get_pages() yields pages in tab order, so "after target" is every page
+        seen once the target has been passed. The target itself and the pinned
+        Start tab are excluded, matching libadwaita's semantics.
+        """
+        pages, seen_target = [], False
+        for p in list(self.tab_view.get_pages()):
+            if p is target_page:
+                seen_target = True
+                continue
+            if self._is_start_tab_page(p):
+                continue
+            if after_only and not seen_target:
+                continue
+            pages.append(p)
+        return pages
+
+    def _count_sessions_in_pages(self, pages) -> int:
+        """Number of live terminal sessions across the given pages."""
+        from .split_view import SplitViewTab
+        total = 0
+        for p in pages:
+            child = p.get_child() if hasattr(p, 'get_child') else None
+            if isinstance(child, SplitViewTab):
+                total += sum(pane.get_terminal_count() for pane in child._panes)
+            elif child in self.terminal_to_connection:
+                total += 1
+        return total
+
+    def _run_suppressed_close(self, close_fn):
+        """Run a bulk close with the per-tab disconnect confirmation suppressed.
+
+        The bulk close emits close-page once per page; suppressing keeps
+        on_tab_close from spawning a modal dialog for each (issue #1014). The
+        closes run synchronously, so the flag is safely reset afterwards.
+        Sessions still tear down via TerminalWidget._on_destroy.
+        """
+        self._suppress_close_confirmation = True
+        try:
+            close_fn()
+        finally:
+            self._suppress_close_confirmation = False
+
+    def _on_bulk_close_response(self, dialog, response_id, close_fn):
+        """Handle the single confirmation dialog for a bulk tab close."""
+        if response_id == 'close':
+            self._run_suppressed_close(close_fn)
+        dialog.destroy()
+
+    def _confirm_then_bulk_close(self, target_page, close_fn, after_only: bool):
+        """Close other / to-the-right tabs, honoring confirm-disconnect.
+
+        When the preference is on and live sessions would be disconnected, ask
+        once for the whole batch rather than once per tab. On confirm the batch
+        closes with per-tab confirmation suppressed; on cancel nothing happens.
+        """
+        pages = self._bulk_close_target_pages(target_page, after_only)
+        if not pages:
+            return
+
+        confirm = bool(
+            getattr(self, 'config', None)
+            and self.config.get_setting('confirm-disconnect', True)
+        )
+        n_sessions = self._count_sessions_in_pages(pages)
+
+        if confirm and n_sessions > 0:
+            dialog = Adw.MessageDialog(
+                transient_for=self,
+                modal=True,
+                heading=_("Close tabs?"),
+                body=_("This will close {t} tab(s) and disconnect {n} session(s). Continue?").format(
+                    t=len(pages), n=n_sessions
+                ),
+            )
+            dialog.add_response('cancel', _("Cancel"))
+            dialog.add_response('close', _("Close"))
+            dialog.set_response_appearance('close', Adw.ResponseAppearance.DESTRUCTIVE)
+            dialog.set_default_response('close')
+            dialog.set_close_response('cancel')
+            dialog.connect('response', self._on_bulk_close_response, close_fn)
+            dialog.present()
+        else:
+            # Toggle off, or nothing with a live session to disconnect: close
+            # directly. With the toggle off, on_tab_close disconnects each tab
+            # without a dialog.
+            close_fn()
 
     def on_tab_close(self, tab_view, page):
         """Handle tab close - THE KEY FIX: Never call close_page ourselves"""
