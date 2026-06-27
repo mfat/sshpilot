@@ -1812,14 +1812,6 @@ class TerminalWidget(Gtk.Box):
             logger.debug(f"Failed to present forwarding error dialog: {e}")
         return False
 
-    def set_group_color(self, color: Optional[str]):
-        """Update the stored group color and refresh the theme if needed."""
-        self.group_color = color if color else None
-        try:
-            self.apply_theme()
-        except Exception:
-            logger.debug("Failed to reapply theme after group color update", exc_info=True)
-
     @staticmethod
     def _mix_rgba(base: Gdk.RGBA, other: Gdk.RGBA, ratio: float) -> Gdk.RGBA:
         ratio = max(0.0, min(1.0, ratio))

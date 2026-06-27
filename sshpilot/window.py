@@ -1231,7 +1231,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     logger.error("Export diagnostics failed: %s", exc, exc_info=True)
                     GLib.idle_add(self._on_export_diagnostics_done, False, str(exc), path)
 
-            import threading
             threading.Thread(target=_work, daemon=True).start()
 
         file_dialog.save(self, None, _on_save)
@@ -1916,15 +1915,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             pass
 
         # Tab navigation shortcuts are handled by application actions (see sshpilot/main.py)
-        
-    def on_window_size_changed(self, window, param):
-        """Handle window size changes and save the new dimensions"""
-        width = self.get_default_width()
-        height = self.get_default_height()
-        logger.debug(f"Window size changed to: {width}x{height}")
-        
-        # Save the new window geometry
-        self.config.set_window_geometry(width, height)
 
     def setup_ui(self):
         """Set up the user interface"""
