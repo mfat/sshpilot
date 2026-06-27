@@ -96,7 +96,7 @@ class Config(GObject.Object):
             logger.error(f"Failed to load JSON config: {e}")
             return self.get_default_config()
 
-    def save_json_config(self, config_data: Dict[str, Any] = None):
+    def save_json_config(self, config_data: Optional[Dict[str, Any]] = None):
         """Save configuration to JSON file"""
         try:
             if config_data is None:
@@ -787,7 +787,7 @@ class Config(GObject.Object):
             'sidebar_width': self.get_setting('ui.sidebar_width', 250),
         }
 
-    def save_window_geometry(self, width: int, height: int, sidebar_width: int = None):
+    def save_window_geometry(self, width: int, height: int, sidebar_width: Optional[int] = None):
         """Save window geometry"""
         if self.get_setting('ui.remember_window_size', True):
             self.set_setting('ui.window_width', width)
