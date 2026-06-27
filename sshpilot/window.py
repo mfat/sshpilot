@@ -1231,7 +1231,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     logger.error("Export diagnostics failed: %s", exc, exc_info=True)
                     GLib.idle_add(self._on_export_diagnostics_done, False, str(exc), path)
 
-            import threading
             threading.Thread(target=_work, daemon=True).start()
 
         file_dialog.save(self, None, _on_save)
@@ -1916,15 +1915,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             pass
 
         # Tab navigation shortcuts are handled by application actions (see sshpilot/main.py)
-        
-    def on_window_size_changed(self, window, param):
-        """Handle window size changes and save the new dimensions"""
-        width = self.get_default_width()
-        height = self.get_default_height()
-        logger.debug(f"Window size changed to: {width}x{height}")
-        
-        # Save the new window geometry
-        self.config.set_window_geometry(width, height)
 
     def setup_ui(self):
         """Set up the user interface"""
@@ -6984,32 +6974,50 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         """
         if embed is None:
             return
-        controller = getattr(embed, '_controller', None)
+        # Idempotency: once torn down (_controller is None) there is nothing to
+        # disconnect or dispose, so a second call (e.g. both on_tab_detached and
+        # _teardown_all_file_manager_tabs firing) is a safe no-op.
+        if getattr(embed, '_controller', None) is None:
+            return
         try:
             destroy_id = GObject.signal_lookup('destroy', Gtk.Widget.__gtype__)
             GObject.signal_handlers_disconnect_matched(
                 embed, GObject.SignalMatchType.ID, destroy_id, 0, None, None, None)
         except Exception:
             logger.debug('Could not disconnect FM embed destroy handlers', exc_info=True)
-        if controller is not None:
-            try:
-                if controller in self._internal_file_manager_windows:
-                    self._internal_file_manager_windows.remove(controller)
-            except Exception:
-                pass
-            try:
-                if hasattr(controller, '_cleanup_manager'):
-                    controller._cleanup_manager()
-            except Exception:
-                logger.debug('FM controller cleanup failed', exc_info=True)
-            try:
-                controller.destroy()
-            except Exception:
-                logger.debug('FM controller destroy failed', exc_info=True)
+        self._teardown_embed_controller(embed, self._internal_file_manager_windows)
+
+    @staticmethod
+    def _teardown_embed_controller(embed, registry) -> bool:
+        """Dispose an embed's file-manager controller. Pure/duck-typed: no GTK.
+
+        Order matters and is asserted by tests: remove the controller from
+        ``registry`` first, then run ``_cleanup_manager()``, then ``destroy()``,
+        then null ``embed._controller`` so the embed reads as torn down.
+        Idempotent — returns False (a no-op) when there is no live controller.
+        """
+        if embed is None or getattr(embed, '_controller', None) is None:
+            return False
+        controller = embed._controller
+        try:
+            if controller in registry:
+                registry.remove(controller)
+        except Exception:
+            pass
+        try:
+            if hasattr(controller, '_cleanup_manager'):
+                controller._cleanup_manager()
+        except Exception:
+            logger.debug('FM controller cleanup failed', exc_info=True)
+        try:
+            controller.destroy()
+        except Exception:
+            logger.debug('FM controller destroy failed', exc_info=True)
         try:
             embed._controller = None
         except Exception:
             pass
+        return True
 
     def _teardown_all_file_manager_tabs(self) -> None:
         """Tear down every open file-manager tab synchronously (app shutdown)."""
@@ -7025,6 +7033,18 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 embed = None
             if embed is not None:
                 self._teardown_file_manager_embed(embed)
+        # Lifecycle assertion: a tab whose embed still holds a live controller
+        # after this pass is a leak that would later be finalized during GC and
+        # segfault. Surface it in the log instead of failing silently.
+        try:
+            for page in pages:
+                embed = self._file_manager_embed_for_child(page.get_child())
+                if embed is not None and getattr(embed, '_controller', None) is not None:
+                    logger.warning(
+                        'File-manager embed survived shutdown teardown with a live '
+                        'controller (%r) — potential GC-finalization crash source', embed)
+        except Exception:
+            logger.debug('FM teardown lifecycle check failed', exc_info=True)
 
     def _enabled_tab_actions(self, child) -> set:
         """Return the set of tab-menu action names to enable for child.

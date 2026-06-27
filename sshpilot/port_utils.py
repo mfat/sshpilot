@@ -3,6 +3,7 @@ Port utilities for sshPilot
 Provides port information and availability checking functionality
 """
 
+import os
 import socket
 import subprocess
 import logging
@@ -397,7 +398,6 @@ class PortChecker:
     def _find_process_by_inode(self, inode: int) -> Tuple[Optional[int], Optional[str]]:
         """Find process PID and name by socket inode"""
         try:
-            import os
             import glob
             
             # Search through /proc/*/fd/* for the socket inode

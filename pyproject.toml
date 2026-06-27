@@ -4,7 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sshpilot"
-version = "3.8.5"
+# Single source of truth: sshpilot/__init__.py::__version__ (updated by the
+# release bump). setuptools reads it via AST (no package import at build time),
+# so the wheel version can never drift from the app version again.
+dynamic = ["version"]
 authors = [
   { name="mFat", email="newmfat@gmail.com" },
 ]
@@ -38,6 +41,19 @@ test = [
 #   Note: webkitgtk is Linux-only; PyXterm.js backend not available on macOS
 # - GtkSourceView 5.0, libsecret
 # See README.md or AGENTS.md for complete system dependency list.
+
+[tool.setuptools.dynamic]
+version = {attr = "sshpilot.__version__"}
+
+[tool.ty.rules]
+# PyGObject is dynamic and ships no type stubs, so the type checker can't see
+# gi.repository members or attributes assigned in __init__/via GObject. These
+# two categories are pure noise here (700+ false positives) and would drown the
+# real findings — silence them so the typecheck gate surfaces genuine issues.
+# The gate runs non-blocking in CI (.github/workflows/typecheck.yml); tighten
+# module-by-module as real findings are cleared.
+unresolved-import = "ignore"
+unresolved-attribute = "ignore"
 
 [tool.setuptools.packages.find]
 where = [""]
@@ -80,7 +96,11 @@ extend-exclude = [
 ]
 
 [tool.ruff.lint]
-# Conservative initial rule set: syntax errors, misused comparisons, and the
-# pyflakes checks that almost always flag runtime bugs. Broader rules can be
+# Conservative, growing rule set: syntax errors, misused comparisons, and the
+# pyflakes checks that almost always flag runtime bugs. Broader rules are
 # enabled incrementally as the tree is cleaned up.
-select = ["E9", "F63", "F7"]
+#   F601 — duplicate dict key literal (one value silently lost)
+#   F7   — misc pyflakes bug checks (e.g. break/return outside loop/function)
+#   F811 — redefinition of an unused name (dead, shadowed defs)
+#   F821 — undefined name (real NameError at runtime)
+select = ["E9", "F63", "F7", "F601", "F811", "F821"]

@@ -9,6 +9,26 @@ from gettext import gettext as _
 
 logger = logging.getLogger(__name__)
 
+
+def _connections_from_drop_payload(value) -> List[str]:
+    """Normalize a sidebar drop payload into an ordered list of nicknames.
+
+    The payload is the ``TYPE_PYOBJECT`` value carried by a connection drag:
+    a dict with ``type == "connection"`` and either ``connection_nicknames``
+    (a list, multi-select) or a single ``connection_nickname`` fallback.
+
+    Returns ``[]`` for anything that isn't a connection payload (non-dict,
+    wrong/absent type, or no nicknames), so callers can treat an empty list as
+    "not a drop we handle". Pure — no widget access — so it is unit-testable.
+    """
+    if not isinstance(value, dict) or value.get("type") != "connection":
+        return []
+    nicknames = value.get("connection_nicknames") or []
+    if not nicknames and value.get("connection_nickname"):
+        nicknames = [value["connection_nickname"]]
+    return list(nicknames)
+
+
 # Alt+1..9 → zero-based pane index (number row + numeric keypad).
 _ALT_NUM_KEYS = {}
 for _i in range(1, 10):
@@ -459,12 +479,7 @@ class SplitPane(Gtk.Box):
         try:
             if hasattr(value, 'get_value'):
                 value = value.get_value()
-            if not isinstance(value, dict) or value.get("type") != "connection":
-                return False
-
-            nicknames = value.get("connection_nicknames") or []
-            if not nicknames and value.get("connection_nickname"):
-                nicknames = [value["connection_nickname"]]
+            nicknames = _connections_from_drop_payload(value)
             if not nicknames:
                 return False
 

@@ -10,6 +10,7 @@ from sshpilot.sidebar import (
     _GROUP_SEAM_HIT_PX,
     _apply_connection_dnd_in_place,
     _apply_group_dnd_in_place,
+    _calculate_autoscroll_velocity,
     _collect_group_subtree_rows,
     _drag_bar_geometry,
     _group_into_decision,
@@ -736,7 +737,7 @@ def test_tree_target_insert_before_nested_child():
     assert _tree_target_insert_before(manager, "y") == ("a", 1)
 
 
-def test_group_motion_shows_reorder_at_sibling_seam(monkeypatch):
+def test_group_motion_shows_reorder_in_gap_before_sibling(monkeypatch):
     """Dragging C into the gap before B shows reorder above B (tree index 1)."""
     shown = []
     monkeypatch.setattr(
@@ -1109,3 +1110,17 @@ def test_group_drop_reorder_skips_rebuild_when_inplace_succeeds(monkeypatch):
     assert sidebar_module._on_connection_list_drop(window, None, value, 0, 99999) is True
     assert applied == [("src", {"nested": False, "reparented": False})]
     assert window.rebuilt == []
+
+
+# ── autoscroll velocity (pure ramp used during drag near the list edges) ──────
+
+def test_autoscroll_velocity_ramps_and_clamps():
+    # No depth into the margin → no scroll.
+    assert _calculate_autoscroll_velocity(0.0, 48.0, 10.0) == 0.0
+    # Half-way into the margin → half max velocity.
+    assert _calculate_autoscroll_velocity(24.0, 48.0, 10.0) == 5.0
+    # At/over the margin the ratio is clamped to 1.0 (never exceeds max).
+    assert _calculate_autoscroll_velocity(48.0, 48.0, 10.0) == 10.0
+    assert _calculate_autoscroll_velocity(96.0, 48.0, 10.0) == 10.0
+    # Negative distance is floored at 0 (no reverse scroll).
+    assert _calculate_autoscroll_velocity(-5.0, 48.0, 10.0) == 0.0

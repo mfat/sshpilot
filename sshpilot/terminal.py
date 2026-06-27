@@ -1281,7 +1281,7 @@ class TerminalWidget(Gtk.Box):
                 if "sshpass" in str(e) and "No such file or directory" in str(e):
                     logger.error("sshpass binary not found, falling back to askpass")
                     # Fall back to askpass method
-                    self._fallback_to_askpass(ssh_cmd, env_list)
+                    self._fallback_to_askpass(ssh_cmd, env_list, working_dir)
                 else:
                     self._on_connection_failed(str(e))
                 return
@@ -1320,7 +1320,7 @@ class TerminalWidget(Gtk.Box):
             logger.error(f"Failed to setup SSH terminal: {e}")
             self._on_connection_failed(str(e))
     
-    def _fallback_to_askpass(self, ssh_cmd, env_list):
+    def _fallback_to_askpass(self, ssh_cmd, env_list, working_dir=None):
         """Fallback when sshpass fails - allow interactive prompting"""
         try:
             logger.info("Falling back to interactive password prompt")
@@ -1811,14 +1811,6 @@ class TerminalWidget(Gtk.Box):
         except Exception as e:
             logger.debug(f"Failed to present forwarding error dialog: {e}")
         return False
-
-    def set_group_color(self, color: Optional[str]):
-        """Update the stored group color and refresh the theme if needed."""
-        self.group_color = color if color else None
-        try:
-            self.apply_theme()
-        except Exception:
-            logger.debug("Failed to reapply theme after group color update", exc_info=True)
 
     @staticmethod
     def _mix_rgba(base: Gdk.RGBA, other: Gdk.RGBA, ratio: float) -> Gdk.RGBA:
