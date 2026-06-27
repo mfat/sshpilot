@@ -10,8 +10,12 @@ Lives under the main window's Help submenu (``win.view-logs``).
 from __future__ import annotations
 
 import collections
+import glob
+import json
 import logging
 import os
+import re
+import zipfile
 from gettext import gettext as _
 from typing import List, Optional
 
@@ -38,6 +42,7 @@ _CATEGORY_MASTER = 'master'
 _CATEGORY_APP = 'app'
 _CATEGORY_SSH = 'ssh'
 _CATEGORY_ASKPASS = 'askpass'
+_CATEGORY_CRASH = 'crash'
 
 
 # Level-filter dropdown options. The integer is the *minimum* logging level
@@ -95,6 +100,9 @@ def _resolve_log_path(category: str = _CATEGORY_MASTER) -> str:
         except Exception as exc:
             logger.debug("Could not resolve askpass log path: %s", exc)
             return ''
+    if category == _CATEGORY_CRASH:
+        # Prefer a non-empty crash report (rotated previous run, else live).
+        return _resolve_crash_path() or os.path.join(get_state_dir(), 'crash.log')
     # Master / fallback.
     return os.path.join(get_state_dir(), 'sshpilot.log')
 
@@ -200,6 +208,130 @@ def _build_diagnostic_bundle(log_lines: List[str], total_lines: int,
     return "\n".join(lines)
 
 
+def _resolve_crash_path(explicit: Optional[str] = None) -> str:
+    """Return the most relevant crash report path, or '' if none has content.
+
+    Prefers an explicit path (e.g. the rotated ``crash.log.previous`` handed to
+    us after a detected crash), then falls back to the live ``crash.log``.
+    """
+    candidates = []
+    if explicit:
+        candidates.append(explicit)
+    state = get_state_dir()
+    candidates.append(os.path.join(state, 'crash.log.previous'))
+    candidates.append(os.path.join(state, 'crash.log'))
+    for path in candidates:
+        try:
+            if path and os.path.isfile(path) and os.path.getsize(path) > 0:
+                return path
+        except Exception:
+            continue
+    return ''
+
+
+def build_report_bundle(crash_path: Optional[str] = None, tail_lines: int = 400) -> str:
+    """Clipboard-ready bug report: platform info + master log tail + crash report.
+
+    Reuses the master-log diagnostic bundle and, when a crash report exists,
+    appends its tail inside the same code block so a single paste carries
+    everything a maintainer needs.
+    """
+    master_path = _resolve_log_path(_CATEGORY_MASTER)
+    master_lines, master_total = _tail_file(master_path, tail_lines)
+    bundle = _build_diagnostic_bundle(master_lines, master_total, master_path)
+
+    crash = _resolve_crash_path(crash_path)
+    if not crash:
+        return bundle
+
+    crash_lines, crash_total = _tail_file(crash, 200)
+    extra: List[str] = ["", "```"]
+    extra.append(f"Crash report: {crash}")
+    if crash_total and len(crash_lines) < crash_total:
+        extra.append(f"Showing last {len(crash_lines)} of {crash_total} lines")
+    extra.append("-" * 48)
+    extra.extend(crash_lines or ["(crash report is empty or unreadable)"])
+    extra.append("```")
+    return bundle + "\n" + "\n".join(extra)
+
+
+# Keys whose values are redacted from the config copy in the diagnostics ZIP.
+# Secrets normally live in the OS keyring, not config.json — this is
+# defence-in-depth so a bug-report bundle never leaks credentials.
+_SECRET_KEY_RE = re.compile(
+    r'(pass(word|phrase)?|secret|token|credential|api[_-]?key|private[_-]?key)', re.I)
+
+
+def _redact_config(obj):
+    """Recursively replace secret-ish values with a placeholder."""
+    if isinstance(obj, dict):
+        out = {}
+        for key, value in obj.items():
+            if isinstance(key, str) and _SECRET_KEY_RE.search(key):
+                out[key] = "***REDACTED***"
+            else:
+                out[key] = _redact_config(value)
+        return out
+    if isinstance(obj, list):
+        return [_redact_config(item) for item in obj]
+    if isinstance(obj, str) and 'PRIVATE KEY-----' in obj:
+        return "***REDACTED***"
+    return obj
+
+
+def build_diagnostics_zip(dest_path: str) -> str:
+    """Write a self-contained diagnostics ZIP to dest_path and return it.
+
+    Contents: logs/ (all log files incl. crash reports), system-info.txt
+    (platform/runtime/tool details), version.txt, and a redacted config.json.
+    Connection lists / ssh_config are intentionally excluded for privacy.
+    """
+    from .platform_utils import get_config_dir, APP_ID
+
+    state = get_state_dir()
+    with zipfile.ZipFile(dest_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+        # Log files (current + rotated backups + crash reports).
+        seen = set()
+        for name in ('sshpilot.log', 'app.log', 'ssh.log',
+                     'crash.log', 'crash.log.previous'):
+            path = os.path.join(state, name)
+            if os.path.isfile(path):
+                zf.write(path, arcname='logs/' + name)
+                seen.add(path)
+        for path in sorted(glob.glob(os.path.join(state, '*.log.*'))):
+            if path not in seen and os.path.isfile(path):
+                zf.write(path, arcname='logs/' + os.path.basename(path))
+
+        # System / runtime info.
+        try:
+            from .startup_info import StartupInfo
+            info = StartupInfo().info
+        except Exception as exc:  # pragma: no cover - defensive
+            info = {"error": "could not collect system info: %s" % exc}
+        zf.writestr('system-info.txt', json.dumps(info, indent=2, default=str))
+
+        # Version.
+        try:
+            from . import __version__ as version
+        except Exception:
+            version = "unknown"
+        zf.writestr('version.txt',
+                    "sshPilot %s\napplication-id: %s\n" % (version, APP_ID))
+
+        # Redacted config.
+        cfg_path = os.path.join(get_config_dir(), 'config.json')
+        try:
+            if os.path.isfile(cfg_path):
+                with open(cfg_path, 'r', encoding='utf-8') as fh:
+                    data = json.load(fh)
+                zf.writestr('config.json',
+                            json.dumps(_redact_config(data), indent=2, default=str))
+        except Exception as exc:
+            zf.writestr('config.json', "(could not read/redact config: %s)" % exc)
+
+    return dest_path
+
+
 class LogViewerWindow(Adw.Window):
     """Main window's "Help → View Logs" target.
 
@@ -227,6 +359,7 @@ class LogViewerWindow(Adw.Window):
             (_CATEGORY_APP,     _("App"),     _resolve_log_path(_CATEGORY_APP)),
             (_CATEGORY_SSH,     _("SSH"),     _resolve_log_path(_CATEGORY_SSH)),
             (_CATEGORY_ASKPASS, _("Askpass"), _resolve_log_path(_CATEGORY_ASKPASS)),
+            (_CATEGORY_CRASH,   _("Crash"),   _resolve_log_path(_CATEGORY_CRASH)),
         ]
         self._current_category: str = _CATEGORY_MASTER
         self._log_path: str = self._categories[0][2]
@@ -332,6 +465,7 @@ class LogViewerWindow(Adw.Window):
             ("open-folder", self._do_open_folder),
             ("save-as", self._do_save_as),
             ("toggle-full", self._do_toggle_full),
+            ("export-diagnostics", self._do_export_diagnostics),
         ):
             act = Gio.SimpleAction.new(name, None)
             act.connect("activate", lambda _a, _p, h=handler: h())
@@ -343,6 +477,7 @@ class LogViewerWindow(Adw.Window):
         menu_model.append(_("Refresh"), "logview.refresh")
         menu_model.append(_("Open Log Folder"), "logview.open-folder")
         menu_model.append(_("Save Log As…"), "logview.save-as")
+        menu_model.append(_("Export Diagnostics…"), "logview.export-diagnostics")
         menu_model.append(_("Toggle Full File"), "logview.toggle-full")
         menu_button.set_menu_model(menu_model)
         header.pack_end(menu_button)
@@ -857,6 +992,36 @@ class LogViewerWindow(Adw.Window):
                     folder, exc, inner_exc,
                 )
 
+    def _do_export_diagnostics(self) -> None:
+        """Save a full diagnostics ZIP (logs + system info + redacted config).
+
+        Delegates to the parent window's handler (which shows a success dialog
+        with "Open Folder"); falls back to a minimal self-contained save.
+        """
+        parent = self.get_transient_for()
+        if parent is not None and hasattr(parent, 'on_export_diagnostics_action'):
+            parent.on_export_diagnostics_action()
+            return
+        from datetime import datetime
+        dialog = Gtk.FileDialog.new()
+        dialog.set_title(_("Export Diagnostics"))
+        dialog.set_initial_name(
+            "sshpilot-diagnostics-%s.zip" % datetime.now().strftime('%Y%m%d-%H%M%S'))
+
+        def _on_save(d, result):
+            try:
+                gfile = d.save_finish(result)
+            except GLib.Error:
+                return
+            if gfile is None:
+                return
+            try:
+                build_diagnostics_zip(gfile.get_path())
+            except Exception as exc:
+                logger.error("Export diagnostics failed: %s", exc, exc_info=True)
+
+        dialog.save(self, None, _on_save)
+
     def _do_save_as(self) -> None:
         """Let the user save a copy of the current log file via Gtk.FileDialog."""
         if not os.path.isfile(self._log_path):
@@ -900,6 +1065,9 @@ class LogViewerWindow(Adw.Window):
         cat_id, _label, path = self._categories[idx]
         if cat_id == self._current_category:
             return
+        # Re-resolve the crash path so we always point at the freshest report.
+        if cat_id == _CATEGORY_CRASH:
+            path = _resolve_log_path(_CATEGORY_CRASH)
         self._current_category = cat_id
         self._log_path = path or self._log_path
         # Reset the "show full file" toggle on category switch — easy to
@@ -914,13 +1082,11 @@ class LogViewerWindow(Adw.Window):
     def _on_copy_clicked(self, _btn) -> None:
         """Build the diagnostic bundle and put it on the clipboard.
 
-        Always sources from the master ``sshpilot.log`` so bug reports
-        contain the full picture, regardless of which category the user is
-        currently viewing.
+        Always sources from the master ``sshpilot.log`` (plus the crash report
+        if present) so bug reports contain the full picture, regardless of which
+        category the user is currently viewing.
         """
-        master_path = _resolve_log_path(_CATEGORY_MASTER)
-        master_lines, master_total = _tail_file(master_path, self._tail_lines)
-        bundle = _build_diagnostic_bundle(master_lines, master_total, master_path)
+        bundle = build_report_bundle()
         try:
             display = self.get_display() or Gdk.Display.get_default()
             if display is not None:

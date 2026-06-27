@@ -17,7 +17,7 @@ from .askpass_utils import (
     ensure_key_in_agent,
     lookup_passphrase,
 )
-from .ssh_password_exec import run_ssh_with_password, run_scp_with_password
+from .ssh_password_exec import run_ssh_with_password
 
 logger = logging.getLogger(__name__)
 

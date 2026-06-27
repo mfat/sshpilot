@@ -13,7 +13,7 @@ from .ssh_connection_builder import (
     resolve_native_auth,
 )
 from .ssh_config_utils import get_effective_ssh_config
-from .ssh_password_exec import run_scp_with_password, assemble_scp_transfer_args
+from .ssh_password_exec import assemble_scp_transfer_args, wrap_argv_with_sshpass
 
 logger = logging.getLogger(__name__)
 
@@ -282,59 +282,27 @@ def download_file(
     try:
         auth = resolve_native_auth(connection, connection_manager, config)
         _apply_native_auth_env(env, auth)
-        password_value = auth.password if auth.use_sshpass else None
     except Exception as e:
         logger.error(f'SCP: Failed to resolve authentication: {e}')
         return False
 
-    # Handle password authentication with sshpass
-    if password_value:
-        try:
-            target = _format_ssh_target(host, user)
+    # Inject sshpass-specific auth-steering options that resolve_native_auth does
+    # not place in auth.extra_opts. These ensure SSH hands the password prompt to
+    # sshpass rather than trying keys first (which would either succeed silently
+    # or prompt interactively in a way sshpass cannot intercept).
+    effective_extra = list(extra_ssh_opts or [])
+    if auth.use_sshpass and auth.password:
+        pref = (
+            'gssapi-with-mic,hostbased,publickey,keyboard-interactive,password'
+            if use_publickey else 'password'
+        )
+        effective_extra = [
+            '-o', f'PreferredAuthentications={pref}',
+            '-o', 'NumberOfPasswordPrompts=1',
+        ] + effective_extra
 
-            def _run_password_scp(use_legacy: bool):
-                return run_scp_with_password(
-                    host,
-                    user,
-                    password_value,
-                    [remote_file],
-                    local_path,
-                    direction='download',
-                    port=port,
-                    known_hosts_path=known_hosts_path,
-                    extra_ssh_opts=extra_ssh_opts or [],
-                    inherit_env=env,
-                    use_publickey=use_publickey,
-                    legacy=use_legacy,
-                )
-
-            result = _run_password_scp(False)
-            if result.returncode != 0:
-                stderr = (getattr(result, 'stderr', None) or '').strip()
-                if stderr:
-                    logger.error('SCP: Download stderr: %s', stderr)
-                # If the remote SFTP subsystem is unavailable, retry once using
-                # the legacy SCP protocol (-O), which does not require sftp-server.
-                if classify_sftp_error(stderr):
-                    logger.info('SCP: Retrying download with legacy protocol (-O) for %s', remote_file)
-                    legacy_result = _run_password_scp(True)
-                    legacy_stderr = (getattr(legacy_result, 'stderr', None) or '').strip()
-                    if legacy_result.returncode == 0:
-                        return True
-                    if legacy_stderr:
-                        logger.error('SCP: Legacy download stderr: %s', legacy_stderr)
-                    # Keep the original failure when scp does not support -O.
-                    if not legacy_scp_flag_unsupported(legacy_stderr):
-                        stderr = legacy_stderr or stderr
-                _record_download_failure(result_details, stderr)
-                return False
-            return True
-        except Exception as exc:
-            logger.error('SCP: Download failed for %s: %s', remote_file, exc)
-            _record_download_failure(result_details, str(exc))
-            return False
-
-    # Build SCP command
+    # Build SCP command via the unified prefix builder (handles -r, app SSH
+    # settings, ClearAllForwardings, strict-host policy, keyfile, etc.).
     target = _format_ssh_target(host, user)
     try:
         transfer_sources, transfer_destination = assemble_scp_transfer_args(
@@ -345,18 +313,25 @@ def download_file(
         )
 
         argv = _build_scp_argv_prefix(
-            connection, config, recursive, known_hosts_path, extra_ssh_opts, auth
+            connection, config, recursive, known_hosts_path, effective_extra, auth
         )
         argv.extend(transfer_sources)
         argv.append(transfer_destination)
 
-        completed = subprocess.run(
-            argv,
-            check=False,
-            text=True,
-            capture_output=True,
-            env=env,
-        )
+        def _run_attempt(scp_argv: List[str]) -> subprocess.CompletedProcess:
+            if auth.use_sshpass and auth.password:
+                wrapped, cleanup = wrap_argv_with_sshpass(scp_argv, auth.password)
+                try:
+                    return subprocess.run(
+                        wrapped, check=False, text=True, capture_output=True, env=env
+                    )
+                finally:
+                    cleanup()
+            return subprocess.run(
+                scp_argv, check=False, text=True, capture_output=True, env=env
+            )
+
+        completed = _run_attempt(argv)
         if completed.returncode != 0:
             stderr = (completed.stderr or '').strip()
             if stderr:
@@ -365,13 +340,7 @@ def download_file(
             # legacy SCP protocol (-O), which does not require sftp-server.
             if classify_sftp_error(stderr):
                 logger.info('SCP: Retrying download with legacy protocol (-O) for %s', remote_file)
-                legacy_completed = subprocess.run(
-                    insert_legacy_scp_flag(argv),
-                    check=False,
-                    text=True,
-                    capture_output=True,
-                    env=env,
-                )
+                legacy_completed = _run_attempt(insert_legacy_scp_flag(argv))
                 if legacy_completed.returncode == 0:
                     return True
                 legacy_stderr = (legacy_completed.stderr or '').strip()
@@ -441,34 +410,23 @@ def upload_file(
     try:
         auth = resolve_native_auth(connection, connection_manager, config)
         _apply_native_auth_env(env, auth)
-        password_value = auth.password if auth.use_sshpass else None
     except Exception as e:
         logger.error(f'SCP: Failed to resolve authentication: {e}')
         return False
 
-    # Handle password authentication with sshpass
-    if password_value:
-        try:
-            target = _format_ssh_target(host, user)
-            result = run_scp_with_password(
-                host,
-                user,
-                password_value,
-                [local_file],
-                remote_path,
-                direction='upload',
-                port=port,
-                known_hosts_path=known_hosts_path,
-                extra_ssh_opts=extra_ssh_opts or [],
-                inherit_env=env,
-                use_publickey=use_publickey,
-            )
-            return result.returncode == 0
-        except Exception as exc:
-            logger.error('SCP: Upload failed for %s: %s', local_file, exc)
-            return False
+    # Inject sshpass-specific auth-steering options (mirrors download_file).
+    effective_extra = list(extra_ssh_opts or [])
+    if auth.use_sshpass and auth.password:
+        pref = (
+            'gssapi-with-mic,hostbased,publickey,keyboard-interactive,password'
+            if use_publickey else 'password'
+        )
+        effective_extra = [
+            '-o', f'PreferredAuthentications={pref}',
+            '-o', 'NumberOfPasswordPrompts=1',
+        ] + effective_extra
 
-    # Build SCP command
+    # Build SCP command via the unified prefix builder.
     target = _format_ssh_target(host, user)
     try:
         transfer_sources, transfer_destination = assemble_scp_transfer_args(
@@ -479,22 +437,41 @@ def upload_file(
         )
 
         argv = _build_scp_argv_prefix(
-            connection, config, recursive, known_hosts_path, extra_ssh_opts, auth
+            connection, config, recursive, known_hosts_path, effective_extra, auth
         )
         argv.extend(transfer_sources)
         argv.append(transfer_destination)
 
-        completed = subprocess.run(
-            argv,
-            check=False,
-            text=True,
-            capture_output=True,
-            env=env,
-        )
+        def _run_attempt(scp_argv: List[str]) -> subprocess.CompletedProcess:
+            if auth.use_sshpass and auth.password:
+                wrapped, cleanup = wrap_argv_with_sshpass(scp_argv, auth.password)
+                try:
+                    return subprocess.run(
+                        wrapped, check=False, text=True, capture_output=True, env=env
+                    )
+                finally:
+                    cleanup()
+            return subprocess.run(
+                scp_argv, check=False, text=True, capture_output=True, env=env
+            )
+
+        completed = _run_attempt(argv)
         if completed.returncode != 0:
             stderr = (completed.stderr or '').strip()
             if stderr:
                 logger.error('SCP: Upload stderr: %s', stderr)
+            # If the remote SFTP subsystem is unavailable, retry once using the
+            # legacy SCP protocol (-O), which does not require sftp-server.
+            if classify_sftp_error(stderr):
+                logger.info('SCP: Retrying upload with legacy protocol (-O) for %s', local_file)
+                legacy_completed = _run_attempt(insert_legacy_scp_flag(argv))
+                if legacy_completed.returncode == 0:
+                    return True
+                legacy_stderr = (legacy_completed.stderr or '').strip()
+                if legacy_stderr:
+                    logger.error('SCP: Legacy upload stderr: %s', legacy_stderr)
+                if not legacy_scp_flag_unsupported(legacy_stderr):
+                    stderr = legacy_stderr or stderr
             return False
         return True
     except Exception as exc:

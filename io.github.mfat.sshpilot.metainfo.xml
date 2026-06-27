@@ -60,6 +60,33 @@
 
 
 
+    <release version="5.4.6" date="2026-06-27">
+      <description>
+        <p>Fixes SCP bug in Flatpak</p>
+        <p>Adds &quot;Edit as Root&quot; button to text editor. Edit eny remote files with sudo</p>
+        <p>Better logging and diagnostics suite</p>
+      </description>
+    </release>
+    <release version="5.4.5" date="2026-06-26">
+      <description>
+        <p>Improved drag and drop and group nesting experience</p>
+      </description>
+    </release>
+    <release version="5.4.4" date="2026-06-26">
+      <description>
+        <p>Added support for nested groups</p>
+        <p>Improvements to Drag &amp; Drop experience in connection list</p>
+        <p>Fixed scp failing to download directories</p>
+        <p>Bug fixes</p>
+      </description>
+    </release>
+    <release version="5.4.3" date="2026-06-24">
+      <description>
+        <p>Bug fixes</p>
+        <p>Performance improvements for SFTP file manager</p>
+        <p>Added option to copy text on select</p>
+      </description>
+    </release>
     <release version="5.4.2" date="2026-06-24">
       <description>
         <p>Bug fixes</p>
@@ -407,24 +434,32 @@
 
   <screenshots>
     <screenshot type="default">
-      <image>https://raw.githubusercontent.com/mfat/sshpilot/52a6681f799b9dffeeebb85980970073bc2784f6/screenshots/start-page.png</image>
+      <image>https://raw.githubusercontent.com/mfat/sshpilot/6cfdc358b818676d390cd7dcf2d69e4f4118e642/screenshots/start-page.png</image>
       <caption>Start Page</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/mfat/sshpilot/6ef5e5bc618ab6dc563a47aa4470b576d9b25ac8/screenshots/main.png</image>
+      <image>https://raw.githubusercontent.com/mfat/sshpilot/6cfdc358b818676d390cd7dcf2d69e4f4118e642/screenshots/groups.png</image>
+      <caption>Connection Groups</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/mfat/sshpilot/6cfdc358b818676d390cd7dcf2d69e4f4118e642/screenshots/main.png</image>
       <caption>Terminal</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/mfat/sshpilot/524e9a0d1405d968a6e6e88d31b31b0a480589ab/screenshots/file-manager.png</image>
+      <image>https://raw.githubusercontent.com/mfat/sshpilot/6cfdc358b818676d390cd7dcf2d69e4f4118e642/screenshots/splitview.png</image>
+      <caption>Split View</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/mfat/sshpilot/6cfdc358b818676d390cd7dcf2d69e4f4118e642/screenshots/file-manager.png</image>
       <caption>SFTP File Manager</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/mfat/sshpilot/38e1a8a/screenshots/tab-overview.png</image>
-      <caption>Tab Overview</caption>
+      <image>https://raw.githubusercontent.com/mfat/sshpilot/6cfdc358b818676d390cd7dcf2d69e4f4118e642/screenshots/commands.png</image>
+      <caption>Command Blocks</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/mfat/sshpilot/38e1a8a/screenshots/ssh-copy-id.png</image>
-      <caption>ssh-copy-id Window</caption>
+      <image>https://raw.githubusercontent.com/mfat/sshpilot/6cfdc358b818676d390cd7dcf2d69e4f4118e642/screenshots/ssh-copy-id.png</image>
+      <caption>Transfer SSH Keys</caption>
     </screenshot>
   </screenshots>
 

@@ -29,7 +29,7 @@ class StatsTabMixin:
 
         toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         live = Gtk.Button()
-        live.set_child(Adw.ButtonContent(icon_name="utilities-system-monitor-symbolic",
+        live.set_child(Adw.ButtonContent(icon_name="warning-outline-symbolic",
                                          label="Live stats"))
         live.set_tooltip_text("Open a streaming `docker stats` in a terminal tab")
         live.connect("clicked", lambda _b: self._open_live_stats())
@@ -75,8 +75,7 @@ class StatsTabMixin:
         nick = self._current_nickname()
         if client is None or not nick:
             return
-        self._warn_sudo_interactive(nick)
-        ok = self.ctx.open_command_terminal(
+        ok = self._open_command_terminal(
             nick, client.stats_stream_command(), title=f"stats: {nick}")
         if not ok:
             self._toast("Could not open live stats")

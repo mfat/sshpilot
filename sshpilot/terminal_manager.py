@@ -74,7 +74,9 @@ class TerminalManager:
     def connect_to_host(self, connection, force_new: bool = False,
                         remote_command: Optional[str] = None,
                         tab_title: Optional[str] = None,
-                        force_tty: bool = False):
+                        force_tty: bool = False,
+                        pty_prompt: Optional[str] = None,
+                        pty_response: Optional[str] = None):
         window = self.window
         group_color = self._resolve_group_color(connection)
         if not force_new:
@@ -118,6 +120,12 @@ class TerminalManager:
             terminal.connect('connection-failed', lambda w, e: logger.error(f"Connection failed: {e}"))
             terminal.connect('connection-lost', self.on_terminal_disconnected)
             terminal.connect('title-changed', self.on_terminal_title_changed)
+
+            # One-shot PTY auto-fill: answer a known remote prompt (e.g. a sudo
+            # password) by typing the response when the prompt appears. Set
+            # before _connect_ssh() so the watcher is armed at spawn time.
+            if pty_prompt and pty_response is not None:
+                terminal._pty_autofill = (pty_prompt, pty_response)
 
             from sshpilot import icon_utils
             page = window.tab_view.append(terminal)

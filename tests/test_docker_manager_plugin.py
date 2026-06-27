@@ -582,6 +582,71 @@ def test_no_sudo_when_disabled():
     assert calls[-1] == "docker ps -q"
 
 
+def test_sudo_password_mode_feeds_password_to_captured_sudo_s():
+    """Password-required sudo: captured commands use ``sudo -S`` and the password
+    is fed over stdin (never on the command line)."""
+    calls = []
+
+    def run_command(nickname, command, *, timeout=None, input=None):
+        calls.append((command, input))
+        return FakeResult(stdout="")
+
+    client = DockerClient(run_command, "srv", "docker",
+                          use_sudo=True, sudo_password="s3cret")
+    client.ping()
+    command, stdin = calls[-1]
+    assert command == "sudo -S -p '' docker ps -q"
+    assert stdin == "s3cret\n"
+    # The password must not leak onto the command line.
+    assert "s3cret" not in command
+
+
+def test_sudo_password_mode_read_file_uses_sudo_s():
+    calls = []
+
+    def run_command(nickname, command, *, timeout=None, input=None):
+        calls.append((command, input))
+        return FakeResult(stdout="data")
+
+    client = DockerClient(run_command, "srv", "docker",
+                          use_sudo=True, sudo_password="pw")
+    assert client.read_file("/etc/x.yml") == "data"
+    command, stdin = calls[-1]
+    assert command == "sudo -S -p '' cat /etc/x.yml"
+    assert stdin == "pw\n"
+
+
+def test_sudo_password_mode_interactive_uses_dash_p_sentinel():
+    """Interactive commands use ``sudo -p <sentinel>`` so the terminal can detect
+    the prompt and auto-type the password — the password is NOT in the string."""
+    client = DockerClient(lambda *a, **k: FakeResult(), "srv", "docker",
+                          use_sudo=True, sudo_password="pw")
+    sentinel = DockerClient.SUDO_PROMPT
+    assert client.exec_shell_command("c1") == (
+        f"sudo -p '{sentinel}' docker exec -it c1 sh -c "
+        "'command -v bash >/dev/null 2>&1 && exec bash || exec sh'"
+    )
+    assert client.logs_follow_command("c1", tail=5) == (
+        f"sudo -p '{sentinel}' docker logs -f --tail 5 c1"
+    )
+    assert client.stats_stream_command() == f"sudo -p '{sentinel}' docker stats"
+    assert "pw" not in client.exec_shell_command("c1")
+
+
+def test_passwordless_sudo_still_uses_sudo_n_without_stdin():
+    """use_sudo without a password keeps the existing ``sudo -n`` path and feeds
+    no stdin (so run_command implementations without ``input`` keep working)."""
+    calls = []
+
+    def run_command(nickname, command, *, timeout=None):  # no ``input`` kwarg
+        calls.append(command)
+        return FakeResult(stdout="")
+
+    client = DockerClient(run_command, "srv", "docker", use_sudo=True)
+    client.ping()  # would raise TypeError if input= were passed
+    assert calls[-1] == "sudo -n docker ps -q"
+
+
 @pytest.mark.parametrize("text,expected", [
     ("Got permission denied while trying to connect to the Docker daemon socket", True),
     ("dial unix /var/run/docker.sock: connect: permission denied", True),
@@ -832,3 +897,126 @@ def test_create_and_textview_dialogs_construct():
     assert dlg._networks == ["bridge", "host", "mynet"]
     assert dlg._network_row.get_selected() == 0
     TextViewDialog(None, "title", "body text")  # constructs without error
+
+
+def _sudo_ctx(settings_store):
+    """A page ctx whose settings are backed by a real dict (so ``sudo:<nick>``
+    sticks) — used to exercise the sudo probe routing."""
+    class Conn:
+        def __init__(self, n):
+            self.nickname = n
+            self.protocol = "ssh"
+
+    return types.SimpleNamespace(
+        run_command=lambda *a, **k: FakeResult(),
+        run_on_ui_thread=lambda fn, *a: fn(*a),
+        settings=types.SimpleNamespace(
+            get=lambda k, d=None: settings_store.get(k, d),
+            set=lambda k, v: settings_store.__setitem__(k, v)),
+        list_connections=lambda: [Conn("web"), Conn("db")],
+        open_command_terminal=lambda *a, **k: True,
+        ui=types.SimpleNamespace(notify=lambda *a, **k: None),
+    )
+
+
+def test_resolve_sudo_prompts_when_password_required():
+    """The probe must ask for a password whenever `sudo -n` is denied — even on
+    a host where plain docker works — instead of silently running `sudo -n`."""
+    _gtk_or_skip()
+    from sshpilot.plugins.builtin.docker_manager.page import DockerConsolePage
+
+    page = DockerConsolePage(_sudo_ctx({}), initial_host="web")
+
+    def rc(nick, command, *, timeout=None, input=None):
+        if command.startswith("sudo -n"):
+            return FakeResult(exit_code=1, stderr="sudo: a password is required")
+        if command.startswith("sudo -S"):
+            return FakeResult() if input == "secret\n" else FakeResult(exit_code=1)
+        return FakeResult()
+
+    # No cached/stored password yet -> prompt the user.
+    assert page._resolve_sudo(rc, "web", "docker") == (True, "needs_password", None)
+    # A cached password that verifies via `sudo -S` is reported back for caching.
+    page._sudo_passwords["web"] = "secret"
+    assert page._resolve_sudo(rc, "web", "docker") == (True, "password", "secret")
+
+
+def test_resolve_sudo_passwordless():
+    _gtk_or_skip()
+    from sshpilot.plugins.builtin.docker_manager.page import DockerConsolePage
+
+    page = DockerConsolePage(_sudo_ctx({}), initial_host="web")
+    # `sudo -n` succeeds -> passwordless, no prompt, no cached password.
+    rc = lambda *a, **k: FakeResult()
+    assert page._resolve_sudo(rc, "web", "docker") == (True, None, None)
+
+
+def test_resolve_sudo_not_sudoers():
+    _gtk_or_skip()
+    from sshpilot.plugins.builtin.docker_manager.page import DockerConsolePage
+
+    page = DockerConsolePage(_sudo_ctx({}), initial_host="web")
+
+    def rc(nick, command, *, timeout=None, input=None):
+        if command.startswith("sudo -n"):
+            return FakeResult(
+                exit_code=1,
+                stderr="webuser is not in the sudoers file.  This incident will be reported.",
+            )
+        return FakeResult()
+
+    assert page._resolve_sudo(rc, "web", "docker") == (True, "not_sudoers", None)
+
+
+def test_resolve_sudo_clears_stale_keyring_on_failed_verify(monkeypatch):
+    _gtk_or_skip()
+    from sshpilot.plugins.builtin.docker_manager.page import DockerConsolePage
+
+    page = DockerConsolePage(_sudo_ctx({}), initial_host="web")
+    cleared = []
+
+    def rc(nick, command, *, timeout=None, input=None):
+        if command.startswith("sudo -n"):
+            return FakeResult(exit_code=1, stderr="sudo: a password is required")
+        if command.startswith("sudo -S"):
+            return FakeResult(exit_code=1, stderr="Sorry, try again.")
+        return FakeResult()
+
+    monkeypatch.setattr(
+        page, "_lookup_stored_sudo", lambda nick: "stale")
+    monkeypatch.setattr(
+        page, "_clear_stored_sudo", lambda nick: cleared.append(nick))
+
+    assert page._resolve_sudo(rc, "web", "docker") == (True, "needs_password", None)
+    assert cleared == ["web"]
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("user is not in the sudoers file", True),
+    ("is not allowed to execute", True),
+    ("sudo: a password is required", False),
+    ("Sorry, try again.", False),
+])
+def test_is_sudo_denied_error(text, expected):
+    assert DockerClient.is_sudo_denied_error(text) is expected
+
+
+def test_check_sudo():
+    _gtk_or_skip()
+    from sshpilot.plugins.builtin.docker_manager.page import DockerConsolePage
+
+    def rc_ok(nick, command, *, timeout=None, input=None):
+        return FakeResult()
+
+    def rc_wrong(nick, command, *, timeout=None, input=None):
+        return FakeResult(exit_code=1, stderr="Sorry, try again.")
+
+    def rc_denied(nick, command, *, timeout=None, input=None):
+        return FakeResult(exit_code=1, stderr="user is not in the sudoers file")
+
+    assert DockerConsolePage._check_sudo(
+        rc_ok, "web", "docker", "good") == (True, None)
+    assert DockerConsolePage._check_sudo(
+        rc_wrong, "web", "docker", "bad") == (False, "wrong_password")
+    assert DockerConsolePage._check_sudo(
+        rc_denied, "web", "docker", "bad") == (False, "not_sudoers")

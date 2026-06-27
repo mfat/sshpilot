@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:5.4.2}
+Version:        %{?version}%{!?version:5.4.6}
 Release:        1%{?dist}
 Summary:        Manage your servers with ease
 
@@ -85,6 +85,25 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/io.github.mfat.sshpil
 %{_datadir}/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg
 
 %changelog
+* Sat Jun 27 2026 mFat <newmfat@gmail.com> - 5.4.6
+- Fixes SCP bug in Flatpak
+- Adds "Edit as Root" button to text editor. Edit eny remote files with sudo
+- Better logging and diagnostics suite
+
+* Fri Jun 26 2026 mFat <newmfat@gmail.com> - 5.4.5
+- Improved drag and drop and group nesting experience
+
+* Fri Jun 26 2026 mFat <newmfat@gmail.com> - 5.4.4
+- Added support for nested groups
+- Improvements to Drag & Drop experience in connection list
+- Fixed scp failing to download directories
+- Bug fixes
+
+* Wed Jun 24 2026 mFat <newmfat@gmail.com> - 5.4.3
+- Bug fixes
+- Performance improvements for SFTP file manager
+- Added option to copy text on select
+
 * Wed Jun 24 2026 mFat <newmfat@gmail.com> - 5.4.2
 - Bug fixes
 

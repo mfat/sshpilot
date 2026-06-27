@@ -134,7 +134,7 @@ class ComposeTabMixin:
         if not config_file:
             self._toast("No compose file path for this project")
             return
-        ok = self.ctx.open_command_terminal(
+        ok = self._open_command_terminal(
             nick, client.compose_up_command(config_file), title=f"compose up: {project}")
         if not ok:
             self._toast("Could not start compose up")
@@ -146,7 +146,7 @@ class ComposeTabMixin:
             return
 
         def do(_force: bool) -> None:
-            ok = self.ctx.open_command_terminal(
+            ok = self._open_command_terminal(
                 nick, client.compose_down_command(project), title=f"compose down: {project}")
             if not ok:
                 self._toast("Could not start compose down")

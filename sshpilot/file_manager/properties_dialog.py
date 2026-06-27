@@ -468,8 +468,6 @@ class PropertiesDialog(Adw.Window):
 
     def _start_folder_size_calculation(self):
         """Start calculating folder size in background thread."""
-        import threading
-        
         folder_path = os.path.join(self._current_path, self._entry.name)
         
         # Create and start the background thread

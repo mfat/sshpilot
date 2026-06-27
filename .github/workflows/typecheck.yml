@@ -1,0 +1,28 @@
+name: Typecheck
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  ty:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install ty
+        run: pip install ty
+
+      # Non-blocking for now: PyGObject is dynamic and unstubbed, so a large
+      # share of findings are noise (the worst two categories are silenced in
+      # pyproject [tool.ty.rules]). This surfaces real type issues without
+      # gating merges; flip continue-on-error off once the tree is clean.
+      - name: ty check
+        continue-on-error: true
+        run: ty check sshpilot/
