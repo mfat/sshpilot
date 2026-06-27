@@ -826,7 +826,24 @@ _get_connection_host = get_connection_host
 _get_connection_alias = get_connection_alias
 _format_connection_host_display = format_connection_host_display
 
-class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin, WindowHelpMixin, WindowFileManagerMixin, WindowTabsMixin, WindowConfigDialogsMixin, WindowActions):
+
+def _effective_max_sidebar_width(saved_value, default: int = 400) -> int:
+    """Resolve the startup max sidebar width from a saved setting value.
+
+    Returns the saved width when it is a valid integer, otherwise ``default``.
+    Kept as a module-level pure function so the parsing/fallback logic is unit
+    testable without building the GTK window.
+    """
+    if saved_value is None:
+        return default
+    try:
+        return int(saved_value)
+    except (TypeError, ValueError):
+        logger.warning("Invalid ui.max-sidebar-width %r; using default %d", saved_value, default)
+        return default
+
+
+class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin, WindowHelpMixin, WindowFileManagerMixin, WindowTabsMixin, WindowActions):
     """Main application window"""
 
     def __init__(self, *args, isolated: bool = False, **kwargs):
@@ -2059,23 +2076,19 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         if not (HAS_NAV_SPLIT or HAS_OVERLAY_SPLIT):
             main_box.append(self.header_bar)
         
-        # Create main layout (fallback if split view widgets are unavailable)
-        # Load saved max-sidebar-width or use defaults
+        # Honor the saved max-sidebar-width on startup (previously it was read but
+        # ignored here, so the saved width only took effect after being changed
+        # mid-session); fall back to 400 when unset/invalid.
         saved_max_width = self.config.get_setting('ui.max-sidebar-width', None)
-        default_nav_max = 280
-        default_overlay_max = 280
-        if saved_max_width is not None:
-            max_width = int(saved_max_width)
-        else:
-            max_width = None
-        
+        effective_max_width = _effective_max_sidebar_width(saved_max_width)
+
         # Try OverlaySplitView first as it's more reliable
         if HAS_OVERLAY_SPLIT:
             self.split_view = Adw.OverlaySplitView()
             try:
                 self.split_view.set_sidebar_width_fraction(0.25)
                 self.split_view.set_min_sidebar_width(180)
-                self.split_view.set_max_sidebar_width(400)
+                self.split_view.set_max_sidebar_width(effective_max_width)
             except Exception:
                 pass
             self.split_view.set_vexpand(True)
@@ -2086,7 +2099,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             try:
                 self.split_view.set_sidebar_width_fraction(0.25)
                 self.split_view.set_min_sidebar_width(200)
-                self.split_view.set_max_sidebar_width(400)
+                self.split_view.set_max_sidebar_width(effective_max_width)
             except Exception:
                 pass
             self.split_view.set_vexpand(True)
@@ -2240,7 +2253,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         show_user_hostname = self.config.get_setting('ui.sidebar_show_user_hostname', True)
         show_group_count = self.config.get_setting('ui.sidebar_show_group_count', True)
         show_status = self.config.get_setting('ui.sidebar_show_connection_status', True)
-        show_port_forwarding = self.config.get_setting('ui.sidebar_show_port_forwarding', True)
         show_connection_icon = self.config.get_setting('ui.sidebar_show_connection_icon', True)
         flat_rows = self.config.get_setting('ui.sidebar_flat_rows', False)
         
@@ -5861,12 +5873,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     def on_delete_connection_response(self, dialog, response, payload):
         """Handle delete connection dialog response"""
         try:
-            neighbor_row = None
             connections: List[Connection]
 
             if isinstance(payload, dict):
                 connections = payload.get('connections', []) or []
-                neighbor_row = payload.get('neighbor_row')
             elif isinstance(payload, (list, tuple)):
                 connections = list(payload)
             else:
@@ -7749,45 +7759,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     'remote_command': _norm_str(getattr(old_connection, 'remote_command', '') or (getattr(old_connection, 'data', {}).get('remote_command') if hasattr(old_connection, 'data') else '')),
                     'extra_ssh_config': _norm_str(getattr(old_connection, 'extra_ssh_config', '') or (getattr(old_connection, 'data', {}).get('extra_ssh_config') if hasattr(old_connection, 'data') else '')),
                 }
-                incoming = {
-                    'nickname': _norm_str(connection_data.get('nickname')),
-                    'hostname': _norm_str(connection_data.get('hostname') or connection_data.get('host')),
-                    'username': _norm_str(connection_data.get('username')),
-                    'port': int(connection_data.get('port') or 22),
-                    'auth_method': int(connection_data.get('auth_method') or 0),
-                    'keyfile': _norm_str(connection_data.get('keyfile')),
-                    'certificate': _norm_str(connection_data.get('certificate')),
-                    'key_select_mode': int(connection_data.get('key_select_mode') or 0),
-                    'password': _norm_str(connection_data.get('password')),
-                    'key_passphrase': _norm_str(connection_data.get('key_passphrase')),
-                    'x11_forwarding': bool(connection_data.get('x11_forwarding', False)),
-                    'forwarding_rules': _norm_rules(connection_data.get('forwarding_rules')),
-                    'pre_command': _norm_str(connection_data.get('pre_command')),
-                    'local_command': _norm_str(connection_data.get('local_command')),
-                    'remote_command': _norm_str(connection_data.get('remote_command')),
-                    'extra_ssh_config': _norm_str(connection_data.get('extra_ssh_config')),
-                }
-                # Determine if anything meaningful changed by comparing canonical SSH config blocks
-                try:
-                    existing_block = self.connection_manager.format_ssh_config_entry(existing)
-                    incoming_block = self.connection_manager.format_ssh_config_entry(incoming)
-                    # Also include auth_method/password/key_select_mode delta in change detection
-                    pw_changed_flag = bool(connection_data.get('password_changed', False))
-                    ksm_changed = (existing.get('key_select_mode', 0) != incoming.get('key_select_mode', 0))
-                    changed = (existing_block != incoming_block) or (existing['auth_method'] != incoming['auth_method']) or pw_changed_flag or ksm_changed or (existing['password'] != incoming['password'])
-                except Exception:
-                    # Fallback to dict comparison if formatter fails
-                    changed = existing != incoming
-
-                # Extra guard: if key_select_mode or auth_method differs from the object's current value, force changed
-                try:
-                    if int(connection_data.get('key_select_mode', -1)) != int(getattr(old_connection, 'key_select_mode', -1)):
-                        changed = True
-                    if int(connection_data.get('auth_method', -1)) != int(getattr(old_connection, 'auth_method', -1)):
-                        changed = True
-                except Exception:
-                    pass
-
+                # Editing always forces an update so forwarding rules stay synced;
+                # change detection was intentionally removed (it could skip needed
+                # updates), so no diff between old and new values is computed here.
                 # Always force update when editing connections - skip change detection entirely for forwarding rules
                 logger.info("Editing connection '%s' - forcing update to ensure forwarding rules are synced", existing['nickname'])
 
