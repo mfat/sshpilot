@@ -49,16 +49,19 @@ def test_broadcast_methods_resolve_to_mixin_module():
 
 def test_mixin_precedes_window_actions_in_mro():
     wm = _window_module()
-    from sshpilot.window_broadcast import WindowBroadcastMixin
-    from sshpilot.actions import WindowActions
-
-    mro = wm.MainWindow.__mro__
-    assert WindowBroadcastMixin in mro
-    assert mro.index(WindowBroadcastMixin) < mro.index(WindowActions)
+    # Compare by class name, not imported identity: other tests reimport
+    # sshpilot.actions / sshpilot.window as fresh modules, so a `from ... import`
+    # here can yield a different class object than the one baked into
+    # MainWindow.__mro__. Names are stable across reimports.
+    mro_names = [c.__name__ for c in wm.MainWindow.__mro__]
+    assert "WindowBroadcastMixin" in mro_names
+    assert mro_names.index("WindowBroadcastMixin") < mro_names.index("WindowActions")
 
 
 def test_dead_broadcast_copy_removed_from_window_actions():
     # The old dialog-based duplicate in WindowActions was dead (shadowed) and
-    # has been deleted; it must not creep back and shadow the mixin.
-    from sshpilot.actions import WindowActions
-    assert "on_broadcast_command_action" not in vars(WindowActions)
+    # has been deleted; it must not creep back and shadow the mixin. Locate the
+    # actual base in MainWindow's MRO (by name) so this is robust to reimports.
+    wm = _window_module()
+    actions_cls = next(c for c in wm.MainWindow.__mro__ if c.__name__ == "WindowActions")
+    assert "on_broadcast_command_action" not in vars(actions_cls)
