@@ -124,7 +124,6 @@ class _FakeSFTPServer(threading.Thread):
                     names = state["children"]
                     body = p.pack_uint32(rid) + p.pack_uint32(len(names))
                     for name in names:
-                        full = handle  # unused
                         child_path = None
                         # reconstruct child path from any matching fs entry
                         for cand in self.fs:
