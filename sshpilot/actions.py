@@ -246,16 +246,6 @@ class WindowActions:
         except Exception as exc:
             logger.error("Failed to open group in split view: %s", exc)
 
-    def on_manage_files_action(self, action, param=None):
-        """Handle manage files action from context menu"""
-        if hasattr(self, '_context_menu_connection') and self._context_menu_connection:
-            connection = self._context_menu_connection
-            try:
-                self._open_manage_files_for_connection(connection)
-            except Exception as e:
-                logger.error(f"Error opening file manager: {e}")
-                self._show_manage_files_error(connection.nickname, str(e))
-
     def on_copy_key_to_server_action(self, action, param=None):
         """Handle copy key to server action from context menu"""
         try:
