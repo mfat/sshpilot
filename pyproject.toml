@@ -4,7 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sshpilot"
-version = "3.8.5"
+# Single source of truth: sshpilot/__init__.py::__version__ (updated by the
+# release bump). setuptools reads it via AST (no package import at build time),
+# so the wheel version can never drift from the app version again.
+dynamic = ["version"]
 authors = [
   { name="mFat", email="newmfat@gmail.com" },
 ]
@@ -38,6 +41,9 @@ test = [
 #   Note: webkitgtk is Linux-only; PyXterm.js backend not available on macOS
 # - GtkSourceView 5.0, libsecret
 # See README.md or AGENTS.md for complete system dependency list.
+
+[tool.setuptools.dynamic]
+version = {attr = "sshpilot.__version__"}
 
 [tool.setuptools.packages.find]
 where = [""]
