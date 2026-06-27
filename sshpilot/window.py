@@ -2575,7 +2575,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         add_button.add_css_class('flat')
         self._expand_sidebar_toolbar_button(add_button)
         add_button.set_tooltip_text(
-            f'Add Connection ({get_primary_modifier_label()}+N)'
+            f'Add Connection ({get_primary_modifier_label()}+Shift+N)'
         )
         add_button.connect('clicked', self.on_add_connection_clicked)
         try:
@@ -3697,10 +3697,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         from sshpilot import icon_utils as _iu
         self.split_view_button = Gtk.Button()
         _iu.set_button_icon(self.split_view_button, 'view-grid-symbolic')
-        from .shortcut_utils import get_primary_modifier_label as _gpm
-        self.split_view_button.set_tooltip_text(
-            _('New Split View ({primary}+Shift+S)').format(primary=_gpm())
-        )
+        self.split_view_button.set_tooltip_text(_('New Split View'))
         self.split_view_button.add_css_class('flat')
         self.split_view_button.connect('clicked', self.on_open_split_view_clicked)
         self.header_bar.pack_start(self.split_view_button)
@@ -3717,7 +3714,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._cmd_blocks_toggle_btn = Gtk.ToggleButton()
         _cmd_icon_utils.set_button_icon(self._cmd_blocks_toggle_btn, 'system-run-symbolic')
         self._cmd_blocks_toggle_btn.add_css_class('flat')
-        self._cmd_blocks_toggle_btn.set_tooltip_text(_('Commands (Ctrl+Alt+S)'))
+        self._cmd_blocks_toggle_btn.set_tooltip_text(_('Commands'))
         self._updating_cmd_toggle = False
 
         def _on_cmd_toggle_btn_toggled(btn):
@@ -4517,7 +4514,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 
                 # Show toast notification
                 toast = Adw.Toast.new(
-                    f"Switched to connection list — ↑/↓ navigate, Enter open, {get_primary_modifier_label()}+Enter new tab, {get_primary_modifier_label()}+Shift+L back to terminal"
+                    f"Switched to connection list — ↑/↓ navigate, Enter open, {get_primary_modifier_label()}+Enter new tab"
                 )
                 toast.set_timeout(3)  # seconds
                 if hasattr(self, 'toast_overlay'):
