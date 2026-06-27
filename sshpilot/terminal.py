@@ -3886,6 +3886,7 @@ class TerminalWidget(Gtk.Box):
         root = self.get_root() if hasattr(self, 'get_root') else None
         is_quitting = bool(getattr(root, '_is_quitting', False))
 
+        was_connected = self.is_connected
         if self.is_connected:
             logger.debug(f"Disconnecting SSH session {self.session_id}...")
             self.is_connected = False

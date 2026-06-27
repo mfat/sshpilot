@@ -335,6 +335,8 @@ class ScpWindowController:
                 msg.present()
                 return
 
+            alias_value = profile.alias
+            hostname_value = profile.hostname
             host_value = profile.host
             username = profile.username
             port = profile.port

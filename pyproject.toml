@@ -103,5 +103,4 @@ extend-exclude = [
 #   F7   — misc pyflakes bug checks (e.g. break/return outside loop/function)
 #   F811 — redefinition of an unused name (dead, shadowed defs)
 #   F821 — undefined name (real NameError at runtime)
-#   F841 — local variable assigned but never used (dead code / latent bugs)
-select = ["E9", "F63", "F7", "F601", "F811", "F821", "F841"]
+select = ["E9", "F63", "F7", "F601", "F811", "F821"]

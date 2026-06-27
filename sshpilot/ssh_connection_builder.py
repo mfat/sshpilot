@@ -658,6 +658,7 @@ def build_ssh_connection(
     connection = ctx.connection
     connection_manager = ctx.connection_manager
     app_config = ctx.config
+    command_type = ctx.command_type
     extra_args = ctx.extra_args or []
     
     logger.debug(f"build_ssh_connection called: native_mode={ctx.native_mode}, connection_manager={'present' if connection_manager else 'None'}")

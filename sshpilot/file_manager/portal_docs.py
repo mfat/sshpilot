@@ -118,6 +118,7 @@ def _grant_persistent_access(gfile):
                 flags |= 8  # export-directory
 
             app_id = os.environ.get("FLATPAK_ID", "")
+            basename = gfile.get_basename() or os.path.basename(path)
 
             permissions: List[str] = ["read"]
             if os.access(path, os.W_OK):

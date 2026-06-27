@@ -255,6 +255,12 @@ def download_file(
 
     env = (inherit_env or os.environ).copy()
     
+    # Check if the inherited environment has askpass configured (e.g., when identity agent is disabled)
+    has_inherited_askpass = bool(
+        inherit_env
+        and str(inherit_env.get('SSH_ASKPASS_REQUIRE') or '').lower() == 'force'
+    )
+
     # Create connection object for ssh_connection_builder
     auth_method = 1 if password else 0
     connection = _create_connection_for_scp(
@@ -376,6 +382,12 @@ def upload_file(
         return False
 
     env = (inherit_env or os.environ).copy()
+    
+    # Check if the inherited environment has askpass configured
+    has_inherited_askpass = bool(
+        inherit_env
+        and str(inherit_env.get('SSH_ASKPASS_REQUIRE') or '').lower() == 'force'
+    )
 
     # Create connection object for ssh_connection_builder
     auth_method = 1 if password else 0
