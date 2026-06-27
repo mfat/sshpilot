@@ -43,6 +43,7 @@ HAS_TIMED_ANIMATION = hasattr(Adw, 'TimedAnimation')
 from gettext import gettext as _
 
 from .connection_manager import ConnectionManager, Connection, ConnectionState
+from .keyboard_utils import get_latin_keyval
 from .terminal import TerminalWidget
 from .terminal_manager import TerminalManager
 from .config import Config
@@ -2150,6 +2151,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.toast_overlay.set_child(main_box)
         self.set_content(self.toast_overlay)
 
+        self._install_layout_shortcut_handler()
+
         # The window UI now exists (tab_view, toast_overlay, the plugins menu
         # section). Bind the plugin host so plugin pages, toasts, events, and
         # terminal control go live. Idempotent: only the first window binds.
@@ -2158,6 +2161,45 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 self.plugin_host.bind_window(self)
         except Exception:
             logger.exception("Plugin host bind_window failed")
+
+    def _install_layout_shortcut_handler(self):
+        """Activate app/win actions by Latin keyval so shortcuts work with any keyboard layout."""
+        def _on_key(ctrl, keyval, keycode, state):
+            try:
+                latin = get_latin_keyval(keycode, state)
+                if latin is None or latin == keyval:
+                    return False
+
+                mods = state & Gtk.accelerator_get_default_mod_mask()
+                if not mods:
+                    return False
+
+                app = self.get_application()
+                if app is None:
+                    return False
+
+                for action_desc in app.list_action_descriptions():
+                    for accel in app.get_accels_for_action(action_desc):
+                        ok, parsed_keyval, parsed_mods = Gtk.accelerator_parse(accel)
+                        if ok and Gdk.keyval_to_lower(parsed_keyval) == Gdk.keyval_to_lower(latin) and parsed_mods == mods:
+                            prefix, _, name = action_desc.partition('.')
+                            if prefix == 'app':
+                                action = app.lookup_action(name)
+                            elif prefix == 'win':
+                                action = self.lookup_action(name)
+                            else:
+                                continue
+                            if action and action.get_enabled():
+                                action.activate(None)
+                                return True
+            except Exception as exc:
+                logger.debug("Layout shortcut handler error: %s", exc)
+            return False
+
+        key_ctrl = Gtk.EventControllerKey()
+        key_ctrl.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        key_ctrl.connect('key-pressed', _on_key)
+        self.add_controller(key_ctrl)
 
     def _set_sidebar_widget(self, widget: Gtk.Widget) -> None:
         if HAS_OVERLAY_SPLIT:

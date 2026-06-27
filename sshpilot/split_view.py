@@ -6,6 +6,7 @@ from typing import List, Optional
 
 from gi.repository import Gtk, Gdk, GObject, GLib, Adw
 from gettext import gettext as _
+from .keyboard_utils import get_latin_keyval
 
 logger = logging.getLogger(__name__)
 
@@ -1596,7 +1597,7 @@ class SplitViewTab(Gtk.Box):
 
     _RESIZE_STEP = 50  # pixels per Ctrl+Alt+Shift+HJKL keypress
 
-    def _on_key_pressed(self, _ctrl, keyval, _keycode, state) -> bool:
+    def _on_key_pressed(self, _ctrl, keyval, keycode, state) -> bool:
         # Guard: only act when the focused widget is inside THIS SplitViewTab.
         # Adw.TabView keeps all tab-page children realized, so GTK4 may invoke
         # our CAPTURE handler even when a sibling widget (e.g. the connection
@@ -1610,6 +1611,8 @@ class SplitViewTab(Gtk.Box):
             w = w.get_parent()
         else:
             return False
+
+        effective = get_latin_keyval(keycode, state) or keyval
 
         mods = state & (
             Gdk.ModifierType.CONTROL_MASK
@@ -1631,8 +1634,8 @@ class SplitViewTab(Gtk.Box):
             Gdk.KEY_l: 'right', Gdk.KEY_L: 'right',
         }
 
-        if keyval in HJKL_NAV:
-            d = HJKL_NAV[keyval]
+        if effective in HJKL_NAV:
+            d = HJKL_NAV[effective]
             if mods == CTRL_ALT:
                 self._navigate_pane(d)
                 return True
@@ -1649,7 +1652,7 @@ class SplitViewTab(Gtk.Box):
             self.set_layout_mode(self.VERTICAL)
             return True
         # Ctrl+Shift+N — add pane (Ctrl+Shift+T is taken by local-terminal action)
-        if keyval in (Gdk.KEY_N, Gdk.KEY_n) and mods == CTRL_SH:
+        if effective in (Gdk.KEY_N, Gdk.KEY_n) and mods == CTRL_SH:
             self.add_pane()
             return True
 

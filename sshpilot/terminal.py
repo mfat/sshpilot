@@ -23,6 +23,7 @@ from datetime import datetime
 from typing import Optional, List
 from .port_utils import get_port_checker
 from .platform_utils import is_flatpak, is_macos, get_sshpass_path
+from .keyboard_utils import get_latin_keyval
 from .terminal_backends import BaseTerminalBackend, VTETerminalBackend, PyXtermTerminalBackend
 from .ssh_connection_builder import build_ssh_connection, ConnectionContext
 from .plugins.api import PluginContext, ProtocolError
@@ -3422,6 +3423,35 @@ class TerminalWidget(Gtk.Box):
                     self.terminal_widget.add_controller(controller)
                 self._shortcut_controller = controller
 
+            if getattr(self, '_layout_shortcut_controller', None) is None:
+                def _on_layout_key(ctrl, keyval, keycode, state):
+                    latin = get_latin_keyval(keycode, state)
+                    if latin is None or latin == keyval:
+                        return False
+                    mods = state & Gtk.accelerator_get_default_mod_mask()
+                    shift = bool(mods & Gdk.ModifierType.SHIFT_MASK)
+                    ctrl_held = bool(mods & Gdk.ModifierType.CONTROL_MASK)
+                    meta = bool(mods & Gdk.ModifierType.META_MASK)
+                    mac = is_macos()
+                    edit = (meta and not shift) if mac else (ctrl_held and shift)
+                    zoom = meta if mac else ctrl_held
+                    if edit and latin in (Gdk.KEY_c, Gdk.KEY_C): return _cb_copy(None)
+                    if edit and latin in (Gdk.KEY_v, Gdk.KEY_V): return _cb_paste(None)
+                    if edit and latin in (Gdk.KEY_a, Gdk.KEY_A): return _cb_select_all(None)
+                    if zoom and latin in (Gdk.KEY_equal, Gdk.KEY_plus): return _cb_zoom_in(None)
+                    if zoom and latin == Gdk.KEY_minus: return _cb_zoom_out(None)
+                    if zoom and latin == Gdk.KEY_0: return _cb_reset_zoom(None)
+                    return False
+
+                layout_ctrl = Gtk.EventControllerKey()
+                layout_ctrl.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+                layout_ctrl.connect('key-pressed', _on_layout_key)
+                if self.vte is not None:
+                    self.vte.add_controller(layout_ctrl)
+                elif self.terminal_widget is not None:
+                    self.terminal_widget.add_controller(layout_ctrl)
+                self._layout_shortcut_controller = layout_ctrl
+
             if getattr(self, '_shortcut_controller', None) is not None:
                 self._setup_mouse_wheel_zoom()
 
@@ -3499,18 +3529,20 @@ class TerminalWidget(Gtk.Box):
     def _on_vte_search_key_pressed(self, controller, keyval, keycode, state):
         """Handle global terminal search shortcuts on the VTE widget."""
         try:
+            effective = get_latin_keyval(keycode, state) or keyval
+
             shift = bool(state & Gdk.ModifierType.SHIFT_MASK)
             primary = bool(state & Gdk.ModifierType.CONTROL_MASK)
             meta = bool(state & Gdk.ModifierType.META_MASK)
 
-            if keyval in (Gdk.KEY_f, Gdk.KEY_F) and (primary or meta):
+            if effective in (Gdk.KEY_f, Gdk.KEY_F) and (primary or meta):
                 if hasattr(self, 'search_revealer') and self.search_revealer.get_reveal_child():
                     self._hide_search_overlay()
                 else:
                     self._show_search_overlay(select_all=True)
                 return True
 
-            if keyval in (Gdk.KEY_g, Gdk.KEY_G) and (primary or meta):
+            if effective in (Gdk.KEY_g, Gdk.KEY_G) and (primary or meta):
                 if shift:
                     self._on_search_previous()
                 else:
@@ -3555,6 +3587,16 @@ class TerminalWidget(Gtk.Box):
                 logger.debug("Failed to remove search key controller: %s", exc)
             finally:
                 self._search_key_controller = None
+
+        layout_ctrl = getattr(self, '_layout_shortcut_controller', None)
+        if layout_ctrl is not None:
+            try:
+                if hasattr(self.vte, 'remove_controller'):
+                    self.vte.remove_controller(layout_ctrl)
+            except Exception as exc:
+                logger.debug("Failed to remove layout shortcut controller: %s", exc)
+            finally:
+                self._layout_shortcut_controller = None
 
     def _apply_pass_through_mode(self, enabled: bool):
         """Enable or disable custom shortcut handling based on configuration."""
