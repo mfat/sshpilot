@@ -66,6 +66,12 @@ class IdentityProvider(ABC):
 6. **`id` is stable within the provider** so callers can refer to an identity
    across listings.
 
+> **Cost note:** unlike `is_available()`, `list_identities()` is *not* guaranteed
+> cheap — it may spawn a subprocess or hit a network/agent (e.g.
+> `SystemAgentProvider` runs `ssh-add -l`). Call it when you actually need the
+> list (UI refresh, plugin query), not on every spawn, and don't treat it as a
+> readiness probe — that's what `is_available()` is for.
+
 ## The two built-in providers
 
 ### `SystemAgentProvider` (`name = "system-agent"`)

@@ -1781,7 +1781,7 @@ class PreferencesWindow(Adw.Window):
                 'pass': _("pass (password store)"),
                 'bitwarden': _("Bitwarden"),
                 'vaultwarden': _("Vaultwarden"),
-                'agent': _("Don't store (ssh-agent only)"),
+                'agent': _("SSH Agent Only"),
             }
             # Offer EVERY registered backend (not just the available ones) so the
             # user can pick e.g. Vaultwarden in order to reveal its server-URL row

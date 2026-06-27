@@ -73,6 +73,19 @@ def test_password_spec_legacy_format():
     assert spec.pass_path == 'sshpilot/password/alice@host.example'
 
 
+def test_sudo_password_spec_legacy_format():
+    spec = ss.sudo_password_spec('host.example', 'alice')
+    assert spec.keyring_service == 'sshPilot'
+    assert spec.keyring_account == 'sudo:alice@host.example'   # legacy macOS account
+    assert spec.attributes == {
+        'application': 'sshPilot',
+        'type': 'sudo_password',                              # distinct from ssh_password
+        'host': 'host.example',
+        'username': 'alice',
+    }
+    assert spec.pass_path == 'sshpilot/sudo/alice@host.example'
+
+
 def test_passphrase_spec_legacy_format():
     spec = passphrase_spec('/home/u/.ssh/id_ed25519')
     assert spec.keyring_service == 'sshPilot'

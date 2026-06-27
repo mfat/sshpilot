@@ -174,6 +174,29 @@ def passphrase_spec(canonical_key_path: str) -> SecretSpec:
     )
 
 
+def sudo_password_spec(host: str, username: str) -> SecretSpec:
+    """Spec for a host's **sudo** password.
+
+    Reproduces the exact legacy sudo keys so passwords saved before sudo went
+    through the backend still resolve: the macOS keyring account ``sudo:user@host``
+    and the libsecret ``type=sudo_password`` attributes. Kept distinct from the
+    SSH login password (``type=ssh_password``) so the two never collide.
+    """
+    account = f"sudo:{username or ''}@{host or ''}"
+    return SecretSpec(
+        keyring_service=SERVICE_NAME,
+        keyring_account=account,
+        attributes={
+            "application": SERVICE_NAME,
+            "type": "sudo_password",
+            "host": host,
+            "username": username or "",
+        },
+        label=f"{SERVICE_NAME} sudo password: {username or ''}@{host or ''}",
+        pass_path=f"sshpilot/sudo/{_pass_segment((username or '') + '@' + (host or ''))}",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Backends
 # ---------------------------------------------------------------------------

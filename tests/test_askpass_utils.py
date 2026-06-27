@@ -92,3 +92,47 @@ def test_clear_passphrase_removes_legacy_alias(monkeypatch, tmp_path):
 
     assert askpass_utils.clear_passphrase(canonical_path)
     assert DummySecretModule.store == {}
+
+
+def test_sudo_password_routes_through_secret_manager(monkeypatch):
+    # Sudo passwords must go through the selected secret backend (not straight to
+    # libsecret/keyring) and use the legacy sudo:user@host account key.
+    from sshpilot import askpass_utils, secret_storage
+
+    captured = {}
+
+    class FakeManager:
+        def store(self, spec, secret):
+            captured['store'] = (spec.keyring_account, spec.attributes['type'], secret)
+            return True
+
+        def lookup(self, spec):
+            captured['lookup'] = spec.keyring_account
+            return 'stored-sudo-pw'
+
+        def delete(self, spec):
+            captured['delete'] = spec.keyring_account
+            return True
+
+    monkeypatch.setattr(secret_storage, 'get_secret_manager', lambda: FakeManager())
+
+    assert askpass_utils.store_sudo_password('host', 'user', 'pw') is True
+    assert captured['store'] == ('sudo:user@host', 'sudo_password', 'pw')
+
+    assert askpass_utils.lookup_sudo_password('host', 'user') == 'stored-sudo-pw'
+    assert captured['lookup'] == 'sudo:user@host'
+
+    assert askpass_utils.clear_sudo_password('host', 'user') is True
+    assert captured['delete'] == 'sudo:user@host'
+
+
+def test_sudo_password_empty_host_short_circuits(monkeypatch):
+    from sshpilot import askpass_utils, secret_storage
+
+    def _boom():
+        raise AssertionError("secret manager must not be consulted without a host")
+
+    monkeypatch.setattr(secret_storage, 'get_secret_manager', _boom)
+    assert askpass_utils.store_sudo_password('', 'user', 'pw') is False
+    assert askpass_utils.lookup_sudo_password('', 'user') == ''
+    assert askpass_utils.clear_sudo_password('', 'user') is False

@@ -732,78 +732,29 @@ def clear_passphrase(key_path: str) -> bool:
     return removed_any
 
 
-def _sudo_keyring_account(host: str, username: str) -> str:
-    """macOS keyring account label for a host's sudo password."""
-    return f"sudo:{username or ''}@{host or ''}"
-
-
 def store_sudo_password(host: str, username: str, password: str) -> bool:
-    """Store a host's **sudo** password (keyring on macOS, libsecret on Linux).
+    """Store a host's **sudo** password via the selected secret backend.
 
-    Kept under its own ``type=sudo_password`` schema so it never collides with
-    the SSH login password (``type=ssh_password`` in ``connection_manager``)."""
+    Routed through :class:`SecretManager` (like SSH passwords/passphrases) so it
+    honours the user's chosen backend instead of always hitting libsecret/keyring.
+    Kept under its own ``type=sudo_password`` schema (see ``sudo_password_spec``)
+    so it never collides with the SSH login password."""
     if not host:
         return False
 
-    if keyring and is_macos():
-        try:
-            keyring.set_password('sshPilot', _sudo_keyring_account(host, username), password)
-            return True
-        except Exception as e:
-            logger.debug(f"Failed to store sudo password in keyring: {e}")
-            return False
+    from .secret_storage import get_secret_manager, sudo_password_spec
 
-    schema = get_secret_schema()
-    if not schema:
-        return False
-    attributes = {
-        "application": "sshPilot",
-        "type": "sudo_password",
-        "host": host,
-        "username": username or "",
-    }
-    try:
-        Secret.password_store_sync(
-            schema,
-            attributes,
-            Secret.COLLECTION_DEFAULT,
-            f"sshPilot sudo password: {username or ''}@{host}",
-            password,
-            None,
-        )
-        return True
-    except Exception:
-        return False
+    return get_secret_manager().store(sudo_password_spec(host, username), password)
 
 
 def lookup_sudo_password(host: str, username: str) -> str:
-    """Look up a host's stored sudo password ("" if none)."""
+    """Look up a host's stored sudo password ("" if none) via the secret backend."""
     if not host:
         return ""
 
-    if keyring and is_macos():
-        try:
-            password = keyring.get_password('sshPilot', _sudo_keyring_account(host, username))
-        except Exception as e:
-            logger.debug(f"Failed to retrieve sudo password from keyring: {e}")
-            password = None
-        if password:
-            return password
+    from .secret_storage import get_secret_manager, sudo_password_spec
 
-    schema = get_secret_schema()
-    if not schema:
-        return ""
-    attributes = {
-        "application": "sshPilot",
-        "type": "sudo_password",
-        "host": host,
-        "username": username or "",
-    }
-    try:
-        result = Secret.password_lookup_sync(schema, attributes, None)
-    except Exception:
-        return ""
-    return result or ""
+    return get_secret_manager().lookup(sudo_password_spec(host, username)) or ""
 
 
 def clear_sudo_password(host: str, username: str) -> bool:
@@ -811,27 +762,9 @@ def clear_sudo_password(host: str, username: str) -> bool:
     if not host:
         return False
 
-    if keyring and is_macos():
-        try:
-            keyring.delete_password('sshPilot', _sudo_keyring_account(host, username))
-            return True
-        except Exception as e:
-            logger.debug(f"Failed to delete sudo password from keyring: {e}")
-            return False
+    from .secret_storage import get_secret_manager, sudo_password_spec
 
-    schema = get_secret_schema()
-    if not schema:
-        return False
-    attributes = {
-        "application": "sshPilot",
-        "type": "sudo_password",
-        "host": host,
-        "username": username or "",
-    }
-    try:
-        return bool(Secret.password_clear_sync(schema, attributes, None))
-    except Exception:
-        return False
+    return get_secret_manager().delete(sudo_password_spec(host, username))
 
 
 # Substrings in sudo's stderr when the user cannot use sudo at all (as opposed to
