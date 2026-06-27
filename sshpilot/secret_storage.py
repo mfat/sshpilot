@@ -725,6 +725,15 @@ class SecretManager:
         """Names of all registered backends that are currently usable."""
         return [n for n, b in self._backends.items() if b.is_available()]
 
+    def registered_backends(self) -> List[str]:
+        """Names of every registered backend, available or not (for UI choices)."""
+        return list(self._backends.keys())
+
+    def is_session_backed(self, name: str) -> bool:
+        """Whether the named backend has a lock lifecycle (Bitwarden/Vaultwarden)."""
+        backend = self._backends.get((name or "").strip().lower())
+        return bool(backend is not None and getattr(backend, "session_backed", False))
+
     # -- selection helpers (session / authoritative) ---------------------
     def selected_backend(self) -> Optional[SecretBackend]:
         """The explicitly-selected backend object (None for ``auto``/unknown)."""

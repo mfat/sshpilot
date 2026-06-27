@@ -1768,15 +1768,13 @@ class PreferencesWindow(Adw.Window):
             self.secret_backend_row.set_title("Secret storage backend")
             try:
                 from .secret_storage import get_secret_manager
-                available = get_secret_manager().available_backends()
+                _mgr = get_secret_manager()
+                available = set(_mgr.available_backends())
+                registered = _mgr.registered_backends()
             except Exception:
-                available = []
+                available = set()
+                registered = []
             current_backend = str(self.config.get_setting('secrets.backend', 'auto'))
-            # Model: "Automatic" + each available backend. Always include the saved
-            # backend even when it is currently unavailable, so the UI reflects the
-            # real config (and matches the manager, which honors config) instead of
-            # silently showing "Automatic".
-            self._secret_backend_ids = ['auto'] + list(available)
             backend_labels = {
                 'libsecret': _("System keyring (libsecret)"),
                 'keyring': _("System keyring"),
@@ -1785,10 +1783,23 @@ class PreferencesWindow(Adw.Window):
                 'vaultwarden': _("Vaultwarden"),
                 'agent': _("Don't store (ssh-agent only)"),
             }
+            # Offer EVERY registered backend (not just the available ones) so the
+            # user can pick e.g. Vaultwarden in order to reveal its server-URL row
+            # (it isn't "available" until that URL is set). Unavailable ones are
+            # labelled so the choice is honest.
+            preferred_order = ['libsecret', 'keyring', 'pass',
+                               'bitwarden', 'vaultwarden', 'agent']
+            ordered_names = [n for n in preferred_order if n in registered]
+            ordered_names += [n for n in registered if n not in preferred_order]
+            self._secret_backend_ids = ['auto'] + ordered_names
             secret_model = Gtk.StringList()
             secret_model.append(_("Automatic"))
-            for name in available:
-                secret_model.append(backend_labels.get(name, name))
+            for name in ordered_names:
+                label = backend_labels.get(name, name)
+                if name not in available:
+                    label = _("{backend} (unavailable)").format(backend=label)
+                secret_model.append(label)
+            # Keep an unknown saved backend visible so the UI matches the config.
             if current_backend not in self._secret_backend_ids:
                 self._secret_backend_ids.append(current_backend)
                 label = backend_labels.get(current_backend, current_backend)
@@ -1802,8 +1813,8 @@ class PreferencesWindow(Adw.Window):
             self.secret_backend_row.connect('notify::selected', self.on_secret_backend_changed)
             secrets_group.add(self.secret_backend_row)
 
-            # Vaultwarden self-hosted server URL (used by the 'vaultwarden' backend;
-            # set this then reopen Preferences to select Vaultwarden).
+            # Vaultwarden self-hosted server URL — only shown when the Vaultwarden
+            # backend is selected (toggled by _update_secret_rows_visibility).
             self.vaultwarden_server_row = Adw.EntryRow(title=_("Vaultwarden server URL"))
             self.vaultwarden_server_row.set_text(
                 str(self.config.get_setting('secrets.vaultwarden.server', '') or '')
@@ -1825,6 +1836,10 @@ class PreferencesWindow(Adw.Window):
                 'notify::value', self.on_secret_session_timeout_changed
             )
             secrets_group.add(self.secret_session_timeout_row)
+
+            # Show the Vaultwarden/timeout rows only when they apply to the
+            # currently-selected backend.
+            self._update_secret_rows_visibility(current_backend)
 
             advanced_page.add(secrets_group)
 
@@ -2290,6 +2305,24 @@ class PreferencesWindow(Adw.Window):
             except Exception as exc:
                 logger.debug("Failed to propagate pass-through state to shortcut editor: %s", exc)
 
+    def _update_secret_rows_visibility(self, name):
+        """Show the Vaultwarden server-URL row only for the Vaultwarden backend,
+        and the session-timeout row only for session-backed backends."""
+        try:
+            name = (name or 'auto').strip().lower()
+            session = False
+            try:
+                from .secret_storage import get_secret_manager
+                session = get_secret_manager().is_session_backed(name)
+            except Exception:
+                session = name in ('bitwarden', 'vaultwarden')
+            if hasattr(self, 'vaultwarden_server_row'):
+                self.vaultwarden_server_row.set_visible(name == 'vaultwarden')
+            if hasattr(self, 'secret_session_timeout_row'):
+                self.secret_session_timeout_row.set_visible(session)
+        except Exception as exc:
+            logger.debug("Failed to update secret rows visibility: %s", exc)
+
     def on_secret_backend_changed(self, combo, _pspec):
         """Persist the selected secret storage backend and apply it live."""
         try:
@@ -2302,6 +2335,7 @@ class PreferencesWindow(Adw.Window):
             manager.set_selected(name)
             # Propagate to child processes (e.g. the askpass helper).
             os.environ['SSHPILOT_SECRET_BACKEND'] = name
+            self._update_secret_rows_visibility(name)
             logger.info("Secret storage backend set to: %s", name)
             # A session-backed backend must be unlocked before it can store/read.
             if manager.selected_needs_unlock():
