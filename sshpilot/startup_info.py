@@ -280,6 +280,12 @@ class StartupInfo:
                 pass
             effective_backend = manager.active_backend_label()
             storage['available_backends'] = manager.available_backends()
+            try:
+                # Session-backed backends (Bitwarden/Vaultwarden): report whether
+                # the selected one still needs unlocking.
+                storage['session_locked'] = manager.selected_needs_unlock()
+            except Exception:
+                pass
         except Exception:
             if not is_macos() and storage.get('libsecret', {}).get('accessible'):
                 effective_backend = 'libsecret'

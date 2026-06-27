@@ -82,12 +82,34 @@ Credentials are stored/retrieved through a **pluggable secret backend**
 `askpass_utils.lookup_passphrase` delegate to `SecretManager`. The backend is
 selectable via the `secrets.backend` setting — `auto` (platform default:
 libsecret then keyring on Linux, keyring on macOS), or an explicit `libsecret` /
-`keyring` / `pass` (passwordstore.org) / registered custom backend. Reads/deletes
-fall through to every available backend so secrets aren't orphaned when the
-selection changes. The askpass helper (`askpass_utils.py`) is the program ssh
-invokes; it looks the passphrase up via the selected backend and, failing that,
-shows a GTK prompt. Keyring autofill + the askpass prompt are advertised features
-— keep them working.
+`keyring` / `pass` (passwordstore.org) / `bitwarden` / `vaultwarden` / `agent`, or
+a registered custom backend. Reads/deletes fall through to every available backend
+so secrets aren't orphaned when the selection changes. The askpass helper
+(`askpass_utils.py`) is the program ssh invokes; it looks the passphrase up via the
+selected backend and, failing that, shows a GTK prompt. Keyring autofill + the
+askpass prompt are advertised features — keep them working.
+
+Backend specifics:
+- **KeePassXC** needs no dedicated backend — enable its GUI *Secret Service
+  integration* and select `libsecret` (same `org.freedesktop.secrets` D-Bus API).
+- **`bitwarden` / `vaultwarden`** are *session-backed* (`bw` CLI). They must be
+  unlocked (master password) before secrets resolve; the unlock token is cached
+  in-process and exported as `BW_SESSION` so the askpass subprocess can read
+  non-interactively. The token is dropped after `secrets.session_timeout` idle
+  minutes (propagated as `SSHPILOT_SECRET_SESSION_TIMEOUT` seconds) and on app
+  shutdown. The GTK unlock prompt lives in `secret_unlock_dialog.py` (the core
+  module stays GTK-free and never prompts); it is driven from Preferences and
+  lazily from `terminal_manager.connect_to_host`. Vaultwarden = self-hosted server
+  URL (`secrets.vaultwarden.server` → `SSHPILOT_VAULTWARDEN_SERVER`); note the `bw`
+  CLI holds one server/account at a time.
+- **`agent`** means *don't store secrets at all*: an `authoritative` null backend.
+  When selected, `store`/`lookup` consult only it (no fallback/fallthrough) so
+  nothing is written to or read from other stores; the user relies on ssh-agent
+  (the existing key-preload path) and ssh's own prompts. `delete` still clears the
+  real stores so old secrets can be purged after switching.
+- New session/null behavior rests on optional `SecretBackend` hooks
+  (`session_backed`, `authoritative`, `is_unlocked`/`unlock`/`lock`) that default
+  to no-ops, so `libsecret`/`keyring`/`pass` are unchanged.
 
 ### Advanced SSH options (Preferences → command)
 Preferences ▸ SSH Settings persists each advanced option under the `ssh.*`

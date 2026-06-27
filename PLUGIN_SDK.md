@@ -202,7 +202,8 @@ self.connect("unmap", lambda *_: self.ctx.release_multiplex(self._nick))
 
 ### Secrets — `ctx.secrets` (secret-backend-backed, scoped to your plugin id)
 - `get(key) -> str | None`, `set(key, value)`, `delete(key) -> bool`. Use for credentials/tokens. No other plugin can read your secrets.
-- Storage goes through the app's configurable secret backend (`secrets.backend`): libsecret / OS keychain via keyring / `pass` / a registered custom backend. Your plugin doesn't choose the backend — the user does; the API is the same regardless.
+- Storage goes through the app's configurable secret backend (`secrets.backend`): libsecret (also KeePassXC via its Secret Service integration) / OS keychain via keyring / `pass` / Bitwarden / Vaultwarden / a registered custom backend. Your plugin doesn't choose the backend — the user does; the API is the same regardless.
+- If the user selects a session-backed backend (Bitwarden/Vaultwarden) that is locked, or the `agent` "don't store" backend, `get`/`set` may return `None`/fail — handle missing secrets gracefully.
 
 ### Settings — `ctx.settings` (app config, scoped to your plugin id)
 - `get(key, default=None)`, `set(key, value)`. For non-secret preferences; stored under `plugins.<id>.<key>`.

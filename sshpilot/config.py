@@ -139,8 +139,18 @@ class Config(GObject.Object):
             },
             'secrets': {
                 # Secret storage backend: 'auto' (platform default), 'libsecret',
-                # 'keyring', 'pass', or a registered custom backend name.
+                # 'keyring', 'pass', 'bitwarden', 'vaultwarden', 'agent'
+                # ('agent' = don't store secrets), or a registered custom backend.
                 'backend': 'auto',
+                # Session-backed backends (Bitwarden/Vaultwarden): minutes of idle
+                # before the cached unlock token is dropped and re-unlock is
+                # required. 0 = keep until the app exits.
+                'session_timeout': 0,
+                # Vaultwarden self-hosted server URL, used when the 'vaultwarden'
+                # backend is selected (empty disables the Vaultwarden option).
+                'vaultwarden': {
+                    'server': '',
+                },
             },
             'ui': {
                 'show_hostname': True,

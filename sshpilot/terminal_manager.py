@@ -71,12 +71,28 @@ class TerminalManager:
                 logger.debug("Failed to iterate tab view while refreshing backends", exc_info=True)
 
     # Connecting/disconnecting hosts
+    def _maybe_unlock_secrets_then(self, retry) -> bool:
+        """If the selected secret backend is session-backed and locked, show the
+        unlock prompt and call ``retry`` when it finishes; return True. Otherwise
+        return False so the caller proceeds immediately."""
+        try:
+            from .secret_storage import get_secret_manager
+            if not get_secret_manager().selected_needs_unlock():
+                return False
+            from .secret_unlock_dialog import prompt_unlock
+            prompt_unlock(self.window, on_done=lambda _success: retry())
+            return True
+        except Exception as exc:
+            logger.error("Secret unlock prompt failed: %s", exc)
+            return False
+
     def connect_to_host(self, connection, force_new: bool = False,
                         remote_command: Optional[str] = None,
                         tab_title: Optional[str] = None,
                         force_tty: bool = False,
                         pty_prompt: Optional[str] = None,
-                        pty_response: Optional[str] = None):
+                        pty_response: Optional[str] = None,
+                        _secret_unlock_attempted: bool = False):
         window = self.window
         group_color = self._resolve_group_color(connection)
         if not force_new:
@@ -100,6 +116,21 @@ class TerminalManager:
                     window.active_terminals[connection] = t
                     window.tab_view.set_selected_page(page)
                     return
+
+        # A session-backed secret store (Bitwarden/Vaultwarden) must be unlocked
+        # before this connection's password/passphrase can be autofilled. Prompt
+        # once on the main thread, then re-enter to actually connect. We retry
+        # regardless of the unlock result (and skip a second prompt) so a cancel
+        # falls back to ssh's own prompt instead of looping.
+        if not _secret_unlock_attempted and self._maybe_unlock_secrets_then(
+            lambda: self.connect_to_host(
+                connection, force_new=force_new, remote_command=remote_command,
+                tab_title=tab_title, force_tty=force_tty,
+                pty_prompt=pty_prompt, pty_response=pty_response,
+                _secret_unlock_attempted=True,
+            )
+        ):
+            return
 
         # The user's "use external terminal" preference is only applied when
         # external terminal options are not hidden by policy or environment.

@@ -1066,9 +1066,22 @@ class ConnectionManager(GObject.Object):
             except Exception:
                 selected = 'auto'
             manager.set_selected(selected)
-            # Propagate the selection to child processes (e.g. the askpass helper)
-            # so they resolve the same backend.
+            # Propagate the selection (and session-backend settings) to child
+            # processes (e.g. the askpass helper) so they resolve the same backend
+            # and can read session-backed secrets non-interactively.
             os.environ['SSHPILOT_SECRET_BACKEND'] = str(selected or 'auto')
+            try:
+                from .config import Config as _SecretsConfig
+                _cfg = _SecretsConfig()
+                timeout_min = int(_cfg.get_setting('secrets.session_timeout', 0) or 0)
+                os.environ['SSHPILOT_SECRET_SESSION_TIMEOUT'] = str(max(0, timeout_min) * 60)
+                vw_server = str(_cfg.get_setting('secrets.vaultwarden.server', '') or '').strip()
+                if vw_server:
+                    os.environ['SSHPILOT_VAULTWARDEN_SERVER'] = vw_server
+                else:
+                    os.environ.pop('SSHPILOT_VAULTWARDEN_SERVER', None)
+            except Exception:
+                pass
             self.secure_storage_backend = manager.active_backend_label()
             logger.info(
                 "Secure storage backend: %s (selected=%s)",

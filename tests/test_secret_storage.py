@@ -1,5 +1,9 @@
 """Tests for the pluggable secret storage layer (sshpilot/secret_storage.py)."""
 
+import base64
+import json
+import os
+
 import pytest
 
 import sshpilot.secret_storage as ss
@@ -224,3 +228,251 @@ def test_pass_backend_argv(monkeypatch):
 
     assert backend.delete(spec) is True
     assert calls[-1][0] == ['/usr/bin/pass', 'rm', '-f', 'sshpilot/password/u@h']
+
+
+# --- ssh-agent "don't store" null backend (authoritative) --------------------
+
+def test_ssh_agent_backend_is_null():
+    a = ss.SSHAgentBackend()
+    assert a.is_available() is True
+    assert a.authoritative is True
+    assert a.store(password_spec('h', 'u'), 's') is True   # claims success
+    assert a.lookup(password_spec('h', 'u')) is None
+    assert a.delete(password_spec('h', 'u')) is False
+
+
+def test_agent_selected_stores_nothing_and_blocks_fallback(manager):
+    mgr, primary, fallback = manager
+    mgr.register_backend('agent', ss.SSHAgentBackend())
+    mgr.set_selected('agent')
+    spec = password_spec('h', 'u')
+    assert mgr.store(spec, 's') is True
+    assert spec.keyring_account not in primary.data    # wrote nowhere
+    assert spec.keyring_account not in fallback.data
+
+
+def test_agent_selected_lookup_ignores_other_stores(manager):
+    mgr, primary, fallback = manager
+    mgr.register_backend('agent', ss.SSHAgentBackend())
+    spec = password_spec('h', 'u')
+    primary.data[spec.keyring_account] = 'leftover'
+    mgr.set_selected('agent')
+    assert mgr.lookup(spec) is None                     # authoritative: no read-through
+
+
+def test_agent_selected_delete_still_clears_other_stores(manager):
+    mgr, primary, fallback = manager
+    mgr.register_backend('agent', ss.SSHAgentBackend())
+    spec = password_spec('h', 'u')
+    primary.data[spec.keyring_account] = 'x'
+    mgr.set_selected('agent')
+    assert mgr.delete(spec) is True
+    assert spec.keyring_account not in primary.data
+
+
+# --- session-backed backends (unlock / lock / timeout) -----------------------
+
+class FakeSessionBackend(ss.SecretBackend):
+    session_backed = True
+
+    def __init__(self, name='vault'):
+        self.name = name
+        self._unlocked = False
+        self.data = {}
+
+    def is_available(self):
+        return True
+
+    def is_unlocked(self):
+        return self._unlocked
+
+    def unlock(self, secret):
+        self._unlocked = (secret == 'correct')
+        return self._unlocked
+
+    def lock(self):
+        self._unlocked = False
+
+    def store(self, spec, secret):
+        if not self._unlocked:
+            return False
+        self.data[spec.keyring_account] = secret
+        return True
+
+    def lookup(self, spec):
+        return self.data.get(spec.keyring_account) if self._unlocked else None
+
+    def delete(self, spec):
+        return self.data.pop(spec.keyring_account, None) is not None
+
+
+def test_selected_needs_unlock_and_unlock_selected(manager):
+    mgr, *_ = manager
+    mgr.register_backend('vault', FakeSessionBackend())
+    mgr.set_selected('vault')
+    assert mgr.selected_needs_unlock() is True
+    assert mgr.unlock_selected('wrong') is False
+    assert mgr.selected_needs_unlock() is True
+    assert mgr.unlock_selected('correct') is True
+    assert mgr.selected_needs_unlock() is False
+
+
+def test_lock_all_relocks_session_backend(manager):
+    mgr, *_ = manager
+    mgr.register_backend('vault', FakeSessionBackend())
+    mgr.set_selected('vault')
+    assert mgr.unlock_selected('correct') is True
+    mgr.lock_all()
+    assert mgr.selected_needs_unlock() is True
+
+
+def test_non_session_backend_needs_no_unlock(manager):
+    mgr, *_ = manager
+    mgr.set_selected('keyring')
+    assert mgr.selected_needs_unlock() is False
+    assert mgr.unlock_selected('whatever') is True   # no-op success
+
+
+# --- Bitwarden / Vaultwarden backend argv & session --------------------------
+
+class _Result:
+    def __init__(self, returncode=0, stdout=b'', stderr=b''):
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+
+
+def test_bitwarden_unlock_lookup_argv(monkeypatch):
+    calls = []
+
+    def fake_run(argv, input=None, capture_output=None, env=None, check=None, timeout=None):
+        calls.append({
+            'argv': list(argv),
+            'input': input,
+            'session': (env or {}).get('BW_SESSION'),
+            'master': (env or {}).get('BW_MASTER'),
+        })
+        if argv[1] == 'unlock':
+            return _Result(0, b'TOKEN123\n')
+        if argv[1:3] == ['get', 'password']:
+            return _Result(0, b'hunter2\n')
+        return _Result(0, b'')
+
+    monkeypatch.setattr(ss.subprocess, 'run', fake_run)
+    monkeypatch.setenv('SSHPILOT_SECRET_SESSION_TIMEOUT', '0')
+    monkeypatch.delenv('BW_SESSION', raising=False)
+
+    b = ss.BitwardenBackend()
+    b._bin = '/usr/bin/bw'
+    try:
+        assert b.unlock('master') is True
+        assert calls[0]['argv'] == ['/usr/bin/bw', 'unlock', '--passwordenv', 'BW_MASTER', '--raw']
+        assert calls[0]['master'] == 'master'
+        assert b.is_unlocked() is True
+        assert os.environ.get('BW_SESSION') == 'TOKEN123'
+
+        assert b.lookup(password_spec('h', 'u')) == 'hunter2'
+        assert calls[-1]['argv'] == ['/usr/bin/bw', 'get', 'password', 'u@h']
+        assert calls[-1]['session'] == 'TOKEN123'
+    finally:
+        b.lock()
+        assert os.environ.get('BW_SESSION') is None
+
+
+def test_bitwarden_idle_timeout(monkeypatch):
+    monkeypatch.setenv('SSHPILOT_SECRET_SESSION_TIMEOUT', '60')
+    monkeypatch.delenv('BW_SESSION', raising=False)
+    clock = {'now': 1000.0}
+    monkeypatch.setattr(ss.time, 'monotonic', lambda: clock['now'])
+    monkeypatch.setattr(ss.subprocess, 'run',
+                        lambda *a, **k: _Result(0, b'TOKEN\n'))
+
+    b = ss.BitwardenBackend()
+    b._bin = '/usr/bin/bw'
+    try:
+        assert b.unlock('m') is True
+        assert b.is_unlocked() is True       # within the 60s window
+        clock['now'] = 1000.0 + 61           # idle past the timeout
+        assert b.is_unlocked() is False
+    finally:
+        b.lock()
+
+
+def test_bitwarden_store_creates_login_item(monkeypatch):
+    calls = []
+
+    def fake_run(argv, input=None, capture_output=None, env=None, check=None, timeout=None):
+        calls.append((list(argv), input))
+        if argv[1] == 'unlock':
+            return _Result(0, b'TOK\n')
+        if argv[1:3] == ['list', 'items']:
+            return _Result(0, b'[]')          # no existing item
+        return _Result(0, b'{}')
+
+    monkeypatch.setattr(ss.subprocess, 'run', fake_run)
+    monkeypatch.setenv('SSHPILOT_SECRET_SESSION_TIMEOUT', '0')
+    monkeypatch.delenv('BW_SESSION', raising=False)
+
+    b = ss.BitwardenBackend()
+    b._bin = '/usr/bin/bw'
+    try:
+        assert b.unlock('m') is True
+        assert b.store(password_spec('h', 'u'), 'secret') is True
+        argv, payload = calls[-1]
+        assert argv[:3] == ['/usr/bin/bw', 'create', 'item']
+        item = json.loads(base64.b64decode(payload).decode())
+        assert item['name'] == 'u@h'
+        assert item['login']['password'] == 'secret'
+    finally:
+        b.lock()
+
+
+def test_bitwarden_delete_finds_id(monkeypatch):
+    calls = []
+
+    def fake_run(argv, input=None, capture_output=None, env=None, check=None, timeout=None):
+        calls.append(list(argv))
+        if argv[1] == 'unlock':
+            return _Result(0, b'TOK\n')
+        if argv[1:3] == ['list', 'items']:
+            return _Result(0, json.dumps([{'name': 'u@h', 'id': 'ID1'}]).encode())
+        return _Result(0, b'')
+
+    monkeypatch.setattr(ss.subprocess, 'run', fake_run)
+    monkeypatch.setenv('SSHPILOT_SECRET_SESSION_TIMEOUT', '0')
+    monkeypatch.delenv('BW_SESSION', raising=False)
+
+    b = ss.BitwardenBackend()
+    b._bin = '/usr/bin/bw'
+    try:
+        assert b.unlock('m') is True
+        assert b.delete(password_spec('h', 'u')) is True
+        assert calls[-1] == ['/usr/bin/bw', 'delete', 'item', 'ID1', '--permanent']
+    finally:
+        b.lock()
+
+
+def test_bitwarden_subprocess_inherits_env_token(monkeypatch):
+    # In the askpass subprocess there is no in-process token; the inherited
+    # BW_SESSION env var must be used so lookups work without unlocking.
+    monkeypatch.setenv('BW_SESSION', 'ENVTOK')
+
+    def fake_run(argv, input=None, capture_output=None, env=None, check=None, timeout=None):
+        assert (env or {}).get('BW_SESSION') == 'ENVTOK'
+        return _Result(0, b'pw\n')
+
+    monkeypatch.setattr(ss.subprocess, 'run', fake_run)
+    b = ss.BitwardenBackend()
+    b._bin = '/usr/bin/bw'
+    assert b.is_unlocked() is True
+    assert b.lookup(password_spec('h', 'u')) == 'pw'
+
+
+def test_vaultwarden_requires_server(monkeypatch):
+    monkeypatch.delenv('SSHPILOT_VAULTWARDEN_SERVER', raising=False)
+    v = ss.VaultwardenBackend()
+    v._bin = '/usr/bin/bw'
+    assert v.is_available() is False
+    monkeypatch.setenv('SSHPILOT_VAULTWARDEN_SERVER', 'https://vw.example')
+    assert v.is_available() is True
+    assert v.describe() == 'vaultwarden:https://vw.example'

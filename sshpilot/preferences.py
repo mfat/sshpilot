@@ -1777,13 +1777,22 @@ class PreferencesWindow(Adw.Window):
             # real config (and matches the manager, which honors config) instead of
             # silently showing "Automatic".
             self._secret_backend_ids = ['auto'] + list(available)
+            backend_labels = {
+                'libsecret': _("System keyring (libsecret)"),
+                'keyring': _("System keyring"),
+                'pass': _("pass (password store)"),
+                'bitwarden': _("Bitwarden"),
+                'vaultwarden': _("Vaultwarden"),
+                'agent': _("Don't store (ssh-agent only)"),
+            }
             secret_model = Gtk.StringList()
-            secret_model.append("Automatic")
+            secret_model.append(_("Automatic"))
             for name in available:
-                secret_model.append(name)
+                secret_model.append(backend_labels.get(name, name))
             if current_backend not in self._secret_backend_ids:
                 self._secret_backend_ids.append(current_backend)
-                secret_model.append(f"{current_backend} (unavailable)")
+                label = backend_labels.get(current_backend, current_backend)
+                secret_model.append(_("{backend} (unavailable)").format(backend=label))
             self.secret_backend_row.set_model(secret_model)
             try:
                 current_index = self._secret_backend_ids.index(current_backend)
@@ -1792,6 +1801,31 @@ class PreferencesWindow(Adw.Window):
             self.secret_backend_row.set_selected(current_index)
             self.secret_backend_row.connect('notify::selected', self.on_secret_backend_changed)
             secrets_group.add(self.secret_backend_row)
+
+            # Vaultwarden self-hosted server URL (used by the 'vaultwarden' backend;
+            # set this then reopen Preferences to select Vaultwarden).
+            self.vaultwarden_server_row = Adw.EntryRow(title=_("Vaultwarden server URL"))
+            self.vaultwarden_server_row.set_text(
+                str(self.config.get_setting('secrets.vaultwarden.server', '') or '')
+            )
+            self.vaultwarden_server_row.connect('changed', self.on_vaultwarden_server_changed)
+            secrets_group.add(self.vaultwarden_server_row)
+
+            # Idle minutes before a session-backed vault (Bitwarden/Vaultwarden)
+            # re-asks for the master password. 0 = keep unlocked until app exit.
+            self.secret_session_timeout_row = Adw.SpinRow.new_with_range(0, 1440, 5)
+            self.secret_session_timeout_row.set_title(_("Vault lock timeout (minutes)"))
+            self.secret_session_timeout_row.set_subtitle(
+                _("Re-ask for the master password after this idle time. 0 = until app exits.")
+            )
+            self.secret_session_timeout_row.set_value(
+                int(self.config.get_setting('secrets.session_timeout', 0) or 0)
+            )
+            self.secret_session_timeout_row.connect(
+                'notify::value', self.on_secret_session_timeout_changed
+            )
+            secrets_group.add(self.secret_session_timeout_row)
+
             advanced_page.add(secrets_group)
 
             # Application behavior group
@@ -2264,12 +2298,49 @@ class PreferencesWindow(Adw.Window):
             name = ids[index] if 0 <= index < len(ids) else 'auto'
             self.config.set_setting('secrets.backend', name)
             from .secret_storage import get_secret_manager
-            get_secret_manager().set_selected(name)
+            manager = get_secret_manager()
+            manager.set_selected(name)
             # Propagate to child processes (e.g. the askpass helper).
             os.environ['SSHPILOT_SECRET_BACKEND'] = name
             logger.info("Secret storage backend set to: %s", name)
+            # A session-backed backend must be unlocked before it can store/read.
+            if manager.selected_needs_unlock():
+                try:
+                    from .secret_unlock_dialog import prompt_unlock
+
+                    def _done(success):
+                        if not success:
+                            self._alert(
+                                _("Unlock failed"),
+                                _("Could not unlock the selected secret store. "
+                                  "Secrets will not be saved or autofilled until it is unlocked."),
+                            )
+                    prompt_unlock(self, on_done=_done)
+                except Exception as exc:
+                    logger.error("Failed to prompt secret backend unlock: %s", exc)
         except Exception as exc:
             logger.error("Failed to update secret storage backend: %s", exc)
+
+    def on_vaultwarden_server_changed(self, row):
+        """Persist and propagate the Vaultwarden self-hosted server URL."""
+        try:
+            url = (row.get_text() or '').strip()
+            self.config.set_setting('secrets.vaultwarden.server', url)
+            if url:
+                os.environ['SSHPILOT_VAULTWARDEN_SERVER'] = url
+            else:
+                os.environ.pop('SSHPILOT_VAULTWARDEN_SERVER', None)
+        except Exception as exc:
+            logger.error("Failed to update Vaultwarden server URL: %s", exc)
+
+    def on_secret_session_timeout_changed(self, row, _pspec):
+        """Persist and propagate the session-backend idle unlock timeout."""
+        try:
+            minutes = int(row.get_value())
+            self.config.set_setting('secrets.session_timeout', minutes)
+            os.environ['SSHPILOT_SECRET_SESSION_TIMEOUT'] = str(max(0, minutes) * 60)
+        except Exception as exc:
+            logger.error("Failed to update secret session timeout: %s", exc)
 
     def on_copy_on_select_toggled(self, switch, _pspec):
         """Persist the terminal copy-on-selection preference."""
