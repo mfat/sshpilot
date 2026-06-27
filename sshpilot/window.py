@@ -98,7 +98,7 @@ from .search_utils import connection_matches
 from .shortcut_utils import get_primary_modifier_label
 from .platform_utils import is_macos, get_config_dir, get_ssh_dir
 from .command_blocks import CommandBlocksPanel, CommandBlockStore
-from .context_menu import IconContextMenu
+from .context_menu import IconContextMenu, IconTileMenu
 from .plugins.api import Capability
 from .plugins.registry import capabilities_for
 from .ssh_utils import ensure_writable_ssh_home
@@ -2798,7 +2798,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 # Build a Gtk.PopoverMenu from the shared sidebar context menu helper.
                 # Reset any batch-target snapshot from a previous menu.
                 self._context_menu_connections = None
-                menu = IconContextMenu()
+                use_tiles = bool(self.config.get_setting('ui.use_tile_context_menu', True))
+                menu = IconTileMenu() if use_tiles else IconContextMenu()
 
                 def _on_popover_closed(popover, *_):
                     # Only clear context state if this is still the active
