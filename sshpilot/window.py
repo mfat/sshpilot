@@ -6972,7 +6972,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowActions):
         try:
             page, _child = self._tab_menu_target()
             if page is not None:
-                self.tab_view.close_other_pages(page)
+                self._confirm_then_bulk_close(
+                    page,
+                    lambda: self.tab_view.close_other_pages(page),
+                    after_only=False,
+                )
         except Exception as exc:
             logger.error("Tab close others failed: %s", exc)
 
@@ -6980,7 +6984,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowActions):
         try:
             page, _child = self._tab_menu_target()
             if page is not None:
-                self.tab_view.close_pages_after(page)
+                self._confirm_then_bulk_close(
+                    page,
+                    lambda: self.tab_view.close_pages_after(page),
+                    after_only=True,
+                )
         except Exception as exc:
             logger.error("Tab close to the right failed: %s", exc)
 
@@ -7180,6 +7188,96 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowActions):
         finally:
             self._suppress_close_confirmation = False
         self.show_start_tab()
+
+    def _bulk_close_target_pages(self, target_page, after_only: bool):
+        """Pages that close_other_pages / close_pages_after would remove.
+
+        get_pages() yields pages in tab order, so "after target" is every page
+        seen once the target has been passed. The target itself and the pinned
+        Start tab are excluded, matching libadwaita's semantics.
+        """
+        pages, seen_target = [], False
+        for p in list(self.tab_view.get_pages()):
+            if p is target_page:
+                seen_target = True
+                continue
+            if self._is_start_tab_page(p):
+                continue
+            if after_only and not seen_target:
+                continue
+            pages.append(p)
+        return pages
+
+    def _count_sessions_in_pages(self, pages) -> int:
+        """Number of live terminal sessions across the given pages."""
+        from .split_view import SplitViewTab
+        total = 0
+        for p in pages:
+            child = p.get_child() if hasattr(p, 'get_child') else None
+            if isinstance(child, SplitViewTab):
+                total += sum(pane.get_terminal_count() for pane in child._panes)
+            elif child in self.terminal_to_connection:
+                total += 1
+        return total
+
+    def _run_suppressed_close(self, close_fn):
+        """Run a bulk close with the per-tab disconnect confirmation suppressed.
+
+        The bulk close emits close-page once per page; suppressing keeps
+        on_tab_close from spawning a modal dialog for each (issue #1014). The
+        closes run synchronously, so the flag is safely reset afterwards.
+        Sessions still tear down via TerminalWidget._on_destroy.
+        """
+        self._suppress_close_confirmation = True
+        try:
+            close_fn()
+        finally:
+            self._suppress_close_confirmation = False
+
+    def _on_bulk_close_response(self, dialog, response_id, close_fn):
+        """Handle the single confirmation dialog for a bulk tab close."""
+        if response_id == 'close':
+            self._run_suppressed_close(close_fn)
+        dialog.destroy()
+
+    def _confirm_then_bulk_close(self, target_page, close_fn, after_only: bool):
+        """Close other / to-the-right tabs, honoring confirm-disconnect.
+
+        When the preference is on and live sessions would be disconnected, ask
+        once for the whole batch rather than once per tab. On confirm the batch
+        closes with per-tab confirmation suppressed; on cancel nothing happens.
+        """
+        pages = self._bulk_close_target_pages(target_page, after_only)
+        if not pages:
+            return
+
+        confirm = bool(
+            getattr(self, 'config', None)
+            and self.config.get_setting('confirm-disconnect', True)
+        )
+        n_sessions = self._count_sessions_in_pages(pages)
+
+        if confirm and n_sessions > 0:
+            dialog = Adw.MessageDialog(
+                transient_for=self,
+                modal=True,
+                heading=_("Close tabs?"),
+                body=_("This will close {t} tab(s) and disconnect {n} session(s). Continue?").format(
+                    t=len(pages), n=n_sessions
+                ),
+            )
+            dialog.add_response('cancel', _("Cancel"))
+            dialog.add_response('close', _("Close"))
+            dialog.set_response_appearance('close', Adw.ResponseAppearance.DESTRUCTIVE)
+            dialog.set_default_response('close')
+            dialog.set_close_response('cancel')
+            dialog.connect('response', self._on_bulk_close_response, close_fn)
+            dialog.present()
+        else:
+            # Toggle off, or nothing with a live session to disconnect: close
+            # directly. With the toggle off, on_tab_close disconnects each tab
+            # without a dialog.
+            close_fn()
 
     def _restore_split_tab(self, entry):
         """Recreate a split-view tab from a captured entry."""
