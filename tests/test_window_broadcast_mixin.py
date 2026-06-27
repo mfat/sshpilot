@@ -52,7 +52,7 @@ def test_mixin_precedes_window_actions_in_mro():
     # Compare by class name, not imported identity: other tests reimport
     # sshpilot.actions / sshpilot.window as fresh modules, so a `from ... import`
     # here can yield a different class object than the one baked into
-    # MainWindow.__mro__. Names are stable across reimports.
+    # MainWindow.__mro__ (making `mro.index(...)` raise). Names are stable.
     mro_names = [c.__name__ for c in wm.MainWindow.__mro__]
     assert "WindowBroadcastMixin" in mro_names
     assert mro_names.index("WindowBroadcastMixin") < mro_names.index("WindowActions")
