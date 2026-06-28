@@ -357,6 +357,24 @@ def test_store_no_fallback_when_selected_session_backend_locked(manager):
     assert spec.keyring_account not in primary.data
 
 
+def test_lookup_no_fallthrough_when_selected_session_backend_locked(manager):
+    # Security: a locked (or failed-to-unlock) selected vault must NOT serve a stale
+    # copy of the secret from another store. A wrong master password => no access.
+    mgr, primary, fallback = manager
+    vault = FakeSessionBackend('vault')          # session_backed, available, locked
+    mgr.register_backend('vault', vault)
+    mgr.set_selected('vault')
+    spec = password_spec('h', 'u')
+    primary.data[spec.keyring_account] = 'stale-libsecret-pw'   # legacy copy elsewhere
+
+    assert mgr.unlock_selected('wrong') is False  # failed unlock -> still locked
+    assert mgr.lookup(spec) is None               # must NOT fall through to libsecret
+
+    # Once unlocked, a migration read of the legacy copy is allowed again.
+    assert vault.unlock('correct') is True
+    assert mgr.lookup(spec) == 'stale-libsecret-pw'
+
+
 def test_bitwarden_is_available_reresolves_bw(monkeypatch):
     # is_available() must reflect a `bw` that appears AFTER the backend is built,
     # so a newly-installed CLI is detected without restarting the app.

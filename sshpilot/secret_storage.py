@@ -1025,6 +1025,21 @@ class SecretManager:
             return backend
         return None
 
+    def _selected_session_locked(self) -> Optional[SecretBackend]:
+        """The selected backend iff it is a session backend that is available but
+        currently **not unlocked** (a locked or failed-to-unlock vault), else None.
+
+        When set, ``store``/``lookup`` must consult ONLY it and never fall through to
+        other stores: a locked vault must mean *no access*, not silently serving a
+        stale copy of the secret from libsecret/keyring. Reads/writes through the
+        backend simply return nothing/False until it is unlocked.
+        """
+        backend = self.selected_backend()
+        if (backend is not None and getattr(backend, "session_backed", False)
+                and backend.is_available() and not backend.is_unlocked()):
+            return backend
+        return None
+
     def selected_needs_unlock(self) -> bool:
         """True when the selected backend is session-backed and currently locked,
         so the GTK layer should drive an unlock prompt."""
@@ -1105,10 +1120,9 @@ class SecretManager:
         auth = self._authoritative_selected()
         if auth is not None:
             return [auth]
-        backend = self.selected_backend()
-        if (backend is not None and getattr(backend, "session_backed", False)
-                and backend.is_available() and not backend.is_unlocked()):
-            return [backend]
+        locked = self._selected_session_locked()
+        if locked is not None:
+            return [locked]
         return self._ordered_backends()
 
     # -- operations ------------------------------------------------------
@@ -1121,8 +1135,11 @@ class SecretManager:
         return False
 
     def lookup(self, spec: SecretSpec) -> Optional[str]:
-        auth = self._authoritative_selected()
-        backends = [auth] if auth else self._all_available_backends()
+        # An authoritative selection (ssh-agent: "don't store") or a locked session
+        # vault both restrict reads to that backend alone — never fall through to a
+        # stale copy in another store while the chosen vault is locked/unavailable.
+        only = self._authoritative_selected() or self._selected_session_locked()
+        backends = [only] if only is not None else self._all_available_backends()
         for backend in backends:
             value = backend.lookup(spec)
             if value:
