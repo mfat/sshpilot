@@ -2,7 +2,6 @@
 
 import os
 import logging
-import subprocess
 import shutil
 import json
 import hashlib

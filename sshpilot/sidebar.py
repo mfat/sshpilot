@@ -8,7 +8,7 @@ from typing import Dict, List, Optional
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Gtk, Gdk, GObject, GLib, Adw, Graphene, Gsk, Pango
+from gi.repository import Gtk, Gdk, GObject, GLib, Graphene, Gsk, Pango
 
 from gettext import gettext as _
 

@@ -4,12 +4,9 @@ Integrated VTE terminal with SSH connection handling using system SSH client
 """
 
 import os
-import sys
 import logging
 import signal
 import time
-import random
-import json
 import re
 import gi
 from gettext import gettext as _
@@ -20,11 +17,9 @@ import subprocess
 import shutil
 import pwd
 from datetime import datetime
-from typing import Optional, List
-from .port_utils import get_port_checker
+from typing import Optional
 from .platform_utils import is_flatpak, is_macos, get_sshpass_path
 from .terminal_backends import BaseTerminalBackend, VTETerminalBackend, PyXtermTerminalBackend
-from .ssh_connection_builder import build_ssh_connection, ConnectionContext
 from .plugins.api import PluginContext, ProtocolError
 from .plugins.registry import protocol_registry
 
@@ -5545,8 +5540,6 @@ class TerminalWidget(Gtk.Box):
                     import time
                     import random
                     import subprocess
-                    import shutil
-                    from .ssh_utils import build_connection_ssh_options
                     
                     # Generate unique temp file name using timestamp and random number
                     temp_filename = f"/tmp/sshpilot_pwd_{int(time.time())}_{random.randint(1000, 9999)}.txt"

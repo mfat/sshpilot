@@ -3,13 +3,10 @@ add_connection_to_group, and the add_connection_group convenience."""
 
 import os
 import sys
-import types
 
-import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from sshpilot.config import Config  # noqa: E402
 from sshpilot.groups import GroupManager  # noqa: E402
 from sshpilot.plugins import registry as registry_mod  # noqa: E402
 from sshpilot.plugins.api import PluginContext  # noqa: E402

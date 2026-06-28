@@ -6,7 +6,6 @@ Handles import/export of SSH and application configuration
 import json
 import logging
 import os
-import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, Optional, Tuple, List

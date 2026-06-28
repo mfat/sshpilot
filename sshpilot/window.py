@@ -14,7 +14,6 @@ import sys
 import time
 import shutil
 from datetime import datetime
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Tuple
 
@@ -24,13 +23,12 @@ gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
 try:
     gi.require_version('Vte', '3.91')
-    from gi.repository import Vte
     _HAS_VTE = True
 except Exception:
     _HAS_VTE = False
 
 gi.require_version('PangoFT2', '1.0')
-from gi.repository import Gtk, Adw, Gio, GLib, GObject, Gdk, Pango, PangoFT2
+from gi.repository import Gtk, Adw, Gio, GLib, Gdk
 import subprocess
 import threading
 
@@ -45,8 +43,8 @@ from .connection_manager import ConnectionManager, Connection, ConnectionState
 from .terminal import TerminalWidget
 from .terminal_manager import TerminalManager
 from .config import Config
-from .key_manager import KeyManager, SSHKey
-from .update_checker import check_for_updates_async, get_update_url, get_platform_install_method
+from .key_manager import KeyManager
+from .update_checker import check_for_updates_async
 from .connection_display import (
     get_connection_alias,
     get_connection_host,
@@ -60,19 +58,11 @@ from .connection_sort import (
 # Port forwarding UI is now integrated into connection_dialog.py
 from .connection_dialog import ConnectionDialog
 from .preferences import (
-    PreferencesWindow,
     should_hide_external_terminal_options,
     should_hide_file_manager_options,
 )
-from .file_manager_integration import (
-    launch_remote_file_manager,
-    create_internal_file_manager_tab,
-    has_internal_file_manager,
-    has_native_gvfs_support,
-)
-from .sftp_utils import should_use_in_app_file_manager
 from .sshcopyid_window import SshCopyIdWindow, SshCopyIdRunner
-from .scp_window import ScpWindowController, SCPConnectionProfile
+from .scp_window import ScpWindowController
 from .groups import GroupManager
 from .session_manager import SessionManager
 from .sidebar import (
@@ -101,14 +91,21 @@ from .window_dialogs import WindowConfigDialogsMixin
 from . import shutdown
 from .search_utils import connection_matches
 from .shortcut_utils import get_primary_modifier_label
-from .platform_utils import is_macos, get_config_dir, get_ssh_dir
+from .platform_utils import is_macos, get_config_dir
 from .command_blocks import CommandBlocksPanel, CommandBlockStore
 from .context_menu import IconContextMenu
 from .plugins.api import Capability
 from .plugins.registry import capabilities_for
-from .ssh_utils import ensure_writable_ssh_home
-from .scp_utils import assemble_scp_transfer_args, classify_sftp_error, download_file, upload_file
 from .ssh_password_exec import run_ssh_with_password
+# Re-exported for backward compatibility: these SCP helpers used to live in
+# window.py and are still referenced as `window.<name>` (e.g. by tests). They are
+# unused within window.py itself, hence the noqa.
+from .scp_utils import (  # noqa: F401
+    assemble_scp_transfer_args,
+    classify_sftp_error,
+    download_file,
+    upload_file,
+)
 
 logger = logging.getLogger(__name__)
 

@@ -1,7 +1,6 @@
 import os
 import logging
 import threading
-import atexit
 from gettext import gettext as _
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
@@ -16,7 +15,7 @@ except Exception:
 from gi.repository import Gtk, Adw, GLib, Gio
 
 from .terminal import TerminalWidget
-from .config import Config
+from .config import Config  # noqa: F401  # exposed for tests that patch scp_window.Config
 from .connection_display import (
     get_connection_alias as _get_connection_alias,
     get_connection_host as _get_connection_host,
@@ -27,7 +26,6 @@ from .scp_utils import (
     classify_sftp_error,
     download_file,
     insert_legacy_scp_flag,
-    upload_file,
 )
 from .platform_utils import is_flatpak
 from .file_manager.portal_docs import (

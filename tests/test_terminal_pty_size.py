@@ -11,9 +11,8 @@ Tests verify that:
 import importlib
 import logging
 import types
-from unittest.mock import Mock, MagicMock, patch
+from unittest.mock import Mock
 
-import pytest
 
 # Add project root to path
 import sys

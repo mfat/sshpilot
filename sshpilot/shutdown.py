@@ -8,7 +8,6 @@ leaner and makes the quit logic reusable.
 
 from gettext import gettext as _
 import logging
-import time
 
 from gi.repository import Gtk, GLib, Adw
 
