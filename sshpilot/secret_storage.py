@@ -666,13 +666,12 @@ class BitwardenBackend(SecretBackend):
                 return False
             self._unlocked = True
             self._status_cache = (0.0, None)
-            self._report(progress, "loading")
-            # Warm the item cache synchronously. INVARIANT: get_password()/lookup()
-            # after unlock must be a warm-cache hit with no HTTP at connect time.
-            self._items = None
-            loaded = self._load_items()
-            if loaded is not None:
-                self._items = loaded
+            # Do NOT prefetch the whole vault here — for a large vault, serializing every
+            # item over HTTP is the dominant cost felt at connect time. Start with an
+            # empty per-item cache; lookups fetch (and cache) just the item they need via
+            # a fast targeted search against the in-memory daemon. Refresh the on-disk
+            # vault in the background.
+            self._items = {}
             self._start_background_sync()
             return True
 
@@ -708,37 +707,11 @@ class BitwardenBackend(SecretBackend):
             os.environ.pop("SSHPILOT_BW_SERVE_PORT", None)
 
     # -- item cache + operations -----------------------------------------
-    def _load_items(self) -> Optional[Dict[str, dict]]:
-        """One ``GET /list/object/items`` → name→item map. ``None`` on failure so a
-        transient error doesn't poison the cache with an empty map."""
-        try:
-            code, data = self._http("GET", "/list/object/items", timeout=60)
-            if code != 200:
-                logger.debug("bw serve list items HTTP %s", code)
-                return None
-            items: Dict[str, dict] = {}
-            for item in ((data.get("data") or {}).get("data") or []):
-                name = item.get("name")
-                if isinstance(name, str):
-                    items[name] = item
-            return items
-        except Exception as exc:
-            logger.debug("bw serve list items failed: %s", exc)
-            return None
-
-    def _ensure_items(self) -> Dict[str, dict]:
-        with self._lock:
-            if self._items is None:
-                loaded = self._load_items()
-                if loaded is None:
-                    return {}
-                self._items = loaded
-            return self._items
-
     def _search_item(self, account: str) -> Optional[dict]:
         """Targeted ``GET /list/object/items?search=`` for one item by exact name.
-        Used on a cold cache (e.g. the askpass subprocess) to avoid pulling the whole
-        vault. Returns the item dict or None."""
+        The daemon filters its in-memory vault and returns only matches, so this is
+        cheap even for a large vault (no whole-vault serialization). Returns the item
+        dict or None."""
         try:
             code, data = self._http("GET", "/list/object/items",
                                     params={"search": account}, timeout=15)
@@ -750,6 +723,17 @@ class BitwardenBackend(SecretBackend):
         except Exception as exc:
             logger.debug("bw serve search failed: %s", exc)
         return None
+
+    def _find_item(self, account: str) -> Optional[dict]:
+        """Return the item named ``account`` — from the per-item cache if present, else
+        one targeted search (caching a hit). ``None`` if not found."""
+        with self._lock:
+            if self._items is not None and account in self._items:
+                return self._items[account]
+        item = self._search_item(account)
+        if item is not None:
+            self._cache_put(account, item)
+        return item
 
     @staticmethod
     def _fill_login_metadata(login: dict, spec: SecretSpec, *, overwrite: bool) -> None:
@@ -778,7 +762,7 @@ class BitwardenBackend(SecretBackend):
             return False
         account = spec.keyring_account
         try:
-            existing = self._ensure_items().get(account)
+            existing = self._find_item(account)
             if existing and existing.get("id"):
                 item = dict(existing)
                 login = dict(item.get("login") or {})
@@ -806,15 +790,8 @@ class BitwardenBackend(SecretBackend):
             return False
 
     def lookup(self, spec: SecretSpec) -> Optional[str]:
-        account = spec.keyring_account
-        # Warm cache (main process after unlock): pure in-memory hit, NO HTTP.
-        with self._lock:
-            if self._items is not None:
-                item = self._items.get(account)
-                return ((item.get("login") or {}).get("password") or None) if item else None
-        # Cold cache (e.g. the askpass subprocess): one targeted search against the
-        # shared daemon. Returns None if the daemon is locked/unreachable.
-        item = self._search_item(account)
+        # Per-item cache hit (instant) or one targeted search (cheap via the daemon).
+        item = self._find_item(spec.keyring_account)
         if not item:
             return None
         return (item.get("login") or {}).get("password") or None
@@ -824,7 +801,7 @@ class BitwardenBackend(SecretBackend):
             return False
         account = spec.keyring_account
         try:
-            existing = self._ensure_items().get(account)
+            existing = self._find_item(account)
             item_id = existing.get("id") if existing else None
             if not item_id:
                 return False
@@ -839,13 +816,25 @@ class BitwardenBackend(SecretBackend):
 
     def _cache_put(self, account: str, item: dict) -> None:
         with self._lock:
-            if self._items is not None:
-                self._items[account] = item
+            if self._items is None:
+                self._items = {}
+            self._items[account] = item
 
     def _cache_drop(self, account: str) -> None:
         with self._lock:
             if self._items is not None:
                 self._items.pop(account, None)
+
+    # -- pre-warm --------------------------------------------------------
+    def prewarm(self) -> None:
+        """Start the serve daemon in the background (no unlock), so its node startup
+        overlaps the user typing the master password."""
+        def _bg():
+            try:
+                self._ensure_serve()
+            except Exception as exc:
+                logger.debug("bw serve prewarm failed: %s", exc)
+        threading.Thread(target=_bg, daemon=True).start()
 
 
 class VaultwardenBackend(BitwardenBackend):
@@ -1040,6 +1029,17 @@ class SecretManager:
         if progress is None:
             return backend.unlock(secret)
         return backend.unlock(secret, progress=progress)
+
+    def prewarm_selected(self) -> None:
+        """Best-effort: start the selected session backend's daemon ahead of unlock so
+        its startup overlaps the master-password prompt. No-op for other backends."""
+        backend = self.selected_backend()
+        prewarm = getattr(backend, "prewarm", None)
+        if callable(prewarm):
+            try:
+                prewarm()
+            except Exception:
+                pass
 
     def lock_all(self) -> None:
         """Drop every backend's cached session/token (e.g. on app shutdown)."""

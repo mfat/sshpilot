@@ -388,6 +388,7 @@ class FakeServe:
         self.status = status
         self.items = [dict(i) for i in (items or [])]
         self.calls = []
+        self.search_terms = []     # search= values seen on /list (None = full list)
         self._n = 0
 
     def http(self, method, path, *, params=None, body=None, timeout=10):
@@ -406,6 +407,7 @@ class FakeServe:
             return 200, {"success": True}
         if path == "/list/object/items":
             search = (params or {}).get("search")
+            self.search_terms.append(search)
             items = self.items
             if search:
                 items = [i for i in items if search.lower() in (i.get("name", "").lower())]
@@ -447,36 +449,36 @@ def _make_backend(monkeypatch, fake, *, owns_proc=True):
     return b
 
 
-def test_bitwarden_unlock_warms_cache(monkeypatch):
+def test_bitwarden_unlock_no_full_list(monkeypatch):
+    # unlock() must NOT pull the whole vault — only POST /unlock (+ background sync).
     fake = FakeServe(status="locked",
                      items=[{"id": "ID1", "name": "u@h", "login": {"password": "hunter2"}}])
     b = _make_backend(monkeypatch, fake)
     assert b.unlock('master') is True
     assert fake.status == "unlocked"
     assert ("POST", "/unlock") in fake.calls
-    assert ("GET", "/list/object/items") in fake.calls   # cache warmed synchronously
-    # lookup is now a warm-cache hit — no HTTP at all.
-    monkeypatch.setattr(b, '_http', _boom_http)
-    assert b.lookup(password_spec('h', 'u')) == 'hunter2'
+    assert fake.search_terms == []                  # no /list of any kind during unlock
 
 
-def test_get_password_hits_warm_cache_after_unlock(monkeypatch):
-    # Core guarantee: after unlock() warms the cache, the lookup get_password() uses is
-    # a warm-cache hit with NO serve API call. Guards against re-introducing a cold load.
-    fake = FakeServe(status="locked",
-                     items=[{"id": "ID1", "name": "u@h", "login": {"password": "cached-pw"}}])
-    b = _make_backend(monkeypatch, fake)
-    assert b.unlock('master') is True
-    monkeypatch.setattr(b, '_http', _boom_http)
-    assert b.lookup(password_spec('h', 'u')) == 'cached-pw'
-
-
-def test_load_items_failure_is_not_cached(monkeypatch):
-    # A failed warm load must NOT poison the cache with an empty map — a later lookup
-    # should retry (via a targeted search) rather than silently miss forever.
+def test_lookup_after_unlock_is_targeted_then_cached(monkeypatch):
+    # After unlock, the first lookup does ONE targeted search (not a whole-vault load);
+    # a repeat lookup of the same host is a cache hit with no HTTP.
     fake = FakeServe(status="locked",
                      items=[{"id": "ID1", "name": "u@h", "login": {"password": "pw"}}])
     b = _make_backend(monkeypatch, fake)
+    assert b.unlock('master') is True
+    assert b.lookup(password_spec('h', 'u')) == 'pw'
+    assert fake.search_terms == ['u@h']             # one targeted search, scoped by name
+    monkeypatch.setattr(b, '_http', _boom_http)
+    assert b.lookup(password_spec('h', 'u')) == 'pw'   # cache hit, no HTTP
+
+
+def test_failed_targeted_search_is_not_cached(monkeypatch):
+    # A failed targeted search returns None and is NOT cached, so a later lookup retries.
+    fake = FakeServe(status="locked",
+                     items=[{"id": "ID1", "name": "u@h", "login": {"password": "pw"}}])
+    b = _make_backend(monkeypatch, fake)
+    assert b.unlock('m') is True
     real = fake.http
     fail = {"on": True}
 
@@ -486,25 +488,24 @@ def test_load_items_failure_is_not_cached(monkeypatch):
         return real(method, path, **k)
 
     monkeypatch.setattr(b, '_http', flaky)
-    assert b.unlock('m') is True            # unlock ok even though the warm /list failed
-    assert b._items is None                 # not poisoned with an empty map
+    assert b.lookup(password_spec('h', 'u')) is None     # search failed -> None
+    assert 'u@h' not in (b._items or {})                  # not cached
     fail["on"] = False
-    assert b.lookup(password_spec('h', 'u')) == 'pw'   # retried via targeted search
+    assert b.lookup(password_spec('h', 'u')) == 'pw'      # retried, found, cached
 
 
-def test_bitwarden_lookup_warm_cache_no_http(monkeypatch):
-    # With a warm cache, lookup makes no serve call (hit or miss).
+def test_bitwarden_lookup_cache_hit_no_http(monkeypatch):
+    # A per-item cache hit makes no serve call at all.
     b = ss.BitwardenBackend()
     b._bin = '/usr/bin/bw'
     b._items = {'u@h': {'name': 'u@h', 'id': 'ID1', 'login': {'password': 'cached'}}}
     monkeypatch.setattr(b, '_http', _boom_http)
     assert b.lookup(password_spec('h', 'u')) == 'cached'
-    assert b.lookup(password_spec('nope', 'x')) is None
 
 
 def test_bitwarden_cold_lookup_uses_targeted_search(monkeypatch):
-    # The askpass-subprocess case: no warm cache -> one targeted /list?search (not a
-    # whole-vault load), served by the shared daemon.
+    # The askpass-subprocess case: no cache -> one targeted /list?search (not a whole-
+    # vault load), served by the shared daemon, and the hit is cached.
     fake = FakeServe(status="unlocked",
                      items=[{"id": "ID1", "name": "u@h", "login": {"password": "pw"}},
                             {"id": "ID2", "name": "other", "login": {"password": "x"}}])
@@ -513,8 +514,10 @@ def test_bitwarden_cold_lookup_uses_targeted_search(monkeypatch):
     monkeypatch.setattr(b, '_http', fake.http)
     assert b._items is None                                  # cold
     assert b.lookup(password_spec('h', 'u')) == 'pw'
-    assert any(p == "/list/object/items" for (_m, p) in fake.calls)
-    assert b._items is None                                  # targeted search doesn't fill cache
+    assert fake.search_terms == ['u@h']                     # targeted, not a full list
+    assert (b._items or {}).get('u@h') is not None          # hit cached
+    monkeypatch.setattr(b, '_http', _boom_http)
+    assert b.lookup(password_spec('h', 'u')) == 'pw'        # repeat is a cache hit
 
 
 def test_bitwarden_stays_unlocked_after_unlock(monkeypatch):
