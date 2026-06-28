@@ -442,6 +442,7 @@ class BitwardenBackend(SecretBackend):
         self._proc: Optional[subprocess.Popen] = None   # the daemon we own, if any
         self._unlocked = False                           # we unlocked it this session
         self._items: Optional[Dict[str, dict]] = None    # name→item; None = not loaded
+        self._cache_complete = False                     # _items holds the whole vault
         self._status_cache: tuple = (0.0, None)          # (monotonic_ts, status|None)
         self._lock = threading.RLock()
         atexit.register(self._terminate_proc)            # don't leak an unlocked daemon
@@ -573,6 +574,7 @@ class BitwardenBackend(SecretBackend):
         proc = self._proc
         self._proc = None
         self._unlocked = False
+        self._cache_complete = False
         if proc is None:
             return
         try:
@@ -650,6 +652,7 @@ class BitwardenBackend(SecretBackend):
         if not self._bin:
             return False
         with self._lock:
+            self._report(progress, "starting")
             if not self._ensure_serve():
                 return False
             self._report(progress, "unlocking")
@@ -666,12 +669,17 @@ class BitwardenBackend(SecretBackend):
                 return False
             self._unlocked = True
             self._status_cache = (0.0, None)
-            # Do NOT prefetch the whole vault here — for a large vault, serializing every
-            # item over HTTP is the dominant cost felt at connect time. Start with an
-            # empty per-item cache; lookups fetch (and cache) just the item they need via
-            # a fast targeted search against the in-memory daemon. Refresh the on-disk
-            # vault in the background.
+            self._report(progress, "loading")
+            # Warm the whole-vault cache now, while the unlock spinner is still up, so
+            # every lookup this session is an in-memory hit (no per-connect HTTP). The
+            # caller keeps the spinner open until this returns. A failed load leaves an
+            # empty, non-complete cache so lookups fall back to a targeted search.
             self._items = {}
+            self._cache_complete = False
+            loaded = self._load_all_items()
+            if loaded is not None:
+                self._items = loaded
+                self._cache_complete = True
             self._start_background_sync()
             return True
 
@@ -701,12 +709,31 @@ class BitwardenBackend(SecretBackend):
             except Exception:
                 pass
             self._items = None
+            self._cache_complete = False
             self._unlocked = False
             self._status_cache = (0.0, None)
             self._terminate_proc()                      # stop the daemon we own
             os.environ.pop("SSHPILOT_BW_SERVE_PORT", None)
 
     # -- item cache + operations -----------------------------------------
+    def _load_all_items(self) -> Optional[Dict[str, dict]]:
+        """One ``GET /list/object/items`` (whole vault) → name→item map. ``None`` on
+        failure so a transient error doesn't poison the cache as 'complete'."""
+        try:
+            code, data = self._http("GET", "/list/object/items", timeout=120)
+            if code != 200:
+                logger.debug("bw serve list items HTTP %s", code)
+                return None
+            items: Dict[str, dict] = {}
+            for item in ((data.get("data") or {}).get("data") or []):
+                name = item.get("name")
+                if isinstance(name, str):
+                    items[name] = item
+            return items
+        except Exception as exc:
+            logger.debug("bw serve list items failed: %s", exc)
+            return None
+
     def _search_item(self, account: str) -> Optional[dict]:
         """Targeted ``GET /list/object/items?search=`` for one item by exact name.
         The daemon filters its in-memory vault and returns only matches, so this is
@@ -725,11 +752,15 @@ class BitwardenBackend(SecretBackend):
         return None
 
     def _find_item(self, account: str) -> Optional[dict]:
-        """Return the item named ``account`` — from the per-item cache if present, else
-        one targeted search (caching a hit). ``None`` if not found."""
+        """Return the item named ``account``. Served from the cache when present; when
+        the whole vault is cached (``_cache_complete``) a miss is definitive (no HTTP).
+        Otherwise (cold cache, e.g. the askpass subprocess) fall back to one targeted
+        search and cache the hit."""
         with self._lock:
             if self._items is not None and account in self._items:
                 return self._items[account]
+            if self._cache_complete:
+                return None
         item = self._search_item(account)
         if item is not None:
             self._cache_put(account, item)

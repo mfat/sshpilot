@@ -449,49 +449,52 @@ def _make_backend(monkeypatch, fake, *, owns_proc=True):
     return b
 
 
-def test_bitwarden_unlock_no_full_list(monkeypatch):
-    # unlock() must NOT pull the whole vault — only POST /unlock (+ background sync).
+def test_bitwarden_unlock_warms_full_cache(monkeypatch):
+    # unlock() warms the whole-vault cache (one full /list) while the spinner is up, so
+    # lookups afterwards are in-memory hits.
     fake = FakeServe(status="locked",
                      items=[{"id": "ID1", "name": "u@h", "login": {"password": "hunter2"}}])
     b = _make_backend(monkeypatch, fake)
     assert b.unlock('master') is True
     assert fake.status == "unlocked"
     assert ("POST", "/unlock") in fake.calls
-    assert fake.search_terms == []                  # no /list of any kind during unlock
+    assert fake.search_terms == [None]              # one whole-vault list (no ?search)
+    assert b._cache_complete is True
+    monkeypatch.setattr(b, '_http', _boom_http)
+    assert b.lookup(password_spec('h', 'u')) == 'hunter2'   # warm-cache hit, no HTTP
 
 
-def test_lookup_after_unlock_is_targeted_then_cached(monkeypatch):
-    # After unlock, the first lookup does ONE targeted search (not a whole-vault load);
-    # a repeat lookup of the same host is a cache hit with no HTTP.
+def test_lookup_after_unlock_is_cache_hit(monkeypatch):
+    # After unlock, lookups hit the warm full cache — both a hit and a definitive miss
+    # make no serve call.
     fake = FakeServe(status="locked",
                      items=[{"id": "ID1", "name": "u@h", "login": {"password": "pw"}}])
     b = _make_backend(monkeypatch, fake)
     assert b.unlock('master') is True
-    assert b.lookup(password_spec('h', 'u')) == 'pw'
-    assert fake.search_terms == ['u@h']             # one targeted search, scoped by name
     monkeypatch.setattr(b, '_http', _boom_http)
-    assert b.lookup(password_spec('h', 'u')) == 'pw'   # cache hit, no HTTP
+    assert b.lookup(password_spec('h', 'u')) == 'pw'    # hit
+    assert b.lookup(password_spec('nope', 'x')) is None  # definitive miss (complete cache)
 
 
-def test_failed_targeted_search_is_not_cached(monkeypatch):
-    # A failed targeted search returns None and is NOT cached, so a later lookup retries.
+def test_unlock_full_load_failure_falls_back_to_search(monkeypatch):
+    # If the whole-vault warm load fails, the cache is not 'complete' and lookups fall
+    # back to a targeted search rather than silently missing.
     fake = FakeServe(status="locked",
                      items=[{"id": "ID1", "name": "u@h", "login": {"password": "pw"}}])
     b = _make_backend(monkeypatch, fake)
-    assert b.unlock('m') is True
     real = fake.http
-    fail = {"on": True}
+    fail = {"full": True}
 
-    def flaky(method, path, **k):
-        if path == "/list/object/items" and fail["on"]:
-            return 500, {"success": False}
-        return real(method, path, **k)
+    def flaky(method, path, *, params=None, body=None, timeout=10):
+        if path == "/list/object/items" and params is None and fail["full"]:
+            return 500, {"success": False}          # whole-vault load fails
+        return real(method, path, params=params, body=body, timeout=timeout)
 
     monkeypatch.setattr(b, '_http', flaky)
-    assert b.lookup(password_spec('h', 'u')) is None     # search failed -> None
-    assert 'u@h' not in (b._items or {})                  # not cached
-    fail["on"] = False
-    assert b.lookup(password_spec('h', 'u')) == 'pw'      # retried, found, cached
+    assert b.unlock('m') is True
+    assert b._cache_complete is False               # warm load failed
+    assert b.lookup(password_spec('h', 'u')) == 'pw'  # falls back to targeted search
+    assert 'u@h' in fake.search_terms
 
 
 def test_bitwarden_lookup_cache_hit_no_http(monkeypatch):
@@ -518,6 +521,26 @@ def test_bitwarden_cold_lookup_uses_targeted_search(monkeypatch):
     assert (b._items or {}).get('u@h') is not None          # hit cached
     monkeypatch.setattr(b, '_http', _boom_http)
     assert b.lookup(password_spec('h', 'u')) == 'pw'        # repeat is a cache hit
+
+
+def test_bitwarden_unlock_reports_progress(monkeypatch):
+    # The spinner dialog's status text rides these stages.
+    fake = FakeServe(status="locked")
+    b = _make_backend(monkeypatch, fake)
+    stages = []
+    assert b.unlock('m', progress=stages.append) is True
+    assert stages == ['starting', 'unlocking', 'loading']
+
+
+def test_unlock_selected_forwards_progress(monkeypatch):
+    fake = FakeServe(status="locked")
+    b = _make_backend(monkeypatch, fake)
+    mgr = ss.SecretManager()
+    mgr._backends = {'bitwarden': b}
+    mgr.set_selected('bitwarden')
+    stages = []
+    assert mgr.unlock_selected('m', progress=stages.append) is True
+    assert 'unlocking' in stages
 
 
 def test_bitwarden_stays_unlocked_after_unlock(monkeypatch):

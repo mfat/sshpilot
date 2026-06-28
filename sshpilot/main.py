@@ -365,6 +365,18 @@ class SshPilotApplication(Adw.Application):
         except Exception as exc:
             logger.debug(f"Failed to start askpass prompt server: {exc}")
 
+        # If a session-backed secret backend (Bitwarden/Vaultwarden) is selected and
+        # locked, prompt to unlock it now (password dialog + spinner) so the vault is
+        # ready before the first connection. Scheduled on idle so it runs after the
+        # connection manager's deferred backend-selection init.
+        try:
+            win = self.window or self.props.active_window
+            if win is not None:
+                from . import secret_unlock_dialog
+                GLib.idle_add(secret_unlock_dialog.unlock_at_startup, win)
+        except Exception as exc:
+            logger.debug(f"Failed to schedule startup vault unlock: {exc}")
+
     def on_shutdown(self, app):
         """Clean up all resources when application is shutting down"""
         logger.info("Application shutdown initiated, cleaning up...")

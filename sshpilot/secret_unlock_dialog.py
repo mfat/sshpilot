@@ -48,6 +48,77 @@ def _message(parent, heading, body):
         dialog.present()
 
 
+def _spinner_dialog(parent, heading, body):
+    """A non-dismissable 'please wait' dialog with a spinner + status label.
+
+    Returns ``(set_status, close)``: ``set_status(text)`` updates the label (call on the
+    GTK main thread); ``close()`` dismisses it. No buttons, and ``can-close`` is disabled
+    so it blocks the UI until the operation finishes."""
+    box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+    box.set_margin_top(6)
+    box.set_margin_bottom(6)
+    spinner = Gtk.Spinner()
+    spinner.start()
+    box.append(spinner)
+    status = Gtk.Label(label=body)
+    status.set_wrap(True)
+    status.set_xalign(0)
+    status.set_hexpand(True)
+    box.append(status)
+
+    if hasattr(Adw, 'AlertDialog'):
+        dialog = Adw.AlertDialog(heading=heading)
+        dialog.set_extra_child(box)
+        try:
+            dialog.set_can_close(False)   # block dismissal while the work runs
+        except Exception:
+            pass
+        dialog.present(parent)
+    else:
+        dialog = Adw.MessageDialog(transient_for=parent, modal=True, heading=heading)
+        dialog.set_extra_child(box)
+        dialog.present()
+
+    def _close():
+        try:
+            dialog.set_can_close(True)
+        except Exception:
+            pass
+        try:
+            if hasattr(dialog, 'force_close'):
+                dialog.force_close()
+            else:
+                dialog.close()
+        except Exception:
+            pass
+
+    return status.set_text, _close
+
+
+def unlock_at_startup(window):
+    """If the selected secret backend is session-backed (Bitwarden/Vaultwarden) and
+    locked, prompt to unlock it at app startup — so the vault is ready (and warm) before
+    the first connection, with the same password dialog + spinner used elsewhere.
+
+    No-op for passive backends or an already-unlocked vault. Safe to schedule via
+    ``GLib.idle_add`` from the application's activation. Returns ``False`` so it runs
+    once when used as an idle source."""
+    try:
+        from .config import Config
+        manager = get_secret_manager()
+        # Apply the configured selection up front (idempotent with the connection
+        # manager's deferred init) so the check below is accurate regardless of order.
+        try:
+            manager.set_selected(Config().get_setting('secrets.backend', 'auto'))
+        except Exception:
+            pass
+        if manager.selected_needs_unlock():
+            prompt_unlock(window)
+    except Exception:
+        logger.debug("startup unlock failed", exc_info=True)
+    return False
+
+
 def prompt_unlock(parent, *, on_done=None):
     """Prompt for the master password and unlock the selected session backend.
 
@@ -126,11 +197,24 @@ def prompt_unlock(parent, *, on_done=None):
     except Exception:
         pass
 
-    def _worker(password):
+    # Holds the spinner dialog's close() so _after_unlock can dismiss it.
+    _close_spinner = [lambda: None]
+
+    def _worker(password, set_status):
         ok = False
         needs_login = False
+
+        def _progress(stage):
+            text = {
+                "starting": _("Starting the vault service…"),
+                "unlocking": _("Unlocking your vault…"),
+                "loading": _("Loading your vault…"),
+            }.get(stage)
+            if text:
+                GLib.idle_add(lambda: (set_status(text), False)[1])
+
         try:
-            ok = bool(manager.unlock_selected(password))
+            ok = bool(manager.unlock_selected(password, progress=_progress))
             if not ok:
                 try:
                     needs_login = bool(manager.selected_needs_login())
@@ -141,6 +225,7 @@ def prompt_unlock(parent, *, on_done=None):
         GLib.idle_add(_after_unlock, ok, needs_login)
 
     def _after_unlock(ok, needs_login):
+        _close_spinner[0]()                 # dismiss the "Unlocking…" spinner
         if ok:
             _finish(True)
         elif needs_login:
@@ -166,7 +251,25 @@ def prompt_unlock(parent, *, on_done=None):
             _finish(False)
             return
         password = entry.get_text() or ''
-        threading.Thread(target=_worker, args=(password,), daemon=True).start()
+
+        # Show a blocking spinner while the unlock runs (otherwise the user sees
+        # nothing for the several seconds it takes). Present it after the password
+        # dialog has finished closing.
+        def _present_spinner():
+            be = manager.selected_backend()
+            label_be = be.describe() if be is not None else _("vault")
+            set_status, close = _spinner_dialog(
+                parent,
+                _("Unlocking {backend}").format(backend=label_be),
+                _("Unlocking your vault…"),
+            )
+            _close_spinner[0] = close
+            threading.Thread(
+                target=_worker, args=(password, set_status), daemon=True
+            ).start()
+            return False
+
+        GLib.idle_add(_present_spinner)
 
     dialog.connect('response', _on_response)
     if use_alert:
