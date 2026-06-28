@@ -116,4 +116,11 @@ extend-exclude = [
 #   UP012 — unnecessary str.encode("utf-8")
 #   UP015 — redundant open() mode ("r")
 #   UP024 — aliased OSError (IOError/EnvironmentError → OSError)
-select = ["E9", "F63", "F7", "F601", "F811", "F821", "F841", "F401", "B904", "RUF013", "RUF015", "RUF034", "SIM222", "UP012", "UP015", "UP024"]
+# Safe idiom cleanups (autofixed, no behaviour change):
+#   PIE790 — unnecessary pass/... placeholder
+#   PIE807 — reimplemented container builtin (lambda: [] → list)
+#   RUF010 — explicit f-string conversion (str(x) → !s)
+#   RUF019 — unnecessary key check (k in d and d[k] → d.get(k))
+#   RUF021 — parenthesize chained and/or for clarity
+#   RUF022 — unsorted __all__
+select = ["E9", "F63", "F7", "F601", "F811", "F821", "F841", "F401", "B904", "RUF013", "RUF015", "RUF034", "SIM222", "UP012", "UP015", "UP024", "PIE790", "PIE807", "RUF010", "RUF019", "RUF021", "RUF022"]

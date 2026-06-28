@@ -86,4 +86,4 @@ def _is_private_key(
     return False
 
 
-__all__ = ["_is_private_key", "_SKIPPED_FILENAMES"]
+__all__ = ["_SKIPPED_FILENAMES", "_is_private_key"]

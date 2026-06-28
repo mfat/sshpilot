@@ -224,7 +224,7 @@ class BackupManager:
         """Replace all configuration with imported data"""
         try:
             # Import SSH config
-            if 'ssh_config' in import_data and import_data['ssh_config']:
+            if import_data.get('ssh_config'):
                 ssh_config_path = self.get_ssh_config_path()
                 os.makedirs(os.path.dirname(ssh_config_path), exist_ok=True)
                 with open(ssh_config_path, 'w', encoding='utf-8') as f:
@@ -234,7 +234,7 @@ class BackupManager:
                 logger.info(f"Replaced SSH config at {ssh_config_path}")
 
             # Import known_hosts if present
-            if 'known_hosts' in import_data and import_data['known_hosts']:
+            if import_data.get('known_hosts'):
                 known_hosts_path = self.get_known_hosts_path()
                 if known_hosts_path:
                     os.makedirs(os.path.dirname(known_hosts_path), exist_ok=True)
@@ -266,12 +266,12 @@ class BackupManager:
         """Merge imported configuration with existing"""
         try:
             # For SSH config, we'll append imported hosts that don't exist
-            if 'ssh_config' in import_data and import_data['ssh_config']:
+            if import_data.get('ssh_config'):
                 ssh_config_path = self.get_ssh_config_path()
                 self._merge_ssh_config(ssh_config_path, import_data['ssh_config'])
 
             # For known_hosts, append if in isolated mode
-            if 'known_hosts' in import_data and import_data['known_hosts']:
+            if import_data.get('known_hosts'):
                 known_hosts_path = self.get_known_hosts_path()
                 if known_hosts_path:
                     self._merge_known_hosts(known_hosts_path, import_data['known_hosts'])

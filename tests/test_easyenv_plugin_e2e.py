@@ -35,7 +35,7 @@ class FakeConfig:
 class FakeWindow:
     def __init__(self, cm):
         self.tab_view = types.SimpleNamespace(
-            pages=[], append=lambda w: None, get_pages=lambda: [],
+            pages=[], append=lambda w: None, get_pages=list,
             set_selected_page=lambda p: None)
         self.toast_overlay = types.SimpleNamespace(
             toasts=[], add_toast=lambda t: self.toast_overlay.toasts.append(t))

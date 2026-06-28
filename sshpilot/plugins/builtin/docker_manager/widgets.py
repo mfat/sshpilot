@@ -144,7 +144,7 @@ def add_row_action(row: Gtk.Box, icon: str, tip: str, cb: Callable[[], None], *,
         if not refreshes:
             GLib.timeout_add(
                 800,
-                lambda: btn.get_parent() is not None and btn.set_sensitive(True) or False,
+                lambda: (btn.get_parent() is not None and btn.set_sensitive(True)) or False,
             )
         cb()
 
