@@ -4,10 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sshpilot"
-# Single source of truth: sshpilot/__init__.py::__version__ (updated by the
-# release bump). setuptools reads it via AST (no package import at build time),
-# so the wheel version can never drift from the app version again.
-dynamic = ["version"]
+version = "3.8.5"
 authors = [
   { name="mFat", email="newmfat@gmail.com" },
 ]
@@ -41,19 +38,6 @@ test = [
 #   Note: webkitgtk is Linux-only; PyXterm.js backend not available on macOS
 # - GtkSourceView 5.0, libsecret
 # See README.md or AGENTS.md for complete system dependency list.
-
-[tool.setuptools.dynamic]
-version = {attr = "sshpilot.__version__"}
-
-[tool.ty.rules]
-# PyGObject is dynamic and ships no type stubs, so the type checker can't see
-# gi.repository members or attributes assigned in __init__/via GObject. These
-# two categories are pure noise here (700+ false positives) and would drown the
-# real findings — silence them so the typecheck gate surfaces genuine issues.
-# The gate runs non-blocking in CI (.github/workflows/typecheck.yml); tighten
-# module-by-module as real findings are cleared.
-unresolved-import = "ignore"
-unresolved-attribute = "ignore"
 
 [tool.setuptools.packages.find]
 where = [""]
@@ -96,31 +80,7 @@ extend-exclude = [
 ]
 
 [tool.ruff.lint]
-# Conservative, growing rule set: syntax errors, misused comparisons, and the
-# pyflakes checks that almost always flag runtime bugs. Broader rules are
+# Conservative initial rule set: syntax errors, misused comparisons, and the
+# pyflakes checks that almost always flag runtime bugs. Broader rules can be
 # enabled incrementally as the tree is cleaned up.
-#   F601 — duplicate dict key literal (one value silently lost)
-#   F7   — misc pyflakes bug checks (e.g. break/return outside loop/function)
-#   F811 — redefinition of an unused name (dead, shadowed defs)
-#   F821 — undefined name (real NameError at runtime)
-#   F841 — local variable assigned but never used (dead code / latent bugs)
-#   F401 — module imported but unused (dead imports; re-exports use __all__/noqa)
-# Bug/correctness rules (low-volume, flag real issues rather than style):
-#   B904   — raise inside except without `from` (loses the original traceback)
-#   RUF013 — implicit Optional (`x: int = None`); also de-noises the ty gate
-#   RUF015 — list(...)[0] instead of next(iter(...)) (needless full allocation)
-#   RUF034 — useless if-else (both branches identical)
-#   SIM222 — `True or ...` / always-true boolean expression
-# pyupgrade (safe subset; the large annotation rewrites UP006/UP045 and the
-# manual UP031 are deferred until the monolith refactors land):
-#   UP012 — unnecessary str.encode("utf-8")
-#   UP015 — redundant open() mode ("r")
-#   UP024 — aliased OSError (IOError/EnvironmentError → OSError)
-# Safe idiom cleanups (autofixed, no behaviour change):
-#   PIE790 — unnecessary pass/... placeholder
-#   PIE807 — reimplemented container builtin (lambda: [] → list)
-#   RUF010 — explicit f-string conversion (str(x) → !s)
-#   RUF019 — unnecessary key check (k in d and d[k] → d.get(k))
-#   RUF021 — parenthesize chained and/or for clarity
-#   RUF022 — unsorted __all__
-select = ["E9", "F63", "F7", "F601", "F811", "F821", "F841", "F401", "B904", "RUF013", "RUF015", "RUF034", "SIM222", "UP012", "UP015", "UP024", "PIE790", "PIE807", "RUF010", "RUF019", "RUF021", "RUF022"]
+select = ["E9", "F63", "F7"]

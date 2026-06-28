@@ -262,31 +262,7 @@ sudo dnf install python3-gobject gtk4 libadwaita vte291-gtk4 gtksourceview5 libs
 
 - Run `pytest` to execute the test suite before committing changes
 - Add or update tests when modifying code
-- Prefer unit tests and controller tests. Do not add GUI tests unless the bug specifically involves widget interaction, focus handling, drag-and-drop, rendering, or event delivery.
 - Verify keyboard shortcuts work on both platforms
-
-### Running GUI tests (real GTK)
-
-The default `pytest` suite stubs `gi` and never opens a window, so it stays
-headless/CI-safe. Real-GTK GUI tests (marker `gui`) boot the actual
-`SshPilotApplication` on a display and drive its `Gio` actions/widgets — useful
-for action/dialog/state/preference flows. They are **opt-in** and excluded from
-the default run (`addopts = -m "not gui"` in `pytest.ini`):
-
-```bash
-SSHPILOT_GUI_TESTS=1 pytest -m gui            # on a display
-SSHPILOT_GUI_TESTS=1 xvfb-run -a pytest -m gui  # headless machine
-```
-
-Without `SSHPILOT_GUI_TESTS=1` + real PyGObject + a display they **skip**
-(never error), so they can never turn CI red. Write them with the harness in
-`tests/_gui_harness.py`: **name the file `test_gui_*.py`** (in GUI mode the
-conftest collects only `test_gui_*` modules — importing the stub-assuming
-modules under real GTK can segfault during collection), call `requires_gui()` at
-module top, mark the module `pytest.mark.gui`, and use the `gui` fixture
-(`open_local_tabs`, `user_pages`, `message_dialogs`, `activate_action`,
-`respond`). See `tests/test_gui_tab_close.py` for examples. They are NOT for pixel-gesture,
-drag-and-drop, VTE-scraping, or live-SSH bugs — use unit tests there.
 
 ## Platform-Specific Considerations
 

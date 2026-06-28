@@ -4,9 +4,12 @@ Integrated VTE terminal with SSH connection handling using system SSH client
 """
 
 import os
+import sys
 import logging
 import signal
 import time
+import random
+import json
 import re
 import gi
 from gettext import gettext as _
@@ -17,9 +20,11 @@ import subprocess
 import shutil
 import pwd
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
+from .port_utils import get_port_checker
 from .platform_utils import is_flatpak, is_macos, get_sshpass_path
 from .terminal_backends import BaseTerminalBackend, VTETerminalBackend, PyXtermTerminalBackend
+from .ssh_connection_builder import build_ssh_connection, ConnectionContext
 from .plugins.api import PluginContext, ProtocolError
 from .plugins.registry import protocol_registry
 
@@ -816,7 +821,7 @@ class TerminalWidget(Gtk.Box):
         except Exception:
             pass
 
-    def _set_disconnected_banner_visible(self, visible: bool, message: Optional[str] = None):
+    def _set_disconnected_banner_visible(self, visible: bool, message: str = None):
         try:
             # Allow callers (e.g., ssh-copy-id dialog) to suppress the red banner entirely
             if getattr(self, '_suppress_disconnect_banner', False):
@@ -1276,7 +1281,7 @@ class TerminalWidget(Gtk.Box):
                 if "sshpass" in str(e) and "No such file or directory" in str(e):
                     logger.error("sshpass binary not found, falling back to askpass")
                     # Fall back to askpass method
-                    self._fallback_to_askpass(ssh_cmd, env_list, working_dir)
+                    self._fallback_to_askpass(ssh_cmd, env_list)
                 else:
                     self._on_connection_failed(str(e))
                 return
@@ -1315,7 +1320,7 @@ class TerminalWidget(Gtk.Box):
             logger.error(f"Failed to setup SSH terminal: {e}")
             self._on_connection_failed(str(e))
     
-    def _fallback_to_askpass(self, ssh_cmd, env_list, working_dir=None):
+    def _fallback_to_askpass(self, ssh_cmd, env_list):
         """Fallback when sshpass fails - allow interactive prompting"""
         try:
             logger.info("Falling back to interactive password prompt")
@@ -1807,6 +1812,14 @@ class TerminalWidget(Gtk.Box):
             logger.debug(f"Failed to present forwarding error dialog: {e}")
         return False
 
+    def set_group_color(self, color: Optional[str]):
+        """Update the stored group color and refresh the theme if needed."""
+        self.group_color = color if color else None
+        try:
+            self.apply_theme()
+        except Exception:
+            logger.debug("Failed to reapply theme after group color update", exc_info=True)
+
     @staticmethod
     def _mix_rgba(base: Gdk.RGBA, other: Gdk.RGBA, ratio: float) -> Gdk.RGBA:
         ratio = max(0.0, min(1.0, ratio))
@@ -1931,7 +1944,7 @@ class TerminalWidget(Gtk.Box):
 
             # Prepare palette colors (16 ANSI colors)
             palette_colors = None
-            if profile.get('palette'):
+            if 'palette' in profile and profile['palette']:
                 palette_colors = []
                 for color_hex in profile['palette']:
                     color = Gdk.RGBA()
@@ -2309,6 +2322,7 @@ class TerminalWidget(Gtk.Box):
         after paste.  Now that cursor shape is driven from Python (set_cursor),
         the grab_focus is not needed here.
         """
+        pass
 
     def _on_vte_motion(self, controller, x, y):
         """Detect URL under the mouse cursor (both OSC 8 links and plain-text regexes)."""
@@ -3626,7 +3640,7 @@ class TerminalWidget(Gtk.Box):
         self._set_disconnected_banner_visible(False)
         self.last_error_message = None
         
-    def _on_connection_lost(self, message: Optional[str] = None):
+    def _on_connection_lost(self, message: str = None):
         """Handle SSH connection loss"""
         if self.is_connected:
             logger.info(f"SSH connection to {self.connection.hostname} lost")
@@ -3646,6 +3660,7 @@ class TerminalWidget(Gtk.Box):
 
     def _on_terminal_input(self, widget, text, size):
         """Handle input from the terminal (handled automatically by VTE)"""
+        pass
             
     def _on_terminal_resize(self, widget, width, height):
         """Handle terminal resize events"""
@@ -3879,6 +3894,7 @@ class TerminalWidget(Gtk.Box):
         root = self.get_root() if hasattr(self, 'get_root') else None
         is_quitting = bool(getattr(root, '_is_quitting', False))
 
+        was_connected = self.is_connected
         if self.is_connected:
             logger.debug(f"Disconnecting SSH session {self.session_id}...")
             self.is_connected = False
@@ -4295,6 +4311,7 @@ class TerminalWidget(Gtk.Box):
     def on_bell(self, terminal):
         """Handle terminal bell"""
         # Could implement visual bell or notification here
+        pass
 
     def _on_selection_changed(self, *_args):
         """Copy-on-select: mirror the terminal selection into the clipboard when
@@ -5454,6 +5471,7 @@ class TerminalWidget(Gtk.Box):
     
     def _on_drop_leave(self, drop_target):
         """Handle drag leave event."""
+        pass
     
     def _on_file_drop(self, drop_target, value, x, y):
         """Handle file drop event - initiate SCP upload."""
@@ -5536,6 +5554,8 @@ class TerminalWidget(Gtk.Box):
                     import time
                     import random
                     import subprocess
+                    import shutil
+                    from .ssh_utils import build_connection_ssh_options
                     
                     # Generate unique temp file name using timestamp and random number
                     temp_filename = f"/tmp/sshpilot_pwd_{int(time.time())}_{random.randint(1000, 9999)}.txt"
@@ -5544,7 +5564,7 @@ class TerminalWidget(Gtk.Box):
                     # Use $$ to get shell PID for uniqueness, or use the generated filename
                     pwd_cmd = f"pwd > {temp_filename}\n"
                     
-                    logger.debug(f"Sending pwd command to terminal: {pwd_cmd!r}")
+                    logger.debug(f"Sending pwd command to terminal: {repr(pwd_cmd)}")
                     
                     # Send command to terminal backend
                     if hasattr(self, 'backend') and self.backend and hasattr(self.backend, 'feed_child'):
@@ -5610,7 +5630,7 @@ class TerminalWidget(Gtk.Box):
                     except Exception:
                         pass  # Ignore cleanup errors
                     
-                    logger.debug(f"pwd file read result: returncode={result.returncode}, stdout={result.stdout!r}, stderr={result.stderr!r}")
+                    logger.debug(f"pwd file read result: returncode={result.returncode}, stdout={repr(result.stdout)}, stderr={repr(result.stderr)}")
                     
                     if result.returncode == 0:
                         if result.stdout:

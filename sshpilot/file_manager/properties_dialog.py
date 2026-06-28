@@ -37,8 +37,20 @@ class PropertiesDialog(Adw.Window):
         self.set_modal(True)
         self.set_transient_for(parent)
         
-        # Positioning is delegated to the window manager via the modal /
-        # transient_for properties; GTK4 has no manual window placement.
+        # Position window relative to parent
+        if parent:
+            try:
+                # Get parent window position and size
+                parent_alloc = parent.get_allocation()
+                parent_width = parent_alloc.width
+                parent_height = parent_alloc.height
+                
+                # Center the dialog on the parent window
+                # For GTK4, we'll let the window manager handle positioning
+                # The modal and transient_for properties should handle this
+            except Exception:
+                # Fallback: let window manager handle positioning
+                pass
 
         # Build the dialog content
         self._build_dialog()
@@ -456,6 +468,8 @@ class PropertiesDialog(Adw.Window):
 
     def _start_folder_size_calculation(self):
         """Start calculating folder size in background thread."""
+        import threading
+        
         folder_path = os.path.join(self._current_path, self._entry.name)
         
         # Create and start the background thread

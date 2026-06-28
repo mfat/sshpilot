@@ -156,7 +156,7 @@ def test_capture_session_schema(monkeypatch):
     pane_term = TerminalWidget.__new__(TerminalWidget)
     pane_conn = types.SimpleNamespace(nickname='server2')
     pane = types.SimpleNamespace(get_terminals=lambda: [pane_term])
-    empty_pane = types.SimpleNamespace(get_terminals=list)
+    empty_pane = types.SimpleNamespace(get_terminals=lambda: [])
     split._panes = [pane, empty_pane]
 
     win.terminal_to_connection = {

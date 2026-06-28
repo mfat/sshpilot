@@ -58,7 +58,7 @@ class Config(GObject.Object):
         """Load configuration from JSON file"""
         try:
             if os.path.exists(self.config_file):
-                with open(self.config_file) as f:
+                with open(self.config_file, 'r') as f:
                     config = json.load(f)
 
                 # Purge outdated configurations
@@ -96,7 +96,7 @@ class Config(GObject.Object):
             logger.error(f"Failed to load JSON config: {e}")
             return self.get_default_config()
 
-    def save_json_config(self, config_data: Optional[Dict[str, Any]] = None):
+    def save_json_config(self, config_data: Dict[str, Any] = None):
         """Save configuration to JSON file"""
         try:
             if config_data is None:
@@ -110,9 +110,45 @@ class Config(GObject.Object):
         except Exception as e:
             logger.error(f"Failed to save JSON config: {e}")
 
-    # Shortcut helpers (get_shortcut_overrides / get_shortcut_override /
-    # set_shortcut_override) live further down — the canonical versions read
-    # config_data directly and persist + emit change signals.
+    # --- Shortcut helpers -------------------------------------------------
+
+    def get_shortcut_overrides(self) -> Dict[str, Any]:
+        """Return the stored shortcut overrides mapping."""
+        try:
+            overrides = self.get_setting('shortcuts', {})
+            if isinstance(overrides, dict):
+                return overrides
+        except Exception:
+            pass
+        return {}
+
+    def get_shortcut_override(self, action_name: str):
+        """Return the stored shortcut override for an action.
+
+        Returns ``None`` when no override is stored, an empty list when the
+        shortcut is disabled, or the list of accelerator strings otherwise.
+        """
+        overrides = self.get_shortcut_overrides()
+        value = overrides.get(action_name)
+        if value is None:
+            return None
+        if isinstance(value, list):
+            return value
+        # Coerce malformed entries back to sane defaults
+        return None
+
+    def set_shortcut_override(self, action_name: str, accelerators: Optional[List[str]]):
+        """Persist a shortcut override.
+
+        ``None`` clears the override, an empty list disables the shortcut, and
+        any other list stores custom accelerators for the action.
+        """
+        overrides = self.get_shortcut_overrides().copy()
+        if accelerators is None:
+            overrides.pop(action_name, None)
+        else:
+            overrides[action_name] = accelerators
+        self.set_setting('shortcuts', overrides)
 
     def get_default_config(self) -> Dict[str, Any]:
         """Get default configuration values"""
@@ -171,6 +207,7 @@ class Config(GObject.Object):
                 'tile_color': None,  # None for default, or hex color for custom
             },
             'connections_meta': {},  # per-connection metadata
+            'shortcuts': {},  # action -> list of custom accelerators
             'ssh': {
                 'compression': False,
                 'auto_add_host_keys': True,
@@ -787,7 +824,7 @@ class Config(GObject.Object):
             'sidebar_width': self.get_setting('ui.sidebar_width', 250),
         }
 
-    def save_window_geometry(self, width: int, height: int, sidebar_width: Optional[int] = None):
+    def save_window_geometry(self, width: int, height: int, sidebar_width: int = None):
         """Save window geometry"""
         if self.get_setting('ui.remember_window_size', True):
             self.set_setting('ui.window_width', width)
@@ -1017,7 +1054,7 @@ class Config(GObject.Object):
     def import_config(self, file_path: str) -> bool:
         """Import configuration from file"""
         try:
-            with open(file_path) as f:
+            with open(file_path, 'r') as f:
                 imported_config = json.load(f)
             
             # Import custom themes

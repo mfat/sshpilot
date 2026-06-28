@@ -158,7 +158,7 @@ class AgentClient:
         
         # Read and encode agent code
         try:
-            with open(agent_path) as f:
+            with open(agent_path, 'r') as f:
                 agent_code = f.read()
             agent_b64 = base64.b64encode(agent_code.encode('utf-8')).decode('ascii')
         except Exception as e:

@@ -68,17 +68,6 @@ ACTION_LABELS: Dict[str, str] = {
     'new-split-view-tab': _('New Split View Tab'),
     'toggle-command-blocks': _('Command Blocks Sidebar'),
     'toggle_sidebar': _('Toggle Sidebar'),
-    'split-focus-left': _('Focus Pane Left'),
-    'split-focus-down': _('Focus Pane Down'),
-    'split-focus-up': _('Focus Pane Up'),
-    'split-focus-right': _('Focus Pane Right'),
-    'split-resize-left': _('Resize Pane Left'),
-    'split-resize-down': _('Resize Pane Down'),
-    'split-resize-up': _('Resize Pane Up'),
-    'split-resize-right': _('Resize Pane Right'),
-    'split-layout-horizontal': _('Split Side by Side'),
-    'split-layout-vertical': _('Split Top / Bottom'),
-    'split-add-pane': _('Add Pane'),
 }
 
 PASS_THROUGH_NOTICE = _('Shortcuts disabled while terminal pass-through mode is active')
@@ -270,10 +259,6 @@ class ShortcutsPreferencesPage(PreferencesPageBase):
         tab_group = Adw.PreferencesGroup()
         tab_group.set_title(_('Tab Management'))
 
-        split_group = Adw.PreferencesGroup()
-        split_group.set_title(_('Split View'))
-        split_group.set_description(_('Active whenever a split view tab is open.'))
-
         # Categorize actions
         general_actions = ['quit', 'preferences', 'help', 'shortcuts', 'toggle_sidebar']
         connection_actions = [
@@ -288,11 +273,6 @@ class ShortcutsPreferencesPage(PreferencesPageBase):
         terminal_actions = ['local-terminal', 'terminal-search', 'broadcast-command', 'toggle-command-blocks']
         tab_actions = ['tab-next', 'tab-prev', 'tab-move-left', 'tab-move-right',
                        'tab-close', 'tab-overview', 'new-split-view-tab']
-        split_actions = [
-            'split-focus-left', 'split-focus-down', 'split-focus-up', 'split-focus-right',
-            'split-resize-left', 'split-resize-down', 'split-resize-up', 'split-resize-right',
-            'split-layout-horizontal', 'split-layout-vertical', 'split-add-pane',
-        ]
 
         for name in self._action_names:
             row = Adw.ActionRow()
@@ -354,14 +334,11 @@ class ShortcutsPreferencesPage(PreferencesPageBase):
             elif name in tab_actions:
                 tab_group.add(row)
                 logger.debug(f"Added {name} to Tab Management group")
-            elif name in split_actions:
-                split_group.add(row)
-                logger.debug(f"Added {name} to Split View group")
             else:
                 general_group.add(row)
                 logger.debug(f"Added {name} to General group (fallback)")
 
-        for group in (general_group, connection_group, terminal_group, tab_group, split_group):
+        for group in (general_group, connection_group, terminal_group, tab_group):
             try:
                 group.add_css_class('boxed-list')
             except Exception:
@@ -373,6 +350,42 @@ class ShortcutsPreferencesPage(PreferencesPageBase):
                 except AttributeError:
                     self._shortcuts_container.add(group)
             logger.debug(f"Prepared group '{group.get_title()}' with {len(list(group))} children")
+
+        # Split view shortcuts are hardcoded (CAPTURE-phase handler in SplitViewTab)
+        # and are not customizable — show them as a read-only reference group.
+        split_group = Adw.PreferencesGroup()
+        split_group.set_title(_('Split View'))
+        split_group.set_description(_('These shortcuts are active whenever a split view tab is open. They cannot be customized.'))
+        _SPLIT_SHORTCUTS = [
+            ('Ctrl+Alt+H', _('Focus pane left')),
+            ('Ctrl+Alt+J', _('Focus pane down')),
+            ('Ctrl+Alt+K', _('Focus pane up')),
+            ('Ctrl+Alt+L', _('Focus pane right')),
+            ('Ctrl+Alt+Shift+H', _('Resize pane left')),
+            ('Ctrl+Alt+Shift+J', _('Resize pane down')),
+            ('Ctrl+Alt+Shift+K', _('Resize pane up')),
+            ('Ctrl+Alt+Shift+L', _('Resize pane right')),
+            ('Ctrl+Shift+\\', _('Side-by-side layout')),
+            ('Ctrl+Shift+-', _('Top / bottom layout')),
+            ('Ctrl+Shift+N', _('Add pane')),
+            ('Ctrl+Shift+W', _('Close focused pane')),
+            ('Alt+1 … Alt+4', _('Focus pane by number')),
+        ]
+        for accel, label in _SPLIT_SHORTCUTS:
+            row = Adw.ActionRow()
+            row.set_title(label)
+            row.set_subtitle(accel)
+            split_group.add(row)
+        try:
+            split_group.add_css_class('boxed-list')
+        except Exception:
+            pass
+        self._groups_list.append(split_group)
+        if self._shortcuts_container is not None:
+            try:
+                self._shortcuts_container.append(split_group)
+            except AttributeError:
+                self._shortcuts_container.add(split_group)
 
         self.set_pass_through_enabled(self._pass_through_enabled)
 

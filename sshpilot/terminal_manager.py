@@ -1,11 +1,13 @@
 import os
 import asyncio
 import logging
+import math
 from typing import Optional
 
+import cairo
 
 
-from gi.repository import Gio, GLib, Adw, Gdk, Gtk
+from gi.repository import Gio, GLib, Adw, Gdk, GdkPixbuf, Gtk
 from gettext import gettext as _
 
 from .terminal import TerminalWidget
@@ -298,7 +300,7 @@ class TerminalManager:
 
     def _on_pane_terminal_title_changed(self, terminal, title):
         """Title-changed handler for terminals embedded in split panes."""
-        # Title updates are reflected in the tab title via SplitViewTab._update_tab_title
+        pass  # Title updates are reflected in the tab title via SplitViewTab._update_tab_title
 
     def _resolve_group_color(self, connection):
         color_value, _ = self._resolve_group_color_and_name(connection)

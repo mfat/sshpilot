@@ -336,7 +336,7 @@ class _FilesFacade:
         return os.path.exists(self.path(rel))
 
     def read_text(self, rel: str, encoding: str = "utf-8") -> str:
-        with open(self.path(rel), encoding=encoding) as fh:
+        with open(self.path(rel), "r", encoding=encoding) as fh:
             return fh.read()
 
     def read_bytes(self, rel: str) -> bytes:

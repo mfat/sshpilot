@@ -81,7 +81,7 @@ def test_build_spawn_threads_port_key_user(monkeypatch):
                        'username': 'bob', 'port': 2222, 'keyfile': '/keys/id'})
     spec = MoshProtocolBackend().build_spawn(conn, _ctx())
     # the ssh prefix (everything after --ssh=) carries the threaded options
-    ssh_arg = next(a for a in spec.argv if a.startswith('--ssh='))
+    ssh_arg = [a for a in spec.argv if a.startswith('--ssh=')][0]
     assert '-p 2222' in ssh_arg
     assert '-i /keys/id' in ssh_arg
     assert '-l bob' in ssh_arg

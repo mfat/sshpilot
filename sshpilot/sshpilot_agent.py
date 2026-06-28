@@ -415,6 +415,7 @@ def handle_resize_signal(signum, frame):
     """Handle SIGWINCH for terminal resize"""
     # In a real implementation, we'd need to communicate resize events
     # from the UI to the agent, possibly via a control channel
+    pass
 
 
 def main():

@@ -57,7 +57,7 @@ class SessionManager:
         try:
             if not os.path.exists(self._path):
                 return
-            with open(self._path, encoding="utf-8") as handle:
+            with open(self._path, "r", encoding="utf-8") as handle:
                 data = json.load(handle)
             if not isinstance(data, dict):
                 data = {}

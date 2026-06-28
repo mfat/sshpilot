@@ -2,6 +2,7 @@ import asyncio
 import types
 
 
+from sshpilot.connection_manager import Connection
 from sshpilot import terminal as terminal_mod
 
 

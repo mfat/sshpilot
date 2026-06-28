@@ -139,8 +139,7 @@ class WindowActions:
             logger.error(f"Failed to duplicate connection: {e}")
 
     def on_open_new_connection_tab_action(self, action, param=None):
-        """Open a tab for each selected connection (the 'open-new-connection-tab'
-        action; disabled by default on Linux/Windows, assignable in Preferences)."""
+        """Open a tab for each selected connection via global shortcut (Ctrl/⌘+Alt+N)."""
         try:
             # Live selection only: a global shortcut should not inherit
             # context-menu targets.
@@ -246,6 +245,16 @@ class WindowActions:
             self.tab_view.set_selected_page(page)
         except Exception as exc:
             logger.error("Failed to open group in split view: %s", exc)
+
+    def on_manage_files_action(self, action, param=None):
+        """Handle manage files action from context menu"""
+        if hasattr(self, '_context_menu_connection') and self._context_menu_connection:
+            connection = self._context_menu_connection
+            try:
+                self._open_manage_files_for_connection(connection)
+            except Exception as e:
+                logger.error(f"Error opening file manager: {e}")
+                self._show_manage_files_error(connection.nickname, str(e))
 
     def on_copy_key_to_server_action(self, action, param=None):
         """Handle copy key to server action from context menu"""
@@ -427,6 +436,76 @@ class WindowActions:
 
         if hasattr(self, 'apply_connection_sort_preset'):
             self.apply_connection_sort_preset(preset_id)
+
+    def on_broadcast_command_action(self, action, param=None):
+        """Handle broadcast command action - shows dialog to input command"""
+        try:
+            dialog = Adw.MessageDialog(
+                transient_for=self,
+                modal=True,
+                heading=_("Broadcast Command"),
+                body=_("Enter a command to send to all open SSH terminals:"),
+            )
+
+            entry = Gtk.Entry()
+            entry.set_placeholder_text(_("e.g., ls -la"))
+            entry.set_activates_default(True)
+            entry.set_hexpand(True)
+            dialog.set_extra_child(entry)
+
+            dialog.add_response('cancel', _('Cancel'))
+            dialog.add_response('send', _('Send'))
+            dialog.set_response_appearance('send', Adw.ResponseAppearance.SUGGESTED)
+            dialog.set_default_response('send')
+            dialog.set_close_response('cancel')
+
+            def on_response(dialog, response):
+                if response == 'send':
+                    command = entry.get_text().strip()
+                    if command:
+                        sent_count, failed_count = self.terminal_manager.broadcast_command(command)
+
+                        result_dialog = Adw.MessageDialog(
+                            transient_for=self,
+                            modal=True,
+                            heading=_("Command Sent"),
+                            body=_("Command sent to {} SSH terminals. {} failed.").format(sent_count, failed_count),
+                        )
+                        result_dialog.add_response('ok', _('OK'))
+                        result_dialog.present()
+                    else:
+                        error_dialog = Adw.MessageDialog(
+                            transient_for=self,
+                            modal=True,
+                            heading=_("Error"),
+                            body=_("Please enter a command to send."),
+                        )
+                        error_dialog.add_response('ok', _('OK'))
+                        error_dialog.present()
+                dialog.destroy()
+
+            dialog.connect('response', on_response)
+            dialog.present()
+
+            def focus_entry():
+                entry.grab_focus()
+                return False
+
+            GLib.idle_add(focus_entry)
+
+        except Exception as e:
+            logger.error(f"Failed to show broadcast command dialog: {e}")
+            try:
+                error_dialog = Adw.MessageDialog(
+                    transient_for=self,
+                    modal=True,
+                    heading=_("Error"),
+                    body=_("Failed to open broadcast command dialog: {}").format(str(e)),
+                )
+                error_dialog.add_response('ok', _('OK'))
+                error_dialog.present()
+            except Exception:
+                pass
 
     def on_edit_known_hosts_action(self, action, param=None):
         """Open the known hosts editor window."""
@@ -1425,7 +1504,7 @@ class WindowActions:
         )
         for path in candidates:
             try:
-                with open(path, encoding='utf-8') as fh:
+                with open(path, 'r', encoding='utf-8') as fh:
                     raw_lines = fh.readlines()
             except OSError:
                 continue
@@ -1789,12 +1868,8 @@ def register_window_actions(window):
         cb_action.connect('activate', lambda a, p: window._toggle_command_blocks_panel())
         window.add_action(cb_action)
         app = window.get_application()
-        if app and hasattr(app, 'register_window_shortcut'):
-            # Disabled by default (Ctrl+Alt+S clashed with AltGr layouts / WM
-            # shortcuts). Stays listed/assignable in the editor and respects a
-            # user override via the normal apply path.
-            app.register_window_shortcut('toggle-command-blocks', [])
-        elif app:
+        if app:
+            app.set_accels_for_action('win.toggle-command-blocks', ['<primary><alt>s'])
             if hasattr(app, '_action_order') and 'toggle-command-blocks' not in app._action_order:
                 app._action_order.append('toggle-command-blocks')
-                app._default_shortcuts['toggle-command-blocks'] = []
+                app._default_shortcuts['toggle-command-blocks'] = ['<primary><alt>s']

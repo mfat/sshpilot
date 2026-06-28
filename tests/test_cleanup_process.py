@@ -2,6 +2,7 @@ import sys
 import types
 import signal
 
+import pytest
 
 
 def test_cleanup_process_sends_sigterm_to_pgid(monkeypatch):

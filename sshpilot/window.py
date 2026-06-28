@@ -7,12 +7,15 @@ import asyncio
 import copy
 import os
 import logging
+import math
+import posixpath
 import re
 import shlex
 import sys
 import time
 import shutil
 from datetime import datetime
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Tuple
 
@@ -22,12 +25,13 @@ gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
 try:
     gi.require_version('Vte', '3.91')
+    from gi.repository import Vte
     _HAS_VTE = True
 except Exception:
     _HAS_VTE = False
 
 gi.require_version('PangoFT2', '1.0')
-from gi.repository import Gtk, Adw, Gio, GLib, Gdk
+from gi.repository import Gtk, Adw, Gio, GLib, GObject, Gdk, Pango, PangoFT2
 import subprocess
 import threading
 
@@ -42,8 +46,8 @@ from .connection_manager import ConnectionManager, Connection, ConnectionState
 from .terminal import TerminalWidget
 from .terminal_manager import TerminalManager
 from .config import Config
-from .key_manager import KeyManager
-from .update_checker import check_for_updates_async
+from .key_manager import KeyManager, SSHKey
+from .update_checker import check_for_updates_async, get_update_url, get_platform_install_method
 from .connection_display import (
     get_connection_alias,
     get_connection_host,
@@ -57,11 +61,19 @@ from .connection_sort import (
 # Port forwarding UI is now integrated into connection_dialog.py
 from .connection_dialog import ConnectionDialog
 from .preferences import (
+    PreferencesWindow,
     should_hide_external_terminal_options,
     should_hide_file_manager_options,
 )
+from .file_manager_integration import (
+    launch_remote_file_manager,
+    create_internal_file_manager_tab,
+    has_internal_file_manager,
+    has_native_gvfs_support,
+)
+from .sftp_utils import should_use_in_app_file_manager
 from .sshcopyid_window import SshCopyIdWindow, SshCopyIdRunner
-from .scp_window import ScpWindowController
+from .scp_window import ScpWindowController, SCPConnectionProfile
 from .groups import GroupManager
 from .session_manager import SessionManager
 from .sidebar import (
@@ -81,35 +93,17 @@ from .tag_groups import (
 
 from .welcome_page import WelcomePage
 from .actions import WindowActions, register_window_actions
-from .window_broadcast import WindowBroadcastMixin
-from .window_session import WindowSessionMixin
-from .window_help import WindowHelpMixin
-from .window_file_manager import WindowFileManagerMixin
-from .window_tabs import WindowTabsMixin
-from .window_dialogs import WindowConfigDialogsMixin
 from . import shutdown
 from .search_utils import connection_matches
 from .shortcut_utils import get_primary_modifier_label
-from .platform_utils import is_macos, get_config_dir
+from .platform_utils import is_macos, get_config_dir, get_ssh_dir
 from .command_blocks import CommandBlocksPanel, CommandBlockStore
 from .context_menu import IconContextMenu
 from .plugins.api import Capability
 from .plugins.registry import capabilities_for
+from .ssh_utils import ensure_writable_ssh_home
+from .scp_utils import assemble_scp_transfer_args, classify_sftp_error, download_file, upload_file
 from .ssh_password_exec import run_ssh_with_password
-from .remote_path_utils import (
-    _format_ssh_target,
-    _normalize_remote_path,
-    _quote_remote_path_for_shell,
-)
-# Re-exported for backward compatibility: these SCP helpers used to live in
-# window.py and are still referenced as `window.<name>` (e.g. by tests). They are
-# unused within window.py itself, hence the noqa.
-from .scp_utils import (  # noqa: F401
-    assemble_scp_transfer_args,
-    classify_sftp_error,
-    download_file,
-    upload_file,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -146,6 +140,84 @@ def _ensure_tips_banner_css() -> None:
         Gtk.STYLE_PROVIDER_PRIORITY_USER,
     )
     _tips_banner_css_installed = True
+
+
+def _format_ssh_target(host: str, user: str) -> str:
+    host_component = host or ''
+    if host_component and ':' in host_component and not (
+        host_component.startswith('[') and host_component.endswith(']')
+    ):
+        host_component = f'[{host_component}]'
+    return f'{user}@{host_component}' if user else host_component
+
+
+def _normalize_remote_path(path: str) -> str:
+    text = (path or '').strip()
+    if not text:
+        return '.'
+    if text in {'.', '/', '~'}:
+        return text
+    if text.startswith('~/'):
+        trimmed = text.rstrip('/')
+        return trimmed if trimmed else '~'
+    if text.startswith('/'):
+        normalized = posixpath.normpath(text)
+        return normalized if normalized.startswith('/') else f'/{normalized}'
+    normalized = posixpath.normpath(text)
+    return normalized or '.'
+
+
+def _remote_parent(path: str) -> Optional[str]:
+    normalized = _normalize_remote_path(path)
+    if normalized in {'.', '/'}:
+        return None
+    if normalized == '~':
+        return '/'
+    if normalized.startswith('~/'):
+        parent = normalized.rsplit('/', 1)[0]
+        return parent or '~'
+    parent = posixpath.dirname(normalized.rstrip('/'))
+    if not parent:
+        return '.'
+    if parent == normalized:
+        return None
+    return parent
+
+
+def _remote_join(base: str, child: str) -> str:
+    base_normalized = _normalize_remote_path(base)
+    child = (child or '').strip()
+    if child in {'', '.'}:
+        return base_normalized
+    if child == '..':
+        parent = _remote_parent(base_normalized)
+        return parent if parent is not None else base_normalized
+    if base_normalized in {'.', ''}:
+        return _normalize_remote_path(child)
+    if base_normalized == '~':
+        return _normalize_remote_path(f"~/{child.lstrip('/')}")
+    if base_normalized == '/':
+        return _normalize_remote_path(f"/{child.lstrip('/')}")
+    return _normalize_remote_path(f"{base_normalized.rstrip('/')}/{child}")
+
+
+
+
+def _quote_remote_path_for_shell(path: str) -> str:
+    normalized = _normalize_remote_path(path)
+    if normalized == '.':
+        return '.'
+    if normalized == '/':
+        return '/'
+    if normalized == '~':
+        return '$HOME'
+    if normalized.startswith('~/'):
+        remainder = normalized[2:]
+        if not remainder:
+            return '$HOME'
+        parts = [shlex.quote(seg) for seg in remainder.split('/')]
+        return '$HOME/' + '/'.join(parts)
+    return shlex.quote(normalized)
 
 
 def list_remote_files(
@@ -749,24 +821,7 @@ _get_connection_host = get_connection_host
 _get_connection_alias = get_connection_alias
 _format_connection_host_display = format_connection_host_display
 
-
-def _effective_max_sidebar_width(saved_value, default: int = 400) -> int:
-    """Resolve the startup max sidebar width from a saved setting value.
-
-    Returns the saved width when it is a valid integer, otherwise ``default``.
-    Kept as a module-level pure function so the parsing/fallback logic is unit
-    testable without building the GTK window.
-    """
-    if saved_value is None:
-        return default
-    try:
-        return int(saved_value)
-    except (TypeError, ValueError):
-        logger.warning("Invalid ui.max-sidebar-width %r; using default %d", saved_value, default)
-        return default
-
-
-class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin, WindowHelpMixin, WindowFileManagerMixin, WindowTabsMixin, WindowConfigDialogsMixin, WindowActions):
+class MainWindow(Adw.ApplicationWindow, WindowActions):
     """Main application window"""
 
     def __init__(self, *args, isolated: bool = False, **kwargs):
@@ -1144,6 +1199,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
     def on_export_diagnostics_action(self, action=None, param=None):
         """Save a ZIP of logs + system info + redacted config for bug reports."""
+        from datetime import datetime
         file_dialog = Gtk.FileDialog()
         file_dialog.set_title(_("Export Diagnostics"))
         file_dialog.set_initial_name(
@@ -1175,6 +1231,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     logger.error("Export diagnostics failed: %s", exc, exc_info=True)
                     GLib.idle_add(self._on_export_diagnostics_done, False, str(exc), path)
 
+            import threading
             threading.Thread(target=_work, daemon=True).start()
 
         file_dialog.save(self, None, _on_save)
@@ -1859,6 +1916,15 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             pass
 
         # Tab navigation shortcuts are handled by application actions (see sshpilot/main.py)
+        
+    def on_window_size_changed(self, window, param):
+        """Handle window size changes and save the new dimensions"""
+        width = self.get_default_width()
+        height = self.get_default_height()
+        logger.debug(f"Window size changed to: {width}x{height}")
+        
+        # Save the new window geometry
+        self.config.set_window_geometry(width, height)
 
     def setup_ui(self):
         """Set up the user interface"""
@@ -1999,19 +2065,23 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         if not (HAS_NAV_SPLIT or HAS_OVERLAY_SPLIT):
             main_box.append(self.header_bar)
         
-        # Honor the saved max-sidebar-width on startup (previously it was read but
-        # ignored here, so the saved width only took effect after being changed
-        # mid-session); fall back to 400 when unset/invalid.
+        # Create main layout (fallback if split view widgets are unavailable)
+        # Load saved max-sidebar-width or use defaults
         saved_max_width = self.config.get_setting('ui.max-sidebar-width', None)
-        effective_max_width = _effective_max_sidebar_width(saved_max_width)
-
+        default_nav_max = 280
+        default_overlay_max = 280
+        if saved_max_width is not None:
+            max_width = int(saved_max_width)
+        else:
+            max_width = None
+        
         # Try OverlaySplitView first as it's more reliable
         if HAS_OVERLAY_SPLIT:
             self.split_view = Adw.OverlaySplitView()
             try:
                 self.split_view.set_sidebar_width_fraction(0.25)
                 self.split_view.set_min_sidebar_width(180)
-                self.split_view.set_max_sidebar_width(effective_max_width)
+                self.split_view.set_max_sidebar_width(400)
             except Exception:
                 pass
             self.split_view.set_vexpand(True)
@@ -2022,7 +2092,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             try:
                 self.split_view.set_sidebar_width_fraction(0.25)
                 self.split_view.set_min_sidebar_width(200)
-                self.split_view.set_max_sidebar_width(effective_max_width)
+                self.split_view.set_max_sidebar_width(400)
             except Exception:
                 pass
             self.split_view.set_vexpand(True)
@@ -2176,6 +2246,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         show_user_hostname = self.config.get_setting('ui.sidebar_show_user_hostname', True)
         show_group_count = self.config.get_setting('ui.sidebar_show_group_count', True)
         show_status = self.config.get_setting('ui.sidebar_show_connection_status', True)
+        show_port_forwarding = self.config.get_setting('ui.sidebar_show_port_forwarding', True)
         show_connection_icon = self.config.get_setting('ui.sidebar_show_connection_icon', True)
         flat_rows = self.config.get_setting('ui.sidebar_flat_rows', False)
         
@@ -2510,7 +2581,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         add_button.add_css_class('flat')
         self._expand_sidebar_toolbar_button(add_button)
         add_button.set_tooltip_text(
-            f'Add Connection ({get_primary_modifier_label()}+Shift+N)'
+            f'Add Connection ({get_primary_modifier_label()}+N)'
         )
         add_button.connect('clicked', self.on_add_connection_clicked)
         try:
@@ -2917,10 +2988,23 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     logger.debug("Simple right-click detected - showing context menu for selected row")
 
                     # Try to detect the clicked row, but fall back to selected row if detection fails
-                    row = self._pick_connection_list_row(x, y)
-                    if row is not None:
-                        logger.debug("Using clicked row for context menu")
-
+                    row = None
+                    try:
+                        # First try to find the row that was actually clicked using pick method
+                        # This is safe now because we're not doing any selection operations
+                        picked_widget = self.connection_list.pick(x, y, Gtk.PickFlags.DEFAULT)
+                        widget = picked_widget
+                        while widget is not None:
+                            if isinstance(widget, Gtk.ListBoxRow):
+                                row = widget
+                                logger.debug("Using clicked row for context menu")
+                                break
+                            widget = widget.get_parent()
+                            if widget == self.connection_list:
+                                break
+                    except Exception as e:
+                        logger.debug(f"Failed to detect clicked row: {e}")
+                    
                     # Fallback to selected row if click detection failed
                     if not row:
                         try:
@@ -3047,7 +3131,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     return
 
 
-                row = self._pick_connection_list_row(x, y)
+                row, _, _ = self._resolve_connection_list_event(x, y)
 
                 if not row:
                     try:
@@ -3297,30 +3381,199 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception as e:
             logger.error(f"Failed to toggle pin for {len(conns)} connection(s): {e}")
 
-    def _pick_connection_list_row(
-        self, x: float, y: float
-    ) -> Optional[Gtk.ListBoxRow]:
-        """Return the ListBoxRow under a pointer event on the connection list.
+    def _resolve_connection_list_event(
+        self,
+        x: float,
+        y: float,
+        scrolled_window: Optional[Gtk.ScrolledWindow] = None,
+    ) -> Tuple[Optional[Gtk.ListBoxRow], float, float]:
+        """Resolve the target row and viewport coordinates for a pointer event on the connection list."""
 
-        The coordinates come from a gesture attached to ``connection_list``
-        itself, so they are already in the ListBox's content space. ``pick()``
-        resolves the row directly with no scroll adjustment, which is why both
-        the right-click and middle-click handlers must share this path: any
-        manual vadjustment math would double-count the scroll offset and select
-        a row further down the list (see issue #1013).
-        """
         try:
-            widget = self.connection_list.pick(x, y, Gtk.PickFlags.DEFAULT)
-        except Exception as e:
-            logger.debug(f"Failed to pick connection list row: {e}")
+            event_x = float(x)
+            event_y = float(y)
+        except (TypeError, ValueError):
+            return None, 0.0, 0.0
+
+        adjusted_x = event_x
+        adjusted_y = event_y
+        hadjust_value = 0.0
+        vadjust_value = 0.0
+
+
+        if scrolled_window is None:
+            try:
+                scrolled_window = self.connection_list.get_ancestor(Gtk.ScrolledWindow)
+            except Exception:
+                scrolled_window = None
+
+        if scrolled_window is not None:
+            try:
+                hadjustment = scrolled_window.get_hadjustment()
+            except Exception:
+                hadjustment = None
+            else:
+                if hadjustment is not None:
+                    try:
+                        hadjust_value = float(hadjustment.get_value())
+                    except Exception:
+                        hadjust_value = 0.0
+                    else:
+                        adjusted_x = event_x + hadjust_value
+
+
+            try:
+                vadjustment = scrolled_window.get_vadjustment()
+            except Exception:
+                vadjustment = None
+            else:
+                if vadjustment is not None:
+                    try:
+                        vadjust_value = float(vadjustment.get_value())
+                    except Exception:
+                        vadjust_value = 0.0
+                    else:
+                        adjusted_y = event_y + vadjust_value
+
+
+        x_candidates: List[float] = [adjusted_x]
+        if not math.isclose(adjusted_x, event_x):
+            x_candidates.append(event_x)
+
+        y_candidates: List[float] = [adjusted_y]
+        if not math.isclose(adjusted_y, event_y):
+            y_candidates.append(event_y)
+
+        row: Optional[Gtk.ListBoxRow] = None
+        pointer_y_source_index = 0
+        for idx, candidate in enumerate(y_candidates):
+
+            try:
+                row = self.connection_list.get_row_at_y(int(candidate))
+            except Exception:
+                row = None
+            if row:
+                pointer_y_source_index = idx
+                break
+            row = self._connection_row_for_coordinate(candidate)
+            if row:
+                pointer_y_source_index = idx
+
+                break
+
+        if not row:
+            return None, x_candidates[0], y_candidates[0]
+
+        pointer_x_list = x_candidates[0]
+        pointer_y_list = y_candidates[pointer_y_source_index]
+
+        pointer_x_viewport = event_x
+        pointer_y_viewport = event_y
+
+        try:
+            allocation = row.get_allocation()
+        except Exception:
+            allocation = None
+
+        if allocation is not None:
+            try:
+                row_left = float(allocation.x)
+                row_top = float(allocation.y)
+                row_right = row_left + max(float(allocation.width) - 1.0, 0.0)
+                row_bottom = row_top + max(float(allocation.height) - 1.0, 0.0)
+            except Exception:
+                row_left = row_top = 0.0
+                row_right = row_bottom = 0.0
+
+
+            if row_right < row_left:
+                row_right = row_left
+            if row_bottom < row_top:
+                row_bottom = row_top
+
+            row_left_viewport = row_left - hadjust_value
+            row_right_viewport = row_right - hadjust_value
+            row_top_viewport = row_top - vadjust_value
+            row_bottom_viewport = row_bottom - vadjust_value
+
+            if row_left_viewport > row_right_viewport:
+                row_left_viewport, row_right_viewport = row_right_viewport, row_left_viewport
+            if row_top_viewport > row_bottom_viewport:
+                row_top_viewport, row_bottom_viewport = row_bottom_viewport, row_top_viewport
+
+            pointer_x_candidates: List[float] = [pointer_x_viewport]
+            pointer_x_from_list = pointer_x_list - hadjust_value
+            if not math.isclose(pointer_x_from_list, pointer_x_viewport):
+                pointer_x_candidates.append(pointer_x_from_list)
+            event_x_minus_adjust = event_x - hadjust_value
+            if hadjust_value and not math.isclose(event_x_minus_adjust, pointer_x_from_list):
+                pointer_x_candidates.append(event_x_minus_adjust)
+
+            for candidate in pointer_x_candidates:
+                if row_left_viewport <= candidate <= row_right_viewport:
+                    pointer_x_viewport = candidate
+                    break
+            else:
+                midpoint_x = row_left_viewport + (row_right_viewport - row_left_viewport) / 2.0
+                if row_left_viewport <= row_right_viewport:
+                    pointer_x_viewport = max(
+                        row_left_viewport, min(pointer_x_viewport, row_right_viewport)
+                    )
+                else:
+                    pointer_x_viewport = midpoint_x
+
+            pointer_y_candidates: List[float] = [pointer_y_viewport]
+            pointer_y_from_list = pointer_y_list - vadjust_value
+            if not math.isclose(pointer_y_from_list, pointer_y_viewport):
+                pointer_y_candidates.append(pointer_y_from_list)
+            event_y_minus_adjust = event_y - vadjust_value
+            if vadjust_value and not math.isclose(event_y_minus_adjust, pointer_y_from_list):
+                pointer_y_candidates.append(event_y_minus_adjust)
+
+            for candidate in pointer_y_candidates:
+                if row_top_viewport <= candidate <= row_bottom_viewport:
+                    pointer_y_viewport = candidate
+                    break
+            else:
+                midpoint_y = row_top_viewport + (row_bottom_viewport - row_top_viewport) / 2.0
+                if row_top_viewport <= row_bottom_viewport:
+                    pointer_y_viewport = max(
+                        row_top_viewport, min(pointer_y_viewport, row_bottom_viewport)
+                    )
+                else:
+                    pointer_y_viewport = midpoint_y
+
+        return row, pointer_x_viewport, pointer_y_viewport
+
+
+    def _connection_row_for_coordinate(self, coord: float) -> Optional[Gtk.ListBoxRow]:
+        """Return the listbox row whose allocation includes the given list-space coordinate."""
+        try:
+            target = float(coord)
+        except (TypeError, ValueError):
             return None
 
-        while widget is not None:
-            if isinstance(widget, Gtk.ListBoxRow):
-                return widget
-            if widget == self.connection_list:
+        try:
+            child = self.connection_list.get_first_child()
+        except Exception:
+            return None
+
+        while child is not None:
+            try:
+                if isinstance(child, Gtk.ListBoxRow):
+                    allocation = child.get_allocation()
+                    row_top = allocation.y
+                    row_bottom = allocation.y + max(allocation.height - 1, 0)
+                    if row_bottom < row_top:
+                        row_bottom = row_top
+                    if row_top <= target <= row_bottom:
+                        return child
+            except Exception:
+                pass
+            try:
+                child = child.get_next_sibling()
+            except Exception:
                 break
-            widget = widget.get_parent()
 
         return None
 
@@ -3632,7 +3885,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         from sshpilot import icon_utils as _iu
         self.split_view_button = Gtk.Button()
         _iu.set_button_icon(self.split_view_button, 'view-grid-symbolic')
-        self.split_view_button.set_tooltip_text(_('New Split View'))
+        from .shortcut_utils import get_primary_modifier_label as _gpm
+        self.split_view_button.set_tooltip_text(
+            _('New Split View ({primary}+Shift+S)').format(primary=_gpm())
+        )
         self.split_view_button.add_css_class('flat')
         self.split_view_button.connect('clicked', self.on_open_split_view_clicked)
         self.header_bar.pack_start(self.split_view_button)
@@ -3649,7 +3905,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._cmd_blocks_toggle_btn = Gtk.ToggleButton()
         _cmd_icon_utils.set_button_icon(self._cmd_blocks_toggle_btn, 'system-run-symbolic')
         self._cmd_blocks_toggle_btn.add_css_class('flat')
-        self._cmd_blocks_toggle_btn.set_tooltip_text(_('Commands'))
+        self._cmd_blocks_toggle_btn.set_tooltip_text(_('Commands (Ctrl+Alt+S)'))
         self._updating_cmd_toggle = False
 
         def _on_cmd_toggle_btn_toggled(btn):
@@ -4449,7 +4705,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 
                 # Show toast notification
                 toast = Adw.Toast.new(
-                    f"Switched to connection list — ↑/↓ navigate, Enter open, {get_primary_modifier_label()}+Enter new tab"
+                    f"Switched to connection list — ↑/↓ navigate, Enter open, {get_primary_modifier_label()}+Enter new tab, {get_primary_modifier_label()}+Shift+L back to terminal"
                 )
                 toast.set_timeout(3)  # seconds
                 if hasattr(self, 'toast_overlay'):
@@ -5082,7 +5338,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
                 except Exception as e:
                     logger.error(f"SshCopyIdWindow: Generate and copy failed: {e}")
-                    logger.debug(f"SshCopyIdWindow: Exception details: {type(e).__name__}: {e!s}")
+                    logger.debug(f"SshCopyIdWindow: Exception details: {type(e).__name__}: {str(e)}")
                     self._error("Generate & Copy failed",
                                 "Could not generate a new key and copy it to the server.",
                                 str(e))
@@ -5134,7 +5390,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             win.present()
         except Exception as e:
             logger.error(f"Main window: ssh-copy-id window failed: {e}")
-            logger.debug(f"Main window: Exception details: {type(e).__name__}: {e!s}")
+            logger.debug(f"Main window: Exception details: {type(e).__name__}: {str(e)}")
             # Fallback error if window cannot be created
             try:
                 md = Adw.MessageDialog(transient_for=self, modal=True,
@@ -5144,6 +5400,630 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 md.present()
             except Exception:
                 pass
+
+    def show_known_hosts_editor(self):
+        """Show known hosts editor window"""
+        logger.info("Show known hosts editor window")
+        try:
+            from .known_hosts_editor import KnownHostsEditorWindow
+            editor = KnownHostsEditorWindow(self, self.connection_manager)
+            editor.present()
+        except Exception as e:
+            logger.error(f"Failed to open known hosts editor: {e}")
+
+    def show_preferences(self):
+        """Show preferences dialog"""
+        logger.info("Show preferences dialog")
+        existing = getattr(self, '_preferences_window', None)
+        if existing is not None:
+            try:
+                existing.present()
+                return
+            except Exception:
+                self._preferences_window = None
+        try:
+            preferences_window = PreferencesWindow(self, self.config)
+            self._preferences_window = preferences_window
+            preferences_window.connect(
+                'close-request',
+                lambda _w: (setattr(self, '_preferences_window', None), False)[1],
+            )
+            preferences_window.present()
+        except Exception as e:
+            logger.error(f"Failed to show preferences dialog: {e}")
+
+    def show_export_dialog(self):
+        """Show export configuration dialog"""
+        logger.info("Show export configuration dialog")
+        try:
+            from .backup_manager import BackupManager
+            
+            # Create file chooser dialog for saving
+            file_dialog = Gtk.FileDialog()
+            file_dialog.set_title(_("Export Configuration"))
+            file_dialog.set_initial_name(f"sshpilot_config_{datetime.now().strftime('%Y%m%d')}.json")
+            
+            # Set default folder to user's documents or home
+            try:
+                docs_path = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOCUMENTS)
+                if docs_path:
+                    file_dialog.set_initial_folder(Gio.File.new_for_path(docs_path))
+            except Exception:
+                pass
+            
+            def on_save_response(dialog, result):
+                try:
+                    file = dialog.save_finish(result)
+                    if file:
+                        export_path = file.get_path()
+                        
+                        # Perform export
+                        backup_mgr = BackupManager(self.config, self.connection_manager)
+                        success, error = backup_mgr.export_configuration(export_path)
+                        
+                        if success:
+                            # Show success dialog
+                            success_dialog = Adw.MessageDialog(
+                                transient_for=self,
+                                modal=True,
+                                heading=_("Export Successful"),
+                                body=_("Configuration exported successfully to:\n{}").format(export_path)
+                            )
+                            success_dialog.add_response('ok', _('OK'))
+                            success_dialog.present()
+                        else:
+                            # Show error dialog
+                            error_dialog = Adw.MessageDialog(
+                                transient_for=self,
+                                modal=True,
+                                heading=_("Export Failed"),
+                                body=_("Failed to export configuration:\n{}").format(error or "Unknown error")
+                            )
+                            error_dialog.add_response('ok', _('OK'))
+                            error_dialog.present()
+                            
+                except GLib.Error as e:
+                    # Check if user cancelled the dialog (error code 2 = GTK_DIALOG_ERROR_DISMISSED)
+                    if e.code == 2:
+                        logger.info("Export cancelled by user")
+                    else:
+                        logger.error(f"Export failed: {e}")
+                        error_dialog = Adw.MessageDialog(
+                            transient_for=self,
+                            modal=True,
+                            heading=_("Export Failed"),
+                            body=_("An error occurred during export:\n{}").format(str(e))
+                        )
+                        error_dialog.add_response('ok', _('OK'))
+                        error_dialog.present()
+                except Exception as e:
+                    logger.error(f"Export failed: {e}")
+                    error_dialog = Adw.MessageDialog(
+                        transient_for=self,
+                        modal=True,
+                        heading=_("Export Failed"),
+                        body=_("An error occurred during export:\n{}").format(str(e))
+                    )
+                    error_dialog.add_response('ok', _('OK'))
+                    error_dialog.present()
+            
+            file_dialog.save(self, None, on_save_response)
+            
+        except Exception as e:
+            logger.error(f"Failed to show export dialog: {e}")
+
+    def show_import_dialog(self):
+        """Show import configuration dialog"""
+        logger.info("Show import configuration dialog")
+        try:
+            # Create file chooser dialog for opening
+            file_dialog = Gtk.FileDialog()
+            file_dialog.set_title(_("Import Configuration"))
+            
+            # Set file filter for JSON files
+            filter_json = Gtk.FileFilter()
+            filter_json.set_name(_("JSON files"))
+            filter_json.add_mime_type("application/json")
+            filter_json.add_pattern("*.json")
+            
+            filter_all = Gtk.FileFilter()
+            filter_all.set_name(_("All files"))
+            filter_all.add_pattern("*")
+            
+            filters = Gio.ListStore.new(Gtk.FileFilter)
+            filters.append(filter_json)
+            filters.append(filter_all)
+            file_dialog.set_filters(filters)
+            file_dialog.set_default_filter(filter_json)
+            
+            # Set default folder to user's documents or home
+            try:
+                docs_path = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOCUMENTS)
+                if docs_path:
+                    file_dialog.set_initial_folder(Gio.File.new_for_path(docs_path))
+            except Exception:
+                pass
+            
+            def on_open_response(dialog, result):
+                try:
+                    file = dialog.open_finish(result)
+                    if file:
+                        import_path = file.get_path()
+                        # Show import mode selection dialog
+                        self._show_import_mode_dialog(import_path)
+                        
+                except GLib.Error as e:
+                    # Check if user cancelled the dialog (error code 2 = GTK_DIALOG_ERROR_DISMISSED)
+                    if e.code == 2:
+                        logger.info("Import cancelled by user")
+                    else:
+                        logger.error(f"Import file selection failed: {e}")
+                except Exception as e:
+                    logger.error(f"Import file selection failed: {e}")
+            
+            file_dialog.open(self, None, on_open_response)
+            
+        except Exception as e:
+            logger.error(f"Failed to show import dialog: {e}")
+
+    def _show_import_mode_dialog(self, import_path: str):
+        """Show dialog to select import mode (replace or merge)"""
+        try:
+            dialog = Adw.MessageDialog(
+                transient_for=self,
+                modal=True,
+                heading=_("Import Configuration"),
+                body=_("Choose how to import the configuration:")
+            )
+            
+            # Create content box with radio buttons
+            content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+            content_box.set_margin_start(20)
+            content_box.set_margin_end(20)
+            content_box.set_margin_top(20)
+            content_box.set_margin_bottom(20)
+            
+            # Replace mode radio
+            replace_radio = Gtk.CheckButton()
+            replace_radio.set_label(_("Replace current configuration"))
+            replace_radio.set_active(True)
+            content_box.append(replace_radio)
+            
+            replace_desc = Gtk.Label()
+            replace_desc.set_markup(_("<small>All current settings will be replaced with imported configuration</small>"))
+            replace_desc.set_xalign(0)
+            replace_desc.set_margin_start(24)
+            replace_desc.add_css_class('dim-label')
+            content_box.append(replace_desc)
+            
+            # Merge mode radio
+            merge_radio = Gtk.CheckButton()
+            merge_radio.set_label(_("Merge with current configuration"))
+            merge_radio.set_group(replace_radio)
+            content_box.append(merge_radio)
+            
+            merge_desc = Gtk.Label()
+            merge_desc.set_markup(_("<small>Add new connections and groups, preserve existing ones</small>"))
+            merge_desc.set_xalign(0)
+            merge_desc.set_margin_start(24)
+            merge_desc.add_css_class('dim-label')
+            content_box.append(merge_desc)
+            
+            # Warning label
+            from sshpilot import icon_utils
+            warning_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            warning_box.set_margin_top(12)
+            warning_icon = icon_utils.new_image_from_icon_name('dialog-warning-symbolic')
+            warning_box.append(warning_icon)
+            warning_label = Gtk.Label()
+            backup_dir = os.path.join(get_config_dir(), 'backups')
+            warning_label.set_markup(_("<small>A backup will be created automatically before importing.\nBackup location: {}</small>").format(backup_dir))
+            warning_label.set_wrap(True)
+            warning_label.set_xalign(0)
+            warning_label.add_css_class('dim-label')
+            warning_box.append(warning_label)
+            content_box.append(warning_box)
+            
+            dialog.set_extra_child(content_box)
+            
+            dialog.add_response('cancel', _('Cancel'))
+            dialog.add_response('import', _('Import'))
+            dialog.set_response_appearance('import', Adw.ResponseAppearance.SUGGESTED)
+            dialog.set_default_response('import')
+            dialog.set_close_response('cancel')
+            
+            def on_response(dialog, response):
+                if response == 'import':
+                    mode = 'replace' if replace_radio.get_active() else 'merge'
+                    self._perform_import(import_path, mode)
+                dialog.destroy()
+            
+            dialog.connect('response', on_response)
+            dialog.present()
+            
+        except Exception as e:
+            logger.error(f"Failed to show import mode dialog: {e}")
+
+    def _perform_import(self, import_path: str, mode: str):
+        """Perform the actual import operation"""
+        try:
+            from .backup_manager import BackupManager
+            
+            backup_mgr = BackupManager(self.config, self.connection_manager)
+            success, error = backup_mgr.import_configuration(import_path, mode=mode, create_backup=True)
+            
+            if success:
+                # Show success dialog with restart suggestion
+                success_dialog = Adw.MessageDialog(
+                    transient_for=self,
+                    modal=True,
+                    heading=_("Import Successful"),
+                    body=_("Configuration imported successfully.\n\nIt is recommended to restart SSH Pilot for all changes to take effect.")
+                )
+                success_dialog.add_response('ok', _('OK'))
+                success_dialog.add_response('restart', _('Restart Now'))
+                success_dialog.set_response_appearance('restart', Adw.ResponseAppearance.SUGGESTED)
+                
+                def on_success_response(dialog, response):
+                    if response == 'restart':
+                        # Reload the connection list and config
+                        try:
+                            self.config.config_data = self.config.load_json_config()
+                            if self.connection_manager:
+                                self.connection_manager.load_ssh_config()
+                            # Reload group manager to pick up imported groups and colors
+                            if self.group_manager:
+                                self.group_manager._load_groups()
+                            self.rebuild_connection_list()
+                            
+                            # Show confirmation
+                            self.toast_overlay.add_toast(Adw.Toast.new(_("Configuration reloaded")))
+                        except Exception as e:
+                            logger.error(f"Failed to reload configuration: {e}")
+                    dialog.destroy()
+                
+                success_dialog.connect('response', on_success_response)
+                success_dialog.present()
+            else:
+                # Show error dialog
+                error_dialog = Adw.MessageDialog(
+                    transient_for=self,
+                    modal=True,
+                    heading=_("Import Failed"),
+                    body=_("Failed to import configuration:\n{}").format(error or "Unknown error")
+                )
+                error_dialog.add_response('ok', _('OK'))
+                error_dialog.present()
+                
+        except Exception as e:
+            logger.error(f"Import failed: {e}")
+            error_dialog = Adw.MessageDialog(
+                transient_for=self,
+                modal=True,
+                heading=_("Import Failed"),
+                body=_("An error occurred during import:\n{}").format(str(e))
+            )
+            error_dialog.add_response('ok', _('OK'))
+            error_dialog.present()
+
+    def show_about_dialog(self):
+        """Show about dialog"""
+        # Use Adw.AboutDialog to get support-url and issue-url properties
+        about = Adw.AboutDialog()
+        about.set_application_name('SSH Pilot')
+        try:
+            from . import __version__ as APP_VERSION
+        except Exception:
+            APP_VERSION = "0.0.0"
+        about.set_version(APP_VERSION)
+        about.set_application_icon('io.github.mfat.sshpilot')
+        about.set_license_type(Gtk.License.GPL_3_0)
+        about.set_website('https://sshpilot.app')
+        about.set_issue_url('https://github.com/mfat/sshpilot/issues')
+        about.set_copyright('© 2025 mFat')
+        about.set_developers(['mFat <newmfat@gmail.com>'])
+        about.set_translator_credits('')
+        
+        # Present the dialog as a child of this window
+        about.present(self)
+
+    def open_help_url(self):
+        """Open the SSH Pilot wiki using a portal-friendly launcher."""
+        url = "https://github.com/mfat/sshpilot/wiki"
+        try:
+            Gio.AppInfo.launch_default_for_uri(url, None)
+            logger.info("Opened help URL via default handler: %s", url)
+            return
+        except Exception as exc:
+            logger.debug("Portal-friendly launcher failed for %s: %s", url, exc)
+
+        # Fall back to old webbrowser module as a last resort
+        try:
+            import webbrowser
+
+            if not webbrowser.open(url):
+                raise RuntimeError("webbrowser.open returned False")
+            logger.info("Opened help URL via webbrowser fallback: %s", url)
+            return
+        except Exception as exc:
+            logger.error("Failed to open help URL: %s", exc)
+
+        # Display a minimal error dialog if all launchers fail
+        try:
+            dialog = Gtk.MessageDialog(
+                transient_for=self,
+                modal=True,
+                message_type=Gtk.MessageType.ERROR,
+                buttons=Gtk.ButtonsType.OK,
+                text="Failed to open help",
+                secondary_text=f"Please open this page manually:\n{url}"
+            )
+            dialog.present()
+        except Exception:
+            pass
+
+    def show_shortcuts_window(self):
+        """Display keyboard shortcuts using Gtk.ShortcutsWindow"""
+        # Always rebuild to show current shortcuts (including user customizations)
+        self._shortcuts_window = self._build_shortcuts_window()
+        try:
+            self.set_help_overlay(self._shortcuts_window)
+        except Exception:
+            pass
+        self._shortcuts_window.present()
+
+    def _build_shortcuts_window(self):
+        mac = is_macos()
+        primary = '<Meta>' if mac else '<primary>'
+
+        win = Gtk.ShortcutsWindow(transient_for=self, modal=True)
+        win.set_title(_('Keyboard Shortcuts'))
+
+        # Don't set custom titlebar for ShortcutsWindow to avoid GTK stack issues
+        # The edit shortcuts functionality can be accessed via the main menu instead
+
+        section = Gtk.ShortcutsSection()
+        section.set_property('title', _('Keyboard Shortcuts'))
+
+        # Use enhanced static shortcuts that can show customizations without causing crashes
+        self._add_safe_current_shortcuts(section, primary)
+
+        win.add_section(section)
+        return win
+
+    def _add_safe_current_shortcuts(self, section, primary):
+        """Add shortcuts with current customizations using a safe approach"""
+        # Get current shortcuts safely
+        current_shortcuts = self._get_safe_current_shortcuts()
+        
+        # General shortcuts group
+        group_general = Gtk.ShortcutsGroup()
+
+        # Add general shortcuts with current values
+        general_actions = [
+            ('toggle_sidebar', _('Toggle Sidebar')),
+            ('quit', _('Quit')),
+            ('preferences', _('Settings')),
+            ('help', _('Documentation')),
+            ('shortcuts', _('Keyboard Shortcuts')),
+            ('edit-ssh-config', _('SSH Config Editor')),
+        ]
+        
+        for action_name, title in general_actions:
+            shortcuts = current_shortcuts.get(action_name)
+            if shortcuts:
+                accelerator = ' '.join(shortcuts)
+                group_general.add_shortcut(Gtk.ShortcutsShortcut(
+                    title=title, accelerator=accelerator))
+        
+        section.add_group(group_general)
+
+        # Connection management shortcuts
+        group_connections = Gtk.ShortcutsGroup()
+        connection_actions = [
+            ('new-connection', _('New Connection')),
+            ('search', _('Search Connections')),
+            ('toggle-list', _('Focus Connection List')),
+            ('open-new-connection-tab', _('Open New Tab')),
+            ('new-key', _('Copy Key to Server')),
+            ('manage-files', _('Manage Files')),
+        ]
+        
+        for action_name, title in connection_actions:
+            shortcuts = current_shortcuts.get(action_name)
+            if shortcuts:
+                accelerator = ' '.join(shortcuts)
+                group_connections.add_shortcut(Gtk.ShortcutsShortcut(
+                    title=title, accelerator=accelerator))
+        
+        section.add_group(group_connections)
+
+        # Terminal shortcuts
+        group_terminal = Gtk.ShortcutsGroup()
+        terminal_actions = [
+            ('local-terminal', _('Local Terminal')),
+            ('terminal-search', _('Search in Terminal')),
+            ('broadcast-command', _('Broadcast Command')),
+        ]
+
+        for action_name, title in terminal_actions:
+            shortcuts = current_shortcuts.get(action_name)
+            if shortcuts:
+                accelerator = ' '.join(shortcuts)
+                group_terminal.add_shortcut(Gtk.ShortcutsShortcut(
+                    title=title, accelerator=accelerator))
+        
+        section.add_group(group_terminal)
+
+        # Tab navigation shortcuts
+        group_tabs = Gtk.ShortcutsGroup()
+        tab_actions = [
+            ('tab-next', _('Next Tab')),
+            ('tab-prev', _('Previous Tab')),
+            ('tab-move-left', _('Move Tab Left')),
+            ('tab-move-right', _('Move Tab Right')),
+            ('tab-close', _('Close Tab')),
+            ('tab-overview', _('Tab Overview')),
+            ('new-split-view-tab', _('New Split View Tab')),
+        ]
+        
+        for action_name, title in tab_actions:
+            shortcuts = current_shortcuts.get(action_name)
+            if shortcuts:
+                accelerator = ' '.join(shortcuts)
+                group_tabs.add_shortcut(Gtk.ShortcutsShortcut(
+                    title=title, accelerator=accelerator))
+        
+        section.add_group(group_tabs)
+
+        # Split view shortcuts (hardcoded — not registered as actions)
+        group_split = Gtk.ShortcutsGroup(title=_('Split View'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Focus pane left'), accelerator='<Ctrl><Alt>h'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Focus pane down'), accelerator='<Ctrl><Alt>j'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Focus pane up'), accelerator='<Ctrl><Alt>k'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Focus pane right'), accelerator='<Ctrl><Alt>l'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Resize pane left'), accelerator='<Ctrl><Alt><Shift>h'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Resize pane down'), accelerator='<Ctrl><Alt><Shift>j'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Resize pane up'), accelerator='<Ctrl><Alt><Shift>k'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Resize pane right'), accelerator='<Ctrl><Alt><Shift>l'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Side-by-side layout'), accelerator='<Ctrl><Shift>backslash'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Top / bottom layout'), accelerator='<Ctrl><Shift>minus'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Add pane'), accelerator='<Ctrl><Shift>n'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Close focused pane'), accelerator='<Ctrl><Shift>w'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Focus pane 1–4'), accelerator='<Alt>1'))
+        section.add_group(group_split)
+
+    def _get_safe_current_shortcuts(self):
+        """Safely get current shortcuts including customizations"""
+        shortcuts = {}
+        try:
+            app = self.get_application()
+            if not app:
+                return shortcuts
+            
+            # Get defaults first
+            if hasattr(app, 'get_registered_shortcut_defaults'):
+                defaults = app.get_registered_shortcut_defaults()
+                shortcuts.update(defaults)
+            
+            # Apply overrides
+            if hasattr(app, 'config') and app.config:
+                for action_name in shortcuts.keys():
+                    try:
+                        override = app.config.get_shortcut_override(action_name)
+                        if override is not None:
+                            if override:  # Not empty
+                                shortcuts[action_name] = override
+                            else:  # Disabled
+                                shortcuts.pop(action_name, None)
+                    except Exception:
+                        continue
+            
+        except Exception as e:
+            logger.debug(f"Error getting current shortcuts: {e}")
+        
+        return shortcuts
+
+    def _add_fallback_shortcuts(self, section, primary):
+        """Add fallback static shortcuts if dynamic generation fails"""
+        # General shortcuts
+        group_general = Gtk.ShortcutsGroup()
+        group_general.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Toggle Sidebar'), accelerator='F9'))
+        group_general.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('SSH Config Editor'), accelerator=f"{primary}<Shift>e"))
+        group_general.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Settings'), accelerator=f"{primary}comma"))
+        group_general.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Documentation'), accelerator='F1'))
+        group_general.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Keyboard Shortcuts'), accelerator=f"{primary}question"))
+        group_general.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Quit'), accelerator=f"{primary}<Shift>q"))
+        section.add_group(group_general)
+
+        # Connection management shortcuts
+        group_connections = Gtk.ShortcutsGroup()
+        group_connections.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('New Connection'), accelerator=f"{primary}n"))
+        group_connections.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Search Connections'), accelerator=f"{primary}f"))
+        group_connections.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Focus Connection List'), accelerator=f"{primary}<Shift>l"))
+        group_connections.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Manage Files'), accelerator=f"{primary}<Shift>o"))
+        section.add_group(group_connections)
+
+        # Terminal shortcuts
+        group_terminal = Gtk.ShortcutsGroup()
+        group_terminal.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Local Terminal'), accelerator=f"{primary}<Shift>t"))
+        group_terminal.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Search in Terminal'), accelerator=f"{primary}<Shift>f"))
+        group_terminal.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Broadcast Command'), accelerator=f"{primary}<Shift>b"))
+        section.add_group(group_terminal)
+
+        # Tab navigation shortcuts
+        group_tabs = Gtk.ShortcutsGroup()
+        group_tabs.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Open New Tab'), accelerator=f"{primary}<Alt>n"))
+        group_tabs.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Next Tab'), accelerator=f"{primary}Page_Down"))
+        group_tabs.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Previous Tab'), accelerator=f"{primary}Page_Up"))
+        group_tabs.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Move Tab Left'), accelerator=f"{primary}<Shift>Page_Up"))
+        group_tabs.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Move Tab Right'), accelerator=f"{primary}<Shift>Page_Down"))
+        group_tabs.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Close Tab'), accelerator=f"{primary}<Shift>w"))
+        group_tabs.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Tab Overview'), accelerator=f"{primary}<Shift>Tab"))
+        section.add_group(group_tabs)
+
+        # Split view shortcuts
+        group_split = Gtk.ShortcutsGroup(title=_('Split View'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Focus pane left'), accelerator='<Ctrl><Alt>h'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Focus pane down'), accelerator='<Ctrl><Alt>j'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Focus pane up'), accelerator='<Ctrl><Alt>k'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Focus pane right'), accelerator='<Ctrl><Alt>l'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Resize pane left'), accelerator='<Ctrl><Alt><Shift>h'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Resize pane down'), accelerator='<Ctrl><Alt><Shift>j'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Resize pane up'), accelerator='<Ctrl><Alt><Shift>k'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Resize pane right'), accelerator='<Ctrl><Alt><Shift>l'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Side-by-side layout'), accelerator='<Ctrl><Shift>backslash'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Top / bottom layout'), accelerator='<Ctrl><Shift>minus'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Add pane'), accelerator='<Ctrl><Shift>n'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Close focused pane'), accelerator='<Ctrl><Shift>w'))
+        group_split.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Focus pane 1–4'), accelerator='<Alt>1'))
+        section.add_group(group_split)
 
     def toggle_list_focus(self):
         """Toggle focus between connection list and terminal"""
@@ -5219,6 +6099,40 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
 
     # Signal handlers
+    def on_connection_click(self, gesture, n_press, x, y):
+        """Handle clicks on the connection list"""
+        # Get the row that was clicked
+        row, _, _ = self._resolve_connection_list_event(x, y)
+        if row is None:
+            return
+
+        if n_press == 1:  # Single click - just select
+            try:
+                self.connection_list.grab_focus()
+            except Exception:
+                pass
+            try:
+                state = gesture.get_current_event_state()
+            except Exception:
+                state = 0
+
+            multi_mask = (
+                Gdk.ModifierType.CONTROL_MASK
+                | Gdk.ModifierType.SHIFT_MASK
+                | getattr(Gdk.ModifierType, 'PRIMARY_ACCELERATOR_MASK', 0)
+            )
+
+            if state & multi_mask:
+                # Allow default multi-selection behavior
+                return
+
+            self._select_only_row(row)
+            gesture.set_state(Gtk.EventSequenceState.CLAIMED)
+        elif n_press == 2:  # Double click - connect
+            if hasattr(row, 'connection'):
+                self._cycle_connection_tabs_or_open(row.connection)
+            gesture.set_state(Gtk.EventSequenceState.CLAIMED)
+
     def on_connection_activated(self, list_box, row):
         """Handle connection activation (Enter key)"""
         self._return_to_tab_view_if_welcome()
@@ -5796,10 +6710,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     def on_delete_connection_response(self, dialog, response, payload):
         """Handle delete connection dialog response"""
         try:
+            neighbor_row = None
             connections: List[Connection]
 
             if isinstance(payload, dict):
                 connections = payload.get('connections', []) or []
+                neighbor_row = payload.get('neighbor_row')
             elif isinstance(payload, (list, tuple)):
                 connections = list(payload)
             else:
@@ -5819,6 +6735,1222 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             # Let the connection removal handler manage the UI state
         except Exception as e:
             logger.error(f"Failed to delete connections: {e}")
+
+    def _on_tab_close_confirmed(self, dialog, response_id, tab_view, page):
+        """Handle response from tab close confirmation dialog"""
+        dialog.destroy()
+        if response_id == 'close':
+            self._close_tab(tab_view, page)
+        # If cancelled, do nothing - the tab remains open
+    
+    def _close_tab(self, tab_view, page):
+        """Close the tab and clean up resources"""
+        if hasattr(page, 'get_child'):
+            child = page.get_child()
+            if hasattr(child, 'disconnect'):
+                # Get the connection associated with this terminal using reverse map
+                connection = self.terminal_to_connection.get(child)
+                # Disconnect the terminal
+                child.disconnect()
+                # Clean up multi-tab tracking maps
+                try:
+                    if connection is not None:
+                        # Remove from list for this connection
+                        if connection in self.connection_to_terminals and child in self.connection_to_terminals[connection]:
+                            self.connection_to_terminals[connection].remove(child)
+                            if not self.connection_to_terminals[connection]:
+                                del self.connection_to_terminals[connection]
+                        # Update most-recent mapping
+                        if connection in self.active_terminals and self.active_terminals[connection] is child:
+                            remaining = self.connection_to_terminals.get(connection)
+                            if remaining:
+                                self.active_terminals[connection] = remaining[-1]
+                            else:
+                                del self.active_terminals[connection]
+                    if child in self.terminal_to_connection:
+                        del self.terminal_to_connection[child]
+                except Exception:
+                    pass
+        
+        # Close the tab page
+        tab_view.close_page(page)
+        
+        # Update the UI based on the number of remaining tabs
+        GLib.idle_add(self._update_ui_after_tab_close)
+    
+    def _on_tab_bar_pressed(self, gesture, n_press, x, y):
+        if n_press != 2:
+            return
+        page = self.tab_view.get_selected_page()
+        if page and not self._is_start_tab_page(page):
+            self._show_tab_rename_popover(page, x, y)
+
+    def _show_tab_rename_popover(self, page, x, y):
+        entry = Gtk.Entry()
+        entry.set_text(page.get_title())
+        entry.set_width_chars(24)
+
+        popover = Gtk.Popover()
+        popover.set_child(entry)
+        popover.set_parent(self.tab_bar)
+        popover.set_has_arrow(False)
+
+        rect = Gdk.Rectangle()
+        rect.x, rect.y, rect.width, rect.height = int(x), int(y), 1, 1
+        popover.set_pointing_to(rect)
+        popover._committed = False
+
+        def commit(_entry):
+            if not popover._committed:
+                popover._committed = True
+                self._apply_tab_title(page, entry.get_text().strip())
+            popover.popdown()
+
+        def on_closed(p):
+            if not p._committed:
+                self._apply_tab_title(page, entry.get_text().strip())
+
+        entry.connect('activate', commit)
+        popover.connect('closed', on_closed)
+        popover.popup()
+        GLib.idle_add(lambda: (entry.grab_focus(), entry.select_region(0, -1), False)[-1])
+
+    def _apply_tab_title(self, page, title):
+        if title:
+            page.set_title(title)
+            page.custom_tab_title = title
+        else:
+            page.custom_tab_title = None
+            terminal = page.get_child()
+            if hasattr(terminal, 'connection'):
+                page.set_title(terminal.connection.nickname)
+
+    # ── tab context menu (right-click) ─────────────────────────────────────────
+
+    # All tab-menu action names, in display order within their sections.
+    _TAB_MENU_ACTIONS = (
+        'tabmenu-duplicate', 'tabmenu-rename',
+        'tabmenu-reconnect', 'tabmenu-manage-files',
+        'tabmenu-open-system-terminal', 'tabmenu-new-local',
+        'tabmenu-fm-new-window',
+        'tabmenu-layout-horizontal', 'tabmenu-layout-vertical',
+        'tabmenu-layout-default', 'tabmenu-layout-compact',
+        'tabmenu-close', 'tabmenu-close-others', 'tabmenu-close-right',
+    )
+
+    def _build_tab_context_menus(self) -> None:
+        """Build the single tab context menu model and register its actions.
+
+        AdwTabBox builds the popover once from this model and caches it, so the
+        same model serves every tab type. Per-tab differences are produced by
+        enabling only the relevant actions in _on_tab_setup_menu; every item
+        carries hidden-when="action-disabled" so disabled items vanish rather
+        than grey out. Each win.<name> action operates on the right-clicked
+        page captured in setup-menu (self._tab_menu_page).
+        """
+        handlers = {
+            'tabmenu-duplicate': self._on_tabmenu_duplicate,
+            'tabmenu-rename': self._on_tabmenu_rename,
+            'tabmenu-reconnect': self._on_tabmenu_reconnect,
+            'tabmenu-manage-files': self._on_tabmenu_manage_files,
+            'tabmenu-open-system-terminal': self._on_tabmenu_open_system_terminal,
+            'tabmenu-new-local': self._on_tabmenu_new_local,
+            'tabmenu-fm-new-window': self._on_tabmenu_fm_new_window,
+            'tabmenu-layout-horizontal': self._on_tabmenu_layout_horizontal,
+            'tabmenu-layout-vertical': self._on_tabmenu_layout_vertical,
+            'tabmenu-layout-default': self._on_tabmenu_layout_default,
+            'tabmenu-layout-compact': self._on_tabmenu_layout_compact,
+            'tabmenu-close': self._on_tabmenu_close,
+            'tabmenu-close-others': self._on_tabmenu_close_others,
+            'tabmenu-close-right': self._on_tabmenu_close_right,
+        }
+        for name, handler in handlers.items():
+            action = Gio.SimpleAction.new(name, None)
+            action.connect('activate', handler)
+            self.add_action(action)
+
+        def _item(label, action_name):
+            item = Gio.MenuItem.new(label, 'win.' + action_name)
+            # Hide the item entirely when its action is disabled, so each tab
+            # type shows only its applicable items.
+            item.set_attribute_value(
+                'hidden-when', GLib.Variant('s', 'action-disabled')
+            )
+            return item
+
+        menu = Gio.Menu()
+
+        sec1 = Gio.Menu()
+        sec1.append_item(_item(_('Duplicate'), 'tabmenu-duplicate'))
+        sec1.append_item(_item(_('Rename Tab…'), 'tabmenu-rename'))
+        menu.append_section(None, sec1)
+
+        sec2 = Gio.Menu()
+        sec2.append_item(_item(_('Reconnect'), 'tabmenu-reconnect'))
+        sec2.append_item(_item(_('Manage Files'), 'tabmenu-manage-files'))
+        sec2.append_item(_item(_('Open in System Terminal'), 'tabmenu-open-system-terminal'))
+        sec2.append_item(_item(_('New Local Tab'), 'tabmenu-new-local'))
+        sec2.append_item(_item(_('Open in New Window'), 'tabmenu-fm-new-window'))
+        menu.append_section(None, sec2)
+
+        sec3 = Gio.Menu()
+        sec3.append_item(_item(_('Side by Side'), 'tabmenu-layout-horizontal'))
+        sec3.append_item(_item(_('Top / Bottom'), 'tabmenu-layout-vertical'))
+        sec3.append_item(_item(_('Default layout'), 'tabmenu-layout-default'))
+        sec3.append_item(_item(_('Compact layout'), 'tabmenu-layout-compact'))
+        menu.append_section(None, sec3)
+
+        sec4 = Gio.Menu()
+        sec4.append_item(_item(_('Close'), 'tabmenu-close'))
+        sec4.append_item(_item(_('Close Other Tabs'), 'tabmenu-close-others'))
+        sec4.append_item(_item(_('Close Tabs to the Right'), 'tabmenu-close-right'))
+        menu.append_section(None, sec4)
+
+        self._tab_menu_model = menu
+
+    def _on_tab_bar_secondary_press(self, gesture, n_press, x, y):
+        """Expose or hide the tab menu model before AdwTabBox builds the menu.
+
+        Runs in the capture phase, ahead of AdwTabBox's own right-click handler.
+        The pinned Start tab gets a NULL model (no menu); every other tab gets
+        the full model. Pinned AdwTab widgets carry the "pinned" CSS class.
+        """
+        # Remember where the menu was opened so "Rename Tab…" can anchor its
+        # popover at the right-clicked tab (tab_bar coordinate space).
+        self._tab_menu_xy = (x, y)
+        try:
+            widget = self.tab_bar.pick(x, y, Gtk.PickFlags.DEFAULT)
+            on_pinned = False
+            while widget is not None and widget is not self.tab_bar:
+                if widget.has_css_class('pinned'):
+                    on_pinned = True
+                    break
+                widget = widget.get_parent()
+            self.tab_view.set_menu_model(
+                None if on_pinned else self._tab_menu_model
+            )
+        except Exception:
+            logger.debug("Tab menu guard failed", exc_info=True)
+            self.tab_view.set_menu_model(self._tab_menu_model)
+
+    def _on_tab_setup_menu(self, tab_view, page):
+        """Enable the actions applicable to the right-clicked tab type.
+
+        page is None when the menu closes; keep _tab_menu_page so the
+        just-activated action still targets the right tab.
+        """
+        if page is None:
+            return
+        self._tab_menu_page = page
+
+        if self._is_start_tab_page(page):
+            enabled = set()  # belt-and-braces; the capture guard already hid it
+        else:
+            enabled = self._enabled_tab_actions(page.get_child())
+
+        for name in self._TAB_MENU_ACTIONS:
+            action = self.lookup_action(name)
+            if action is not None:
+                action.set_enabled(name in enabled)
+
+    def _file_manager_embed_for_child(self, child):
+        """Return the FileManagerTabEmbed in a tab's child subtree, or None.
+
+        File-manager tabs wrap the embed inside a placeholder GtkBox, so a
+        direct isinstance() check on the page child is insufficient.
+        """
+        from .file_manager_integration import FileManagerTabEmbed
+        if child is None:
+            return None
+        if isinstance(child, FileManagerTabEmbed):
+            return child
+        w = child.get_first_child() if hasattr(child, 'get_first_child') else None
+        while w is not None:
+            found = self._file_manager_embed_for_child(w)
+            if found is not None:
+                return found
+            w = w.get_next_sibling()
+        return None
+
+    def _teardown_file_manager_embed(self, embed) -> None:
+        """Destroy an embedded file manager synchronously, outside GC.
+
+        The embed carries Python 'destroy' signal handlers (its own _on_destroy
+        plus the tracking lambda from _track_internal_file_manager_window) that
+        form reference cycles. If the embed is finalized by the garbage
+        collector, PyGObject invokes those Python handlers mid-collection, which
+        segfaults. Disconnecting the handlers and disposing the controller here
+        (at tab close / shutdown, outside GC) avoids that.
+        """
+        if embed is None:
+            return
+        controller = getattr(embed, '_controller', None)
+        try:
+            destroy_id = GObject.signal_lookup('destroy', Gtk.Widget.__gtype__)
+            GObject.signal_handlers_disconnect_matched(
+                embed, GObject.SignalMatchType.ID, destroy_id, 0, None, None, None)
+        except Exception:
+            logger.debug('Could not disconnect FM embed destroy handlers', exc_info=True)
+        if controller is not None:
+            try:
+                if controller in self._internal_file_manager_windows:
+                    self._internal_file_manager_windows.remove(controller)
+            except Exception:
+                pass
+            try:
+                if hasattr(controller, '_cleanup_manager'):
+                    controller._cleanup_manager()
+            except Exception:
+                logger.debug('FM controller cleanup failed', exc_info=True)
+            try:
+                controller.destroy()
+            except Exception:
+                logger.debug('FM controller destroy failed', exc_info=True)
+        try:
+            embed._controller = None
+        except Exception:
+            pass
+
+    def _teardown_all_file_manager_tabs(self) -> None:
+        """Tear down every open file-manager tab synchronously (app shutdown)."""
+        try:
+            pages = [self.tab_view.get_nth_page(i)
+                     for i in range(self.tab_view.get_n_pages())]
+        except Exception:
+            return
+        for page in pages:
+            try:
+                embed = self._file_manager_embed_for_child(page.get_child())
+            except Exception:
+                embed = None
+            if embed is not None:
+                self._teardown_file_manager_embed(embed)
+
+    def _enabled_tab_actions(self, child) -> set:
+        """Return the set of tab-menu action names to enable for child.
+
+        Applies the same capability/preference gating as the sidebar menu for
+        Manage Files, Open in System Terminal and (file manager) New Window.
+        """
+        from .split_view import SplitViewTab
+
+        common = {'tabmenu-rename', 'tabmenu-close',
+                  'tabmenu-close-others', 'tabmenu-close-right'}
+
+        if isinstance(child, SplitViewTab):
+            return common | {
+                'tabmenu-layout-horizontal', 'tabmenu-layout-vertical',
+                'tabmenu-layout-default', 'tabmenu-layout-compact',
+            }
+
+        if self._file_manager_embed_for_child(child) is not None:
+            enabled = set(common)
+            if not should_hide_file_manager_options():
+                enabled.add('tabmenu-fm-new-window')
+            return enabled
+
+        if isinstance(child, TerminalWidget):
+            try:
+                is_local = child._is_local_terminal()
+            except Exception:
+                is_local = False
+            enabled = common | {'tabmenu-duplicate'}
+            if is_local:
+                enabled.add('tabmenu-new-local')
+                return enabled
+            enabled.add('tabmenu-reconnect')
+            conn = self.terminal_to_connection.get(child)
+            caps = capabilities_for(conn) if conn else frozenset()
+            if Capability.FILE_TRANSFER in caps and not should_hide_file_manager_options():
+                enabled.add('tabmenu-manage-files')
+            if getattr(conn, 'protocol', 'ssh') == 'ssh' and not should_hide_external_terminal_options():
+                enabled.add('tabmenu-open-system-terminal')
+            return enabled
+
+        return set()
+
+    # ── tab context menu action handlers ───────────────────────────────────────
+
+    def _tab_menu_target(self):
+        """Return (page, child) for the current tab menu target, or (None, None)."""
+        page = getattr(self, '_tab_menu_page', None)
+        if page is None:
+            return None, None
+        try:
+            child = page.get_child()
+        except Exception:
+            child = None
+        return page, child
+
+    def _on_tabmenu_duplicate(self, action, param=None):
+        try:
+            page, child = self._tab_menu_target()
+            if not isinstance(child, TerminalWidget):
+                return
+            if child._is_local_terminal():
+                self.terminal_manager.show_local_terminal()
+                return
+            conn = self.terminal_to_connection.get(child)
+            if conn is not None:
+                self.terminal_manager.connect_to_host(conn, force_new=True)
+        except Exception as exc:
+            logger.error("Tab duplicate failed: %s", exc)
+
+    def _on_tabmenu_rename(self, action, param=None):
+        try:
+            page, _child = self._tab_menu_target()
+            if page is not None:
+                self._rename_tab_page(page)
+        except Exception as exc:
+            logger.error("Tab rename failed: %s", exc)
+
+    def _rename_tab_page(self, page) -> None:
+        """Select the page and open the inline rename popover anchored to the tab bar."""
+        try:
+            self.tab_view.set_selected_page(page)
+        except Exception:
+            pass
+        # Anchor at the right-clicked position (captured when the menu opened);
+        # fall back near the start of the tab bar for keyboard-triggered menus.
+        xy = getattr(self, '_tab_menu_xy', None)
+        if xy is not None:
+            x, y = xy
+        else:
+            x = max(0, min(40, self.tab_bar.get_width() // 2))
+            y = self.tab_bar.get_height()
+        self._show_tab_rename_popover(page, x, y)
+
+    def _on_tabmenu_reconnect(self, action, param=None):
+        try:
+            page, child = self._tab_menu_target()
+            if isinstance(child, TerminalWidget) and hasattr(child, '_on_reconnect_clicked'):
+                child._on_reconnect_clicked()
+        except Exception as exc:
+            logger.error("Tab reconnect failed: %s", exc)
+
+    def _on_tabmenu_manage_files(self, action, param=None):
+        try:
+            page, child = self._tab_menu_target()
+            if not isinstance(child, TerminalWidget):
+                return
+            conn = self.terminal_to_connection.get(child)
+            if conn is not None:
+                self._open_manage_files_for_connection(conn)
+        except Exception as exc:
+            logger.error("Tab manage files failed: %s", exc)
+
+    def _on_tabmenu_open_system_terminal(self, action, param=None):
+        try:
+            page, child = self._tab_menu_target()
+            if not isinstance(child, TerminalWidget):
+                return
+            conn = self.terminal_to_connection.get(child)
+            if conn is not None:
+                self.open_in_system_terminal(conn)
+        except Exception as exc:
+            logger.error("Tab open in system terminal failed: %s", exc)
+
+    def _on_tabmenu_new_local(self, action, param=None):
+        try:
+            self.terminal_manager.show_local_terminal()
+        except Exception as exc:
+            logger.error("Tab new local terminal failed: %s", exc)
+
+    def _on_tabmenu_close(self, action, param=None):
+        try:
+            page, _child = self._tab_menu_target()
+            if page is not None:
+                self.tab_view.close_page(page)
+        except Exception as exc:
+            logger.error("Tab close failed: %s", exc)
+
+    def _on_tabmenu_close_others(self, action, param=None):
+        try:
+            page, _child = self._tab_menu_target()
+            if page is not None:
+                self.tab_view.close_other_pages(page)
+        except Exception as exc:
+            logger.error("Tab close others failed: %s", exc)
+
+    def _on_tabmenu_close_right(self, action, param=None):
+        try:
+            page, _child = self._tab_menu_target()
+            if page is not None:
+                self.tab_view.close_pages_after(page)
+        except Exception as exc:
+            logger.error("Tab close to the right failed: %s", exc)
+
+    def _apply_split_layout_to_target(self, mode):
+        page, child = self._tab_menu_target()
+        from .split_view import SplitViewTab
+        if isinstance(child, SplitViewTab):
+            child.set_layout_mode(mode)
+
+    def _on_tabmenu_layout_horizontal(self, action, param=None):
+        try:
+            self._apply_split_layout_to_target('horizontal')
+        except Exception as exc:
+            logger.error("Tab layout horizontal failed: %s", exc)
+
+    def _on_tabmenu_layout_vertical(self, action, param=None):
+        try:
+            self._apply_split_layout_to_target('vertical')
+        except Exception as exc:
+            logger.error("Tab layout vertical failed: %s", exc)
+
+    def _on_tabmenu_layout_default(self, action, param=None):
+        try:
+            page, child = self._tab_menu_target()
+            from .split_view import SplitViewTab
+            if isinstance(child, SplitViewTab):
+                child.fill_panes_to_viewport()
+        except Exception as exc:
+            logger.error("Tab layout default failed: %s", exc)
+
+    def _on_tabmenu_layout_compact(self, action, param=None):
+        try:
+            page, child = self._tab_menu_target()
+            from .split_view import SplitViewTab
+            if isinstance(child, SplitViewTab):
+                child.reset_all_row_heights(0.3)
+        except Exception as exc:
+            logger.error("Tab layout compact failed: %s", exc)
+
+    def _on_tabmenu_fm_new_window(self, action, param=None):
+        try:
+            page, child = self._tab_menu_target()
+            embed = self._file_manager_embed_for_child(child)
+            if embed is None:
+                return
+            controller = getattr(embed, '_controller', None)
+            conn = getattr(controller, '_connection', None) if controller else None
+            if conn is None:
+                logger.debug("File manager tab has no connection for new window")
+                return
+            self._launch_external_file_manager(conn)
+        except Exception as exc:
+            logger.error("Tab file manager new window failed: %s", exc)
+
+    def _launch_external_file_manager(self, connection) -> None:
+        """Open a standalone (external) file manager window for connection.
+
+        Same path used by the file_manager.open_externally preference.
+        """
+        nickname = (
+            getattr(connection, 'nickname', None)
+            or getattr(connection, 'hostname', None)
+            or getattr(connection, 'host', None)
+            or getattr(connection, 'username', 'Remote Host')
+        )
+        host_value = _get_connection_host(connection) or _get_connection_alias(connection)
+        username = getattr(connection, 'username', '') or ''
+        port_value = getattr(connection, 'port', 22)
+        effective_port = port_value if port_value and port_value != 22 else None
+
+        ssh_config = None
+        if hasattr(self, 'config') and self.config is not None:
+            try:
+                ssh_config = self.config.get_ssh_config()
+            except Exception as exc:
+                logger.debug("Failed to read SSH configuration for file manager: %s", exc)
+                ssh_config = None
+
+        def error_callback(error_msg):
+            message = error_msg or "Failed to open file manager"
+            logger.error(f"Failed to open file manager for {nickname}: {message}")
+            self._show_manage_files_error(str(nickname), message)
+
+        success, error_msg, window = launch_remote_file_manager(
+            user=str(username or ''),
+            host=str(host_value or ''),
+            port=effective_port,
+            nickname=str(nickname),
+            parent_window=self,
+            error_callback=error_callback,
+            connection=connection,
+            connection_manager=self.connection_manager,
+            ssh_config=ssh_config,
+        )
+
+        if success:
+            logger.info(f"Started external file manager for {nickname}")
+            if window is not None:
+                self._track_internal_file_manager_window(window)
+        else:
+            message = error_msg or "Failed to start file manager process"
+            logger.error(f"Failed to start file manager process for {nickname}: {message}")
+            self._show_manage_files_error(str(nickname), message)
+
+    def capture_session(self) -> dict:
+        """Capture the current set of open tabs as a serializable session dict.
+
+        Captures SSH terminal tabs (by connection nickname), local terminal
+        tabs, and split-view tabs (layout + per-pane connection nicknames), in
+        left-to-right tab order. File manager and other tabs are skipped.
+        """
+        from .split_view import SplitViewTab
+
+        tabs = []
+        try:
+            n_pages = self.tab_view.get_n_pages()
+        except Exception:
+            n_pages = 0
+
+        for i in range(n_pages):
+            try:
+                page = self.tab_view.get_nth_page(i)
+            except Exception:
+                page = None
+            if page is None:
+                continue
+            if self._is_start_tab_page(page):
+                continue
+            child = page.get_child()
+            if child is None:
+                continue
+
+            if isinstance(child, SplitViewTab):
+                panes = []
+                for pane in getattr(child, '_panes', []):
+                    pane_conns = []
+                    try:
+                        terminals = pane.get_terminals()
+                    except Exception:
+                        terminals = []
+                    for term in terminals:
+                        conn = self.terminal_to_connection.get(term)
+                        nickname = getattr(conn, 'nickname', None)
+                        if nickname:
+                            pane_conns.append({'nickname': nickname})
+                    # Preserve empty panes only if some pane has terminals
+                    panes.append(pane_conns)
+                # Drop trailing empty panes so a freshly-restored split (which
+                # always starts with two empty panes) round-trips cleanly.
+                while panes and not panes[-1]:
+                    panes.pop()
+                if not any(panes):
+                    continue
+                tabs.append({
+                    'type': 'split',
+                    'layout': child.get_layout_mode(),
+                    'custom_title': getattr(page, 'custom_tab_title', None),
+                    'panes': panes,
+                })
+                continue
+
+            if isinstance(child, TerminalWidget):
+                is_local = False
+                try:
+                    is_local = bool(child._is_local_terminal())
+                except Exception:
+                    is_local = False
+                if is_local:
+                    tabs.append({'type': 'local'})
+                    continue
+                conn = self.terminal_to_connection.get(child)
+                nickname = getattr(conn, 'nickname', None)
+                if not nickname:
+                    continue
+                tabs.append({
+                    'type': 'ssh',
+                    'nickname': nickname,
+                    'custom_title': getattr(page, 'custom_tab_title', None),
+                })
+                continue
+
+            # File manager tabs / placeholders are intentionally skipped.
+
+        return {'tabs': tabs}
+
+    def _close_all_tabs(self):
+        """Close every user tab; the pinned Start tab is kept."""
+        self._suppress_close_confirmation = True
+        try:
+            for page in list(self.tab_view.get_pages()):
+                if self._is_start_tab_page(page):
+                    continue
+                try:
+                    self.tab_view.close_page(page)
+                except Exception:
+                    pass
+        finally:
+            self._suppress_close_confirmation = False
+        self.show_start_tab()
+
+    def _restore_split_tab(self, entry):
+        """Recreate a split-view tab from a captured entry."""
+        from .split_view import SplitViewTab
+        from sshpilot import icon_utils
+
+        panes = entry.get('panes') or []
+        svt = SplitViewTab(self)
+        page = self.tab_view.append(svt)
+        page.set_title(_("Split View"))
+        try:
+            page.set_icon(icon_utils.new_gicon_from_icon_name('view-dual-symbolic'))
+        except Exception:
+            pass
+        svt._tab_page = page
+        layout = entry.get('layout')
+        if layout in (SplitViewTab.HORIZONTAL, SplitViewTab.VERTICAL):
+            svt.set_layout_mode(layout)
+
+        for pane_index, pane_conns in enumerate(panes):
+            if pane_index < len(svt._panes):
+                pane = svt._panes[pane_index]
+            else:
+                pane = svt.add_pane()
+            for conn_entry in pane_conns or []:
+                nickname = conn_entry.get('nickname') if isinstance(conn_entry, dict) else None
+                if not nickname:
+                    continue
+                connection = self.connection_manager.find_connection_by_nickname(nickname)
+                if connection is None:
+                    logger.warning(f"Session restore: split connection '{nickname}' not found; skipping")
+                    continue
+                try:
+                    pane.add_connection(connection)
+                except Exception as exc:
+                    logger.error(f"Failed to restore split connection '{nickname}': {exc}")
+
+        custom_title = entry.get('custom_title')
+        if custom_title:
+            self._apply_tab_title(page, custom_title)
+        self.show_tab_view()
+        self.tab_view.set_selected_page(page)
+
+    def restore_session(self, data, replace: bool = True):
+        """Recreate tabs from a captured session dict.
+
+        When ``replace`` is True, all currently-open tabs are closed first.
+        """
+        if not isinstance(data, dict):
+            logger.warning("Session restore called with invalid data")
+            return
+        tabs = data.get('tabs')
+        if not isinstance(tabs, list):
+            tabs = []
+
+        if replace:
+            self._close_all_tabs()
+
+        for entry in tabs:
+            if not isinstance(entry, dict):
+                continue
+            tab_type = entry.get('type')
+            try:
+                if tab_type == 'local':
+                    self.terminal_manager.show_local_terminal()
+                elif tab_type == 'split':
+                    self._restore_split_tab(entry)
+                elif tab_type == 'ssh':
+                    nickname = entry.get('nickname')
+                    if not nickname:
+                        continue
+                    connection = self.connection_manager.find_connection_by_nickname(nickname)
+                    if connection is None:
+                        logger.warning(f"Session restore: connection '{nickname}' not found; skipping")
+                        continue
+                    self.terminal_manager.connect_to_host(connection, force_new=True)
+                    custom_title = entry.get('custom_title')
+                    if custom_title:
+                        page = self.tab_view.get_selected_page()
+                        if page is not None and isinstance(page.get_child(), TerminalWidget):
+                            self._apply_tab_title(page, custom_title)
+            except Exception as exc:
+                logger.error(f"Failed to restore tab {entry!r}: {exc}")
+
+    def on_tab_close(self, tab_view, page):
+        """Handle tab close - THE KEY FIX: Never call close_page ourselves"""
+        if self._is_start_tab_page(page):
+            return True
+
+        # If we are closing pages programmatically (e.g., after deleting a
+        # connection), suppress the confirmation dialog and allow the default
+        # close behavior to proceed.
+        if getattr(self, '_suppress_close_confirmation', False):
+            return False
+
+        # SplitViewTab: clean up all embedded terminals, then allow immediate close.
+        # When confirm-disconnect is enabled and there are active terminals, ask first.
+        if hasattr(page, 'get_child'):
+            child = page.get_child()
+            from .split_view import SplitViewTab
+            if isinstance(child, SplitViewTab):
+                n_terminals = sum(p.get_terminal_count() for p in child._panes)
+                confirm_disconnect = getattr(self, 'config', None) and self.config.get_setting('confirm-disconnect', True)
+                if confirm_disconnect and n_terminals > 0:
+                    self._pending_close_split_tab_view = tab_view
+                    self._pending_close_split_page = page
+                    self._pending_close_split_child = child
+                    dialog = Adw.MessageDialog(
+                        transient_for=self,
+                        modal=True,
+                        heading=_("Close split view?"),
+                        body=_("This will disconnect {n} terminal session(s). Continue?").format(n=n_terminals),
+                    )
+                    dialog.add_response('cancel', _("Cancel"))
+                    dialog.add_response('close', _("Close"))
+                    dialog.set_response_appearance('close', Adw.ResponseAppearance.DESTRUCTIVE)
+                    dialog.set_default_response('close')
+                    dialog.set_close_response('cancel')
+                    dialog.connect('response', self._on_split_tab_close_response)
+                    dialog.present()
+                    return True  # Prevent immediate close; dialog handles it
+                child.cleanup_all()
+                return False
+
+        # Get the connection for this tab
+        connection = None
+        terminal = None
+        if hasattr(page, 'get_child'):
+            child = page.get_child()
+            if hasattr(child, 'disconnect'):
+                terminal = child
+                connection = self.terminal_to_connection.get(child)
+        
+        if not connection:
+            # Non-terminal tabs (plugins, file manager, …) close immediately.
+            return False
+        
+        # Check if confirmation is required
+        confirm_disconnect = self.config.get_setting('confirm-disconnect', True)
+        
+        if confirm_disconnect:
+            # Store tab view and page as instance variables
+            self._pending_close_tab_view = tab_view
+            self._pending_close_page = page
+            self._pending_close_connection = connection
+            self._pending_close_terminal = terminal
+            
+            # Show confirmation dialog
+            host_value = _get_connection_host(connection) or _get_connection_alias(connection)
+            dialog = Adw.MessageDialog(
+                transient_for=self,
+                modal=True,
+                heading=_("Close connection to {}").format(connection.nickname or host_value),
+                body=_("Are you sure you want to close this connection?")
+            )
+            dialog.add_response('cancel', _("Cancel"))
+            dialog.add_response('close', _("Close"))
+            dialog.set_response_appearance('close', Adw.ResponseAppearance.DESTRUCTIVE)
+            dialog.set_default_response('close')
+            dialog.set_close_response('cancel')
+            
+            # Connect to response signal before showing the dialog
+            dialog.connect('response', self._on_tab_close_response)
+            dialog.present()
+            
+            # Prevent the default close behavior while we show confirmation
+            return True
+        else:
+            # Explicitly disconnect so the SSH process (including any port
+            # forwarding) is killed immediately rather than relying on the
+            # widget destroy signal, which can be deferred indefinitely.
+            if terminal and hasattr(terminal, 'disconnect'):
+                terminal.disconnect()
+            return False
+
+    def _on_tab_close_response(self, dialog, response_id):
+        """Handle the response from the close confirmation dialog."""
+        # Retrieve the pending tab info
+        tab_view = self._pending_close_tab_view
+        page = self._pending_close_page
+        terminal = self._pending_close_terminal
+
+        if response_id == 'close':
+            # User confirmed, disconnect the terminal. The tab will be removed
+            # by the AdwTabView once we finish the close operation.
+            if terminal and hasattr(terminal, 'disconnect'):
+                terminal.disconnect()
+            # Now, tell the tab view to finish closing the page.
+            tab_view.close_page_finish(page, True)
+            
+            # Update tab button visibility after closing
+            self._update_tab_button_visibility()
+            
+            # Check if this was the last user tab
+            if not self.has_user_tabs():
+                self.show_start_tab()
+        else:
+            # User cancelled, so we reject the close request.
+            # This is the critical step that makes the close button work again.
+            tab_view.close_page_finish(page, False)
+
+        dialog.destroy()
+        # Clear pending state to avoid memory leaks
+        self._pending_close_tab_view = None
+        self._pending_close_page = None
+        self._pending_close_connection = None
+        self._pending_close_terminal = None
+
+    def _on_split_tab_close_response(self, dialog, response_id):
+        """Handle the confirmation dialog for closing an entire SplitViewTab."""
+        tab_view = getattr(self, '_pending_close_split_tab_view', None)
+        page = getattr(self, '_pending_close_split_page', None)
+        child = getattr(self, '_pending_close_split_child', None)
+        if response_id == 'close':
+            if child is not None:
+                child.cleanup_all()
+            if tab_view is not None and page is not None:
+                tab_view.close_page_finish(page, True)
+            self._update_tab_button_visibility()
+            if tab_view is not None and not self.has_user_tabs():
+                self.show_start_tab()
+        else:
+            if tab_view is not None and page is not None:
+                tab_view.close_page_finish(page, False)
+        dialog.destroy()
+        self._pending_close_split_tab_view = None
+        self._pending_close_split_page = None
+        self._pending_close_split_child = None
+
+    def on_tab_attached(self, tab_view, page, position):
+        """Handle tab attached"""
+        self._update_tab_button_visibility()
+        # Register a drop target on TerminalWidget pages so dragging a
+        # connection onto a terminal converts that tab into a split-view tab.
+        try:
+            from .terminal import TerminalWidget
+            child = page.get_child() if page else None
+            if isinstance(child, TerminalWidget):
+                self._register_convert_to_split_drop(child, page)
+        except Exception as exc:
+            logger.debug("Could not register convert-to-split drop: %s", exc)
+        self._update_layout_toggle_state()
+
+        # Sidebar behavior: a session (SSH or local) just opened. Hide after a
+        # short delay so the terminal settles, then the sidebar slides away.
+        try:
+            if self.config.get_setting('ui.sidebar_hide_on_terminal_open', False):
+                self._cancel_pending_sidebar_hide()
+                self._sidebar_hide_timer_id = GLib.timeout_add(
+                    350, self._hide_sidebar_after_terminal
+                )
+        except Exception:
+            logger.debug("sidebar hide-on-terminal-open failed", exc_info=True)
+
+    def _register_convert_to_split_drop(self, terminal, page) -> None:
+        """Attach a drop target to terminal so dragging a connection converts the tab to split view."""
+        from gi.repository import Gtk, Gdk, GObject
+        dt = Gtk.DropTarget.new(type=GObject.TYPE_PYOBJECT, actions=Gdk.DragAction.MOVE)
+
+        def _on_drop(_target, value, _x, _y):
+            try:
+                if hasattr(value, 'get_value'):
+                    value = value.get_value()
+                if not isinstance(value, dict):
+                    return False
+
+                drag_type = value.get("type")
+
+                if drag_type == "command_block":
+                    cmd_dict = {
+                        'id': value.get('command_id'),
+                        'name': value.get('name', ''),
+                        'command': value.get('command', ''),
+                        'has_placeholders': value.get('has_placeholders', False),
+                    }
+                    panel = getattr(self, 'command_blocks_panel', None)
+                    if panel is not None:
+                        panel._send_command_to_terminal(cmd_dict)
+                    else:
+                        data = (cmd_dict['command'] + '\n').encode('utf-8')
+                        try:
+                            if hasattr(terminal, 'backend') and terminal.backend:
+                                terminal.backend.feed_child(data)
+                            elif hasattr(terminal, 'vte') and terminal.vte:
+                                terminal.vte.feed_child(data)
+                        except Exception:
+                            pass
+                    return True
+
+                if drag_type not in ("connection", "group"):
+                    return False
+
+                # Only convert if the terminal is still in the main tab_view
+                source_page = self._page_for_child(terminal)
+                if source_page is None:
+                    return False
+
+                tab_title = _("Split View")
+
+                if drag_type == "connection":
+                    nicknames = value.get("connection_nicknames") or []
+                    if not nicknames and value.get("connection_nickname"):
+                        nicknames = [value["connection_nickname"]]
+                    if not nicknames:
+                        return False
+                    connections = []
+                    for nick in nicknames:
+                        conn = self.connection_manager.find_connection_by_nickname(nick)
+                        if conn is not None:
+                            connections.append(conn)
+                else:  # group
+                    group_id = value.get("group_id")
+                    group_info = self.group_manager.groups.get(group_id) if group_id else None
+                    if not group_info:
+                        return False
+                    group_name = group_info.get("name", "")
+                    if group_name:
+                        tab_title = _("Split View — {name}").format(name=group_name)
+                    connections = []
+                    for nick in group_info.get("connections", []):
+                        conn = self.connection_manager.find_connection_by_nickname(nick)
+                        if conn is not None:
+                            connections.append(conn)
+
+                if not connections:
+                    return False
+
+                from .split_view import SplitViewTab
+                from sshpilot import icon_utils
+
+                svt = SplitViewTab(self)
+
+                # Move the existing terminal out of the main tab_view into pane 0
+                title = source_page.get_title() or _("Terminal")
+                self._suppress_close_confirmation = True
+                self._moving_tab_to_pane = True
+                try:
+                    self.tab_view.close_page(source_page)
+                finally:
+                    self._suppress_close_confirmation = False
+                    self._moving_tab_to_pane = False
+                # Defer reparent so tab_view fully completes its close sequence.
+                # Pane 1 is filled synchronously below, so the proportional
+                # paned settles before pane 0 gets its (deferred) terminal — that
+                # leaves the divider at the empty placeholder's natural size, not
+                # 50/50. Re-equalize once the terminal is embedded so the panes
+                # match every other split scenario.
+                def _embed_terminal_in_pane0():
+                    svt._panes[0].add_terminal(terminal, title)
+                    # _on_default_clicked resets horizontal splits to 50/50 and
+                    # applies the default sizing for the pane count (fill for ≤2,
+                    # 50% rows for more) — same as a freshly-opened split.
+                    GLib.idle_add(lambda: (svt._on_default_clicked(), False)[1])
+                    return False
+                GLib.idle_add(_embed_terminal_in_pane0)
+
+                # Add each dropped connection to pane 1 (and extra panes beyond)
+                for i, conn in enumerate(connections):
+                    if i == 0:
+                        svt._panes[1].add_connection(conn)
+                    else:
+                        svt.add_pane().add_connection(conn)
+
+                # Append the split-view tab to the main tab_view
+                new_page = self.tab_view.append(svt)
+                new_page.set_title(tab_title)
+                try:
+                    new_page.set_icon(
+                        icon_utils.new_gicon_from_icon_name('view-dual-symbolic')
+                    )
+                except Exception:
+                    pass
+                svt._tab_page = new_page
+                self.show_tab_view()
+                self.tab_view.set_selected_page(new_page)
+                return True
+            except Exception as exc:
+                logger.error("Convert-to-split drop failed: %s", exc)
+                return False
+
+        dt.connect("drop", _on_drop)
+        dt.connect("enter", lambda _t, _x, _y: Gdk.DragAction.MOVE)
+        terminal.add_controller(dt)
+        # Remember it so SplitPane.add_terminal can detach it when this terminal
+        # is embedded into a pane (otherwise it keeps intercepting connection
+        # drops over the terminal area, so only the tab bar would accept them).
+        terminal._convert_to_split_dt = dt
+
+    # ── layout toggle state / apply ───────────────────────────────────────────
+
+    def _update_layout_toggle_state(self) -> None:
+        """Sync tab-bar H/V toggles with the selected tab."""
+        if not hasattr(self, '_layout_h_btn'):
+            return
+        try:
+            page = self.tab_view.get_selected_page()
+            child = page.get_child() if page else None
+            from .split_view import SplitViewTab
+            is_terminal_tab = isinstance(child, (TerminalWidget, SplitViewTab))
+            self._layout_h_btn.set_visible(is_terminal_tab)
+            self._layout_v_btn.set_visible(is_terminal_tab)
+            self._layout_toggle_updating[0] = True
+            try:
+                if isinstance(child, SplitViewTab):
+                    mode = child.get_layout_mode()
+                    self._layout_h_btn.set_active(mode == 'horizontal')
+                    self._layout_v_btn.set_active(mode == 'vertical')
+                else:
+                    self._layout_h_btn.set_active(False)
+                    self._layout_v_btn.set_active(False)
+            finally:
+                self._layout_toggle_updating[0] = False
+        except Exception as exc:
+            logger.debug("Failed to update layout toggle state: %s", exc)
+
+    def _apply_tab_layout_mode(self, mode: str) -> None:
+        """Apply H or V layout to the current tab (converts regular tab if needed)."""
+        try:
+            page = self.tab_view.get_selected_page()
+            if page is None:
+                return
+            child = page.get_child()
+            from .split_view import SplitViewTab
+            if isinstance(child, SplitViewTab):
+                child.set_layout_mode(mode)
+            elif isinstance(child, TerminalWidget):
+                self._convert_terminal_tab_to_split(page, child, mode)
+        except Exception as exc:
+            logger.error("Failed to apply tab layout mode: %s", exc)
+
+    def _convert_terminal_tab_to_split(self, source_page, terminal, mode: str) -> None:
+        """Convert a regular terminal tab into a split-view tab."""
+        from .split_view import SplitViewTab
+        from sshpilot import icon_utils
+
+        svt = SplitViewTab(self)
+        svt.set_layout_mode(mode)
+
+        title = source_page.get_title() or _("Terminal")
+        self._suppress_close_confirmation = True
+        self._moving_tab_to_pane = True
+        try:
+            self.tab_view.close_page(source_page)
+        finally:
+            self._suppress_close_confirmation = False
+            self._moving_tab_to_pane = False
+
+        # Defer reparent so tab_view fully completes its close sequence first
+        GLib.idle_add(svt._panes[0].add_terminal, terminal, title)
+
+        new_page = self.tab_view.append(svt)
+        new_page.set_title(_("Split View"))
+        try:
+            new_page.set_icon(
+                icon_utils.new_gicon_from_icon_name('view-dual-symbolic')
+            )
+        except Exception:
+            pass
+        svt._tab_page = new_page
+        self.show_tab_view()
+        self.tab_view.set_selected_page(new_page)
+
+    # ── tab button visibility ─────────────────────────────────────────────────
+
+    def _update_tab_button_visibility(self):
+        """Hide tab bar and overview button when only the Start tab is open."""
+        try:
+            show_tabs = self.has_user_tabs()
+            if hasattr(self, 'tab_button'):
+                self.tab_button.set_visible(show_tabs)
+            if hasattr(self, 'tab_bar'):
+                self.tab_bar.set_visible(show_tabs)
+        except Exception as e:
+            logger.error(f"Failed to update tab button visibility: {e}")
+
+    def on_tab_detached(self, tab_view, page, position):
+        """Handle tab detached"""
+        # Skip dict cleanup when a terminal is being moved into a split pane
+        # (the terminal stays live; its tracking entries remain valid).
+        if getattr(self, '_moving_tab_to_pane', False):
+            self._update_tab_button_visibility()
+            if tab_view.get_n_pages() <= 1:
+                self.show_start_tab()
+            return
+
+        # Tear down an embedded file manager synchronously (outside GC) so its
+        # Python 'destroy' handlers never run during a garbage collection,
+        # which segfaults. Covers ×, Close, Close Other Tabs, Close to Right.
+        try:
+            embed = (
+                self._file_manager_embed_for_child(page.get_child())
+                if page is not None and hasattr(page, 'get_child')
+                else None
+            )
+            if embed is not None:
+                self._teardown_file_manager_embed(embed)
+        except Exception:
+            logger.debug('File manager tab teardown on detach failed', exc_info=True)
+
+        # Cleanup terminal-to-connection maps when a page is detached
+        detached_connection = None
+        try:
+            if hasattr(page, 'get_child'):
+                child = page.get_child()
+                if child in self.terminal_to_connection:
+                    connection = self.terminal_to_connection.get(child)
+                    detached_connection = connection
+                    # Remove reverse map
+                    del self.terminal_to_connection[child]
+                    # Remove from per-connection list
+                    if connection in self.connection_to_terminals and child in self.connection_to_terminals[connection]:
+                        self.connection_to_terminals[connection].remove(child)
+                        if not self.connection_to_terminals[connection]:
+                            del self.connection_to_terminals[connection]
+                    # Update most recent mapping if needed
+                    if connection in self.active_terminals and self.active_terminals[connection] is child:
+                        remaining = self.connection_to_terminals.get(connection)
+                        if remaining:
+                            self.active_terminals[connection] = remaining[-1]
+                        else:
+                            del self.active_terminals[connection]
+        except Exception:
+            pass
+
+        # Update tab button visibility
+        self._update_tab_button_visibility()
+        self._update_layout_toggle_state()
+
+        # Select Start when the last user tab closes
+        if not self.has_user_tabs():
+            self.show_start_tab()
+
+        # Recompute the affected connection's state now that the terminal has
+        # been removed from the maps. With no terminals left this resolves to
+        # UNKNOWN, hiding the sidebar status icon instead of leaving a stale red
+        # "Disconnected" indicator after an intentional close.
+        if detached_connection is not None:
+            try:
+                self._recompute_connection_state(detached_connection)
+            except Exception:
+                pass
+
+    def on_open_split_view_clicked(self, button):
+        """Open a new empty split-view tab."""
+        try:
+            from .split_view import SplitViewTab
+            from sshpilot import icon_utils
+            svt = SplitViewTab(self)
+            page = self.tab_view.append(svt)
+            page.set_title(_("Split View"))
+            page.set_icon(icon_utils.new_gicon_from_icon_name('view-dual-symbolic'))
+            svt._tab_page = page
+            self.show_tab_view()
+            self.tab_view.set_selected_page(page)
+        except Exception as exc:
+            logger.error("Failed to open split view: %s", exc)
+
+    def on_local_terminal_button_clicked(self, button):
+        """Handle local terminal button click"""
+        try:
+            logger.info("Local terminal button clicked")
+            self.terminal_manager.show_local_terminal()
+        except Exception as e:
+            logger.error(f"Failed to open local terminal: {e}")
+
+    def on_tab_button_clicked(self, button):
+        """Toggle the tab overview."""
+        try:
+            is_open = self.tab_overview.get_open()
+            self.tab_overview.set_open(not is_open)
+        except Exception as e:
+            logger.error(f"Failed to toggle tab overview: {e}")
+
+
+            
 
     def on_connection_added(self, manager, connection):
         """Handle new connection added"""
@@ -6240,6 +8372,15 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 app.release()
 
 
+    def on_manage_files_action(self, action, param=None):
+        """Handle manage files action from context menu"""
+        if hasattr(self, '_context_menu_connection') and self._context_menu_connection:
+            connection = self._context_menu_connection
+            try:
+                self._open_manage_files_for_connection(connection)
+            except Exception as e:
+                logger.error(f"Error opening file manager: {e}")
+
     def on_manage_local_authorized_keys_action(self, action, param=None):
         """Open the structured editor on the local user's ~/.ssh/authorized_keys."""
         try:
@@ -6324,6 +8465,765 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             except Exception:
                 pass
 
+    def _open_manage_files_for_connection(self, connection):
+        """Open files for the supplied connection.
+
+        On the very first invocation (per user profile, per machine) where a
+        choice between built-in and system file managers actually exists,
+        prompt the user once and remember their pick. Subsequent calls go
+        straight to the open flow.
+        """
+        if Capability.FILE_TRANSFER not in capabilities_for(connection):
+            logger.debug("Manage Files unavailable: protocol %r has no file transfer",
+                         getattr(connection, 'protocol', 'ssh'))
+            return
+        if self._should_prompt_file_manager_choice():
+            self._show_file_manager_first_run_dialog(
+                lambda choice: self._continue_open_manage_files_after_choice(connection, choice)
+            )
+            return
+        self._open_manage_files_now_for_connection(connection)
+
+    def _continue_open_manage_files_after_choice(
+        self, connection, choice: Optional[str]
+    ) -> None:
+        """Persist the first-run choice and then open the file manager.
+
+        *choice* is ``None`` when the user cancelled / dismissed the dialog;
+        in that case we do nothing — no preference saved, no file manager
+        opened, and the next Manage Files click re-prompts.
+        """
+        if choice is None:
+            logger.debug("File manager first-run dialog cancelled; deferring choice")
+            return
+        self._apply_file_manager_first_run_choice(choice)
+        self._open_manage_files_now_for_connection(connection)
+
+    def _should_prompt_file_manager_choice(self) -> bool:
+        """Return True if we should ask the user which file manager to use."""
+        try:
+            already_shown = bool(
+                self.config.get_setting('file_manager.first_run_prompt_shown', False)
+            )
+        except Exception:
+            already_shown = False
+        if already_shown:
+            return False
+        # If only the built-in is available (Flatpak, macOS, no GVFS) there's
+        # no real choice to make. Silently mark the prompt as shown so we
+        # never reach this branch again.
+        if not has_internal_file_manager() or not has_native_gvfs_support():
+            try:
+                self.config.set_setting('file_manager.first_run_prompt_shown', True)
+            except Exception as exc:
+                logger.debug("Could not mark first-run file manager prompt: %s", exc)
+            return False
+        return True
+
+    def _apply_file_manager_first_run_choice(self, choice: str) -> None:
+        """Persist the user's pick from the first-run dialog."""
+        try:
+            if choice == 'builtin':
+                self.config.set_setting('file_manager.force_internal', True)
+            elif choice == 'system':
+                self.config.set_setting('file_manager.force_internal', False)
+            # Any unknown response (e.g. future close-response) is treated
+            # the same as no preference change — but we still mark the
+            # prompt as shown so we never ask again.
+            self.config.set_setting('file_manager.first_run_prompt_shown', True)
+        except Exception as exc:
+            logger.error("Failed to persist file manager first-run choice: %s", exc)
+
+    # --- Operation mode first-run dialog ---
+
+    def _should_prompt_operation_mode(self) -> bool:
+        """Return True if the operation mode dialog should be shown."""
+        try:
+            already_shown = bool(
+                self.config.get_setting('ssh.operation_mode_prompt_shown', False)
+            )
+        except Exception:
+            already_shown = False
+
+        if not already_shown:
+            # Migrate the old key name used before the rename.
+            try:
+                old_val = self.config.get_setting('ssh.config_mode_prompt_shown', None)
+                if old_val is not None:
+                    already_shown = bool(old_val)
+                    # Write under new key and purge the old one.
+                    self.config.set_setting('ssh.operation_mode_prompt_shown', already_shown)
+                    try:
+                        ssh_section = self.config.config_data.get('ssh', {})
+                        ssh_section.pop('config_mode_prompt_shown', None)
+                        self.config.save_json_config()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+        if already_shown:
+            return False
+        if getattr(self, 'isolated_mode', False):
+            try:
+                self.config.set_setting('ssh.operation_mode_prompt_shown', True)
+            except Exception:
+                pass
+            return False
+        return True
+
+    def _prompt_backup_ssh_config(self) -> None:
+        """Let the user back up ~/.ssh/config to a location they choose.
+
+        Uses Gtk.FileDialog (portal-backed, so it works inside the Flatpak
+        sandbox) to pick the destination, copies the config there, then shows
+        an alert confirming the saved path.  Does nothing — and never raises —
+        if there is no config to back up.
+        """
+        src = Path(get_ssh_dir()) / 'config'
+        if not src.exists() or src.stat().st_size == 0:
+            logger.debug("No SSH config to back up; skipping backup prompt")
+            return
+
+        dialog = Gtk.FileDialog.new()
+        dialog.set_title(_("Back Up SSH Config"))
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        dialog.set_initial_name(f"ssh_config_backup_{timestamp}.bak")
+
+        def _on_done(dlg, result):
+            try:
+                gfile = dlg.save_finish(result)
+            except GLib.Error:
+                return  # user cancelled or portal denied
+            if gfile is None:
+                return
+            dst = gfile.get_path()
+            if not dst:
+                logger.warning("Backup destination has no local path")
+                return
+            try:
+                shutil.copy2(str(src), dst)
+                logger.info("SSH config backed up to %s", dst)
+            except Exception as exc:
+                logger.error("Could not back up SSH config: %s", exc)
+                self._show_backup_result_alert(False, dst)
+                return
+            self._show_backup_result_alert(True, dst)
+
+        try:
+            dialog.save(self, None, _on_done)
+        except Exception as exc:
+            logger.error("Could not open backup save dialog: %s", exc, exc_info=True)
+
+    def _show_backup_result_alert(self, success: bool, path: str) -> None:
+        """Tell the user where the SSH config backup was (or wasn't) saved."""
+        if success:
+            heading = _("Backup Saved")
+            body = _("Your SSH config was backed up to:\n{path}").format(path=path)
+        else:
+            heading = _("Backup Failed")
+            body = _(
+                "SSH Pilot could not save the backup to:\n{path}"
+            ).format(path=path)
+
+        if hasattr(Adw, 'AlertDialog'):
+            alert = Adw.AlertDialog(heading=heading, body=body)
+            alert.add_response('ok', _("OK"))
+            alert.set_default_response('ok')
+            alert.set_close_response('ok')
+            alert.present(self)
+        else:
+            alert = Adw.MessageDialog(
+                transient_for=self, modal=True, heading=heading, body=body
+            )
+            alert.add_response('ok', _("OK"))
+            alert.set_default_response('ok')
+            alert.set_close_response('ok')
+            alert.present()
+
+    def _apply_operation_mode_choice(
+        self, choice: Optional[str], copy: bool = False
+    ) -> None:
+        """Persist the operation mode choice and optionally seed the isolated config.
+
+        When the user picks Isolated the app must restart for the new config
+        path to take full effect (ConnectionManager and KeyManager are already
+        initialised with the default path).  restart_app() is called after all
+        settings are saved so the fresh process picks up the new mode.
+        """
+        try:
+            if choice == 'isolated':
+                self.config.set_setting('ssh.use_isolated_config', True)
+                self.config.set_setting('ssh.operation_mode_prompt_shown', True)
+                if copy:
+                    src = Path(get_ssh_dir()) / 'config'
+                    dst = Path(get_config_dir()) / 'ssh_config'
+                    if src.exists() and not dst.exists():
+                        try:
+                            dst.parent.mkdir(parents=True, exist_ok=True)
+                            shutil.copy2(str(src), str(dst))
+                            logger.info("Seeded isolated SSH config from %s", src)
+                        except Exception as exc:
+                            logger.warning(
+                                "Could not copy SSH config to isolated path: %s", exc
+                            )
+                from .platform_utils import restart_app
+                restart_app()
+            elif choice == 'default':
+                self.config.set_setting('ssh.use_isolated_config', False)
+                self.config.set_setting('ssh.operation_mode_prompt_shown', True)
+            else:
+                # Skip — mark shown so the dialog never reappears.
+                self.config.set_setting('ssh.operation_mode_prompt_shown', True)
+        except Exception as exc:
+            logger.error("Failed to persist operation mode choice: %s", exc)
+
+    def _show_operation_mode_dialog(self) -> None:
+        """One-time dialog asking the user which operation mode to use.
+
+        Follows the GNOME HIG choice-dialog pattern used by
+        _show_file_manager_first_run_dialog.  When the user picks Isolated,
+        _apply_operation_mode_choice calls restart_app() so the new config
+        path is honoured from the very next launch.
+        """
+        heading = _("Choose Operation Mode")
+        body = _(
+            "SSH Pilot can use your .ssh/config "
+            "or use its own configuration file. "
+            
+        )
+
+        use_alert = hasattr(Adw, 'AlertDialog')
+        if use_alert:
+            dialog = Adw.AlertDialog(heading=heading, body=body)
+        else:
+            dialog = Adw.MessageDialog(
+                transient_for=self, modal=True, heading=heading, body=body
+            )
+
+        content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        content_box.set_margin_top(12)
+        content_box.set_size_request(460, -1)
+
+        icon = Gtk.Image.new_from_icon_name('shield-full-symbolic')
+        icon.set_pixel_size(64)
+        icon.set_halign(Gtk.Align.CENTER)
+        icon.set_margin_bottom(4)
+        content_box.append(icon)
+
+        mode_group = Adw.PreferencesGroup()
+
+        default_row = Adw.ActionRow()
+        default_row.set_title(_("Default — use ~/.ssh/config"))
+        default_row.set_subtitle(_("SSH Pilot shares config with the system SSH client"))
+        default_radio = Gtk.CheckButton()
+        default_radio.set_valign(Gtk.Align.CENTER)
+        default_radio.set_active(True)
+        default_row.add_prefix(default_radio)
+        default_row.set_activatable_widget(default_radio)
+        mode_group.add(default_row)
+
+        isolated_row = Adw.ActionRow()
+        isolated_row.set_title(_("Isolated — use a private SSH config"))
+        isolated_row.set_subtitle(
+            _("SSH Pilot stores its own ssh config file in its directory")
+        )
+        isolated_radio = Gtk.CheckButton()
+        isolated_radio.set_valign(Gtk.Align.CENTER)
+        isolated_radio.set_group(default_radio)
+        isolated_row.add_prefix(isolated_radio)
+        isolated_row.set_activatable_widget(isolated_radio)
+        mode_group.add(isolated_row)
+
+        content_box.append(mode_group)
+
+        src_exists = (Path(get_ssh_dir()) / 'config').exists()
+        copy_group = Adw.PreferencesGroup()
+        copy_row = Adw.ActionRow()
+        copy_row.set_title(_("Copy existing ssh config into the isolated profile"))
+        copy_row.set_subtitle(_("Your hosts and keys will be available immediately"))
+        copy_check = Gtk.CheckButton()
+        copy_check.set_valign(Gtk.Align.CENTER)
+        copy_check.set_active(True)
+        copy_row.add_prefix(copy_check)
+        copy_row.set_activatable_widget(copy_check)
+        copy_group.add(copy_row)
+        copy_group.set_visible(False)
+        content_box.append(copy_group)
+
+        # Default mode: offer an explicit, opt-in backup of the existing config.
+        # Shown only when there is a config to back up; the actual destination
+        # is chosen later via a portal-aware save dialog.
+        backup_group = Adw.PreferencesGroup()
+        backup_row = Adw.ActionRow()
+        backup_row.set_title(_("Back up my existing SSH config first"))
+        backup_row.set_subtitle(
+            _("You'll choose where to save a copy of ~/.ssh/config")
+        )
+        backup_check = Gtk.CheckButton()
+        backup_check.set_valign(Gtk.Align.CENTER)
+        backup_check.set_active(True)
+        backup_row.add_prefix(backup_check)
+        backup_row.set_activatable_widget(backup_check)
+        backup_group.add(backup_row)
+        backup_group.set_visible(src_exists)
+        content_box.append(backup_group)
+
+        def _sync_option_visibility(*_args):
+            isolated = isolated_radio.get_active()
+            copy_group.set_visible(isolated and src_exists)
+            backup_group.set_visible(not isolated and src_exists)
+
+        default_radio.connect('toggled', _sync_option_visibility)
+        isolated_radio.connect('toggled', _sync_option_visibility)
+        _sync_option_visibility()
+
+        footer = Gtk.Label(
+            label=_("You can change this anytime in Preferences › SSH Settings.")
+        )
+        footer.set_wrap(True)
+        footer.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        footer.set_xalign(0)
+        footer.set_halign(Gtk.Align.START)
+        footer.add_css_class('caption')
+        footer.add_css_class('dim-label')
+        content_box.append(footer)
+
+        dialog.set_extra_child(content_box)
+
+        dialog.add_response('skip', _("Skip"))
+        dialog.add_response('confirm', _("Confirm"))
+        dialog.set_default_response('confirm')
+        dialog.set_close_response('skip')
+        try:
+            dialog.set_response_appearance(
+                'confirm', Adw.ResponseAppearance.SUGGESTED
+            )
+        except Exception:
+            pass
+
+        def _on_response(_d, response: str) -> None:
+            if response == 'confirm':
+                if isolated_radio.get_active():
+                    self._apply_operation_mode_choice(
+                        'isolated', copy=copy_check.get_active() and src_exists
+                    )
+                else:
+                    self._apply_operation_mode_choice('default')
+                    if backup_check.get_active() and src_exists:
+                        self._prompt_backup_ssh_config()
+            else:
+                self._apply_operation_mode_choice(None)
+
+        dialog.connect('response', _on_response)
+
+        if use_alert:
+            dialog.present(self)
+        else:
+            dialog.present()
+
+    def _show_file_manager_first_run_dialog(self, on_choice) -> None:
+        """Present the one-time built-in vs system chooser.
+
+        *on_choice* is called with ``'builtin'`` or ``'system'`` after the
+        user picks and confirms, or ``None`` if they cancel / dismiss the
+        dialog (no preference is saved in that case, so the next Manage
+        Files click re-prompts).
+
+        Layout follows the GNOME HIG choice-dialog pattern: heading, a brief
+        body, then an Adw.PreferencesGroup of Adw.ActionRow rows each with
+        a prefix radio button. The whole row is the radio's activatable
+        widget, so clicking anywhere on a row toggles the selection.
+        """
+        heading = _("Choose your file manager")
+        body = _("How should SSH Pilot manage files on remote hs?")
+
+        use_alert = hasattr(Adw, 'AlertDialog')
+        if use_alert:
+            dialog = Adw.AlertDialog(heading=heading, body=body)
+        else:
+            dialog = Adw.MessageDialog(
+                transient_for=self, modal=True, heading=heading, body=body
+            )
+
+        # --- Choice list ---
+        content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18)
+        content_box.set_margin_top(12)
+        # Give the dialog room to breathe; AlertDialog will respect this
+        # as a minimum content width.
+        content_box.set_size_request(440, -1)
+
+        try:
+            # Gtk.Image is for app-chosen icon sizes (pixel-size); Gtk.Picture
+            # shows paintables at natural size — see GTK 4 docs for each widget.
+            illustration = Gtk.Image.new_from_resource(
+                '/io/github/mfat/sshpilot/file-manager-choice.png'
+            )
+            illustration.set_pixel_size(180)
+            illustration.set_halign(Gtk.Align.CENTER)
+            illustration.set_vexpand(False)
+            content_box.append(illustration)
+        except GLib.Error as exc:
+            logger.debug(
+                "File manager choice dialog illustration unavailable: %s", exc
+            )
+
+        group = Adw.PreferencesGroup()
+
+        # Built-in option (recommended → pre-selected).
+        builtin_row = Adw.ActionRow()
+        builtin_row.set_title(_("Use the built-in, dual-pane File Manager"))
+        builtin_row.set_subtitle(
+            _("Recommended — opens in a tab inside sshPilot")
+        )
+        builtin_radio = Gtk.CheckButton()
+        builtin_radio.set_valign(Gtk.Align.CENTER)
+        builtin_radio.set_active(True)
+        builtin_row.add_prefix(builtin_radio)
+        builtin_row.set_activatable_widget(builtin_radio)
+        group.add(builtin_row)
+
+        # System option.
+        system_row = Adw.ActionRow()
+        system_row.set_title(_("Use the system file manager"))
+        system_row.set_subtitle(
+            _("Opens your desktop file manager (e.g. GNOME Files)")
+        )
+        system_radio = Gtk.CheckButton()
+        system_radio.set_valign(Gtk.Align.CENTER)
+        # set_group makes this radio share state with the first one — picking
+        # one deselects the other.
+        system_radio.set_group(builtin_radio)
+        system_row.add_prefix(system_radio)
+        system_row.set_activatable_widget(system_radio)
+        group.add(system_row)
+
+        content_box.append(group)
+
+        # --- Footer hint ---
+        footer = Gtk.Label(
+            label=_("You can change this anytime in Preferences → File Management.")
+        )
+        footer.set_wrap(True)
+        footer.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        footer.set_xalign(0)
+        footer.set_halign(Gtk.Align.START)
+        footer.add_css_class("caption")
+        footer.add_css_class("dim-label")
+        content_box.append(footer)
+
+        dialog.set_extra_child(content_box)
+
+        # --- Response buttons (Cancel / Confirm) ---
+        dialog.add_response('cancel', _("Cancel"))
+        dialog.add_response('confirm', _("Confirm"))
+        dialog.set_default_response('confirm')
+        dialog.set_close_response('cancel')
+        try:
+            dialog.set_response_appearance(
+                'confirm', Adw.ResponseAppearance.SUGGESTED
+            )
+        except Exception:
+            pass
+
+        def _on_response(_d, response: str) -> None:
+            if response == 'confirm':
+                choice = 'builtin' if builtin_radio.get_active() else 'system'
+                on_choice(choice)
+            else:
+                on_choice(None)
+
+        dialog.connect('response', _on_response)
+
+        if use_alert:
+            dialog.present(self)
+        else:
+            dialog.present()
+
+    def _open_manage_files_now_for_connection(self, connection):
+        """Actually open the file manager (no prompts, no gating)."""
+
+        nickname = getattr(connection, 'nickname', None) or getattr(connection, 'hostname', None) or getattr(connection, 'host', None) or getattr(connection, 'username', 'Remote Host')
+        host_value = _get_connection_host(connection) or _get_connection_alias(connection)
+        username = getattr(connection, 'username', '') or ''
+        port_value = getattr(connection, 'port', 22)
+        effective_port = port_value if port_value and port_value != 22 else None
+
+        def error_callback(error_msg):
+            message = error_msg or "Failed to open file manager"
+            logger.error(f"Failed to open file manager for {nickname}: {message}")
+            self._show_manage_files_error(str(nickname), message)
+
+        ssh_config = None
+        if hasattr(self, 'config') and self.config is not None:
+            try:
+                ssh_config = self.config.get_ssh_config()
+            except Exception as exc:
+                logger.debug("Failed to read SSH configuration for file manager: %s", exc)
+                ssh_config = None
+
+        open_externally = False
+        force_internal = False
+        try:
+            open_externally = bool(self.config.get_setting('file_manager.open_externally', False))
+            force_internal = bool(self.config.get_setting('file_manager.force_internal', False))
+        except Exception:
+            open_externally = False
+            force_internal = False
+
+        use_internal = False
+        if not open_externally:
+            use_internal = force_internal or should_use_in_app_file_manager()
+
+        placeholder_info = None
+        if use_internal and has_internal_file_manager():
+            placeholder_info = self._create_file_manager_placeholder_tab(nickname, host_value)
+
+            def _create_embedded_file_manager():
+                try:
+                    widget, controller = create_internal_file_manager_tab(
+                        user=str(username or ''),
+                        host=str(host_value or ''),
+                        port=effective_port,
+                        nickname=str(nickname),
+                        parent_window=self,
+                        connection=connection,
+                        connection_manager=self.connection_manager,
+                        ssh_config=ssh_config,
+                    )
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.error("Embedded file manager failed: %s", exc, exc_info=True)
+                    self._handle_file_manager_placeholder_error(
+                        placeholder_info,
+                        str(nickname or host_value or _('Remote Host')),
+                        str(exc) or _('Failed to open file manager'),
+                    )
+                else:
+                    self._register_file_manager_tab(
+                        widget,
+                        controller,
+                        nickname,
+                        host_value,
+                        page=placeholder_info.get('page') if placeholder_info else None,
+                        container=placeholder_info.get('container') if placeholder_info else None,
+                    )
+                return False
+
+            if GLib.idle_add(_create_embedded_file_manager, priority=GLib.PRIORITY_DEFAULT_IDLE):
+                return
+            # If idle_add failed, fall back to immediate creation using the placeholder
+            fallback_placeholder = placeholder_info
+            try:
+                widget, controller = create_internal_file_manager_tab(
+                    user=str(username or ''),
+                    host=str(host_value or ''),
+                    port=effective_port,
+                    nickname=str(nickname),
+                    parent_window=self,
+                    connection=connection,
+                    connection_manager=self.connection_manager,
+                    ssh_config=ssh_config,
+                )
+            except Exception as exc:
+                logger.error("Embedded file manager failed: %s", exc, exc_info=True)
+                self._handle_file_manager_placeholder_error(
+                    fallback_placeholder,
+                    str(nickname or host_value or _('Remote Host')),
+                    str(exc) or _('Failed to open file manager'),
+                )
+            else:
+                self._register_file_manager_tab(
+                    widget,
+                    controller,
+                    nickname,
+                    host_value,
+                    page=fallback_placeholder.get('page') if fallback_placeholder else None,
+                    container=fallback_placeholder.get('container') if fallback_placeholder else None,
+                )
+                return
+
+        success, error_msg, window = launch_remote_file_manager(
+            user=str(username or ''),
+            host=str(host_value or ''),
+            port=effective_port,
+            nickname=str(nickname),
+            parent_window=self,
+            error_callback=error_callback,
+            connection=connection,
+            connection_manager=self.connection_manager,
+            ssh_config=ssh_config,
+        )
+
+        if success:
+            logger.info(f"Started file manager for {nickname}")
+            if window is not None:
+                self._track_internal_file_manager_window(window)
+        else:
+            message = error_msg or "Failed to start file manager process"
+            logger.error(f"Failed to start file manager process for {nickname}: {message}")
+            self._show_manage_files_error(str(nickname), message)
+
+    def _track_internal_file_manager_window(self, window, *, widget=None):
+        """Keep a reference to in-app file manager controllers to prevent GC."""
+
+        if window in self._internal_file_manager_windows:
+            return
+        self._internal_file_manager_windows.append(window)
+
+        def _cleanup(*_args):
+            try:
+                self._internal_file_manager_windows.remove(window)
+            except ValueError:
+                pass
+            return False
+
+        if widget is not None and hasattr(widget, 'connect'):
+            widget.connect('destroy', lambda *_: _cleanup())
+            return
+
+        try:
+            if hasattr(window, 'connect'):
+                window.connect('close-request', _cleanup)
+        except Exception:  # pragma: no cover - defensive
+            logger.debug('Unable to attach close handler to internal file manager window')
+
+    def _create_file_manager_placeholder_tab(self, nickname, host_value):
+        """Create and show a placeholder tab while the embedded manager loads."""
+
+        display_name = str(nickname or host_value or _('Remote Host'))
+        page_title = _('{name} Files').format(name=display_name)
+
+        container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        container.set_hexpand(True)
+        container.set_vexpand(True)
+
+        inner_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        inner_box.set_halign(Gtk.Align.CENTER)
+        inner_box.set_valign(Gtk.Align.CENTER)
+        inner_box.set_hexpand(True)
+        inner_box.set_vexpand(True)
+
+        spinner = Gtk.Spinner()
+        spinner.start()
+        inner_box.append(spinner)
+
+        status_label = Gtk.Label(label=_('Opening file manager…'))
+        status_label.set_wrap(True)
+        status_label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        status_label.set_justify(Gtk.Justification.CENTER)
+        try:
+            status_label.set_xalign(0.5)
+        except AttributeError:  # pragma: no cover - older GTK
+            pass
+        try:
+            status_label.set_halign(Gtk.Align.CENTER)
+        except AttributeError:  # pragma: no cover - alignment fallback
+            pass
+        inner_box.append(status_label)
+
+        container.append(inner_box)
+
+        page = self.tab_view.append(container)
+        page.set_title(page_title)
+        from sshpilot import icon_utils
+        try:
+            page.set_icon(icon_utils.new_gicon_from_icon_name('folder-remote-symbolic'))
+        except Exception:
+            page.set_icon(icon_utils.new_gicon_from_icon_name('folder-symbolic'))
+
+        self.show_tab_view()
+        self.tab_view.set_selected_page(page)
+
+        return {
+            'page': page,
+            'container': container,
+            'spinner': spinner,
+            'label': status_label,
+            'inner_box': inner_box,
+        }
+
+    def _handle_file_manager_placeholder_error(self, placeholder_info, display_name, message):
+        """Update placeholder tab to reflect an error state."""
+
+        if placeholder_info is None:
+            self._show_manage_files_error(display_name, message)
+            return
+
+        spinner = placeholder_info.get('spinner')
+        if spinner is not None:
+            try:
+                spinner.stop()
+                parent = spinner.get_parent()
+                if parent is not None and hasattr(parent, 'remove'):
+                    parent.remove(spinner)
+            except Exception:  # pragma: no cover - defensive cleanup
+                pass
+
+        label = placeholder_info.get('label')
+        if label is not None:
+            try:
+                label.set_label(message)
+                label.add_css_class('error')
+            except Exception:  # pragma: no cover - defensive styling
+                pass
+
+        self._show_manage_files_error(display_name, message)
+
+    def _replace_placeholder_tab_content(self, container, widget):
+        """Replace placeholder children with the real widget."""
+
+        if container is None or widget is None:
+            return False
+
+        try:
+            while child := container.get_first_child():
+                container.remove(child)
+        except Exception as exc:  # pragma: no cover - defensive cleanup
+            logger.debug('Failed to clear placeholder content: %s', exc)
+            return False
+
+        try:
+            container.append(widget)
+        except Exception as exc:  # pragma: no cover - defensive append
+            logger.debug('Failed to attach embedded file manager to placeholder: %s', exc)
+            return False
+
+        try:
+            widget.set_hexpand(True)
+            widget.set_vexpand(True)
+        except Exception:  # pragma: no cover - optional sizing
+            pass
+
+        return True
+
+    def _register_file_manager_tab(self, widget, controller, nickname, host_value, *, page=None, container=None):
+        """Add an embedded file manager tab to the tab view."""
+
+        display_name = str(nickname or host_value or _('Remote Host'))
+        page_title = _('{name} Files').format(name=display_name)
+
+        if page is not None and container is not None:
+            replaced = self._replace_placeholder_tab_content(container, widget)
+            if not replaced:
+                page = None
+
+        if page is None:
+            page = self.tab_view.append(widget)
+
+        page.set_title(page_title)
+        from sshpilot import icon_utils
+        try:
+            page.set_icon(icon_utils.new_gicon_from_icon_name('folder-remote-symbolic'))
+        except Exception:
+            page.set_icon(icon_utils.new_gicon_from_icon_name('folder-symbolic'))
+        # Note: AdwTabPage doesn't support set_tooltip_text in GTK4
+        # The title already provides the necessary information
+
+        self._track_internal_file_manager_window(controller, widget=widget)
+
+        self.show_tab_view()
+        self.tab_view.set_selected_page(page)
+
     def on_edit_connection_action(self, action, param=None):
         """Handle edit connection action from context menu"""
         try:
@@ -6367,6 +9267,172 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception as e:
             logger.error(f"Failed to open in system terminal: {e}")
 
+    def on_broadcast_send_clicked(self, button):
+        """Handle broadcast banner send button click"""
+        command = self.broadcast_entry.get_text().strip()
+        if command:
+            sent_count, failed_count = self.terminal_manager.broadcast_command(command)
+
+            # Update banner message with result (we'll need to find the title label)
+            # For now, just hide the banner after sending
+            self.broadcast_entry_dirty = False
+            self._schedule_broadcast_hide_timeout()
+        else:
+            # Show error for empty command - could add error styling here
+            self.broadcast_entry_dirty = False
+            self._schedule_broadcast_hide_timeout()
+
+    def on_broadcast_cancel_clicked(self, button):
+        """Handle broadcast banner cancel button click"""
+        self.hide_broadcast_banner()
+    
+    def on_broadcast_entry_activate(self, entry):
+        """Handle Enter key press in broadcast entry"""
+        self.on_broadcast_send_clicked(self.broadcast_send_button)
+    
+    def on_broadcast_entry_key_pressed(self, controller, keyval, keycode, state):
+        """Handle key presses in broadcast entry"""
+        if keyval == Gdk.KEY_Escape:
+            self.hide_broadcast_banner()
+            return True  # Consume the key event
+        self._cancel_broadcast_hide_timeout()
+        return False  # Let other keys pass through
+
+    def on_broadcast_banner_key_pressed(self, controller, keyval, keycode, state):
+        """Handle key presses on the entire broadcast banner"""
+        if keyval == Gdk.KEY_Escape:
+            self.hide_broadcast_banner()
+            return True  # Consume the key event
+        return False  # Let other keys pass through
+    
+    def hide_broadcast_banner(self):
+        """Hide the broadcast banner"""
+        self._cancel_broadcast_hide_timeout()
+        self.broadcast_banner.set_reveal_child(False)
+        self.broadcast_entry_dirty = False
+        self._suppress_broadcast_entry_changed = True
+        try:
+            self.broadcast_entry.set_text("")
+        finally:
+            self._suppress_broadcast_entry_changed = False
+
+        # Focus the active terminal tab after hiding the banner
+        self._focus_active_terminal_tab()
+
+    def _focus_active_terminal_tab(self):
+        """Focus the currently active terminal tab"""
+        try:
+            if hasattr(self, 'tab_view') and self.tab_view:
+                selected_page = self.tab_view.get_selected_page()
+                if selected_page:
+                    terminal_widget = selected_page.get_child()
+                    if terminal_widget:
+                        if hasattr(terminal_widget, 'vte') and hasattr(terminal_widget.vte, 'grab_focus'):
+                            terminal_widget.vte.grab_focus()
+                        elif hasattr(terminal_widget, 'grab_focus'):
+                            terminal_widget.grab_focus()
+        except Exception as e:
+            logger.debug(f"Failed to focus active terminal tab: {e}")
+    
+    def show_broadcast_banner(self):
+        """Show the broadcast banner"""
+        self._cancel_broadcast_hide_timeout()
+        self.broadcast_banner.set_reveal_child(True)
+        self.broadcast_entry_dirty = bool(self.broadcast_entry.get_text())
+        # Focus the entry after a short delay to ensure banner is visible
+        def focus_entry():
+            self.broadcast_entry.grab_focus()
+            return False
+        GLib.idle_add(focus_entry)
+
+    def on_broadcast_entry_changed(self, entry):
+        """Track user edits to the broadcast entry"""
+        if self._suppress_broadcast_entry_changed:
+            return
+        self.broadcast_entry_dirty = True
+        self._cancel_broadcast_hide_timeout()
+
+    def on_broadcast_entry_focus_enter(self, controller, *args):
+        """Cancel hide timeout when the entry gains focus"""
+        self._cancel_broadcast_hide_timeout()
+
+    def on_broadcast_entry_focus_leave(self, controller, *args):
+        """Schedule hiding when the entry loses focus"""
+        if not self.broadcast_banner.get_reveal_child():
+            return
+        self._schedule_broadcast_hide_timeout()
+
+    def _cancel_broadcast_hide_timeout(self):
+        """Cancel any pending hide timeout for the broadcast banner"""
+        if self.broadcast_hide_timeout_id is not None:
+            try:
+                GLib.source_remove(self.broadcast_hide_timeout_id)
+            except Exception:
+                pass
+            finally:
+                self.broadcast_hide_timeout_id = None
+
+    def _schedule_broadcast_hide_timeout(self, timeout_ms: int = 5000):
+        """Schedule hiding the broadcast banner after a delay"""
+        self._cancel_broadcast_hide_timeout()
+
+        def maybe_hide_banner():
+            self.broadcast_hide_timeout_id = None
+            entry_has_focus = False
+            try:
+                entry_has_focus = self.broadcast_entry.has_focus()
+            except Exception:
+                entry_has_focus = False
+
+            if entry_has_focus and self.broadcast_entry_dirty:
+                return False
+
+            self.hide_broadcast_banner()
+            return False
+
+        self.broadcast_hide_timeout_id = GLib.timeout_add(timeout_ms, maybe_hide_banner)
+
+    def on_broadcast_command_action(self, action, param=None):
+        """Handle broadcast command action - shows banner to input command"""
+        try:
+            # Check if there are any SSH terminals open
+            ssh_terminals_count = sum(
+                1 for _ in self.terminal_manager.iter_ssh_terminals()
+            )
+            
+            if ssh_terminals_count == 0:
+                # Show message dialog
+                try:
+                    error_dialog = Adw.MessageDialog(
+                        transient_for=self,
+                        modal=True,
+                        heading=_("No SSH Terminals Open"),
+                        body=_("Connect to your server first!")
+                    )
+                    error_dialog.add_response('ok', _('OK'))
+                    error_dialog.present()
+                except Exception as e:
+                    logger.error(f"Failed to show error dialog: {e}")
+                return
+            
+            # Show the broadcast banner instead of a dialog
+            self.show_broadcast_banner()
+            
+        except Exception as e:
+            logger.error(f"Failed to show broadcast command dialog: {e}")
+            # Show error dialog
+            try:
+                error_dialog = Adw.MessageDialog(
+                    transient_for=self,
+                    modal=True,
+                    heading=_("Error"),
+                    body=_("Failed to open broadcast command dialog: {}").format(str(e))
+                )
+                error_dialog.add_response('ok', _('OK'))
+                error_dialog.present()
+            except Exception:
+                pass
+    
     def on_run_command_action(self, action=None, param=None):
         """Open the command picker for the right-clicked connection(s) or group."""
         panel = getattr(self, 'command_blocks_panel', None)
@@ -7047,7 +10113,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception as e:
             logger.error(f"Failed to show move to group dialog: {e}")
 
-    def move_connection_to_group(self, connection_nickname: str, target_group_id: Optional[str] = None):
+    def move_connection_to_group(self, connection_nickname: str, target_group_id: str = None):
         """Move a connection to a specific group"""
         try:
             self.group_manager.move_connection(connection_nickname, target_group_id)
@@ -7682,9 +10748,45 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     'remote_command': _norm_str(getattr(old_connection, 'remote_command', '') or (getattr(old_connection, 'data', {}).get('remote_command') if hasattr(old_connection, 'data') else '')),
                     'extra_ssh_config': _norm_str(getattr(old_connection, 'extra_ssh_config', '') or (getattr(old_connection, 'data', {}).get('extra_ssh_config') if hasattr(old_connection, 'data') else '')),
                 }
-                # Editing always forces an update so forwarding rules stay synced;
-                # change detection was intentionally removed (it could skip needed
-                # updates), so no diff between old and new values is computed here.
+                incoming = {
+                    'nickname': _norm_str(connection_data.get('nickname')),
+                    'hostname': _norm_str(connection_data.get('hostname') or connection_data.get('host')),
+                    'username': _norm_str(connection_data.get('username')),
+                    'port': int(connection_data.get('port') or 22),
+                    'auth_method': int(connection_data.get('auth_method') or 0),
+                    'keyfile': _norm_str(connection_data.get('keyfile')),
+                    'certificate': _norm_str(connection_data.get('certificate')),
+                    'key_select_mode': int(connection_data.get('key_select_mode') or 0),
+                    'password': _norm_str(connection_data.get('password')),
+                    'key_passphrase': _norm_str(connection_data.get('key_passphrase')),
+                    'x11_forwarding': bool(connection_data.get('x11_forwarding', False)),
+                    'forwarding_rules': _norm_rules(connection_data.get('forwarding_rules')),
+                    'pre_command': _norm_str(connection_data.get('pre_command')),
+                    'local_command': _norm_str(connection_data.get('local_command')),
+                    'remote_command': _norm_str(connection_data.get('remote_command')),
+                    'extra_ssh_config': _norm_str(connection_data.get('extra_ssh_config')),
+                }
+                # Determine if anything meaningful changed by comparing canonical SSH config blocks
+                try:
+                    existing_block = self.connection_manager.format_ssh_config_entry(existing)
+                    incoming_block = self.connection_manager.format_ssh_config_entry(incoming)
+                    # Also include auth_method/password/key_select_mode delta in change detection
+                    pw_changed_flag = bool(connection_data.get('password_changed', False))
+                    ksm_changed = (existing.get('key_select_mode', 0) != incoming.get('key_select_mode', 0))
+                    changed = (existing_block != incoming_block) or (existing['auth_method'] != incoming['auth_method']) or pw_changed_flag or ksm_changed or (existing['password'] != incoming['password'])
+                except Exception:
+                    # Fallback to dict comparison if formatter fails
+                    changed = existing != incoming
+
+                # Extra guard: if key_select_mode or auth_method differs from the object's current value, force changed
+                try:
+                    if int(connection_data.get('key_select_mode', -1)) != int(getattr(old_connection, 'key_select_mode', -1)):
+                        changed = True
+                    if int(connection_data.get('auth_method', -1)) != int(getattr(old_connection, 'auth_method', -1)):
+                        changed = True
+                except Exception:
+                    pass
+
                 # Always force update when editing connections - skip change detection entirely for forwarding rules
                 logger.info("Editing connection '%s' - forcing update to ensure forwarding rules are synced", existing['nickname'])
 

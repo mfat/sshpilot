@@ -214,8 +214,8 @@ class RemoteFileEditorWindow(Adw.Window):
         self._title_widget.set_tooltip_text(self._file_path)
         header_bar.set_title_widget(self._title_widget)
         
-        # Save button
-        save_label = "Save"
+        # Save button - label depends on local vs remote
+        save_label = "Save" if self._is_local else "Save"
         self._save_button = Gtk.Button(label=save_label)
         self._save_button.add_css_class("suggested-action")
         self._save_button.set_sensitive(False)
@@ -781,7 +781,7 @@ class RemoteFileEditorWindow(Adw.Window):
         self._title_text = title
         self._update_title()
 
-    def _update_title(self, modified: Optional[bool] = None) -> None:
+    def _update_title(self, modified: bool = None) -> None:
         """Update the headerbar title (modified marker) and path subtitle."""
         if modified is None:
             modified = self._buffer.get_modified() if self._buffer else False

@@ -6,6 +6,7 @@ Handles import/export of SSH and application configuration
 import json
 import logging
 import os
+import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, Optional, Tuple, List
@@ -77,7 +78,7 @@ class BackupManager:
             ssh_config_path = self.get_ssh_config_path()
             if ssh_config_path and os.path.exists(ssh_config_path):
                 try:
-                    with open(ssh_config_path, encoding='utf-8') as f:
+                    with open(ssh_config_path, 'r', encoding='utf-8') as f:
                         export_data['ssh_config'] = f.read()
                     logger.info(f"Exported SSH config from {ssh_config_path}")
                 except Exception as e:
@@ -91,7 +92,7 @@ class BackupManager:
             known_hosts_path = self.get_known_hosts_path()
             if known_hosts_path and os.path.exists(known_hosts_path):
                 try:
-                    with open(known_hosts_path, encoding='utf-8') as f:
+                    with open(known_hosts_path, 'r', encoding='utf-8') as f:
                         export_data['known_hosts'] = f.read()
                     logger.info(f"Exported known_hosts from {known_hosts_path}")
                 except Exception as e:
@@ -104,7 +105,7 @@ class BackupManager:
             config_file = Path(get_config_dir()) / 'config.json'
             if config_file.exists():
                 try:
-                    with open(config_file, encoding='utf-8') as f:
+                    with open(config_file, 'r', encoding='utf-8') as f:
                         export_data['app_config'] = json.load(f)
                     logger.info(f"Exported app config from {config_file}")
                 except Exception as e:
@@ -152,7 +153,7 @@ class BackupManager:
 
             # Load import data
             try:
-                with open(import_path, encoding='utf-8') as f:
+                with open(import_path, 'r', encoding='utf-8') as f:
                     import_data = json.load(f)
             except json.JSONDecodeError as e:
                 return False, f"Invalid JSON file: {e}"
@@ -224,7 +225,7 @@ class BackupManager:
         """Replace all configuration with imported data"""
         try:
             # Import SSH config
-            if import_data.get('ssh_config'):
+            if 'ssh_config' in import_data and import_data['ssh_config']:
                 ssh_config_path = self.get_ssh_config_path()
                 os.makedirs(os.path.dirname(ssh_config_path), exist_ok=True)
                 with open(ssh_config_path, 'w', encoding='utf-8') as f:
@@ -234,7 +235,7 @@ class BackupManager:
                 logger.info(f"Replaced SSH config at {ssh_config_path}")
 
             # Import known_hosts if present
-            if import_data.get('known_hosts'):
+            if 'known_hosts' in import_data and import_data['known_hosts']:
                 known_hosts_path = self.get_known_hosts_path()
                 if known_hosts_path:
                     os.makedirs(os.path.dirname(known_hosts_path), exist_ok=True)
@@ -266,12 +267,12 @@ class BackupManager:
         """Merge imported configuration with existing"""
         try:
             # For SSH config, we'll append imported hosts that don't exist
-            if import_data.get('ssh_config'):
+            if 'ssh_config' in import_data and import_data['ssh_config']:
                 ssh_config_path = self.get_ssh_config_path()
                 self._merge_ssh_config(ssh_config_path, import_data['ssh_config'])
 
             # For known_hosts, append if in isolated mode
-            if import_data.get('known_hosts'):
+            if 'known_hosts' in import_data and import_data['known_hosts']:
                 known_hosts_path = self.get_known_hosts_path()
                 if known_hosts_path:
                     self._merge_known_hosts(known_hosts_path, import_data['known_hosts'])
@@ -297,7 +298,7 @@ class BackupManager:
             # Read existing config
             existing_config = ''
             if os.path.exists(target_path):
-                with open(target_path, encoding='utf-8') as f:
+                with open(target_path, 'r', encoding='utf-8') as f:
                     existing_config = f.read()
 
             # Extract host entries from existing config (simple approach)
@@ -368,7 +369,7 @@ class BackupManager:
         try:
             existing_lines = set()
             if os.path.exists(target_path):
-                with open(target_path, encoding='utf-8') as f:
+                with open(target_path, 'r', encoding='utf-8') as f:
                     existing_lines = set(line.strip() for line in f if line.strip())
 
             # Add new unique lines

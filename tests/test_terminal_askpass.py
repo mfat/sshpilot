@@ -13,6 +13,7 @@ agent is never disabled. These tests cover that wiring.
 import importlib
 import types
 
+import pytest
 
 
 class _RecordingGLib:

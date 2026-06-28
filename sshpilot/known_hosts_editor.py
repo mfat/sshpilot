@@ -80,7 +80,7 @@ class KnownHostsEditorWindow(Adw.Window):
     def _load_entries(self):
         """Load known_hosts entries into the listbox."""
         try:
-            with open(self._known_hosts_path) as f:
+            with open(self._known_hosts_path, 'r') as f:
                 lines = [line.rstrip('\n') for line in f]
         except Exception as e:
             logger.error(f"Failed to load known_hosts: {e}")

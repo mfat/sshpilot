@@ -6,6 +6,7 @@ import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from sshpilot.tag_groups import (
+    TAG_GROUP_ID_PREFIX,
     add_tag_to_list,
     complete_tag_text,
     compute_tag_groups,

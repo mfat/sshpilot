@@ -29,7 +29,7 @@ class StatsTabMixin:
 
         toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         live = Gtk.Button()
-        live.set_child(Adw.ButtonContent(icon_name="warning-outline-symbolic",
+        live.set_child(Adw.ButtonContent(icon_name="utilities-system-monitor-symbolic",
                                          label="Live stats"))
         live.set_tooltip_text("Open a streaming `docker stats` in a terminal tab")
         live.connect("clicked", lambda _b: self._open_live_stats())
