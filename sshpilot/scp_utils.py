@@ -13,6 +13,7 @@ from .ssh_connection_builder import (
 )
 from .ssh_config_utils import get_effective_ssh_config
 from .ssh_password_exec import assemble_scp_transfer_args, wrap_argv_with_sshpass
+from .remote_path_utils import _format_ssh_target
 
 logger = logging.getLogger(__name__)
 
@@ -98,16 +99,6 @@ def _record_download_failure(
     friendly = classify_sftp_error(stderr)
     if friendly:
         result_details['friendly'] = friendly
-
-
-def _format_ssh_target(host: str, user: str) -> str:
-    """Format SSH target as user@host."""
-    host_component = host or ''
-    if host_component and ':' in host_component and not (
-        host_component.startswith('[') and host_component.endswith(']')
-    ):
-        host_component = f'[{host_component}]'
-    return f'{user}@{host_component}' if user else host_component
 
 
 def _create_connection_for_scp(
