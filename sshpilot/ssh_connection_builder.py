@@ -7,14 +7,17 @@ components (terminal, SCP, SFTP, ssh-copy-id) that matches default SSH behavior.
 """
 import os
 import logging
-from typing import Dict, List, Optional, Union
+import subprocess
+from typing import Dict, List, Optional, Tuple, Union
 from dataclasses import dataclass
 
+from .ssh_config_utils import get_effective_ssh_config
 from .askpass_utils import (
     get_ssh_env_with_askpass,
     ensure_key_in_agent,
     lookup_passphrase,
 )
+from .ssh_password_exec import run_ssh_with_password
 
 logger = logging.getLogger(__name__)
 
@@ -655,6 +658,7 @@ def build_ssh_connection(
     connection = ctx.connection
     connection_manager = ctx.connection_manager
     app_config = ctx.config
+    command_type = ctx.command_type
     extra_args = ctx.extra_args or []
     
     logger.debug(f"build_ssh_connection called: native_mode={ctx.native_mode}, connection_manager={'present' if connection_manager else 'None'}")

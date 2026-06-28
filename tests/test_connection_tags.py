@@ -2,14 +2,21 @@ import os
 import sys
 
 
-# conftest.py provides gi.repository stubs whose dummy GI metaclass returns a
-# bare object() from __call__, so a Config built against the stub would yield
-# object() (with none of Config's methods) from Config(). The previous workaround
-# rebound the shared gi globals at import time and relied on being the first test
-# to import sshpilot.config — which fails in the full suite once another module
-# (e.g. test_plugin_defaults) imports it first (see #985). Instead we build Config
-# without routing through the stub metaclass and scope every override to the test
-# via monkeypatch, so nothing leaks and the result is order-independent.
+# conftest.py provides gi.repository stubs. Override only the specific
+# attributes this test needs without clobbering the shared module (see #985).
+from gi.repository import Gio, GLib, GObject
+
+
+class DummySettingsSchemaSource:
+    @staticmethod
+    def get_default():
+        return None
+
+
+GObject.Object = type('GObject', (object,), {})
+Gio.SettingsSchemaSource = DummySettingsSchemaSource
+GLib.get_user_config_dir = lambda: os.path.join(os.environ.get("HOME", ""), ".config")
+
 
 # Ensure project root is importable
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -18,26 +25,12 @@ import sshpilot.config
 from sshpilot.config import Config
 
 
-class _DummySchemaSource:
-    @staticmethod
-    def get_default():
-        return None
-
-
 def make_config(tmp_path, monkeypatch):
     monkeypatch.setenv('HOME', str(tmp_path))
-    # Point the JSON config at tmp_path and force the JSON backend.
+    # The conftest gi stub makes GLib-based dir lookup return a dummy object,
+    # so point the config dir at tmp_path directly.
     monkeypatch.setattr(sshpilot.config, 'get_config_dir', lambda: str(tmp_path))
-    monkeypatch.setattr(
-        sshpilot.config.Gio, 'SettingsSchemaSource', _DummySchemaSource,
-        raising=False,
-    )
-    # Bypass the conftest stub's metaclass __call__ (which returns object()):
-    # __new__ + explicit __init__ yields a real Config regardless of which test
-    # imported sshpilot.config first.
-    cfg = Config.__new__(Config)
-    cfg.__init__()
-    return cfg
+    return Config()
 
 
 def test_tags_round_trip_strips_whitespace_and_empties(tmp_path, monkeypatch):

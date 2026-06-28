@@ -1,3 +1,4 @@
+import subprocess
 
 import pytest
 
@@ -10,6 +11,7 @@ from sshpilot.scp_utils import (
     insert_legacy_scp_flag,
     legacy_scp_flag_unsupported,
 )
+from sshpilot import ssh_password_exec
 
 
 def test_insert_legacy_scp_flag_inserts_after_binary():

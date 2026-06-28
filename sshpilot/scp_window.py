@@ -1,6 +1,7 @@
 import os
 import logging
 import threading
+import atexit
 from gettext import gettext as _
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
@@ -15,7 +16,7 @@ except Exception:
 from gi.repository import Gtk, Adw, GLib, Gio
 
 from .terminal import TerminalWidget
-from .config import Config  # noqa: F401  # exposed for tests that patch scp_window.Config
+from .config import Config
 from .connection_display import (
     get_connection_alias as _get_connection_alias,
     get_connection_host as _get_connection_host,
@@ -26,6 +27,7 @@ from .scp_utils import (
     classify_sftp_error,
     download_file,
     insert_legacy_scp_flag,
+    upload_file,
 )
 from .platform_utils import is_flatpak
 from .file_manager.portal_docs import (
@@ -313,9 +315,9 @@ class ScpWindowController:
 
     def _prompt_scp_download(self, connection):
         """Show a simple file picker that downloads selected remote files via scp."""
-        from .window import list_remote_files, _show_password_passphrase_dialog
-        from .remote_path_utils import (
-            _normalize_remote_path, _remote_parent, _remote_join,
+        from .window import (
+            list_remote_files, _normalize_remote_path, _remote_parent,
+            _remote_join, _show_password_passphrase_dialog,
         )
         try:
             try:
@@ -333,6 +335,8 @@ class ScpWindowController:
                 msg.present()
                 return
 
+            alias_value = profile.alias
+            hostname_value = profile.hostname
             host_value = profile.host
             username = profile.username
             port = profile.port

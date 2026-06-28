@@ -14,8 +14,6 @@ with GTK's icon theme system for symbolic icon recoloring.
 """
 
 import logging
-from typing import Optional
-
 from gi.repository import Gtk, Gio, GLib
 
 logger = logging.getLogger(__name__)
@@ -79,7 +77,6 @@ _ICON_RESOURCE_MAP = {
     'dialog-error-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/dialog-error-symbolic.svg',
     'error-outline-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/error-outline-symbolic.svg',
     'info-outline-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/info-outline-symbolic.svg',
-    'warning-outline-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/warning-outline-symbolic.svg',
     'color-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/color-symbolic.svg',
     'brand-docker-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/brand-docker-symbolic.svg',
     'success-small-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/success-small-symbolic.svg',
@@ -157,7 +154,7 @@ _ICON_RESOURCE_MAP = {
     'x-package-repository': '/io/github/mfat/sshpilot/icons/scalable/mimetypes/x-package-repository.svg',
 }
 
-def new_image_from_icon_name(icon_name: str, size: Optional[int] = None) -> Gtk.Image:
+def new_image_from_icon_name(icon_name: str, size: int = None) -> Gtk.Image:
     """
     Create a Gtk.Image from an icon name, preferring bundled icons over system icons.
     
@@ -194,6 +191,7 @@ def new_image_from_icon_name(icon_name: str, size: Optional[int] = None) -> Gtk.
             return image
         except (GLib.Error, Exception) as e:
             logger.debug(f"Bundled icon not found for {icon_name}, using icon theme: {e}")
+            pass
     
     # Fall back to icon theme system (will check resource path, then system themes)
     # This ensures symbolic icons are properly recolored when using system icons
@@ -235,6 +233,7 @@ def set_icon_from_name(image: Gtk.Image, icon_name: str) -> None:
             return
         except (GLib.Error, Exception) as e:
             logger.debug(f"Bundled icon not found for {icon_name}, using icon theme: {e}")
+            pass
     
     # Fall back to icon theme system
     if _original_set_from_icon_name is not None:

@@ -2,6 +2,7 @@
 
 import os
 
+import pytest
 
 from sshpilot import ssh_password_exec as spe
 

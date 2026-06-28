@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 from typing import List, Optional
 
+import pytest
 
 from sshpilot.connection_manager import Connection, ConnectionManager
 from sshpilot.ssh_connection_builder import (

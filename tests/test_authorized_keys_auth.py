@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+import pytest
 
 from sshpilot.authorized_keys_window import AuthorizedKeysWindow
 

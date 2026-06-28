@@ -2112,6 +2112,7 @@ class FilePane(Gtk.Box):
     def _on_drag_end(self, drag_source: Gtk.DragSource, drag: Gdk.Drag, delete_data: bool) -> None:
         """Called when drag operation ends."""
         # Clean up any drag-related state if needed
+        pass
 
     def _on_drop_string(self, drop_target: Gtk.DropTarget, value: str, x: float, y: float) -> bool:
         """Handle dropped files from string data."""
@@ -2377,7 +2378,7 @@ class FilePane(Gtk.Box):
             window._check_file_conflicts(files_to_transfer, "upload", _proceed_with_upload)
 
         except Exception as e:
-            self.show_toast(f"Upload failed: {e!s}")
+            self.show_toast(f"Upload failed: {str(e)}")
 
     def _handle_download_from_drag(
         self,
@@ -2439,7 +2440,7 @@ class FilePane(Gtk.Box):
             window._check_file_conflicts(files_to_transfer, "download", _proceed_with_download)
 
         except Exception as e:
-            self.show_toast(f"Download failed: {e!s}")
+            self.show_toast(f"Download failed: {str(e)}")
 
     def _on_drop_enter(self, drop_target: Gtk.DropTarget, x: float, y: float) -> Gdk.DragAction:
         """Called when drag enters drop target."""

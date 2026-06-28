@@ -1,5 +1,6 @@
 import sys
 import types
+import importlib
 import pytest
 
 try:  # Skip test if Gtk/Adw bindings aren't available

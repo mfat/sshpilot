@@ -19,7 +19,7 @@ def _sftp_path_exists(sftp: Any, path: str) -> bool:
         sftp.stat(path)
     except FileNotFoundError:
         return False
-    except OSError as exc:
+    except IOError as exc:
         error_code = getattr(exc, "errno", None)
         if error_code is None and exc.args:
             first_arg = exc.args[0]

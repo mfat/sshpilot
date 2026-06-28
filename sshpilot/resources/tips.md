@@ -4,8 +4,9 @@
 # Edit, add, or remove tips here — no need to change the app source.
 
 Select a host, press Ctrl+Shift+O to open the file manager!
+Press Ctrl+Shift+L to switch between the terminal and the connection list
 Press Ctrl+F to search your connections
-Press Ctrl+Shift+N to open a new connection
+Press Ctrl+N to open a new connection
 Press Ctrl+Shift+F to search inside the terminal
 Press Ctrl+Shift+K to copy your SSH key to a server
 Press F9 to toggle the sidebar
@@ -15,3 +16,4 @@ Middle-click a tab to close it!
 Hover your mouse pointer over the right side of a connection to access the file manager
 You can use your favorite terminal from Settings
 When the app starts, just type a host name and press enter to connect!
+In Split View,you can swith between terminals with Alt+1/2/3.. 

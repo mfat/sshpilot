@@ -133,7 +133,7 @@ def _resolve_host_to_ip(host: str, port: int = 22) -> Optional[str]:
     host = host.strip()
     # If it's already an IPv4 address, return as-is
     try:
-        socket.inet_pton(socket.AF_INET, host)  # validates; raises OSError if not an IPv4 literal
+        addr = socket.inet_pton(socket.AF_INET, host)
         return host
     except OSError:
         pass
@@ -162,7 +162,7 @@ def _trigger_arp(ip: str, port: int = 22, timeout: float = 2.0) -> None:
 def _read_arp_linux(ip: str) -> Optional[str]:
     """Read MAC for the given IP from /proc/net/arp. Returns None if not found or invalid."""
     try:
-        with open("/proc/net/arp") as f:
+        with open("/proc/net/arp", "r") as f:
             lines = f.readlines()
     except OSError as e:
         logger.debug("Cannot read /proc/net/arp: %s", e)

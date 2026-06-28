@@ -616,7 +616,7 @@ class AuthorizedKeysWindow(Adw.Window):
             )
             return
         try:
-            with open(public_path, encoding="utf-8") as fh:
+            with open(public_path, "r", encoding="utf-8") as fh:
                 text = fh.read().strip()
         except OSError as exc:
             self._toast(_("Could not read {}: {}").format(public_path, exc))

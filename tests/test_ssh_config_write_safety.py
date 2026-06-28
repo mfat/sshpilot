@@ -15,6 +15,7 @@ block-targeted rewrite, and these tests pin the safety properties:
 """
 
 import asyncio
+import os
 from types import SimpleNamespace
 
 import pytest

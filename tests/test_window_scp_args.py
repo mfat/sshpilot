@@ -1,3 +1,4 @@
+import os
 import sys
 import types
 from types import SimpleNamespace
@@ -5,7 +6,7 @@ from types import SimpleNamespace
 if 'cairo' not in sys.modules:
     sys.modules['cairo'] = types.ModuleType('cairo')
 
-from sshpilot import window
+from sshpilot import askpass_utils, window
 from sshpilot import scp_window
 
 
