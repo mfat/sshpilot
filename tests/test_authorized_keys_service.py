@@ -221,12 +221,12 @@ class FakeSFTP:
         self._record("stat", path)
         if path in self.dirs or path in self.files:
             return MagicMock(st_mode=0)
-        raise IOError(f"missing: {path}")
+        raise OSError(f"missing: {path}")
 
     def mkdir(self, path, mode=0o777):
         self._record("mkdir", path, mode)
         if path in self.dirs:
-            raise IOError(f"already exists: {path}")
+            raise OSError(f"already exists: {path}")
         self.dirs.add(path)
         self.modes[path] = mode
 
@@ -234,7 +234,7 @@ class FakeSFTP:
         self._record("file", path, mode)
         if "r" in mode:
             if path not in self.files:
-                raise IOError(f"missing: {path}")
+                raise OSError(f"missing: {path}")
             return _FakeSFTPFile(self.files[path])
 
         # Write mode: create the file empty on open so chmod-before-write
@@ -252,9 +252,9 @@ class FakeSFTP:
     def posix_rename(self, src, dst):
         self._record("posix_rename", src, dst)
         if self.posix_rename_fails:
-            raise IOError("posix-rename@openssh.com not supported")
+            raise OSError("posix-rename@openssh.com not supported")
         if src not in self.files:
-            raise IOError(f"missing rename src: {src}")
+            raise OSError(f"missing rename src: {src}")
         self.files[dst] = self.files.pop(src)
         # posix_rename preserves source mode.
         if src in self.modes:
@@ -267,12 +267,12 @@ class FakeSFTP:
         elif path in self.dirs:
             self.dirs.discard(path)
         else:
-            raise IOError(f"missing: {path}")
+            raise OSError(f"missing: {path}")
 
     def rename(self, src, dst):
         self._record("rename", src, dst)
         if src not in self.files:
-            raise IOError(f"missing rename src: {src}")
+            raise OSError(f"missing rename src: {src}")
         self.files[dst] = self.files.pop(src)
         if src in self.modes:
             self.modes[dst] = self.modes.pop(src)
@@ -280,7 +280,7 @@ class FakeSFTP:
     def chmod(self, path, mode):
         self._record("chmod", path, mode)
         if path not in self.files and path not in self.dirs:
-            raise IOError(f"chmod missing: {path}")
+            raise OSError(f"chmod missing: {path}")
         self.modes[path] = mode
 
 

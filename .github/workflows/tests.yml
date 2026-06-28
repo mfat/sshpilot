@@ -44,5 +44,9 @@ jobs:
 
       # Unit suite only — the `integration` tests run the real tool binaries and
       # live in the containerized "Test environment" workflow.
+      # pytest-cov is already installed above; emit a coverage summary so the
+      # least-covered modules are visible (informational, does not fail the run).
       - name: Run pytest
-        run: pytest -ra -m "not integration"
+        run: >
+          pytest -ra -m "not integration"
+          --cov=sshpilot --cov-report=term-missing --cov-report=xml

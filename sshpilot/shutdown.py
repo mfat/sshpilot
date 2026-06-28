@@ -8,7 +8,6 @@ leaner and makes the quit logic reusable.
 
 from gettext import gettext as _
 import logging
-import time
 
 from gi.repository import Gtk, GLib, Adw
 
@@ -263,7 +262,7 @@ def _disconnect_terminal_safely(terminal):
 
 __all__ = [
     "cleanup_and_quit",
-    "show_reconnecting_message",
     "hide_reconnecting_message",
+    "show_reconnecting_message",
 ]
 

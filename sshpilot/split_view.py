@@ -9,11 +9,25 @@ from gettext import gettext as _
 
 logger = logging.getLogger(__name__)
 
-# Alt+1..9 → zero-based pane index (number row + numeric keypad).
-_ALT_NUM_KEYS = {}
-for _i in range(1, 10):
-    _ALT_NUM_KEYS[getattr(Gdk, f'KEY_{_i}')] = _i - 1
-    _ALT_NUM_KEYS[getattr(Gdk, f'KEY_KP_{_i}')] = _i - 1
+
+def _connections_from_drop_payload(value) -> List[str]:
+    """Normalize a sidebar drop payload into an ordered list of nicknames.
+
+    The payload is the ``TYPE_PYOBJECT`` value carried by a connection drag:
+    a dict with ``type == "connection"`` and either ``connection_nicknames``
+    (a list, multi-select) or a single ``connection_nickname`` fallback.
+
+    Returns ``[]`` for anything that isn't a connection payload (non-dict,
+    wrong/absent type, or no nicknames), so callers can treat an empty list as
+    "not a drop we handle". Pure — no widget access — so it is unit-testable.
+    """
+    if not isinstance(value, dict) or value.get("type") != "connection":
+        return []
+    nicknames = value.get("connection_nicknames") or []
+    if not nicknames and value.get("connection_nickname"):
+        nicknames = [value["connection_nickname"]]
+    return list(nicknames)
+
 
 # Installed once per process; scoped to the .add-pane-strip / scroll-spacer
 # style classes so it only affects those widgets and nothing else in the app.
@@ -459,12 +473,7 @@ class SplitPane(Gtk.Box):
         try:
             if hasattr(value, 'get_value'):
                 value = value.get_value()
-            if not isinstance(value, dict) or value.get("type") != "connection":
-                return False
-
-            nicknames = value.get("connection_nicknames") or []
-            if not nicknames and value.get("connection_nickname"):
-                nicknames = [value["connection_nickname"]]
+            nicknames = _connections_from_drop_payload(value)
             if not nicknames:
                 return False
 
@@ -738,6 +747,25 @@ class SplitViewTab(Gtk.Box):
         drag_motion.connect("enter", self._on_drag_enter_tab)
         drag_motion.connect("leave", self._on_drag_leave_tab)
         self.add_controller(drag_motion)
+
+        # Customizable split-view shortcuts (action name → callback). The
+        # accelerators live in the shortcut registry/config (see main.py
+        # register_custom_shortcut); _on_key_pressed matches the live event
+        # against their effective accelerators. Built once; the callbacks bind
+        # to this instance with constant arguments.
+        self._split_actions = {
+            'split-focus-left':  lambda: self._navigate_pane('left'),
+            'split-focus-down':  lambda: self._navigate_pane('down'),
+            'split-focus-up':    lambda: self._navigate_pane('up'),
+            'split-focus-right': lambda: self._navigate_pane('right'),
+            'split-resize-left':  lambda: self._resize_active_pane('left'),
+            'split-resize-down':  lambda: self._resize_active_pane('down'),
+            'split-resize-up':    lambda: self._resize_active_pane('up'),
+            'split-resize-right': lambda: self._resize_active_pane('right'),
+            'split-layout-horizontal': lambda: self.set_layout_mode(self.HORIZONTAL),
+            'split-layout-vertical':   lambda: self.set_layout_mode(self.VERTICAL),
+            'split-add-pane': lambda: self.add_pane(),
+        }
 
         # CAPTURE-phase key controller intercepts shortcuts before VTE eats them
         key_ctrl = Gtk.EventControllerKey()
@@ -1594,9 +1622,9 @@ class SplitViewTab(Gtk.Box):
 
     # ── keyboard navigation ───────────────────────────────────────────────────
 
-    _RESIZE_STEP = 50  # pixels per Ctrl+Alt+Shift+HJKL keypress
+    _RESIZE_STEP = 50  # pixels per resize-pane keypress
 
-    def _on_key_pressed(self, _ctrl, keyval, _keycode, state) -> bool:
+    def _on_key_pressed(self, _ctrl, _keyval, _keycode, state) -> bool:
         # Guard: only act when the focused widget is inside THIS SplitViewTab.
         # Adw.TabView keeps all tab-page children realized, so GTK4 may invoke
         # our CAPTURE handler even when a sibling widget (e.g. the connection
@@ -1618,49 +1646,26 @@ class SplitViewTab(Gtk.Box):
             | Gdk.ModifierType.META_MASK
         )
 
-        CTRL_ALT    = Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.ALT_MASK
-        CTRL_ALT_SH = CTRL_ALT | Gdk.ModifierType.SHIFT_MASK
-        CTRL_SH     = Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.SHIFT_MASK
+        # Cheap early-out: every customizable split shortcut uses Control or Alt,
+        # so plain typing skips the trigger matching below entirely.
+        if not (mods & (Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.ALT_MASK)):
+            return False
 
-        # Ctrl+Alt+H/J/K/L — focus navigation (vim-style, no GNOME/macOS conflicts)
-        # Ctrl+Alt+Shift+H/J/K/L — resize
-        HJKL_NAV = {
-            Gdk.KEY_h: 'left',  Gdk.KEY_H: 'left',
-            Gdk.KEY_j: 'down',  Gdk.KEY_J: 'down',
-            Gdk.KEY_k: 'up',    Gdk.KEY_K: 'up',
-            Gdk.KEY_l: 'right', Gdk.KEY_L: 'right',
-        }
-
-        if keyval in HJKL_NAV:
-            d = HJKL_NAV[keyval]
-            if mods == CTRL_ALT:
-                self._navigate_pane(d)
-                return True
-            if mods == CTRL_ALT_SH:
-                self._resize_active_pane(d)
-                return True
-
-        # Accept both the base key and its Shift-transformed variant since GTK4
-        # reports the effective (shifted) keyval: \ → |, - → _
-        if keyval in (Gdk.KEY_backslash, Gdk.KEY_bar) and mods == CTRL_SH:
-            self.set_layout_mode(self.HORIZONTAL)
-            return True
-        if keyval in (Gdk.KEY_minus, Gdk.KEY_underscore) and mods == CTRL_SH:
-            self.set_layout_mode(self.VERTICAL)
-            return True
-        # Ctrl+Shift+N — add pane (Ctrl+Shift+T is taken by local-terminal action)
-        if keyval in (Gdk.KEY_N, Gdk.KEY_n) and mods == CTRL_SH:
-            self.add_pane()
-            return True
-
-        # Alt+1..9 — focus the Nth pane. (Ctrl+Shift+W "close focused pane" is
-        # now handled by the global, context-aware tab-close action so it works
-        # both inside and outside split views without a precedence clash.)
-        if mods == Gdk.ModifierType.ALT_MASK and keyval in _ALT_NUM_KEYS:
-            idx = _ALT_NUM_KEYS[keyval]
-            if 0 <= idx < len(self._panes):
-                self._focus_pane(self._panes[idx])
-            return True
+        # Config-driven shortcuts: match the live key event against each action's
+        # effective accelerators using GTK's own trigger machinery (the same one
+        # ShortcutController uses), so Shift/symbol/case normalization — and any
+        # user rebinding — Just Work without manual keyval tables. These actions
+        # are disabled by default (no accelerator); users assign their own in the
+        # shortcut editor (see main.py register_custom_shortcut).
+        event = _ctrl.get_current_event()
+        app = self.window.get_application() if self.window is not None else None
+        if event is not None and app is not None and hasattr(app, 'get_effective_shortcuts'):
+            for name, callback in self._split_actions.items():
+                for accel in (app.get_effective_shortcuts(name) or []):
+                    trigger = Gtk.ShortcutTrigger.parse_string(accel)
+                    if trigger is not None and trigger.trigger(event, False) == Gdk.KeyMatch.EXACT:
+                        callback()
+                        return True
 
         return False
 

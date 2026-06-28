@@ -5,10 +5,8 @@ Dialog for adding/editing SSH connections
 
 import os
 import logging
-import gettext
 import re
 import ipaddress
-import socket
 import subprocess
 import threading
 import types
@@ -2022,7 +2020,7 @@ class ConnectionDialog(Adw.Window):
     @staticmethod
     def _read_pub(pub_path):
         try:
-            with open(pub_path, 'r') as f:
+            with open(pub_path) as f:
                 parts = f.read().split()
             return parts if len(parts) >= 2 else None
         except Exception:
@@ -2325,7 +2323,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             return
 
         try:
-            keyfile_path = None
             # Load basic connection data
             if hasattr(self.connection, 'nickname'):
                 self.nickname_row.set_text(self.connection.nickname or "")
@@ -3992,7 +3989,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             conn = getattr(row, '_conn', None)
             if conn is None:
                 return
-            host_str = getattr(conn, 'host', '') or getattr(conn, 'hostname', '')
             jump_target = conn.nickname
             current = self.proxy_jump_row.get_text().strip()
             if current:

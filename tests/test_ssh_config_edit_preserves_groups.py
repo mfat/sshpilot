@@ -18,7 +18,7 @@ if 'gi.repository' in sys.modules:
 # Ensure an event loop for Connection objects
 asyncio.set_event_loop(asyncio.new_event_loop())
 
-from sshpilot.connection_manager import ConnectionManager, Connection
+from sshpilot.connection_manager import ConnectionManager
 from sshpilot.groups import GroupManager
 
 

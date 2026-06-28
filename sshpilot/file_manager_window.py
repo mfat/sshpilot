@@ -18,29 +18,19 @@ indicators and toast based feedback.
 
 from __future__ import annotations
 
-import collections
 import dataclasses
-import errno
-import json
-import mimetypes
 import os
 import pathlib
 import posixpath
 import shutil
-import stat
-import threading
 import weakref
-import time
-import re
-import tempfile
-from datetime import datetime
-from concurrent.futures import Future, ThreadPoolExecutor, CancelledError
+from concurrent.futures import Future, CancelledError
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 from gettext import gettext as _
 
 
-from gi.repository import Adw, Gio, GLib, GObject, Gdk, Gtk, Pango
+from gi.repository import Adw, Gio, GLib, GObject, Gdk, Gtk
 
 # Try to import GtkSourceView for syntax highlighting
 try:
@@ -52,41 +42,19 @@ except (ImportError, ValueError, AttributeError):
     _HAS_GTKSOURCE = False
     GtkSource = None
 
-from .platform_utils import is_flatpak, is_macos
+from .platform_utils import is_flatpak
 from .text_editor import RemoteFileEditorWindow
 from .file_manager import (
     create_file_manager_backend,
-    DOCS_JSON,
     FileEntry,
     FilePane,
-    PaneControls,
-    PaneToolbar,
-    PathEntry,
-    PropertiesDialog,
     SFTPProgressDialog,
     TransferCancelledException,
     _HAS_ALERT_DIALOG,
-    _MainThreadDispatcher,
-    _PROGRESS_DIALOG_BASE,
-    _ensure_cfg_dir,
-    _get_docs_json_path,
-    _grant_persistent_access,
-    _human_size,
-    _human_time,
-    _load_doc_config,
     _load_first_doc_path,
     _load_grant_for_host,
-    _lookup_doc_entry,
-    _lookup_document_path,
-    _lookup_path_from_config,
-    _mode_to_octal,
-    _mode_to_str,
-    _portal_doc_path,
-    _pretty_path_for_display,
-    _save_doc,
     _sftp_path_exists,
     stat_isdir,
-    walk_remote,
 )
 
 import logging
@@ -899,7 +867,7 @@ class FileManagerWindow(Adw.Window):
                 target = self._right_pane
             if target is None:
                 target = self._left_pane
-            logger.debug(f"_on_directory_loaded: fallback target pane: {target == self._right_pane and 'remote' or 'local'}")
+            logger.debug(f"_on_directory_loaded: fallback target pane: {(target == self._right_pane and 'remote') or 'local'}")
         
         # Clear the pending flag for the resolved pane
         logger.debug(f"_on_directory_loaded: clearing pending path for target pane")
@@ -1131,7 +1099,7 @@ class FileManagerWindow(Adw.Window):
                     except Exception as e:
                         logger.error(f"_finalize_conflicts: Error checking connection: {e}")
                         if hasattr(self, '_right_pane') and self._right_pane:
-                            self._right_pane.show_toast(f"Connection error: {str(e)}")
+                            self._right_pane.show_toast(f"Connection error: {e!s}")
                         return
                 
                 logger.debug("No conflicts, proceeding with transfers")
@@ -1654,7 +1622,7 @@ class FileManagerWindow(Adw.Window):
                                 future_result.result()  # Check for errors
                                 logger.info(f"Successfully deleted '{entry_name}'")
                             except Exception as e:
-                                error_msg = f"Failed to delete {entry_name}: {str(e)}"
+                                error_msg = f"Failed to delete {entry_name}: {e!s}"
                                 logger.error(f"Delete failed for '{entry_name}': {error_msg}", exc_info=True)
                                 errors.append(error_msg)
                             
@@ -1666,7 +1634,7 @@ class FileManagerWindow(Adw.Window):
                             future.add_done_callback(_on_delete_done)
                         except Exception as exc:
                             logger.error(f"Failed to create remove future for {entry_name}: {exc}", exc_info=True)
-                            errors.append(f"Failed to delete {entry_name}: {str(exc)}")
+                            errors.append(f"Failed to delete {entry_name}: {exc!s}")
                             GLib.idle_add(lambda: _delete_next(index + 1))
                     
                     # Start sequential deletion
@@ -1799,7 +1767,7 @@ class FileManagerWindow(Adw.Window):
                             return
                 except Exception as e:
                     logger.error(f"_proceed_with_upload: Error checking connection: {e}")
-                    pane.show_toast(f"Upload failed: {str(e)}")
+                    pane.show_toast(f"Upload failed: {e!s}")
                     return
                 
                 total_files = len(resolved_files)
@@ -1922,7 +1890,7 @@ class FileManagerWindow(Adw.Window):
                                 move_remote_pane or pane,
                             )
                     except Exception as e:
-                        pane.show_toast(f"Error downloading {entry_name}: {str(e)}")
+                        pane.show_toast(f"Error downloading {entry_name}: {e!s}")
 
             self._check_file_conflicts(files_to_transfer, "download", _proceed_with_download)
 
@@ -2042,7 +2010,7 @@ class FileManagerWindow(Adw.Window):
             except Exception as e:
                 error_str = str(e).lower()
                 # Check if it's a socket/connection closed error - upload might still have succeeded
-                if "socket is closed" in error_str or "connection" in error_str and "closed" in error_str:
+                if "socket is closed" in error_str or ("connection" in error_str and "closed" in error_str):
                     logger.debug(f"_attach_refresh: operation completed but socket closed: {e}")
                     # Still try to refresh - the upload might have succeeded before socket closed
                     operation_succeeded = True
@@ -2443,7 +2411,7 @@ class FileManagerWindow(Adw.Window):
         for component in reversed(components):
             try:
                 sftp.mkdir(component)
-            except IOError:
+            except OSError:
                 continue
 
     @staticmethod

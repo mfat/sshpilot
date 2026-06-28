@@ -3,7 +3,6 @@ import subprocess
 import pytest
 
 import sys
-import types
 
 # Stub out gi modules so window.py can be imported without GTK
 gi_module = types.ModuleType("gi")

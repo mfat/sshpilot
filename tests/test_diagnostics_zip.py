@@ -6,7 +6,6 @@ keys/values are preserved.
 """
 
 import json
-import os
 import zipfile
 
 from sshpilot import log_viewer

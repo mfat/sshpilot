@@ -644,7 +644,7 @@ class OpenSSHSFTPManager(GObject.GObject):
                 proc.kill()
             if cleanup is not None:
                 cleanup()
-            raise self._classify_handshake_failure(self._drained_stderr(), exc)
+            raise self._classify_handshake_failure(self._drained_stderr(), exc) from exc
 
         with self._lock:
             self._proc = proc
@@ -689,7 +689,7 @@ class OpenSSHSFTPManager(GObject.GObject):
             from ..scp_utils import classify_sftp_error
 
             friendly = classify_sftp_error(text)
-            return IOError(friendly or text)
+            return OSError(friendly or text)
         return exc
 
     def _read_keepalive_config(self) -> None:
@@ -833,7 +833,7 @@ class OpenSSHSFTPManager(GObject.GObject):
     # -- path helpers -----------------------------------------------------
     def _client_or_raise(self) -> OpenSSHSFTPClient:
         if self._client is None:
-            raise IOError("SFTP connection is not available")
+            raise OSError("SFTP connection is not available")
         return self._client
 
     def _expand(self, path: str) -> str:

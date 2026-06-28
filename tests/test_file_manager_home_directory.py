@@ -1,6 +1,5 @@
 """Test home directory resolution logic."""
 
-import os
 from unittest.mock import Mock
 import pytest
 

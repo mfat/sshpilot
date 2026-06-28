@@ -2,7 +2,6 @@
 
 import os
 import logging
-import subprocess
 import shutil
 import json
 import hashlib
@@ -3625,7 +3624,6 @@ class PreferencesWindow(Adw.Window):
     def save_advanced_ssh_settings(self):
         """Persist advanced SSH settings from the preferences UI"""
         try:
-            native_value = False
             connect_timeout = None
             connection_attempts = None
             keepalive_interval = None

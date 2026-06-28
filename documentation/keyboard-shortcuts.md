@@ -1,6 +1,8 @@
 # SSH Pilot — Keyboard Shortcuts
 
-SSH Pilot is designed for efficient keyboard navigation. Most shortcuts can be customized in **Preferences → Shortcuts** or by pressing **Ctrl+?** (**Cmd+?** on macOS). Split view shortcuts are hardcoded and cannot be changed.
+SSH Pilot is designed for efficient keyboard navigation. Every shortcut — including split view — can be customized in **Preferences → Shortcuts** or by pressing **Ctrl+?** (**Cmd+?** on macOS).
+
+To avoid clashing with command-line tools (readline, vim, …) and keyboard layouts, several shortcuts are **disabled by default** on Linux/Windows. They are still listed in **Preferences → Shortcuts**, where you can assign your own keys.
 
 ## Platform Notes
 
@@ -25,14 +27,14 @@ SSH Pilot is designed for efficient keyboard navigation. Most shortcuts can be c
 
 | Action | Linux | macOS | Notes |
 |--------|-------|-------|-------|
-| New Connection | Ctrl+N | Cmd+N | Opens the connection editor |
-| Open New Connection Tab | Ctrl+Alt+N | Cmd+Alt+N | Opens a new tab for the selected connection |
+| New Connection | Ctrl+Shift+N | Cmd+N | Opens the connection editor |
+| Open New Connection Tab | *Disabled by default* | Cmd+Alt+N | Opens a new tab for the selected connection |
 | Open or Focus Selected Connection | Enter | Enter | Switches to an existing tab, or opens one |
 | Force Open in New Tab | Ctrl+Enter | Cmd+Enter | Always opens a new tab, even if one exists |
 | Search Connections | Ctrl+F | Cmd+F | Focuses the sidebar search bar |
-| Focus Connection List | Ctrl+Shift+L | Cmd+Shift+L | Moves focus to the sidebar from anywhere |
+| Focus Connection List | *Disabled by default* | Cmd+Shift+L | Moves focus to the sidebar from anywhere |
 | Copy Key to Server | Ctrl+Shift+K | Cmd+Shift+K | Opens the SSH key copy tool |
-| SSH Config Editor | Ctrl+Shift+E | Cmd+Shift+E | Opens the SSH configuration file in a text editor |
+| SSH Config Editor | *Disabled by default* | Cmd+Shift+E | Opens the SSH configuration file in a text editor |
 | Manage Files | Ctrl+Shift+O | Cmd+Shift+O | Opens the file manager for the selected connection |
 | Delete Selected Connection(s) | Delete or Backspace | Delete | Prompts for confirmation |
 | Toggle Sidebar | F9 | F9 | Also accessible from the header bar button |
@@ -68,30 +70,24 @@ SSH Pilot is designed for efficient keyboard navigation. Most shortcuts can be c
 | Move Tab Right | Ctrl+Shift+Page Down | Ctrl+Shift+Page Down |
 | Close Tab | Ctrl+Shift+W | Cmd+Shift+W |
 | Tab Overview | Ctrl+Shift+Tab | Cmd+Shift+Tab |
-| New Split View Tab | Ctrl+Shift+S | Cmd+Shift+S |
-| Command Blocks Sidebar | Ctrl+Alt+S | Ctrl+Alt+S |
+| New Split View Tab | *Disabled by default* | Cmd+Shift+S |
+| Command Blocks Sidebar | *Disabled by default* | *Disabled by default* |
 
 ---
 
-## Split View (not customizable)
+## Split View
 
-These shortcuts are active whenever a split view tab is in focus.
+These actions apply while a split view tab is in focus. They are **disabled by
+default** — assign your own keys in **Preferences → Shortcuts** (the *Split View*
+group). "Close focused pane" uses the regular **Close Tab** shortcut.
 
-| Action | Shortcut |
-|--------|----------|
-| Focus pane left | Ctrl+Alt+H |
-| Focus pane down | Ctrl+Alt+J |
-| Focus pane up | Ctrl+Alt+K |
-| Focus pane right | Ctrl+Alt+L |
-| Resize pane left | Ctrl+Alt+Shift+H |
-| Resize pane down | Ctrl+Alt+Shift+J |
-| Resize pane up | Ctrl+Alt+Shift+K |
-| Resize pane right | Ctrl+Alt+Shift+L |
-| Side-by-side layout | Ctrl+Shift+\ |
-| Top / bottom layout | Ctrl+Shift+- |
-| Add pane | Ctrl+Shift+N |
-| Close focused pane | Ctrl+Shift+W |
-| Focus pane by number (1–4) | Alt+1 through Alt+4 |
+| Action | Default |
+|--------|---------|
+| Focus pane left / down / up / right | *Disabled by default* |
+| Resize pane left / down / up / right | *Disabled by default* |
+| Side-by-side layout | *Disabled by default* |
+| Top / bottom layout | *Disabled by default* |
+| Add pane | *Disabled by default* |
 
 ---
 

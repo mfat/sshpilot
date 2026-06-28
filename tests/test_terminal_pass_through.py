@@ -1,6 +1,5 @@
 """Regression tests for terminal pass-through shortcut handling."""
 
-import logging
 import sys
 import types
 

@@ -15,7 +15,6 @@ from sshpilot.ssh_connection_builder import (
     ConnectionContext,
     build_ssh_connection,
     build_native_command,
-    resolve_native_auth,
 )
 
 
