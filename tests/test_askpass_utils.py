@@ -209,8 +209,40 @@ def test_handle_askpass_cli_ipc_fallback(monkeypatch):
     from sshpilot import askpass_utils
 
     monkeypatch.delenv("SSHPILOT_SESSION_PASSPHRASE_FILE", raising=False)
+    monkeypatch.delenv("SSHPILOT_SECRET_BACKEND", raising=False)   # auto = non-session
     monkeypatch.setattr(askpass_utils, "lookup_passphrase", lambda _kp: "")
     monkeypatch.setattr(askpass_utils, "_lookup_via_main_app", lambda _kp, _log: "viaipc")
 
     prompt = "Enter passphrase for key '/home/u/.ssh/id_ed25519':"
     assert askpass_utils.handle_askpass_cli(prompt) == "viaipc"
+
+
+def test_handle_askpass_cli_session_backend_prefers_ipc(monkeypatch):
+    # For a session vault (Bitwarden) the warm-cache IPC lookup runs BEFORE the local
+    # `bw` lookup (which would cold-start the CLI), so a cache hit avoids the spawn.
+    from sshpilot import askpass_utils
+
+    monkeypatch.delenv("SSHPILOT_SESSION_PASSPHRASE_FILE", raising=False)
+    monkeypatch.setenv("SSHPILOT_SECRET_BACKEND", "bitwarden")
+
+    def _must_not_run(_kp):
+        raise AssertionError("local bw lookup must not run when IPC resolves it")
+
+    monkeypatch.setattr(askpass_utils, "lookup_passphrase", _must_not_run)
+    monkeypatch.setattr(askpass_utils, "_lookup_via_main_app", lambda _kp, _log: "viaipc")
+
+    prompt = "Enter passphrase for key '/home/u/.ssh/id_ed25519':"
+    assert askpass_utils.handle_askpass_cli(prompt) == "viaipc"
+
+
+def test_handle_askpass_cli_session_backend_falls_back_to_local(monkeypatch):
+    # Session vault but the main app is unreachable (IPC returns None) -> local lookup.
+    from sshpilot import askpass_utils
+
+    monkeypatch.delenv("SSHPILOT_SESSION_PASSPHRASE_FILE", raising=False)
+    monkeypatch.setenv("SSHPILOT_SECRET_BACKEND", "bitwarden")
+    monkeypatch.setattr(askpass_utils, "_lookup_via_main_app", lambda _kp, _log: None)
+    monkeypatch.setattr(askpass_utils, "lookup_passphrase", lambda _kp: "vialocal")
+
+    prompt = "Enter passphrase for key '/home/u/.ssh/id_ed25519':"
+    assert askpass_utils.handle_askpass_cli(prompt) == "vialocal"

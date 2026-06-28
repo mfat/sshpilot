@@ -570,12 +570,11 @@ def _lookup_via_main_app(key_path: str, log_fn) -> "str | None":
     try:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
             # Short timeout on purpose: a warm-cache answer is near-instant when the
-            # main loop is free (the common preload-on-worker-thread path). When the
-            # loop is blocked (combined auth runs build_ssh_connection under
-            # run_until_complete on the main thread), it can't service this socket —
-            # so time out quickly and let the caller fall back to a local lookup
-            # rather than stalling the whole connect.
-            client.settimeout(3)
+            # main loop is free (the common case). When the loop is blocked (combined
+            # auth runs build_ssh_connection under run_until_complete on the main
+            # thread), it can't service this socket — so time out quickly and let the
+            # caller fall back to a local lookup rather than stalling the whole connect.
+            client.settimeout(1.5)
             client.connect(sock_path)
             client.sendall((request + "\n").encode("utf-8"))
             chunks = []
@@ -656,24 +655,44 @@ def handle_askpass_cli(prompt: str) -> "str | None":
         except Exception as exc:
             _log(f"ASKPASS: Error reading session passphrase file: {exc}")
 
-    # Resolve via the selected secret backend directly. For Bitwarden this runs a
-    # targeted `bw` lookup using the inherited BW_SESSION; for libsecret/keyring it reads
-    # the platform store in-process. This works even when the main app's GTK loop is
-    # blocked (e.g. combined auth), so we try it before the IPC fallback.
-    for candidate in _get_key_path_lookup_candidates(key_path):
-        passphrase = lookup_passphrase(candidate)
-        if passphrase:
-            _log(f"ASKPASS: Found passphrase for {candidate}")
-            _log("ASKPASS: Returning passphrase to caller")
-            return passphrase
-        _log(f"ASKPASS: No passphrase found for {candidate}")
+    # Resolve the passphrase from storage. Two routes:
+    #   * local — read the selected backend in this subprocess. Instant for the platform
+    #     stores (libsecret/keyring), but for a session vault (Bitwarden/Vaultwarden) it
+    #     cold-starts `bw` (~1-2s) because the in-memory vault cache lives in the *main*
+    #     process, not here.
+    #   * main-app IPC — ask the running app, which already holds the unlocked vault in
+    #     memory, to resolve from its warm cache (near-instant, no `bw` spawn).
+    # So for a session vault try IPC first (cache hit) and fall back to the local `bw`
+    # lookup; for platform stores do the instant local read first.
+    try:
+        from .secret_storage import get_secret_manager
+        _selected = (os.environ.get("SSHPILOT_SECRET_BACKEND") or "auto").strip().lower()
+        prefer_ipc = bool(get_secret_manager().is_session_backed(_selected))
+    except Exception:
+        prefer_ipc = False
 
-    # Fallback: ask the running main app to resolve it from its warm cache (covers the
-    # case where the serve daemon isn't reachable from this subprocess but the app is).
-    main_app_value = _lookup_via_main_app(key_path, _log)
-    if main_app_value:
-        _log("ASKPASS: passphrase resolved via main-app cache")
-        return main_app_value
+    def _resolve_local():
+        for candidate in _get_key_path_lookup_candidates(key_path):
+            passphrase = lookup_passphrase(candidate)
+            if passphrase:
+                _log(f"ASKPASS: Found passphrase for {candidate}")
+                return passphrase
+            _log(f"ASKPASS: No passphrase found for {candidate}")
+        return None
+
+    def _resolve_main_app():
+        value = _lookup_via_main_app(key_path, _log)
+        if value:
+            _log("ASKPASS: passphrase resolved via main-app cache")
+        return value
+
+    resolvers = ((_resolve_main_app, _resolve_local) if prefer_ipc
+                 else (_resolve_local, _resolve_main_app))
+    for resolve in resolvers:
+        value = resolve()
+        if value:
+            _log("ASKPASS: Returning passphrase to caller")
+            return value
 
     # Fall back to the built-in GUI dialog, unless the user has turned it off in
     # settings — in that case defer to SSH / the system keyring prompt.
