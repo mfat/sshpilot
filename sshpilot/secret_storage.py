@@ -428,10 +428,24 @@ class BitwardenBackend(SecretBackend):
     _TIMEOUT = 120  # seconds — generous enough for a master-password unlock
 
     def __init__(self, bin_name: str = "bw") -> None:
-        self._bin = shutil.which(bin_name) or None
+        self._bin_name = bin_name
+        self._bin_override: Optional[str] = None
         self._token: Optional[str] = None
         self._deadline: Optional[float] = None  # monotonic; None = no expiry
         self._lock = threading.RLock()
+
+    @property
+    def _bin(self) -> Optional[str]:
+        """Resolve the ``bw`` binary on each access (not cached at construction) so a
+        CLI installed *after* the app started is detected without a restart. Assigning
+        ``self._bin`` pins an explicit path (used by tests)."""
+        if self._bin_override is not None:
+            return self._bin_override
+        return shutil.which(self._bin_name) or None
+
+    @_bin.setter
+    def _bin(self, value: Optional[str]) -> None:
+        self._bin_override = value
 
     # -- server (Vaultwarden overrides) ----------------------------------
     def _server_url(self) -> str:
@@ -860,11 +874,28 @@ class SecretManager:
         backends = self._ordered_backends()
         return backends[0].describe() if backends else "none"
 
+    def _store_backends(self) -> List[SecretBackend]:
+        """Backends ``store`` may use, honoring the authoritative short-circuit and
+        the "explicitly-selected session backend that isn't ready" rule.
+
+        When the user explicitly selected a session-backed backend (Bitwarden/
+        Vaultwarden) that is available but **not unlocked**, do NOT fall back to
+        other stores — otherwise the secret would silently land in libsecret while
+        the user believes it went to their chosen vault. Return only that backend
+        (whose ``store`` returns False until unlocked), so the caller can surface it.
+        """
+        auth = self._authoritative_selected()
+        if auth is not None:
+            return [auth]
+        backend = self.selected_backend()
+        if (backend is not None and getattr(backend, "session_backed", False)
+                and backend.is_available() and not backend.is_unlocked()):
+            return [backend]
+        return self._ordered_backends()
+
     # -- operations ------------------------------------------------------
     def store(self, spec: SecretSpec, secret: str) -> bool:
-        auth = self._authoritative_selected()
-        backends = [auth] if auth else self._ordered_backends()
-        for backend in backends:
+        for backend in self._store_backends():
             if backend.store(spec, secret):
                 logger.debug("secret stored via %s", backend.name)
                 return True

@@ -339,6 +339,41 @@ def test_lock_all_relocks_session_backend(manager):
     assert mgr.selected_needs_unlock() is True
 
 
+def test_store_no_fallback_when_selected_session_backend_locked(manager):
+    # A selected, available-but-locked session backend must NOT silently fall back
+    # to libsecret/keyring — otherwise the secret lands somewhere the user didn't pick.
+    mgr, primary, fallback = manager
+    vault = FakeSessionBackend('vault')          # session_backed, available, locked
+    mgr.register_backend('vault', vault)
+    mgr.set_selected('vault')
+    spec = password_spec('h', 'u')
+
+    assert mgr.store(spec, 's') is False          # stored nowhere
+    assert spec.keyring_account not in primary.data
+    assert spec.keyring_account not in fallback.data
+
+    # Once unlocked, the secret goes to the selected backend (still no fallback).
+    assert vault.unlock('correct') is True
+    assert mgr.store(spec, 's') is True
+    assert vault.data[spec.keyring_account] == 's'
+    assert spec.keyring_account not in primary.data
+
+
+def test_bitwarden_is_available_reresolves_bw(monkeypatch):
+    # is_available() must reflect a `bw` that appears AFTER the backend is built,
+    # so a newly-installed CLI is detected without restarting the app.
+    present = {'ok': False}
+
+    def fake_which(name):
+        return '/usr/local/bin/bw' if (name == 'bw' and present['ok']) else None
+
+    monkeypatch.setattr(ss.shutil, 'which', fake_which)
+    backend = ss.BitwardenBackend()
+    assert backend.is_available() is False
+    present['ok'] = True                          # bw installed after construction
+    assert backend.is_available() is True
+
+
 def test_non_session_backend_needs_no_unlock(manager):
     mgr, *_ = manager
     mgr.set_selected('keyring')

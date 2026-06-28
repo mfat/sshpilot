@@ -2081,13 +2081,11 @@ class PreferencesWindow(Adw.Window):
                 try:
                     from .secret_unlock_dialog import prompt_unlock
 
+                    # prompt_unlock owns its own messaging (login-required /
+                    # wrong-password); we only log the outcome here.
                     def _done(success):
-                        if not success:
-                            self._alert(
-                                _("Unlock failed"),
-                                _("Could not unlock the selected secret store. "
-                                  "Secrets will not be saved or autofilled until it is unlocked."),
-                            )
+                        logger.info("Secret backend unlock %s",
+                                    "succeeded" if success else "not completed")
                     prompt_unlock(self, on_done=_done)
                 except Exception as exc:
                     logger.error("Failed to prompt secret backend unlock: %s", exc)
