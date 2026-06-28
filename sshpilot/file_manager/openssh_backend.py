@@ -644,7 +644,7 @@ class OpenSSHSFTPManager(GObject.GObject):
                 proc.kill()
             if cleanup is not None:
                 cleanup()
-            raise self._classify_handshake_failure(self._drained_stderr(), exc)
+            raise self._classify_handshake_failure(self._drained_stderr(), exc) from exc
 
         with self._lock:
             self._proc = proc

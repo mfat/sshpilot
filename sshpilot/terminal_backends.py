@@ -613,16 +613,16 @@ class PyXtermTerminalBackend:
             try:
                 external_module = importlib.import_module("pyxtermjs")
                 pyxterm_module = external_module
-            except ModuleNotFoundError:
+            except ModuleNotFoundError as exc:
                 if vendored_module is None:
                     # Neither module found - will be caught by outer exception handler
-                    raise ImportError("Neither external nor vendored pyxtermjs module found")
+                    raise ImportError("Neither external nor vendored pyxtermjs module found") from exc
                 logger.debug("External pyxtermjs package not found; using vendored copy")
                 pyxterm_module = vendored_module
             except Exception as e:
                 if vendored_module is None:
                     # No fallback available - will be caught by outer exception handler
-                    raise ImportError(f"Failed to import pyxtermjs: {e}")
+                    raise ImportError(f"Failed to import pyxtermjs: {e}") from e
                 logger.debug(f"External pyxtermjs import failed; using vendored copy: {e}")
                 pyxterm_module = vendored_module
 
@@ -650,7 +650,7 @@ class PyXtermTerminalBackend:
                 
                 # Check if GTK 4.0 is already loaded (which conflicts with WebKit2)
                 if hasattr(Gtk, 'get_major_version') and Gtk.get_major_version() == 4:
-                    raise ImportError("PyXterm backend requires WebKit 6.0 for GTK 4.0 compatibility, but WebKit 6.0 is not available")
+                    raise ImportError("PyXterm backend requires WebKit 6.0 for GTK 4.0 compatibility, but WebKit 6.0 is not available") from webkit6_error
                 
                 # Fall back to WebKit2 4.0 (only if GTK 3.0 is available)
                 gi.require_version("WebKit2", "4.0")

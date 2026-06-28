@@ -1348,7 +1348,7 @@ class ConnectionManager(GObject.Object):
         except Exception as e:
             logger.error(f"Failed to load SSH config: {e}", exc_info=True)
 
-    def parse_host_config(self, config: Dict[str, Any], source: str = None) -> Optional[Dict[str, Any]]:
+    def parse_host_config(self, config: Dict[str, Any], source: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Parse host configuration from SSH config"""
         try:
             def _unwrap(val: Any) -> Any:
@@ -1888,7 +1888,7 @@ class ConnectionManager(GObject.Object):
             backend_name = self._get_keyring_backend_name()
             try:
                 keyring.delete_password(_SERVICE_NAME, f"{username}@{host}")
-                removed_any = True or removed_any
+                removed_any = True
                 logger.debug(
                     "Password entry cleared via keyring backend %s for %s@%s",
                     backend_name,
@@ -2319,7 +2319,7 @@ class ConnectionManager(GObject.Object):
             logger.error(f"Failed to split host block for '{original_host}': {e}")
             return False
 
-    def update_ssh_config_file(self, connection: Connection, new_data: Dict[str, Any], original_nickname: str = None):
+    def update_ssh_config_file(self, connection: Connection, new_data: Dict[str, Any], original_nickname: Optional[str] = None):
         """Update SSH config file with new connection data"""
         try:
             target_path = new_data.get('source') or getattr(connection, 'source', None) or self.ssh_config_path

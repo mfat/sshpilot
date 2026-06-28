@@ -816,7 +816,7 @@ class TerminalWidget(Gtk.Box):
         except Exception:
             pass
 
-    def _set_disconnected_banner_visible(self, visible: bool, message: str = None):
+    def _set_disconnected_banner_visible(self, visible: bool, message: Optional[str] = None):
         try:
             # Allow callers (e.g., ssh-copy-id dialog) to suppress the red banner entirely
             if getattr(self, '_suppress_disconnect_banner', False):
@@ -3627,7 +3627,7 @@ class TerminalWidget(Gtk.Box):
         self._set_disconnected_banner_visible(False)
         self.last_error_message = None
         
-    def _on_connection_lost(self, message: str = None):
+    def _on_connection_lost(self, message: Optional[str] = None):
         """Handle SSH connection loss"""
         if self.is_connected:
             logger.info(f"SSH connection to {self.connection.hostname} lost")

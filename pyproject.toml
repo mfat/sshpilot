@@ -105,4 +105,10 @@ extend-exclude = [
 #   F821 — undefined name (real NameError at runtime)
 #   F841 — local variable assigned but never used (dead code / latent bugs)
 #   F401 — module imported but unused (dead imports; re-exports use __all__/noqa)
-select = ["E9", "F63", "F7", "F601", "F811", "F821", "F841", "F401"]
+# Bug/correctness rules (low-volume, flag real issues rather than style):
+#   B904   — raise inside except without `from` (loses the original traceback)
+#   RUF013 — implicit Optional (`x: int = None`); also de-noises the ty gate
+#   RUF015 — list(...)[0] instead of next(iter(...)) (needless full allocation)
+#   RUF034 — useless if-else (both branches identical)
+#   SIM222 — `True or ...` / always-true boolean expression
+select = ["E9", "F63", "F7", "F601", "F811", "F821", "F841", "F401", "B904", "RUF013", "RUF015", "RUF034", "SIM222"]
