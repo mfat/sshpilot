@@ -188,7 +188,7 @@ def test_ssh_terminal_sets_pty_size_before_spawn(monkeypatch, caplog):
     )
     
     terminal.config = types.SimpleNamespace(
-        get_ssh_config=lambda: {},
+        get_ssh_config=dict,
         get_setting=lambda *a, **k: None,
     )
     
@@ -376,7 +376,7 @@ def test_pty_size_not_set_for_default_dimensions(monkeypatch, caplog):
     )
     
     terminal.config = types.SimpleNamespace(
-        get_ssh_config=lambda: {},
+        get_ssh_config=dict,
         get_setting=lambda *a, **k: None,
     )
     
@@ -489,7 +489,7 @@ def test_pty_size_set_before_spawn_order(monkeypatch):
     )
     
     terminal.config = types.SimpleNamespace(
-        get_ssh_config=lambda: {},
+        get_ssh_config=dict,
         get_setting=lambda *a, **k: None,
     )
     

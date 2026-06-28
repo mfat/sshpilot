@@ -5156,7 +5156,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
                 except Exception as e:
                     logger.error(f"SshCopyIdWindow: Generate and copy failed: {e}")
-                    logger.debug(f"SshCopyIdWindow: Exception details: {type(e).__name__}: {str(e)}")
+                    logger.debug(f"SshCopyIdWindow: Exception details: {type(e).__name__}: {e!s}")
                     self._error("Generate & Copy failed",
                                 "Could not generate a new key and copy it to the server.",
                                 str(e))
@@ -5208,7 +5208,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             win.present()
         except Exception as e:
             logger.error(f"Main window: ssh-copy-id window failed: {e}")
-            logger.debug(f"Main window: Exception details: {type(e).__name__}: {str(e)}")
+            logger.debug(f"Main window: Exception details: {type(e).__name__}: {e!s}")
             # Fallback error if window cannot be created
             try:
                 md = Adw.MessageDialog(transient_for=self, modal=True,
