@@ -44,6 +44,10 @@ except (ImportError, AttributeError):  # pragma: no cover - used in tests withou
     GObject.SignalFlags = types.SimpleNamespace(RUN_FIRST=None)
 from .port_utils import get_port_checker
 from .platform_utils import is_macos, get_ssh_dir, get_config_dir
+from .ssh_key_fingerprint import (
+    _fingerprint_for_path,
+    _fingerprint_for_pub_line,
+)
 from .path_list import PathList
 from . import wol
 from .plugins.registry import protocol_registry
@@ -882,54 +886,6 @@ def _ensure_key_badge_css():
         display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
     )
     _KEY_BADGE_CSS_REGISTERED = True
-
-
-# --- SSH key fingerprint helpers (type · SHA256 · comment) -------------------
-_FINGERPRINT_CACHE: Dict[str, tuple] = {}
-
-
-def _parse_keygen_line(line: str) -> tuple:
-    """Parse an ``ssh-keygen -l`` line into (type_label, "SHA256:…", comment).
-
-    Example line: ``256 SHA256:abc… user@host (ED25519)``.
-    """
-    parts = (line or "").strip().split()
-    if len(parts) < 2:
-        return ("", "", "")
-    fingerprint = parts[1]
-    key_type = parts[-1].strip("()") if parts[-1].startswith("(") else ""
-    comment = " ".join(parts[2:-1]) if len(parts) > 3 else (parts[2] if len(parts) > 2 else "")
-    return (key_type, fingerprint, comment)
-
-
-def _fingerprint_for_path(path: str) -> tuple:
-    """(type_label, fingerprint, comment) for a key file, via ``ssh-keygen -lf``."""
-    expanded = os.path.expanduser(path or "")
-    if expanded in _FINGERPRINT_CACHE:
-        return _FINGERPRINT_CACHE[expanded]
-    result = ("", "", "")
-    try:
-        proc = subprocess.run(["ssh-keygen", "-lf", expanded],
-                              capture_output=True, text=True, timeout=5)
-        if proc.returncode == 0:
-            result = _parse_keygen_line(proc.stdout)
-    except Exception:
-        logger.debug("ssh-keygen fingerprint failed for %s", path, exc_info=True)
-    _FINGERPRINT_CACHE[expanded] = result
-    return result
-
-
-def _fingerprint_for_pub_line(pub_line: str) -> tuple:
-    """(type_label, fingerprint, comment) for a public-key line (e.g. ssh-add -L)."""
-    try:
-        proc = subprocess.run(["ssh-keygen", "-lf", "-"],
-                              input=(pub_line or "") + "\n",
-                              capture_output=True, text=True, timeout=5)
-        if proc.returncode == 0:
-            return _parse_keygen_line(proc.stdout)
-    except Exception:
-        logger.debug("ssh-keygen fingerprint (stdin) failed", exc_info=True)
-    return ("", "", "")
 
 
 def _accent_hex():
