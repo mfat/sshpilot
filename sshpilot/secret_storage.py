@@ -528,13 +528,17 @@ class BitwardenBackend(SecretBackend):
                     self._run(["config", "server", url])
                 env = os.environ.copy()
                 env["BW_MASTER"] = secret or ""
+                _unlock_started = time.monotonic()
                 result = subprocess.run(
-                    [self._bin, "unlock", "--passwordenv", "BW_MASTER", "--raw"],
+                    [self._bin, "--nointeraction", "unlock",
+                     "--passwordenv", "BW_MASTER", "--raw"],
                     capture_output=True,
                     env=env,
                     check=False,
                     timeout=self._TIMEOUT,
                 )
+                logger.debug("bw unlock: %.2fs (rc=%s)",
+                             time.monotonic() - _unlock_started, result.returncode)
                 if result.returncode != 0:
                     logger.error(
                         "bw unlock failed: %s",
@@ -547,38 +551,43 @@ class BitwardenBackend(SecretBackend):
                 self._token = token
                 self._touch_deadline()
                 os.environ["BW_SESSION"] = token
-                # `bw unlock` does not refresh the local vault cache (only
-                # `bw login` syncs), so items changed on another device would be
-                # invisible this session. Sync best-effort; failure is harmless.
-                # This whole method runs on a worker thread (the unlock dialog), so
-                # the sync + item prefetch below are off the GTK main thread — by the
-                # time the user acts, reads are served from the warm cache.
-                try:
-                    self._run(["sync"], token=token)
-                except Exception:
-                    pass
-                self._items = self._load_items(token)  # warm cache off-thread
+                # Prefetch the local vault into the in-memory cache now — this is a
+                # fast local read (bw pushes our own writes to the local cache on
+                # create/edit, so it's current for the common single-device case).
+                # Refresh from the server with `bw sync` in the BACKGROUND so a
+                # multi-device change appears later without blocking unlock (and thus
+                # the connect that follows) on a network round-trip.
+                self._items = self._load_items(token)
+                self._start_background_sync(token)
                 return True
             except Exception as exc:
                 logger.error("bw unlock error: %s", exc)
                 return False
 
+    def _start_background_sync(self, token: str) -> None:
+        """Refresh the on-disk vault from the server off-thread (network pull only).
+
+        Deliberately does NOT re-``list`` (re-decrypt) the whole vault — that's the
+        expensive part and would burn CPU for seconds after every unlock. The
+        in-memory cache from unlock's prefetch serves this session; ``bw sync`` just
+        keeps the local data current for the next launch. Best-effort."""
+        def _bg():
+            try:
+                self._run(["sync"], token=token)
+            except Exception as exc:
+                logger.debug("bw background sync failed: %s", exc)
+
+        threading.Thread(target=_bg, daemon=True).start()
+
     def lock(self) -> None:
+        # Only drop the in-process session + cache — instant. We never persist the
+        # session key, so discarding it fully disables further use; spawning
+        # ``bw lock`` here would add a slow Node subprocess to app shutdown.
         with self._lock:
             self._token = None
             self._deadline = None
             self._items = None
             os.environ.pop("BW_SESSION", None)
-            try:
-                if self._bin:
-                    subprocess.run(
-                        [self._bin, "lock"],
-                        capture_output=True,
-                        check=False,
-                        timeout=self._TIMEOUT,
-                    )
-            except Exception:
-                pass
 
     # -- bw helpers ------------------------------------------------------
     def _run(self, args: List[str], *, token: Optional[str] = None,
@@ -586,14 +595,20 @@ class BitwardenBackend(SecretBackend):
         env = os.environ.copy()
         if token:
             env["BW_SESSION"] = token
-        return subprocess.run(
-            [self._bin] + args,
+        # --nointeraction guarantees bw never blocks on stdin (a GUI must never
+        # hang waiting for terminal input).
+        started = time.monotonic()
+        result = subprocess.run(
+            [self._bin, "--nointeraction"] + args,
             input=input_bytes,
             capture_output=True,
             env=env,
             check=False,
             timeout=self._TIMEOUT,
         )
+        logger.debug("bw %s: %.2fs (rc=%s)",
+                     " ".join(args[:2]), time.monotonic() - started, result.returncode)
+        return result
 
     # -- item cache ------------------------------------------------------
     def _load_items(self, token: str) -> Dict[str, dict]:

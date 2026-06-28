@@ -548,6 +548,58 @@ def _route_passphrase_to_main_app(
     return (True, None)
 
 
+def _lookup_via_main_app(key_path: str, log_fn) -> "str | None":
+    """Resolve a stored passphrase via the running main app's warm cache.
+
+    The askpass subprocess has no secret cache of its own, so with a session
+    backend (Bitwarden) a direct lookup cold-loads the whole vault from ``bw`` on
+    every invocation (~seconds). The main process already holds the unlocked vault
+    in memory, so ask it over the existing askpass IPC socket. Returns the
+    passphrase, or ``None`` when unavailable (caller falls back to a local lookup).
+    This never prompts — it only reads an already-resolved/cached value.
+    """
+    import json
+    import socket
+
+    sock_path = os.environ.get("SSHPILOT_ASKPASS_SOCKET", "")
+    token = os.environ.get("SSHPILOT_ASKPASS_TOKEN", "")
+    if not sock_path or not token or not key_path:
+        return None
+
+    request = json.dumps({"token": token, "type": "lookup", "key_path": key_path})
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+            # Short timeout on purpose: a warm-cache answer is near-instant when the
+            # main loop is free (the common preload-on-worker-thread path). When the
+            # loop is blocked (combined auth runs build_ssh_connection under
+            # run_until_complete on the main thread), it can't service this socket —
+            # so time out quickly and let the caller fall back to a local lookup
+            # rather than stalling the whole connect.
+            client.settimeout(3)
+            client.connect(sock_path)
+            client.sendall((request + "\n").encode("utf-8"))
+            chunks = []
+            while b"\n" not in b"".join(chunks):
+                data = client.recv(4096)
+                if not data:
+                    break
+                chunks.append(data)
+    except Exception as exc:
+        log_fn(f"ASKPASS: main-app lookup unavailable ({exc})")
+        return None
+
+    raw = b"".join(chunks).split(b"\n", 1)[0].strip()
+    if not raw:
+        return None
+    try:
+        reply = json.loads(raw.decode("utf-8"))
+    except Exception:
+        return None
+    if reply.get("ok") and reply.get("passphrase"):
+        return reply.get("passphrase")
+    return None
+
+
 def handle_askpass_cli(prompt: str) -> "str | None":
     """Handle --askpass CLI mode (re-invoked by SSH as SSH_ASKPASS handler).
 
@@ -604,7 +656,18 @@ def handle_askpass_cli(prompt: str) -> "str | None":
         except Exception as exc:
             _log(f"ASKPASS: Error reading session passphrase file: {exc}")
 
-    # Check keyring / libsecret for stored passphrases
+    # Fast path: ask the running main app to resolve the passphrase from its warm
+    # in-process cache. This subprocess has no cache of its own, so a direct lookup
+    # would cold-load the whole vault from `bw` on every invocation — the slowness
+    # users feel at connect time. The main app answers instantly on a cache hit (or
+    # quickly says "no" when locked), so we try it before any local backend call.
+    main_app_value = _lookup_via_main_app(key_path, _log)
+    if main_app_value:
+        _log("ASKPASS: passphrase resolved via main-app cache")
+        return main_app_value
+
+    # Check the selected secret backend directly (fallback when the main app is
+    # unreachable, e.g. ssh-add run outside a running sshPilot).
     for candidate in _get_key_path_lookup_candidates(key_path):
         passphrase = lookup_passphrase(candidate)
         if passphrase:

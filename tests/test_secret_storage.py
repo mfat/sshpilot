@@ -390,15 +390,21 @@ class _Result:
         self.stderr = stderr
 
 
+def _bw_cmd(argv):
+    """bw args after the binary, ignoring the global --nointeraction flag."""
+    return [a for a in list(argv)[1:] if a != '--nointeraction']
+
+
 def test_bitwarden_unlock_prefetches_items(monkeypatch):
     calls = []
 
     def fake_run(argv, input=None, capture_output=None, env=None, check=None, timeout=None):
-        calls.append({'argv': list(argv), 'session': (env or {}).get('BW_SESSION'),
+        calls.append({'cmd': _bw_cmd(argv), 'session': (env or {}).get('BW_SESSION'),
                       'master': (env or {}).get('BW_MASTER')})
-        if argv[1] == 'unlock':
+        cmd = _bw_cmd(argv)
+        if cmd[0] == 'unlock':
             return _Result(0, b'TOKEN123\n')
-        if argv[1:3] == ['list', 'items']:
+        if cmd[:2] == ['list', 'items']:
             return _Result(0, json.dumps(
                 [{'name': 'u@h', 'id': 'ID1', 'login': {'password': 'hunter2'}}]).encode())
         return _Result(0, b'')
@@ -411,17 +417,13 @@ def test_bitwarden_unlock_prefetches_items(monkeypatch):
     b._bin = '/usr/bin/bw'
     try:
         assert b.unlock('master') is True
-        assert calls[0]['argv'] == ['/usr/bin/bw', 'unlock', '--passwordenv', 'BW_MASTER', '--raw']
+        assert calls[0]['cmd'] == ['unlock', '--passwordenv', 'BW_MASTER', '--raw']
         assert calls[0]['master'] == 'master'
         assert os.environ.get('BW_SESSION') == 'TOKEN123'
-        # unlock runs a best-effort sync, then prefetches all items (warm cache).
-        argvs = [c['argv'][1:] for c in calls]
-        assert ['sync'] in argvs
-        assert ['list', 'items'] in argvs
-        # lookup is now served from the warm cache — no further bw spawn.
-        n_before = len(calls)
+        # unlock prefetches items synchronously (warm cache); `bw sync` is backgrounded.
+        assert any(c['cmd'][:2] == ['list', 'items'] for c in calls)
+        # lookup is now served from the warm cache.
         assert b.lookup(password_spec('h', 'u')) == 'hunter2'
-        assert len(calls) == n_before
     finally:
         b.lock()
         assert os.environ.get('BW_SESSION') is None
@@ -449,8 +451,8 @@ def test_bitwarden_cold_lookup_loads_items_once(monkeypatch):
     calls = []
 
     def fake_run(argv, input=None, capture_output=None, env=None, check=None, timeout=None):
-        calls.append(list(argv))
-        if argv[1:3] == ['list', 'items']:
+        calls.append(_bw_cmd(argv))
+        if _bw_cmd(argv)[:2] == ['list', 'items']:
             return _Result(0, json.dumps(
                 [{'name': 'u@h', 'id': 'ID1', 'login': {'password': 'pw'}}]).encode())
         return _Result(0, b'')
@@ -460,8 +462,8 @@ def test_bitwarden_cold_lookup_loads_items_once(monkeypatch):
     b._bin = '/usr/bin/bw'
     assert b.lookup(password_spec('h', 'u')) == 'pw'
     assert b.lookup(password_spec('h', 'u')) == 'pw'
-    assert [c for c in calls if c[1:3] == ['list', 'items']] == [
-        ['/usr/bin/bw', 'list', 'items']
+    assert [c for c in calls if c[:2] == ['list', 'items']] == [
+        ['list', 'items']
     ]  # loaded exactly once
 
 
@@ -488,12 +490,13 @@ def test_bitwarden_store_creates_enriched_item(monkeypatch):
     calls = []
 
     def fake_run(argv, input=None, capture_output=None, env=None, check=None, timeout=None):
-        calls.append((list(argv), input))
-        if argv[1] == 'unlock':
+        calls.append((_bw_cmd(argv), input))
+        cmd = _bw_cmd(argv)
+        if cmd[0] == 'unlock':
             return _Result(0, b'TOK\n')
-        if argv[1:3] == ['list', 'items']:
+        if cmd[:2] == ['list', 'items']:
             return _Result(0, b'[]')          # empty vault
-        if argv[1:3] == ['create', 'item']:
+        if cmd[:2] == ['create', 'item']:
             return _Result(0, b'{}')
         return _Result(0, b'')
 
@@ -506,7 +509,7 @@ def test_bitwarden_store_creates_enriched_item(monkeypatch):
     try:
         assert b.unlock('m') is True
         assert b.store(password_spec('h', 'u'), 'secret') is True
-        create = [(a, p) for (a, p) in calls if a[1:3] == ['create', 'item']]
+        create = [(a, p) for (a, p) in calls if a[:2] == ['create', 'item']]
         assert len(create) == 1
         _argv, payload = create[-1]
         item = json.loads(base64.b64decode(payload).decode())
@@ -525,10 +528,11 @@ def test_bitwarden_store_updates_cache(monkeypatch):
     calls = []
 
     def fake_run(argv, input=None, capture_output=None, env=None, check=None, timeout=None):
-        calls.append(list(argv))
-        if argv[1:3] == ['list', 'items']:
+        calls.append(_bw_cmd(argv))
+        cmd = _bw_cmd(argv)
+        if cmd[:2] == ['list', 'items']:
             return _Result(0, b'[]')
-        if argv[1:3] == ['create', 'item']:
+        if cmd[:2] == ['create', 'item']:
             return _Result(0, json.dumps(
                 {'name': 'u@h', 'id': 'NEW', 'login': {'password': 'secret'}}).encode())
         return _Result(0, b'')
@@ -550,14 +554,32 @@ def test_bitwarden_lock_clears_cache():
     assert b._items is None
 
 
+def test_bitwarden_lock_spawns_no_bw(monkeypatch):
+    # lock() must be instant on shutdown — no `bw lock` subprocess.
+    def boom(*a, **k):
+        raise AssertionError("lock() must not spawn bw")
+
+    monkeypatch.setattr(ss.subprocess, 'run', boom)
+    b = ss.BitwardenBackend()
+    b._bin = '/usr/bin/bw'
+    b._token = 'TOK'
+    b._items = {'u@h': {'login': {'password': 'x'}}}
+    monkeypatch.setenv('BW_SESSION', 'TOK')
+    b.lock()
+    assert b._token is None
+    assert b._items is None
+    assert os.environ.get('BW_SESSION') is None
+
+
 def test_bitwarden_delete_finds_id(monkeypatch):
     calls = []
 
     def fake_run(argv, input=None, capture_output=None, env=None, check=None, timeout=None):
-        calls.append(list(argv))
-        if argv[1] == 'unlock':
+        calls.append(_bw_cmd(argv))
+        cmd = _bw_cmd(argv)
+        if cmd[0] == 'unlock':
             return _Result(0, b'TOK\n')
-        if argv[1:3] == ['list', 'items']:
+        if cmd[:2] == ['list', 'items']:
             return _Result(0, json.dumps([{'name': 'u@h', 'id': 'ID1'}]).encode())
         return _Result(0, b'')
 
@@ -570,7 +592,9 @@ def test_bitwarden_delete_finds_id(monkeypatch):
     try:
         assert b.unlock('m') is True
         assert b.delete(password_spec('h', 'u')) is True
-        assert calls[-1] == ['/usr/bin/bw', 'delete', 'item', 'ID1', '--permanent']
+        # filter (not calls[-1]) — the background sync may append calls too.
+        deletes = [c for c in calls if c[:2] == ['delete', 'item']]
+        assert deletes[-1] == ['delete', 'item', 'ID1', '--permanent']
     finally:
         b.lock()
 
@@ -583,7 +607,7 @@ def test_bitwarden_subprocess_inherits_env_token(monkeypatch):
 
     def fake_run(argv, input=None, capture_output=None, env=None, check=None, timeout=None):
         seen['session'] = (env or {}).get('BW_SESSION')
-        if argv[1:3] == ['list', 'items']:
+        if _bw_cmd(argv)[:2] == ['list', 'items']:
             return _Result(0, json.dumps(
                 [{'name': 'u@h', 'id': 'ID1', 'login': {'password': 'pw'}}]).encode())
         return _Result(0, b'')
@@ -602,7 +626,7 @@ def test_bitwarden_needs_login(monkeypatch):
     monkeypatch.delenv('BW_SESSION', raising=False)
 
     def fake_run(argv, input=None, capture_output=None, env=None, check=None, timeout=None):
-        if argv[1] == 'status':
+        if _bw_cmd(argv)[0] == 'status':
             return _Result(0, json.dumps({'status': 'unauthenticated'}).encode())
         return _Result(0, b'')
 

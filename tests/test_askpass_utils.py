@@ -136,3 +136,68 @@ def test_sudo_password_empty_host_short_circuits(monkeypatch):
     assert askpass_utils.store_sudo_password('', 'user', 'pw') is False
     assert askpass_utils.lookup_sudo_password('', 'user') == ''
     assert askpass_utils.clear_sudo_password('', 'user') is False
+
+
+def test_lookup_via_main_app_roundtrip(monkeypatch, tmp_path):
+    # The askpass subprocess resolves a passphrase from the main app over the IPC
+    # socket (warm cache) instead of cold-loading the vault itself.
+    import json
+    import socket
+    import threading
+    from sshpilot import askpass_utils
+
+    sock_path = str(tmp_path / "askpass.sock")
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(sock_path)
+    server.listen(1)
+    received = {}
+
+    def _serve():
+        conn, _ = server.accept()
+        with conn:
+            data = b""
+            while b"\n" not in data:
+                chunk = conn.recv(4096)
+                if not chunk:
+                    break
+                data += chunk
+            received['req'] = json.loads(data.split(b"\n", 1)[0].decode())
+            conn.sendall(
+                (json.dumps({"ok": True, "passphrase": "sekret"}) + "\n").encode())
+
+    threading.Thread(target=_serve, daemon=True).start()
+    monkeypatch.setenv("SSHPILOT_ASKPASS_SOCKET", sock_path)
+    monkeypatch.setenv("SSHPILOT_ASKPASS_TOKEN", "tok123")
+    try:
+        value = askpass_utils._lookup_via_main_app("/home/u/.ssh/id", lambda *_a: None)
+    finally:
+        server.close()
+
+    assert value == "sekret"
+    assert received['req'] == {
+        "token": "tok123", "type": "lookup", "key_path": "/home/u/.ssh/id",
+    }
+
+
+def test_lookup_via_main_app_no_socket(monkeypatch):
+    from sshpilot import askpass_utils
+    monkeypatch.delenv("SSHPILOT_ASKPASS_SOCKET", raising=False)
+    monkeypatch.delenv("SSHPILOT_ASKPASS_TOKEN", raising=False)
+    assert askpass_utils._lookup_via_main_app("/k", lambda *_a: None) is None
+
+
+def test_handle_askpass_cli_prefers_main_app_cache(monkeypatch):
+    # When the main app resolves the passphrase from its warm cache (IPC hit), the
+    # askpass subprocess must return it WITHOUT a local cold lookup (no bw spawn).
+    from sshpilot import askpass_utils
+
+    monkeypatch.delenv("SSHPILOT_SESSION_PASSPHRASE_FILE", raising=False)
+    monkeypatch.setattr(askpass_utils, "_lookup_via_main_app", lambda kp, log: "viaipc")
+
+    def _must_not_run(*_a, **_k):
+        raise AssertionError("local cold lookup_passphrase must not run on an IPC hit")
+
+    monkeypatch.setattr(askpass_utils, "lookup_passphrase", _must_not_run)
+
+    prompt = "Enter passphrase for key '/home/u/.ssh/id_ed25519':"
+    assert askpass_utils.handle_askpass_cli(prompt) == "viaipc"
