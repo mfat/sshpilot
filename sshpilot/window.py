@@ -2681,7 +2681,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._expand_sidebar_toolbar_button(preferences_button)
         header.append(preferences_button)
 
-        # Menu button (placed on sidebar header bar below)
+        # Menu button (packed on content header bar in setup_content_area)
         self.menu_button = Gtk.MenuButton()
         self.menu_button.add_css_class('flat')
         self.menu_button.set_can_focus(False)
@@ -3311,8 +3311,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         sidebar_title_label.set_xalign(0.0)
         self.sidebar_header_bar.set_title_widget(sidebar_title_label)
 
-        self.sidebar_header_bar.pack_end(self.menu_button)
-
         sidebar_toolbar_view = Adw.ToolbarView()
         sidebar_toolbar_view.add_top_bar(self.sidebar_header_bar)
         sidebar_toolbar_view.set_content(sidebar_box)
@@ -3725,6 +3723,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._cmd_blocks_toggle_btn.connect('toggled', _on_cmd_toggle_btn_toggled)
         self.header_bar.pack_end(self._cmd_blocks_toggle_btn)
         self.header_bar.pack_end(self._headerbar_theme_menu_button)
+        self.header_bar.pack_end(self.menu_button)
         self._sync_theme_menu_button()
 
         # Create broadcast command banner (custom banner-like widget)
