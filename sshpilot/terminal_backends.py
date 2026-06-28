@@ -1520,14 +1520,14 @@ class PyXtermTerminalBackend:
                         server_ready = True
                         logger.debug(f"PyXterm server ready on port {port} after {attempt + 1} attempts")
                         break
-                except (socket.error, ConnectionRefusedError) as e:
+                except (OSError, ConnectionRefusedError) as e:
                     logger.debug(f"Server not ready yet, attempt {attempt + 1}/{max_retries}: {e}")
                     # Check if the process is still running
                     if self._server_process and self._server_process.poll() is not None:
                         # Read stderr for error details
                         stderr_content = ""
                         try:
-                            with open(stderr_file.name, 'r') as f:
+                            with open(stderr_file.name) as f:
                                 stderr_content = f.read().strip()
                         except Exception:
                             pass
@@ -1543,7 +1543,7 @@ class PyXtermTerminalBackend:
                 # Read stderr for error details
                 stderr_content = ""
                 try:
-                    with open(stderr_file.name, 'r') as f:
+                    with open(stderr_file.name) as f:
                         stderr_content = f.read().strip()
                 except Exception:
                     pass

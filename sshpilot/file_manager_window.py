@@ -2411,7 +2411,7 @@ class FileManagerWindow(Adw.Window):
         for component in reversed(components):
             try:
                 sftp.mkdir(component)
-            except IOError:
+            except OSError:
                 continue
 
     @staticmethod

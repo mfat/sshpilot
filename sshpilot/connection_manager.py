@@ -1272,7 +1272,7 @@ class ConnectionManager(GObject.Object):
                 current_hosts: List[str] = []
                 current_config: Dict[str, Any] = {}
                 try:
-                    with open(cfg_file, 'r') as f:
+                    with open(cfg_file) as f:
                         lines = f.readlines()
                 except Exception as e:
                     logger.warning(f"Skipping unreadable config {cfg_file}: {e}")
@@ -2217,7 +2217,7 @@ class ConnectionManager(GObject.Object):
             if not target_path or not os.path.exists(target_path):
                 return None
 
-            with open(target_path, 'r') as f:
+            with open(target_path) as f:
                 lines = f.readlines()
 
             i = 0
@@ -2259,7 +2259,7 @@ class ConnectionManager(GObject.Object):
             target_path = self._ensure_config_parent_dir(target_path)
 
             try:
-                with open(target_path, 'r') as f:
+                with open(target_path) as f:
                     lines = f.readlines()
             except FileNotFoundError:
                 lines = []
@@ -2333,9 +2333,9 @@ class ConnectionManager(GObject.Object):
                 return
 
             try:
-                with open(target_path, 'r') as f:
+                with open(target_path) as f:
                     lines = f.readlines()
-            except IOError as e:
+            except OSError as e:
                 logger.error(f"Failed to read SSH config: {e}")
                 raise
             
@@ -2412,7 +2412,7 @@ class ConnectionManager(GObject.Object):
                     len(new_data.get('forwarding_rules', []) or []),
                     target_path,
                 )
-            except IOError as e:
+            except OSError as e:
                 logger.error(f"Failed to write SSH config: {e}")
                 raise
         except Exception as e:
@@ -2429,9 +2429,9 @@ class ConnectionManager(GObject.Object):
             if not os.path.exists(target_path):
                 return False
             try:
-                with open(target_path, 'r') as f:
+                with open(target_path) as f:
                     lines = f.readlines()
-            except IOError as e:
+            except OSError as e:
                 logger.error(f"Failed to read SSH config for delete: {e}")
                 return False
 
@@ -2496,7 +2496,7 @@ class ConnectionManager(GObject.Object):
                 try:
                     self._safe_write_config(target_path, ''.join(updated_lines))
                     logger.info(f"SSH config updated: {'removed' if host_nickname else 'modified'} entry for '{host_nickname}'")
-                except IOError as e:
+                except OSError as e:
                     logger.error(f"Failed to write SSH config after delete: {e}")
                     return False
             return modified

@@ -162,7 +162,7 @@ def _trigger_arp(ip: str, port: int = 22, timeout: float = 2.0) -> None:
 def _read_arp_linux(ip: str) -> Optional[str]:
     """Read MAC for the given IP from /proc/net/arp. Returns None if not found or invalid."""
     try:
-        with open("/proc/net/arp", "r") as f:
+        with open("/proc/net/arp") as f:
             lines = f.readlines()
     except OSError as e:
         logger.debug("Cannot read /proc/net/arp: %s", e)

@@ -463,7 +463,7 @@ def test_keepalive_emits_operation_error_after_failures(backend_modules, monkeyp
 
     class _DeadClient:
         def realpath(self, _p):
-            raise IOError("probe failed")
+            raise OSError("probe failed")
 
     manager._client = _DeadClient()
     manager._read_keepalive_config()

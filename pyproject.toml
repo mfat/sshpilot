@@ -111,4 +111,9 @@ extend-exclude = [
 #   RUF015 — list(...)[0] instead of next(iter(...)) (needless full allocation)
 #   RUF034 — useless if-else (both branches identical)
 #   SIM222 — `True or ...` / always-true boolean expression
-select = ["E9", "F63", "F7", "F601", "F811", "F821", "F841", "F401", "B904", "RUF013", "RUF015", "RUF034", "SIM222"]
+# pyupgrade (safe subset; the large annotation rewrites UP006/UP045 and the
+# manual UP031 are deferred until the monolith refactors land):
+#   UP012 — unnecessary str.encode("utf-8")
+#   UP015 — redundant open() mode ("r")
+#   UP024 — aliased OSError (IOError/EnvironmentError → OSError)
+select = ["E9", "F63", "F7", "F601", "F811", "F821", "F841", "F401", "B904", "RUF013", "RUF015", "RUF034", "SIM222", "UP012", "UP015", "UP024"]
