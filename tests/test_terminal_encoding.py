@@ -451,7 +451,7 @@ class TestEncodingAffectsText:
         # UTF-8: 0xD1 0x8F (2 bytes)
         
         text_koi8r = 'я'.encode('KOI8-R')
-        text_utf8 = 'я'.encode('UTF-8')
+        text_utf8 = 'я'.encode()
         
         assert text_koi8r != text_utf8
         assert len(text_koi8r) == 1

@@ -45,19 +45,19 @@ class AuthorizedKeysService:
         try:
             sftp.posix_rename(tmp_path, ak_path)
             return
-        except IOError as exc:
+        except OSError as exc:
             logger.debug(
                 "posix-rename unsupported or failed (%s); falling back to rename",
                 exc,
             )
         try:
             sftp.remove(ak_path)
-        except IOError:
+        except OSError:
             pass
         sftp.rename(tmp_path, ak_path)
         try:
             sftp.chmod(ak_path, 0o600)
-        except IOError as chmod_exc:
+        except OSError as chmod_exc:
             logger.debug("chmod after rename fallback failed: %s", chmod_exc)
 
     # -- load -----------------------------------------------------------
@@ -72,13 +72,13 @@ class AuthorizedKeysService:
             _, ssh_dir, ak_path = self._resolve_paths(sftp)
             try:
                 sftp.stat(ssh_dir)
-            except IOError:
+            except OSError:
                 logger.debug("Remote ~/.ssh does not exist yet")
                 return []
             try:
                 with sftp.file(ak_path, "r") as fh:
                     data = fh.read()
-            except IOError:
+            except OSError:
                 logger.debug("Remote authorized_keys does not exist yet")
                 return []
             if isinstance(data, bytes):
@@ -115,12 +115,12 @@ class AuthorizedKeysService:
             # shells, etc).
             try:
                 sftp.mkdir(ssh_dir, 0o700)
-            except IOError:
+            except OSError:
                 # Already exists — that's fine.
                 pass
             try:
                 sftp.chmod(ssh_dir, 0o700)
-            except IOError as exc:
+            except OSError as exc:
                 # Non-fatal: continue and let the write fail with a clearer
                 # error if the directory really isn't writable.
                 logger.debug("chmod 700 on %s failed: %s", ssh_dir, exc)
@@ -133,7 +133,7 @@ class AuthorizedKeysService:
             if do_backup:
                 try:
                     sftp.stat(ak_path)
-                except IOError:
+                except OSError:
                     pass  # nothing to back up
                 else:
                     backup_path = f"{ak_path}.bak-{int(time.time())}"
@@ -143,7 +143,7 @@ class AuthorizedKeysService:
                         dst.write(existing)
                     try:
                         sftp.chmod(backup_path, 0o600)
-                    except IOError as exc:
+                    except OSError as exc:
                         logger.debug("chmod 600 on backup failed: %s", exc)
                     logger.info("Backed up authorized_keys to %s", backup_path)
 
@@ -155,7 +155,7 @@ class AuthorizedKeysService:
             try:
                 try:
                     sftp.chmod(tmp_path, 0o600)
-                except IOError as exc:
+                except OSError as exc:
                     logger.debug("chmod on empty tmp failed: %s", exc)
                 fh.write(payload)
             finally:
@@ -194,7 +194,7 @@ class LocalAuthorizedKeysService:
                 return self._resolved_future([])
             if not os.path.exists(self.path):
                 return self._resolved_future([])
-            with open(self.path, "r", encoding="utf-8") as fh:
+            with open(self.path, encoding="utf-8") as fh:
                 text = fh.read()
             return self._resolved_future(parse_file(text))
         except Exception as exc:

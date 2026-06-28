@@ -48,7 +48,7 @@ def _save_doc(folder_path: str, doc_id: str):
     data = {}
     if os.path.exists(DOCS_JSON):
         try:
-            with open(DOCS_JSON, "r", encoding="utf-8") as f:
+            with open(DOCS_JSON, encoding="utf-8") as f:
                 data = json.load(f)
         except Exception:
             data = {}
@@ -467,7 +467,7 @@ def _load_doc_config() -> Dict[str, Dict[str, str]]:
         return {}
 
     try:
-        with open(DOCS_JSON, "r", encoding="utf-8") as f:
+        with open(DOCS_JSON, encoding="utf-8") as f:
             data = json.load(f)
             if isinstance(data, dict):
                 # Ensure we only keep dictionary entries
