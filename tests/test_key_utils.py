@@ -1,7 +1,6 @@
 import subprocess
 from pathlib import Path
 
-import pytest
 
 from sshpilot.key_utils import _is_private_key
 

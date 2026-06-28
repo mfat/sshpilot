@@ -10,7 +10,6 @@ import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from sshpilot.plugins import api as api_mod
 from sshpilot.plugins.api import API_VERSION, CommandResult, PluginContext
 from sshpilot.plugins.registry import ProtocolRegistry
 

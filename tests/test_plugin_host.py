@@ -16,7 +16,6 @@ from sshpilot.plugins.host import (
     EventBus,
     Events,
     PluginHost,
-    SessionInfo,
     UiHost,
 )
 

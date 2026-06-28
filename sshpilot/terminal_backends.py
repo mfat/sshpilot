@@ -613,16 +613,16 @@ class PyXtermTerminalBackend:
             try:
                 external_module = importlib.import_module("pyxtermjs")
                 pyxterm_module = external_module
-            except ModuleNotFoundError:
+            except ModuleNotFoundError as exc:
                 if vendored_module is None:
                     # Neither module found - will be caught by outer exception handler
-                    raise ImportError("Neither external nor vendored pyxtermjs module found")
+                    raise ImportError("Neither external nor vendored pyxtermjs module found") from exc
                 logger.debug("External pyxtermjs package not found; using vendored copy")
                 pyxterm_module = vendored_module
             except Exception as e:
                 if vendored_module is None:
                     # No fallback available - will be caught by outer exception handler
-                    raise ImportError(f"Failed to import pyxtermjs: {e}")
+                    raise ImportError(f"Failed to import pyxtermjs: {e}") from e
                 logger.debug(f"External pyxtermjs import failed; using vendored copy: {e}")
                 pyxterm_module = vendored_module
 
@@ -650,7 +650,7 @@ class PyXtermTerminalBackend:
                 
                 # Check if GTK 4.0 is already loaded (which conflicts with WebKit2)
                 if hasattr(Gtk, 'get_major_version') and Gtk.get_major_version() == 4:
-                    raise ImportError("PyXterm backend requires WebKit 6.0 for GTK 4.0 compatibility, but WebKit 6.0 is not available")
+                    raise ImportError("PyXterm backend requires WebKit 6.0 for GTK 4.0 compatibility, but WebKit 6.0 is not available") from webkit6_error
                 
                 # Fall back to WebKit2 4.0 (only if GTK 3.0 is available)
                 gi.require_version("WebKit2", "4.0")
@@ -1334,7 +1334,6 @@ class PyXtermTerminalBackend:
             raise RuntimeError("pyxterm backend is not available")
 
         import subprocess
-        import threading
         import time
         import os
 
@@ -1521,14 +1520,14 @@ class PyXtermTerminalBackend:
                         server_ready = True
                         logger.debug(f"PyXterm server ready on port {port} after {attempt + 1} attempts")
                         break
-                except (socket.error, ConnectionRefusedError) as e:
+                except (OSError, ConnectionRefusedError) as e:
                     logger.debug(f"Server not ready yet, attempt {attempt + 1}/{max_retries}: {e}")
                     # Check if the process is still running
                     if self._server_process and self._server_process.poll() is not None:
                         # Read stderr for error details
                         stderr_content = ""
                         try:
-                            with open(stderr_file.name, 'r') as f:
+                            with open(stderr_file.name) as f:
                                 stderr_content = f.read().strip()
                         except Exception:
                             pass
@@ -1544,7 +1543,7 @@ class PyXtermTerminalBackend:
                 # Read stderr for error details
                 stderr_content = ""
                 try:
-                    with open(stderr_file.name, 'r') as f:
+                    with open(stderr_file.name) as f:
                         stderr_content = f.read().strip()
                 except Exception:
                     pass
@@ -1946,10 +1945,6 @@ class PyXtermTerminalBackend:
             # Escape the search term for JavaScript string
             escaped_term = search_term.replace('\\', '\\\\').replace("'", "\\'").replace('"', '\\"').replace('\n', '\\n').replace('\r', '\\r')
             # Build search options according to ISearchOptions interface
-            search_options = {
-                'caseSensitive': case_sensitive,
-                'regex': is_regex
-            }
             options_json = f"caseSensitive: {str(case_sensitive).lower()}, regex: {str(is_regex).lower()}"
             search_js = f"""
             (function() {{

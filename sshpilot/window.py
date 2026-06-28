@@ -7,14 +7,12 @@ import asyncio
 import copy
 import os
 import logging
-import posixpath
 import re
 import shlex
 import sys
 import time
 import shutil
 from datetime import datetime
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Tuple
 
@@ -24,13 +22,12 @@ gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
 try:
     gi.require_version('Vte', '3.91')
-    from gi.repository import Vte
     _HAS_VTE = True
 except Exception:
     _HAS_VTE = False
 
 gi.require_version('PangoFT2', '1.0')
-from gi.repository import Gtk, Adw, Gio, GLib, GObject, Gdk, Pango, PangoFT2
+from gi.repository import Gtk, Adw, Gio, GLib, Gdk
 import subprocess
 import threading
 
@@ -45,8 +42,8 @@ from .connection_manager import ConnectionManager, Connection, ConnectionState
 from .terminal import TerminalWidget
 from .terminal_manager import TerminalManager
 from .config import Config
-from .key_manager import KeyManager, SSHKey
-from .update_checker import check_for_updates_async, get_update_url, get_platform_install_method
+from .key_manager import KeyManager
+from .update_checker import check_for_updates_async
 from .connection_display import (
     get_connection_alias,
     get_connection_host,
@@ -60,19 +57,11 @@ from .connection_sort import (
 # Port forwarding UI is now integrated into connection_dialog.py
 from .connection_dialog import ConnectionDialog
 from .preferences import (
-    PreferencesWindow,
     should_hide_external_terminal_options,
     should_hide_file_manager_options,
 )
-from .file_manager_integration import (
-    launch_remote_file_manager,
-    create_internal_file_manager_tab,
-    has_internal_file_manager,
-    has_native_gvfs_support,
-)
-from .sftp_utils import should_use_in_app_file_manager
 from .sshcopyid_window import SshCopyIdWindow, SshCopyIdRunner
-from .scp_window import ScpWindowController, SCPConnectionProfile
+from .scp_window import ScpWindowController
 from .groups import GroupManager
 from .session_manager import SessionManager
 from .sidebar import (
@@ -97,17 +86,30 @@ from .window_session import WindowSessionMixin
 from .window_help import WindowHelpMixin
 from .window_file_manager import WindowFileManagerMixin
 from .window_tabs import WindowTabsMixin
+from .window_dialogs import WindowConfigDialogsMixin
 from . import shutdown
 from .search_utils import connection_matches
 from .shortcut_utils import get_primary_modifier_label
-from .platform_utils import is_macos, get_config_dir, get_ssh_dir
+from .platform_utils import is_macos, get_config_dir
 from .command_blocks import CommandBlocksPanel, CommandBlockStore
 from .context_menu import IconContextMenu
 from .plugins.api import Capability
 from .plugins.registry import capabilities_for
-from .ssh_utils import ensure_writable_ssh_home
-from .scp_utils import assemble_scp_transfer_args, classify_sftp_error, download_file, upload_file
 from .ssh_password_exec import run_ssh_with_password
+from .remote_path_utils import (
+    _format_ssh_target,
+    _normalize_remote_path,
+    _quote_remote_path_for_shell,
+)
+# Re-exported for backward compatibility: these SCP helpers used to live in
+# window.py and are still referenced as `window.<name>` (e.g. by tests). They are
+# unused within window.py itself, hence the noqa.
+from .scp_utils import (  # noqa: F401
+    assemble_scp_transfer_args,
+    classify_sftp_error,
+    download_file,
+    upload_file,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -144,84 +146,6 @@ def _ensure_tips_banner_css() -> None:
         Gtk.STYLE_PROVIDER_PRIORITY_USER,
     )
     _tips_banner_css_installed = True
-
-
-def _format_ssh_target(host: str, user: str) -> str:
-    host_component = host or ''
-    if host_component and ':' in host_component and not (
-        host_component.startswith('[') and host_component.endswith(']')
-    ):
-        host_component = f'[{host_component}]'
-    return f'{user}@{host_component}' if user else host_component
-
-
-def _normalize_remote_path(path: str) -> str:
-    text = (path or '').strip()
-    if not text:
-        return '.'
-    if text in {'.', '/', '~'}:
-        return text
-    if text.startswith('~/'):
-        trimmed = text.rstrip('/')
-        return trimmed if trimmed else '~'
-    if text.startswith('/'):
-        normalized = posixpath.normpath(text)
-        return normalized if normalized.startswith('/') else f'/{normalized}'
-    normalized = posixpath.normpath(text)
-    return normalized or '.'
-
-
-def _remote_parent(path: str) -> Optional[str]:
-    normalized = _normalize_remote_path(path)
-    if normalized in {'.', '/'}:
-        return None
-    if normalized == '~':
-        return '/'
-    if normalized.startswith('~/'):
-        parent = normalized.rsplit('/', 1)[0]
-        return parent or '~'
-    parent = posixpath.dirname(normalized.rstrip('/'))
-    if not parent:
-        return '.'
-    if parent == normalized:
-        return None
-    return parent
-
-
-def _remote_join(base: str, child: str) -> str:
-    base_normalized = _normalize_remote_path(base)
-    child = (child or '').strip()
-    if child in {'', '.'}:
-        return base_normalized
-    if child == '..':
-        parent = _remote_parent(base_normalized)
-        return parent if parent is not None else base_normalized
-    if base_normalized in {'.', ''}:
-        return _normalize_remote_path(child)
-    if base_normalized == '~':
-        return _normalize_remote_path(f"~/{child.lstrip('/')}")
-    if base_normalized == '/':
-        return _normalize_remote_path(f"/{child.lstrip('/')}")
-    return _normalize_remote_path(f"{base_normalized.rstrip('/')}/{child}")
-
-
-
-
-def _quote_remote_path_for_shell(path: str) -> str:
-    normalized = _normalize_remote_path(path)
-    if normalized == '.':
-        return '.'
-    if normalized == '/':
-        return '/'
-    if normalized == '~':
-        return '$HOME'
-    if normalized.startswith('~/'):
-        remainder = normalized[2:]
-        if not remainder:
-            return '$HOME'
-        parts = [shlex.quote(seg) for seg in remainder.split('/')]
-        return '$HOME/' + '/'.join(parts)
-    return shlex.quote(normalized)
 
 
 def list_remote_files(
@@ -825,7 +749,24 @@ _get_connection_host = get_connection_host
 _get_connection_alias = get_connection_alias
 _format_connection_host_display = format_connection_host_display
 
-class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin, WindowHelpMixin, WindowFileManagerMixin, WindowTabsMixin, WindowActions):
+
+def _effective_max_sidebar_width(saved_value, default: int = 400) -> int:
+    """Resolve the startup max sidebar width from a saved setting value.
+
+    Returns the saved width when it is a valid integer, otherwise ``default``.
+    Kept as a module-level pure function so the parsing/fallback logic is unit
+    testable without building the GTK window.
+    """
+    if saved_value is None:
+        return default
+    try:
+        return int(saved_value)
+    except (TypeError, ValueError):
+        logger.warning("Invalid ui.max-sidebar-width %r; using default %d", saved_value, default)
+        return default
+
+
+class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin, WindowHelpMixin, WindowFileManagerMixin, WindowTabsMixin, WindowConfigDialogsMixin, WindowActions):
     """Main application window"""
 
     def __init__(self, *args, isolated: bool = False, **kwargs):
@@ -1203,7 +1144,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
     def on_export_diagnostics_action(self, action=None, param=None):
         """Save a ZIP of logs + system info + redacted config for bug reports."""
-        from datetime import datetime
         file_dialog = Gtk.FileDialog()
         file_dialog.set_title(_("Export Diagnostics"))
         file_dialog.set_initial_name(
@@ -2059,23 +1999,19 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         if not (HAS_NAV_SPLIT or HAS_OVERLAY_SPLIT):
             main_box.append(self.header_bar)
         
-        # Create main layout (fallback if split view widgets are unavailable)
-        # Load saved max-sidebar-width or use defaults
+        # Honor the saved max-sidebar-width on startup (previously it was read but
+        # ignored here, so the saved width only took effect after being changed
+        # mid-session); fall back to 400 when unset/invalid.
         saved_max_width = self.config.get_setting('ui.max-sidebar-width', None)
-        default_nav_max = 280
-        default_overlay_max = 280
-        if saved_max_width is not None:
-            max_width = int(saved_max_width)
-        else:
-            max_width = None
-        
+        effective_max_width = _effective_max_sidebar_width(saved_max_width)
+
         # Try OverlaySplitView first as it's more reliable
         if HAS_OVERLAY_SPLIT:
             self.split_view = Adw.OverlaySplitView()
             try:
                 self.split_view.set_sidebar_width_fraction(0.25)
                 self.split_view.set_min_sidebar_width(180)
-                self.split_view.set_max_sidebar_width(400)
+                self.split_view.set_max_sidebar_width(effective_max_width)
             except Exception:
                 pass
             self.split_view.set_vexpand(True)
@@ -2086,7 +2022,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             try:
                 self.split_view.set_sidebar_width_fraction(0.25)
                 self.split_view.set_min_sidebar_width(200)
-                self.split_view.set_max_sidebar_width(400)
+                self.split_view.set_max_sidebar_width(effective_max_width)
             except Exception:
                 pass
             self.split_view.set_vexpand(True)
@@ -2240,7 +2176,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         show_user_hostname = self.config.get_setting('ui.sidebar_show_user_hostname', True)
         show_group_count = self.config.get_setting('ui.sidebar_show_group_count', True)
         show_status = self.config.get_setting('ui.sidebar_show_connection_status', True)
-        show_port_forwarding = self.config.get_setting('ui.sidebar_show_port_forwarding', True)
         show_connection_icon = self.config.get_setting('ui.sidebar_show_connection_icon', True)
         flat_rows = self.config.get_setting('ui.sidebar_flat_rows', False)
         
@@ -5146,7 +5081,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
                 except Exception as e:
                     logger.error(f"SshCopyIdWindow: Generate and copy failed: {e}")
-                    logger.debug(f"SshCopyIdWindow: Exception details: {type(e).__name__}: {str(e)}")
+                    logger.debug(f"SshCopyIdWindow: Exception details: {type(e).__name__}: {e!s}")
                     self._error("Generate & Copy failed",
                                 "Could not generate a new key and copy it to the server.",
                                 str(e))
@@ -5198,7 +5133,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             win.present()
         except Exception as e:
             logger.error(f"Main window: ssh-copy-id window failed: {e}")
-            logger.debug(f"Main window: Exception details: {type(e).__name__}: {str(e)}")
+            logger.debug(f"Main window: Exception details: {type(e).__name__}: {e!s}")
             # Fallback error if window cannot be created
             try:
                 md = Adw.MessageDialog(transient_for=self, modal=True,
@@ -5208,311 +5143,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 md.present()
             except Exception:
                 pass
-
-    def show_known_hosts_editor(self):
-        """Show known hosts editor window"""
-        logger.info("Show known hosts editor window")
-        try:
-            from .known_hosts_editor import KnownHostsEditorWindow
-            editor = KnownHostsEditorWindow(self, self.connection_manager)
-            editor.present()
-        except Exception as e:
-            logger.error(f"Failed to open known hosts editor: {e}")
-
-    def show_preferences(self):
-        """Show preferences dialog"""
-        logger.info("Show preferences dialog")
-        existing = getattr(self, '_preferences_window', None)
-        if existing is not None:
-            try:
-                existing.present()
-                return
-            except Exception:
-                self._preferences_window = None
-        try:
-            preferences_window = PreferencesWindow(self, self.config)
-            self._preferences_window = preferences_window
-            preferences_window.connect(
-                'close-request',
-                lambda _w: (setattr(self, '_preferences_window', None), False)[1],
-            )
-            preferences_window.present()
-        except Exception as e:
-            logger.error(f"Failed to show preferences dialog: {e}")
-
-    def show_export_dialog(self):
-        """Show export configuration dialog"""
-        logger.info("Show export configuration dialog")
-        try:
-            from .backup_manager import BackupManager
-            
-            # Create file chooser dialog for saving
-            file_dialog = Gtk.FileDialog()
-            file_dialog.set_title(_("Export Configuration"))
-            file_dialog.set_initial_name(f"sshpilot_config_{datetime.now().strftime('%Y%m%d')}.json")
-            
-            # Set default folder to user's documents or home
-            try:
-                docs_path = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOCUMENTS)
-                if docs_path:
-                    file_dialog.set_initial_folder(Gio.File.new_for_path(docs_path))
-            except Exception:
-                pass
-            
-            def on_save_response(dialog, result):
-                try:
-                    file = dialog.save_finish(result)
-                    if file:
-                        export_path = file.get_path()
-                        
-                        # Perform export
-                        backup_mgr = BackupManager(self.config, self.connection_manager)
-                        success, error = backup_mgr.export_configuration(export_path)
-                        
-                        if success:
-                            # Show success dialog
-                            success_dialog = Adw.MessageDialog(
-                                transient_for=self,
-                                modal=True,
-                                heading=_("Export Successful"),
-                                body=_("Configuration exported successfully to:\n{}").format(export_path)
-                            )
-                            success_dialog.add_response('ok', _('OK'))
-                            success_dialog.present()
-                        else:
-                            # Show error dialog
-                            error_dialog = Adw.MessageDialog(
-                                transient_for=self,
-                                modal=True,
-                                heading=_("Export Failed"),
-                                body=_("Failed to export configuration:\n{}").format(error or "Unknown error")
-                            )
-                            error_dialog.add_response('ok', _('OK'))
-                            error_dialog.present()
-                            
-                except GLib.Error as e:
-                    # Check if user cancelled the dialog (error code 2 = GTK_DIALOG_ERROR_DISMISSED)
-                    if e.code == 2:
-                        logger.info("Export cancelled by user")
-                    else:
-                        logger.error(f"Export failed: {e}")
-                        error_dialog = Adw.MessageDialog(
-                            transient_for=self,
-                            modal=True,
-                            heading=_("Export Failed"),
-                            body=_("An error occurred during export:\n{}").format(str(e))
-                        )
-                        error_dialog.add_response('ok', _('OK'))
-                        error_dialog.present()
-                except Exception as e:
-                    logger.error(f"Export failed: {e}")
-                    error_dialog = Adw.MessageDialog(
-                        transient_for=self,
-                        modal=True,
-                        heading=_("Export Failed"),
-                        body=_("An error occurred during export:\n{}").format(str(e))
-                    )
-                    error_dialog.add_response('ok', _('OK'))
-                    error_dialog.present()
-            
-            file_dialog.save(self, None, on_save_response)
-            
-        except Exception as e:
-            logger.error(f"Failed to show export dialog: {e}")
-
-    def show_import_dialog(self):
-        """Show import configuration dialog"""
-        logger.info("Show import configuration dialog")
-        try:
-            # Create file chooser dialog for opening
-            file_dialog = Gtk.FileDialog()
-            file_dialog.set_title(_("Import Configuration"))
-            
-            # Set file filter for JSON files
-            filter_json = Gtk.FileFilter()
-            filter_json.set_name(_("JSON files"))
-            filter_json.add_mime_type("application/json")
-            filter_json.add_pattern("*.json")
-            
-            filter_all = Gtk.FileFilter()
-            filter_all.set_name(_("All files"))
-            filter_all.add_pattern("*")
-            
-            filters = Gio.ListStore.new(Gtk.FileFilter)
-            filters.append(filter_json)
-            filters.append(filter_all)
-            file_dialog.set_filters(filters)
-            file_dialog.set_default_filter(filter_json)
-            
-            # Set default folder to user's documents or home
-            try:
-                docs_path = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOCUMENTS)
-                if docs_path:
-                    file_dialog.set_initial_folder(Gio.File.new_for_path(docs_path))
-            except Exception:
-                pass
-            
-            def on_open_response(dialog, result):
-                try:
-                    file = dialog.open_finish(result)
-                    if file:
-                        import_path = file.get_path()
-                        # Show import mode selection dialog
-                        self._show_import_mode_dialog(import_path)
-                        
-                except GLib.Error as e:
-                    # Check if user cancelled the dialog (error code 2 = GTK_DIALOG_ERROR_DISMISSED)
-                    if e.code == 2:
-                        logger.info("Import cancelled by user")
-                    else:
-                        logger.error(f"Import file selection failed: {e}")
-                except Exception as e:
-                    logger.error(f"Import file selection failed: {e}")
-            
-            file_dialog.open(self, None, on_open_response)
-            
-        except Exception as e:
-            logger.error(f"Failed to show import dialog: {e}")
-
-    def _show_import_mode_dialog(self, import_path: str):
-        """Show dialog to select import mode (replace or merge)"""
-        try:
-            dialog = Adw.MessageDialog(
-                transient_for=self,
-                modal=True,
-                heading=_("Import Configuration"),
-                body=_("Choose how to import the configuration:")
-            )
-            
-            # Create content box with radio buttons
-            content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-            content_box.set_margin_start(20)
-            content_box.set_margin_end(20)
-            content_box.set_margin_top(20)
-            content_box.set_margin_bottom(20)
-            
-            # Replace mode radio
-            replace_radio = Gtk.CheckButton()
-            replace_radio.set_label(_("Replace current configuration"))
-            replace_radio.set_active(True)
-            content_box.append(replace_radio)
-            
-            replace_desc = Gtk.Label()
-            replace_desc.set_markup(_("<small>All current settings will be replaced with imported configuration</small>"))
-            replace_desc.set_xalign(0)
-            replace_desc.set_margin_start(24)
-            replace_desc.add_css_class('dim-label')
-            content_box.append(replace_desc)
-            
-            # Merge mode radio
-            merge_radio = Gtk.CheckButton()
-            merge_radio.set_label(_("Merge with current configuration"))
-            merge_radio.set_group(replace_radio)
-            content_box.append(merge_radio)
-            
-            merge_desc = Gtk.Label()
-            merge_desc.set_markup(_("<small>Add new connections and groups, preserve existing ones</small>"))
-            merge_desc.set_xalign(0)
-            merge_desc.set_margin_start(24)
-            merge_desc.add_css_class('dim-label')
-            content_box.append(merge_desc)
-            
-            # Warning label
-            from sshpilot import icon_utils
-            warning_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-            warning_box.set_margin_top(12)
-            warning_icon = icon_utils.new_image_from_icon_name('dialog-warning-symbolic')
-            warning_box.append(warning_icon)
-            warning_label = Gtk.Label()
-            backup_dir = os.path.join(get_config_dir(), 'backups')
-            warning_label.set_markup(_("<small>A backup will be created automatically before importing.\nBackup location: {}</small>").format(backup_dir))
-            warning_label.set_wrap(True)
-            warning_label.set_xalign(0)
-            warning_label.add_css_class('dim-label')
-            warning_box.append(warning_label)
-            content_box.append(warning_box)
-            
-            dialog.set_extra_child(content_box)
-            
-            dialog.add_response('cancel', _('Cancel'))
-            dialog.add_response('import', _('Import'))
-            dialog.set_response_appearance('import', Adw.ResponseAppearance.SUGGESTED)
-            dialog.set_default_response('import')
-            dialog.set_close_response('cancel')
-            
-            def on_response(dialog, response):
-                if response == 'import':
-                    mode = 'replace' if replace_radio.get_active() else 'merge'
-                    self._perform_import(import_path, mode)
-                dialog.destroy()
-            
-            dialog.connect('response', on_response)
-            dialog.present()
-            
-        except Exception as e:
-            logger.error(f"Failed to show import mode dialog: {e}")
-
-    def _perform_import(self, import_path: str, mode: str):
-        """Perform the actual import operation"""
-        try:
-            from .backup_manager import BackupManager
-            
-            backup_mgr = BackupManager(self.config, self.connection_manager)
-            success, error = backup_mgr.import_configuration(import_path, mode=mode, create_backup=True)
-            
-            if success:
-                # Show success dialog with restart suggestion
-                success_dialog = Adw.MessageDialog(
-                    transient_for=self,
-                    modal=True,
-                    heading=_("Import Successful"),
-                    body=_("Configuration imported successfully.\n\nIt is recommended to restart SSH Pilot for all changes to take effect.")
-                )
-                success_dialog.add_response('ok', _('OK'))
-                success_dialog.add_response('restart', _('Restart Now'))
-                success_dialog.set_response_appearance('restart', Adw.ResponseAppearance.SUGGESTED)
-                
-                def on_success_response(dialog, response):
-                    if response == 'restart':
-                        # Reload the connection list and config
-                        try:
-                            self.config.config_data = self.config.load_json_config()
-                            if self.connection_manager:
-                                self.connection_manager.load_ssh_config()
-                            # Reload group manager to pick up imported groups and colors
-                            if self.group_manager:
-                                self.group_manager._load_groups()
-                            self.rebuild_connection_list()
-                            
-                            # Show confirmation
-                            self.toast_overlay.add_toast(Adw.Toast.new(_("Configuration reloaded")))
-                        except Exception as e:
-                            logger.error(f"Failed to reload configuration: {e}")
-                    dialog.destroy()
-                
-                success_dialog.connect('response', on_success_response)
-                success_dialog.present()
-            else:
-                # Show error dialog
-                error_dialog = Adw.MessageDialog(
-                    transient_for=self,
-                    modal=True,
-                    heading=_("Import Failed"),
-                    body=_("Failed to import configuration:\n{}").format(error or "Unknown error")
-                )
-                error_dialog.add_response('ok', _('OK'))
-                error_dialog.present()
-                
-        except Exception as e:
-            logger.error(f"Import failed: {e}")
-            error_dialog = Adw.MessageDialog(
-                transient_for=self,
-                modal=True,
-                heading=_("Import Failed"),
-                body=_("An error occurred during import:\n{}").format(str(e))
-            )
-            error_dialog.add_response('ok', _('OK'))
-            error_dialog.present()
 
     def toggle_list_focus(self):
         """Toggle focus between connection list and terminal"""
@@ -6165,12 +5795,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     def on_delete_connection_response(self, dialog, response, payload):
         """Handle delete connection dialog response"""
         try:
-            neighbor_row = None
             connections: List[Connection]
 
             if isinstance(payload, dict):
                 connections = payload.get('connections', []) or []
-                neighbor_row = payload.get('neighbor_row')
             elif isinstance(payload, (list, tuple)):
                 connections = list(payload)
             else:
@@ -7418,7 +7046,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception as e:
             logger.error(f"Failed to show move to group dialog: {e}")
 
-    def move_connection_to_group(self, connection_nickname: str, target_group_id: str = None):
+    def move_connection_to_group(self, connection_nickname: str, target_group_id: Optional[str] = None):
         """Move a connection to a specific group"""
         try:
             self.group_manager.move_connection(connection_nickname, target_group_id)
@@ -8053,45 +7681,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     'remote_command': _norm_str(getattr(old_connection, 'remote_command', '') or (getattr(old_connection, 'data', {}).get('remote_command') if hasattr(old_connection, 'data') else '')),
                     'extra_ssh_config': _norm_str(getattr(old_connection, 'extra_ssh_config', '') or (getattr(old_connection, 'data', {}).get('extra_ssh_config') if hasattr(old_connection, 'data') else '')),
                 }
-                incoming = {
-                    'nickname': _norm_str(connection_data.get('nickname')),
-                    'hostname': _norm_str(connection_data.get('hostname') or connection_data.get('host')),
-                    'username': _norm_str(connection_data.get('username')),
-                    'port': int(connection_data.get('port') or 22),
-                    'auth_method': int(connection_data.get('auth_method') or 0),
-                    'keyfile': _norm_str(connection_data.get('keyfile')),
-                    'certificate': _norm_str(connection_data.get('certificate')),
-                    'key_select_mode': int(connection_data.get('key_select_mode') or 0),
-                    'password': _norm_str(connection_data.get('password')),
-                    'key_passphrase': _norm_str(connection_data.get('key_passphrase')),
-                    'x11_forwarding': bool(connection_data.get('x11_forwarding', False)),
-                    'forwarding_rules': _norm_rules(connection_data.get('forwarding_rules')),
-                    'pre_command': _norm_str(connection_data.get('pre_command')),
-                    'local_command': _norm_str(connection_data.get('local_command')),
-                    'remote_command': _norm_str(connection_data.get('remote_command')),
-                    'extra_ssh_config': _norm_str(connection_data.get('extra_ssh_config')),
-                }
-                # Determine if anything meaningful changed by comparing canonical SSH config blocks
-                try:
-                    existing_block = self.connection_manager.format_ssh_config_entry(existing)
-                    incoming_block = self.connection_manager.format_ssh_config_entry(incoming)
-                    # Also include auth_method/password/key_select_mode delta in change detection
-                    pw_changed_flag = bool(connection_data.get('password_changed', False))
-                    ksm_changed = (existing.get('key_select_mode', 0) != incoming.get('key_select_mode', 0))
-                    changed = (existing_block != incoming_block) or (existing['auth_method'] != incoming['auth_method']) or pw_changed_flag or ksm_changed or (existing['password'] != incoming['password'])
-                except Exception:
-                    # Fallback to dict comparison if formatter fails
-                    changed = existing != incoming
-
-                # Extra guard: if key_select_mode or auth_method differs from the object's current value, force changed
-                try:
-                    if int(connection_data.get('key_select_mode', -1)) != int(getattr(old_connection, 'key_select_mode', -1)):
-                        changed = True
-                    if int(connection_data.get('auth_method', -1)) != int(getattr(old_connection, 'auth_method', -1)):
-                        changed = True
-                except Exception:
-                    pass
-
+                # Editing always forces an update so forwarding rules stay synced;
+                # change detection was intentionally removed (it could skip needed
+                # updates), so no diff between old and new values is computed here.
                 # Always force update when editing connections - skip change detection entirely for forwarding rules
                 logger.info("Editing connection '%s' - forcing update to ensure forwarding rules are synced", existing['nickname'])
 

@@ -2,7 +2,6 @@
 
 import os
 import logging
-import subprocess
 import shutil
 import json
 import hashlib
@@ -21,6 +20,7 @@ from .file_manager_integration import (
     has_native_gvfs_support,
 )
 from .shortcut_editor import ShortcutsPreferencesPage
+from .monospace_font_dialog import MonospaceFontDialog
 
 
 import gi
@@ -28,7 +28,7 @@ gi.require_version('Gtk', '4.0')
 gi.require_version('Gdk', '4.0')
 gi.require_version('Adw', '1')
 gi.require_version('Vte', '3.91')
-from gi.repository import Gtk, Gdk, Adw, Pango, PangoFT2, Vte, GLib, Gio
+from gi.repository import Gtk, Gdk, Adw, Pango, Vte, GLib, Gio
 
 logger = logging.getLogger(__name__)
 
@@ -244,267 +244,6 @@ def should_hide_file_manager_options() -> bool:
     except Exception as exc:  # pragma: no cover - defensive
         logger.debug("File manager capability detection failed: %s", exc)
     return True
-
-class MonospaceFontDialog(Adw.Window):
-    def __init__(self, parent=None, current_font="Monospace 12"):
-        super().__init__()
-        
-        self.set_title("Select Terminal Font")
-        self.set_default_size(500, 600)
-        self.set_transient_for(parent)
-        self.set_modal(True)
-        
-        # Store callback
-        self.callback = None
-        
-        # Parse current font
-        self.current_font_desc = Pango.FontDescription.from_string(current_font)
-        
-        # Create main content
-        self.setup_ui()
-        self.populate_fonts()
-        
-    def setup_ui(self):
-        # Main box
-        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        main_box.set_margin_top(12)
-        main_box.set_margin_bottom(12)
-        main_box.set_margin_start(12)
-        main_box.set_margin_end(12)
-        
-        # Header
-        header = Adw.HeaderBar()
-        header.set_show_start_title_buttons(False)
-        header.set_show_end_title_buttons(False)
-        
-        # Cancel button
-        cancel_btn = Gtk.Button(label="Cancel")
-        cancel_btn.connect("clicked", self.on_cancel)
-        header.pack_start(cancel_btn)
-        
-        # Select button
-        select_btn = Gtk.Button(label="Select")
-        select_btn.add_css_class("suggested-action")
-        select_btn.connect("clicked", self.on_select)
-        header.pack_end(select_btn)
-        
-        # Create search entry
-        self.search_entry = Gtk.SearchEntry()
-        self.search_entry.set_placeholder_text("Search fonts...")
-        self.search_entry.connect("search-changed", self.on_search_changed)
-        
-        # Create font list
-        self.font_model = Gtk.ListStore(str, str, object)  # display_name, family, font_desc
-        self.font_filter = Gtk.TreeModelFilter(child_model=self.font_model)
-        self.font_filter.set_visible_func(self.filter_fonts)
-        
-        self.font_view = Gtk.TreeView(model=self.font_filter)
-        self.font_view.set_headers_visible(False)
-        
-        # Font name column
-        name_renderer = Gtk.CellRendererText()
-        name_column = Gtk.TreeViewColumn("Font", name_renderer, text=0)
-        self.font_view.append_column(name_column)
-        
-        # Selection handling
-        selection = self.font_view.get_selection()
-        selection.connect("changed", self.on_selection_changed)
-        
-        # Scrolled window for font list
-        scrolled = Gtk.ScrolledWindow()
-        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scrolled.set_child(self.font_view)
-        scrolled.set_vexpand(True)
-        
-        # Size selection
-        size_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        size_label = Gtk.Label(label="Size:")
-        size_label.set_halign(Gtk.Align.START)
-        
-        self.size_spin = Gtk.SpinButton.new_with_range(6, 72, 1)
-        self.size_spin.set_value(self.current_font_desc.get_size() / Pango.SCALE)
-        self.size_spin.connect("value-changed", self.on_size_changed)
-        
-        size_box.append(size_label)
-        size_box.append(self.size_spin)
-        
-        # Preview text
-        preview_frame = Gtk.Frame()
-        preview_frame.set_label("Preview")
-
-        self.preview_label = Gtk.Label()
-        self.preview_label.set_text(
-            "The quick brown fox jumps over the lazy dog\n0123456789 !@#$%^&*()_+-=[]{}|;:,.<>?"
-        )
-        self.preview_label.set_margin_top(12)
-        self.preview_label.set_margin_bottom(12)
-        self.preview_label.set_margin_start(12)
-        self.preview_label.set_margin_end(12)
-        self.preview_label.set_selectable(True)
-        self.preview_label.set_wrap(True)
-        self.preview_label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
-        self.preview_label.set_xalign(0.0)
-
-        preview_scroller = Gtk.ScrolledWindow()
-        preview_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        preview_scroller.set_min_content_height(140)
-        preview_scroller.set_max_content_height(140)
-        preview_scroller.set_hexpand(True)
-        preview_scroller.set_vexpand(False)
-        preview_scroller.set_child(self.preview_label)
-
-        preview_frame.set_child(preview_scroller)
-        
-        # Add everything to main box
-        main_box.append(header)
-        main_box.append(self.search_entry)
-        main_box.append(scrolled)
-        main_box.append(size_box)
-        main_box.append(preview_frame)
-        
-        self.set_content(main_box)
-        
-    def populate_fonts(self):
-        # Get font map
-        fontmap = PangoFT2.FontMap.new()
-        families = fontmap.list_families()
-        
-        monospace_families = []
-        for family in families:
-            if family.is_monospace():
-                family_name = family.get_name()
-                
-                # Get available faces for this family
-                faces = family.list_faces()
-                for face in faces:
-                    face_name = face.get_face_name()
-                    
-                    # Create font description
-                    desc = Pango.FontDescription()
-                    desc.set_family(family_name)
-                    desc.set_size(12 * Pango.SCALE)
-                    
-                    # Set style if not regular
-                    if face_name.lower() != "regular":
-                        if "bold" in face_name.lower():
-                            desc.set_weight(Pango.Weight.BOLD)
-                        if "italic" in face_name.lower() or "oblique" in face_name.lower():
-                            desc.set_style(Pango.Style.ITALIC)
-                    
-                    # Display name
-                    if face_name.lower() == "regular":
-                        display_name = family_name
-                    else:
-                        display_name = f"{family_name} {face_name}"
-                    
-                    monospace_families.append((display_name, family_name, desc))
-        
-        # Sort by family name
-        monospace_families.sort(key=lambda x: x[0].lower())
-        
-        # Add to model
-        for display_name, family_name, desc in monospace_families:
-            self.font_model.append([display_name, family_name, desc])
-            
-        # Select current font if possible
-        self.select_current_font()
-        
-    def select_current_font(self):
-        current_family = self.current_font_desc.get_family()
-        if not current_family:
-            return
-            
-        iter = self.font_model.get_iter_first()
-        while iter:
-            family = self.font_model.get_value(iter, 1)
-            if family.lower() == current_family.lower():
-                # Convert to filter iter
-                filter_iter = self.font_filter.convert_child_iter_to_iter(iter)
-                if filter_iter[1]:  # Check if conversion was successful
-                    selection = self.font_view.get_selection()
-                    selection.select_iter(filter_iter[1])
-                    
-                    # Scroll to selection
-                    path = self.font_filter.get_path(filter_iter[1])
-                    self.font_view.scroll_to_cell(path, None, False, 0.0, 0.0)
-                break
-            iter = self.font_model.iter_next(iter)
-    
-    def filter_fonts(self, model, iter, data):
-        search_text = self.search_entry.get_text().lower()
-        if not search_text:
-            return True
-            
-        font_name = model.get_value(iter, 0).lower()
-        return search_text in font_name
-    
-    def on_search_changed(self, entry):
-        self.font_filter.refilter()
-    
-    def on_selection_changed(self, selection):
-        model, iter = selection.get_selected()
-        if iter:
-            font_desc = model.get_value(iter, 2).copy()
-            font_desc.set_size(int(self.size_spin.get_value()) * Pango.SCALE)
-            self.update_preview(font_desc)
-    
-    def on_size_changed(self, spin):
-        selection = self.font_view.get_selection()
-        model, iter = selection.get_selected()
-        if iter:
-            font_desc = model.get_value(iter, 2).copy()
-            font_desc.set_size(int(spin.get_value()) * Pango.SCALE)
-            self.update_preview(font_desc)
-    
-    def update_preview(self, font_desc):
-        # Remove previous CSS provider if it exists
-        if hasattr(self, '_css_provider'):
-            context = self.preview_label.get_style_context()
-            context.remove_provider(self._css_provider)
-        
-        # Create CSS for the font
-        css = f"""
-        .preview-font {{
-            font-family: "{font_desc.get_family()}";
-            font-size: {font_desc.get_size() / Pango.SCALE}pt;
-            font-weight: normal;
-            font-style: normal;
-        """
-        
-        if font_desc.get_weight() == Pango.Weight.BOLD:
-            css += "font-weight: bold;"
-        if font_desc.get_style() == Pango.Style.ITALIC:
-            css += "font-style: italic;"
-            
-        css += "}"
-        
-        # Apply CSS
-        self._css_provider = Gtk.CssProvider()
-        self._css_provider.load_from_data(css.encode())
-        
-        context = self.preview_label.get_style_context()
-        context.add_provider(self._css_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
-        
-        # Ensure the class is added (but only once)
-        if not context.has_class("preview-font"):
-            context.add_class("preview-font")
-    
-    def on_cancel(self, button):
-        self.close()
-    
-    def on_select(self, button):
-        selection = self.font_view.get_selection()
-        model, iter = selection.get_selected()
-        if iter and self.callback:
-            font_desc = model.get_value(iter, 2).copy()
-            font_desc.set_size(int(self.size_spin.get_value()) * Pango.SCALE)
-            font_string = font_desc.to_string()
-            self.callback(font_string)
-        self.close()
-    
-    def set_callback(self, callback):
-        """Set callback function that receives the selected font string"""
-        self.callback = callback
 
 
 class PreferencesWindow(Adw.Window):
@@ -3781,7 +3520,6 @@ class PreferencesWindow(Adw.Window):
     def save_advanced_ssh_settings(self):
         """Persist advanced SSH settings from the preferences UI"""
         try:
-            native_value = False
             connect_timeout = None
             connection_attempts = None
             keepalive_interval = None

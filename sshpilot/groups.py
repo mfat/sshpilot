@@ -95,7 +95,7 @@ class GroupManager:
                 return True
         return False
 
-    def create_group(self, name: str, parent_id: str = None, color: Optional[str] = None) -> str:
+    def create_group(self, name: str, parent_id: Optional[str] = None, color: Optional[str] = None) -> str:
         """Create a new group and return its ID"""
         # Check for duplicate names (case-insensitive)
         if self.group_name_exists(name):
@@ -177,7 +177,7 @@ class GroupManager:
         del self.groups[group_id]
         self._save_groups()
 
-    def move_connection(self, connection_nickname: str, target_group_id: str = None):
+    def move_connection(self, connection_nickname: str, target_group_id: Optional[str] = None):
         """Move a connection to a different group"""
         self.connections[connection_nickname] = target_group_id
 

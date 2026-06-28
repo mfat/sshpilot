@@ -4,7 +4,7 @@ SSH utilities for building consistent SSH options across the application
 
 import os
 import logging
-from typing import List, Dict
+from typing import Dict
 
 from .platform_utils import is_flatpak
 

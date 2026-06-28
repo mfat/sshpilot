@@ -8,8 +8,6 @@ import socket
 import subprocess
 import logging
 from typing import Dict, Iterable, Iterator, List, Optional, Tuple, Any
-import json
-import re
 from gettext import gettext as _
 
 # Try to import psutil, fallback to subprocess methods if not available
@@ -327,7 +325,7 @@ class PortChecker:
         # Parse TCP v4 and v6
         for proc_file, is_ipv6 in [('/proc/net/tcp', False), ('/proc/net/tcp6', True)]:
             try:
-                with open(proc_file, 'r') as f:
+                with open(proc_file) as f:
                     lines = f.readlines()[1:]  # Skip header
                     
                     for line in lines:
@@ -389,7 +387,7 @@ class PortChecker:
                         
                         ports.append(port_info)
                         
-            except (OSError, IOError) as e:
+            except OSError as e:
                 logger.debug(f"Could not read {proc_file}: {e}")
                 continue
         
@@ -438,33 +436,33 @@ class PortChecker:
         try:
             # Try /proc/pid/comm first (most reliable)
             try:
-                with open(f'/proc/{pid}/comm', 'r') as f:
+                with open(f'/proc/{pid}/comm') as f:
                     return f.read().strip()
-            except (OSError, IOError):
+            except OSError:
                 pass
             
             # Try /proc/pid/cmdline as fallback
             try:
-                with open(f'/proc/{pid}/cmdline', 'r') as f:
+                with open(f'/proc/{pid}/cmdline') as f:
                     cmdline = f.read().strip()
                     if cmdline:
                         # Get just the command name, not full path or arguments
                         cmd = cmdline.split('\x00')[0]  # cmdline is null-separated
                         if cmd:
                             return os.path.basename(cmd)
-            except (OSError, IOError):
+            except OSError:
                 pass
             
             # Try /proc/pid/stat as last resort
             try:
-                with open(f'/proc/{pid}/stat', 'r') as f:
+                with open(f'/proc/{pid}/stat') as f:
                     stat_line = f.read().strip()
                     # Process name is the second field in parentheses
                     start = stat_line.find('(')
                     end = stat_line.rfind(')')
                     if start != -1 and end != -1 and end > start:
                         return stat_line[start+1:end]
-            except (OSError, IOError):
+            except OSError:
                 pass
                 
         except Exception as e:

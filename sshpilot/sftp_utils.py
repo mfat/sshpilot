@@ -528,9 +528,9 @@ def _mount_and_open_sftp(
                         if error_callback:
                             error_callback(error_msg)
             except Exception as e:
-                error_msg = f"Unexpected error during mount: {str(e)}"
+                error_msg = f"Unexpected error during mount: {e!s}"
                 logger.error(f"Mount error for {user}@{host}: {e}")
-                progress_dialog.update_progress(0.0, f"Error: {str(e)}")
+                progress_dialog.update_progress(0.0, f"Error: {e!s}")
                 progress_dialog.show_error(error_msg)
                 GLib.timeout_add(1500, lambda: GLib.idle_add(progress_dialog.close))
                 if error_callback:
@@ -552,7 +552,7 @@ def _mount_and_open_sftp(
         return True, None
 
     except Exception as e:
-        error_msg = f"Failed to start mount operation: {str(e)}"
+        error_msg = f"Failed to start mount operation: {e!s}"
         logger.error(f"Mount operation failed for {user}@{host}: {e}")
         GLib.timeout_add(1500, lambda: GLib.idle_add(progress_dialog.close))
 

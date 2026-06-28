@@ -2,7 +2,6 @@
 
 import subprocess
 
-import pytest
 
 
 # --- ensure_key_in_agent: force / lifetime behavior -------------------------

@@ -1425,7 +1425,7 @@ class WindowActions:
         )
         for path in candidates:
             try:
-                with open(path, 'r', encoding='utf-8') as fh:
+                with open(path, encoding='utf-8') as fh:
                     raw_lines = fh.readlines()
             except OSError:
                 continue

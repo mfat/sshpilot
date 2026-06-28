@@ -8,11 +8,10 @@ Tests verify that:
 4. UTF-8/UTF-16 are not wrapped (native xterm.js support)
 """
 
-import os
 import sys
 import types
 from pathlib import Path
-from unittest.mock import Mock, MagicMock, patch, call
+from unittest.mock import Mock
 
 import pytest
 
@@ -173,7 +172,7 @@ _Gdk.Rectangle = Mock
 _Adw.Application = types.SimpleNamespace(get_default=lambda: None)
 
 # Now import the modules we want to test
-from sshpilot.terminal_backends import VTETerminalBackend, PyXtermTerminalBackend
+from sshpilot.terminal_backends import VTETerminalBackend
 
 
 class TestVTETerminalEncoding:
@@ -226,7 +225,6 @@ class TestPyXtermEncoding:
     def test_utf8_encoding_no_luit_wrapper(self, monkeypatch):
         """Test that UTF-8 encoding doesn't wrap command with luit"""
         # Test the encoding wrapping logic directly
-        import shutil
         
         # UTF-8 should not be wrapped (native xterm.js support)
         encoding = 'UTF-8'
@@ -453,7 +451,7 @@ class TestEncodingAffectsText:
         # UTF-8: 0xD1 0x8F (2 bytes)
         
         text_koi8r = 'я'.encode('KOI8-R')
-        text_utf8 = 'я'.encode('UTF-8')
+        text_utf8 = 'я'.encode()
         
         assert text_koi8r != text_utf8
         assert len(text_koi8r) == 1
@@ -478,7 +476,7 @@ class TestEncodingIntegration:
         import importlib
         
         # Import the module to get access to the method
-        terminal_backends = importlib.import_module('sshpilot.terminal_backends')
+        importlib.import_module('sshpilot.terminal_backends')
         
         # Create a minimal backend instance to test the method
         # We'll create a mock instance that has the method

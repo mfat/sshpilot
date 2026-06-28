@@ -6,7 +6,7 @@ import logging
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
 
-from gi.repository import Gtk, Adw, Gdk, Gio, GLib
+from gi.repository import Gtk, Adw
 
 from gettext import gettext as _
 
@@ -112,10 +112,6 @@ class WelcomePage(Gtk.Overlay):
         
         # Edit SSH Config action row
         edit_config_accel = self._get_action_accel_display(current_shortcuts, 'edit-ssh-config')
-        if hasattr(self.config, 'isolated_mode') and self.config.isolated_mode:
-            config_location = '~/.config/sshpilot/config'
-        else:
-            config_location = '~/.ssh/config'
         edit_config_row = Adw.ActionRow()
         edit_config_row.set_title(_('View and Edit SSH Config'))
         edit_config_row.set_activatable(True)
