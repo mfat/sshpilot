@@ -1931,7 +1931,7 @@ class TerminalWidget(Gtk.Box):
 
             # Prepare palette colors (16 ANSI colors)
             palette_colors = None
-            if 'palette' in profile and profile['palette']:
+            if profile.get('palette'):
                 palette_colors = []
                 for color_hex in profile['palette']:
                     color = Gdk.RGBA()
@@ -2309,7 +2309,6 @@ class TerminalWidget(Gtk.Box):
         after paste.  Now that cursor shape is driven from Python (set_cursor),
         the grab_focus is not needed here.
         """
-        pass
 
     def _on_vte_motion(self, controller, x, y):
         """Detect URL under the mouse cursor (both OSC 8 links and plain-text regexes)."""
@@ -3647,7 +3646,6 @@ class TerminalWidget(Gtk.Box):
 
     def _on_terminal_input(self, widget, text, size):
         """Handle input from the terminal (handled automatically by VTE)"""
-        pass
             
     def _on_terminal_resize(self, widget, width, height):
         """Handle terminal resize events"""
@@ -4297,7 +4295,6 @@ class TerminalWidget(Gtk.Box):
     def on_bell(self, terminal):
         """Handle terminal bell"""
         # Could implement visual bell or notification here
-        pass
 
     def _on_selection_changed(self, *_args):
         """Copy-on-select: mirror the terminal selection into the clipboard when
@@ -5457,7 +5454,6 @@ class TerminalWidget(Gtk.Box):
     
     def _on_drop_leave(self, drop_target):
         """Handle drag leave event."""
-        pass
     
     def _on_file_drop(self, drop_target, value, x, y):
         """Handle file drop event - initiate SCP upload."""
@@ -5548,7 +5544,7 @@ class TerminalWidget(Gtk.Box):
                     # Use $$ to get shell PID for uniqueness, or use the generated filename
                     pwd_cmd = f"pwd > {temp_filename}\n"
                     
-                    logger.debug(f"Sending pwd command to terminal: {repr(pwd_cmd)}")
+                    logger.debug(f"Sending pwd command to terminal: {pwd_cmd!r}")
                     
                     # Send command to terminal backend
                     if hasattr(self, 'backend') and self.backend and hasattr(self.backend, 'feed_child'):
@@ -5614,7 +5610,7 @@ class TerminalWidget(Gtk.Box):
                     except Exception:
                         pass  # Ignore cleanup errors
                     
-                    logger.debug(f"pwd file read result: returncode={result.returncode}, stdout={repr(result.stdout)}, stderr={repr(result.stderr)}")
+                    logger.debug(f"pwd file read result: returncode={result.returncode}, stdout={result.stdout!r}, stderr={result.stderr!r}")
                     
                     if result.returncode == 0:
                         if result.stdout:

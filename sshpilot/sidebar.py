@@ -3139,4 +3139,4 @@ def build_sidebar(window):
     return window.connection_list
 
 
-__all__ = ["GroupRow", "ConnectionRow", "build_sidebar"]
+__all__ = ["ConnectionRow", "GroupRow", "build_sidebar"]

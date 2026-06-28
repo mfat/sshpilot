@@ -426,7 +426,7 @@ def test_portal_path_to_host_entry_xattr_wins_over_gethostpaths(monkeypatch):
 
 
 def test_restore_returns_none_when_empty_or_unresolvable(monkeypatch):
-    monkeypatch.setattr(portal_docs, "_load_doc_config", lambda: {})
+    monkeypatch.setattr(portal_docs, "_load_doc_config", dict)
     assert portal_docs.restore_granted_folder() is None
 
     monkeypatch.setattr(portal_docs, "_load_doc_config", lambda: {"D": {"display": "x"}})
