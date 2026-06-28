@@ -173,3 +173,14 @@ def prompt_unlock(parent, *, on_done=None):
         dialog.present(parent)
     else:
         dialog.present()
+
+    # Focus the password entry once the dialog is realized so the user can type
+    # immediately and Enter activates the default "Unlock" response.
+    def _focus_entry():
+        try:
+            entry.grab_focus()
+        except Exception:
+            pass
+        return False
+
+    GLib.idle_add(_focus_entry)

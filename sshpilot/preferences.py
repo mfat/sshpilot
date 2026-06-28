@@ -1500,8 +1500,13 @@ class PreferencesWindow(Adw.Window):
             # Secret storage backend selection
             secrets_group = Adw.PreferencesGroup(
                 title="Secret Storage",
-                description="Where sshPilot stores passwords and key passphrases. "
-                            "Switching does not migrate existing secrets.",
+                description=_(
+                    "Where sshPilot stores passwords and key passphrases. "
+                    "Switching does not migrate existing secrets.\n"
+                    "Note: Bitwarden/Vaultwarden run a local 'bw serve' daemon on "
+                    "127.0.0.1 while unlocked; its API is reachable by other programs "
+                    "running as your user until you quit sshPilot."
+                ),
             )
             self.secret_backend_row = Adw.ComboRow()
             self.secret_backend_row.set_title("Secret storage backend")

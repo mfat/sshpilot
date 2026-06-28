@@ -13,10 +13,11 @@ Built-in backends:
 - ``keyring``   — the cross-platform Python ``keyring`` library (macOS Keychain,
   Windows Credential Manager, KWallet, …).
 - ``pass``      — passwordstore.org (``pass`` CLI, gpg-backed).
-- ``bitwarden`` / ``vaultwarden`` — the ``bw`` CLI (Vaultwarden = self-hosted
-  server URL). *Session-backed*: must be unlocked before secrets are readable;
-  the unlock token (``BW_SESSION``) is cached in-process and exported to the env
-  so the ``--askpass`` subprocess can read non-interactively.
+- ``bitwarden`` / ``vaultwarden`` — a persistent ``bw serve`` daemon + loopback
+  HTTP (Vaultwarden = self-hosted server URL). *Session-backed*: must be unlocked
+  before secrets are readable. The daemon holds the session and listens on
+  ``127.0.0.1`` (port via ``SSHPILOT_BW_SERVE_PORT``), so the ``--askpass``
+  subprocess reads from the same daemon without cold-loading the vault.
 - ``agent`` — the "don't store secrets" choice: a null backend that persists
   nothing and (when selected) is never read from. The user relies on ssh-agent
   and ssh's own prompts. Marked ``authoritative`` so the manager does not fall
@@ -47,7 +48,8 @@ this module existed, so existing saved credentials keep working under ``auto``.
 
 from __future__ import annotations
 
-import base64
+import atexit
+import http.client
 import json
 import logging
 import os
@@ -56,7 +58,8 @@ import subprocess
 import threading
 import time
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
+from urllib.parse import urlencode
 
 logger = logging.getLogger(__name__)
 
@@ -408,42 +411,45 @@ class PassBackend(SecretBackend):
 
 
 class BitwardenBackend(SecretBackend):
-    """Bitwarden backend driving the ``bw`` CLI.
+    """Bitwarden backend using a persistent ``bw serve`` daemon + loopback HTTP.
 
-    *Session-backed*: :meth:`unlock` runs ``bw unlock`` and caches the returned
-    ``BW_SESSION`` token (in-process **and** in ``os.environ`` so the
-    ``--askpass`` subprocess, which inherits the env, can read non-interactively).
-    The token is dropped after ``secrets.session_timeout`` minutes of idle
-    (propagated as ``SSHPILOT_SECRET_SESSION_TIMEOUT`` seconds); ``0`` = until exit.
+    ``bw`` cold-starts a Node runtime (~1–2s) per invocation, so instead of spawning it
+    per operation we start one ``bw serve`` daemon and make fast REST calls to its
+    local API. The daemon holds the unlocked vault in memory, so reads/writes are quick;
+    because it listens on ``127.0.0.1`` the ``--askpass`` subprocess can hit the *same*
+    daemon (port via ``SSHPILOT_BW_SERVE_PORT``) without cold-loading the vault.
 
-    Secrets are stored as login items named after ``spec.keyring_account`` with the
-    secret in ``login.password``. ``is_available`` only checks for the ``bw`` binary
-    — never ``bw status`` — so it stays cheap on the hot path. The ``bw`` CLI holds
-    one server/account at a time, so Bitwarden-cloud and a Vaultwarden server cannot
-    be logged in simultaneously through the same install.
+    The daemon owns the session (we don't track ``BW_SESSION``). We keep an in-memory
+    name→item cache, warmed once on unlock, so repeated lookups in this process need no
+    HTTP. GTK-free (imported by the askpass subprocess); UI lives in the GTK layer.
+
+    Security: the API is reachable by any same-user process while the vault is unlocked
+    (TCP loopback). A dedicated default port is used so we never clobber a ``bw serve``
+    the user runs for their own tooling.
     """
 
     name = "bitwarden"
     session_backed = True
-    _TIMEOUT = 120  # seconds — generous enough for a master-password unlock
+    _HOST = "127.0.0.1"
+    _DEFAULT_PORT = 8765        # dedicated; NOT bw's default 8087
+    _START_TIMEOUT = 8.0        # seconds to wait for `bw serve` to become ready
+    _CONFIG_TIMEOUT = 30        # subprocess timeout for one-shot `bw config server`
+    _STATUS_TTL = 1.0           # seconds to cache GET /status
 
     def __init__(self, bin_name: str = "bw") -> None:
         self._bin_name = bin_name
         self._bin_override: Optional[str] = None
-        self._token: Optional[str] = None
-        self._deadline: Optional[float] = None  # monotonic; None = no expiry
-        # In-memory cache of all vault items, indexed by item name. ``None`` means
-        # "not loaded yet". `bw` spins up a JS runtime per call (~0.5–2s), so we
-        # fetch every item once (decrypted) and serve reads from memory — no per-read
-        # spawn, no UI freeze. Warmed by a background prefetch in unlock().
-        self._items: Optional[Dict[str, dict]] = None
+        self._proc: Optional[subprocess.Popen] = None   # the daemon we own, if any
+        self._unlocked = False                           # we unlocked it this session
+        self._items: Optional[Dict[str, dict]] = None    # name→item; None = not loaded
+        self._status_cache: tuple = (0.0, None)          # (monotonic_ts, status|None)
         self._lock = threading.RLock()
+        atexit.register(self._terminate_proc)            # don't leak an unlocked daemon
 
     @property
     def _bin(self) -> Optional[str]:
-        """Resolve the ``bw`` binary on each access (not cached at construction) so a
-        CLI installed *after* the app started is detected without a restart. Assigning
-        ``self._bin`` pins an explicit path (used by tests)."""
+        """Resolve ``bw`` on each access so a CLI installed after launch is found.
+        Assigning ``self._bin`` pins an explicit path (used by tests)."""
         if self._bin_override is not None:
             return self._bin_override
         return shutil.which(self._bin_name) or None
@@ -462,190 +468,293 @@ class BitwardenBackend(SecretBackend):
         return f"{self.name}:{url}" if url else self.name
 
     def is_available(self) -> bool:
+        # Cheap, daemon-free: just whether the CLI exists. Lock/unlock state is a
+        # separate question answered by is_unlocked()/needs_login().
         return bool(self._bin)
 
-    def _status(self) -> Optional[str]:
-        """Return the ``bw status`` state ('unauthenticated'|'locked'|'unlocked')
-        or ``None`` if it can't be determined. Needs no session token."""
-        if not self._bin:
-            return None
+    # -- loopback HTTP to the serve daemon -------------------------------
+    def _port(self) -> int:
         try:
-            result = self._run(["status"])
-            if result.returncode != 0:
-                return None
-            data = json.loads(result.stdout.decode("utf-8", "replace") or "{}")
-            status = data.get("status")
-            return status if isinstance(status, str) else None
-        except Exception as exc:
-            logger.debug("bw status failed: %s", exc)
-            return None
-
-    def needs_login(self) -> bool:
-        """True when no account is authenticated, so ``bw unlock`` cannot succeed
-        until the user runs ``bw login`` (or ``bw login --apikey``) in a shell."""
-        return self._status() == "unauthenticated"
-
-    # -- session lifecycle ----------------------------------------------
-    @staticmethod
-    def _session_timeout_seconds() -> int:
-        try:
-            return int(os.environ.get("SSHPILOT_SECRET_SESSION_TIMEOUT", "0") or 0)
+            return int(os.environ.get("SSHPILOT_BW_SERVE_PORT") or self._DEFAULT_PORT)
         except Exception:
-            return 0
+            return self._DEFAULT_PORT
 
-    def _touch_deadline(self) -> None:
-        secs = self._session_timeout_seconds()
-        self._deadline = (time.monotonic() + secs) if secs > 0 else None
+    def _http(self, method: str, path: str, *, params=None, body=None, timeout: float = 10):
+        """One request to the serve API. Returns ``(status_code, data_dict)``; raises on
+        a transport error (connection refused => daemon down)."""
+        if params:
+            query = urlencode({k: v for k, v in params.items() if v is not None})
+            if query:
+                path = f"{path}?{query}"
+        conn = http.client.HTTPConnection(self._HOST, self._port(), timeout=timeout)
+        try:
+            payload = None
+            headers = {}
+            if body is not None:
+                payload = json.dumps(body).encode("utf-8")
+                headers["Content-Type"] = "application/json"
+            conn.request(method, path, body=payload, headers=headers)
+            resp = conn.getresponse()
+            raw = resp.read()
+            try:
+                data = json.loads(raw.decode("utf-8", "replace") or "{}")
+            except Exception:
+                data = {}
+            return resp.status, (data if isinstance(data, dict) else {})
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
-    def _current_token(self) -> Optional[str]:
-        """Return a usable session token, honoring the idle timeout.
+    @staticmethod
+    def _ok(code: int, data: dict) -> bool:
+        return code == 200 and bool(data.get("success"))
 
-        In a subprocess (no in-process token) fall back to an inherited
-        ``BW_SESSION`` env var so the askpass helper works without unlocking.
-        """
-        with self._lock:
-            if self._token is None:
-                return os.environ.get("BW_SESSION") or None
-            if self._deadline is not None and time.monotonic() > self._deadline:
-                self._token = None
-                self._deadline = None
-                self._items = None  # locked → cached secrets no longer valid
-                os.environ.pop("BW_SESSION", None)
-                return None
-            self._touch_deadline()  # sliding idle window
-            return self._token
+    def _serve_reachable(self) -> bool:
+        try:
+            code, _ = self._http("GET", "/status", timeout=1.5)
+            return code == 200
+        except Exception:
+            return False
 
-    def is_unlocked(self) -> bool:
-        return self._current_token() is not None
-
-    def unlock(self, secret: str) -> bool:
+    # -- daemon lifecycle ------------------------------------------------
+    def _ensure_serve(self) -> bool:
+        """Ensure a serve daemon is reachable; return True on success. Only called from
+        the unlock flow (never from the askpass subprocess, which reuses the main app's
+        daemon for reads)."""
         if not self._bin:
             return False
         with self._lock:
-            try:
-                url = self._server_url()
-                if url:
-                    self._run(["config", "server", url])
-                env = os.environ.copy()
-                env["BW_MASTER"] = secret or ""
-                _unlock_started = time.monotonic()
-                result = subprocess.run(
-                    [self._bin, "--nointeraction", "unlock",
-                     "--passwordenv", "BW_MASTER", "--raw"],
-                    capture_output=True,
-                    env=env,
-                    check=False,
-                    timeout=self._TIMEOUT,
-                )
-                logger.debug("bw unlock: %.2fs (rc=%s)",
-                             time.monotonic() - _unlock_started, result.returncode)
-                if result.returncode != 0:
-                    logger.error(
-                        "bw unlock failed: %s",
-                        result.stderr.decode("utf-8", "replace").strip(),
-                    )
-                    return False
-                token = result.stdout.decode("utf-8", "replace").strip()
-                if not token:
-                    return False
-                self._token = token
-                self._touch_deadline()
-                os.environ["BW_SESSION"] = token
-                # Prefetch the local vault into the in-memory cache now — this is a
-                # fast local read (bw pushes our own writes to the local cache on
-                # create/edit, so it's current for the common single-device case).
-                # Refresh from the server with `bw sync` in the BACKGROUND so a
-                # multi-device change appears later without blocking unlock (and thus
-                # the connect that follows) on a network round-trip.
-                self._items = self._load_items(token)
-                self._start_background_sync(token)
+            if self._serve_reachable():
+                if self._proc is None:
+                    # A daemon we didn't start (leftover from a crash / previous run):
+                    # lock it so an unlocked session can't be inherited across launches.
+                    try:
+                        self._http("POST", "/lock", timeout=3)
+                    except Exception:
+                        pass
+                os.environ["SSHPILOT_BW_SERVE_PORT"] = str(self._port())
                 return True
+            url = self._server_url()  # Vaultwarden: point the CLI at the server first
+            if url:
+                try:
+                    subprocess.run([self._bin, "config", "server", url],
+                                   capture_output=True, check=False,
+                                   timeout=self._CONFIG_TIMEOUT)
+                except Exception as exc:
+                    logger.debug("bw config server failed: %s", exc)
+            try:
+                self._proc = subprocess.Popen(
+                    [self._bin, "serve", "--port", str(self._port())],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                )
             except Exception as exc:
-                logger.error("bw unlock error: %s", exc)
+                logger.error("failed to start bw serve: %s", exc)
+                self._proc = None
                 return False
+            deadline = time.monotonic() + self._START_TIMEOUT
+            while time.monotonic() < deadline:
+                if self._serve_reachable():
+                    os.environ["SSHPILOT_BW_SERVE_PORT"] = str(self._port())
+                    logger.debug("bw serve ready on %s:%s", self._HOST, self._port())
+                    return True
+                if self._proc.poll() is not None:
+                    logger.error("bw serve exited (rc=%s) during startup",
+                                 self._proc.returncode)
+                    self._proc = None
+                    return False
+                time.sleep(0.1)
+            logger.error("bw serve did not become ready within %ss", self._START_TIMEOUT)
+            self._terminate_proc()
+            return False
 
-    def _start_background_sync(self, token: str) -> None:
-        """Refresh the on-disk vault from the server off-thread (network pull only).
+    def _terminate_proc(self) -> None:
+        proc = self._proc
+        self._proc = None
+        self._unlocked = False
+        if proc is None:
+            return
+        try:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except Exception:
+                proc.kill()
+        except Exception:
+            pass
 
-        Deliberately does NOT re-``list`` (re-decrypt) the whole vault — that's the
-        expensive part and would burn CPU for seconds after every unlock. The
-        in-memory cache from unlock's prefetch serves this session; ``bw sync`` just
-        keeps the local data current for the next launch. Best-effort."""
+    # -- status / unlock state -------------------------------------------
+    @staticmethod
+    def _extract_status(data: dict) -> Optional[str]:
+        """Pull the vault status out of a ``/status`` reply, tolerating shape variants
+        ({"data": {"status": ...}} or a nested template)."""
+        d = data.get("data") if isinstance(data.get("data"), dict) else data
+        if isinstance(d, dict):
+            if isinstance(d.get("status"), str):
+                return d["status"]
+            tmpl = d.get("template")
+            if isinstance(tmpl, dict) and isinstance(tmpl.get("status"), str):
+                return tmpl["status"]
+        return None
+
+    def _status(self) -> Optional[str]:
+        """Vault status via the daemon ('unauthenticated'|'locked'|'unlocked') or None.
+        Does NOT start the daemon — only queries one if reachable (TTL-cached)."""
+        now = time.monotonic()
+        ts, cached = self._status_cache
+        if cached is not None and (now - ts) < self._STATUS_TTL:
+            return cached
+        status = None
+        try:
+            code, data = self._http("GET", "/status", timeout=2)
+            if code == 200:
+                status = self._extract_status(data)
+                if status is None:
+                    logger.debug("bw serve /status unparsed: %s", data)
+            else:
+                logger.debug("bw serve /status HTTP %s: %s", code, data)
+        except Exception as exc:
+            logger.debug("bw serve /status error: %s", exc)
+        self._status_cache = (now, status)
+        return status
+
+    def needs_login(self) -> bool:
+        """True when no account is authenticated (``bw login`` required). Starts the
+        daemon if needed — only called in the unlock-decision flow."""
+        if not self._bin:
+            return False
+        if not self._serve_reachable() and not self._ensure_serve():
+            return False
+        return self._status() == "unauthenticated"
+
+    def _daemon_alive(self) -> bool:
+        proc = self._proc
+        if proc is None:
+            return False
+        try:
+            return proc.poll() is None
+        except Exception:
+            return True   # can't probe (e.g. a test sentinel) → assume alive
+
+    def is_unlocked(self) -> bool:
+        # Trust our own successful unlock while the daemon we started is still running,
+        # so we don't re-prompt on every connection if a /status probe is flaky. Falls
+        # back to asking the daemon (subprocess / external daemon case); never starts one.
+        if self._unlocked and self._daemon_alive():
+            return True
+        return self._status() == "unlocked"
+
+    # -- unlock / lock ---------------------------------------------------
+    def unlock(self, secret: str, progress: Optional[Callable[[str], None]] = None) -> bool:
+        if not self._bin:
+            return False
+        with self._lock:
+            if not self._ensure_serve():
+                return False
+            self._report(progress, "unlocking")
+            self._status_cache = (0.0, None)
+            try:
+                code, data = self._http("POST", "/unlock", body={"password": secret or ""},
+                                        timeout=self._CONFIG_TIMEOUT)
+            except Exception as exc:
+                logger.error("bw serve unlock error: %s", exc)
+                return False
+            if not self._ok(code, data):
+                logger.error("bw serve unlock failed: %s",
+                             data.get("message") or f"HTTP {code}")
+                return False
+            self._unlocked = True
+            self._status_cache = (0.0, None)
+            self._report(progress, "loading")
+            # Warm the item cache synchronously. INVARIANT: get_password()/lookup()
+            # after unlock must be a warm-cache hit with no HTTP at connect time.
+            self._items = None
+            loaded = self._load_items()
+            if loaded is not None:
+                self._items = loaded
+            self._start_background_sync()
+            return True
+
+    @staticmethod
+    def _report(progress, stage: str) -> None:
+        if callable(progress):
+            try:
+                progress(stage)
+            except Exception:
+                pass
+
+    def _start_background_sync(self) -> None:
+        """Best-effort ``POST /sync`` off-thread so a multi-device change lands without
+        blocking unlock/connect (the warm cache already serves this session)."""
         def _bg():
             try:
-                self._run(["sync"], token=token)
+                self._http("POST", "/sync", timeout=60)
             except Exception as exc:
-                logger.debug("bw background sync failed: %s", exc)
-
+                logger.debug("bw serve sync failed: %s", exc)
         threading.Thread(target=_bg, daemon=True).start()
 
     def lock(self) -> None:
-        # Only drop the in-process session + cache — instant. We never persist the
-        # session key, so discarding it fully disables further use; spawning
-        # ``bw lock`` here would add a slow Node subprocess to app shutdown.
         with self._lock:
-            self._token = None
-            self._deadline = None
+            try:
+                if self._serve_reachable():
+                    self._http("POST", "/lock", timeout=3)
+            except Exception:
+                pass
             self._items = None
-            os.environ.pop("BW_SESSION", None)
+            self._unlocked = False
+            self._status_cache = (0.0, None)
+            self._terminate_proc()                      # stop the daemon we own
+            os.environ.pop("SSHPILOT_BW_SERVE_PORT", None)
 
-    # -- bw helpers ------------------------------------------------------
-    def _run(self, args: List[str], *, token: Optional[str] = None,
-             input_bytes: Optional[bytes] = None):
-        env = os.environ.copy()
-        if token:
-            env["BW_SESSION"] = token
-        # --nointeraction guarantees bw never blocks on stdin (a GUI must never
-        # hang waiting for terminal input).
-        started = time.monotonic()
-        result = subprocess.run(
-            [self._bin, "--nointeraction"] + args,
-            input=input_bytes,
-            capture_output=True,
-            env=env,
-            check=False,
-            timeout=self._TIMEOUT,
-        )
-        logger.debug("bw %s: %.2fs (rc=%s)",
-                     " ".join(args[:2]), time.monotonic() - started, result.returncode)
-        return result
-
-    # -- item cache ------------------------------------------------------
-    def _load_items(self, token: str) -> Dict[str, dict]:
-        """Fetch every vault item once (decrypted) and index by item name.
-
-        ``bw list items`` returns full item objects including ``login.password`` and
-        ``id``, so a single call backs all reads. Returns an empty map on failure.
-        """
-        items: Dict[str, dict] = {}
+    # -- item cache + operations -----------------------------------------
+    def _load_items(self) -> Optional[Dict[str, dict]]:
+        """One ``GET /list/object/items`` → name→item map. ``None`` on failure so a
+        transient error doesn't poison the cache with an empty map."""
         try:
-            result = self._run(["list", "items"], token=token)
-            if result.returncode == 0:
-                for item in json.loads(result.stdout.decode("utf-8", "replace") or "[]"):
-                    name = item.get("name")
-                    if isinstance(name, str):
-                        items[name] = item
+            code, data = self._http("GET", "/list/object/items", timeout=60)
+            if code != 200:
+                logger.debug("bw serve list items HTTP %s", code)
+                return None
+            items: Dict[str, dict] = {}
+            for item in ((data.get("data") or {}).get("data") or []):
+                name = item.get("name")
+                if isinstance(name, str):
+                    items[name] = item
+            return items
         except Exception as exc:
-            logger.debug("bw list items failed: %s", exc)
-        return items
+            logger.debug("bw serve list items failed: %s", exc)
+            return None
 
-    def _ensure_items(self, token: str) -> Dict[str, dict]:
-        """Return the item cache, loading it once on a cold miss (one ``bw`` spawn)."""
+    def _ensure_items(self) -> Dict[str, dict]:
         with self._lock:
             if self._items is None:
-                self._items = self._load_items(token)
+                loaded = self._load_items()
+                if loaded is None:
+                    return {}
+                self._items = loaded
             return self._items
 
-    @staticmethod
-    def _encode(item: dict) -> bytes:
-        return base64.b64encode(json.dumps(item).encode("utf-8"))
+    def _search_item(self, account: str) -> Optional[dict]:
+        """Targeted ``GET /list/object/items?search=`` for one item by exact name.
+        Used on a cold cache (e.g. the askpass subprocess) to avoid pulling the whole
+        vault. Returns the item dict or None."""
+        try:
+            code, data = self._http("GET", "/list/object/items",
+                                    params={"search": account}, timeout=15)
+            if code != 200:
+                return None
+            for item in ((data.get("data") or {}).get("data") or []):
+                if item.get("name") == account:
+                    return item
+        except Exception as exc:
+            logger.debug("bw serve search failed: %s", exc)
+        return None
 
     @staticmethod
     def _fill_login_metadata(login: dict, spec: SecretSpec, *, overwrite: bool) -> None:
         """Populate ``login.username`` / ``login.uris`` from the spec attributes.
-
-        With ``overwrite=False`` only fills empty fields, so user edits to an existing
-        item are never clobbered."""
+        With ``overwrite=False`` only fills empty fields (never clobbers user edits)."""
         attrs = spec.attributes or {}
         username = attrs.get("username")
         if username and (overwrite or not login.get("username")):
@@ -665,68 +774,67 @@ class BitwardenBackend(SecretBackend):
         }
 
     def store(self, spec: SecretSpec, secret: str) -> bool:
-        token = self._current_token()
-        if not token or not self._bin:
+        if not self._bin:
             return False
         account = spec.keyring_account
         try:
-            existing = self._ensure_items(token).get(account)
+            existing = self._ensure_items().get(account)
             if existing and existing.get("id"):
-                item = dict(existing)  # full item from `bw list items`
+                item = dict(existing)
                 login = dict(item.get("login") or {})
                 login["password"] = secret
                 self._fill_login_metadata(login, spec, overwrite=False)
                 item["login"] = login
                 if not item.get("notes"):
                     item["notes"] = "Saved by SSH Pilot"
-                res = self._run(["edit", "item", item["id"]], token=token,
-                                input_bytes=self._encode(item))
-                if res.returncode != 0:
+                code, data = self._http("PUT", f"/object/item/{item['id']}",
+                                        body=item, timeout=15)
+                if not self._ok(code, data):
                     return False
-                self._cache_put(account, item)
+                updated = data.get("data") if isinstance(data.get("data"), dict) else item
+                self._cache_put(account, updated)
                 return True
             item = self._new_item(account, secret, spec)
-            res = self._run(["create", "item"], token=token,
-                            input_bytes=self._encode(item))
-            if res.returncode != 0:
+            code, data = self._http("POST", "/object/item", body=item, timeout=15)
+            if not self._ok(code, data):
                 return False
-            try:
-                created = json.loads(res.stdout.decode("utf-8", "replace") or "{}")
-            except Exception:
-                created = item
-            self._cache_put(account, created if isinstance(created, dict) else item)
+            created = data.get("data") if isinstance(data.get("data"), dict) else item
+            self._cache_put(account, created)
             return True
         except Exception as exc:
-            logger.error("bw store failed: %s", exc)
+            logger.error("bw serve store failed: %s", exc)
             return False
 
     def lookup(self, spec: SecretSpec) -> Optional[str]:
-        token = self._current_token()
-        if not token or not self._bin:
-            return None
-        item = self._ensure_items(token).get(spec.keyring_account)
+        account = spec.keyring_account
+        # Warm cache (main process after unlock): pure in-memory hit, NO HTTP.
+        with self._lock:
+            if self._items is not None:
+                item = self._items.get(account)
+                return ((item.get("login") or {}).get("password") or None) if item else None
+        # Cold cache (e.g. the askpass subprocess): one targeted search against the
+        # shared daemon. Returns None if the daemon is locked/unreachable.
+        item = self._search_item(account)
         if not item:
             return None
-        password = (item.get("login") or {}).get("password")
-        return password or None
+        return (item.get("login") or {}).get("password") or None
 
     def delete(self, spec: SecretSpec) -> bool:
-        token = self._current_token()
-        if not token or not self._bin:
+        if not self._bin:
             return False
         account = spec.keyring_account
         try:
-            existing = self._ensure_items(token).get(account)
+            existing = self._ensure_items().get(account)
             item_id = existing.get("id") if existing else None
             if not item_id:
                 return False
-            res = self._run(["delete", "item", item_id, "--permanent"], token=token)
-            if res.returncode != 0:
+            code, data = self._http("DELETE", f"/object/item/{item_id}", timeout=10)
+            if code not in (200, 204) or (code == 200 and not data.get("success", True)):
                 return False
             self._cache_drop(account)
             return True
         except Exception as exc:
-            logger.debug("bw delete failed: %s", exc)
+            logger.debug("bw serve delete failed: %s", exc)
             return False
 
     def _cache_put(self, account: str, item: dict) -> None:
@@ -741,10 +849,11 @@ class BitwardenBackend(SecretBackend):
 
 
 class VaultwardenBackend(BitwardenBackend):
-    """Vaultwarden = self-hosted Bitwarden. Same ``bw`` CLI, configured server URL.
+    """Vaultwarden = self-hosted Bitwarden. Same ``bw serve`` daemon, configured server.
 
     The URL is read from ``SSHPILOT_VAULTWARDEN_SERVER`` (propagated from the
     ``secrets.vaultwarden.server`` setting); without it the backend is not offered.
+    ``_ensure_serve`` runs ``bw config server <url>`` before starting the daemon.
     """
 
     name = "vaultwarden"
@@ -919,12 +1028,18 @@ class SecretManager:
         except Exception:
             return False
 
-    def unlock_selected(self, secret: str) -> bool:
-        """Unlock the selected session-backed backend (no-op otherwise)."""
+    def unlock_selected(self, secret: str, progress=None) -> bool:
+        """Unlock the selected session-backed backend (no-op otherwise).
+
+        ``progress(stage: str)`` is forwarded to the backend for staged UI reporting
+        (e.g. a startup spinner); passing nothing keeps the simple two-arg call so
+        backends without a ``progress`` parameter still work."""
         backend = self.selected_backend()
         if backend is None or not getattr(backend, "session_backed", False):
             return True
-        return backend.unlock(secret)
+        if progress is None:
+            return backend.unlock(secret)
+        return backend.unlock(secret, progress=progress)
 
     def lock_all(self) -> None:
         """Drop every backend's cached session/token (e.g. on app shutdown)."""

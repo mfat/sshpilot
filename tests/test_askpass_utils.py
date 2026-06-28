@@ -186,18 +186,31 @@ def test_lookup_via_main_app_no_socket(monkeypatch):
     assert askpass_utils._lookup_via_main_app("/k", lambda *_a: None) is None
 
 
-def test_handle_askpass_cli_prefers_main_app_cache(monkeypatch):
-    # When the main app resolves the passphrase from its warm cache (IPC hit), the
-    # askpass subprocess must return it WITHOUT a local cold lookup (no bw spawn).
+def test_handle_askpass_cli_resolves_via_backend_first(monkeypatch):
+    # The askpass subprocess resolves via the selected backend first (Bitwarden -> the
+    # shared `bw serve` daemon, libsecret/keyring -> in-process). The main-app IPC is
+    # only a fallback, so a backend hit must NOT reach it.
     from sshpilot import askpass_utils
 
     monkeypatch.delenv("SSHPILOT_SESSION_PASSPHRASE_FILE", raising=False)
-    monkeypatch.setattr(askpass_utils, "_lookup_via_main_app", lambda kp, log: "viaipc")
+    monkeypatch.setattr(askpass_utils, "lookup_passphrase", lambda _kp: "viabackend")
 
     def _must_not_run(*_a, **_k):
-        raise AssertionError("local cold lookup_passphrase must not run on an IPC hit")
+        raise AssertionError("IPC fallback must not run when the backend resolves it")
 
-    monkeypatch.setattr(askpass_utils, "lookup_passphrase", _must_not_run)
+    monkeypatch.setattr(askpass_utils, "_lookup_via_main_app", _must_not_run)
+
+    prompt = "Enter passphrase for key '/home/u/.ssh/id_ed25519':"
+    assert askpass_utils.handle_askpass_cli(prompt) == "viabackend"
+
+
+def test_handle_askpass_cli_ipc_fallback(monkeypatch):
+    # When the backend finds nothing, fall back to the main-app IPC.
+    from sshpilot import askpass_utils
+
+    monkeypatch.delenv("SSHPILOT_SESSION_PASSPHRASE_FILE", raising=False)
+    monkeypatch.setattr(askpass_utils, "lookup_passphrase", lambda _kp: "")
+    monkeypatch.setattr(askpass_utils, "_lookup_via_main_app", lambda _kp, _log: "viaipc")
 
     prompt = "Enter passphrase for key '/home/u/.ssh/id_ed25519':"
     assert askpass_utils.handle_askpass_cli(prompt) == "viaipc"

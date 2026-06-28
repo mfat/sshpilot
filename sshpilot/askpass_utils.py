@@ -656,18 +656,10 @@ def handle_askpass_cli(prompt: str) -> "str | None":
         except Exception as exc:
             _log(f"ASKPASS: Error reading session passphrase file: {exc}")
 
-    # Fast path: ask the running main app to resolve the passphrase from its warm
-    # in-process cache. This subprocess has no cache of its own, so a direct lookup
-    # would cold-load the whole vault from `bw` on every invocation — the slowness
-    # users feel at connect time. The main app answers instantly on a cache hit (or
-    # quickly says "no" when locked), so we try it before any local backend call.
-    main_app_value = _lookup_via_main_app(key_path, _log)
-    if main_app_value:
-        _log("ASKPASS: passphrase resolved via main-app cache")
-        return main_app_value
-
-    # Check the selected secret backend directly (fallback when the main app is
-    # unreachable, e.g. ssh-add run outside a running sshPilot).
+    # Resolve via the selected secret backend directly. For Bitwarden this hits the
+    # shared `bw serve` daemon over loopback (no cold vault load); for libsecret/keyring
+    # it reads the platform store in-process. This works even when the main app's GTK
+    # loop is blocked (e.g. combined auth), so we try it before the IPC fallback.
     for candidate in _get_key_path_lookup_candidates(key_path):
         passphrase = lookup_passphrase(candidate)
         if passphrase:
@@ -675,6 +667,13 @@ def handle_askpass_cli(prompt: str) -> "str | None":
             _log("ASKPASS: Returning passphrase to caller")
             return passphrase
         _log(f"ASKPASS: No passphrase found for {candidate}")
+
+    # Fallback: ask the running main app to resolve it from its warm cache (covers the
+    # case where the serve daemon isn't reachable from this subprocess but the app is).
+    main_app_value = _lookup_via_main_app(key_path, _log)
+    if main_app_value:
+        _log("ASKPASS: passphrase resolved via main-app cache")
+        return main_app_value
 
     # Fall back to the built-in GUI dialog, unless the user has turned it off in
     # settings — in that case defer to SSH / the system keyring prompt.

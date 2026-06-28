@@ -151,6 +151,12 @@ class Config(GObject.Object):
                 'vaultwarden': {
                     'server': '',
                 },
+                # Bitwarden/Vaultwarden run a local `bw serve` daemon on loopback for
+                # fast access. Dedicated default port (NOT bw's default 8087) so we
+                # never clash with a `bw serve` the user runs themselves.
+                'bitwarden': {
+                    'serve_port': 8765,
+                },
             },
             'ui': {
                 'show_hostname': True,
