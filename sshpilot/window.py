@@ -7626,59 +7626,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             else:
                 logger.error("Failed to save plugin connection")
 
-    def _ensure_secret_backend_ready_for_save(self, dialog, connection_data):
-        """If the connection carries a password and the selected session backend
-        (Bitwarden/Vaultwarden) is locked or not signed in, drive the unlock prompt
-        first, then re-enter ``on_connection_saved``. Returns True if the save was
-        deferred (caller should return), False to proceed immediately."""
-        try:
-            pw = connection_data.get('password')
-            if not pw or not str(pw).strip():
-                return False
-            from .secret_storage import get_secret_manager
-            mgr = get_secret_manager()
-            if not (mgr.selected_needs_unlock() or mgr.selected_needs_login()):
-                return False
-            from .secret_unlock_dialog import prompt_unlock
-
-            def _after(_success):
-                # Re-run the save exactly once (the guard prevents a loop). If the
-                # backend is still locked afterwards, the password is NOT silently
-                # written to libsecret (see SecretManager._store_backends) — say so.
-                self.on_connection_saved(dialog, connection_data, _secret_retry=True)
-                try:
-                    if get_secret_manager().selected_needs_unlock():
-                        self._secret_not_saved_toast()
-                except Exception:
-                    pass
-
-            prompt_unlock(self, on_done=_after)
-            return True
-        except Exception as exc:
-            logger.error("Secret readiness gate failed: %s", exc)
-            return False
-
-    def _secret_not_saved_toast(self):
-        toast_overlay = getattr(self, "toast_overlay", None)
-        if not toast_overlay:
-            return
-        toast = Adw.Toast.new(_("Password not saved — the secret store is locked"))
-        toast.set_timeout(4)
-        toast_overlay.add_toast(toast)
-
-    def on_connection_saved(self, dialog, connection_data, _secret_retry=False):
+    def on_connection_saved(self, dialog, connection_data):
         """Handle connection saved from dialog"""
         try:
             if connection_data.get('protocol', 'ssh') != 'ssh':
                 self._on_plugin_connection_saved(dialog, connection_data)
-                return
-
-            # If a password is being saved but the chosen session backend isn't
-            # ready, unlock first then re-run the save (prompt at most once), so the
-            # secret lands in the chosen vault rather than silently in libsecret.
-            if not _secret_retry and self._ensure_secret_backend_ready_for_save(
-                dialog, connection_data
-            ):
                 return
             if dialog.is_editing:
                 # Update existing connection

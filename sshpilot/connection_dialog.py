@@ -3274,9 +3274,41 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             # Explicitly update forwarding rules to ensure they're fresh
             self.connection.forwarding_rules = forwarding_rules
             
-        # Emit signal with connection data
+        # Emit signal with connection data. If a password is being saved but the
+        # chosen session secret backend (Bitwarden/Vaultwarden) is locked or not
+        # signed in, unlock first so the password lands in the chosen vault instead
+        # of silently falling back to libsecret. The prompt owns its own messaging.
+        if self._needs_secret_unlock_before_save(connection_data):
+            try:
+                from .secret_unlock_dialog import prompt_unlock
+                prompt_unlock(
+                    self,
+                    on_done=lambda _ok: self._emit_connection_saved(connection_data),
+                )
+                return
+            except Exception:
+                logger.debug("Secret unlock-on-save gate failed; saving anyway",
+                             exc_info=True)
+        self._emit_connection_saved(connection_data)
+
+    def _emit_connection_saved(self, connection_data):
+        """Emit the saved signal and close the dialog."""
         self.emit('connection-saved', connection_data)
         self.close()
+
+    @staticmethod
+    def _needs_secret_unlock_before_save(connection_data) -> bool:
+        """True when a password is being saved and the selected session backend
+        (Bitwarden/Vaultwarden) is locked or not signed in, so it should be unlocked
+        before the password is stored."""
+        try:
+            pw = connection_data.get('password')
+            if not pw or not str(pw).strip():
+                return False
+            from .secret_storage import get_secret_manager
+            return bool(get_secret_manager().selected_needs_unlock())
+        except Exception:
+            return False
 
     def show_error(self, message):
         """Show error message"""

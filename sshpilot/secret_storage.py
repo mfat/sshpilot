@@ -432,6 +432,11 @@ class BitwardenBackend(SecretBackend):
         self._bin_override: Optional[str] = None
         self._token: Optional[str] = None
         self._deadline: Optional[float] = None  # monotonic; None = no expiry
+        # In-memory cache of all vault items, indexed by item name. ``None`` means
+        # "not loaded yet". `bw` spins up a JS runtime per call (~0.5–2s), so we
+        # fetch every item once (decrypted) and serve reads from memory — no per-read
+        # spawn, no UI freeze. Warmed by a background prefetch in unlock().
+        self._items: Optional[Dict[str, dict]] = None
         self._lock = threading.RLock()
 
     @property
@@ -504,6 +509,7 @@ class BitwardenBackend(SecretBackend):
             if self._deadline is not None and time.monotonic() > self._deadline:
                 self._token = None
                 self._deadline = None
+                self._items = None  # locked → cached secrets no longer valid
                 os.environ.pop("BW_SESSION", None)
                 return None
             self._touch_deadline()  # sliding idle window
@@ -544,10 +550,14 @@ class BitwardenBackend(SecretBackend):
                 # `bw unlock` does not refresh the local vault cache (only
                 # `bw login` syncs), so items changed on another device would be
                 # invisible this session. Sync best-effort; failure is harmless.
+                # This whole method runs on a worker thread (the unlock dialog), so
+                # the sync + item prefetch below are off the GTK main thread — by the
+                # time the user acts, reads are served from the warm cache.
                 try:
                     self._run(["sync"], token=token)
                 except Exception:
                     pass
+                self._items = self._load_items(token)  # warm cache off-thread
                 return True
             except Exception as exc:
                 logger.error("bw unlock error: %s", exc)
@@ -557,6 +567,7 @@ class BitwardenBackend(SecretBackend):
         with self._lock:
             self._token = None
             self._deadline = None
+            self._items = None
             os.environ.pop("BW_SESSION", None)
             try:
                 if self._bin:
@@ -584,23 +595,59 @@ class BitwardenBackend(SecretBackend):
             timeout=self._TIMEOUT,
         )
 
-    def _find_item_id(self, account: str, token: str) -> Optional[str]:
-        """Return the id of the login item exactly named ``account`` (or None)."""
+    # -- item cache ------------------------------------------------------
+    def _load_items(self, token: str) -> Dict[str, dict]:
+        """Fetch every vault item once (decrypted) and index by item name.
+
+        ``bw list items`` returns full item objects including ``login.password`` and
+        ``id``, so a single call backs all reads. Returns an empty map on failure.
+        """
+        items: Dict[str, dict] = {}
         try:
-            result = self._run(["list", "items", "--search", account], token=token)
-            if result.returncode != 0:
-                return None
-            items = json.loads(result.stdout.decode("utf-8", "replace") or "[]")
-            for item in items:
-                if item.get("name") == account:
-                    return item.get("id")
+            result = self._run(["list", "items"], token=token)
+            if result.returncode == 0:
+                for item in json.loads(result.stdout.decode("utf-8", "replace") or "[]"):
+                    name = item.get("name")
+                    if isinstance(name, str):
+                        items[name] = item
         except Exception as exc:
             logger.debug("bw list items failed: %s", exc)
-        return None
+        return items
+
+    def _ensure_items(self, token: str) -> Dict[str, dict]:
+        """Return the item cache, loading it once on a cold miss (one ``bw`` spawn)."""
+        with self._lock:
+            if self._items is None:
+                self._items = self._load_items(token)
+            return self._items
 
     @staticmethod
     def _encode(item: dict) -> bytes:
         return base64.b64encode(json.dumps(item).encode("utf-8"))
+
+    @staticmethod
+    def _fill_login_metadata(login: dict, spec: SecretSpec, *, overwrite: bool) -> None:
+        """Populate ``login.username`` / ``login.uris`` from the spec attributes.
+
+        With ``overwrite=False`` only fills empty fields, so user edits to an existing
+        item are never clobbered."""
+        attrs = spec.attributes or {}
+        username = attrs.get("username")
+        if username and (overwrite or not login.get("username")):
+            login["username"] = username
+        host = attrs.get("host")
+        if host and (overwrite or not login.get("uris")):
+            login["uris"] = [{"match": None, "uri": f"ssh://{host}"}]
+
+    def _new_item(self, account: str, secret: str, spec: SecretSpec) -> dict:
+        login = {"username": None, "password": secret}
+        self._fill_login_metadata(login, spec, overwrite=True)
+        return {
+            "type": 1,  # login
+            "name": account,
+            "notes": "Saved by SSH Pilot",
+            "login": login,
+        }
 
     def store(self, spec: SecretSpec, secret: str) -> bool:
         token = self._current_token()
@@ -608,27 +655,32 @@ class BitwardenBackend(SecretBackend):
             return False
         account = spec.keyring_account
         try:
-            item_id = self._find_item_id(account, token)
-            if item_id:
-                got = self._run(["get", "item", item_id], token=token)
-                if got.returncode != 0:
-                    return False
-                item = json.loads(got.stdout.decode("utf-8", "replace"))
-                login = item.get("login") or {}
+            existing = self._ensure_items(token).get(account)
+            if existing and existing.get("id"):
+                item = dict(existing)  # full item from `bw list items`
+                login = dict(item.get("login") or {})
                 login["password"] = secret
+                self._fill_login_metadata(login, spec, overwrite=False)
                 item["login"] = login
-                res = self._run(["edit", "item", item_id], token=token,
+                if not item.get("notes"):
+                    item["notes"] = "Saved by SSH Pilot"
+                res = self._run(["edit", "item", item["id"]], token=token,
                                 input_bytes=self._encode(item))
-                return res.returncode == 0
-            item = {
-                "type": 1,  # login
-                "name": account,
-                "notes": None,
-                "login": {"username": None, "password": secret},
-            }
+                if res.returncode != 0:
+                    return False
+                self._cache_put(account, item)
+                return True
+            item = self._new_item(account, secret, spec)
             res = self._run(["create", "item"], token=token,
                             input_bytes=self._encode(item))
-            return res.returncode == 0
+            if res.returncode != 0:
+                return False
+            try:
+                created = json.loads(res.stdout.decode("utf-8", "replace") or "{}")
+            except Exception:
+                created = item
+            self._cache_put(account, created if isinstance(created, dict) else item)
+            return True
         except Exception as exc:
             logger.error("bw store failed: %s", exc)
             return False
@@ -637,35 +689,40 @@ class BitwardenBackend(SecretBackend):
         token = self._current_token()
         if not token or not self._bin:
             return None
-        account = spec.keyring_account
-        try:
-            # Resolve the exact item id first (like store/delete) so duplicate
-            # item names don't make `bw get password` fail with "More than one
-            # result"; fall back to the name when no exact match is found.
-            item_id = self._find_item_id(account, token)
-            target = item_id or account
-            result = self._run(["get", "password", target], token=token)
-            if result.returncode != 0:
-                return None
-            text = result.stdout.decode("utf-8", "replace").strip()
-            return text or None
-        except Exception as exc:
-            logger.debug("bw lookup failed: %s", exc)
+        item = self._ensure_items(token).get(spec.keyring_account)
+        if not item:
             return None
+        password = (item.get("login") or {}).get("password")
+        return password or None
 
     def delete(self, spec: SecretSpec) -> bool:
         token = self._current_token()
         if not token or not self._bin:
             return False
+        account = spec.keyring_account
         try:
-            item_id = self._find_item_id(spec.keyring_account, token)
+            existing = self._ensure_items(token).get(account)
+            item_id = existing.get("id") if existing else None
             if not item_id:
                 return False
             res = self._run(["delete", "item", item_id, "--permanent"], token=token)
-            return res.returncode == 0
+            if res.returncode != 0:
+                return False
+            self._cache_drop(account)
+            return True
         except Exception as exc:
             logger.debug("bw delete failed: %s", exc)
             return False
+
+    def _cache_put(self, account: str, item: dict) -> None:
+        with self._lock:
+            if self._items is not None:
+                self._items[account] = item
+
+    def _cache_drop(self, account: str) -> None:
+        with self._lock:
+            if self._items is not None:
+                self._items.pop(account, None)
 
 
 class VaultwardenBackend(BitwardenBackend):

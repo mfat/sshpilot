@@ -105,7 +105,10 @@ def prompt_unlock(parent, *, on_done=None):
 
         entry = Gtk.PasswordEntry(show_peek_icon=True)
         entry.set_hexpand(True)
-        entry.set_activates_default(True)  # Enter triggers the default response
+        # Gtk.PasswordEntry has the `activates-default` property but no
+        # set_activates_default() convenience method — set it via the property so
+        # Enter triggers the dialog's default response.
+        entry.set_property('activates-default', True)
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         box.append(entry)
         dialog.set_extra_child(box)
