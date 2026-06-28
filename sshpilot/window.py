@@ -7121,7 +7121,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception as e:
             logger.error(f"Failed to show move to group dialog: {e}")
 
-    def move_connection_to_group(self, connection_nickname: str, target_group_id: str = None):
+    def move_connection_to_group(self, connection_nickname: str, target_group_id: Optional[str] = None):
         """Move a connection to a specific group"""
         try:
             self.group_manager.move_connection(connection_nickname, target_group_id)
