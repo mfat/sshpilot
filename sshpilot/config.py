@@ -58,7 +58,7 @@ class Config(GObject.Object):
         """Load configuration from JSON file"""
         try:
             if os.path.exists(self.config_file):
-                with open(self.config_file, 'r') as f:
+                with open(self.config_file) as f:
                     config = json.load(f)
 
                 # Purge outdated configurations
@@ -1017,7 +1017,7 @@ class Config(GObject.Object):
     def import_config(self, file_path: str) -> bool:
         """Import configuration from file"""
         try:
-            with open(file_path, 'r') as f:
+            with open(file_path) as f:
                 imported_config = json.load(f)
             
             # Import custom themes

@@ -166,7 +166,7 @@ def resolve_ssh_config_files(main_path: str, *, max_depth: int = 32) -> List[str
         if abs_path in visited:
             return
         try:
-            with open(abs_path, 'r') as f:
+            with open(abs_path) as f:
                 lines = f.readlines()
         except OSError as exc:
             logger.warning("Cannot read include file %s: %s", abs_path, exc)

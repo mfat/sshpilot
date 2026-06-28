@@ -89,7 +89,7 @@ def _read_manifest(directory: Path) -> Optional[dict]:
     if not manifest.is_file():
         return None
     try:
-        with open(manifest, "r", encoding="utf-8") as fh:
+        with open(manifest, encoding="utf-8") as fh:
             return json.load(fh)
     except (OSError, ValueError) as exc:
         logger.error("Invalid plugin manifest %s: %s", manifest, exc)

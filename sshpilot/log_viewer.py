@@ -118,7 +118,7 @@ def _tail_file(path: str, n: int) -> tuple[List[str], int]:
     try:
         # Use a deque so we don't materialise the whole file. ~10 MB log =
         # ~100k lines; deque(maxlen=n) keeps memory bounded to n entries.
-        with open(path, 'r', encoding='utf-8', errors='replace') as fh:
+        with open(path, encoding='utf-8', errors='replace') as fh:
             dq: 'collections.deque[str]' = collections.deque(maxlen=n)
             total = 0
             for line in fh:
@@ -133,7 +133,7 @@ def _tail_file(path: str, n: int) -> tuple[List[str], int]:
 def _read_full_file(path: str) -> str:
     """Return the entire file as text, or ``""`` on error."""
     try:
-        with open(path, 'r', encoding='utf-8', errors='replace') as fh:
+        with open(path, encoding='utf-8', errors='replace') as fh:
             return fh.read()
     except Exception as exc:
         logger.warning("Could not read log file %s: %s", path, exc)
@@ -322,7 +322,7 @@ def build_diagnostics_zip(dest_path: str) -> str:
         cfg_path = os.path.join(get_config_dir(), 'config.json')
         try:
             if os.path.isfile(cfg_path):
-                with open(cfg_path, 'r', encoding='utf-8') as fh:
+                with open(cfg_path, encoding='utf-8') as fh:
                     data = json.load(fh)
                 zf.writestr('config.json',
                             json.dumps(_redact_config(data), indent=2, default=str))

@@ -2020,7 +2020,7 @@ class ConnectionDialog(Adw.Window):
     @staticmethod
     def _read_pub(pub_path):
         try:
-            with open(pub_path, 'r') as f:
+            with open(pub_path) as f:
                 parts = f.read().split()
             return parts if len(parts) >= 2 else None
         except Exception:

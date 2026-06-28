@@ -227,7 +227,7 @@ def read_new_askpass_log_lines(include_existing: bool = False) -> List[str]:
             _ASKPASS_LOG_OFFSET = 0
 
         try:
-            with open(path, "r", encoding="utf-8", errors="replace") as handle:
+            with open(path, encoding="utf-8", errors="replace") as handle:
                 handle.seek(_ASKPASS_LOG_OFFSET)
                 data = handle.read()
                 _ASKPASS_LOG_OFFSET = handle.tell()
@@ -319,7 +319,7 @@ def _read_app_setting(key: str, default):
             os.path.expanduser("~"), ".config"
         )
         config_file = os.path.join(config_dir, "sshpilot", "config.json")
-        with open(config_file, "r", encoding="utf-8") as handle:
+        with open(config_file, encoding="utf-8") as handle:
             data = json.load(handle)
         value = data.get(key, default)
         return bool(value) if isinstance(default, bool) else value
@@ -377,7 +377,7 @@ def _run_askpass_dialog(key_path: str, log_fn) -> "str | None":
             saved_theme = "default"
             if os.path.exists(config_file):
                 try:
-                    with open(config_file, "r") as f:
+                    with open(config_file) as f:
                         saved_theme = str(json.load(f).get("app-theme", "default"))
                 except Exception:
                     pass
@@ -601,7 +601,7 @@ def handle_askpass_cli(prompt: str) -> "str | None":
     session_passphrase_file = os.environ.get("SSHPILOT_SESSION_PASSPHRASE_FILE", "")
     if session_passphrase_file and os.path.exists(session_passphrase_file):
         try:
-            with open(session_passphrase_file, "r", encoding="utf-8") as f:
+            with open(session_passphrase_file, encoding="utf-8") as f:
                 session_passphrase = f.read().strip()
             if session_passphrase:
                 _log("ASKPASS: Found session passphrase from secure temp file")
