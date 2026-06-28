@@ -1242,6 +1242,10 @@ class FileListEditor(Adw.PreferencesGroup):
         focus.connect('leave', lambda _c, e=pass_entry, p=path, n=norm: self._commit_passphrase(e, p, n))
         pass_entry.add_controller(focus)
         row.add_suffix(pass_entry)
+        # Track the entry on the row so the save flow can flush all passphrases at once.
+        row._pass_entry = pass_entry
+        row._pass_path = path
+        row._pass_norm = norm
 
         remove_btn = Gtk.Button(icon_name='user-trash-symbolic')
         remove_btn.add_css_class('flat')
@@ -1251,7 +1255,7 @@ class FileListEditor(Adw.PreferencesGroup):
         row.add_suffix(remove_btn)
         return row
 
-    def _commit_passphrase(self, pass_entry, path, norm):
+    def _commit_passphrase(self, pass_entry, path, norm, force=False):
         text = pass_entry.get_text()
         if text and callable(self._verify):
             try:
@@ -1262,14 +1266,66 @@ class FileListEditor(Adw.PreferencesGroup):
                 pass_entry.add_css_class('error')
                 return
         pass_entry.remove_css_class('error')
-        if self._connection_manager is not None:
-            try:
-                if text:
-                    self._connection_manager.store_key_passphrase(norm, text)
-                elif hasattr(self._connection_manager, 'delete_key_passphrase'):
+        if self._connection_manager is None:
+            return
+        if not text:
+            # Clearing a passphrase deletes it (not gated by the vault lock state).
+            if hasattr(self._connection_manager, 'delete_key_passphrase'):
+                try:
                     self._connection_manager.delete_key_passphrase(norm)
+                except Exception:
+                    logger.debug("Failed to delete passphrase for %s", norm, exc_info=True)
+            return
+        # Storing a passphrase needs the selected session vault unlocked. If it is
+        # locked, don't try now (it would fail silently) — defer to the save flow, which
+        # unlocks first, then calls flush_passphrases(force=True).
+        if not force and self._secret_backend_needs_unlock():
+            return
+        try:
+            self._connection_manager.store_key_passphrase(norm, text)
+        except Exception:
+            logger.debug("Failed to store passphrase for %s", norm, exc_info=True)
+
+    @staticmethod
+    def _secret_backend_needs_unlock() -> bool:
+        try:
+            from .secret_storage import get_secret_manager
+            return bool(get_secret_manager().selected_needs_unlock())
+        except Exception:
+            return False
+
+    def _passphrase_rows(self):
+        """(entry, path, norm) for each key row that carries a passphrase entry."""
+        out = []
+        for row in self._rows:
+            entry = getattr(row, '_pass_entry', None)
+            if entry is not None:
+                out.append((entry, getattr(row, '_pass_path', None),
+                            getattr(row, '_pass_norm', None)))
+        return out
+
+    def has_pending_passphrases(self) -> bool:
+        """True if any key row holds a non-empty passphrase to store on save."""
+        if not self._with_passphrase:
+            return False
+        for entry, _p, _n in self._passphrase_rows():
+            try:
+                if entry.get_text():
+                    return True
             except Exception:
-                logger.debug("Failed to store/delete passphrase for %s", norm, exc_info=True)
+                pass
+        return False
+
+    def flush_passphrases(self) -> None:
+        """Store every non-empty key passphrase now (called after an unlock so secrets
+        land in the chosen vault). Only stores non-empty entries — never deletes — so an
+        entry left blank because the vault was locked is not mistaken for a clear."""
+        for entry, path, norm in self._passphrase_rows():
+            try:
+                if entry.get_text():
+                    self._commit_passphrase(entry, path, norm, force=True)
+            except Exception:
+                logger.debug("Failed to flush passphrase for %s", norm, exc_info=True)
 
     def _remove_row(self, path, row):
         self._model.remove(path)
@@ -3274,17 +3330,26 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             # Explicitly update forwarding rules to ensure they're fresh
             self.connection.forwarding_rules = forwarding_rules
             
-        # Emit signal with connection data. If a password is being saved but the
-        # chosen session secret backend (Bitwarden/Vaultwarden) is locked or not
-        # signed in, unlock first so the password lands in the chosen vault instead
-        # of silently falling back to libsecret. The prompt owns its own messaging.
+        # Emit signal with connection data. If a secret is being saved (a host password
+        # or a key passphrase) but the chosen session backend (Bitwarden/Vaultwarden) is
+        # locked or not signed in, unlock first so the secret lands in the chosen vault
+        # instead of failing silently. The prompt owns its own messaging.
         if self._needs_secret_unlock_before_save(connection_data):
             try:
                 from .secret_unlock_dialog import prompt_unlock
-                prompt_unlock(
-                    self,
-                    on_done=lambda _ok: self._emit_connection_saved(connection_data),
-                )
+
+                def _after_unlock(ok):
+                    if ok:
+                        editor = getattr(self, 'key_editor', None)
+                        if editor is not None:
+                            try:
+                                editor.flush_passphrases()
+                            except Exception:
+                                logger.debug("flush passphrases after unlock failed",
+                                             exc_info=True)
+                    self._emit_connection_saved(connection_data)
+
+                prompt_unlock(self, on_done=_after_unlock)
                 return
             except Exception:
                 logger.debug("Secret unlock-on-save gate failed; saving anyway",
@@ -3296,17 +3361,19 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         self.emit('connection-saved', connection_data)
         self.close()
 
-    @staticmethod
-    def _needs_secret_unlock_before_save(connection_data) -> bool:
-        """True when a password is being saved and the selected session backend
-        (Bitwarden/Vaultwarden) is locked or not signed in, so it should be unlocked
-        before the password is stored."""
+    def _needs_secret_unlock_before_save(self, connection_data) -> bool:
+        """True when saving would store a secret — a host password or a key passphrase —
+        and the selected session backend (Bitwarden/Vaultwarden) is locked or not signed
+        in, so it should be unlocked before the secret is stored."""
         try:
-            pw = connection_data.get('password')
-            if not pw or not str(pw).strip():
-                return False
             from .secret_storage import get_secret_manager
-            return bool(get_secret_manager().selected_needs_unlock())
+            if not get_secret_manager().selected_needs_unlock():
+                return False
+            pw = connection_data.get('password')
+            if pw and str(pw).strip():
+                return True
+            editor = getattr(self, 'key_editor', None)
+            return bool(editor is not None and editor.has_pending_passphrases())
         except Exception:
             return False
 

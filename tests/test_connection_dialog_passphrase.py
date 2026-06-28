@@ -19,6 +19,12 @@ class DummyEntry:
     def set_sensitive(self, *_args, **_kwargs):
         return None
 
+    def add_css_class(self, *_args, **_kwargs):
+        return None
+
+    def remove_css_class(self, *_args, **_kwargs):
+        return None
+
 
 class DummySubtitleRow(DummyEntry):
     def __init__(self, text=""):
@@ -192,6 +198,70 @@ def test_edit_connection_retains_passphrase_without_keyring():
     # mirrors the passphrase into connection.data nor re-stores it. Saving must
     # retain the passphrase that was loaded into the editor.
     assert dialog.key_passphrase_row.get_text() == "existing-secret"
+
+
+def test_filelisteditor_defers_passphrase_when_vault_locked(monkeypatch):
+    # With a locked session vault, committing a passphrase must NOT store (and fail
+    # silently); it stays pending and is flushed after the save-flow unlock.
+    import sshpilot.secret_storage as ss
+    from sshpilot.connection_dialog import FileListEditor
+
+    ed = FileListEditor.__new__(FileListEditor)
+    ed._with_passphrase = True
+    ed._verify = None
+    cm = DummyConnectionManager()
+    ed._connection_manager = cm
+    entry = DummyEntry('secret')
+    ed._rows = [types.SimpleNamespace(_pass_entry=entry, _pass_path='/k', _pass_norm='/k')]
+
+    sm = ss.get_secret_manager()
+    monkeypatch.setattr(sm, 'selected_needs_unlock', lambda: True)
+
+    ed._commit_passphrase(entry, '/k', '/k')          # locked -> deferred
+    assert cm.stored == {}
+    assert ed.has_pending_passphrases() is True
+
+    ed.flush_passphrases()                             # after unlock
+    assert cm.stored == {'/k': 'secret'}
+
+
+def test_filelisteditor_stores_passphrase_when_unlocked(monkeypatch):
+    import sshpilot.secret_storage as ss
+    from sshpilot.connection_dialog import FileListEditor
+
+    ed = FileListEditor.__new__(FileListEditor)
+    ed._with_passphrase = True
+    ed._verify = None
+    cm = DummyConnectionManager()
+    ed._connection_manager = cm
+    ed._rows = []
+
+    sm = ss.get_secret_manager()
+    monkeypatch.setattr(sm, 'selected_needs_unlock', lambda: False)
+
+    ed._commit_passphrase(DummyEntry('secret'), '/k', '/k')   # unlocked -> stored now
+    assert cm.stored == {'/k': 'secret'}
+
+
+def test_save_gate_detects_pending_passphrase_when_locked(monkeypatch):
+    import sshpilot.secret_storage as ss
+
+    dialog = ConnectionDialog.__new__(ConnectionDialog)
+    dialog.key_editor = types.SimpleNamespace(has_pending_passphrases=lambda: True)
+    sm = ss.get_secret_manager()
+
+    monkeypatch.setattr(sm, 'selected_needs_unlock', lambda: True)
+    assert dialog._needs_secret_unlock_before_save({'password': ''}) is True   # passphrase
+    assert dialog._needs_secret_unlock_before_save({'password': 'p'}) is True  # password
+
+    # No pending passphrase and no password -> no prompt even when locked.
+    dialog.key_editor = types.SimpleNamespace(has_pending_passphrases=lambda: False)
+    assert dialog._needs_secret_unlock_before_save({'password': ''}) is False
+
+    # Unlocked -> never needs a prompt.
+    monkeypatch.setattr(sm, 'selected_needs_unlock', lambda: False)
+    dialog.key_editor = types.SimpleNamespace(has_pending_passphrases=lambda: True)
+    assert dialog._needs_secret_unlock_before_save({'password': 'p'}) is False
 
 
 def test_rule_editor_remote_to_local_resets_host_to_localhost():
