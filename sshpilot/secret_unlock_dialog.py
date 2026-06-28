@@ -335,13 +335,6 @@ def prompt_unlock(parent, *, on_done=None):
     else:
         dialog.present()
 
-    # Start the backend's daemon now (off-thread) so its startup overlaps the user
-    # typing the master password — by submit time only the unlock itself remains.
-    try:
-        manager.prewarm_selected()
-    except Exception:
-        logger.debug("prewarm_selected failed", exc_info=True)
-
     # Focus the password entry once the dialog is realized so the user can type
     # immediately and Enter activates the default "Unlock" response.
     def _focus_entry():

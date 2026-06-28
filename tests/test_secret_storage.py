@@ -1,5 +1,7 @@
 """Tests for the pluggable secret storage layer (sshpilot/secret_storage.py)."""
 
+import base64
+import json
 import os
 
 import pytest
@@ -399,151 +401,161 @@ def test_non_session_backend_needs_no_unlock(manager):
 
 # --- Bitwarden / Vaultwarden backend argv & session --------------------------
 
-class FakeServe:
-    """In-memory stand-in for the `bw serve` REST API (used as BitwardenBackend._http)."""
+class _Result:
+    def __init__(self, returncode=0, stdout=b'', stderr=b''):
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
 
-    def __init__(self, status="locked", items=None):
+
+class FakeBw:
+    """In-memory stand-in for the ``bw`` CLI, installed as ``ss.subprocess.run``."""
+
+    def __init__(self, status="locked", items=None, *, unlock_ok=True):
         self.status = status
         self.items = [dict(i) for i in (items or [])]
-        self.calls = []
-        self.search_terms = []     # search= values seen on /list (None = full list)
+        self.unlock_ok = unlock_ok
+        self.calls = []            # each: bw args (without bin / --nointeraction)
+        self.search_terms = []     # search values seen on `list items` (None = full)
         self._n = 0
 
-    def http(self, method, path, *, params=None, body=None, timeout=10):
-        self.calls.append((method, path))
-        if path == "/status":
-            return 200, {"success": True, "data": {"status": self.status}}
-        if path == "/unlock":
-            if self.status == "unauthenticated":
-                return 200, {"success": False, "message": "not logged in"}
+    def run(self, argv, input=None, capture_output=None, env=None, check=None, timeout=None):
+        cmd = [a for a in list(argv)[1:] if a != '--nointeraction']   # strip bin + flag
+        self.calls.append(cmd)
+        if cmd[:1] == ['status']:
+            return _Result(0, json.dumps({"status": self.status}).encode())
+        if cmd[:1] == ['unlock']:
+            if self.status == "unauthenticated" or not self.unlock_ok:
+                return _Result(1, b'', b'unlock failed')
             self.status = "unlocked"
-            return 200, {"success": True, "data": {"raw": "SESSION"}}
-        if path == "/lock":
-            self.status = "locked"
-            return 200, {"success": True}
-        if path == "/sync":
-            return 200, {"success": True}
-        if path == "/list/object/items":
-            search = (params or {}).get("search")
+            return _Result(0, b'SESSION\n')
+        if cmd[:1] == ['sync'] or cmd[:1] == ['config']:
+            return _Result(0, b'')
+        if cmd[:2] == ['list', 'items']:
+            search = cmd[cmd.index('--search') + 1] if '--search' in cmd else None
             self.search_terms.append(search)
             items = self.items
             if search:
                 items = [i for i in items if search.lower() in (i.get("name", "").lower())]
-            return 200, {"success": True, "data": {"object": "list", "data": items}}
-        if path == "/object/item" and method == "POST":
+            return _Result(0, json.dumps(items).encode())
+        if cmd[:2] == ['create', 'item']:
             self._n += 1
-            item = dict(body or {})
+            item = json.loads(base64.b64decode(input).decode())
             item["id"] = f"NEW{self._n}"
             self.items.append(item)
-            return 200, {"success": True, "data": item}
-        if path.startswith("/object/item/"):
-            iid = path.rsplit("/", 1)[1]
-            if method == "PUT":
-                for idx, it in enumerate(self.items):
-                    if it.get("id") == iid:
-                        upd = dict(body or {})
-                        upd["id"] = iid
-                        self.items[idx] = upd
-                        return 200, {"success": True, "data": upd}
-                return 404, {"success": False}
-            if method == "DELETE":
-                self.items = [it for it in self.items if it.get("id") != iid]
-                return 200, {"success": True, "data": None}
-        return 404, {"success": False}
+            return _Result(0, json.dumps(item).encode())
+        if cmd[:2] == ['edit', 'item']:
+            iid = cmd[2]
+            item = json.loads(base64.b64decode(input).decode())
+            for idx, it in enumerate(self.items):
+                if it.get("id") == iid:
+                    self.items[idx] = item
+            return _Result(0, json.dumps(item).encode())
+        if cmd[:2] == ['delete', 'item']:
+            iid = cmd[2]
+            self.items = [it for it in self.items if it.get("id") != iid]
+            return _Result(0, b'')
+        return _Result(1, b'', b'unknown')
 
 
-def _boom_http(*_a, **_k):
-    raise AssertionError("warm-cache lookup must not call the serve API")
+def _boom_bw(*_a, **_k):
+    raise AssertionError("warm-cache operation must not spawn bw")
 
 
-def _make_backend(monkeypatch, fake, *, owns_proc=True):
-    """A BitwardenBackend wired to a FakeServe, with no real daemon spawned."""
+def _make_backend(monkeypatch, fake):
+    """A BitwardenBackend wired to a FakeBw via ss.subprocess.run."""
     b = ss.BitwardenBackend()
     b._bin = '/usr/bin/bw'
-    if owns_proc:
-        b._proc = object()                    # pretend we own a daemon (skip reuse-lock)
-    monkeypatch.setattr(b, '_http', fake.http)
-    monkeypatch.setattr(b, '_ensure_serve', lambda: True)
+    monkeypatch.setattr(ss.subprocess, 'run', fake.run)
     return b
 
 
+@pytest.fixture(autouse=True)
+def _clean_bw_session():
+    # unlock() exports BW_SESSION to os.environ directly (not via monkeypatch), so
+    # isolate it around every test.
+    os.environ.pop('BW_SESSION', None)
+    yield
+    os.environ.pop('BW_SESSION', None)
+
+
 def test_bitwarden_unlock_warms_full_cache(monkeypatch):
-    # unlock() warms the whole-vault cache (one full /list) while the spinner is up, so
-    # lookups afterwards are in-memory hits.
-    fake = FakeServe(status="locked",
-                     items=[{"id": "ID1", "name": "u@h", "login": {"password": "hunter2"}}])
+    # unlock() warms the whole-vault cache (one full `bw list items`) while the spinner
+    # is up, so lookups afterwards are in-memory hits.
+    fake = FakeBw(status="locked",
+                  items=[{"id": "ID1", "name": "u@h", "login": {"password": "hunter2"}}])
     b = _make_backend(monkeypatch, fake)
     assert b.unlock('master') is True
     assert fake.status == "unlocked"
-    assert ("POST", "/unlock") in fake.calls
-    assert fake.search_terms == [None]              # one whole-vault list (no ?search)
+    assert ['unlock'] in [c[:1] for c in fake.calls]
+    assert fake.search_terms == [None]              # one whole-vault list (no --search)
     assert b._cache_complete is True
-    monkeypatch.setattr(b, '_http', _boom_http)
-    assert b.lookup(password_spec('h', 'u')) == 'hunter2'   # warm-cache hit, no HTTP
+    monkeypatch.setattr(ss.subprocess, 'run', _boom_bw)
+    assert b.lookup(password_spec('h', 'u')) == 'hunter2'   # warm-cache hit, no spawn
 
 
 def test_lookup_after_unlock_is_cache_hit(monkeypatch):
     # After unlock, lookups hit the warm full cache — both a hit and a definitive miss
-    # make no serve call.
-    fake = FakeServe(status="locked",
-                     items=[{"id": "ID1", "name": "u@h", "login": {"password": "pw"}}])
+    # spawn no bw.
+    fake = FakeBw(status="locked",
+                  items=[{"id": "ID1", "name": "u@h", "login": {"password": "pw"}}])
     b = _make_backend(monkeypatch, fake)
     assert b.unlock('master') is True
-    monkeypatch.setattr(b, '_http', _boom_http)
-    assert b.lookup(password_spec('h', 'u')) == 'pw'    # hit
+    monkeypatch.setattr(ss.subprocess, 'run', _boom_bw)
+    assert b.lookup(password_spec('h', 'u')) == 'pw'     # hit
     assert b.lookup(password_spec('nope', 'x')) is None  # definitive miss (complete cache)
 
 
 def test_unlock_full_load_failure_falls_back_to_search(monkeypatch):
     # If the whole-vault warm load fails, the cache is not 'complete' and lookups fall
     # back to a targeted search rather than silently missing.
-    fake = FakeServe(status="locked",
-                     items=[{"id": "ID1", "name": "u@h", "login": {"password": "pw"}}])
+    fake = FakeBw(status="locked",
+                  items=[{"id": "ID1", "name": "u@h", "login": {"password": "pw"}}])
     b = _make_backend(monkeypatch, fake)
-    real = fake.http
+    real = fake.run
     fail = {"full": True}
 
-    def flaky(method, path, *, params=None, body=None, timeout=10):
-        if path == "/list/object/items" and params is None and fail["full"]:
-            return 500, {"success": False}          # whole-vault load fails
-        return real(method, path, params=params, body=body, timeout=timeout)
+    def flaky(argv, **k):
+        cmd = [a for a in list(argv)[1:] if a != '--nointeraction']
+        if cmd[:2] == ['list', 'items'] and '--search' not in cmd and fail["full"]:
+            return _Result(1, b'', b'boom')         # whole-vault load fails
+        return real(argv, **k)
 
-    monkeypatch.setattr(b, '_http', flaky)
+    monkeypatch.setattr(ss.subprocess, 'run', flaky)
     assert b.unlock('m') is True
     assert b._cache_complete is False               # warm load failed
     assert b.lookup(password_spec('h', 'u')) == 'pw'  # falls back to targeted search
     assert 'u@h' in fake.search_terms
 
 
-def test_bitwarden_lookup_cache_hit_no_http(monkeypatch):
-    # A per-item cache hit makes no serve call at all.
+def test_bitwarden_lookup_cache_hit_no_spawn(monkeypatch):
+    # A cache hit makes no bw spawn at all.
     b = ss.BitwardenBackend()
     b._bin = '/usr/bin/bw'
     b._items = {'u@h': {'name': 'u@h', 'id': 'ID1', 'login': {'password': 'cached'}}}
-    monkeypatch.setattr(b, '_http', _boom_http)
+    monkeypatch.setattr(ss.subprocess, 'run', _boom_bw)
     assert b.lookup(password_spec('h', 'u')) == 'cached'
 
 
 def test_bitwarden_cold_lookup_uses_targeted_search(monkeypatch):
-    # The askpass-subprocess case: no cache -> one targeted /list?search (not a whole-
-    # vault load), served by the shared daemon, and the hit is cached.
-    fake = FakeServe(status="unlocked",
-                     items=[{"id": "ID1", "name": "u@h", "login": {"password": "pw"}},
-                            {"id": "ID2", "name": "other", "login": {"password": "x"}}])
-    b = ss.BitwardenBackend()
-    b._bin = '/usr/bin/bw'
-    monkeypatch.setattr(b, '_http', fake.http)
-    assert b._items is None                                  # cold
+    # The askpass-subprocess case: no warm cache, an inherited BW_SESSION -> one targeted
+    # `bw list items --search` (not a whole-vault load), and the hit is cached.
+    fake = FakeBw(status="unlocked",
+                  items=[{"id": "ID1", "name": "u@h", "login": {"password": "pw"}},
+                         {"id": "ID2", "name": "other", "login": {"password": "x"}}])
+    b = _make_backend(monkeypatch, fake)
+    monkeypatch.setenv('BW_SESSION', 'TOK')                 # inherited session
+    assert b._items is None                                 # cold
     assert b.lookup(password_spec('h', 'u')) == 'pw'
     assert fake.search_terms == ['u@h']                     # targeted, not a full list
     assert (b._items or {}).get('u@h') is not None          # hit cached
-    monkeypatch.setattr(b, '_http', _boom_http)
+    monkeypatch.setattr(ss.subprocess, 'run', _boom_bw)
     assert b.lookup(password_spec('h', 'u')) == 'pw'        # repeat is a cache hit
 
 
 def test_bitwarden_unlock_reports_progress(monkeypatch):
     # The spinner dialog's status text rides these stages.
-    fake = FakeServe(status="locked")
+    fake = FakeBw(status="locked")
     b = _make_backend(monkeypatch, fake)
     stages = []
     assert b.unlock('m', progress=stages.append) is True
@@ -551,7 +563,7 @@ def test_bitwarden_unlock_reports_progress(monkeypatch):
 
 
 def test_unlock_selected_forwards_progress(monkeypatch):
-    fake = FakeServe(status="locked")
+    fake = FakeBw(status="locked")
     b = _make_backend(monkeypatch, fake)
     mgr = ss.SecretManager()
     mgr._backends = {'bitwarden': b}
@@ -562,14 +574,13 @@ def test_unlock_selected_forwards_progress(monkeypatch):
 
 
 def test_bitwarden_stays_unlocked_after_unlock(monkeypatch):
-    # Regression: after a successful unlock, is_unlocked() must stay True (so the user
-    # is NOT re-prompted on every connection) while our daemon is alive — even if a
-    # /status probe is unavailable.
-    fake = FakeServe(status="locked",
-                     items=[{"id": "ID1", "name": "u@h", "login": {"password": "pw"}}])
-    b = _make_backend(monkeypatch, fake)        # b._proc is an alive sentinel
+    # Regression: after a successful unlock, is_unlocked() stays True (no re-prompt on
+    # every connection) without spawning bw.
+    fake = FakeBw(status="locked",
+                  items=[{"id": "ID1", "name": "u@h", "login": {"password": "pw"}}])
+    b = _make_backend(monkeypatch, fake)
     assert b.unlock('m') is True
-    monkeypatch.setattr(b, '_http', _boom_http)  # /status unanswerable
+    monkeypatch.setattr(ss.subprocess, 'run', _boom_bw)  # is_unlocked must not spawn bw
     assert b.is_unlocked() is True
 
     mgr = SecretManager()
@@ -578,30 +589,22 @@ def test_bitwarden_stays_unlocked_after_unlock(monkeypatch):
     assert mgr.selected_needs_unlock() is False   # -> no re-prompt on the next connect
 
 
-def test_bitwarden_is_unlocked_never_starts_daemon(monkeypatch):
-    # is_unlocked() must not spawn a daemon; with none reachable it's just False.
-    def _refused(*_a, **_k):
-        raise ConnectionRefusedError()
+def test_bitwarden_is_unlocked_locked_no_spawn(monkeypatch):
+    # When locked (no token, no inherited BW_SESSION), is_unlocked() is False and spawns
+    # no bw.
+    monkeypatch.delenv('BW_SESSION', raising=False)
     b = ss.BitwardenBackend()
     b._bin = '/usr/bin/bw'
-    monkeypatch.setattr(b, '_http', _refused)
+    monkeypatch.setattr(ss.subprocess, 'run', _boom_bw)
     assert b.is_unlocked() is False
 
 
-def test_bitwarden_port_from_env(monkeypatch):
-    b = ss.BitwardenBackend()
-    monkeypatch.delenv('SSHPILOT_BW_SERVE_PORT', raising=False)
-    assert b._port() == ss.BitwardenBackend._DEFAULT_PORT
-    monkeypatch.setenv('SSHPILOT_BW_SERVE_PORT', '9999')
-    assert b._port() == 9999
-
-
 def test_bitwarden_store_creates_enriched_item(monkeypatch):
-    fake = FakeServe(status="locked")   # empty vault
+    fake = FakeBw(status="locked")   # empty vault
     b = _make_backend(monkeypatch, fake)
     assert b.unlock('m') is True
     assert b.store(password_spec('h', 'u'), 'secret') is True
-    assert ("POST", "/object/item") in fake.calls
+    assert ['create', 'item'] in [c[:2] for c in fake.calls]
     created = [i for i in fake.items if i.get("name") == "u@h"]
     assert len(created) == 1
     item = created[0]
@@ -612,60 +615,57 @@ def test_bitwarden_store_creates_enriched_item(monkeypatch):
 
 
 def test_bitwarden_store_updates_cache(monkeypatch):
-    fake = FakeServe(status="locked")
+    fake = FakeBw(status="locked")
     b = _make_backend(monkeypatch, fake)
     assert b.unlock('m') is True
     assert b.store(password_spec('h', 'u'), 'secret') is True
-    monkeypatch.setattr(b, '_http', _boom_http)
-    assert b.lookup(password_spec('h', 'u')) == 'secret'   # served from updated cache, no HTTP
+    monkeypatch.setattr(ss.subprocess, 'run', _boom_bw)
+    assert b.lookup(password_spec('h', 'u')) == 'secret'   # served from updated cache, no spawn
 
 
 def test_bitwarden_store_edits_existing(monkeypatch):
-    fake = FakeServe(status="locked",
-                     items=[{"id": "ID1", "name": "u@h", "login": {"password": "old"}}])
+    fake = FakeBw(status="locked",
+                  items=[{"id": "ID1", "name": "u@h", "login": {"password": "old"}}])
     b = _make_backend(monkeypatch, fake)
     assert b.unlock('m') is True
     assert b.store(password_spec('h', 'u'), 'new') is True
-    assert ("PUT", "/object/item/ID1") in fake.calls
+    assert ['edit', 'item'] in [c[:2] for c in fake.calls]
     assert fake.items[0]["login"]["password"] == "new"
 
 
 def test_bitwarden_delete(monkeypatch):
-    fake = FakeServe(status="locked",
-                     items=[{"id": "ID1", "name": "u@h", "login": {"password": "pw"}}])
+    fake = FakeBw(status="locked",
+                  items=[{"id": "ID1", "name": "u@h", "login": {"password": "pw"}}])
     b = _make_backend(monkeypatch, fake)
     assert b.unlock('m') is True
     assert b.delete(password_spec('h', 'u')) is True
-    assert ("DELETE", "/object/item/ID1") in fake.calls
+    assert ['delete', 'item'] in [c[:2] for c in fake.calls]
     assert fake.items == []
-    monkeypatch.setattr(b, '_http', _boom_http)
-    assert b.lookup(password_spec('h', 'u')) is None       # cache dropped, no HTTP
+    monkeypatch.setattr(ss.subprocess, 'run', _boom_bw)
+    assert b.lookup(password_spec('h', 'u')) is None       # cache dropped, no spawn
 
 
-def test_bitwarden_lock_clears_cache_and_stops_daemon(monkeypatch):
-    fake = FakeServe(status="unlocked")
+def test_bitwarden_lock_clears_session(monkeypatch):
+    # lock() drops the in-process session + cache and the BW_SESSION env, instantly,
+    # without spawning `bw lock`.
+    fake = FakeBw(status="locked")
     b = _make_backend(monkeypatch, fake)
-    b._items = {'u@h': {'login': {'password': 'pw'}}}
-    stopped = {'n': 0}
-    monkeypatch.setattr(b, '_terminate_proc',
-                        lambda: stopped.__setitem__('n', stopped['n'] + 1))
-    monkeypatch.setenv('SSHPILOT_BW_SERVE_PORT', '8765')
+    assert b.unlock('m') is True
+    assert os.environ.get('BW_SESSION') == 'SESSION'
+    monkeypatch.setattr(ss.subprocess, 'run', _boom_bw)  # lock must not spawn bw
     b.lock()
     assert b._items is None
-    assert fake.status == "locked"                # POST /lock was issued
-    assert stopped['n'] == 1                       # the daemon we own is stopped
-    assert os.environ.get('SSHPILOT_BW_SERVE_PORT') is None
+    assert b._token is None
+    assert b._unlocked is False
+    assert b._cache_complete is False
+    assert os.environ.get('BW_SESSION') is None
 
 
 def test_bitwarden_needs_login(monkeypatch):
-    # /status reporting 'unauthenticated' surfaces as needs_login() so the UI can tell
-    # the user to run `bw login` instead of failing silently.
-    fake = FakeServe(status="unauthenticated")
-    b = ss.BitwardenBackend()
-    b._bin = '/usr/bin/bw'
-    monkeypatch.setattr(b, '_http', fake.http)
-    monkeypatch.setattr(b, '_serve_reachable', lambda: True)
-    monkeypatch.setattr(b, '_ensure_serve', lambda: True)
+    # `bw status` reporting 'unauthenticated' surfaces as needs_login() so the UI can
+    # tell the user to run `bw login` instead of failing silently.
+    fake = FakeBw(status="unauthenticated")
+    b = _make_backend(monkeypatch, fake)
     assert b.needs_login() is True
 
     mgr = SecretManager()

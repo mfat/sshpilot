@@ -1080,10 +1080,6 @@ class ConnectionManager(GObject.Object):
                     os.environ['SSHPILOT_VAULTWARDEN_SERVER'] = vw_server
                 else:
                     os.environ.pop('SSHPILOT_VAULTWARDEN_SERVER', None)
-                # Port of the `bw serve` daemon, so the askpass subprocess reaches the
-                # same daemon the main app starts.
-                serve_port = int(_cfg.get_setting('secrets.bitwarden.serve_port', 8765) or 8765)
-                os.environ['SSHPILOT_BW_SERVE_PORT'] = str(serve_port)
             except Exception:
                 pass
             self.secure_storage_backend = manager.active_backend_label()

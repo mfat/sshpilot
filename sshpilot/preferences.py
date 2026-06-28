@@ -1503,9 +1503,9 @@ class PreferencesWindow(Adw.Window):
                 description=_(
                     "Where sshPilot stores passwords and key passphrases. "
                     "Switching does not migrate existing secrets.\n"
-                    "Note: Bitwarden/Vaultwarden run a local 'bw serve' daemon on "
-                    "127.0.0.1 while unlocked; its API is reachable by other programs "
-                    "running as your user until you quit sshPilot."
+                    "Note: Bitwarden/Vaultwarden keep the unlocked session token in the "
+                    "environment while sshPilot runs, so other programs running as your "
+                    "user can read the vault until you quit."
                 ),
             )
             self.secret_backend_row = Adw.ComboRow()

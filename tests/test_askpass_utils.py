@@ -187,9 +187,9 @@ def test_lookup_via_main_app_no_socket(monkeypatch):
 
 
 def test_handle_askpass_cli_resolves_via_backend_first(monkeypatch):
-    # The askpass subprocess resolves via the selected backend first (Bitwarden -> the
-    # shared `bw serve` daemon, libsecret/keyring -> in-process). The main-app IPC is
-    # only a fallback, so a backend hit must NOT reach it.
+    # The askpass subprocess resolves via the selected backend first (Bitwarden -> a
+    # targeted `bw` lookup, libsecret/keyring -> in-process). The main-app IPC is only a
+    # fallback, so a backend hit must NOT reach it.
     from sshpilot import askpass_utils
 
     monkeypatch.delenv("SSHPILOT_SESSION_PASSPHRASE_FILE", raising=False)

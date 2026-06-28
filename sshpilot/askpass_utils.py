@@ -656,10 +656,10 @@ def handle_askpass_cli(prompt: str) -> "str | None":
         except Exception as exc:
             _log(f"ASKPASS: Error reading session passphrase file: {exc}")
 
-    # Resolve via the selected secret backend directly. For Bitwarden this hits the
-    # shared `bw serve` daemon over loopback (no cold vault load); for libsecret/keyring
-    # it reads the platform store in-process. This works even when the main app's GTK
-    # loop is blocked (e.g. combined auth), so we try it before the IPC fallback.
+    # Resolve via the selected secret backend directly. For Bitwarden this runs a
+    # targeted `bw` lookup using the inherited BW_SESSION; for libsecret/keyring it reads
+    # the platform store in-process. This works even when the main app's GTK loop is
+    # blocked (e.g. combined auth), so we try it before the IPC fallback.
     for candidate in _get_key_path_lookup_candidates(key_path):
         passphrase = lookup_passphrase(candidate)
         if passphrase:
