@@ -240,7 +240,7 @@ def prompt_unlock(parent, *, on_done=None):
             _message(
                 parent,
                 _("Incorrect master password"),
-                _("sshPilot could not unlock the secret store. Check your master "
+                _("SSH Pilot could not unlock the secret store. Check your master "
                   "password and try again."),
             )
             _finish(False)
