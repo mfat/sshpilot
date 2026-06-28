@@ -1,5 +1,4 @@
 import asyncio
-from typing import Any
 
 import pytest
 

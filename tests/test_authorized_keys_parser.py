@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 
 from sshpilot.authorized_keys_parser import (
     AuthorizedKeyEntry,

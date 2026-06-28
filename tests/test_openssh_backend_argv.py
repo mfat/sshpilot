@@ -86,7 +86,6 @@ def test_build_argv_wraps_sshpass_when_password_auth(monkeypatch):
 def test_build_argv_uses_manager_password_for_sshpass(monkeypatch):
     """Password from the file-manager dialog lives on manager._password; it must
     reach resolve_native_auth via connection.password (no TTY on the SFTP pipe)."""
-    import sshpilot.ssh_connection_builder as scb
     import sshpilot.ssh_password_exec as spe
 
     conn = types.SimpleNamespace(

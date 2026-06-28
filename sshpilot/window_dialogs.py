@@ -11,7 +11,6 @@ import itself). The generic `_error_dialog` / `_info_dialog` helpers these call
 stay in window.py and resolve via `self`.
 """
 
-import json
 import logging
 import os
 from datetime import datetime

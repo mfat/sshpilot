@@ -136,7 +136,6 @@ class PaneToolbar(Gtk.Box):
         # Tooltip text is parsed as Pango markup; escape the ampersand or
         # use a plain word to avoid "entity did not end with a semicolon".
         split_button.set_dropdown_tooltip("Adjust icon size and sort order")
-        from sshpilot import icon_utils
         split_button.set_icon_name("view-list-symbolic")
         split_button.connect("clicked", self._on_view_toggle_clicked)
         return split_button
@@ -199,7 +198,6 @@ class PaneToolbar(Gtk.Box):
 
     # Example handler
     def _on_view_toggle_clicked(self, *_):
-        from sshpilot import icon_utils
         self._current_view = "grid" if self._current_view == "list" else "list"
         icon_name = "view-grid-symbolic" if self._current_view == "grid" else "view-list-symbolic"
         # Adw.SplitButton uses set_icon_name()

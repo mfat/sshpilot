@@ -8,8 +8,6 @@ import socket
 import subprocess
 import logging
 from typing import Dict, Iterable, Iterator, List, Optional, Tuple, Any
-import json
-import re
 from gettext import gettext as _
 
 # Try to import psutil, fallback to subprocess methods if not available

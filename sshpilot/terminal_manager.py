@@ -1,13 +1,11 @@
 import os
 import asyncio
 import logging
-import math
 from typing import Optional
 
-import cairo
 
 
-from gi.repository import Gio, GLib, Adw, Gdk, GdkPixbuf, Gtk
+from gi.repository import Gio, GLib, Adw, Gdk, Gtk
 from gettext import gettext as _
 
 from .terminal import TerminalWidget

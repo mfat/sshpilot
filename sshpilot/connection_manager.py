@@ -10,11 +10,9 @@ import tempfile
 import asyncio
 import enum
 import logging
-import configparser
 import getpass
 import subprocess
 import shlex
-import signal
 import re
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple, Union, Set
@@ -34,8 +32,6 @@ try:
     import keyring
 except Exception:
     keyring = None
-import socket
-import time
 from gi.repository import GObject, GLib
 from .askpass_utils import (
     clear_passphrase,
@@ -53,7 +49,7 @@ else:
 if os.name == 'posix':
     import gi
     gi.require_version('Gtk', '4.0')
-    from gi.repository import Gtk, GLib
+    from gi.repository import GLib
     
     # Set up the asyncio event loop
     if not hasattr(GLib, 'MainLoop'):

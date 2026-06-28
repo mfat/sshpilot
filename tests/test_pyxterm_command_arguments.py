@@ -1,7 +1,5 @@
 import shlex
-import socket
 
-import pytest
 from gi.repository import Gtk
 
 from sshpilot.terminal_backends import PyXtermTerminalBackend
