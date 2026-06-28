@@ -29,14 +29,19 @@ Selection (``SecretManager.set_selected`` / config ``secrets.backend``):
 
 Operations:
 - ``store`` — first available backend in the selected order (with fallback on
-  failure).
-- ``lookup`` / ``delete`` — selected order first, then every other registered
-  backend that is available (e.g. ``pass`` while on ``auto``), so secrets are
-  not orphaned when the user switches backends.
+  failure), unless the selected backend is ``authoritative`` or a session-backed
+  vault that is available but **locked** — then only that backend is consulted
+  (writes return False until unlocked, so secrets are not silently saved elsewhere).
+- ``lookup`` — selected order first, then every other registered backend that is
+  available (e.g. ``pass`` while on ``auto``), so secrets stored under a previous
+  backend still resolve after switching — **except** when the selected backend is
+  ``authoritative`` or a locked session-backed vault: then only that backend is
+  consulted (no fallthrough to a stale copy in libsecret/keyring while the chosen
+  vault is locked).
+- ``delete`` — every available backend, so old copies can be cleared after switching.
 - When the *selected* backend is ``authoritative`` (the ``agent`` null backend),
   ``store`` and ``lookup`` consult only it — no fallback, no fallthrough — so
-  "don't store" truly stores/reads nothing. ``delete`` still clears every store
-  so old secrets can be purged after switching.
+  "don't store" truly stores/reads nothing.
 
 The module is GTK-free so it can be imported by the ``--askpass`` subprocess; it
 lazily imports ``Secret`` and ``keyring``.
