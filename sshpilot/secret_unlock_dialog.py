@@ -34,26 +34,40 @@ _unlock_in_progress = False
 _pending_callbacks = []
 
 
-def _message(parent, heading, body):
-    """Show a simple informational dialog (AlertDialog, MessageDialog fallback)."""
+def _message(parent, heading, body, on_closed=None):
+    """Show a simple informational dialog (AlertDialog, MessageDialog fallback).
+
+    ``on_closed`` (if given) runs once the dialog has fully closed, so callers can
+    sequence follow-up work (e.g. opening a terminal) only after it disappears."""
     if hasattr(Adw, 'AlertDialog'):
         dialog = Adw.AlertDialog(heading=heading, body=body)
         dialog.add_response('ok', _("OK"))
-        dialog.present(parent)
     else:
         dialog = Adw.MessageDialog(
             transient_for=parent, modal=True, heading=heading, body=body,
         )
         dialog.add_response('ok', _("OK"))
+
+    if on_closed is not None:
+        try:
+            dialog.connect('closed', lambda *_a: on_closed())
+        except Exception:
+            # Legacy dialogs without a 'closed' signal: best-effort, run on idle.
+            GLib.idle_add(lambda: (on_closed(), False)[1])
+
+    if hasattr(Adw, 'AlertDialog'):
+        dialog.present(parent)
+    else:
         dialog.present()
 
 
 def _spinner_dialog(parent, heading, body):
     """A non-dismissable 'please wait' dialog with a spinner + status label.
 
-    Returns ``(set_status, close)``: ``set_status(text)`` updates the label (call on the
-    GTK main thread); ``close()`` dismisses it. No buttons, and ``can-close`` is disabled
-    so it blocks the UI until the operation finishes."""
+    Returns ``(set_status, close, dialog)``: ``set_status(text)`` updates the label (call
+    on the GTK main thread); ``close()`` dismisses it; ``dialog`` is exposed so the caller
+    can connect its ``closed`` signal to sequence follow-up work. No buttons, and
+    ``can-close`` is disabled so it blocks the UI until the operation finishes."""
     box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
     box.set_margin_top(6)
     box.set_margin_bottom(6)
@@ -92,7 +106,7 @@ def _spinner_dialog(parent, heading, body):
         except Exception:
             pass
 
-    return status.set_text, _close
+    return status.set_text, _close, dialog
 
 
 def unlock_at_startup(window):
@@ -150,8 +164,14 @@ def prompt_unlock(parent, *, on_done=None):
             _pending_callbacks.append(on_done)
         return
     _unlock_in_progress = True
+    _finished = [False]
 
     def _finish(success):
+        # Idempotent: several dialog 'closed' hooks may reach here, but on_done /
+        # retry() (which opens the terminal) must run exactly once.
+        if _finished[0]:
+            return False
+        _finished[0] = True
         global _unlock_in_progress
         _unlock_in_progress = False
         callbacks = list(_pending_callbacks)
@@ -197,8 +217,11 @@ def prompt_unlock(parent, *, on_done=None):
     except Exception:
         pass
 
-    # Holds the spinner dialog's close() so _after_unlock can dismiss it.
-    _close_spinner = [lambda: None]
+    # Holds the spinner's (close_fn, dialog) so _after_unlock can dismiss it and
+    # sequence _finish off its 'closed' signal.
+    _spinner = [None]
+    # The password dialog's chosen response, read by its 'closed' handler.
+    _outcome = ['cancel']
 
     def _worker(password, set_status):
         ok = False
@@ -225,30 +248,52 @@ def prompt_unlock(parent, *, on_done=None):
         GLib.idle_add(_after_unlock, ok, needs_login)
 
     def _after_unlock(ok, needs_login):
-        _close_spinner[0]()                 # dismiss the "Unlocking…" spinner
+        # Sequence everything off the spinner's close so the terminal the caller opens
+        # (via on_done -> retry()) never appears behind a closing dialog.
+        close, spin = _spinner[0] if _spinner[0] is not None else (lambda: None, None)
+
         if ok:
-            _finish(True)
+            on_spinner_closed = lambda *_a: _finish(True)
         elif needs_login:
-            _message(
+            on_spinner_closed = lambda *_a: _message(
                 parent,
                 _("Not signed in"),
                 _("Your secret store has no signed-in account yet. Open a terminal, "
                   "run “bw login”, then try again."),
+                on_closed=lambda: _finish(False),
             )
-            _finish(False)
         else:
-            _message(
+            on_spinner_closed = lambda *_a: _message(
                 parent,
                 _("Incorrect master password"),
                 _("SSH Pilot could not unlock the secret store. Check your master "
                   "password and try again."),
+                on_closed=lambda: _finish(False),
             )
-            _finish(False)
+
+        if spin is not None:
+            connected = False
+            try:
+                spin.connect('closed', on_spinner_closed)
+                connected = True
+            except Exception:
+                connected = False
+            close()
+            if not connected:
+                # Legacy dialog without a 'closed' signal: sequence directly.
+                on_spinner_closed()
+        else:
+            on_spinner_closed()
         return False
 
     def _on_response(_d, response):
+        _outcome[0] = response
         if response != 'unlock':
-            _finish(False)
+            # Cancel/close: when the dialog has a 'closed' signal, finish there so the
+            # terminal opens only after the prompt disappears. On the legacy path
+            # (no 'closed'), finish here.
+            if not _pw_has_closed[0]:
+                _finish(False)
             return
         password = entry.get_text() or ''
 
@@ -258,12 +303,12 @@ def prompt_unlock(parent, *, on_done=None):
         def _present_spinner():
             be = manager.selected_backend()
             label_be = be.describe() if be is not None else _("vault")
-            set_status, close = _spinner_dialog(
+            set_status, close, spin = _spinner_dialog(
                 parent,
                 _("Unlocking {backend}").format(backend=label_be),
                 _("Unlocking your vault…"),
             )
-            _close_spinner[0] = close
+            _spinner[0] = (close, spin)
             threading.Thread(
                 target=_worker, args=(password, set_status), daemon=True
             ).start()
@@ -271,7 +316,20 @@ def prompt_unlock(parent, *, on_done=None):
 
         GLib.idle_add(_present_spinner)
 
+    def _on_pw_closed(_d):
+        # Fires after the password dialog's close animation. On cancel/close, finish
+        # now (terminal opens after the dialog is gone); on 'unlock' the spinner path
+        # owns the finish.
+        if _outcome[0] != 'unlock':
+            _finish(False)
+
     dialog.connect('response', _on_response)
+    _pw_has_closed = [False]
+    try:
+        dialog.connect('closed', _on_pw_closed)
+        _pw_has_closed[0] = True
+    except Exception:
+        _pw_has_closed[0] = False
     if use_alert:
         dialog.present(parent)
     else:
