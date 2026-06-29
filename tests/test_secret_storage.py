@@ -589,6 +589,33 @@ def test_bitwarden_stays_unlocked_after_unlock(monkeypatch):
     assert mgr.selected_needs_unlock() is False   # -> no re-prompt on the next connect
 
 
+def test_bitwarden_idle_timeout(monkeypatch):
+    # With a non-zero idle timeout the session is dropped after the window, so the next
+    # is_unlocked() is False (the connect will re-prompt).
+    monkeypatch.setenv('SSHPILOT_SECRET_SESSION_TIMEOUT', '60')
+    clock = {'t': 1000.0}
+    monkeypatch.setattr(ss.time, 'monotonic', lambda: clock['t'])
+    fake = FakeBw(status='locked')
+    b = _make_backend(monkeypatch, fake)
+    assert b.unlock('m') is True
+    assert b.is_unlocked() is True            # within the window
+    clock['t'] += 61                          # idle past 60s
+    assert b.is_unlocked() is False           # expired -> re-locked
+    assert b._token is None
+    assert os.environ.get('BW_SESSION') is None
+
+
+def test_bitwarden_no_idle_timeout_by_default(monkeypatch):
+    monkeypatch.setenv('SSHPILOT_SECRET_SESSION_TIMEOUT', '0')   # default = keep unlocked
+    clock = {'t': 1000.0}
+    monkeypatch.setattr(ss.time, 'monotonic', lambda: clock['t'])
+    fake = FakeBw(status='locked')
+    b = _make_backend(monkeypatch, fake)
+    assert b.unlock('m') is True
+    clock['t'] += 10_000_000                   # far future
+    assert b.is_unlocked() is True             # never expires
+
+
 def test_bitwarden_is_unlocked_locked_no_spawn(monkeypatch):
     # When locked (no token, no inherited BW_SESSION), is_unlocked() is False and spawns
     # no bw.

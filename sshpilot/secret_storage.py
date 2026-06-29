@@ -419,8 +419,9 @@ class BitwardenBackend(SecretBackend):
     *Session-backed*: :meth:`unlock` runs ``bw unlock`` and caches the returned
     ``BW_SESSION`` token (in-process **and** in ``os.environ`` so the ``--askpass``
     subprocess, which inherits the env, can read non-interactively). The token is kept
-    for the whole app session — dropped on :meth:`lock` / shutdown; there is no idle
-    timeout.
+    until :meth:`lock` / shutdown, or until ``secrets.session_timeout`` minutes of idle
+    (propagated as ``SSHPILOT_SECRET_SESSION_TIMEOUT`` seconds; ``0`` = no timeout, the
+    default) — a sliding window refreshed on each use.
 
     On unlock the whole vault is fetched once (``bw list items``) into an in-memory
     name→item cache, so every lookup this session is served from memory with no further
@@ -444,6 +445,7 @@ class BitwardenBackend(SecretBackend):
         self._bin_override: Optional[str] = None
         self._token: Optional[str] = None                # session token (this process)
         self._unlocked = False                           # we unlocked it this session
+        self._deadline: Optional[float] = None           # monotonic; None = no timeout
         self._items: Optional[Dict[str, dict]] = None    # name→item; None = not loaded
         self._cache_complete = False                     # _items holds the whole vault
         self._lock = threading.RLock()
@@ -515,17 +517,57 @@ class BitwardenBackend(SecretBackend):
         cannot succeed. Only called in the unlock-decision flow."""
         return self._status() == "unauthenticated"
 
+    # -- idle timeout ----------------------------------------------------
+    @staticmethod
+    def _session_timeout_seconds() -> int:
+        """Idle seconds before the session is dropped (0 = never). Driven by the
+        ``SSHPILOT_SECRET_SESSION_TIMEOUT`` env var set from ``secrets.session_timeout``."""
+        try:
+            return int(os.environ.get("SSHPILOT_SECRET_SESSION_TIMEOUT", "0") or 0)
+        except Exception:
+            return 0
+
+    def _touch_deadline(self) -> None:
+        """Refresh the idle deadline (sliding window). Caller holds ``self._lock``."""
+        secs = self._session_timeout_seconds()
+        self._deadline = (time.monotonic() + secs) if secs > 0 else None
+
+    def _expired(self) -> bool:
+        """Caller holds ``self._lock``."""
+        return self._deadline is not None and time.monotonic() > self._deadline
+
+    def _drop_session(self) -> None:
+        """Forget the in-process session + cache (re-lock). Caller holds ``self._lock``."""
+        self._token = None
+        self._unlocked = False
+        self._deadline = None
+        self._items = None
+        self._cache_complete = False
+        os.environ.pop("BW_SESSION", None)
+
     def _current_token(self) -> Optional[str]:
-        """A usable session token: the one from unlock() in this process, else an
-        inherited ``BW_SESSION`` (so the askpass subprocess works without unlocking)."""
+        """A usable session token: the one from unlock() in this process (honoring the
+        idle timeout), else an inherited ``BW_SESSION`` (so the askpass subprocess works
+        without unlocking)."""
         with self._lock:
-            return self._token or os.environ.get("BW_SESSION") or None
+            if self._token is not None:
+                if self._expired():
+                    self._drop_session()
+                else:
+                    self._touch_deadline()   # sliding window on activity
+                    return self._token
+            return os.environ.get("BW_SESSION") or None
 
     def is_unlocked(self) -> bool:
-        # Trust our own successful unlock for the whole session (no re-prompt across
-        # connects). In a subprocess an inherited BW_SESSION means the vault is usable.
-        if self._unlocked:
-            return True
+        # Trust our own successful unlock (no re-prompt across connects) until it idles
+        # out. In a subprocess an inherited BW_SESSION means the vault is usable.
+        with self._lock:
+            if self._unlocked:
+                if self._expired():
+                    self._drop_session()
+                else:
+                    self._touch_deadline()
+                    return True
         return bool(os.environ.get("BW_SESSION"))
 
     # -- unlock / lock ---------------------------------------------------
@@ -567,6 +609,7 @@ class BitwardenBackend(SecretBackend):
                 self._token = token
                 self._unlocked = True
                 os.environ["BW_SESSION"] = token
+                self._touch_deadline()
                 self._report(progress, "loading")
                 # Warm the whole-vault cache now, while the unlock spinner is still up, so
                 # every lookup this session is an in-memory hit (no per-connect bw spawn).
@@ -600,11 +643,7 @@ class BitwardenBackend(SecretBackend):
         # session key, so discarding it fully disables further use; spawning ``bw lock``
         # would add a slow Node subprocess to shutdown.
         with self._lock:
-            self._token = None
-            self._unlocked = False
-            self._items = None
-            self._cache_complete = False
-            os.environ.pop("BW_SESSION", None)
+            self._drop_session()
 
     # -- item cache + operations -----------------------------------------
     def _load_all_items(self, token: str) -> Optional[Dict[str, dict]]:
