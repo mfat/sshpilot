@@ -22,8 +22,8 @@ Built-in backends:
   further ``bw`` spawn.
 - ``agent`` — the "don't store secrets" choice: a null backend that persists
   nothing and (when selected) is never read from. The user relies on ssh-agent
-  and ssh's own prompts. Marked ``authoritative`` so the manager does not fall
-  back to / read from other stores while it is selected.
+  and ssh's own prompts. Like any explicit selection it is exclusive, so the
+  manager does not fall back to / read from other stores while it is selected.
 
 Selection (``SecretManager.set_selected`` / config ``secrets.backend``):
 - ``auto``  — platform default: macOS → keyring; Linux → libsecret then keyring.
@@ -38,10 +38,12 @@ Operations:
   fallback on store failure, no read-through to a stale copy in libsecret/keyring,
   and no cross-backend delete. A locked session vault simply returns nothing/False
   until unlocked; an unlocked vault with no matching item returns ``None``.
-- When the selected backend is ``authoritative`` (the ``agent`` null backend),
-  ``store`` and ``lookup`` consult only it — no fallback, no fallthrough — so
-  "don't store" truly stores/reads nothing; ``delete`` is likewise a no-op on
+- The ``agent`` null backend is just a special case of explicit selection: being
+  exclusive, "don't store" truly stores/reads nothing and ``delete`` is a no-op on
   other stores.
+- If an explicitly-selected backend is **unavailable** (e.g. ``bitwarden`` with no
+  ``bw`` on PATH), operations resolve to nothing/False **and a warning is logged** —
+  the failure is surfaced, not silent.
 
 The module is GTK-free so it can be imported by the ``--askpass`` subprocess; it
 lazily imports ``Secret`` and ``keyring``.
@@ -217,10 +219,6 @@ class SecretBackend:
     #: Backend has a lock lifecycle that must be unlocked before secrets resolve
     #: (e.g. Bitwarden/Vaultwarden). Passive stores leave this ``False``.
     session_backed: bool = False
-
-    #: When this backend is the *selected* one, the manager must NOT fall back to
-    #: or read from other backends (the ``agent`` "don't store" null backend).
-    authoritative: bool = False
 
     def describe(self) -> str:
         """Human/diagnostic label (may include sub-backend detail)."""
@@ -800,16 +798,14 @@ class BitwardenBackend(SecretBackend):
 class SSHAgentBackend(SecretBackend):
     """The "don't store secrets at all" choice.
 
-    A null backend: it persists nothing and returns nothing. Because it is
-    ``authoritative``, selecting it makes the manager skip every other store for
-    reads/writes, so no secret lands in or is read from libsecret/keyring. The
-    user relies on ssh-agent (keys loaded by the existing preload path or
-    externally) and on ssh's own prompts. ``store`` returns ``True`` so the
-    manager's fallback loop stops without writing anywhere.
+    A null backend: it persists nothing and returns nothing. Because every explicit
+    selection is exclusive, selecting it makes the manager consult only it, so no secret
+    lands in or is read from libsecret/keyring. The user relies on ssh-agent (keys loaded
+    by the existing preload path or externally) and on ssh's own prompts. ``store``
+    returns ``True`` (no-op success) so saving a secret reports success without writing.
     """
 
     name = "agent"
-    authoritative = True
 
     def describe(self) -> str:
         return "agent" if os.environ.get("SSH_AUTH_SOCK") else "agent (no SSH_AUTH_SOCK)"
@@ -818,13 +814,13 @@ class SSHAgentBackend(SecretBackend):
         return True
 
     def store(self, spec: SecretSpec, secret: str) -> bool:
-        return True  # no-op success: stops the manager's store fallback
+        return True  # no-op success: nothing is stored
 
     def lookup(self, spec: SecretSpec) -> Optional[str]:
         return None
 
     def delete(self, spec: SecretSpec) -> bool:
-        return False  # nothing of ours; manager still clears the real stores
+        return False  # nothing of ours to delete
 
 
 # ---------------------------------------------------------------------------
@@ -853,6 +849,7 @@ class SecretManager:
             "agent": SSHAgentBackend(),
         }
         self._selected: Optional[str] = None  # resolved lazily
+        self._warned_unavailable: Optional[str] = None  # dedup for the warning below
 
     # -- selection / registry --------------------------------------------
     def register_backend(self, name: str, backend: SecretBackend) -> None:
@@ -917,7 +914,7 @@ class SecretManager:
         backend = self._backends.get((name or "").strip().lower())
         return bool(backend is not None and getattr(backend, "session_backed", False))
 
-    # -- selection helpers (session / authoritative) ---------------------
+    # -- selection helpers ------------------------------------------------
     def selected_backend(self) -> Optional[SecretBackend]:
         """The explicitly-selected backend object (None for ``auto``/unknown)."""
         name = self._selected_name()
@@ -929,8 +926,27 @@ class SecretManager:
         """The explicitly-selected backend (``None`` for ``auto``).
 
         When set, ``store``/``lookup``/``delete`` consult only it — no
-        fallback/fallthrough to other stores."""
-        return self.selected_backend()
+        fallback/fallthrough to other stores. If it is currently **unavailable**
+        (e.g. ``bitwarden`` with no ``bw`` on PATH), operations will resolve to
+        nothing — so we log a warning here (deduped) to make that visible rather than
+        a silent no-op. Reset once it becomes available again."""
+        backend = self.selected_backend()
+        if backend is not None:
+            try:
+                available = backend.is_available()
+            except Exception:
+                available = False
+            if not available:
+                if self._warned_unavailable != backend.name:
+                    self._warned_unavailable = backend.name
+                    logger.warning(
+                        "Selected secret backend %r is unavailable — passwords and key "
+                        "passphrases will not be stored or autofilled until it is "
+                        "available or you change the backend "
+                        "(Preferences ▸ Security & Credentials).", backend.name)
+            elif self._warned_unavailable == backend.name:
+                self._warned_unavailable = None
+        return backend
 
     def selected_needs_unlock(self) -> bool:
         """True when the selected backend is session-backed and currently locked,
@@ -1001,11 +1017,13 @@ class SecretManager:
 
     # -- operations ------------------------------------------------------
     def store(self, spec: SecretSpec, secret: str) -> bool:
-        for backend in self._store_backends():
+        backends = self._store_backends()
+        for backend in backends:
             if backend.store(spec, secret):
                 logger.debug("secret stored via %s", backend.name)
                 return True
-        logger.warning("No secure storage backend available; secret not stored")
+        tried = ", ".join(b.name for b in backends) or "none"
+        logger.warning("Secret not stored — no backend accepted it (tried: %s)", tried)
         return False
 
     def lookup(self, spec: SecretSpec) -> Optional[str]:

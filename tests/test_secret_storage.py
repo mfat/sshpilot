@@ -243,12 +243,11 @@ def test_pass_backend_argv(monkeypatch):
     assert calls[-1][0] == ['/usr/bin/pass', 'rm', '-f', 'sshpilot/password/u@h']
 
 
-# --- ssh-agent "don't store" null backend (authoritative) --------------------
+# --- ssh-agent "don't store" null backend ------------------------------------
 
 def test_ssh_agent_backend_is_null():
     a = ss.SSHAgentBackend()
     assert a.is_available() is True
-    assert a.authoritative is True
     assert a.store(password_spec('h', 'u'), 's') is True   # claims success
     assert a.lookup(password_spec('h', 'u')) is None
     assert a.delete(password_spec('h', 'u')) is False
@@ -418,6 +417,40 @@ def test_store_no_fallback_when_explicit_session_backend_unlocked(manager):
     assert mgr.store(spec, 's') is False
     assert spec.keyring_account not in primary.data
     assert spec.keyring_account not in fallback.data
+
+
+def test_unavailable_explicit_backend_warns_and_no_fallthrough(manager, caplog):
+    # Selecting a backend that is UNAVAILABLE (e.g. bitwarden with no `bw`) must not
+    # silently resolve to nothing — it logs a warning — and must NOT read/write a stale
+    # copy in another store.
+    import logging
+    mgr, primary, fallback = manager
+    broken = FakeBackend('broken', available=False)
+    broken.fail_store = True                       # an unavailable store fails
+    mgr.register_backend('broken', broken)
+    mgr.set_selected('broken')
+    spec = password_spec('h', 'u')
+    fallback.data[spec.keyring_account] = 'stale-keyring'   # a stale copy elsewhere
+
+    with caplog.at_level(logging.WARNING):
+        assert mgr.lookup(spec) is None            # no fallthrough to keyring
+        assert mgr.store(spec, 's') is False       # not stored anywhere
+    assert spec.keyring_account not in primary.data
+    assert 'unavailable' in caplog.text.lower() and 'broken' in caplog.text.lower()
+
+
+def test_unavailable_backend_warning_is_deduped(manager, caplog):
+    import logging
+    mgr, primary, fallback = manager
+    mgr.register_backend('broken', FakeBackend('broken', available=False))
+    mgr.set_selected('broken')
+    spec = password_spec('h', 'u')
+    with caplog.at_level(logging.WARNING):
+        mgr.lookup(spec)
+        mgr.lookup(spec)
+        mgr.lookup(spec)
+    hits = [r for r in caplog.records if 'unavailable' in r.getMessage().lower()]
+    assert len(hits) == 1                          # warned once, not per call
 
 
 def test_bitwarden_is_available_reresolves_bw(monkeypatch):

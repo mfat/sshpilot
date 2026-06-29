@@ -1172,6 +1172,16 @@ class ConnectionManager(GObject.Object):
                 "Secure storage backend: %s (selected=%s)",
                 self.secure_storage_backend, selected,
             )
+            # Surface (don't silently swallow) an explicit selection that can't work.
+            try:
+                sel_be = manager.selected_backend()
+                if sel_be is not None and not sel_be.is_available():
+                    logger.warning(
+                        "Selected secret backend '%s' is unavailable — secrets will not "
+                        "be stored or autofilled until it is available or you change the "
+                        "backend in Preferences.", selected)
+            except Exception:
+                pass
         except Exception as e:
             logger.warning("Secret manager initialization failed: %s", e)
         # Identity provider selection (parallel to the secret backend): propagate the
