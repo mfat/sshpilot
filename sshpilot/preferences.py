@@ -451,6 +451,13 @@ class PreferencesWindow(Adw.Window):
         """Add a page to the custom layout"""
         # Create sidebar row
         row = Adw.ActionRow()
+        # Sidebar titles are plain text; disable Pango markup before setting the title
+        # so characters like '&' (e.g. "Security & Credentials") render literally
+        # instead of failing markup parsing and showing an empty label.
+        try:
+            row.set_use_markup(False)
+        except Exception:
+            pass
         row.set_title(title)
         page_id = title.lower().replace(' ', '-')
         row.set_name(page_id)
@@ -1454,6 +1461,12 @@ class PreferencesWindow(Adw.Window):
             advanced_page.set_title("Advanced")
             advanced_page.set_icon_name("applications-system-symbolic")
 
+            # Security & Credentials page — secret storage + identity provider live here
+            # (built below alongside the Advanced page, then registered as its own page).
+            security_page = Adw.PreferencesPage()
+            security_page.set_title("Security & Credentials")
+            security_page.set_icon_name("dialog-password-symbolic")
+
             # Operation mode selection
             operation_group = Adw.PreferencesGroup(title="Operation Mode")
 
@@ -1585,7 +1598,7 @@ class PreferencesWindow(Adw.Window):
             # currently-selected backend.
             self._update_secret_rows_visibility(current_backend)
 
-            advanced_page.add(secrets_group)
+            security_page.add(secrets_group)
 
             # --- SSH identity provider (parallel to Secret Storage) ---
             identity_group = Adw.PreferencesGroup(
@@ -1634,7 +1647,7 @@ class PreferencesWindow(Adw.Window):
             self.identity_provider_row.connect(
                 'notify::selected', self.on_identity_provider_changed)
             identity_group.add(self.identity_provider_row)
-            advanced_page.add(identity_group)
+            security_page.add(identity_group)
 
             # Application behavior group
             behavior_group = Adw.PreferencesGroup(title="Application Behavior")
@@ -2049,6 +2062,7 @@ class PreferencesWindow(Adw.Window):
             self.add_page_to_layout("Shortcuts", "preferences-desktop-keyboard-shortcuts-symbolic", shortcuts_page)
             self.add_page_to_layout("Groups", "folder-open-symbolic", groups_page)
             self.add_page_to_layout("SSH Options", "network-workgroup-symbolic", ssh_settings_page)
+            self.add_page_to_layout("Security & Credentials", "dialog-password-symbolic", security_page)
             self.add_page_to_layout("Updates", "software-update-available-symbolic", updates_page)
             plugins_page = self._create_plugins_page()
             self.add_page_to_layout("Plugins", "application-x-addon-symbolic", plugins_page)
