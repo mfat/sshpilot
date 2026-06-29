@@ -21,6 +21,26 @@ def test_is_flatpak_false(monkeypatch):
     assert platform_utils.is_flatpak() is False
 
 
+def test_resolve_host_binary_prefers_sandbox(monkeypatch):
+    monkeypatch.setattr(platform_utils.shutil, "which", lambda name: "/app/bin/bw" if name == "bw" else None)
+    assert platform_utils.resolve_host_binary("bw") == ["/app/bin/bw"]
+
+
+def test_resolve_host_binary_flatpak_host_fallback(monkeypatch):
+    monkeypatch.setattr(platform_utils, "is_flatpak", lambda: True)
+    monkeypatch.setattr(platform_utils.shutil, "which", lambda name: "/usr/bin/flatpak-spawn" if name == "flatpak-spawn" else None)
+
+    def fake_run(argv, **kwargs):
+        assert argv[:3] == ["/usr/bin/flatpak-spawn", "--host", "which"]
+        class R:
+            returncode = 0
+            stdout = "/home/u/.npm-global/bin/bw\n"
+        return R()
+
+    monkeypatch.setattr(platform_utils.subprocess, "run", fake_run)
+    assert platform_utils.resolve_host_binary("bw") == ["/usr/bin/flatpak-spawn", "--host", "bw"]
+
+
 def test_get_config_dir(monkeypatch, tmp_path):
     monkeypatch.setattr(
         platform_utils.GLib,

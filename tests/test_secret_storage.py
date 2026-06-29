@@ -513,14 +513,35 @@ def test_bitwarden_is_available_reresolves_bw(monkeypatch):
     # so a newly-installed CLI is detected without restarting the app.
     present = {'ok': False}
 
-    def fake_which(name):
-        return '/usr/local/bin/bw' if (name == 'bw' and present['ok']) else None
+    def fake_resolve(binary):
+        if binary != 'bw' or not present['ok']:
+            return None
+        return ['/usr/local/bin/bw']
 
-    monkeypatch.setattr(ss.shutil, 'which', fake_which)
+    monkeypatch.setattr(ss, 'resolve_host_binary', fake_resolve)
     backend = ss.BitwardenBackend()
     assert backend.is_available() is False
     present['ok'] = True                          # bw installed after construction
     assert backend.is_available() is True
+
+
+def test_bitwarden_flatpak_uses_host_spawn(monkeypatch):
+    calls = []
+
+    def fake_resolve(binary):
+        assert binary == 'bw'
+        return ['/usr/bin/flatpak-spawn', '--host', 'bw']
+
+    def fake_run(argv, **kwargs):
+        calls.append(list(argv))
+        return _Result(0, json.dumps({"status": "locked"}).encode())
+
+    monkeypatch.setattr(ss, 'resolve_host_binary', fake_resolve)
+    monkeypatch.setattr(ss.subprocess, 'run', fake_run)
+    backend = ss.BitwardenBackend()
+    assert backend.is_available() is True
+    assert backend._status() == 'locked'
+    assert calls == [['/usr/bin/flatpak-spawn', '--host', 'bw', '--nointeraction', 'status']]
 
 
 def test_non_session_backend_needs_no_unlock(manager):
@@ -551,8 +572,17 @@ class FakeBw:
         self.search_terms = []     # search values seen on `list items` (None = full)
         self._n = 0
 
+    @staticmethod
+    def _bw_command(argv):
+        args = list(argv)
+        if len(args) >= 3 and os.path.basename(args[0]) == "flatpak-spawn" and args[1] == "--host":
+            args = args[3:]
+        elif args:
+            args = args[1:]
+        return [a for a in args if a != '--nointeraction']
+
     def run(self, argv, input=None, capture_output=None, env=None, check=None, timeout=None):
-        cmd = [a for a in list(argv)[1:] if a != '--nointeraction']   # strip bin + flag
+        cmd = self._bw_command(argv)
         self.calls.append(cmd)
         self.envs.append(dict(env or {}))
         if cmd[:1] == ['status']:

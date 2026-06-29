@@ -3,6 +3,8 @@
 import os
 import platform
 import shutil
+import subprocess
+from typing import List, Optional
 
 from gi.repository import GLib
 
@@ -18,6 +20,33 @@ def is_macos() -> bool:
 def is_flatpak() -> bool:
     """Return True if running inside a Flatpak sandbox."""
     return os.environ.get("FLATPAK_ID") is not None or os.path.exists("/.flatpak-info")
+
+
+def resolve_host_binary(binary: str) -> Optional[List[str]]:
+    """Return an argv *prefix* that runs ``binary``:
+
+    * ``[<abs path>]`` when it is in the sandbox ``PATH``;
+    * ``[flatpak-spawn, --host, binary]`` when it exists only on the Flatpak host;
+    * ``None`` when it cannot be found either way.
+
+    Callers append their own arguments to the returned list.
+    """
+    found = shutil.which(binary)
+    if found:
+        return [found]
+    if is_flatpak():
+        spawn = shutil.which("flatpak-spawn")
+        if spawn:
+            try:
+                result = subprocess.run(
+                    [spawn, "--host", "which", binary],
+                    capture_output=True, text=True, timeout=10, check=False,
+                )
+                if result.returncode == 0 and (result.stdout or "").strip():
+                    return [spawn, "--host", binary]
+            except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+                pass
+    return None
 
 
 def get_config_dir() -> str:

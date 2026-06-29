@@ -1576,10 +1576,16 @@ class PreferencesWindow(Adw.Window):
                 str(self.config.get_setting('secrets.bitwarden.profile', '') or '')
             )
             try:
+                from .platform_utils import is_flatpak
+                flatpak_note = _(
+                    " Under Flatpak, use the host path (e.g. /home/you/.config/Bitwarden CLI) "
+                    "or leave empty for the host default — the app runs `bw` on the host."
+                ) if is_flatpak() else ""
                 self.bw_profile_row.set_tooltip_text(_(
                     "Optional. Path to a `bw` data directory (BITWARDENCLI_APPDATA_DIR) for "
                     "a specific account. Empty = the default account. Leave empty for a "
-                    "single Bitwarden account."))
+                    "single Bitwarden account.{flatpak_note}"
+                ).format(flatpak_note=flatpak_note))
             except Exception:
                 pass
             browse_btn = Gtk.Button(icon_name='folder-open-symbolic')

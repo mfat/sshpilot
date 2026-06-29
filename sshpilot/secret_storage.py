@@ -82,14 +82,18 @@ except Exception:  # pragma: no cover - optional dependency
     keyring = None
 
 try:
-    from .platform_utils import is_macos
+    from .platform_utils import is_macos, resolve_host_binary
 except Exception:  # pragma: no cover - fallback when run as a loose module
     try:
-        from platform_utils import is_macos  # type: ignore
+        from platform_utils import is_macos, resolve_host_binary  # type: ignore
     except Exception:
         def is_macos() -> bool:  # type: ignore
             import sys
             return sys.platform == "darwin"
+
+        def resolve_host_binary(binary: str) -> Optional[List[str]]:  # type: ignore
+            found = shutil.which(binary)
+            return [found] if found else None
 
 
 # Legacy identifiers — MUST match the values used before this module existed so
@@ -462,12 +466,13 @@ class BitwardenBackend(SecretBackend):
     ``spec.keyring_account`` with the secret in ``login.password``.
 
     ``is_available`` only checks for the ``bw`` binary — never ``bw status`` — so it stays
-    cheap on the hot path. The ``bw`` CLI holds one account/server per **data directory**;
-    the user selects an account by pointing ``BITWARDENCLI_APPDATA_DIR`` at that data dir
-    (``secrets.bitwarden.profile``). This is also how a self-hosted **Vaultwarden** account
-    is used — a profile whose data dir is configured (``bw config server`` + ``bw login``)
-    for the self-hosted server. GTK-free (imported by the askpass subprocess); UI lives in
-    the GTK layer.
+    cheap on the hot path. Under Flatpak, ``bw`` on the host is reached via
+    ``flatpak-spawn --host`` (same as other host CLIs). The ``bw`` CLI holds one
+    account/server per **data directory**; the user selects an account by pointing
+    ``BITWARDENCLI_APPDATA_DIR`` at that data dir (``secrets.bitwarden.profile``) — under
+    Flatpak this should be the **host** path (e.g. ``~/.config/Bitwarden CLI``), or left
+    empty so the host ``bw`` uses its default. GTK-free (imported by the askpass subprocess);
+    UI lives in the GTK layer.
     """
 
     name = "bitwarden"
@@ -476,7 +481,7 @@ class BitwardenBackend(SecretBackend):
 
     def __init__(self, bin_name: str = "bw") -> None:
         self._bin_name = bin_name
-        self._bin_override: Optional[str] = None
+        self._argv_override: Optional[List[str]] = None
         self._token: Optional[str] = None                # session token (this process)
         self._unlocked = False                           # we unlocked it this session
         self._deadline: Optional[float] = None           # monotonic; None = no timeout
@@ -485,16 +490,32 @@ class BitwardenBackend(SecretBackend):
         self._lock = threading.RLock()
 
     @property
+    def _argv_prefix(self) -> Optional[List[str]]:
+        """Argv prefix to spawn ``bw`` (direct path or ``flatpak-spawn --host bw``).
+
+        Re-resolved on each access so a CLI installed after launch is found. Assigning
+        ``self._bin`` pins an explicit path (used by tests)."""
+        if self._argv_override is not None:
+            return list(self._argv_override)
+        return resolve_host_binary(self._bin_name)
+
+    @property
     def _bin(self) -> Optional[str]:
-        """Resolve ``bw`` on each access so a CLI installed after launch is found.
-        Assigning ``self._bin`` pins an explicit path (used by tests)."""
-        if self._bin_override is not None:
-            return self._bin_override
-        return shutil.which(self._bin_name) or None
+        """Primary ``bw`` executable label (for logging / legacy checks)."""
+        prefix = self._argv_prefix
+        if not prefix:
+            return None
+        return prefix[-1]
 
     @_bin.setter
     def _bin(self, value: Optional[str]) -> None:
-        self._bin_override = value
+        self._argv_override = [value] if value else None
+
+    def _bw_argv(self, *args: str) -> List[str]:
+        prefix = self._argv_prefix
+        if not prefix:
+            raise RuntimeError("bw is not available")
+        return prefix + ["--nointeraction"] + list(args)
 
     def describe(self) -> str:
         return self.name
@@ -504,7 +525,7 @@ class BitwardenBackend(SecretBackend):
         # answered by is_unlocked()/needs_login(). Which server/account the CLI talks to
         # (Bitwarden cloud, a self-hosted Vaultwarden, a specific profile) is configured
         # by the user via the `bw` CLI + the optional BITWARDENCLI_APPDATA_DIR profile.
-        return bool(self._bin)
+        return self._argv_prefix is not None
 
     # -- bw subprocess helper --------------------------------------------
     def _run(self, args: List[str], *, token: Optional[str] = None,
@@ -512,12 +533,15 @@ class BitwardenBackend(SecretBackend):
         """Run ``bw <args>`` non-interactively, returning the CompletedProcess.
         ``token`` (if given) is passed as ``BW_SESSION``. ``--nointeraction`` guarantees
         ``bw`` never blocks on stdin (a GUI must never hang on terminal input)."""
+        prefix = self._argv_prefix
+        if not prefix:
+            raise RuntimeError("bw is not available")
         env = os.environ.copy()
         if token:
             env["BW_SESSION"] = token
         started = time.monotonic()
         result = subprocess.run(
-            [self._bin, "--nointeraction"] + list(args),
+            self._bw_argv(*args),
             input=input_bytes, capture_output=True, env=env, check=False,
             timeout=self._TIMEOUT,
         )
@@ -610,9 +634,16 @@ class BitwardenBackend(SecretBackend):
                 pass
 
     def unlock(self, secret: str, progress: Optional[Callable[[str], None]] = None) -> bool:
-        if not self._bin:
+        if not self._argv_prefix:
             return False
         with self._lock:
+            # Already unlocked AND fully cached (e.g. a background startup warm-up just
+            # finished): no-op. The RLock serialized us behind that warm-up, so the startup
+            # spinner's unlock simply adopts its result instead of spawning a redundant
+            # second `bw unlock` + re-list.
+            if self._unlocked and self._cache_complete and not self._expired():
+                self._touch_deadline()
+                return True
             try:
                 self._report(progress, "starting")
                 # We do NOT run `bw config server` here: `bw` rejects a server change while
@@ -625,8 +656,7 @@ class BitwardenBackend(SecretBackend):
                 self._report(progress, "unlocking")
                 started = time.monotonic()
                 result = subprocess.run(
-                    [self._bin, "--nointeraction", "unlock",
-                     "--passwordenv", "BW_MASTER", "--raw"],
+                    self._bw_argv("unlock", "--passwordenv", "BW_MASTER", "--raw"),
                     capture_output=True, env=env, check=False, timeout=self._TIMEOUT,
                 )
                 logger.debug("bw unlock: %.2fs (rc=%s)",
