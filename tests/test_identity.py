@@ -234,3 +234,61 @@ def test_manager_list_identities_skips_failing_provider():
 
 def test_get_identity_manager_singleton():
     assert get_identity_manager() is get_identity_manager()
+
+
+class _MarkProvider(_FakeProvider):
+    """Fake provider that injects a marker var so we can see which provider ran."""
+
+    def apply_to_env(self, env):
+        new = dict(env)
+        new["PICKED"] = self._name
+        return new
+
+
+def test_manager_selection_defaults_to_system_agent(monkeypatch):
+    monkeypatch.delenv("SSHPILOT_IDENTITY_PROVIDER", raising=False)
+    mgr = IdentityManager()
+    assert mgr._selected_name() == "auto"
+    assert mgr.selected_provider().name == mgr.SYSTEM_AGENT   # 'auto' -> system agent
+
+
+def test_manager_selection_from_env(monkeypatch):
+    monkeypatch.setenv("SSHPILOT_IDENTITY_PROVIDER", "System-Agent")
+    mgr = IdentityManager()
+    assert mgr._selected_name() == "system-agent"             # normalized
+
+
+def test_manager_set_selected_overrides_env(monkeypatch):
+    monkeypatch.setenv("SSHPILOT_IDENTITY_PROVIDER", "system-agent")
+    mgr = IdentityManager()
+    mgr.set_selected("custom")
+    assert mgr._selected_name() == "custom"
+
+
+def test_manager_selected_provider_unknown_falls_back_to_agent():
+    mgr = IdentityManager()
+    mgr.set_selected("nope")
+    assert mgr.selected_provider().name == mgr.SYSTEM_AGENT   # never disables the agent
+
+
+def test_manager_apply_selected_routes_to_selected_provider():
+    mgr = IdentityManager()
+    mgr.register(_MarkProvider("custom"))
+    mgr.set_selected("custom")
+    out = mgr.apply_selected_to_env({"FOO": "bar"})
+    assert out["PICKED"] == "custom"
+    assert out["FOO"] == "bar"                                # input preserved (copy)
+
+
+def test_manager_apply_selected_auto_uses_system_agent():
+    mgr = IdentityManager()
+    mgr.set_selected("auto")
+    mgr._providers[mgr.SYSTEM_AGENT] = _MarkProvider(mgr.SYSTEM_AGENT)
+    assert mgr.apply_selected_to_env({})["PICKED"] == mgr.SYSTEM_AGENT
+
+
+def test_manager_registered_providers_lists_names():
+    mgr = IdentityManager()
+    mgr.register(_FakeProvider("file-key"))
+    names = mgr.registered_providers()
+    assert mgr.SYSTEM_AGENT in names and "file-key" in names

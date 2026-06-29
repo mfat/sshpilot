@@ -152,6 +152,12 @@ class Config(GObject.Object):
                     'server': '',
                 },
             },
+            'identity': {
+                # Default SSH identity provider whose environment injection is applied
+                # to connections (e.g. offering the system ssh-agent). 'auto' = system
+                # ssh-agent. The per-connection key is set via IdentityFile, not here.
+                'provider': 'auto',
+            },
             'ui': {
                 'show_hostname': True,
                 'auto_focus_terminal': True,

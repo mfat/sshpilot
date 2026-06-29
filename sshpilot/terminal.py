@@ -1163,11 +1163,11 @@ class TerminalWidget(Gtk.Box):
                 use_askpass = False
                 password_value = None
 
-            # Route the ssh-agent socket through the identity provider rather than
-            # relying on implicit inheritance, so all agent injection goes through
-            # one seam. Idempotent: it re-sets SSH_AUTH_SOCK to the live value.
-            from .providers.system_agent import SystemAgentProvider
-            env = SystemAgentProvider().apply_to_env(env)
+            # Route identity/agent env injection through the selected identity provider
+            # (default: system ssh-agent), so all injection goes through one seam and
+            # honors the configured default. Idempotent over the inherited environment.
+            from .identity import get_identity_manager
+            env = get_identity_manager().apply_selected_to_env(env)
 
             # Remember whether a stored password was supplied this attempt, so an
             # auth failure can say "saved password rejected" rather than a generic
@@ -2828,11 +2828,11 @@ class TerminalWidget(Gtk.Box):
             
             logger.info(f"Launching agent-based shell via flatpak-spawn with size {cols}x{rows}...")
             
-            # Environment for agent. Route the agent socket through the identity
+            # Environment for agent. Route env injection through the selected identity
             # provider so child processes (e.g. ssh run from this shell) reach the
             # user's ssh-agent via the same seam as SSH connections.
-            from .providers.system_agent import SystemAgentProvider
-            env = SystemAgentProvider().apply_to_env(os.environ.copy())
+            from .identity import get_identity_manager
+            env = get_identity_manager().apply_selected_to_env(os.environ.copy())
             # Set TERM to a proper value only if missing or set to "dumb"
             if 'TERM' not in env or env.get('TERM', '').lower() == 'dumb':
                 env['TERM'] = 'xterm-256color'
@@ -2873,10 +2873,10 @@ class TerminalWidget(Gtk.Box):
         Set up local shell using direct spawn (legacy approach).
         This is the fallback when agent is not available.
         """
-        # Route the agent socket through the identity provider (one seam for all
+        # Route env injection through the selected identity provider (one seam for all
         # SSH_AUTH_SOCK injection); idempotent over the inherited environment.
-        from .providers.system_agent import SystemAgentProvider
-        env = SystemAgentProvider().apply_to_env(os.environ.copy())
+        from .identity import get_identity_manager
+        env = get_identity_manager().apply_selected_to_env(os.environ.copy())
 
         # Determine the user's preferred shell
         shell = None

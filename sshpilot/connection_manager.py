@@ -1089,6 +1089,19 @@ class ConnectionManager(GObject.Object):
             )
         except Exception as e:
             logger.warning("Secret manager initialization failed: %s", e)
+        # Identity provider selection (parallel to the secret backend): propagate the
+        # configured default provider to child processes and the in-process manager so
+        # connection env injection routes through it.
+        try:
+            from .config import Config as _IdCfg
+            identity_provider = str(
+                _IdCfg().get_setting('identity.provider', 'auto') or 'auto'
+            ).strip().lower()
+            os.environ['SSHPILOT_IDENTITY_PROVIDER'] = identity_provider
+            from .identity import get_identity_manager
+            get_identity_manager().set_selected(identity_provider)
+        except Exception as exc:
+            logger.debug("Identity provider initialization failed: %s", exc)
         if self.secure_storage_backend == 'none':
             logger.info("Secure storage backend: unavailable; password storage disabled")
         return False  # run once

@@ -104,9 +104,20 @@ A single private key on disk (e.g. `~/.ssh/id_ed25519`).
    keep `is_available()` cheap, and route any secret lookups through the
    credential backend.
 3. Register it (`get_identity_manager().register(YourProvider(...))`) where the
-   provider becomes relevant. Provider *selection* UI is a separate task.
+   provider becomes relevant. Once registered, it appears in **Preferences ▸ SSH
+   Identity ▸ Identity provider** and can be chosen as the default.
 4. Add tests under `tests/` mirroring `tests/test_identity.py` (use fakes /
    monkeypatched subprocess — do not require the real agent/CLI in CI).
+
+### Default-provider selection
+
+`IdentityManager` tracks a *selected* default provider (config `identity.provider`,
+propagated as the `SSHPILOT_IDENTITY_PROVIDER` env var; `'auto'` = system ssh-agent).
+The connection flow injects identity/agent env through one seam —
+`get_identity_manager().apply_selected_to_env(env)` in `terminal.py` — which routes to
+`selected_provider().apply_to_env()`. `'auto'` and any unknown selection resolve to the
+system ssh-agent, so the agent is never silently disabled. The per-connection key stays
+the connection's `IdentityFile`; this selection is only the global default.
 
 Sketches (not yet implemented):
 

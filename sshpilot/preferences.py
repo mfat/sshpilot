@@ -1587,6 +1587,55 @@ class PreferencesWindow(Adw.Window):
 
             advanced_page.add(secrets_group)
 
+            # --- SSH identity provider (parallel to Secret Storage) ---
+            identity_group = Adw.PreferencesGroup(
+                title=_("SSH Identity"),
+                description=_(
+                    "Default identity provider whose agent/keys are offered to "
+                    "connections. The per-connection key is set on each connection "
+                    "(IdentityFile); this is the global default."
+                ),
+            )
+            self.identity_provider_row = Adw.ComboRow()
+            self.identity_provider_row.set_title(_("Identity provider"))
+            try:
+                from .identity import get_identity_manager
+                _imgr = get_identity_manager()
+                id_registered = _imgr.registered_providers()
+                id_available = {p.name for p in _imgr.available_providers()}
+            except Exception:
+                id_registered = ['system-agent']
+                id_available = set()
+            id_labels = {'system-agent': _("System ssh-agent")}
+            current_provider = str(
+                self.config.get_setting('identity.provider', 'auto')
+            ).strip().lower()
+            # Offer registered global providers (system-agent + any plugin-registered).
+            # 'file-key' is per-key, not a global default, so it is not offered here.
+            id_order = [n for n in id_registered if n != 'file-key']
+            self._identity_provider_ids = ['auto'] + id_order
+            id_model = Gtk.StringList()
+            id_model.append(_("Automatic (system ssh-agent)"))
+            for name in id_order:
+                label = id_labels.get(name, name)
+                if name not in id_available:
+                    label = _("{provider} (unavailable)").format(provider=label)
+                id_model.append(label)
+            if current_provider not in self._identity_provider_ids:
+                self._identity_provider_ids.append(current_provider)
+                id_model.append(_("{provider} (unavailable)").format(
+                    provider=id_labels.get(current_provider, current_provider)))
+            self.identity_provider_row.set_model(id_model)
+            try:
+                id_index = self._identity_provider_ids.index(current_provider)
+            except ValueError:
+                id_index = 0
+            self.identity_provider_row.set_selected(id_index)
+            self.identity_provider_row.connect(
+                'notify::selected', self.on_identity_provider_changed)
+            identity_group.add(self.identity_provider_row)
+            advanced_page.add(identity_group)
+
             # Application behavior group
             behavior_group = Adw.PreferencesGroup(title="Application Behavior")
             
@@ -2096,6 +2145,23 @@ class PreferencesWindow(Adw.Window):
                     logger.error("Failed to prompt secret backend unlock: %s", exc)
         except Exception as exc:
             logger.error("Failed to update secret storage backend: %s", exc)
+
+    def on_identity_provider_changed(self, combo, _pspec):
+        """Persist the selected default SSH identity provider and apply it live."""
+        try:
+            index = combo.get_selected()
+            ids = getattr(self, '_identity_provider_ids', ['auto'])
+            name = ids[index] if 0 <= index < len(ids) else 'auto'
+            self.config.set_setting('identity.provider', name)
+            os.environ['SSHPILOT_IDENTITY_PROVIDER'] = name
+            try:
+                from .identity import get_identity_manager
+                get_identity_manager().set_selected(name)
+            except Exception:
+                pass
+            logger.info("SSH identity provider set to: %s", name)
+        except Exception as exc:
+            logger.error("Failed to update SSH identity provider: %s", exc)
 
     def on_vaultwarden_server_changed(self, row):
         """Persist and propagate the Vaultwarden self-hosted server URL."""
