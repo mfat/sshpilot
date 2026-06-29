@@ -34,6 +34,19 @@ _unlock_in_progress = False
 _pending_callbacks = []
 
 
+def _should_finish_cancel(outcome, has_closed, closed_fired) -> bool:
+    """Whether the password prompt should finish as *cancel*.
+
+    True only when the outcome is KNOWN and is not ``'unlock'`` — and the dialog is gone
+    (``closed_fired``) or has no ``closed`` signal (legacy ``has_closed`` False). An
+    unknown outcome (``None``) never finishes: GTK may emit ``closed`` before ``response``
+    (e.g. pressing Enter), and finishing then would abort an in-progress unlock and start
+    the connection early. The ``unlock`` outcome is owned by the spinner/worker path."""
+    if outcome is None or outcome == 'unlock':
+        return False
+    return bool(closed_fired or not has_closed)
+
+
 def _friendly_backend_name(backend):
     """A human label for the unlock heading — never the raw describe() (which for
     Vaultwarden includes the server URL, e.g. ``vaultwarden:https://…``)."""
@@ -235,8 +248,19 @@ def prompt_unlock(parent, *, on_done=None):
     # Holds the spinner's (close_fn, dialog) so _after_unlock can dismiss it and
     # sequence _finish off its 'closed' signal.
     _spinner = [None]
-    # The password dialog's chosen response, read by its 'closed' handler.
-    _outcome = ['cancel']
+    # The password dialog's chosen response, and whether its 'closed' signal has fired.
+    # ``_outcome`` starts as None ("unknown"): GTK does NOT guarantee 'response' fires
+    # before 'closed' (pressing Enter / activates-default can emit 'closed' first), so we
+    # must never treat the default as a cancel — that would prematurely finish the unlock
+    # and start the connection while the worker is still unlocking.
+    _outcome = [None]
+    _pw_closed_fired = [False]
+
+    def _cancel_finish_if_ready():
+        # Finish (as cancel) only once we KNOW the outcome is a non-unlock response AND the
+        # dialog is gone (or has no 'closed' signal). Robust to either signal ordering.
+        if _should_finish_cancel(_outcome[0], _pw_has_closed[0], _pw_closed_fired[0]):
+            _finish(False)
 
     def _worker(password, set_status):
         ok = False
@@ -309,11 +333,10 @@ def prompt_unlock(parent, *, on_done=None):
     def _on_response(_d, response):
         _outcome[0] = response
         if response != 'unlock':
-            # Cancel/close: when the dialog has a 'closed' signal, finish there so the
-            # terminal opens only after the prompt disappears. On the legacy path
-            # (no 'closed'), finish here.
-            if not _pw_has_closed[0]:
-                _finish(False)
+            # Cancel/close. Finish (as cancel) once the dialog is gone so the terminal
+            # opens only after the prompt disappears — but if it already closed (closed
+            # fired before response) or has no 'closed' signal (legacy), finish now.
+            _cancel_finish_if_ready()
             return
         password = entry.get_text() or ''
 
@@ -337,11 +360,13 @@ def prompt_unlock(parent, *, on_done=None):
         GLib.idle_add(_present_spinner)
 
     def _on_pw_closed(_d):
-        # Fires after the password dialog's close animation. On cancel/close, finish
-        # now (terminal opens after the dialog is gone); on 'unlock' the spinner path
-        # owns the finish.
-        if _outcome[0] != 'unlock':
-            _finish(False)
+        # Fires after the password dialog's close animation. We only finish-as-cancel
+        # when the outcome is KNOWN and not 'unlock'. If 'closed' arrives before 'response'
+        # (Enter), the outcome is still None here and we do nothing — the 'response'
+        # handler (or, for 'unlock', the spinner/worker) drives the finish. This is what
+        # prevents the connection from starting while the unlock worker is still running.
+        _pw_closed_fired[0] = True
+        _cancel_finish_if_ready()
 
     dialog.connect('response', _on_response)
     _pw_has_closed = [False]
