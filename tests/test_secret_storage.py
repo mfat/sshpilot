@@ -179,6 +179,18 @@ def test_lookup_and_delete_reach_nonselected_available_backend(manager):
     assert spec.keyring_account not in extra.data
 
 
+def test_lookup_everywhere_ignores_exclusive_selection(manager):
+    # lookup_everywhere (used by the credential manager) scans ALL available backends and
+    # names the one that held the secret — even one the user has switched away from.
+    mgr, primary, fallback = manager
+    spec = password_spec('h', 'u')
+    fallback.data[spec.keyring_account] = 'in-keyring'   # only in the non-selected backend
+    mgr.set_selected('libsecret')                        # explicit selection = exclusive
+    assert mgr.lookup(spec) is None                      # normal lookup honors exclusivity
+    assert mgr.lookup_everywhere(spec) == ('in-keyring', 'keyring')
+    assert mgr.lookup_everywhere(password_spec('nope', 'x')) is None
+
+
 def test_active_backend_label_uses_describe(monkeypatch):
     monkeypatch.setattr(ss, 'is_macos', lambda: False)
     mgr = SecretManager()

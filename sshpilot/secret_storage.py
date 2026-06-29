@@ -64,7 +64,7 @@ import subprocess
 import threading
 import time
 from dataclasses import dataclass
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -1133,6 +1133,25 @@ class SecretManager:
             value = backend.lookup(spec)
             if value:
                 return value
+        return None
+
+    def lookup_everywhere(self, spec: SecretSpec) -> Optional[Tuple[str, str]]:
+        """Find ``spec`` across **every available backend**, returning ``(value, backend
+        name)`` for the first hit, or ``None``.
+
+        Unlike :meth:`lookup`, this deliberately **ignores the exclusive/selected backend**
+        — it scans all available stores so callers (the credential manager / export) can see
+        secrets wherever they live, even under a backend the user has since switched away
+        from. A locked session vault simply contributes nothing (its ``lookup`` returns
+        ``None``); this never prompts or forces an unlock.
+        """
+        for backend in self._all_available_backends():
+            try:
+                value = backend.lookup(spec)
+            except Exception:
+                value = None
+            if value:
+                return value, backend.name
         return None
 
     def delete(self, spec: SecretSpec) -> bool:
