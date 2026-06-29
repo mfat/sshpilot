@@ -23,7 +23,7 @@ import logging
 import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -62,11 +62,25 @@ class IdentityProvider(ABC):
 
     @abstractmethod
     def apply_to_env(self, env: Dict[str, str]) -> Dict[str, str]:
-        """Return a **copy** of ``env`` with whatever this provider needs
-        injected (e.g. ``SSH_AUTH_SOCK``, ``SSH_IDENTITY_FILE``).
+        """Return a **copy** of ``env`` with any **environmental** value this provider
+        needs injected — chiefly the running agent's ``SSH_AUTH_SOCK`` for the OS/desktop
+        agent, whose socket is a volatile per-session path with nothing stable to persist.
 
-        Must not mutate the argument in place.
+        Per-host identity that ssh config can express (key files, certificates, a fixed
+        agent socket, PKCS#11, …) does **not** belong here: it is the source of truth in
+        ``~/.ssh/config`` (see :meth:`ssh_config_directives` and CLAUDE.md). Must not
+        mutate the argument in place.
         """
+
+    def ssh_config_directives(self) -> List[Tuple[str, str]]:
+        """ssh_config directives this provider contributes to the **global defaults**
+        (a managed ``Host *`` block), as ``(keyword, value)`` pairs — e.g.
+        ``[("IdentityAgent", "~/.1password/agent.sock")]`` for a fixed-socket agent.
+
+        Default: none. Because ssh config is the source of truth, a fixed-socket agent
+        expresses itself here rather than via :meth:`apply_to_env`.
+        """
+        return []
 
     @abstractmethod
     def is_available(self) -> bool:
@@ -88,14 +102,18 @@ class IdentityManager:
     """
 
     SYSTEM_AGENT = "system-agent"
+    CUSTOM = "custom"
+    CUSTOM_SOCKET_ENV = "SSHPILOT_IDENTITY_AGENT_SOCKET"
 
     def __init__(self) -> None:
         self._providers: Dict[str, IdentityProvider] = {}
         self._selected: Optional[str] = None  # resolved lazily (config/env)
         # Lazy import avoids a module-load cycle (providers import this module).
         from .providers.system_agent import SystemAgentProvider
+        from .providers.socket_agent import onepassword_provider
 
         self.register(SystemAgentProvider())
+        self.register(onepassword_provider())  # fixed-socket preset (1Password)
 
     def register(self, provider: IdentityProvider) -> None:
         """Register (or replace) a provider, keyed by its ``name``."""
@@ -132,13 +150,26 @@ class IdentityManager:
         return list(self._providers.keys())
 
     def selected_provider(self) -> Optional[IdentityProvider]:
-        """The provider that injects the default identity env. ``'auto'`` and any
-        unknown selection resolve to the system ssh-agent, preserving the historical
-        behavior and never silently disabling the agent."""
+        """The selected provider. ``'auto'`` and any unknown selection resolve to the
+        system ssh-agent, preserving the historical behavior and never silently disabling
+        the agent. ``'custom'`` is built on demand from the configured socket path
+        (env ``SSHPILOT_IDENTITY_AGENT_SOCKET``)."""
         name = self._selected_name()
         if name in ("", "auto"):
             return self._providers.get(self.SYSTEM_AGENT)
+        if name == self.CUSTOM:
+            return self._custom_provider()
         return self._providers.get(name) or self._providers.get(self.SYSTEM_AGENT)
+
+    def _custom_provider(self) -> Optional[IdentityProvider]:
+        """A fixed-socket provider for the user's custom ``IdentityAgent`` socket, or the
+        system agent when none is configured (never disables the agent)."""
+        socket = (os.environ.get(self.CUSTOM_SOCKET_ENV) or "").strip()
+        if not socket:
+            return self._providers.get(self.SYSTEM_AGENT)
+        from .providers.socket_agent import SocketAgentProvider
+
+        return SocketAgentProvider(self.CUSTOM, "Custom", socket)
 
     def apply_selected_to_env(self, env: Dict[str, str]) -> Dict[str, str]:
         """Apply the selected default provider's :meth:`IdentityProvider.apply_to_env`.
@@ -152,6 +183,19 @@ class IdentityManager:
             logger.debug("identity apply_to_env failed (%s): %s",
                          self._selected_name(), exc)
             return dict(env)
+
+    def selected_config_directives(self) -> List[Tuple[str, str]]:
+        """The selected provider's global ssh_config directives (empty for the system
+        agent / ``auto``). Written to the managed ``Host *`` block in ``~/.ssh/config``."""
+        provider = self.selected_provider()
+        if provider is None:
+            return []
+        try:
+            return list(provider.ssh_config_directives())
+        except Exception as exc:
+            logger.debug("identity ssh_config_directives failed (%s): %s",
+                         self._selected_name(), exc)
+            return []
 
     def list_identities(self) -> List[Identity]:
         """Aggregate identities across every currently-available provider."""

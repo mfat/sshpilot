@@ -1027,6 +1027,75 @@ class ConnectionManager(GObject.Object):
             raise
         self._ensure_secure_permissions(path, 0o600)
 
+    # -- managed global identity defaults (Host *) -----------------------
+    _MANAGED_BEGIN = "# >>> sshpilot: identity defaults (managed) >>>"
+    _MANAGED_END = "# <<< sshpilot: identity defaults (managed) <<<"
+
+    @classmethod
+    def _strip_managed_block(cls, text: str):
+        """Remove the sentinel-delimited managed block from *text*.
+
+        Returns ``(new_text, removed)``. When no managed block is present the text is
+        returned byte-for-byte unchanged (``removed=False``) so we never churn the file.
+        """
+        if cls._MANAGED_BEGIN not in text:
+            return text, False
+        lines = text.splitlines(keepends=True)
+        out, i, n, removed = [], 0, len(text.splitlines(keepends=True)), False
+        while i < n:
+            if lines[i].strip() == cls._MANAGED_BEGIN:
+                removed = True
+                i += 1
+                while i < n and lines[i].strip() != cls._MANAGED_END:
+                    i += 1
+                i += 1  # skip the END marker line
+                if i < n and lines[i].strip() == "":   # consume one trailing blank line
+                    i += 1
+                continue
+            out.append(lines[i])
+            i += 1
+        return "".join(out), removed
+
+    def apply_global_identity_agent(self, socket: Optional[str]) -> bool:
+        """Write/update/remove a managed global ``Host *`` block setting ``IdentityAgent``
+        to *socket* in ``~/.ssh/config``. A falsy *socket* removes the managed block.
+
+        Idempotent and non-destructive: only the sentinel-delimited block is touched, so
+        all other user content (including a user's own ``Host *``) is preserved. The block
+        is placed at end of file, so per-host blocks (earlier) win ssh's first-match
+        semantics and a per-connection ``IdentityAgent`` still overrides this default.
+        """
+        path = self.ssh_config_path
+        if not path:
+            return False
+        socket = (socket or "").strip()
+        try:
+            existing = ""
+            if os.path.exists(path):
+                with open(path, "r", encoding="utf-8") as f:
+                    existing = f.read()
+            stripped, _removed = self._strip_managed_block(existing)
+            if socket:
+                block = (f"{self._MANAGED_BEGIN}\n"
+                         f"Host *\n"
+                         f"    IdentityAgent {socket}\n"
+                         f"{self._MANAGED_END}\n")
+                base = stripped.rstrip("\n")
+                new_text = (base + "\n\n" + block) if base.strip() else block
+            else:
+                new_text = stripped
+            if new_text == existing:
+                return True  # already in the desired state — no write
+            if not new_text and not os.path.exists(path):
+                return True  # nothing to remove and no file to create
+            self._safe_write_config(path, new_text)
+            logger.info("Updated managed IdentityAgent block (%s)",
+                        socket or "removed")
+            return True
+        except Exception as exc:
+            logger.error("Failed to apply global IdentityAgent: %s", exc)
+            return False
+
     def _normalize_path(self, path: str) -> str:
         """Expand user/env vars and return absolute, non-empty paths."""
         if not path or not str(path).strip():
@@ -1094,12 +1163,24 @@ class ConnectionManager(GObject.Object):
         # connection env injection routes through it.
         try:
             from .config import Config as _IdCfg
+            _idcfg = _IdCfg()
             identity_provider = str(
-                _IdCfg().get_setting('identity.provider', 'auto') or 'auto'
+                _idcfg.get_setting('identity.provider', 'auto') or 'auto'
             ).strip().lower()
+            agent_socket = str(
+                _idcfg.get_setting('identity.agent_socket', '') or ''
+            ).strip()
             os.environ['SSHPILOT_IDENTITY_PROVIDER'] = identity_provider
+            if agent_socket:
+                os.environ['SSHPILOT_IDENTITY_AGENT_SOCKET'] = agent_socket
+            else:
+                os.environ.pop('SSHPILOT_IDENTITY_AGENT_SOCKET', None)
             from .identity import get_identity_manager
-            get_identity_manager().set_selected(identity_provider)
+            mgr = get_identity_manager()
+            mgr.set_selected(identity_provider)
+            # Reconcile the managed Host * IdentityAgent block with the saved selection.
+            directives = dict(mgr.selected_config_directives())
+            self.apply_global_identity_agent(directives.get('IdentityAgent'))
         except Exception as exc:
             logger.debug("Identity provider initialization failed: %s", exc)
         if self.secure_storage_backend == 'none':

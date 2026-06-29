@@ -1610,7 +1610,7 @@ class PreferencesWindow(Adw.Window):
                 ),
             )
             self.identity_provider_row = Adw.ComboRow()
-            self.identity_provider_row.set_title(_("Identity provider"))
+            self.identity_provider_row.set_title(_("Default SSH agent"))
             try:
                 from .identity import get_identity_manager
                 _imgr = get_identity_manager()
@@ -1619,14 +1619,15 @@ class PreferencesWindow(Adw.Window):
             except Exception:
                 id_registered = ['system-agent']
                 id_available = set()
-            id_labels = {'system-agent': _("System ssh-agent")}
+            id_labels = {'onepassword': _("1Password")}
             current_provider = str(
                 self.config.get_setting('identity.provider', 'auto')
             ).strip().lower()
-            # Offer registered global providers (system-agent + any plugin-registered).
-            # 'file-key' is per-key, not a global default, so it is not offered here.
-            id_order = [n for n in id_registered if n != 'file-key']
-            self._identity_provider_ids = ['auto'] + id_order
+            # 'auto' already means the system ssh-agent, so it is not listed twice;
+            # 'file-key' is per-key, not a global default. 'custom' is a free-form socket.
+            id_order = [n for n in id_registered
+                        if n not in ('system-agent', 'file-key')]
+            self._identity_provider_ids = ['auto'] + id_order + ['custom']
             id_model = Gtk.StringList()
             id_model.append(_("Automatic (system ssh-agent)"))
             for name in id_order:
@@ -1634,6 +1635,7 @@ class PreferencesWindow(Adw.Window):
                 if name not in id_available:
                     label = _("{provider} (unavailable)").format(provider=label)
                 id_model.append(label)
+            id_model.append(_("Custom socket…"))
             if current_provider not in self._identity_provider_ids:
                 self._identity_provider_ids.append(current_provider)
                 id_model.append(_("{provider} (unavailable)").format(
@@ -1647,6 +1649,18 @@ class PreferencesWindow(Adw.Window):
             self.identity_provider_row.connect(
                 'notify::selected', self.on_identity_provider_changed)
             identity_group.add(self.identity_provider_row)
+
+            # Custom agent socket — only shown when "Custom socket…" is selected. Written
+            # as a global `Host *` IdentityAgent directive to ~/.ssh/config.
+            self.identity_agent_socket_row = Adw.EntryRow(
+                title=_("Custom agent socket (IdentityAgent)"))
+            self.identity_agent_socket_row.set_text(
+                str(self.config.get_setting('identity.agent_socket', '') or ''))
+            self.identity_agent_socket_row.connect(
+                'changed', self.on_identity_agent_socket_changed)
+            identity_group.add(self.identity_agent_socket_row)
+            self._update_identity_rows_visibility(current_provider)
+
             security_page.add(identity_group)
 
             # Application behavior group
@@ -2160,8 +2174,32 @@ class PreferencesWindow(Adw.Window):
         except Exception as exc:
             logger.error("Failed to update secret storage backend: %s", exc)
 
+    def _update_identity_rows_visibility(self, name):
+        """Show the custom-socket row only when the 'custom' agent is selected."""
+        try:
+            if hasattr(self, 'identity_agent_socket_row'):
+                self.identity_agent_socket_row.set_visible(
+                    (name or '').strip().lower() == 'custom')
+        except Exception as exc:
+            logger.debug("Failed to update identity rows visibility: %s", exc)
+
+    def _write_identity_agent_block(self):
+        """Reconcile the managed `Host *` IdentityAgent block in ~/.ssh/config with the
+        current selection (the identity manager resolves the socket; system/auto removes
+        the block)."""
+        try:
+            from .identity import get_identity_manager
+            directives = dict(get_identity_manager().selected_config_directives())
+            socket = directives.get('IdentityAgent')
+            cm = getattr(self.parent_window, 'connection_manager', None)
+            if cm is not None and hasattr(cm, 'apply_global_identity_agent'):
+                cm.apply_global_identity_agent(socket)
+        except Exception as exc:
+            logger.error("Failed to write managed IdentityAgent block: %s", exc)
+
     def on_identity_provider_changed(self, combo, _pspec):
-        """Persist the selected default SSH identity provider and apply it live."""
+        """Persist the selected default SSH agent and apply it live — writing/removing the
+        managed `Host *` IdentityAgent block for fixed-socket agents."""
         try:
             index = combo.get_selected()
             ids = getattr(self, '_identity_provider_ids', ['auto'])
@@ -2173,9 +2211,27 @@ class PreferencesWindow(Adw.Window):
                 get_identity_manager().set_selected(name)
             except Exception:
                 pass
-            logger.info("SSH identity provider set to: %s", name)
+            self._update_identity_rows_visibility(name)
+            self._write_identity_agent_block()
+            logger.info("Default SSH agent set to: %s", name)
         except Exception as exc:
-            logger.error("Failed to update SSH identity provider: %s", exc)
+            logger.error("Failed to update default SSH agent: %s", exc)
+
+    def on_identity_agent_socket_changed(self, row):
+        """Persist and propagate the custom agent socket; if 'custom' is selected, rewrite
+        the managed IdentityAgent block."""
+        try:
+            socket = (row.get_text() or '').strip()
+            self.config.set_setting('identity.agent_socket', socket)
+            if socket:
+                os.environ['SSHPILOT_IDENTITY_AGENT_SOCKET'] = socket
+            else:
+                os.environ.pop('SSHPILOT_IDENTITY_AGENT_SOCKET', None)
+            selected = str(self.config.get_setting('identity.provider', 'auto')).strip().lower()
+            if selected == 'custom':
+                self._write_identity_agent_block()
+        except Exception as exc:
+            logger.error("Failed to update custom agent socket: %s", exc)
 
     def on_vaultwarden_server_changed(self, row):
         """Persist and propagate the Vaultwarden self-hosted server URL."""

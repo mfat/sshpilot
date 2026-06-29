@@ -153,10 +153,14 @@ class Config(GObject.Object):
                 },
             },
             'identity': {
-                # Default SSH identity provider whose environment injection is applied
-                # to connections (e.g. offering the system ssh-agent). 'auto' = system
-                # ssh-agent. The per-connection key is set via IdentityFile, not here.
+                # Default SSH agent offered to connections. 'auto' = the OS/desktop
+                # ssh-agent (inherited via SSH_AUTH_SOCK). A fixed-socket agent
+                # (e.g. '1password', or 'custom') is written as a global `Host *`
+                # IdentityAgent directive to ~/.ssh/config. The per-connection key is
+                # set via IdentityFile, not here.
                 'provider': 'auto',
+                # Socket path for the 'custom' agent (written as IdentityAgent).
+                'agent_socket': '',
             },
             'ui': {
                 'show_hostname': True,

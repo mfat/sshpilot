@@ -113,12 +113,14 @@ def test_file_key_availability(tmp_path, key_pair):
     assert FileKeyProvider(str(tmp_path / "missing")).is_available() is False
 
 
-def test_file_key_apply_to_env(key_pair):
+def test_file_key_apply_to_env_is_noop(key_pair):
+    # A file key is expressed as IdentityFile in ssh config, not via env: apply_to_env
+    # returns an unmodified copy.
     key, _ = key_pair
     original = {"A": "1"}
     out = FileKeyProvider(str(key)).apply_to_env(original)
-    assert original == {"A": "1"}                  # not mutated
-    assert out["SSH_IDENTITY_FILE"] == str(key)
+    assert out == {"A": "1"} and out is not original   # copy, unchanged
+    assert "SSH_IDENTITY_FILE" not in out
 
 
 def test_file_key_apply_to_env_missing_key_is_noop(tmp_path):
@@ -273,10 +275,10 @@ def test_manager_selected_provider_unknown_falls_back_to_agent():
 
 def test_manager_apply_selected_routes_to_selected_provider():
     mgr = IdentityManager()
-    mgr.register(_MarkProvider("custom"))
-    mgr.set_selected("custom")
+    mgr.register(_MarkProvider("marker"))   # 'custom' is reserved for the socket agent
+    mgr.set_selected("marker")
     out = mgr.apply_selected_to_env({"FOO": "bar"})
-    assert out["PICKED"] == "custom"
+    assert out["PICKED"] == "marker"
     assert out["FOO"] == "bar"                                # input preserved (copy)
 
 
@@ -292,3 +294,49 @@ def test_manager_registered_providers_lists_names():
     mgr.register(_FakeProvider("file-key"))
     names = mgr.registered_providers()
     assert mgr.SYSTEM_AGENT in names and "file-key" in names
+
+
+# --- ssh_config_directives / fixed-socket agents -----------------------------
+
+def test_ssh_config_directives_default_empty():
+    mgr = IdentityManager()
+    assert mgr.system_agent().ssh_config_directives() == []   # OS agent: env, not config
+    assert _FakeProvider("x").ssh_config_directives() == []   # ABC default
+
+
+def test_socket_agent_provider(tmp_path):
+    from sshpilot.providers.socket_agent import SocketAgentProvider
+    sock = tmp_path / "agent.sock"
+    p = SocketAgentProvider("x", "X", str(sock))
+    assert p.is_available() is False                          # socket absent
+    assert p.ssh_config_directives() == [("IdentityAgent", str(sock))]
+    assert p.apply_to_env({"A": "B"}) == {"A": "B"}           # no env injection
+    sock.write_text("")
+    assert p.is_available() is True                           # socket now exists
+
+
+def test_onepassword_preset_directives(monkeypatch):
+    monkeypatch.delenv("SSHPILOT_IDENTITY_PROVIDER", raising=False)
+    mgr = IdentityManager()
+    assert "onepassword" in mgr.registered_providers()
+    mgr.set_selected("onepassword")
+    assert mgr.selected_config_directives() == [
+        ("IdentityAgent", "~/.1password/agent.sock")]
+
+
+def test_custom_provider_directives_from_env(monkeypatch):
+    mgr = IdentityManager()
+    mgr.set_selected("custom")
+    monkeypatch.delenv("SSHPILOT_IDENTITY_AGENT_SOCKET", raising=False)
+    assert mgr.selected_config_directives() == []             # no socket -> agent -> []
+    monkeypatch.setenv("SSHPILOT_IDENTITY_AGENT_SOCKET", "~/.my/agent.sock")
+    assert mgr.selected_config_directives() == [
+        ("IdentityAgent", "~/.my/agent.sock")]
+
+
+def test_auto_and_system_agent_have_no_directives():
+    mgr = IdentityManager()
+    mgr.set_selected("auto")
+    assert mgr.selected_config_directives() == []
+    mgr.set_selected("system-agent")
+    assert mgr.selected_config_directives() == []

@@ -44,14 +44,22 @@ class IdentityProvider(ABC):
     @abstractmethod
     def apply_to_env(self, env: dict) -> dict: ...     # return a COPY, never mutate
 
+    def ssh_config_directives(self) -> list[tuple[str, str]]:  # default: []
+        ...                                            # (keyword, value) for Host *
+
     @abstractmethod
     def is_available(self) -> bool: ...                # readiness, not a hard error
 ```
 
 ### Rules every provider must follow
 
-1. **`apply_to_env` returns a modified copy.** Never mutate the argument in place.
-   Inject only what the provider needs (e.g. `SSH_AUTH_SOCK`, `SSH_IDENTITY_FILE`).
+1. **`apply_to_env` returns a modified copy, for *environmental* values only.** Never
+   mutate the argument in place. Inject only genuinely environmental things — chiefly the
+   running agent's `SSH_AUTH_SOCK` for the OS/desktop agent (a volatile per-session
+   socket). **Per-host identity that ssh config can express — key files, certificates, a
+   fixed agent socket, PKCS#11 — does NOT go here.** ssh config is the source of truth
+   (`CLAUDE.md`): express it via `ssh_config_directives()` (written to a managed `Host *`
+   block) or, per connection, the connection editor's IdentityFile/IdentityAgent fields.
 2. **Safe to instantiate when the dependency is missing.** The constructor must
    not raise because an agent is down or a key file is absent — report that via
    `is_available()` returning `False`.
@@ -90,12 +98,22 @@ add keys (`askpass_utils.ensure_key_in_agent` does).
 A single private key on disk (e.g. `~/.ssh/id_ed25519`).
 
 - `is_available()` — true when the key file exists.
-- `apply_to_env()` — sets the `SSH_IDENTITY_FILE` convention variable. (The
-  canonical ssh mechanism remains `IdentityFile` in `~/.ssh/config`; the provider
-  does not append CLI flags — see `CLAUDE.md`.)
+- `apply_to_env()` — **no-op.** A key is expressed as `IdentityFile` in
+  `~/.ssh/config` (the source of truth — see `CLAUDE.md`); ssh reads no env var for a
+  key path, so there is nothing to inject.
 - `list_identities()` — one `Identity`; fingerprint from the sibling `.pub`.
 - `unlock(lifetime=0)` / `has_stored_passphrase()` — passphrase comes from the
   **credential backend** via the shared askpass path, never libsecret directly.
+
+### `SocketAgentProvider` (e.g. `name = "onepassword"`, `"custom"`)
+A fixed-socket ssh-agent (the 1Password agent at `~/.1password/agent.sock`, or a
+user-supplied socket), parameterised by `(name, display_name, socket_path)`.
+
+- `is_available()` — true when the socket file exists.
+- `apply_to_env()` — **no-op** (config-driven, not env-driven).
+- `ssh_config_directives()` — `[("IdentityAgent", socket_path)]`. The selection writes
+  this into a managed `Host *` block in `~/.ssh/config` (see below), which ssh honours
+  for every invocation and which overrides any inherited `SSH_AUTH_SOCK`.
 
 ## Writing a new provider (e.g. Bitwarden Agent, PKCS#11)
 
@@ -111,20 +129,30 @@ A single private key on disk (e.g. `~/.ssh/id_ed25519`).
 
 ### Default-provider selection
 
-`IdentityManager` tracks a *selected* default provider (config `identity.provider`,
-propagated as the `SSHPILOT_IDENTITY_PROVIDER` env var; `'auto'` = system ssh-agent).
-The connection flow injects identity/agent env through one seam —
-`get_identity_manager().apply_selected_to_env(env)` in `terminal.py` — which routes to
-`selected_provider().apply_to_env()`. `'auto'` and any unknown selection resolve to the
-system ssh-agent, so the agent is never silently disabled. The per-connection key stays
-the connection's `IdentityFile`; this selection is only the global default.
+`IdentityManager` tracks a *selected* default agent (config `identity.provider`,
+propagated as `SSHPILOT_IDENTITY_PROVIDER`; `'auto'` = system ssh-agent). Selection is
+surfaced in **Preferences ▸ Security & Credentials ▸ Default SSH agent**
+(Automatic / 1Password / Custom socket…).
+
+Two seams carry a selected provider into a connection, by nature of the value:
+
+- **ssh config (source of truth) — fixed-socket agents.** When the selected provider
+  returns `ssh_config_directives()` (e.g. 1Password → `IdentityAgent ~/.1password/agent.sock`),
+  `connection_manager.apply_global_identity_agent()` writes a **sentinel-delimited managed
+  `Host *` block** at the end of `~/.ssh/config` (atomic write + `.bak`, never touching
+  other user content). It is idempotent: re-selecting updates it, switching to Automatic
+  removes it. End-of-file placement means a per-connection `IdentityAgent` still wins.
+- **Environment — the OS/desktop agent.** `get_identity_manager().apply_selected_to_env(env)`
+  in `terminal.py` injects `SSH_AUTH_SOCK` for the system agent (Automatic). Its socket is
+  a volatile per-session path, so there is nothing to persist to config.
+
+`'auto'`/unknown resolve to the system agent (never silently disabled). The per-connection
+key stays the connection's `IdentityFile`; this selection is only the global default.
 
 Sketches (not yet implemented):
 
-- **Bitwarden agent** — `is_available()` checks the bw SSH-agent socket;
-  `apply_to_env()` injects that socket as `SSH_AUTH_SOCK`; `list_identities()`
-  enumerates the vault's SSH keys. Unlock state reuses the session-backed
-  credential backend.
-- **PKCS#11** — `apply_to_env()` arranges for the module/token to be used (e.g.
-  via `PKCS11Provider` config in `~/.ssh/config`); `list_identities()` lists token
-  slots/objects.
+- **gpg-agent / KeePassXC** — more `SocketAgentProvider` presets once their socket paths
+  are discovered (distro-variable); until then the **Custom socket** field covers them.
+- **PKCS#11 / hardware token** — a provider returning
+  `[("PKCS11Provider", "/path/to/module.so")]` from `ssh_config_directives()`, written to
+  the managed block via the same seam (no env/CLI).

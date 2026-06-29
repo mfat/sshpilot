@@ -34,13 +34,10 @@ class FileKeyProvider(IdentityProvider):
         return bool(self._expanded) and os.path.isfile(self._expanded)
 
     def apply_to_env(self, env: Dict[str, str]) -> Dict[str, str]:
-        new_env = dict(env)
-        if self.is_available():
-            # Convention variable for callers that opt into a specific key. The
-            # canonical ssh mechanism remains ``IdentityFile`` in ``~/.ssh/config``
-            # (see CLAUDE.md), so we deliberately do not append a CLI flag here.
-            new_env["SSH_IDENTITY_FILE"] = self._expanded
-        return new_env
+        # A file key is expressed as ``IdentityFile`` in ``~/.ssh/config`` (the source of
+        # truth — see CLAUDE.md), not via the environment. ssh reads no env var for a key
+        # path, so there is nothing to inject here.
+        return dict(env)
 
     def list_identities(self) -> List[Identity]:
         if not self.is_available():
