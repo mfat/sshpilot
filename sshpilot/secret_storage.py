@@ -209,6 +209,39 @@ def sudo_password_spec(host: str, username: str) -> SecretSpec:
     )
 
 
+def _looks_like_key_path(account: str) -> bool:
+    return account.startswith("/") or account.startswith("~") or (
+        os.sep in account and "@" not in account
+    )
+
+
+def _split_user_host(text: str, username_hint: Optional[str] = None) -> Tuple[str, str]:
+    """Split ``user@host`` into ``(user, host)``. ``username_hint`` (e.g. Bitwarden's
+    ``login.username``) keeps this correct when the username itself contains ``@``
+    (email-style SSH usernames); otherwise splits on the first ``@``."""
+    if username_hint and text.startswith(username_hint + "@"):
+        return username_hint, text[len(username_hint) + 1:]
+    user, _, host = text.partition("@")
+    return user, host
+
+
+def parse_account(account: str, *, username_hint: Optional[str] = None) -> Dict[str, str]:
+    """Reconstruct spec attributes (``type``/``host``/``username``/``key_path``) from a stored
+    account key — the inverse of :func:`password_spec` / :func:`sudo_password_spec` /
+    :func:`passphrase_spec`. For backends that key only by the account string (Bitwarden, pass);
+    libsecret should use its real stored attributes instead. Returns ``{}`` if unrecognized."""
+    account = account or ""
+    if account.startswith("sudo:"):
+        user, host = _split_user_host(account[len("sudo:"):], username_hint)
+        return {"type": "sudo_password", "host": host, "username": user}
+    if _looks_like_key_path(account):
+        return {"type": "key_passphrase", "key_path": account}
+    if "@" in account:
+        user, host = _split_user_host(account, username_hint)
+        return {"type": "ssh_password", "host": host, "username": user}
+    return {}
+
+
 def master_password_spec(backend_name: str = "bitwarden", profile: str = "") -> SecretSpec:
     """Spec for a session vault's **master password** (e.g. the Bitwarden unlock
     password), keyed by backend and account/profile so multiple accounts don't collide.
@@ -336,6 +369,38 @@ class LibSecretBackend(SecretBackend):
             logger.error("libsecret delete failed: %s", exc)
             return False
 
+    def iter_credentials(self) -> List[Tuple[Dict[str, str], Optional[str]]]:
+        """Enumerate every sshPilot item in the Secret Service as ``(attributes, secret)``.
+
+        Searches by the ``application`` attribute (under our schema), so it returns the real
+        per-item attributes (``type``/``host``/``username``/``key_path``). The credential
+        adapter's ``load_all()`` maps these to :class:`Credential`s."""
+        if Secret is None or get_schema() is None:
+            return []
+        try:
+            flags = (Secret.SearchFlags.ALL | Secret.SearchFlags.LOAD_SECRETS
+                     | Secret.SearchFlags.UNLOCK)
+            items = Secret.password_search_sync(
+                get_schema(), {"application": SERVICE_NAME}, flags, None)
+        except Exception as exc:
+            logger.debug("libsecret search failed: %s", exc)
+            return []
+        out: List[Tuple[Dict[str, str], Optional[str]]] = []
+        for item in items or []:
+            try:
+                attrs = dict(item.get_attributes() or {})
+            except Exception:
+                attrs = {}
+            value = None
+            try:
+                secret = item.retrieve_secret_sync(None)
+                if secret is not None:
+                    value = secret.get_text()
+            except Exception:
+                value = None
+            out.append((attrs, value))
+        return out
+
 
 class KeyringBackend(SecretBackend):
     name = "keyring"
@@ -447,6 +512,46 @@ class PassBackend(SecretBackend):
         except Exception as exc:
             logger.debug("pass delete failed: %s", exc)
             return False
+
+    def iter_credentials(self) -> List[Tuple[Dict[str, str], Optional[str]]]:
+        """Enumerate the ``sshpilot/`` subtree of the password store as ``(attributes,
+        secret)``. The credential type comes from the path prefix (``password``/``sudo``/
+        ``passphrase``); host/username are split from the segment (lossy for email-style
+        usernames; passphrase key paths are lossy since ``/`` was sanitized to ``_``).
+        One ``pass show`` (gpg decrypt) per entry — used only for enumeration/export."""
+        if not self.is_available():
+            return []
+        store = self._store_dir()
+        kinds = {"password": "ssh_password", "sudo": "sudo_password",
+                 "passphrase": "key_passphrase"}
+        out: List[Tuple[Dict[str, str], Optional[str]]] = []
+        for sub, raw_type in kinds.items():
+            base = os.path.join(store, "sshpilot", sub)
+            if not os.path.isdir(base):
+                continue
+            for root, _dirs, files in os.walk(base):
+                for fn in files:
+                    if not fn.endswith(".gpg"):
+                        continue
+                    entry = os.path.relpath(os.path.join(root, fn), store)[:-4]   # strip .gpg
+                    seg = entry[len(os.path.join("sshpilot", sub)) + 1:]
+                    attrs: Dict[str, str] = {"type": raw_type}
+                    if raw_type == "key_passphrase":
+                        attrs["key_path"] = seg
+                    else:
+                        user, _, host = seg.partition("@")
+                        attrs["host"] = host
+                        attrs["username"] = user
+                    value = None
+                    try:
+                        res = self._run(["show", entry])
+                        if res.returncode == 0:
+                            text = res.stdout.decode("utf-8", "replace")
+                            value = text.split("\n", 1)[0] if text else None
+                    except Exception:
+                        value = None
+                    out.append((attrs, value))
+        return out
 
 
 class BitwardenBackend(SecretBackend):
@@ -827,6 +932,22 @@ class BitwardenBackend(SecretBackend):
         if not item:
             return None
         return (item.get("login") or {}).get("password") or None
+
+    def iter_credentials(self) -> List[Tuple[Dict[str, str], Optional[str]]]:
+        """Enumerate the cached vault (after unlock) as ``(attributes, secret)``. Empty when
+        locked or not cached. Reconstructs spec attributes from each item's name, using
+        ``login.username`` as the hint so email-style usernames split correctly."""
+        with self._lock:
+            items = self._items
+            snapshot = list(items.items()) if items else []
+        out: List[Tuple[Dict[str, str], Optional[str]]] = []
+        for name, item in snapshot:
+            login = (item.get("login") or {}) if isinstance(item, dict) else {}
+            attrs = parse_account(name, username_hint=login.get("username") or None)
+            if not attrs:
+                continue
+            out.append((attrs, login.get("password")))
+        return out
 
     def delete(self, spec: SecretSpec) -> bool:
         token = self._current_token()

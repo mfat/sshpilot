@@ -179,6 +179,46 @@ def test_lookup_and_delete_reach_nonselected_available_backend(manager):
     assert spec.keyring_account not in extra.data
 
 
+def test_libsecret_iter_credentials_maps_search_results(monkeypatch):
+    # iter_credentials enumerates via Secret.password_search and returns (attributes, secret).
+    class FakeValue:
+        def __init__(self, text):
+            self._t = text
+
+        def get_text(self):
+            return self._t
+
+    class FakeItem:
+        def __init__(self, attrs, secret):
+            self._a = attrs
+            self._s = secret
+
+        def get_attributes(self):
+            return dict(self._a)
+
+        def retrieve_secret_sync(self, _c):
+            return FakeValue(self._s)
+
+    class FakeFlags:
+        ALL = 1
+        LOAD_SECRETS = 2
+        UNLOCK = 4
+
+    class FakeSecret:
+        SearchFlags = FakeFlags
+
+        @staticmethod
+        def password_search_sync(schema, attrs, flags, cancellable):
+            assert attrs == {'application': 'sshPilot'}
+            assert flags == (FakeFlags.ALL | FakeFlags.LOAD_SECRETS | FakeFlags.UNLOCK)
+            return [FakeItem({'type': 'ssh_password', 'host': 'h', 'username': 'u'}, 'pw')]
+
+    monkeypatch.setattr(ss, 'Secret', FakeSecret)
+    monkeypatch.setattr(ss, 'get_schema', lambda: object())   # non-None schema
+    rows = ss.LibSecretBackend().iter_credentials()
+    assert rows == [({'type': 'ssh_password', 'host': 'h', 'username': 'u'}, 'pw')]
+
+
 def test_lookup_everywhere_ignores_exclusive_selection(manager):
     # lookup_everywhere (used by the credential manager) scans ALL available backends and
     # names the one that held the secret — even one the user has switched away from.

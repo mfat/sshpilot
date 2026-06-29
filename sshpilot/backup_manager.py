@@ -51,79 +51,111 @@ class BackupManager:
             return str(Path(get_config_dir()) / 'known_hosts')
         return None
 
-    def export_configuration(self, export_path: str) -> Tuple[bool, Optional[str]]:
-        """
-        Export all configuration to a JSON file
-        
-        Args:
-            export_path: Path where to save the export file
-            
-        Returns:
-            Tuple of (success, error_message)
-        """
-        try:
-            export_data = {
-                'version': BACKUP_VERSION,
-                'export_date': datetime.now().isoformat(),
-                'platform': 'flatpak' if is_flatpak() else os.name,
-                'config_version': CONFIG_VERSION,
-            }
+    def _build_export_data(self) -> Dict[str, Any]:
+        """The config payload (ssh_config + known_hosts + app_config + metadata) shared by the
+        legacy JSON export and the ``.spbk`` backup."""
+        export_data = {
+            'version': BACKUP_VERSION,
+            'export_date': datetime.now().isoformat(),
+            'platform': 'flatpak' if is_flatpak() else os.name,
+            'config_version': CONFIG_VERSION,
+        }
 
-            # Export SSH configuration mode
-            use_isolated = self.config.get_setting('ssh.use_isolated_config', False)
-            export_data['isolated_mode'] = bool(use_isolated)
+        # Export SSH configuration mode
+        use_isolated = self.config.get_setting('ssh.use_isolated_config', False)
+        export_data['isolated_mode'] = bool(use_isolated)
 
-            # Export SSH config file
-            ssh_config_path = self.get_ssh_config_path()
-            if ssh_config_path and os.path.exists(ssh_config_path):
-                try:
-                    with open(ssh_config_path, encoding='utf-8') as f:
-                        export_data['ssh_config'] = f.read()
-                    logger.info(f"Exported SSH config from {ssh_config_path}")
-                except Exception as e:
-                    logger.warning(f"Could not read SSH config: {e}")
-                    export_data['ssh_config'] = ''
-            else:
+        # Export SSH config file
+        ssh_config_path = self.get_ssh_config_path()
+        if ssh_config_path and os.path.exists(ssh_config_path):
+            try:
+                with open(ssh_config_path, encoding='utf-8') as f:
+                    export_data['ssh_config'] = f.read()
+                logger.info(f"Exported SSH config from {ssh_config_path}")
+            except Exception as e:
+                logger.warning(f"Could not read SSH config: {e}")
                 export_data['ssh_config'] = ''
-                logger.warning(f"SSH config not found at {ssh_config_path}")
+        else:
+            export_data['ssh_config'] = ''
+            logger.warning(f"SSH config not found at {ssh_config_path}")
 
-            # Export known_hosts if in isolated mode
-            known_hosts_path = self.get_known_hosts_path()
-            if known_hosts_path and os.path.exists(known_hosts_path):
-                try:
-                    with open(known_hosts_path, encoding='utf-8') as f:
-                        export_data['known_hosts'] = f.read()
-                    logger.info(f"Exported known_hosts from {known_hosts_path}")
-                except Exception as e:
-                    logger.warning(f"Could not read known_hosts: {e}")
-                    export_data['known_hosts'] = None
-            else:
+        # Export known_hosts if in isolated mode
+        known_hosts_path = self.get_known_hosts_path()
+        if known_hosts_path and os.path.exists(known_hosts_path):
+            try:
+                with open(known_hosts_path, encoding='utf-8') as f:
+                    export_data['known_hosts'] = f.read()
+                logger.info(f"Exported known_hosts from {known_hosts_path}")
+            except Exception as e:
+                logger.warning(f"Could not read known_hosts: {e}")
                 export_data['known_hosts'] = None
+        else:
+            export_data['known_hosts'] = None
 
-            # Export app configuration
-            config_file = Path(get_config_dir()) / 'config.json'
-            if config_file.exists():
-                try:
-                    with open(config_file, encoding='utf-8') as f:
-                        export_data['app_config'] = json.load(f)
-                    logger.info(f"Exported app config from {config_file}")
-                except Exception as e:
-                    logger.warning(f"Could not read app config: {e}")
-                    export_data['app_config'] = self.config.get_default_config()
-            else:
+        # Export app configuration
+        config_file = Path(get_config_dir()) / 'config.json'
+        if config_file.exists():
+            try:
+                with open(config_file, encoding='utf-8') as f:
+                    export_data['app_config'] = json.load(f)
+                logger.info(f"Exported app config from {config_file}")
+            except Exception as e:
+                logger.warning(f"Could not read app config: {e}")
                 export_data['app_config'] = self.config.get_default_config()
-                logger.warning("App config not found, using defaults")
+        else:
+            export_data['app_config'] = self.config.get_default_config()
+            logger.warning("App config not found, using defaults")
 
-            # Write export file
+        return export_data
+
+    def export_configuration(self, export_path: str) -> Tuple[bool, Optional[str]]:
+        """Export all configuration to a plain JSON file (legacy format; no secrets)."""
+        try:
+            export_data = self._build_export_data()
             export_path = os.path.expanduser(export_path)
             with open(export_path, 'w', encoding='utf-8') as f:
                 json.dump(export_data, f, indent=2)
-
             logger.info(f"Configuration exported successfully to {export_path}")
             return True, None
-
         except Exception as e:
             error_msg = f"Failed to export configuration: {e}"
+            logger.error(error_msg)
+            return False, error_msg
+
+    def _gather_credentials(self, connections) -> List[Dict[str, Any]]:
+        """Serialized credentials (password/sudo/key passphrase) for the given connections —
+        only their secrets, no enumerated orphans."""
+        if not connections:
+            return []
+        try:
+            from .credential_manager import CredentialManager
+            creds = CredentialManager(list(connections)).list_credentials(include_orphans=False)
+        except Exception:
+            logger.warning("Gathering credentials for backup failed", exc_info=True)
+            return []
+        out: List[Dict[str, Any]] = []
+        for c in creds:
+            if c.secret is None:
+                continue
+            out.append({'id': c.id, 'type': c.type, 'host': c.host,
+                        'username': c.username, 'secret': c.secret, 'metadata': c.metadata})
+        return out
+
+    def export_backup(self, export_path: str, *, connections=None,
+                      passphrase: Optional[str] = None) -> Tuple[bool, Optional[str]]:
+        """Export a ``.spbk`` backup: the full config payload plus the selected connections'
+        credentials, encrypted with ``passphrase`` when given (else plaintext)."""
+        try:
+            from .backup_archive import write_spbk
+            manifest = self._build_export_data()
+            manifest['format'] = 'spbk'
+            manifest['credentials'] = self._gather_credentials(connections)
+            write_spbk(os.path.expanduser(export_path), manifest, passphrase or None)
+            logger.info("Backup exported to %s (%d credential(s), encrypted=%s)",
+                        export_path, len(manifest['credentials']), bool(passphrase))
+            return True, None
+        except Exception as e:
+            error_msg = f"Failed to export backup: {e}"
             logger.error(error_msg)
             return False, error_msg
 
@@ -157,39 +189,78 @@ class BackupManager:
             except json.JSONDecodeError as e:
                 return False, f"Invalid JSON file: {e}"
 
-            # Validate import data structure
-            is_valid, validation_error = self._validate_import_data(import_data)
-            if not is_valid:
-                return False, validation_error
-
-            # Create backup before import
-            if create_backup:
-                backup_path = self._create_auto_backup()
-                if backup_path:
-                    logger.info(f"Created automatic backup at {backup_path}")
-
-            # Import based on mode
-            if mode == 'replace':
-                success, error = self._import_replace(import_data)
-            elif mode == 'merge':
-                success, error = self._import_merge(import_data)
-            else:
-                return False, f"Invalid import mode: {mode}"
-
-            if success:
-                # Reload configuration manager if available
-                if self.connection_manager:
-                    try:
-                        self.connection_manager.load_ssh_config()
-                    except Exception as e:
-                        logger.warning(f"Failed to reload SSH config: {e}")
-
-            return success, error
+            return self._apply_parsed(import_data, mode, create_backup)
 
         except Exception as e:
             error_msg = f"Failed to import configuration: {e}"
             logger.error(error_msg)
             return False, error_msg
+
+    def _apply_parsed(self, import_data: Dict[str, Any], mode: str,
+                      create_backup: bool) -> Tuple[bool, Optional[str]]:
+        """Validate, auto-backup, then apply a parsed config payload (replace/merge) and reload.
+        Shared by JSON import and ``.spbk`` restore."""
+        is_valid, validation_error = self._validate_import_data(import_data)
+        if not is_valid:
+            return False, validation_error
+
+        if create_backup:
+            backup_path = self._create_auto_backup()
+            if backup_path:
+                logger.info(f"Created automatic backup at {backup_path}")
+
+        if mode == 'replace':
+            success, error = self._import_replace(import_data)
+        elif mode == 'merge':
+            success, error = self._import_merge(import_data)
+        else:
+            return False, f"Invalid import mode: {mode}"
+
+        if success and self.connection_manager:
+            try:
+                self.connection_manager.load_ssh_config()
+            except Exception as e:
+                logger.warning(f"Failed to reload SSH config: {e}")
+        return success, error
+
+    def _restore_credentials(self, manifest: Dict[str, Any]) -> int:
+        """Re-store the manifest's credentials into the selected secret backend. Returns the
+        number successfully stored. Each is written via the same path normal saves use."""
+        creds = manifest.get('credentials') or []
+        if not creds:
+            return 0
+        try:
+            from .secret_storage import get_secret_manager
+            from .credential_model import Credential, credential_to_spec
+        except Exception:
+            logger.warning("Credential restore unavailable", exc_info=True)
+            return 0
+        mgr = get_secret_manager()
+        restored = 0
+        for c in creds:
+            try:
+                secret = c.get('secret')
+                if secret is None:
+                    continue
+                cred = Credential(
+                    id=c.get('id', ''), type=c.get('type', ''),
+                    host=c.get('host'), username=c.get('username'),
+                    secret=secret, metadata=c.get('metadata') or {})
+                if mgr.store(credential_to_spec(cred), secret):
+                    restored += 1
+            except Exception:
+                logger.warning("Failed to restore a credential", exc_info=True)
+        return restored
+
+    def apply_imported_manifest(self, manifest: Dict[str, Any], mode: str = 'replace',
+                                create_backup: bool = True) -> Tuple[bool, Optional[str], int]:
+        """Apply a decrypted ``.spbk`` manifest: config (replace/merge) **and** restore its
+        credentials. Returns ``(success, error, restored_credential_count)``. The caller
+        (UI) is responsible for reading/decrypting the ``.spbk`` first (it owns the passphrase
+        prompt)."""
+        success, error = self._apply_parsed(manifest, mode, create_backup)
+        restored = self._restore_credentials(manifest) if success else 0
+        return success, error, restored
 
     def _validate_import_data(self, data: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
         """Validate import data structure"""

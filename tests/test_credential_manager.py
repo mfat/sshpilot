@@ -24,6 +24,7 @@ class FakeBackend(ss.SecretBackend):
         self.name = name
         self._available = available
         self.data = {}
+        self.rows = []          # (attributes, value) pairs returned by iter_credentials
 
     def is_available(self):
         return self._available
@@ -37,6 +38,9 @@ class FakeBackend(ss.SecretBackend):
 
     def delete(self, spec):
         return self.data.pop(spec.keyring_account, None) is not None
+
+    def iter_credentials(self):
+        return list(self.rows)
 
 
 class FakeConn:
@@ -135,6 +139,42 @@ def test_dedup_same_account_across_connections(secrets):
     passwords = [c for c in cm.list_credentials() if c.type == TYPE_PASSWORD]
     assert len(passwords) == 1                                    # collapsed by (id, type)
     assert passwords[0].id == 'u@shared'
+
+
+def test_merge_adds_enumerated_orphans(secrets):
+    # Enumeration (adapter.load_all via iter_credentials) surfaces a stored secret with NO
+    # matching connection as an orphan; a credential also present via a connection stays the
+    # richer connection-derived one and is not marked orphan.
+    mgr, libsecret, keyring = secrets
+    a = FakeConn('A', hostname='a.example', username='alice')
+    libsecret.store(password_spec('a.example', 'alice'), 'pw-a')         # belongs to conn A
+    libsecret.rows = [
+        ({'type': 'ssh_password', 'host': 'a.example', 'username': 'alice'}, 'pw-a'),
+        ({'type': 'ssh_password', 'host': 'orphan', 'username': 'o'}, 'orphan-pw'),  # no conn
+    ]
+    cm = CredentialManager(FakeConnManager([a]), secret_manager=mgr)
+    creds = {(c.type, c.id): c for c in cm.list_credentials()}
+
+    derived = creds[(TYPE_PASSWORD, 'alice@a.example')]
+    assert derived.secret == 'pw-a' and derived.metadata.get('orphan') is not True
+    orphan = creds[(TYPE_PASSWORD, 'o@orphan')]
+    assert orphan.secret == 'orphan-pw' and orphan.metadata['orphan'] is True
+
+
+def test_include_orphans_false_skips_enumeration(secrets):
+    # With include_orphans=False (the backup path) the enumeration/orphan merge is skipped,
+    # so only the given connections' credentials are returned.
+    mgr, libsecret, keyring = secrets
+    a = FakeConn('A', hostname='a.example', username='alice')
+    libsecret.store(password_spec('a.example', 'alice'), 'pw-a')
+    libsecret.rows = [({'type': 'ssh_password', 'host': 'orphan', 'username': 'o'}, 'orphan-pw')]
+    cm = CredentialManager(FakeConnManager([a]), secret_manager=mgr)
+    ids = {(c.type, c.id) for c in cm.list_credentials(include_orphans=False)}
+    assert (TYPE_PASSWORD, 'alice@a.example') in ids
+    assert (TYPE_PASSWORD, 'o@orphan') not in ids          # orphan skipped
+    # default still includes the orphan
+    ids_all = {(c.type, c.id) for c in cm.list_credentials()}
+    assert (TYPE_PASSWORD, 'o@orphan') in ids_all
 
 
 def test_accepts_plain_connection_iterable(secrets):

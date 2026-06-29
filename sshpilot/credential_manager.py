@@ -19,47 +19,26 @@ from __future__ import annotations
 
 import logging
 import os
-from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Tuple
 
 from .secret_storage import (
-    SecretSpec,
     get_secret_manager,
     password_spec,
     passphrase_spec,
     sudo_password_spec,
 )
+# Credential model + spec<->credential translation live in credential_model so the adapters
+# and this orchestrator can share them without a cycle. Re-exported here for back-compat.
+from .credential_model import (  # noqa: F401
+    Credential,
+    TYPE_PASSWORD,
+    TYPE_SUDO,
+    TYPE_KEY,
+    spec_to_credential,
+)
+from .credential_adapters import SecretBackendAdapter
 
 logger = logging.getLogger(__name__)
-
-# Normalized credential types (mapped from the SecretSpec ``type`` attribute).
-TYPE_PASSWORD = "password"   # host login password  (spec type ssh_password)
-TYPE_SUDO = "sudo"           # sudo password         (spec type sudo_password)
-TYPE_KEY = "key"             # SSH key passphrase    (spec type key_passphrase)
-
-_TYPE_FROM_SPEC = {
-    "ssh_password": TYPE_PASSWORD,
-    "sudo_password": TYPE_SUDO,
-    "key_passphrase": TYPE_KEY,
-}
-
-
-@dataclass
-class Credential:
-    """One normalized, sshPilot-stored secret.
-
-    ``id`` is the backend account key (``user@host`` / ``sudo:user@host`` / canonical key
-    path). ``host``/``username`` are set for password & sudo creds and ``None`` for a key
-    passphrase. ``metadata`` carries the source backend, the spec label, the raw spec type,
-    and (where known) ``key_path``, ``port``, ``uri`` and the referencing ``connection``(s).
-    """
-
-    id: str
-    type: str
-    host: Optional[str] = None
-    username: Optional[str] = None
-    secret: Optional[str] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 def _canonical_key_path(key_path: str) -> str:
@@ -83,12 +62,19 @@ class CredentialManager:
         self._extra_key_paths = list(extra_key_paths or ())
 
     # -- public API -------------------------------------------------------
-    def list_credentials(self) -> List[Credential]:
+    def list_credentials(self, *, include_orphans: bool = True) -> List[Credential]:
         """Every sshPilot-stored credential, normalized and eager-loaded.
 
-        Resolves each secret now (across all available backends); entries with no stored
-        secret are omitted. Deduped by ``(id, type)`` — a value present in several backends
-        collapses to one credential recording the first backend found.
+        Merges two discovery passes, deduped by ``(id, type)``:
+        1. **Connection-derived** — look up each connection's password/sudo and each key's
+           passphrase across all available backends (rich metadata: connection/port/uri).
+        2. **Enumeration** (``include_orphans``) — for each available backend whose adapter can
+           enumerate (libsecret/pass/bitwarden), ``load_all()`` to surface **orphans** (stored
+           secrets with no matching connection); these are tagged ``metadata['orphan']=True``.
+
+        Pass ``include_orphans=False`` (e.g. a connection-scoped backup) to skip pass 2 and
+        return only the credentials of the given connections. Connection-derived entries win on
+        collision (richer metadata). Entries with no stored secret are omitted.
         """
         out: Dict[Tuple[str, str], Credential] = {}
         connections = self._get_connections()
@@ -98,7 +84,27 @@ class CredentialManager:
             except Exception:
                 logger.debug("collecting passwords for a connection failed", exc_info=True)
         self._collect_key_passphrases(connections, out)
+        if include_orphans:
+            self._merge_enumeration(out)
         return list(out.values())
+
+    def _merge_enumeration(self, out: Dict[Tuple[str, str], Credential]) -> None:
+        """Add enumerated orphans from every available backend that can enumerate."""
+        try:
+            backends = self._secrets._all_available_backends()
+        except Exception:
+            logger.debug("listing available backends failed", exc_info=True)
+            return
+        for backend in backends:
+            adapter = SecretBackendAdapter(backend)
+            if not adapter.can_enumerate:
+                continue
+            for cred in adapter.load_all():
+                key = (cred.id, cred.type)
+                if key in out:
+                    continue                       # connection-derived already has it (richer)
+                cred.metadata["orphan"] = True
+                out[key] = cred
 
     # -- connection passwords + sudo -------------------------------------
     def _collect_connection_passwords(self, conn, out: Dict[Tuple[str, str], Credential]) -> None:
@@ -110,7 +116,7 @@ class CredentialManager:
                 if found is None:
                     continue
                 value, backend = found
-                cred = self._credential_from(spec, value, backend, connection=conn)
+                cred = spec_to_credential(spec, value, backend, connection=conn)
                 out.setdefault((cred.id, cred.type), cred)
                 break   # first host-variant hit wins for this (connection, kind)
 
@@ -157,7 +163,7 @@ class CredentialManager:
             if found is None:
                 continue
             value, backend = found
-            cred = self._credential_from(spec, value, backend)
+            cred = spec_to_credential(spec, value, backend)
             cred.metadata["connections"] = sorted(n for n in nicknames if n)
             out.setdefault((cred.id, cred.type), cred)
 
@@ -173,7 +179,7 @@ class CredentialManager:
         return paths
 
     # -- helpers ----------------------------------------------------------
-    def _lookup(self, spec: SecretSpec) -> Optional[Tuple[str, str]]:
+    def _lookup(self, spec):
         try:
             return self._secrets.lookup_everywhere(spec)
         except Exception:
@@ -193,45 +199,3 @@ class CredentialManager:
             return list(self._connections_source or [])
         except Exception:
             return []
-
-    @staticmethod
-    def _credential_from(spec: SecretSpec, value: str, backend_name: str, *,
-                         connection=None) -> Credential:
-        attrs = spec.attributes or {}
-        raw_type = attrs.get("type", "")
-        ctype = _TYPE_FROM_SPEC.get(raw_type, raw_type or "unknown")
-        host = attrs.get("host") or None
-        username = attrs.get("username") or None
-        key_path = attrs.get("key_path") or None
-
-        metadata: Dict[str, Any] = {
-            "backend": backend_name,
-            "raw_type": raw_type,
-            "label": spec.label,
-        }
-        if key_path:
-            metadata["key_path"] = key_path
-        if connection is not None:
-            port = getattr(connection, "port", None)
-            nickname = getattr(connection, "nickname", "") or None
-            if port:
-                metadata["port"] = port
-            if nickname:
-                metadata["connection"] = nickname
-            if host and username:
-                suffix = ""
-                try:
-                    if port and int(port) != 22:
-                        suffix = f":{int(port)}"
-                except (TypeError, ValueError):
-                    suffix = ""
-                metadata["uri"] = f"ssh://{username}@{host}{suffix}"
-
-        return Credential(
-            id=spec.keyring_account,
-            type=ctype,
-            host=host,
-            username=username,
-            secret=value,
-            metadata=metadata,
-        )

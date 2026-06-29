@@ -25,6 +25,10 @@ dependencies = [
     "keyring>=24.3",
     "psutil>=5.9.0",
     "certifi>=2023.7.22",
+    # KeePass (.kdbx) credential adapter (export/import). Imported lazily; the KDBX
+    # adapter reports unavailable if it (or its deps: lxml/pycryptodomex/argon2-cffi)
+    # is missing, so the rest of the app is unaffected.
+    "pykeepass>=4.0",
 ]
 
 [project.optional-dependencies]

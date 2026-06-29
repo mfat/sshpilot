@@ -30,6 +30,11 @@
 cryptography>=42.0
 keyring>=24.3
 
+# KeePass (.kdbx) credential adapter (export/import). Imported lazily — the KDBX
+# adapter degrades to "unavailable" if this (or its deps lxml/pycryptodomex/argon2-cffi)
+# is missing, so it's safe to omit if you don't need KeePass interop.
+pykeepass>=4.0
+
 # System utilities
 psutil>=5.9.0
 

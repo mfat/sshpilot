@@ -58,85 +58,183 @@ class WindowConfigDialogsMixin:
         except Exception as e:
             logger.error(f"Failed to show preferences dialog: {e}")
 
+    def _simple_dialog(self, heading, body):
+        d = Adw.MessageDialog(transient_for=self, modal=True, heading=heading, body=body)
+        d.add_response('ok', _('OK'))
+        d.present()
+
     def show_export_dialog(self):
-        """Show export configuration dialog"""
-        logger.info("Show export configuration dialog")
+        """Show the backup export flow: pick connections + encryption, then save a .spbk."""
+        logger.info("Show export backup dialog")
         try:
-            from .backup_manager import BackupManager
-            
-            # Create file chooser dialog for saving
-            file_dialog = Gtk.FileDialog()
-            file_dialog.set_title(_("Export Configuration"))
-            file_dialog.set_initial_name(f"sshpilot_config_{datetime.now().strftime('%Y%m%d')}.json")
-            
-            # Set default folder to user's documents or home
-            try:
-                docs_path = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOCUMENTS)
-                if docs_path:
-                    file_dialog.set_initial_folder(Gio.File.new_for_path(docs_path))
-            except Exception:
-                pass
-            
-            def on_save_response(dialog, result):
-                try:
-                    file = dialog.save_finish(result)
-                    if file:
-                        export_path = file.get_path()
-                        
-                        # Perform export
-                        backup_mgr = BackupManager(self.config, self.connection_manager)
-                        success, error = backup_mgr.export_configuration(export_path)
-                        
-                        if success:
-                            # Show success dialog
-                            success_dialog = Adw.MessageDialog(
-                                transient_for=self,
-                                modal=True,
-                                heading=_("Export Successful"),
-                                body=_("Configuration exported successfully to:\n{}").format(export_path)
-                            )
-                            success_dialog.add_response('ok', _('OK'))
-                            success_dialog.present()
-                        else:
-                            # Show error dialog
-                            error_dialog = Adw.MessageDialog(
-                                transient_for=self,
-                                modal=True,
-                                heading=_("Export Failed"),
-                                body=_("Failed to export configuration:\n{}").format(error or "Unknown error")
-                            )
-                            error_dialog.add_response('ok', _('OK'))
-                            error_dialog.present()
-                            
-                except GLib.Error as e:
-                    # Check if user cancelled the dialog (error code 2 = GTK_DIALOG_ERROR_DISMISSED)
-                    if e.code == 2:
-                        logger.info("Export cancelled by user")
-                    else:
-                        logger.error(f"Export failed: {e}")
-                        error_dialog = Adw.MessageDialog(
-                            transient_for=self,
-                            modal=True,
-                            heading=_("Export Failed"),
-                            body=_("An error occurred during export:\n{}").format(str(e))
-                        )
-                        error_dialog.add_response('ok', _('OK'))
-                        error_dialog.present()
-                except Exception as e:
-                    logger.error(f"Export failed: {e}")
-                    error_dialog = Adw.MessageDialog(
-                        transient_for=self,
-                        modal=True,
-                        heading=_("Export Failed"),
-                        body=_("An error occurred during export:\n{}").format(str(e))
-                    )
-                    error_dialog.add_response('ok', _('OK'))
-                    error_dialog.present()
-            
-            file_dialog.save(self, None, on_save_response)
-            
+            self._show_export_options_dialog()
         except Exception as e:
             logger.error(f"Failed to show export dialog: {e}")
+
+    def _show_export_options_dialog(self, prefill_ids=None, encrypt_default=True):
+        """Select which connections' credentials to include + whether to encrypt."""
+        try:
+            connections = list(self.connection_manager.get_connections()) \
+                if self.connection_manager else []
+        except Exception:
+            connections = []
+
+        dialog = Adw.MessageDialog(
+            transient_for=self, modal=True, heading=_("Export Backup"),
+            body=_("Your full configuration is always backed up. Choose which connections' "
+                   "saved passwords and key passphrases to include."))
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        box.set_margin_start(8); box.set_margin_end(8)
+        box.set_margin_top(8); box.set_margin_bottom(8)
+
+        select_all = Gtk.CheckButton(label=_("Select all connections"))
+        box.append(select_all)
+
+        listbox = Gtk.ListBox()
+        listbox.set_selection_mode(Gtk.SelectionMode.NONE)
+        listbox.add_css_class('boxed-list')
+        checks = []
+        prefill = set(prefill_ids or [])
+        for conn in connections:
+            try:
+                label = getattr(conn, 'nickname', '') or conn.get_effective_host() or '?'
+                key = getattr(conn, 'nickname', '') or label
+            except Exception:
+                label, key = '?', '?'
+            cb = Gtk.CheckButton(label=label)
+            cb.set_active(key in prefill)
+            row = Gtk.ListBoxRow(); row.set_child(cb); listbox.append(row)
+            checks.append((cb, conn, key))
+        scrolled = Gtk.ScrolledWindow()
+        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scrolled.set_min_content_height(180)
+        scrolled.set_child(listbox)
+        box.append(scrolled)
+
+        def on_select_all(btn):
+            for cb, _c, _k in checks:
+                cb.set_active(btn.get_active())
+        select_all.connect('toggled', on_select_all)
+
+        enc_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        enc_label = Gtk.Label(label=_("Encrypt with a passphrase"), xalign=0, hexpand=True)
+        enc_switch = Gtk.Switch(active=bool(encrypt_default))
+        enc_switch.set_valign(Gtk.Align.CENTER)
+        enc_row.append(enc_label); enc_row.append(enc_switch)
+        enc_row.set_margin_top(6)
+        box.append(enc_row)
+
+        pw = Gtk.PasswordEntry(show_peek_icon=True)
+        pw.set_property('placeholder-text', _("Passphrase"))
+        box.append(pw)
+        caption = Gtk.Label(label=_("Without a passphrase, secrets are written in plain text."))
+        caption.set_xalign(0); caption.set_wrap(True)
+        for css in ('dim-label', 'caption'):
+            try: caption.add_css_class(css)
+            except Exception: pass
+        box.append(caption)
+
+        def sync_pw(*_a):
+            on = enc_switch.get_active()
+            pw.set_visible(on)
+            caption.set_visible(not on)
+        enc_switch.connect('notify::active', sync_pw)
+        sync_pw()
+
+        dialog.set_extra_child(box)
+        dialog.add_response('cancel', _('Cancel'))
+        dialog.add_response('next', _('Continue'))
+        dialog.set_response_appearance('next', Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response('next')
+        dialog.set_close_response('cancel')
+
+        def on_response(dlg, resp):
+            if resp != 'next':
+                return
+            selected = [conn for cb, conn, _k in checks if cb.get_active()]
+            sel_ids = [k for cb, _c, k in checks if cb.get_active()]
+            if enc_switch.get_active():
+                passphrase = pw.get_text() or ''
+                if not passphrase:
+                    # Re-open with the same selection so they don't lose it.
+                    self._simple_dialog(_("Passphrase required"),
+                                        _("Enter a passphrase, or turn off encryption."))
+                    GLib.idle_add(lambda: (self._show_export_options_dialog(sel_ids, True), False)[1])
+                    return
+                self._choose_export_path(selected, passphrase)
+            else:
+                self._confirm_plaintext_then_export(selected, sel_ids)
+
+        dialog.connect('response', on_response)
+        dialog.present()
+
+    def _confirm_plaintext_then_export(self, connections, sel_ids):
+        warn = Adw.MessageDialog(
+            transient_for=self, modal=True, heading=_("Export without encryption?"),
+            body=_("Saved passwords and key passphrases will be written in PLAIN TEXT and "
+                   "readable by anyone with the file. Continue?"))
+        warn.add_response('back', _('Go Back'))
+        warn.add_response('plain', _('Export Unencrypted'))
+        warn.set_response_appearance('plain', Adw.ResponseAppearance.DESTRUCTIVE)
+        warn.set_close_response('back')
+
+        def on_warn(dlg, resp):
+            if resp == 'plain':
+                self._choose_export_path(connections, None)
+            else:
+                GLib.idle_add(lambda: (self._show_export_options_dialog(sel_ids, False), False)[1])
+        warn.connect('response', on_warn)
+        warn.present()
+
+    def _choose_export_path(self, connections, passphrase):
+        from .backup_manager import BackupManager
+        file_dialog = Gtk.FileDialog()
+        file_dialog.set_title(_("Export Backup"))
+        file_dialog.set_initial_name(
+            f"sshpilot_backup_{datetime.now().strftime('%Y%m%d')}.spbk")
+        spbk_filter = Gtk.FileFilter()
+        spbk_filter.set_name(_("sshPilot backup (*.spbk)"))
+        spbk_filter.add_pattern("*.spbk")
+        filters = Gio.ListStore.new(Gtk.FileFilter)
+        filters.append(spbk_filter)
+        file_dialog.set_filters(filters)
+        file_dialog.set_default_filter(spbk_filter)
+        try:
+            docs_path = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOCUMENTS)
+            if docs_path:
+                file_dialog.set_initial_folder(Gio.File.new_for_path(docs_path))
+        except Exception:
+            pass
+
+        def on_save_response(dialog, result):
+            try:
+                file = dialog.save_finish(result)
+            except GLib.Error as e:
+                if getattr(e, 'code', None) == 2:
+                    logger.info("Export cancelled by user")
+                else:
+                    logger.error(f"Export failed: {e}")
+                    self._simple_dialog(_("Export Failed"), str(e))
+                return
+            if not file:
+                return
+            export_path = file.get_path()
+            if not export_path.endswith('.spbk'):
+                export_path += '.spbk'
+            backup_mgr = BackupManager(self.config, self.connection_manager)
+            success, error = backup_mgr.export_backup(
+                export_path, connections=connections, passphrase=passphrase)
+            if success:
+                self._simple_dialog(
+                    _("Export Successful"),
+                    _("Backup saved to:\n{}\n\n{} credential(s) included; encryption: {}.").format(
+                        export_path, len(connections),
+                        _("on") if passphrase else _("off")))
+            else:
+                self._simple_dialog(_("Export Failed"), error or _("Unknown error"))
+
+        file_dialog.save(self, None, on_save_response)
 
     def show_import_dialog(self):
         """Show import configuration dialog"""
@@ -146,21 +244,21 @@ class WindowConfigDialogsMixin:
             file_dialog = Gtk.FileDialog()
             file_dialog.set_title(_("Import Configuration"))
             
-            # Set file filter for JSON files
-            filter_json = Gtk.FileFilter()
-            filter_json.set_name(_("JSON files"))
-            filter_json.add_mime_type("application/json")
-            filter_json.add_pattern("*.json")
-            
+            # Backups (.spbk) and legacy JSON configs.
+            filter_backup = Gtk.FileFilter()
+            filter_backup.set_name(_("sshPilot backups & configs"))
+            filter_backup.add_pattern("*.spbk")
+            filter_backup.add_pattern("*.json")
+
             filter_all = Gtk.FileFilter()
             filter_all.set_name(_("All files"))
             filter_all.add_pattern("*")
-            
+
             filters = Gio.ListStore.new(Gtk.FileFilter)
-            filters.append(filter_json)
+            filters.append(filter_backup)
             filters.append(filter_all)
             file_dialog.set_filters(filters)
-            file_dialog.set_default_filter(filter_json)
+            file_dialog.set_default_filter(filter_backup)
             
             # Set default folder to user's documents or home
             try:
@@ -175,9 +273,8 @@ class WindowConfigDialogsMixin:
                     file = dialog.open_finish(result)
                     if file:
                         import_path = file.get_path()
-                        # Show import mode selection dialog
-                        self._show_import_mode_dialog(import_path)
-                        
+                        self._begin_import(import_path)
+
                 except GLib.Error as e:
                     # Check if user cancelled the dialog (error code 2 = GTK_DIALOG_ERROR_DISMISSED)
                     if e.code == 2:
@@ -192,7 +289,68 @@ class WindowConfigDialogsMixin:
         except Exception as e:
             logger.error(f"Failed to show import dialog: {e}")
 
-    def _show_import_mode_dialog(self, import_path: str):
+    def _begin_import(self, import_path: str):
+        """Route an import by format: .spbk (decrypt as needed) vs legacy JSON."""
+        try:
+            from .backup_archive import is_spbk
+            if is_spbk(import_path):
+                self._import_spbk(import_path)
+            else:
+                self._show_import_mode_dialog(import_path)
+        except Exception as e:
+            logger.error(f"Failed to start import: {e}")
+            self._simple_dialog(_("Import Failed"), str(e))
+
+    def _import_spbk(self, import_path: str):
+        """Decrypt (if needed) a .spbk, then proceed to the import-mode dialog with its manifest."""
+        from .backup_archive import read_spbk, spbk_is_encrypted, SpbkError
+        try:
+            if spbk_is_encrypted(import_path):
+                self._prompt_spbk_passphrase(import_path)
+                return
+            manifest = read_spbk(import_path, None)
+            self._show_import_mode_dialog(import_path, manifest=manifest)
+        except SpbkError as e:
+            self._simple_dialog(_("Import Failed"), str(e))
+        except Exception as e:
+            logger.error(f"Failed to read backup: {e}")
+            self._simple_dialog(_("Import Failed"), str(e))
+
+    def _prompt_spbk_passphrase(self, import_path: str, error: str = None):
+        """Prompt for the backup passphrase; retry on a wrong passphrase."""
+        from .backup_archive import read_spbk, SpbkPassphraseError, SpbkError
+        dialog = Adw.MessageDialog(
+            transient_for=self, modal=True, heading=_("Encrypted Backup"),
+            body=error or _("Enter the passphrase used when this backup was created."))
+        entry = Gtk.PasswordEntry(show_peek_icon=True)
+        entry.set_property('activates-default', True)
+        dialog.set_extra_child(entry)
+        dialog.add_response('cancel', _('Cancel'))
+        dialog.add_response('ok', _('Unlock'))
+        dialog.set_response_appearance('ok', Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response('ok')
+        dialog.set_close_response('cancel')
+
+        def on_response(dlg, resp):
+            if resp != 'ok':
+                return
+            passphrase = entry.get_text() or ''
+            try:
+                manifest = read_spbk(import_path, passphrase)
+            except SpbkPassphraseError:
+                GLib.idle_add(lambda: (self._prompt_spbk_passphrase(
+                    import_path, _("Wrong passphrase — try again.")), False)[1])
+                return
+            except SpbkError as e:
+                self._simple_dialog(_("Import Failed"), str(e))
+                return
+            self._show_import_mode_dialog(import_path, manifest=manifest)
+
+        dialog.connect('response', on_response)
+        dialog.present()
+        GLib.idle_add(lambda: (entry.grab_focus(), False)[1])
+
+    def _show_import_mode_dialog(self, import_path: str, manifest=None):
         """Show dialog to select import mode (replace or merge)"""
         try:
             dialog = Adw.MessageDialog(
@@ -261,7 +419,10 @@ class WindowConfigDialogsMixin:
             def on_response(dialog, response):
                 if response == 'import':
                     mode = 'replace' if replace_radio.get_active() else 'merge'
-                    self._perform_import(import_path, mode)
+                    if manifest is not None:
+                        self._perform_spbk_import(manifest, mode)
+                    else:
+                        self._perform_import(import_path, mode)
                 dialog.destroy()
             
             dialog.connect('response', on_response)
@@ -269,6 +430,46 @@ class WindowConfigDialogsMixin:
             
         except Exception as e:
             logger.error(f"Failed to show import mode dialog: {e}")
+
+    def _perform_spbk_import(self, manifest, mode: str):
+        """Apply a decrypted .spbk manifest: config (replace/merge) + restore credentials."""
+        try:
+            from .backup_manager import BackupManager
+            backup_mgr = BackupManager(self.config, self.connection_manager)
+            success, error, restored = backup_mgr.apply_imported_manifest(
+                manifest, mode=mode, create_backup=True)
+            if not success:
+                self._simple_dialog(_("Import Failed"), error or _("Unknown error"))
+                return
+            cred_line = (_("\n\n{} credential(s) were restored.").format(restored)
+                         if restored else "")
+            success_dialog = Adw.MessageDialog(
+                transient_for=self, modal=True, heading=_("Import Successful"),
+                body=_("Backup imported successfully.{}\n\nIt is recommended to restart "
+                       "SSH Pilot for all changes to take effect.").format(cred_line))
+            success_dialog.add_response('ok', _('OK'))
+            success_dialog.add_response('restart', _('Restart Now'))
+            success_dialog.set_response_appearance('restart', Adw.ResponseAppearance.SUGGESTED)
+
+            def on_success_response(dialog, response):
+                if response == 'restart':
+                    try:
+                        self.config.config_data = self.config.load_json_config()
+                        if self.connection_manager:
+                            self.connection_manager.load_ssh_config()
+                        if self.group_manager:
+                            self.group_manager._load_groups()
+                        self.rebuild_connection_list()
+                        self.toast_overlay.add_toast(Adw.Toast.new(_("Configuration reloaded")))
+                    except Exception as e:
+                        logger.error(f"Failed to reload configuration: {e}")
+                dialog.destroy()
+
+            success_dialog.connect('response', on_success_response)
+            success_dialog.present()
+        except Exception as e:
+            logger.error(f"Backup import failed: {e}")
+            self._simple_dialog(_("Import Failed"), str(e))
 
     def _perform_import(self, import_path: str, mode: str):
         """Perform the actual import operation"""
