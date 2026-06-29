@@ -106,7 +106,13 @@ Backend specifics:
   never prompts); it is driven from Preferences and lazily from
   `terminal_manager.connect_to_host`. Signing in (`bw login`, and `bw config server <url>`
   first for a self-hosted Vaultwarden) is a one-time user step in a terminal — the app
-  only runs `bw unlock`.
+  only runs `bw unlock`. The prompt has an opt-in **"Remember master password"** that
+  saves it to the **platform keyring** (libsecret/keyring) — never the vault it unlocks —
+  via `SecretManager.store_in_keyring`/`lookup_in_keyring`/`delete_in_keyring` and
+  `master_password_spec` (keyed by backend + `BITWARDENCLI_APPDATA_DIR` profile,
+  selection-independent). When a saved password exists, `prompt_unlock` auto-unlocks with
+  it but still shows the "Unlocking…" spinner; a stale saved password is dropped and the
+  manual prompt shown.
 - **`agent`** means *don't store secrets at all*: an `authoritative` null backend.
   When selected, `store`/`lookup` consult only it (no fallback/fallthrough) so
   nothing is written to or read from other stores; the user relies on ssh-agent

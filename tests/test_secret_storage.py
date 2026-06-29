@@ -453,6 +453,61 @@ def test_unavailable_backend_warning_is_deduped(manager, caplog):
     assert len(hits) == 1                          # warned once, not per call
 
 
+def test_master_password_spec_uses_only_schema_attrs():
+    spec = ss.master_password_spec('bitwarden', '')
+    assert spec.keyring_account == 'bitwarden-master:default'
+    assert spec.attributes == {
+        'application': 'sshPilot',
+        'type': 'vault_master',
+        'key_path': 'bitwarden-master:default',
+    }
+    # libsecret's schema only has these attribute names; must not invent new ones.
+    assert set(spec.attributes) <= {'application', 'type', 'key_path', 'host', 'username'}
+    # distinct per account/profile so multiple accounts don't collide.
+    assert ss.master_password_spec('bitwarden', '/data/work').keyring_account \
+        != spec.keyring_account
+
+
+def test_master_password_stored_in_keyring_not_selected_vault(manager):
+    # The master password must land in the platform keyring (libsecret) even when a
+    # session vault is the selected backend — it can't live in the vault it unlocks.
+    mgr, primary, fallback = manager
+    vault = FakeSessionBackend('vault')
+    vault.unlock('correct')
+    mgr.register_backend('vault', vault)
+    mgr.set_selected('vault')
+    spec = ss.master_password_spec('vault', '')
+
+    assert mgr.store_in_keyring(spec, 'master-pw') is True
+    assert primary.data[spec.keyring_account] == 'master-pw'     # libsecret got it
+    assert spec.keyring_account not in vault.data                # NOT the selected vault
+    assert mgr.lookup_in_keyring(spec) == 'master-pw'
+    assert mgr.delete_in_keyring(spec) is True
+    assert mgr.lookup_in_keyring(spec) is None
+
+
+def test_selected_master_spec_tracks_selection_and_profile(manager, monkeypatch):
+    # The unlock dialog (save) and Preferences (forget) must key off the SAME spec.
+    mgr, primary, fallback = manager
+    mgr.register_backend('vault', FakeSessionBackend('vault'))
+    mgr.set_selected('vault')
+    monkeypatch.delenv('BITWARDENCLI_APPDATA_DIR', raising=False)
+    assert ss.selected_master_spec(mgr).keyring_account == 'vault-master:default'
+    monkeypatch.setenv('BITWARDENCLI_APPDATA_DIR', '/data/work')
+    assert ss.selected_master_spec(mgr).keyring_account == 'vault-master:/data/work'
+
+
+def test_lookup_in_keyring_ignores_non_keyring_backend_copy(manager):
+    # A value present only in a non-keyring backend (e.g. `pass`) must not be returned by
+    # the keyring-only lookup used for the master password.
+    mgr, primary, fallback = manager
+    extra = mgr._backends['pass']
+    extra._available = True
+    spec = ss.master_password_spec('bitwarden', '')
+    extra.data[spec.keyring_account] = 'in-pass'
+    assert mgr.lookup_in_keyring(spec) is None
+
+
 def test_bitwarden_is_available_reresolves_bw(monkeypatch):
     # is_available() must reflect a `bw` that appears AFTER the backend is built,
     # so a newly-installed CLI is detected without restarting the app.

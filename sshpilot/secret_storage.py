@@ -205,6 +205,40 @@ def sudo_password_spec(host: str, username: str) -> SecretSpec:
     )
 
 
+def master_password_spec(backend_name: str = "bitwarden", profile: str = "") -> SecretSpec:
+    """Spec for a session vault's **master password** (e.g. the Bitwarden unlock
+    password), keyed by backend and account/profile so multiple accounts don't collide.
+
+    This is the one secret that must NOT live in the session vault it unlocks (circular),
+    so it is always stored in the platform keyring via
+    :meth:`SecretManager.store_in_keyring`. ``type=vault_master`` keeps it distinct from
+    host passwords, and the unique account id is carried in the schema's ``key_path``
+    attribute (the libsecret schema has no ``backend``/``profile`` keys)."""
+    account = f"{backend_name}-master:{profile or 'default'}"
+    return SecretSpec(
+        keyring_service=SERVICE_NAME,
+        keyring_account=account,
+        attributes={
+            "application": SERVICE_NAME,
+            "type": "vault_master",
+            "key_path": account,
+        },
+        label=f"{SERVICE_NAME}: {backend_name} master password",
+        pass_path=f"sshpilot/master/{_pass_segment(account)}",
+    )
+
+
+def selected_master_spec(manager: Optional["SecretManager"] = None) -> SecretSpec:
+    """:func:`master_password_spec` for the currently-selected backend + profile —
+    the single source of truth shared by the unlock dialog and Preferences so a saved
+    password is stored, read, and forgotten under the same key."""
+    mgr = manager if manager is not None else get_secret_manager()
+    backend = mgr.selected_backend()
+    name = (getattr(backend, "name", "") or "session").strip().lower()
+    profile = os.environ.get("BITWARDENCLI_APPDATA_DIR", "")
+    return master_password_spec(name, profile)
+
+
 # ---------------------------------------------------------------------------
 # Backends
 # ---------------------------------------------------------------------------
@@ -868,6 +902,42 @@ class SecretManager:
     @staticmethod
     def _platform_default_order() -> List[str]:
         return ["keyring"] if is_macos() else ["libsecret", "keyring"]
+
+    # -- platform keyring (selection-independent) -------------------------
+    # Used for the session vault's master password, which must be stored in the OS
+    # keyring regardless of the selected backend (it cannot live in the vault it
+    # unlocks, nor in `pass`/`agent`).
+    def _platform_keyring_backends(self) -> List[SecretBackend]:
+        out: List[SecretBackend] = []
+        for name in self._platform_default_order():   # libsecret then keyring (Linux)
+            backend = self._backends.get(name)
+            if backend is not None and backend.is_available():
+                out.append(backend)
+        return out
+
+    def store_in_keyring(self, spec: SecretSpec, secret: str) -> bool:
+        """Store ``secret`` in the platform keyring only (ignores the selection)."""
+        for backend in self._platform_keyring_backends():
+            if backend.store(spec, secret):
+                return True
+        logger.warning("No platform keyring available; %s not saved", spec.label)
+        return False
+
+    def lookup_in_keyring(self, spec: SecretSpec) -> Optional[str]:
+        """Read ``spec`` from the platform keyring only (ignores the selection)."""
+        for backend in self._platform_keyring_backends():
+            value = backend.lookup(spec)
+            if value:
+                return value
+        return None
+
+    def delete_in_keyring(self, spec: SecretSpec) -> bool:
+        """Clear ``spec`` from every platform keyring backend (ignores the selection)."""
+        removed = False
+        for backend in self._platform_keyring_backends():
+            if backend.delete(spec):
+                removed = True
+        return removed
 
     def _ordered_names(self) -> List[str]:
         selected = self._selected_name()
