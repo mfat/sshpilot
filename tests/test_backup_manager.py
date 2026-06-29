@@ -95,6 +95,29 @@ def test_spbk_export_gathers_selected_credentials_and_restores(monkeypatch, tmp_
     assert fake.data[sudo_password_spec("h.example", "alice").keyring_account] == "sudo-a"
 
 
+def test_restore_count_reflects_failed_stores(monkeypatch, tmp_path):
+    # A locked/unavailable backend makes store() return False; _restore_credentials returns the
+    # number actually saved, so the UI can detect a partial restore (and prompt to unlock).
+    monkeypatch.setattr(bm, "get_config_dir", lambda: str(tmp_path))
+
+    class LockedMgr(FakeMgr):
+        def store(self, spec, secret):
+            return False                          # e.g. a locked session vault
+
+    monkeypatch.setattr(ss, "get_secret_manager", lambda: LockedMgr())
+    mgr = bm.BackupManager(FakeConfig(), FakeConnMgr([]))
+    manifest = {"credentials": [
+        {"id": "u@h", "type": "password", "host": "h", "username": "u", "secret": "pw"},
+        {"id": "v@h", "type": "password", "host": "h", "username": "v", "secret": "pw2"},
+    ]}
+    assert mgr._restore_credentials(manifest) == 0     # nothing saved -> UI shows "0 of 2"
+
+    # ...and when the backend works, all are restored.
+    ok = FakeMgr()
+    monkeypatch.setattr(ss, "get_secret_manager", lambda: ok)
+    assert mgr._restore_credentials(manifest) == 2
+
+
 def test_spbk_export_plaintext_when_no_passphrase(monkeypatch, tmp_path):
     monkeypatch.setattr(bm, "get_config_dir", lambda: str(tmp_path))
     fake = FakeMgr()

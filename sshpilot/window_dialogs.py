@@ -432,44 +432,76 @@ class WindowConfigDialogsMixin:
             logger.error(f"Failed to show import mode dialog: {e}")
 
     def _perform_spbk_import(self, manifest, mode: str):
-        """Apply a decrypted .spbk manifest: config (replace/merge) + restore credentials."""
-        try:
-            from .backup_manager import BackupManager
-            backup_mgr = BackupManager(self.config, self.connection_manager)
-            success, error, restored = backup_mgr.apply_imported_manifest(
-                manifest, mode=mode, create_backup=True)
+        """Apply a decrypted .spbk manifest: config (replace/merge) + restore credentials.
+
+        If the manifest carries credentials and the selected secret backend is a **locked
+        session vault** (e.g. Bitwarden), unlock it first so the restores don't silently fail.
+        Proceed-regardless: if the user cancels the unlock we still import and report how many
+        credentials could be restored."""
+        total = len([c for c in (manifest.get('credentials') or [])
+                     if c.get('secret') is not None])
+
+        def do_apply(*_args):
+            try:
+                from .backup_manager import BackupManager
+                backup_mgr = BackupManager(self.config, self.connection_manager)
+                success, error, restored = backup_mgr.apply_imported_manifest(
+                    manifest, mode=mode, create_backup=True)
+            except Exception as e:
+                logger.error(f"Backup import failed: {e}")
+                self._simple_dialog(_("Import Failed"), str(e))
+                return
             if not success:
                 self._simple_dialog(_("Import Failed"), error or _("Unknown error"))
                 return
-            cred_line = (_("\n\n{} credential(s) were restored.").format(restored)
-                         if restored else "")
-            success_dialog = Adw.MessageDialog(
-                transient_for=self, modal=True, heading=_("Import Successful"),
-                body=_("Backup imported successfully.{}\n\nIt is recommended to restart "
-                       "SSH Pilot for all changes to take effect.").format(cred_line))
-            success_dialog.add_response('ok', _('OK'))
-            success_dialog.add_response('restart', _('Restart Now'))
-            success_dialog.set_response_appearance('restart', Adw.ResponseAppearance.SUGGESTED)
+            self._show_import_success(restored, total)
 
-            def on_success_response(dialog, response):
-                if response == 'restart':
-                    try:
-                        self.config.config_data = self.config.load_json_config()
-                        if self.connection_manager:
-                            self.connection_manager.load_ssh_config()
-                        if self.group_manager:
-                            self.group_manager._load_groups()
-                        self.rebuild_connection_list()
-                        self.toast_overlay.add_toast(Adw.Toast.new(_("Configuration reloaded")))
-                    except Exception as e:
-                        logger.error(f"Failed to reload configuration: {e}")
-                dialog.destroy()
+        if total:
+            try:
+                from .secret_storage import get_secret_manager
+                if get_secret_manager().selected_needs_unlock():
+                    from .secret_unlock_dialog import prompt_unlock
+                    prompt_unlock(self, on_done=do_apply)   # do_apply runs once unlock resolves
+                    return
+            except Exception:
+                logger.debug("Pre-restore unlock check failed", exc_info=True)
+        do_apply()
 
-            success_dialog.connect('response', on_success_response)
-            success_dialog.present()
-        except Exception as e:
-            logger.error(f"Backup import failed: {e}")
-            self._simple_dialog(_("Import Failed"), str(e))
+    def _show_import_success(self, restored: int, total: int):
+        if total == 0:
+            body = _("Backup imported successfully.")
+        elif restored >= total:
+            body = _("Backup imported successfully.\n\n{} credential(s) were restored.").format(
+                restored)
+        else:
+            body = _("Configuration imported, but only {restored} of {total} credential(s) "
+                     "could be restored — your selected secret backend may be locked or "
+                     "unavailable. Unlock it and import again to finish restoring the rest."
+                     ).format(restored=restored, total=total)
+        body += _("\n\nIt is recommended to restart SSH Pilot for all changes to take effect.")
+
+        success_dialog = Adw.MessageDialog(
+            transient_for=self, modal=True, heading=_("Import Successful"), body=body)
+        success_dialog.add_response('ok', _('OK'))
+        success_dialog.add_response('restart', _('Restart Now'))
+        success_dialog.set_response_appearance('restart', Adw.ResponseAppearance.SUGGESTED)
+
+        def on_success_response(dialog, response):
+            if response == 'restart':
+                try:
+                    self.config.config_data = self.config.load_json_config()
+                    if self.connection_manager:
+                        self.connection_manager.load_ssh_config()
+                    if self.group_manager:
+                        self.group_manager._load_groups()
+                    self.rebuild_connection_list()
+                    self.toast_overlay.add_toast(Adw.Toast.new(_("Configuration reloaded")))
+                except Exception as e:
+                    logger.error(f"Failed to reload configuration: {e}")
+            dialog.destroy()
+
+        success_dialog.connect('response', on_success_response)
+        success_dialog.present()
 
     def _perform_import(self, import_path: str, mode: str):
         """Perform the actual import operation"""
