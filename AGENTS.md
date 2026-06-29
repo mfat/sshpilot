@@ -82,7 +82,7 @@ Credentials are stored/retrieved through a **pluggable secret backend**
 `askpass_utils.lookup_passphrase` delegate to `SecretManager`. The backend is
 selectable via the `secrets.backend` setting — `auto` (platform default:
 libsecret then keyring on Linux, keyring on macOS), or an explicit `libsecret` /
-`keyring` / `pass` (passwordstore.org) / `bitwarden` / `vaultwarden` / `agent`, or
+`keyring` / `pass` (passwordstore.org) / `bitwarden` / `agent`, or
 a registered custom backend. Reads/deletes fall through to every available backend
 so secrets aren't orphaned when the selection changes. The askpass helper
 (`askpass_utils.py`) is the program ssh invokes; it looks the passphrase up via the
@@ -92,16 +92,20 @@ askpass prompt are advertised features — keep them working.
 Backend specifics:
 - **KeePassXC** needs no dedicated backend — enable its GUI *Secret Service
   integration* and select `libsecret` (same `org.freedesktop.secrets` D-Bus API).
-- **`bitwarden` / `vaultwarden`** are *session-backed* (`bw` CLI). They must be
-  unlocked (master password) before secrets resolve; the unlock token is cached
-  in-process and exported as `BW_SESSION` so the askpass subprocess can read
-  non-interactively. The token is dropped after `secrets.session_timeout` idle
-  minutes (propagated as `SSHPILOT_SECRET_SESSION_TIMEOUT` seconds) and on app
-  shutdown. The GTK unlock prompt lives in `secret_unlock_dialog.py` (the core
-  module stays GTK-free and never prompts); it is driven from Preferences and
-  lazily from `terminal_manager.connect_to_host`. Vaultwarden = self-hosted server
-  URL (`secrets.vaultwarden.server` → `SSHPILOT_VAULTWARDEN_SERVER`); note the `bw`
-  CLI holds one server/account at a time.
+- **`bitwarden`** is *session-backed* (`bw` CLI). One backend covers Bitwarden cloud
+  **and** self-hosted **Vaultwarden** (and any account) — which server/account the CLI
+  talks to is the CLI's own config plus the optional **account/profile**
+  `secrets.bitwarden.profile` (a `bw` data dir, exported as `BITWARDENCLI_APPDATA_DIR`
+  into the process env so every `bw` spawn and the askpass subprocess use that account).
+  It must be unlocked (master password) before secrets resolve; the unlock token is
+  cached in-process and exported as `BW_SESSION` so the askpass subprocess can read
+  non-interactively. The token is dropped after `secrets.session_timeout` idle minutes
+  (propagated as `SSHPILOT_SECRET_SESSION_TIMEOUT` seconds) and on app shutdown. The GTK
+  unlock prompt lives in `secret_unlock_dialog.py` (the core module stays GTK-free and
+  never prompts); it is driven from Preferences and lazily from
+  `terminal_manager.connect_to_host`. Signing in (`bw login`, and `bw config server <url>`
+  first for a self-hosted Vaultwarden) is a one-time user step in a terminal — the app
+  only runs `bw unlock`.
 - **`agent`** means *don't store secrets at all*: an `authoritative` null backend.
   When selected, `store`/`lookup` consult only it (no fallback/fallthrough) so
   nothing is written to or read from other stores; the user relies on ssh-agent

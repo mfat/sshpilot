@@ -416,12 +416,14 @@ class FakeBw:
         self.items = [dict(i) for i in (items or [])]
         self.unlock_ok = unlock_ok
         self.calls = []            # each: bw args (without bin / --nointeraction)
+        self.envs = []             # the env dict each call was spawned with
         self.search_terms = []     # search values seen on `list items` (None = full)
         self._n = 0
 
     def run(self, argv, input=None, capture_output=None, env=None, check=None, timeout=None):
         cmd = [a for a in list(argv)[1:] if a != '--nointeraction']   # strip bin + flag
         self.calls.append(cmd)
+        self.envs.append(dict(env or {}))
         if cmd[:1] == ['status']:
             return _Result(0, json.dumps({"status": self.status}).encode())
         if cmd[:1] == ['unlock']:
@@ -701,32 +703,35 @@ def test_bitwarden_needs_login(monkeypatch):
     assert mgr.selected_needs_login() is True
 
 
-def test_vaultwarden_requires_server(monkeypatch):
-    monkeypatch.delenv('SSHPILOT_VAULTWARDEN_SERVER', raising=False)
-    v = ss.VaultwardenBackend()
-    v._bin = '/usr/bin/bw'
-    assert v.is_available() is False
-    monkeypatch.setenv('SSHPILOT_VAULTWARDEN_SERVER', 'https://vw.example')
-    assert v.is_available() is True
-    assert v.describe() == 'vaultwarden:https://vw.example'
+def test_one_session_backend_no_vaultwarden(monkeypatch):
+    # Bitwarden + Vaultwarden were merged into one `bw` backend; there is no separate
+    # 'vaultwarden' backend, and availability is bin-only (no server URL gate).
+    assert not hasattr(ss, 'VaultwardenBackend')
+    mgr = ss.SecretManager()
+    assert 'vaultwarden' not in mgr.registered_backends()
+    assert 'bitwarden' in mgr.registered_backends()
+    b = ss.BitwardenBackend()
+    b._bin = '/usr/bin/bw'
+    assert b.is_available() is True            # no server URL required
+    assert b.describe() == 'bitwarden'
 
 
-def test_vaultwarden_inherits_full_unlock_flow(monkeypatch):
-    # Vaultwarden is a thin subclass: unlock warms the whole-vault cache and lookups hit
-    # it — identical to Bitwarden — and it must NOT spawn `bw config server` (the server
-    # is configured by the user via the CLI; that call only ever wasted a spawn).
-    monkeypatch.setenv('SSHPILOT_VAULTWARDEN_SERVER', 'https://vw.example')
+def test_bitwarden_profile_env_passed_to_bw(monkeypatch):
+    # Selecting an account profile sets BITWARDENCLI_APPDATA_DIR in the environment, which
+    # every `bw` spawn (and the inherited askpass subprocess) must carry.
+    monkeypatch.setenv('BITWARDENCLI_APPDATA_DIR', '/home/u/.config/Bitwarden CLI Work')
     fake = FakeBw(status='locked',
                   items=[{"id": "ID1", "name": "u@h", "login": {"password": "pw"}}])
-    b = ss.VaultwardenBackend()
-    b._bin = '/usr/bin/bw'
-    monkeypatch.setattr(ss.subprocess, 'run', fake.run)
-
-    assert b.is_available() is True
+    b = _make_backend(monkeypatch, fake)
     assert b.unlock('m') is True
-    assert b._cache_complete is True                          # full-vault cache warmed
-    assert not any(c[:1] == ['config'] for c in fake.calls)  # no `bw config server`
-    assert ['unlock'] in [c[:1] for c in fake.calls]
+    assert fake.envs, "no bw spawn captured"
+    assert all(e.get('BITWARDENCLI_APPDATA_DIR') == '/home/u/.config/Bitwarden CLI Work'
+               for e in fake.envs)
 
-    monkeypatch.setattr(ss.subprocess, 'run', _boom_bw)
-    assert b.lookup(password_spec('h', 'u')) == 'pw'          # warm-cache hit, no spawn
+
+def test_bitwarden_no_profile_env_when_unset(monkeypatch):
+    monkeypatch.delenv('BITWARDENCLI_APPDATA_DIR', raising=False)
+    fake = FakeBw(status='locked')
+    b = _make_backend(monkeypatch, fake)
+    assert b.unlock('m') is True
+    assert all('BITWARDENCLI_APPDATA_DIR' not in e for e in fake.envs)

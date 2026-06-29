@@ -1131,24 +1131,40 @@ class ConnectionManager(GObject.Object):
             manager = get_secret_manager()
             try:
                 from .config import Config
-                selected = Config().get_setting('secrets.backend', 'auto')
+                _cfg = Config()
+                selected = _cfg.get_setting('secrets.backend', 'auto')
             except Exception:
+                _cfg = None
                 selected = 'auto'
+            # The legacy separate 'vaultwarden' backend was merged into 'bitwarden'
+            # (one `bw` CLI). Migrate an old selection so it keeps working.
+            if str(selected).strip().lower() == 'vaultwarden':
+                selected = 'bitwarden'
+                try:
+                    if _cfg is not None:
+                        _cfg.set_setting('secrets.backend', 'bitwarden')
+                except Exception:
+                    pass
             manager.set_selected(selected)
             # Propagate the selection (and session-backend settings) to child
             # processes (e.g. the askpass helper) so they resolve the same backend
             # and can read session-backed secrets non-interactively.
             os.environ['SSHPILOT_SECRET_BACKEND'] = str(selected or 'auto')
             try:
-                from .config import Config as _SecretsConfig
-                _cfg = _SecretsConfig()
+                if _cfg is None:
+                    from .config import Config as _C
+                    _cfg = _C()
                 timeout_min = int(_cfg.get_setting('secrets.session_timeout', 0) or 0)
                 os.environ['SSHPILOT_SECRET_SESSION_TIMEOUT'] = str(max(0, timeout_min) * 60)
-                vw_server = str(_cfg.get_setting('secrets.vaultwarden.server', '') or '').strip()
-                if vw_server:
-                    os.environ['SSHPILOT_VAULTWARDEN_SERVER'] = vw_server
+                # Bitwarden CLI account/profile (BITWARDENCLI_APPDATA_DIR). Set in the
+                # process env so every `bw` spawn — and the inherited askpass subprocess —
+                # uses the same account.
+                profile = str(_cfg.get_setting('secrets.bitwarden.profile', '') or '').strip()
+                if profile:
+                    os.environ['BITWARDENCLI_APPDATA_DIR'] = os.path.expanduser(profile)
                 else:
-                    os.environ.pop('SSHPILOT_VAULTWARDEN_SERVER', None)
+                    os.environ.pop('BITWARDENCLI_APPDATA_DIR', None)
+                os.environ.pop('SSHPILOT_VAULTWARDEN_SERVER', None)  # retired
             except Exception:
                 pass
             self.secure_storage_backend = manager.active_backend_label()

@@ -34,6 +34,16 @@ _unlock_in_progress = False
 _pending_callbacks = []
 
 
+def _friendly_backend_name(backend):
+    """A human label for the unlock heading — never the raw describe() (which for
+    Vaultwarden includes the server URL, e.g. ``vaultwarden:https://…``)."""
+    name = (getattr(backend, "name", "") or "").strip().lower()
+    friendly = {"bitwarden": "Bitwarden", "vaultwarden": "Vaultwarden"}.get(name)
+    if friendly:
+        return friendly
+    return name.replace("-", " ").title() if name else _("vault")
+
+
 def _message(parent, heading, body, on_closed=None):
     """Show a simple informational dialog (AlertDialog, MessageDialog fallback).
 
@@ -144,6 +154,11 @@ def prompt_unlock(parent, *, on_done=None):
 
     Only one prompt is ever open at a time — concurrent calls ride the in-flight one
     and all their callbacks fire when it resolves.
+
+    Returns ``True`` when this call **owns** the interaction (it showed the dialog, or no
+    unlock was needed), and ``False`` when it merely **rode** an already-open prompt. The
+    connect flow uses this to avoid silently proceeding on a *ridden* prompt that resolves
+    still-locked (e.g. a startup unlock the user cancelled).
     """
     global _unlock_in_progress
     manager = get_secret_manager()
@@ -156,13 +171,13 @@ def prompt_unlock(parent, *, on_done=None):
                 on_done(True)
             except Exception:
                 logger.debug("unlock on_done callback failed", exc_info=True)
-        return
+        return True
 
     # A prompt is already open: ride it instead of stacking a second dialog.
     if _unlock_in_progress:
         if on_done:
             _pending_callbacks.append(on_done)
-        return
+        return False
     _unlock_in_progress = True
     _finished = [False]
 
@@ -186,7 +201,7 @@ def prompt_unlock(parent, *, on_done=None):
         return False  # usable directly with GLib.idle_add
 
     backend = manager.selected_backend()
-    label = backend.describe() if backend is not None else _("vault")
+    label = _friendly_backend_name(backend)
     heading = _("Unlock {backend}").format(backend=label)
     body = _("Enter your master password to unlock the secret store.")
 
@@ -255,17 +270,12 @@ def prompt_unlock(parent, *, on_done=None):
         if ok:
             on_spinner_closed = lambda *_a: _finish(True)
         elif needs_login:
-            # Vaultwarden also needs the server pointed at the CLI first (sshPilot does
-            # not run `bw config server` — `bw` refuses it while logged in).
-            backend = manager.selected_backend()
-            if getattr(backend, 'name', '') == 'vaultwarden':
-                login_body = _(
-                    "Your Vaultwarden vault has no signed-in account yet. In a terminal, "
-                    "run “bw config server <your-server-url>” then “bw login”, and try again.")
-            else:
-                login_body = _(
-                    "Your secret store has no signed-in account yet. Open a terminal, "
-                    "run “bw login”, then try again.")
+            # sshPilot only runs `bw unlock`; signing in (and, for a self-hosted
+            # Vaultwarden, pointing the CLI at the server) is a one-time terminal step.
+            login_body = _(
+                "Your vault has no signed-in account yet. In a terminal, run “bw login”, "
+                "then try again. For a self-hosted Vaultwarden, run “bw config server "
+                "your-server-url” first.")
             on_spinner_closed = lambda *_a, _body=login_body: _message(
                 parent,
                 _("Not signed in"),
@@ -312,7 +322,7 @@ def prompt_unlock(parent, *, on_done=None):
         # dialog has finished closing.
         def _present_spinner():
             be = manager.selected_backend()
-            label_be = be.describe() if be is not None else _("vault")
+            label_be = _friendly_backend_name(be)
             set_status, close, spin = _spinner_dialog(
                 parent,
                 _("Unlocking {backend}").format(backend=label_be),
@@ -355,3 +365,4 @@ def prompt_unlock(parent, *, on_done=None):
         return False
 
     GLib.idle_add(_focus_entry)
+    return True   # this call owns the (newly shown) prompt

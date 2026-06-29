@@ -139,17 +139,20 @@ class Config(GObject.Object):
             },
             'secrets': {
                 # Secret storage backend: 'auto' (platform default), 'libsecret',
-                # 'keyring', 'pass', 'bitwarden', 'vaultwarden', 'agent'
-                # ('agent' = don't store secrets), or a registered custom backend.
+                # 'keyring', 'pass', 'bitwarden' (the bw CLI; covers self-hosted
+                # Vaultwarden too), 'agent' ('agent' = don't store secrets), or a
+                # registered custom backend. (Legacy 'vaultwarden' migrates to
+                # 'bitwarden'.)
                 'backend': 'auto',
-                # Session-backed backends (Bitwarden/Vaultwarden): minutes of idle
-                # before the cached unlock token is dropped and re-unlock is
-                # required. 0 = keep until the app exits.
+                # Session-backed backend (Bitwarden, incl. self-hosted Vaultwarden):
+                # minutes of idle before the cached unlock token is dropped and
+                # re-unlock is required. 0 = keep until the app exits.
                 'session_timeout': 0,
-                # Vaultwarden self-hosted server URL, used when the 'vaultwarden'
-                # backend is selected (empty disables the Vaultwarden option).
-                'vaultwarden': {
-                    'server': '',
+                # Bitwarden CLI account/profile: a path to a `bw` data directory
+                # (BITWARDENCLI_APPDATA_DIR). Empty = the default account. Use a
+                # separate data dir per account (e.g. a self-hosted Vaultwarden).
+                'bitwarden': {
+                    'profile': '',
                 },
             },
             'identity': {

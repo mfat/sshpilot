@@ -1532,20 +1532,18 @@ class PreferencesWindow(Adw.Window):
                 available = set()
                 registered = []
             current_backend = str(self.config.get_setting('secrets.backend', 'auto'))
+            if current_backend.strip().lower() == 'vaultwarden':
+                current_backend = 'bitwarden'   # merged into one bw backend
             backend_labels = {
                 'libsecret': _("System keyring (libsecret)"),
                 'keyring': _("System keyring"),
                 'pass': _("pass (password store)"),
-                'bitwarden': _("Bitwarden"),
-                'vaultwarden': _("Vaultwarden"),
+                'bitwarden': _("Bitwarden / Vaultwarden (bw CLI)"),
                 'agent': _("SSH Agent Only"),
             }
-            # Offer EVERY registered backend (not just the available ones) so the
-            # user can pick e.g. Vaultwarden in order to reveal its server-URL row
-            # (it isn't "available" until that URL is set). Unavailable ones are
-            # labelled so the choice is honest.
-            preferred_order = ['libsecret', 'keyring', 'pass',
-                               'bitwarden', 'vaultwarden', 'agent']
+            # Offer EVERY registered backend (not just the available ones). Unavailable
+            # ones are labelled so the choice is honest.
+            preferred_order = ['libsecret', 'keyring', 'pass', 'bitwarden', 'agent']
             ordered_names = [n for n in preferred_order if n in registered]
             ordered_names += [n for n in registered if n not in preferred_order]
             self._secret_backend_ids = ['auto'] + ordered_names
@@ -1570,14 +1568,28 @@ class PreferencesWindow(Adw.Window):
             self.secret_backend_row.connect('notify::selected', self.on_secret_backend_changed)
             secrets_group.add(self.secret_backend_row)
 
-            # Vaultwarden self-hosted server URL — only shown when the Vaultwarden
-            # backend is selected (toggled by _update_secret_rows_visibility).
-            self.vaultwarden_server_row = Adw.EntryRow(title=_("Vaultwarden server URL"))
-            self.vaultwarden_server_row.set_text(
-                str(self.config.get_setting('secrets.vaultwarden.server', '') or '')
+            # Bitwarden CLI account/profile (BITWARDENCLI_APPDATA_DIR) — a data dir for a
+            # specific account (incl. a self-hosted Vaultwarden). Empty = default account.
+            # Only shown when the Bitwarden backend is selected.
+            self.bw_profile_row = Adw.EntryRow(title=_("bw data directory (account/profile)"))
+            self.bw_profile_row.set_text(
+                str(self.config.get_setting('secrets.bitwarden.profile', '') or '')
             )
-            self.vaultwarden_server_row.connect('changed', self.on_vaultwarden_server_changed)
-            secrets_group.add(self.vaultwarden_server_row)
+            try:
+                self.bw_profile_row.set_tooltip_text(_(
+                    "Optional. Path to a `bw` data directory (BITWARDENCLI_APPDATA_DIR) for "
+                    "a specific account. Empty = the default account. Leave empty for a "
+                    "single Bitwarden account."))
+            except Exception:
+                pass
+            browse_btn = Gtk.Button(icon_name='folder-open-symbolic')
+            browse_btn.set_valign(Gtk.Align.CENTER)
+            browse_btn.add_css_class('flat')
+            browse_btn.set_tooltip_text(_("Choose data directory"))
+            browse_btn.connect('clicked', self.on_bw_profile_browse)
+            self.bw_profile_row.add_suffix(browse_btn)
+            self.bw_profile_row.connect('changed', self.on_bw_profile_changed)
+            secrets_group.add(self.bw_profile_row)
 
             # Idle minutes before a session-backed vault (Bitwarden/Vaultwarden)
             # re-asks for the master password. 0 = keep unlocked until app exit.
@@ -2127,8 +2139,8 @@ class PreferencesWindow(Adw.Window):
                 logger.debug("Failed to propagate pass-through state to shortcut editor: %s", exc)
 
     def _update_secret_rows_visibility(self, name):
-        """Show the Vaultwarden server-URL row only for the Vaultwarden backend,
-        and the session-timeout row only for session-backed backends."""
+        """Show the bw data-directory row only for the Bitwarden backend, and the
+        session-timeout row only for session-backed backends."""
         try:
             name = (name or 'auto').strip().lower()
             session = False
@@ -2136,11 +2148,23 @@ class PreferencesWindow(Adw.Window):
                 from .secret_storage import get_secret_manager
                 session = get_secret_manager().is_session_backed(name)
             except Exception:
-                session = name in ('bitwarden', 'vaultwarden')
-            if hasattr(self, 'vaultwarden_server_row'):
-                self.vaultwarden_server_row.set_visible(name == 'vaultwarden')
+                session = name == 'bitwarden'
+            if hasattr(self, 'bw_profile_row'):
+                self.bw_profile_row.set_visible(name == 'bitwarden')
             if hasattr(self, 'secret_session_timeout_row'):
                 self.secret_session_timeout_row.set_visible(session)
+            # Tell the user how to set up the bw CLI for the selected backend.
+            # (Plain text only — no '<' or '&' — Adw rows parse Pango markup.)
+            if hasattr(self, 'secret_backend_row'):
+                if name == 'bitwarden':
+                    hint = _("Uses the bw CLI. Run “bw login” in a terminal first "
+                             "(for a self-hosted Vaultwarden, run “bw config server” first).")
+                else:
+                    hint = ""
+                try:
+                    self.secret_backend_row.set_subtitle(hint)
+                except Exception:
+                    pass
         except Exception as exc:
             logger.debug("Failed to update secret rows visibility: %s", exc)
 
@@ -2233,17 +2257,46 @@ class PreferencesWindow(Adw.Window):
         except Exception as exc:
             logger.error("Failed to update custom agent socket: %s", exc)
 
-    def on_vaultwarden_server_changed(self, row):
-        """Persist and propagate the Vaultwarden self-hosted server URL."""
+    def on_bw_profile_changed(self, row):
+        """Persist and propagate the Bitwarden CLI data dir (account/profile). Changing
+        the account re-locks the vault so a stale session can't leak across accounts."""
         try:
-            url = (row.get_text() or '').strip()
-            self.config.set_setting('secrets.vaultwarden.server', url)
-            if url:
-                os.environ['SSHPILOT_VAULTWARDEN_SERVER'] = url
+            profile = (row.get_text() or '').strip()
+            prev = str(os.environ.get('BITWARDENCLI_APPDATA_DIR', '') or '')
+            self.config.set_setting('secrets.bitwarden.profile', profile)
+            if profile:
+                os.environ['BITWARDENCLI_APPDATA_DIR'] = os.path.expanduser(profile)
             else:
-                os.environ.pop('SSHPILOT_VAULTWARDEN_SERVER', None)
+                os.environ.pop('BITWARDENCLI_APPDATA_DIR', None)
+            # Account changed → drop any cached session/items for the old account.
+            if os.environ.get('BITWARDENCLI_APPDATA_DIR', '') != prev:
+                try:
+                    from .secret_storage import get_secret_manager
+                    be = get_secret_manager().selected_backend()
+                    if be is not None and hasattr(be, 'lock'):
+                        be.lock()
+                except Exception:
+                    pass
         except Exception as exc:
-            logger.error("Failed to update Vaultwarden server URL: %s", exc)
+            logger.error("Failed to update bw profile: %s", exc)
+
+    def on_bw_profile_browse(self, _button):
+        """Folder chooser for the bw data directory."""
+        try:
+            dialog = Gtk.FileDialog()
+            dialog.set_title(_("Choose bw data directory"))
+
+            def _picked(dlg, result):
+                try:
+                    folder = dlg.select_folder_finish(result)
+                    if folder is not None and hasattr(self, 'bw_profile_row'):
+                        self.bw_profile_row.set_text(folder.get_path() or '')
+                except Exception:
+                    pass  # user cancelled / no selection
+
+            dialog.select_folder(self, None, _picked)
+        except Exception as exc:
+            logger.debug("bw profile browse failed: %s", exc)
 
     def on_secret_session_timeout_changed(self, row, _pspec):
         """Persist and propagate the session-backend idle unlock timeout."""

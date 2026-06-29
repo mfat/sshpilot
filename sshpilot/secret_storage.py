@@ -13,11 +13,13 @@ Built-in backends:
 - ``keyring``   — the cross-platform Python ``keyring`` library (macOS Keychain,
   Windows Credential Manager, KWallet, …).
 - ``pass``      — passwordstore.org (``pass`` CLI, gpg-backed).
-- ``bitwarden`` / ``vaultwarden`` — the ``bw`` CLI (Vaultwarden = self-hosted
-  server URL). *Session-backed*: must be unlocked before secrets are readable. The
-  ``BW_SESSION`` token from unlock is kept in-process and exported to the env so the
-  ``--askpass`` subprocess can read non-interactively; the whole vault is cached in
-  memory on unlock so lookups need no further ``bw`` spawn.
+- ``bitwarden`` — the ``bw`` CLI (covers Bitwarden cloud **and** self-hosted
+  Vaultwarden, and any account, since which server/account it talks to is the CLI's
+  own config + the optional ``BITWARDENCLI_APPDATA_DIR`` profile). *Session-backed*:
+  must be unlocked before secrets are readable. The ``BW_SESSION`` token from unlock is
+  kept in-process and exported to the env so the ``--askpass`` subprocess can read
+  non-interactively; the whole vault is cached in memory on unlock so lookups need no
+  further ``bw`` spawn.
 - ``agent`` — the "don't store secrets" choice: a null backend that persists
   nothing and (when selected) is never read from. The user relies on ssh-agent
   and ssh's own prompts. Marked ``authoritative`` so the manager does not fall
@@ -430,10 +432,12 @@ class BitwardenBackend(SecretBackend):
     ``spec.keyring_account`` with the secret in ``login.password``.
 
     ``is_available`` only checks for the ``bw`` binary — never ``bw status`` — so it stays
-    cheap on the hot path. The ``bw`` CLI holds one server/account at a time, so
-    Bitwarden-cloud and a Vaultwarden server cannot be logged in simultaneously through
-    the same install. GTK-free (imported by the askpass subprocess); UI lives in the GTK
-    layer.
+    cheap on the hot path. The ``bw`` CLI holds one account/server per **data directory**;
+    the user selects an account by pointing ``BITWARDENCLI_APPDATA_DIR`` at that data dir
+    (``secrets.bitwarden.profile``). This is also how a self-hosted **Vaultwarden** account
+    is used — a profile whose data dir is configured (``bw config server`` + ``bw login``)
+    for the self-hosted server. GTK-free (imported by the askpass subprocess); UI lives in
+    the GTK layer.
     """
 
     name = "bitwarden"
@@ -462,18 +466,14 @@ class BitwardenBackend(SecretBackend):
     def _bin(self, value: Optional[str]) -> None:
         self._bin_override = value
 
-    # -- server (Vaultwarden overrides) ----------------------------------
-    def _server_url(self) -> str:
-        """Self-hosted server URL; empty = Bitwarden cloud."""
-        return ""
-
     def describe(self) -> str:
-        url = self._server_url()
-        return f"{self.name}:{url}" if url else self.name
+        return self.name
 
     def is_available(self) -> bool:
         # Cheap: just whether the CLI exists. Lock/unlock state is a separate question
-        # answered by is_unlocked()/needs_login().
+        # answered by is_unlocked()/needs_login(). Which server/account the CLI talks to
+        # (Bitwarden cloud, a self-hosted Vaultwarden, a specific profile) is configured
+        # by the user via the `bw` CLI + the optional BITWARDENCLI_APPDATA_DIR profile.
         return bool(self._bin)
 
     # -- bw subprocess helper --------------------------------------------
@@ -799,26 +799,6 @@ class BitwardenBackend(SecretBackend):
                 self._items.pop(account, None)
 
 
-class VaultwardenBackend(BitwardenBackend):
-    """Vaultwarden = self-hosted Bitwarden. Same ``bw`` CLI, pointed at a custom server.
-
-    The URL is read from ``SSHPILOT_VAULTWARDEN_SERVER`` (propagated from the
-    ``secrets.vaultwarden.server`` setting); without it the backend is not offered — the
-    URL only gates availability and labels the entry. Pointing the CLI at the server is a
-    one-time user step done in a terminal (``bw config server <url>`` then ``bw login``),
-    because ``bw`` holds one account/server at a time and refuses to change the server
-    while logged in. Everything else (unlock, cache, lookup, …) is inherited unchanged.
-    """
-
-    name = "vaultwarden"
-
-    def _server_url(self) -> str:
-        return (os.environ.get("SSHPILOT_VAULTWARDEN_SERVER", "") or "").strip()
-
-    def is_available(self) -> bool:
-        return bool(self._bin) and bool(self._server_url())
-
-
 class SSHAgentBackend(SecretBackend):
     """The "don't store secrets at all" choice.
 
@@ -872,7 +852,6 @@ class SecretManager:
             "keyring": KeyringBackend(),
             "pass": PassBackend(),
             "bitwarden": BitwardenBackend(),
-            "vaultwarden": VaultwardenBackend(),
             "agent": SSHAgentBackend(),
         }
         self._selected: Optional[str] = None  # resolved lazily

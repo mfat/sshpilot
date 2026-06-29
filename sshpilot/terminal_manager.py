@@ -69,16 +69,35 @@ class TerminalManager:
                 logger.debug("Failed to iterate tab view while refreshing backends", exc_info=True)
 
     # Connecting/disconnecting hosts
-    def _maybe_unlock_secrets_then(self, retry) -> bool:
-        """If the selected secret backend is session-backed and locked, show the
-        unlock prompt and call ``retry`` when it finishes; return True. Otherwise
-        return False so the caller proceeds immediately."""
+    def _maybe_unlock_secrets_then(self, retry, _allow_reprompt: bool = True) -> bool:
+        """If the selected secret backend is session-backed and locked, show the unlock
+        prompt and call ``retry`` when it finishes; return True. Otherwise return False so
+        the caller proceeds immediately.
+
+        When this connection only *rode* an already-open prompt (e.g. the startup unlock)
+        and that prompt resolves with the vault **still locked** (the user deferred it),
+        we don't silently start a background terminal — we re-show *our own* prompt once so
+        the user can unlock for this connection. After that one re-prompt we proceed
+        regardless (the user cancelling their own prompt falls back to SSH's own prompt)."""
         try:
             from .secret_storage import get_secret_manager
             if not get_secret_manager().selected_needs_unlock():
                 return False
             from .secret_unlock_dialog import prompt_unlock
-            prompt_unlock(self.window, on_done=lambda _success: retry())
+
+            def _on_done(_success):
+                still_locked = False
+                try:
+                    still_locked = get_secret_manager().selected_needs_unlock()
+                except Exception:
+                    still_locked = False
+                if (still_locked and _allow_reprompt and not owned[0]
+                        and self._maybe_unlock_secrets_then(retry, _allow_reprompt=False)):
+                    return  # rode a deferred prompt -> our own prompt now drives the retry
+                retry()
+
+            owned = [True]
+            owned[0] = bool(prompt_unlock(self.window, on_done=_on_done))
             return True
         except Exception as exc:
             logger.error("Secret unlock prompt failed: %s", exc)
@@ -324,7 +343,13 @@ class TerminalManager:
             except Exception as exc:
                 logger.error(f"Error initialising pane terminal: {exc}")
 
-        GLib.idle_add(_set_terminal_colors)
+        # Gate the ssh spawn behind the vault unlock (same as connect_to_host) so a pane
+        # connection doesn't start in the background while a session vault is locked. The
+        # widget is returned now (it shows "connecting" until the spawn runs after unlock).
+        def _start_pane_connect():
+            GLib.idle_add(_set_terminal_colors)
+        if not self._maybe_unlock_secrets_then(_start_pane_connect):
+            _start_pane_connect()
         return terminal
 
     def _on_pane_terminal_title_changed(self, terminal, title):
