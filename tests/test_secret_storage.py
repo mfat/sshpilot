@@ -709,3 +709,24 @@ def test_vaultwarden_requires_server(monkeypatch):
     monkeypatch.setenv('SSHPILOT_VAULTWARDEN_SERVER', 'https://vw.example')
     assert v.is_available() is True
     assert v.describe() == 'vaultwarden:https://vw.example'
+
+
+def test_vaultwarden_inherits_full_unlock_flow(monkeypatch):
+    # Vaultwarden is a thin subclass: unlock warms the whole-vault cache and lookups hit
+    # it — identical to Bitwarden — and it must NOT spawn `bw config server` (the server
+    # is configured by the user via the CLI; that call only ever wasted a spawn).
+    monkeypatch.setenv('SSHPILOT_VAULTWARDEN_SERVER', 'https://vw.example')
+    fake = FakeBw(status='locked',
+                  items=[{"id": "ID1", "name": "u@h", "login": {"password": "pw"}}])
+    b = ss.VaultwardenBackend()
+    b._bin = '/usr/bin/bw'
+    monkeypatch.setattr(ss.subprocess, 'run', fake.run)
+
+    assert b.is_available() is True
+    assert b.unlock('m') is True
+    assert b._cache_complete is True                          # full-vault cache warmed
+    assert not any(c[:1] == ['config'] for c in fake.calls)  # no `bw config server`
+    assert ['unlock'] in [c[:1] for c in fake.calls]
+
+    monkeypatch.setattr(ss.subprocess, 'run', _boom_bw)
+    assert b.lookup(password_spec('h', 'u')) == 'pw'          # warm-cache hit, no spawn

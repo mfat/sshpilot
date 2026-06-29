@@ -255,11 +255,21 @@ def prompt_unlock(parent, *, on_done=None):
         if ok:
             on_spinner_closed = lambda *_a: _finish(True)
         elif needs_login:
-            on_spinner_closed = lambda *_a: _message(
+            # Vaultwarden also needs the server pointed at the CLI first (sshPilot does
+            # not run `bw config server` — `bw` refuses it while logged in).
+            backend = manager.selected_backend()
+            if getattr(backend, 'name', '') == 'vaultwarden':
+                login_body = _(
+                    "Your Vaultwarden vault has no signed-in account yet. In a terminal, "
+                    "run “bw config server <your-server-url>” then “bw login”, and try again.")
+            else:
+                login_body = _(
+                    "Your secret store has no signed-in account yet. Open a terminal, "
+                    "run “bw login”, then try again.")
+            on_spinner_closed = lambda *_a, _body=login_body: _message(
                 parent,
                 _("Not signed in"),
-                _("Your secret store has no signed-in account yet. Open a terminal, "
-                  "run “bw login”, then try again."),
+                _body,
                 on_closed=lambda: _finish(False),
             )
         else:

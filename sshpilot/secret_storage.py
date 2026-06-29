@@ -585,9 +585,11 @@ class BitwardenBackend(SecretBackend):
         with self._lock:
             try:
                 self._report(progress, "starting")
-                url = self._server_url()  # Vaultwarden: point the CLI at the server first
-                if url:
-                    self._run(["config", "server", url])
+                # We do NOT run `bw config server` here: `bw` rejects a server change while
+                # logged in (and you must be logged in for `unlock` to succeed), so it only
+                # ever burned a ~1-2s spawn. Vaultwarden's server is configured by the user
+                # via the CLI (`bw config server <url>` then `bw login`); the app's URL
+                # setting just gates availability and labels the backend.
                 env = os.environ.copy()
                 env["BW_MASTER"] = secret or ""
                 self._report(progress, "unlocking")
@@ -801,8 +803,11 @@ class VaultwardenBackend(BitwardenBackend):
     """Vaultwarden = self-hosted Bitwarden. Same ``bw`` CLI, pointed at a custom server.
 
     The URL is read from ``SSHPILOT_VAULTWARDEN_SERVER`` (propagated from the
-    ``secrets.vaultwarden.server`` setting); without it the backend is not offered.
-    :meth:`unlock` runs ``bw config server <url>`` before unlocking.
+    ``secrets.vaultwarden.server`` setting); without it the backend is not offered — the
+    URL only gates availability and labels the entry. Pointing the CLI at the server is a
+    one-time user step done in a terminal (``bw config server <url>`` then ``bw login``),
+    because ``bw`` holds one account/server at a time and refuses to change the server
+    while logged in. Everything else (unlock, cache, lookup, …) is inherited unchanged.
     """
 
     name = "vaultwarden"
