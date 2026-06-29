@@ -273,14 +273,16 @@ def test_agent_selected_lookup_ignores_other_stores(manager):
     assert mgr.lookup(spec) is None                     # authoritative: no read-through
 
 
-def test_agent_selected_delete_still_clears_other_stores(manager):
+def test_agent_selected_delete_only_consults_agent(manager):
     mgr, primary, fallback = manager
     mgr.register_backend('agent', ss.SSHAgentBackend())
     spec = password_spec('h', 'u')
     primary.data[spec.keyring_account] = 'x'
+    fallback.data[spec.keyring_account] = 'y'
     mgr.set_selected('agent')
-    assert mgr.delete(spec) is True
-    assert spec.keyring_account not in primary.data
+    assert mgr.delete(spec) is False
+    assert spec.keyring_account in primary.data
+    assert spec.keyring_account in fallback.data
 
 
 # --- session-backed backends (unlock / lock / timeout) -----------------------
@@ -372,9 +374,50 @@ def test_lookup_no_fallthrough_when_selected_session_backend_locked(manager):
     assert mgr.unlock_selected('wrong') is False  # failed unlock -> still locked
     assert mgr.lookup(spec) is None               # must NOT fall through to libsecret
 
-    # Once unlocked, a migration read of the legacy copy is allowed again.
+    # Unlocked but secret not in vault: still no read-through to legacy stores.
     assert vault.unlock('correct') is True
-    assert mgr.lookup(spec) == 'stale-libsecret-pw'
+    assert mgr.lookup(spec) is None
+
+
+def test_lookup_no_fallthrough_when_explicit_session_backend_unlocked(manager):
+    mgr, primary, fallback = manager
+    vault = FakeSessionBackend('vault')
+    vault.unlock('correct')
+    mgr.register_backend('vault', vault)
+    mgr.set_selected('vault')
+    spec = password_spec('h', 'u')
+    primary.data[spec.keyring_account] = 'stale-libsecret-pw'
+    fallback.data[spec.keyring_account] = 'stale-keyring-pw'
+    assert mgr.lookup(spec) is None
+
+
+def test_delete_only_selected_backend_when_explicit(manager):
+    mgr, primary, fallback = manager
+    spec = password_spec('h', 'u')
+    primary.data[spec.keyring_account] = 'in-libsecret'
+    fallback.data[spec.keyring_account] = 'in-keyring'
+    mgr.set_selected('keyring')
+    assert mgr.delete(spec) is True
+    assert spec.keyring_account not in fallback.data
+    assert spec.keyring_account in primary.data
+
+
+def test_store_no_fallback_when_explicit_session_backend_unlocked(manager):
+    # Unlocked vault selected but store fails -> must not land in libsecret/keyring.
+    mgr, primary, fallback = manager
+    vault = FakeSessionBackend('vault')
+    vault.unlock('correct')
+
+    def fail_store(spec, secret):
+        return False
+
+    vault.store = fail_store
+    mgr.register_backend('vault', vault)
+    mgr.set_selected('vault')
+    spec = password_spec('h', 'u')
+    assert mgr.store(spec, 's') is False
+    assert spec.keyring_account not in primary.data
+    assert spec.keyring_account not in fallback.data
 
 
 def test_bitwarden_is_available_reresolves_bw(monkeypatch):

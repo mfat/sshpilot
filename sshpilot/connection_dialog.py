@@ -2269,7 +2269,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             if hasattr(self.connection, 'password') and self.connection.password:
                 self.password_row.set_text(self.connection.password)
             else:
-                # Fallback: fetch from keyring so the dialog shows stored password (masked)
+                # Fallback: fetch from the selected secret backend (masked in the row)
                 try:
                     mgr = getattr(self.parent_window, 'connection_manager', None)
                     if mgr and hasattr(self.connection, 'username'):

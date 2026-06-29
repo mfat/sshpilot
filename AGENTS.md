@@ -83,8 +83,9 @@ Credentials are stored/retrieved through a **pluggable secret backend**
 selectable via the `secrets.backend` setting — `auto` (platform default:
 libsecret then keyring on Linux, keyring on macOS), or an explicit `libsecret` /
 `keyring` / `pass` (passwordstore.org) / `bitwarden` / `agent`, or
-a registered custom backend. Reads/deletes fall through to every available backend
-so secrets aren't orphaned when the selection changes. The askpass helper
+a registered custom backend. With **`auto`**, reads/deletes fall through to every
+available backend so secrets aren't orphaned when the selection changes; with an
+**explicit** backend, `store`/`lookup`/`delete` consult only that backend. The askpass helper
 (`askpass_utils.py`) is the program ssh invokes; it looks the passphrase up via the
 selected backend and, failing that, shows a GTK prompt. Keyring autofill + the
 askpass prompt are advertised features — keep them working.
@@ -109,8 +110,8 @@ Backend specifics:
 - **`agent`** means *don't store secrets at all*: an `authoritative` null backend.
   When selected, `store`/`lookup` consult only it (no fallback/fallthrough) so
   nothing is written to or read from other stores; the user relies on ssh-agent
-  (the existing key-preload path) and ssh's own prompts. `delete` still clears the
-  real stores so old secrets can be purged after switching.
+  (the existing key-preload path) and ssh's own prompts. `delete` is a no-op on
+  other stores — switch to `auto` or the backend that holds the secret to purge it.
 - New session/null behavior rests on optional `SecretBackend` hooks
   (`session_backed`, `authoritative`, `is_unlocked`/`unlock`/`lock`) that default
   to no-ops, so `libsecret`/`keyring`/`pass` are unchanged.

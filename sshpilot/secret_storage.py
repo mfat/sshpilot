@@ -27,23 +27,21 @@ Built-in backends:
 
 Selection (``SecretManager.set_selected`` / config ``secrets.backend``):
 - ``auto``  — platform default: macOS → keyring; Linux → libsecret then keyring.
-- a name    — that backend first, then the platform defaults as store fallback.
+- a name    — **only** that backend is used for ``store``/``lookup``/``delete``.
 
 Operations:
-- ``store`` — first available backend in the selected order (with fallback on
-  failure), unless the selected backend is ``authoritative`` or a session-backed
-  vault that is available but **locked** — then only that backend is consulted
-  (writes return False until unlocked, so secrets are not silently saved elsewhere).
-- ``lookup`` — selected order first, then every other registered backend that is
-  available (e.g. ``pass`` while on ``auto``), so secrets stored under a previous
-  backend still resolve after switching — **except** when the selected backend is
-  ``authoritative`` or a locked session-backed vault: then only that backend is
-  consulted (no fallthrough to a stale copy in libsecret/keyring while the chosen
-  vault is locked).
-- ``delete`` — every available backend, so old copies can be cleared after switching.
-- When the *selected* backend is ``authoritative`` (the ``agent`` null backend),
+- ``auto`` — ``store`` tries the platform order (libsecret then keyring on Linux);
+  ``lookup`` and ``delete`` consult every available backend so secrets stored under
+  a previous backend still resolve and can be cleared after switching.
+- **Explicit selection** (any named backend, including ``agent`` and session-backed
+  vaults) — ``store``/``lookup``/``delete`` consult **only** that backend: no
+  fallback on store failure, no read-through to a stale copy in libsecret/keyring,
+  and no cross-backend delete. A locked session vault simply returns nothing/False
+  until unlocked; an unlocked vault with no matching item returns ``None``.
+- When the selected backend is ``authoritative`` (the ``agent`` null backend),
   ``store`` and ``lookup`` consult only it — no fallback, no fallthrough — so
-  "don't store" truly stores/reads nothing.
+  "don't store" truly stores/reads nothing; ``delete`` is likewise a no-op on
+  other stores.
 
 The module is GTK-free so it can be imported by the ``--askpass`` subprocess; it
 lazily imports ``Secret`` and ``keyring``.
@@ -927,31 +925,12 @@ class SecretManager:
             return None
         return self._backends.get(name)
 
-    def _authoritative_selected(self) -> Optional[SecretBackend]:
-        """The selected backend iff it is authoritative and available (else None).
+    def _exclusive_backend(self) -> Optional[SecretBackend]:
+        """The explicitly-selected backend (``None`` for ``auto``).
 
-        When set, ``store``/``lookup`` consult only it — no fallback/fallthrough.
-        """
-        backend = self.selected_backend()
-        if backend is not None and getattr(backend, "authoritative", False) \
-                and backend.is_available():
-            return backend
-        return None
-
-    def _selected_session_locked(self) -> Optional[SecretBackend]:
-        """The selected backend iff it is a session backend that is available but
-        currently **not unlocked** (a locked or failed-to-unlock vault), else None.
-
-        When set, ``store``/``lookup`` must consult ONLY it and never fall through to
-        other stores: a locked vault must mean *no access*, not silently serving a
-        stale copy of the secret from libsecret/keyring. Reads/writes through the
-        backend simply return nothing/False until it is unlocked.
-        """
-        backend = self.selected_backend()
-        if (backend is not None and getattr(backend, "session_backed", False)
-                and backend.is_available() and not backend.is_unlocked()):
-            return backend
-        return None
+        When set, ``store``/``lookup``/``delete`` consult only it — no
+        fallback/fallthrough to other stores."""
+        return self.selected_backend()
 
     def selected_needs_unlock(self) -> bool:
         """True when the selected backend is session-backed and currently locked,
@@ -1010,21 +989,14 @@ class SecretManager:
         return backends[0].describe() if backends else "none"
 
     def _store_backends(self) -> List[SecretBackend]:
-        """Backends ``store`` may use, honoring the authoritative short-circuit and
-        the "explicitly-selected session backend that isn't ready" rule.
+        """Backends ``store`` may use.
 
-        When the user explicitly selected a session-backed backend (Bitwarden/
-        Vaultwarden) that is available but **not unlocked**, do NOT fall back to
-        other stores — otherwise the secret would silently land in libsecret while
-        the user believes it went to their chosen vault. Return only that backend
-        (whose ``store`` returns False until unlocked), so the caller can surface it.
+        Explicit selection → only that backend (locked session vaults return False
+        until unlocked). ``auto`` → platform order with fallback on failure.
         """
-        auth = self._authoritative_selected()
-        if auth is not None:
-            return [auth]
-        locked = self._selected_session_locked()
-        if locked is not None:
-            return [locked]
+        exclusive = self._exclusive_backend()
+        if exclusive is not None:
+            return [exclusive]
         return self._ordered_backends()
 
     # -- operations ------------------------------------------------------
@@ -1037,11 +1009,8 @@ class SecretManager:
         return False
 
     def lookup(self, spec: SecretSpec) -> Optional[str]:
-        # An authoritative selection (ssh-agent: "don't store") or a locked session
-        # vault both restrict reads to that backend alone — never fall through to a
-        # stale copy in another store while the chosen vault is locked/unavailable.
-        only = self._authoritative_selected() or self._selected_session_locked()
-        backends = [only] if only is not None else self._all_available_backends()
+        exclusive = self._exclusive_backend()
+        backends = [exclusive] if exclusive is not None else self._all_available_backends()
         for backend in backends:
             value = backend.lookup(spec)
             if value:
@@ -1049,8 +1018,10 @@ class SecretManager:
         return None
 
     def delete(self, spec: SecretSpec) -> bool:
+        exclusive = self._exclusive_backend()
+        backends = [exclusive] if exclusive is not None else self._all_available_backends()
         removed = False
-        for backend in self._all_available_backends():
+        for backend in backends:
             if backend.delete(spec):
                 removed = True
         return removed
