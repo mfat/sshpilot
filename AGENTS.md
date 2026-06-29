@@ -82,7 +82,7 @@ Credentials are stored/retrieved through a **pluggable secret backend**
 `askpass_utils.lookup_passphrase` delegate to `SecretManager`. The backend is
 selectable via the `secrets.backend` setting — `auto` (platform default:
 libsecret then keyring on Linux, keyring on macOS), or an explicit `libsecret` /
-`keyring` / `pass` (passwordstore.org) / `bitwarden` / `agent`, or
+`keyring` / `pass` (passwordstore.org) / `bitwarden` / `keepassxc` / `agent`, or
 a registered custom backend. With **`auto`**, reads/deletes fall through to every
 available backend so secrets aren't orphaned when the selection changes; with an
 **explicit** backend, `store`/`lookup`/`delete` consult only that backend. The askpass helper
@@ -91,8 +91,18 @@ selected backend and, failing that, shows a GTK prompt. Keyring autofill + the
 askpass prompt are advertised features — keep them working.
 
 Backend specifics:
-- **KeePassXC** needs no dedicated backend — enable its GUI *Secret Service
-  integration* and select `libsecret` (same `org.freedesktop.secrets` D-Bus API).
+- **KeePassXC** can be used two ways: (a) enable its GUI *Secret Service integration* and
+  select `libsecret` (same `org.freedesktop.secrets` D-Bus API); or (b) the dedicated
+  **`keepassxc`** backend (`KdbxBackend`, `secret_storage.py`) which opens a `.kdbx` file
+  **directly** via `pykeepass`. The KDBX format is a static encrypted file (no session), but
+  the backend is `session_backed=True`: `unlock(master_password)` opens the file (+ optional
+  key file from `secrets.keepassxc.keyfile`), warms a `title→password` cache, and exports the
+  derived `transformed_key` as `SSHPILOT_KDBX_KEY` so the askpass subprocess opens the file
+  fast (no Argon2) without re-prompting — same env posture as `BW_SESSION`, never persisted,
+  dropped on idle/exit. DB + keyfile paths come from `secrets.keepassxc.*` → exported as
+  `SSHPILOT_KDBX_DATABASE`/`_KEYFILE`. Read-write: secrets are stored in a dedicated `sshPilot`
+  group (entry title = the account; sshPilot type in a custom property). Caveat: don't keep
+  the same `.kdbx` open in KeePassXC while sshPilot writes (`kp.save()` can conflict).
 - **`bitwarden`** is *session-backed* (`bw` CLI). One backend covers Bitwarden cloud
   **and** self-hosted **Vaultwarden** (and any account) — which server/account the CLI
   talks to is the CLI's own config plus the optional **account/profile**

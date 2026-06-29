@@ -1165,6 +1165,18 @@ class ConnectionManager(GObject.Object):
                 else:
                     os.environ.pop('BITWARDENCLI_APPDATA_DIR', None)
                 os.environ.pop('SSHPILOT_VAULTWARDEN_SERVER', None)  # retired
+                # KeePass (.kdbx) backend: database + optional key file paths, so the backend
+                # and the inherited askpass subprocess open the same file.
+                kdbx_db = str(_cfg.get_setting('secrets.keepassxc.database', '') or '').strip()
+                if kdbx_db:
+                    os.environ['SSHPILOT_KDBX_DATABASE'] = os.path.expanduser(kdbx_db)
+                else:
+                    os.environ.pop('SSHPILOT_KDBX_DATABASE', None)
+                kdbx_kf = str(_cfg.get_setting('secrets.keepassxc.keyfile', '') or '').strip()
+                if kdbx_kf:
+                    os.environ['SSHPILOT_KDBX_KEYFILE'] = os.path.expanduser(kdbx_kf)
+                else:
+                    os.environ.pop('SSHPILOT_KDBX_KEYFILE', None)
             except Exception:
                 pass
             self.secure_storage_backend = manager.active_backend_label()

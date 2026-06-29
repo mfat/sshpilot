@@ -51,7 +51,8 @@ def _friendly_backend_name(backend):
     """A human label for the unlock heading — never the raw describe() (which for
     Vaultwarden includes the server URL, e.g. ``vaultwarden:https://…``)."""
     name = (getattr(backend, "name", "") or "").strip().lower()
-    friendly = {"bitwarden": "Bitwarden", "vaultwarden": "Vaultwarden"}.get(name)
+    friendly = {"bitwarden": "Bitwarden", "vaultwarden": "Vaultwarden",
+                "keepassxc": "KeePassXC"}.get(name)
     if friendly:
         return friendly
     return name.replace("-", " ").title() if name else _("vault")

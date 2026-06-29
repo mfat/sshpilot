@@ -1539,11 +1539,12 @@ class PreferencesWindow(Adw.Window):
                 'keyring': _("System keyring"),
                 'pass': _("pass (password store)"),
                 'bitwarden': _("Bitwarden / Vaultwarden (bw CLI)"),
+                'keepassxc': _("KeePass database (.kdbx)"),
                 'agent': _("SSH Agent Only"),
             }
             # Offer EVERY registered backend (not just the available ones). Unavailable
             # ones are labelled so the choice is honest.
-            preferred_order = ['libsecret', 'keyring', 'pass', 'bitwarden', 'agent']
+            preferred_order = ['libsecret', 'keyring', 'pass', 'bitwarden', 'keepassxc', 'agent']
             ordered_names = [n for n in preferred_order if n in registered]
             ordered_names += [n for n in registered if n not in preferred_order]
             self._secret_backend_ids = ['auto'] + ordered_names
@@ -1596,6 +1597,32 @@ class PreferencesWindow(Adw.Window):
             self.bw_profile_row.add_suffix(browse_btn)
             self.bw_profile_row.connect('changed', self.on_bw_profile_changed)
             secrets_group.add(self.bw_profile_row)
+
+            # KeePass (.kdbx) database + optional key file — only shown for the KeePassXC
+            # backend. The master password is typed per launch (not stored here).
+            self.kdbx_db_row = Adw.EntryRow(title=_("KeePass database (.kdbx)"))
+            self.kdbx_db_row.set_text(
+                str(self.config.get_setting('secrets.keepassxc.database', '') or ''))
+            kdbx_db_btn = Gtk.Button(icon_name='document-open-symbolic')
+            kdbx_db_btn.set_valign(Gtk.Align.CENTER)
+            kdbx_db_btn.add_css_class('flat')
+            kdbx_db_btn.set_tooltip_text(_("Choose database file"))
+            kdbx_db_btn.connect('clicked', self.on_kdbx_database_browse)
+            self.kdbx_db_row.add_suffix(kdbx_db_btn)
+            self.kdbx_db_row.connect('changed', self.on_kdbx_database_changed)
+            secrets_group.add(self.kdbx_db_row)
+
+            self.kdbx_keyfile_row = Adw.EntryRow(title=_("Key file (optional)"))
+            self.kdbx_keyfile_row.set_text(
+                str(self.config.get_setting('secrets.keepassxc.keyfile', '') or ''))
+            kdbx_kf_btn = Gtk.Button(icon_name='document-open-symbolic')
+            kdbx_kf_btn.set_valign(Gtk.Align.CENTER)
+            kdbx_kf_btn.add_css_class('flat')
+            kdbx_kf_btn.set_tooltip_text(_("Choose key file"))
+            kdbx_kf_btn.connect('clicked', self.on_kdbx_keyfile_browse)
+            self.kdbx_keyfile_row.add_suffix(kdbx_kf_btn)
+            self.kdbx_keyfile_row.connect('changed', self.on_kdbx_keyfile_changed)
+            secrets_group.add(self.kdbx_keyfile_row)
 
             # Idle minutes before a session-backed vault (Bitwarden/Vaultwarden)
             # re-asks for the master password. 0 = keep unlocked until app exit.
@@ -2169,6 +2196,9 @@ class PreferencesWindow(Adw.Window):
                 session = name == 'bitwarden'
             if hasattr(self, 'bw_profile_row'):
                 self.bw_profile_row.set_visible(name == 'bitwarden')
+            for attr in ('kdbx_db_row', 'kdbx_keyfile_row'):
+                if hasattr(self, attr):
+                    getattr(self, attr).set_visible(name == 'keepassxc')
             if hasattr(self, 'secret_session_timeout_row'):
                 self.secret_session_timeout_row.set_visible(session)
             if hasattr(self, 'forget_master_row'):
@@ -2345,6 +2375,64 @@ class PreferencesWindow(Adw.Window):
             dialog.select_folder(self, None, _picked)
         except Exception as exc:
             logger.debug("bw profile browse failed: %s", exc)
+
+    def _relock_selected_session_backend(self):
+        try:
+            from .secret_storage import get_secret_manager
+            be = get_secret_manager().selected_backend()
+            if be is not None and hasattr(be, 'lock'):
+                be.lock()
+        except Exception:
+            pass
+
+    def on_kdbx_database_changed(self, row):
+        """Persist + propagate the KeePass database path; re-lock on change."""
+        try:
+            path = (row.get_text() or '').strip()
+            self.config.set_setting('secrets.keepassxc.database', path)
+            if path:
+                os.environ['SSHPILOT_KDBX_DATABASE'] = os.path.expanduser(path)
+            else:
+                os.environ.pop('SSHPILOT_KDBX_DATABASE', None)
+            self._relock_selected_session_backend()
+        except Exception as exc:
+            logger.error("Failed to update KeePass database path: %s", exc)
+
+    def on_kdbx_keyfile_changed(self, row):
+        """Persist + propagate the KeePass key file path; re-lock on change."""
+        try:
+            path = (row.get_text() or '').strip()
+            self.config.set_setting('secrets.keepassxc.keyfile', path)
+            if path:
+                os.environ['SSHPILOT_KDBX_KEYFILE'] = os.path.expanduser(path)
+            else:
+                os.environ.pop('SSHPILOT_KDBX_KEYFILE', None)
+            self._relock_selected_session_backend()
+        except Exception as exc:
+            logger.error("Failed to update KeePass key file path: %s", exc)
+
+    def _kdbx_file_browse(self, title, row_attr):
+        try:
+            dialog = Gtk.FileDialog()
+            dialog.set_title(title)
+
+            def _picked(dlg, result):
+                try:
+                    f = dlg.open_finish(result)
+                    if f is not None and hasattr(self, row_attr):
+                        getattr(self, row_attr).set_text(f.get_path() or '')
+                except Exception:
+                    pass  # cancelled / no selection
+
+            dialog.open(self, None, _picked)
+        except Exception as exc:
+            logger.debug("KDBX file browse failed: %s", exc)
+
+    def on_kdbx_database_browse(self, _button):
+        self._kdbx_file_browse(_("Choose KeePass database"), 'kdbx_db_row')
+
+    def on_kdbx_keyfile_browse(self, _button):
+        self._kdbx_file_browse(_("Choose key file"), 'kdbx_keyfile_row')
 
     def on_secret_session_timeout_changed(self, row, _pspec):
         """Persist and propagate the session-backend idle unlock timeout."""

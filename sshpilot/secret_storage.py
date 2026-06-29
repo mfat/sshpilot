@@ -81,6 +81,15 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - optional dependency
     keyring = None
 
+try:  # pragma: no cover - optional dependency (KDBX backend)
+    from pykeepass import PyKeePass
+    from pykeepass.exceptions import CredentialsError
+except Exception:  # pragma: no cover - optional dependency
+    PyKeePass = None
+
+    class CredentialsError(Exception):
+        pass
+
 try:
     from .platform_utils import is_macos, resolve_host_binary
 except Exception:  # pragma: no cover - fallback when run as a loose module
@@ -272,7 +281,10 @@ def selected_master_spec(manager: Optional["SecretManager"] = None) -> SecretSpe
     mgr = manager if manager is not None else get_secret_manager()
     backend = mgr.selected_backend()
     name = (getattr(backend, "name", "") or "session").strip().lower()
-    profile = os.environ.get("BITWARDENCLI_APPDATA_DIR", "")
+    if name == "keepassxc":
+        profile = os.environ.get("SSHPILOT_KDBX_DATABASE", "")   # keyed by the .kdbx path
+    else:
+        profile = os.environ.get("BITWARDENCLI_APPDATA_DIR", "")
     return master_password_spec(name, profile)
 
 
@@ -980,6 +992,235 @@ class BitwardenBackend(SecretBackend):
                 self._items.pop(account, None)
 
 
+class KdbxBackend(SecretBackend):
+    """KeePass database (``.kdbx``) backend via ``pykeepass`` — a connect-time, read-write store.
+
+    KDBX is a static encrypted file (no session in the format); we keep a per-launch in-memory
+    "session" purely for usability: :meth:`unlock` opens the file with the master password (+
+    optional key file), caches the opened DB, and exports the derived ``transformed_key`` as
+    ``SSHPILOT_KDBX_KEY`` so the ``--askpass`` subprocess can open the file fast (no re-running
+    Argon2) without re-prompting — the same env posture as Bitwarden's ``BW_SESSION``. The
+    database/keyfile paths come from the env (``SSHPILOT_KDBX_DATABASE``/``_KEYFILE``), set from
+    config by the connection manager / Preferences. Entries live in a dedicated ``sshPilot``
+    group, titled by the secret account; the sshPilot type is kept in a custom property.
+    """
+
+    name = "keepassxc"
+    session_backed = True
+    _GROUP = "sshPilot"
+    _TYPE_PROP = "sshpilot_type"
+    _ENV_DB = "SSHPILOT_KDBX_DATABASE"
+    _ENV_KEYFILE = "SSHPILOT_KDBX_KEYFILE"
+    _ENV_KEY = "SSHPILOT_KDBX_KEY"
+
+    def __init__(self) -> None:
+        self._kp = None
+        self._cache: Optional[Dict[str, Optional[str]]] = None   # title -> password
+        self._deadline: Optional[float] = None
+        self._lock = threading.RLock()
+
+    # -- config (paths come from env, set by connection_manager / preferences) ----
+    def _database(self) -> str:
+        return os.path.expanduser(os.environ.get(self._ENV_DB, "") or "")
+
+    def _keyfile(self) -> Optional[str]:
+        kf = os.environ.get(self._ENV_KEYFILE, "") or ""
+        return os.path.expanduser(kf) if kf else None
+
+    def describe(self) -> str:
+        return self.name
+
+    def is_available(self) -> bool:
+        db = self._database()
+        return PyKeePass is not None and bool(db) and os.path.exists(db)
+
+    # -- idle timeout (mirrors BitwardenBackend) ----
+    @staticmethod
+    def _session_timeout_seconds() -> int:
+        try:
+            return int(os.environ.get("SSHPILOT_SECRET_SESSION_TIMEOUT", "0") or 0)
+        except Exception:
+            return 0
+
+    def _touch_deadline(self) -> None:
+        secs = self._session_timeout_seconds()
+        self._deadline = (time.monotonic() + secs) if secs > 0 else None
+
+    def _expired(self) -> bool:
+        return self._deadline is not None and time.monotonic() > self._deadline
+
+    def _drop_session(self) -> None:
+        """Forget the in-process DB + cache + derived key. Caller holds ``self._lock``."""
+        self._kp = None
+        self._cache = None
+        self._deadline = None
+        os.environ.pop(self._ENV_KEY, None)
+
+    @staticmethod
+    def _report(progress, stage: str) -> None:
+        if callable(progress):
+            try:
+                progress(stage)
+            except Exception:
+                pass
+
+    # -- open / unlock ----
+    def _open(self, *, password=None, transformed_key=None):
+        if PyKeePass is None:
+            raise RuntimeError("pykeepass is not installed")
+        db = self._database()
+        if not db:
+            raise RuntimeError("no KeePass database configured")
+        if transformed_key is not None:
+            return PyKeePass(db, transformed_key=transformed_key)
+        return PyKeePass(db, password=(password or None), keyfile=self._keyfile())
+
+    def _db(self):
+        """The opened DB: our in-process one (honoring the idle timeout), else one opened from
+        an inherited ``SSHPILOT_KDBX_KEY`` (the askpass subprocess). ``None`` if unavailable."""
+        with self._lock:
+            if self._kp is not None:
+                if self._expired():
+                    self._drop_session()
+                else:
+                    self._touch_deadline()
+                    return self._kp
+            key_b64 = os.environ.get(self._ENV_KEY)
+            if key_b64:
+                try:
+                    return self._open(transformed_key=base64.b64decode(key_b64))
+                except Exception as exc:
+                    logger.debug("KDBX open from env key failed: %s", exc)
+            return None
+
+    def is_unlocked(self) -> bool:
+        with self._lock:
+            if self._kp is not None:
+                if self._expired():
+                    self._drop_session()
+                else:
+                    self._touch_deadline()
+                    return True
+        return bool(os.environ.get(self._ENV_KEY))
+
+    def unlock(self, secret: str, progress: Optional[Callable[[str], None]] = None) -> bool:
+        if not self.is_available():
+            return False
+        with self._lock:
+            if self._kp is not None and not self._expired():
+                self._touch_deadline()
+                return True
+            try:
+                self._report(progress, "unlocking")
+                kp = self._open(password=secret)
+            except CredentialsError:
+                logger.error("KDBX unlock failed: wrong master password or key file")
+                return False
+            except Exception as exc:
+                logger.error("KDBX unlock error: %s", exc)
+                return False
+            self._kp = kp
+            try:
+                os.environ[self._ENV_KEY] = base64.b64encode(
+                    kp.transformed_key).decode("ascii")
+            except Exception as exc:
+                logger.debug("KDBX transformed_key export failed: %s", exc)
+            self._touch_deadline()
+            self._report(progress, "loading")
+            self._warm_cache(kp)
+            return True
+
+    def _warm_cache(self, kp) -> None:
+        cache: Dict[str, Optional[str]] = {}
+        try:
+            for entry in (kp.entries or []):
+                if entry.title:
+                    cache[entry.title] = entry.password
+        except Exception as exc:
+            logger.debug("KDBX cache warm failed: %s", exc)
+        self._cache = cache
+
+    def lock(self) -> None:
+        with self._lock:
+            self._drop_session()
+
+    # -- group / entry helpers ----
+    def _group(self, kp):
+        grp = kp.find_groups(name=self._GROUP, first=True)
+        if grp is None:
+            grp = kp.add_group(kp.root_group, self._GROUP)
+        return grp
+
+    @staticmethod
+    def _find(kp, title: str):
+        return kp.find_entries(title=title, first=True)
+
+    # -- operations ----
+    def lookup(self, spec: SecretSpec) -> Optional[str]:
+        account = spec.keyring_account
+        with self._lock:
+            if self._kp is not None and self._cache is not None and not self._expired():
+                self._touch_deadline()
+                if account in self._cache:
+                    return self._cache[account] or None
+        kp = self._db()
+        if kp is None:
+            return None
+        entry = self._find(kp, account)
+        return (entry.password if entry else None) or None
+
+    def store(self, spec: SecretSpec, secret: str) -> bool:
+        kp = self._db()
+        if kp is None:
+            return False
+        try:
+            account = spec.keyring_account
+            attrs = spec.attributes or {}
+            entry = self._find(kp, account)
+            if entry is None:
+                entry = kp.add_entry(self._group(kp), account,
+                                     attrs.get("username") or "", secret)
+            else:
+                entry.password = secret
+                if attrs.get("username"):
+                    entry.username = attrs.get("username")
+            host = attrs.get("host")
+            if host and attrs.get("username"):
+                entry.url = f"ssh://{attrs.get('username')}@{host}"
+            setter = getattr(entry, "set_custom_property", None)
+            if callable(setter):
+                try:
+                    setter(self._TYPE_PROP, attrs.get("type") or "")
+                except Exception:
+                    pass
+            kp.save()
+            with self._lock:
+                if self._cache is not None:
+                    self._cache[account] = secret
+            return True
+        except Exception as exc:
+            logger.error("KDBX store failed: %s", exc)
+            return False
+
+    def delete(self, spec: SecretSpec) -> bool:
+        kp = self._db()
+        if kp is None:
+            return False
+        try:
+            entry = self._find(kp, spec.keyring_account)
+            if entry is None:
+                return False
+            kp.delete_entry(entry)
+            kp.save()
+            with self._lock:
+                if self._cache is not None:
+                    self._cache.pop(spec.keyring_account, None)
+            return True
+        except Exception as exc:
+            logger.error("KDBX delete failed: %s", exc)
+            return False
+
+
 class SSHAgentBackend(SecretBackend):
     """The "don't store secrets at all" choice.
 
@@ -1031,6 +1272,7 @@ class SecretManager:
             "keyring": KeyringBackend(),
             "pass": PassBackend(),
             "bitwarden": BitwardenBackend(),
+            "keepassxc": KdbxBackend(),
             "agent": SSHAgentBackend(),
         }
         self._selected: Optional[str] = None  # resolved lazily

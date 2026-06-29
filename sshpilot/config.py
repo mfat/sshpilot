@@ -154,6 +154,12 @@ class Config(GObject.Object):
                 'bitwarden': {
                     'profile': '',
                 },
+                # KeePass (.kdbx) backend: path to the database file and an optional key
+                # file. The master password is typed per launch (kept in memory).
+                'keepassxc': {
+                    'database': '',
+                    'keyfile': '',
+                },
             },
             'identity': {
                 # Default SSH agent offered to connections. 'auto' = the OS/desktop
