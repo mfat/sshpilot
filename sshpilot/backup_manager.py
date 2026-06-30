@@ -58,16 +58,32 @@ class BackupManager:
             return str(Path(get_ssh_dir()) / 'config')
 
     def get_known_hosts_path(self) -> Optional[str]:
-        """Get the known_hosts path if in isolated mode"""
+        """Get the current known_hosts path based on mode."""
         if self.connection_manager:
-            isolated = getattr(self.connection_manager, 'isolated_mode', False)
-            if isolated:
-                return getattr(self.connection_manager, 'known_hosts_path', None)
+            return getattr(self.connection_manager, 'known_hosts_path', None)
         
         use_isolated = self.config.get_setting('ssh.use_isolated_config', False)
         if use_isolated:
             return str(Path(get_config_dir()) / 'known_hosts')
-        return None
+        return str(Path(get_ssh_dir()) / 'known_hosts')
+
+    def _current_isolated_mode(self) -> bool:
+        """Return the mode that restore targets should keep using after import."""
+        if self.connection_manager:
+            return bool(getattr(self.connection_manager, 'isolated_mode', False))
+        return bool(self.config.get_setting('ssh.use_isolated_config', False))
+
+    def _app_config_for_restore(self, app_config: Dict[str, Any]) -> Dict[str, Any]:
+        """Copy imported app settings while preserving the current SSH operation mode."""
+        restored = dict(app_config)
+        ssh_settings = restored.get('ssh')
+        if isinstance(ssh_settings, dict):
+            ssh_settings = dict(ssh_settings)
+        else:
+            ssh_settings = {}
+        ssh_settings['use_isolated_config'] = self._current_isolated_mode()
+        restored['ssh'] = ssh_settings
+        return restored
 
     @staticmethod
     def normalize_backup_options(options: Optional[Dict[str, Any]] = None) -> Dict[str, bool]:
@@ -111,7 +127,7 @@ class BackupManager:
             export_data['ssh_config'] = ''
             logger.warning(f"SSH config not found at {ssh_config_path}")
 
-        # Export known_hosts if in isolated mode
+        # Export known_hosts from the active mode's path
         known_hosts_path = self.get_known_hosts_path()
         if not options['known_hosts']:
             export_data['known_hosts'] = None
@@ -488,7 +504,7 @@ class BackupManager:
 
             # Import app config
             if options['app_settings']:
-                app_config = import_data['app_config']
+                app_config = self._app_config_for_restore(import_data['app_config'])
                 config_file = Path(get_config_dir()) / 'config.json'
                 os.makedirs(config_file.parent, exist_ok=True)
                 with open(config_file, 'w', encoding='utf-8') as f:
@@ -527,7 +543,7 @@ class BackupManager:
 
             # Merge app config
             if options['app_settings']:
-                app_config = import_data['app_config']
+                app_config = self._app_config_for_restore(import_data['app_config'])
                 self._merge_app_config(app_config)
 
                 # Reload config in memory
@@ -676,6 +692,7 @@ class BackupManager:
                         current_config[key] = value
 
             # Update config version to current
+            current_config = self._app_config_for_restore(current_config)
             current_config['config_version'] = CONFIG_VERSION
 
             # Save merged config

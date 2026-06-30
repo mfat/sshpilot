@@ -1,5 +1,7 @@
 """Tests for the .spbk credential gather/restore in BackupManager."""
 
+import json
+
 import sshpilot.backup_manager as bm
 import sshpilot.credential_manager as cmod
 import sshpilot.secret_storage as ss
@@ -47,6 +49,25 @@ class FakeConfig:
         return {"some": "config"}
 
 
+class ModeConfig(FakeConfig):
+    def __init__(self, config_file, isolated):
+        self.config_file = str(config_file)
+        self.config_data = {"ssh": {"use_isolated_config": isolated}}
+
+    def get_setting(self, key, default=None):
+        if key == "ssh.use_isolated_config":
+            return self.config_data.get("ssh", {}).get("use_isolated_config", default)
+        return default
+
+    def load_json_config(self):
+        with open(self.config_file, encoding="utf-8") as f:
+            self.config_data = json.load(f)
+        return self.config_data
+
+    def get_default_config(self):
+        return {"ssh": {"use_isolated_config": self.get_setting("ssh.use_isolated_config", False)}}
+
+
 class FakeConnMgr:
     def __init__(self, conns, ssh_config_path="", known_hosts_path=None, isolated_mode=False):
         self._conns = conns
@@ -59,6 +80,107 @@ class FakeConnMgr:
 
     def load_ssh_config(self):
         pass
+
+
+def test_restore_replace_keeps_current_default_mode(monkeypatch, tmp_path):
+    """An isolated backup restored while in default mode must stay in default mode."""
+    config_dir = tmp_path / "config"
+    ssh_dir = tmp_path / "ssh"
+    config_dir.mkdir()
+    ssh_dir.mkdir()
+    monkeypatch.setattr(bm, "get_config_dir", lambda: str(config_dir))
+    monkeypatch.setattr(bm, "get_ssh_dir", lambda: str(ssh_dir))
+
+    config_file = config_dir / "config.json"
+    config_file.write_text(
+        json.dumps({"ssh": {"use_isolated_config": False}}),
+        encoding="utf-8",
+    )
+    config = ModeConfig(config_file, isolated=False)
+    ssh_config_path = ssh_dir / "config"
+    known_hosts_path = ssh_dir / "known_hosts"
+    mgr = bm.BackupManager(
+        config,
+        FakeConnMgr([], str(ssh_config_path), str(known_hosts_path), isolated_mode=False),
+    )
+    manifest = {
+        "version": 1,
+        "isolated_mode": True,
+        "backup_options": {
+            "app_settings": True,
+            "ssh_config": True,
+            "known_hosts": True,
+            "secrets": False,
+            "private_keys": False,
+        },
+        "ssh_config": "Host isolated-backup\n",
+        "known_hosts": "isolated.example ssh-ed25519 AAAA\n",
+        "app_config": {"ssh": {"use_isolated_config": True}, "ui": {"theme": "dark"}},
+    }
+
+    success, error = mgr._apply_parsed(manifest, mode="replace", create_backup=False)
+
+    assert success, error
+    assert ssh_config_path.read_text(encoding="utf-8") == "Host isolated-backup\n"
+    assert known_hosts_path.read_text(encoding="utf-8") == "isolated.example ssh-ed25519 AAAA\n"
+    restored_config = json.loads(config_file.read_text(encoding="utf-8"))
+    assert restored_config["ssh"]["use_isolated_config"] is False
+    assert restored_config["ui"]["theme"] == "dark"
+
+
+def test_restore_replace_keeps_current_isolated_mode(monkeypatch, tmp_path):
+    """A default backup restored while in isolated mode must stay in isolated mode."""
+    config_dir = tmp_path / "config"
+    default_ssh_dir = tmp_path / "ssh"
+    config_dir.mkdir()
+    default_ssh_dir.mkdir()
+    monkeypatch.setattr(bm, "get_config_dir", lambda: str(config_dir))
+    monkeypatch.setattr(bm, "get_ssh_dir", lambda: str(default_ssh_dir))
+
+    config_file = config_dir / "config.json"
+    config_file.write_text(
+        json.dumps({"ssh": {"use_isolated_config": True}}),
+        encoding="utf-8",
+    )
+    config = ModeConfig(config_file, isolated=True)
+    isolated_config_path = config_dir / "ssh_config"
+    isolated_known_hosts_path = config_dir / "known_hosts"
+    mgr = bm.BackupManager(
+        config,
+        FakeConnMgr(
+            [],
+            str(isolated_config_path),
+            str(isolated_known_hosts_path),
+            isolated_mode=True,
+        ),
+    )
+    manifest = {
+        "version": 1,
+        "isolated_mode": False,
+        "backup_options": {
+            "app_settings": True,
+            "ssh_config": True,
+            "known_hosts": True,
+            "secrets": False,
+            "private_keys": False,
+        },
+        "ssh_config": "Host default-backup\n",
+        "known_hosts": "default.example ssh-ed25519 BBBB\n",
+        "app_config": {"ssh": {"use_isolated_config": False}, "ui": {"theme": "light"}},
+    }
+
+    success, error = mgr._apply_parsed(manifest, mode="replace", create_backup=False)
+
+    assert success, error
+    assert isolated_config_path.read_text(encoding="utf-8") == "Host default-backup\n"
+    assert (
+        isolated_known_hosts_path.read_text(encoding="utf-8")
+        == "default.example ssh-ed25519 BBBB\n"
+    )
+    assert not (default_ssh_dir / "config").exists()
+    restored_config = json.loads(config_file.read_text(encoding="utf-8"))
+    assert restored_config["ssh"]["use_isolated_config"] is True
+    assert restored_config["ui"]["theme"] == "light"
 
 
 def test_spbk_export_gathers_selected_credentials_and_restores(monkeypatch, tmp_path):
