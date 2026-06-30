@@ -307,8 +307,8 @@ def test_spbk_private_key_merge_skips_existing(monkeypatch, tmp_path):
     assert pub_path.read_bytes() == b"EXISTING PUBLIC\n"
 
 
-def test_spbk_private_key_merge_restores_missing_public_sidecar(monkeypatch, tmp_path):
-    """Merge mode should still restore a missing .pub file beside an existing private key."""
+def test_spbk_private_key_merge_skips_public_when_private_exists(monkeypatch, tmp_path):
+    """Merge mode treats a private key and its .pub file as one skipped key-pair entry."""
     monkeypatch.setattr(bm, "get_config_dir", lambda: str(tmp_path / "config"))
     key_path = tmp_path / "id_ed25519"
     pub_path = tmp_path / "id_ed25519.pub"
@@ -351,9 +351,9 @@ def test_spbk_private_key_merge_restores_missing_public_sidecar(monkeypatch, tmp
     )
     assert success, error
     assert restored == 0
-    assert restored_keys == 1
+    assert restored_keys == 0
     assert key_path.read_bytes() == b"EXISTING PRIVATE\n"
-    assert pub_path.read_bytes() == b"BACKUP PUBLIC\n"
+    assert not pub_path.exists()
 
 
 def test_spbk_private_key_merge_restores_missing(monkeypatch, tmp_path):

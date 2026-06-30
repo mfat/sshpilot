@@ -375,9 +375,9 @@ class BackupManager:
                 raw = item.get('content_b64')
                 if not path or not raw:
                     continue
-                restored_any = False
                 if mode == 'merge' and os.path.isfile(path):
                     logger.info("Skipping existing private key at %s (merge mode)", path)
+                    continue
                 else:
                     os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
                     with open(path, 'wb') as f:
@@ -385,7 +385,6 @@ class BackupManager:
                     private_mode = int(item.get('mode') or 0o600) & 0o777
                     # Private keys must never be restored with group/other access.
                     os.chmod(path, (private_mode & 0o600) or 0o600)
-                    restored_any = True
 
                 public_path = os.path.expanduser(str(item.get('public_path') or ''))
                 public_raw = item.get('public_content_b64')
@@ -397,9 +396,7 @@ class BackupManager:
                         with open(public_path, 'wb') as f:
                             f.write(base64.b64decode(public_raw.encode('ascii')))
                         os.chmod(public_path, int(item.get('public_mode') or 0o644) & 0o777)
-                        restored_any = True
-                if restored_any:
-                    restored += 1
+                restored += 1
             except Exception:
                 logger.warning("Failed to restore a private key", exc_info=True)
         return restored
