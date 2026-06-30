@@ -95,11 +95,26 @@ class WindowConfigDialogsMixin:
         category_label = Gtk.Label(label=_("Include"), xalign=0)
         category_label.add_css_class('heading')
         category_box.append(category_label)
-        app_settings_check = Gtk.CheckButton(label=_("App settings and groups"))
-        ssh_config_check = Gtk.CheckButton(label=_("SSH config entries"))
-        known_hosts_check = Gtk.CheckButton(label=_("Known hosts"))
-        secrets_check = Gtk.CheckButton(label=_("Saved passwords, sudo passwords, and key passphrases"))
-        private_keys_check = Gtk.CheckButton(label=_("Private key files"))
+
+        def switch_row(label, active=False):
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            text = Gtk.Label(label=label, xalign=0, hexpand=True)
+            switch = Gtk.Switch(active=bool(active))
+            switch.set_valign(Gtk.Align.CENTER)
+            row.append(text); row.append(switch)
+            return row, switch
+
+        app_row, app_settings_check = switch_row(
+            _("App settings and groups"), option_defaults.get('app_settings', False))
+        ssh_row, ssh_config_check = switch_row(
+            _("SSH config entries"), option_defaults.get('ssh_config', False))
+        known_row, known_hosts_check = switch_row(
+            _("Known hosts"), option_defaults.get('known_hosts', False))
+        secrets_row, secrets_check = switch_row(
+            _("Saved passwords, sudo passwords, and key passphrases"),
+            option_defaults.get('secrets', False))
+        keys_row, private_keys_check = switch_row(
+            _("Private key files"), option_defaults.get('private_keys', False))
         option_checks = {
             'app_settings': app_settings_check,
             'ssh_config': ssh_config_check,
@@ -107,9 +122,8 @@ class WindowConfigDialogsMixin:
             'secrets': secrets_check,
             'private_keys': private_keys_check,
         }
-        for key, check in option_checks.items():
-            check.set_active(option_defaults.get(key, False))
-            category_box.append(check)
+        for row in (app_row, ssh_row, known_row, secrets_row, keys_row):
+            category_box.append(row)
         box.append(category_box)
 
         connection_label = Gtk.Label(
@@ -118,8 +132,8 @@ class WindowConfigDialogsMixin:
         connection_label.add_css_class('heading')
         box.append(connection_label)
 
-        select_all = Gtk.CheckButton(label=_("Select all connections"))
-        box.append(select_all)
+        select_all_row, select_all = switch_row(_("Select all connections"), False)
+        box.append(select_all_row)
 
         listbox = Gtk.ListBox()
         listbox.set_selection_mode(Gtk.SelectionMode.NONE)
@@ -132,9 +146,8 @@ class WindowConfigDialogsMixin:
                 key = getattr(conn, 'nickname', '') or label
             except Exception:
                 label, key = '?', '?'
-            cb = Gtk.CheckButton(label=label)
-            cb.set_active(key in prefill)
-            row = Gtk.ListBoxRow(); row.set_child(cb); listbox.append(row)
+            switch_box, cb = switch_row(label, key in prefill)
+            row = Gtk.ListBoxRow(); row.set_child(switch_box); listbox.append(row)
             checks.append((cb, conn, key))
         scrolled = Gtk.ScrolledWindow()
         scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
@@ -145,15 +158,15 @@ class WindowConfigDialogsMixin:
         def on_select_all(btn):
             for cb, _c, _k in checks:
                 cb.set_active(btn.get_active())
-        select_all.connect('toggled', on_select_all)
+        select_all.connect('notify::active', on_select_all)
 
         def sync_connection_controls(*_a):
             needs_connections = secrets_check.get_active() or private_keys_check.get_active()
             select_all.set_sensitive(needs_connections)
             listbox.set_sensitive(needs_connections)
             connection_label.set_sensitive(needs_connections)
-        secrets_check.connect('toggled', sync_connection_controls)
-        private_keys_check.connect('toggled', sync_connection_controls)
+        secrets_check.connect('notify::active', sync_connection_controls)
+        private_keys_check.connect('notify::active', sync_connection_controls)
         sync_connection_controls()
 
         enc_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
@@ -478,13 +491,16 @@ class WindowConfigDialogsMixin:
                     'private_keys': _("Private key files"),
                 }
                 for key in BACKUP_OPTION_KEYS:
-                    check = Gtk.CheckButton(label=labels[key])
-                    check.set_active(included.get(key, False))
-                    check.set_sensitive(included.get(key, False))
+                    row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+                    label = Gtk.Label(label=labels[key], xalign=0, hexpand=True)
+                    check = Gtk.Switch(active=included.get(key, False))
+                    check.set_valign(Gtk.Align.CENTER)
+                    row.append(label); row.append(check)
+                    row.set_sensitive(included.get(key, False))
                     if not included.get(key, False):
-                        check.set_tooltip_text(_("This backup does not include this item."))
+                        row.set_tooltip_text(_("This backup does not include this item."))
                     restore_checks[key] = check
-                    content_box.append(check)
+                    content_box.append(row)
             
             # Warning label
             from sshpilot import icon_utils
