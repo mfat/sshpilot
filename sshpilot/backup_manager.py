@@ -3,6 +3,7 @@ Backup and Restore Manager for sshPilot
 Handles import/export of SSH and application configuration
 """
 
+import base64
 import json
 import logging
 import os
@@ -16,6 +17,21 @@ from .config import Config, CONFIG_VERSION
 logger = logging.getLogger(__name__)
 
 BACKUP_VERSION = 1
+BACKUP_OPTION_KEYS = (
+    'app_settings',
+    'ssh_config',
+    'known_hosts',
+    'secrets',
+    'private_keys',
+)
+DEFAULT_BACKUP_OPTIONS = {
+    'app_settings': True,
+    'ssh_config': True,
+    'known_hosts': True,
+    'secrets': True,
+    'private_keys': False,
+}
+DEFAULT_RESTORE_OPTIONS = dict(DEFAULT_BACKUP_OPTIONS)
 
 
 class BackupManager:
@@ -26,6 +42,7 @@ class BackupManager:
         self.connection_manager = connection_manager
         self.backup_dir = Path(get_config_dir()) / 'backups'
         self.backup_dir.mkdir(parents=True, exist_ok=True)
+        self.last_export_counts = {'credentials': 0, 'private_keys': 0}
 
     def get_ssh_config_path(self) -> str:
         """Get the current SSH config path based on mode"""
@@ -51,14 +68,26 @@ class BackupManager:
             return str(Path(get_config_dir()) / 'known_hosts')
         return None
 
-    def _build_export_data(self) -> Dict[str, Any]:
+    @staticmethod
+    def normalize_backup_options(options: Optional[Dict[str, Any]] = None) -> Dict[str, bool]:
+        """Return a complete, boolean option map for export/restore categories."""
+        merged = dict(DEFAULT_BACKUP_OPTIONS)
+        if options:
+            for key in BACKUP_OPTION_KEYS:
+                if key in options:
+                    merged[key] = bool(options[key])
+        return merged
+
+    def _build_export_data(self, options: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """The config payload (ssh_config + known_hosts + app_config + metadata) shared by the
         legacy JSON export and the ``.spbk`` backup."""
+        options = self.normalize_backup_options(options)
         export_data = {
             'version': BACKUP_VERSION,
             'export_date': datetime.now().isoformat(),
             'platform': 'flatpak' if is_flatpak() else os.name,
             'config_version': CONFIG_VERSION,
+            'backup_options': options,
         }
 
         # Export SSH configuration mode
@@ -67,7 +96,9 @@ class BackupManager:
 
         # Export SSH config file
         ssh_config_path = self.get_ssh_config_path()
-        if ssh_config_path and os.path.exists(ssh_config_path):
+        if not options['ssh_config']:
+            export_data['ssh_config'] = ''
+        elif ssh_config_path and os.path.exists(ssh_config_path):
             try:
                 with open(ssh_config_path, encoding='utf-8') as f:
                     export_data['ssh_config'] = f.read()
@@ -81,7 +112,9 @@ class BackupManager:
 
         # Export known_hosts if in isolated mode
         known_hosts_path = self.get_known_hosts_path()
-        if known_hosts_path and os.path.exists(known_hosts_path):
+        if not options['known_hosts']:
+            export_data['known_hosts'] = None
+        elif known_hosts_path and os.path.exists(known_hosts_path):
             try:
                 with open(known_hosts_path, encoding='utf-8') as f:
                     export_data['known_hosts'] = f.read()
@@ -94,7 +127,9 @@ class BackupManager:
 
         # Export app configuration
         config_file = Path(get_config_dir()) / 'config.json'
-        if config_file.exists():
+        if not options['app_settings']:
+            export_data['app_config'] = {}
+        elif config_file.exists():
             try:
                 with open(config_file, encoding='utf-8') as f:
                     export_data['app_config'] = json.load(f)
@@ -141,18 +176,72 @@ class BackupManager:
                         'username': c.username, 'secret': c.secret, 'metadata': c.metadata})
         return out
 
+    def _connection_key_paths(self, connections) -> List[str]:
+        paths: List[str] = []
+        for conn in connections or []:
+            for attr in ('keyfile', 'identity_files', 'resolved_identity_files'):
+                value = getattr(conn, attr, None)
+                if isinstance(value, (list, tuple)):
+                    candidates = value
+                else:
+                    candidates = [value]
+                for candidate in candidates:
+                    if not candidate:
+                        continue
+                    path = os.path.expanduser(str(candidate))
+                    if path and path not in paths:
+                        paths.append(path)
+        return paths
+
+    def _gather_private_keys(self, connections) -> List[Dict[str, Any]]:
+        """Serialize selected connections' private key files and matching .pub files."""
+        out: List[Dict[str, Any]] = []
+        for key_path in self._connection_key_paths(connections):
+            try:
+                if not os.path.isfile(key_path):
+                    continue
+                with open(key_path, 'rb') as f:
+                    private_raw = f.read()
+                stat = os.stat(key_path)
+                item: Dict[str, Any] = {
+                    'path': key_path,
+                    'mode': stat.st_mode & 0o777,
+                    'content_b64': base64.b64encode(private_raw).decode('ascii'),
+                }
+                public_path = f"{key_path}.pub"
+                if os.path.isfile(public_path):
+                    with open(public_path, 'rb') as f:
+                        public_raw = f.read()
+                    item['public_path'] = public_path
+                    item['public_content_b64'] = base64.b64encode(public_raw).decode('ascii')
+                    item['public_mode'] = os.stat(public_path).st_mode & 0o777
+                out.append(item)
+            except Exception:
+                logger.warning("Failed to include private key in backup: %s", key_path,
+                               exc_info=True)
+        return out
+
     def export_backup(self, export_path: str, *, connections=None,
-                      passphrase: Optional[str] = None) -> Tuple[bool, Optional[str]]:
-        """Export a ``.spbk`` backup: the full config payload plus the selected connections'
-        credentials, encrypted with ``passphrase`` when given (else plaintext)."""
+                      passphrase: Optional[str] = None,
+                      options: Optional[Dict[str, Any]] = None) -> Tuple[bool, Optional[str]]:
+        """Export a ``.spbk`` backup with user-selected config and secret categories."""
         try:
             from .backup_archive import write_spbk
-            manifest = self._build_export_data()
+            options = self.normalize_backup_options(options)
+            manifest = self._build_export_data(options)
             manifest['format'] = 'spbk'
-            manifest['credentials'] = self._gather_credentials(connections)
+            manifest['credentials'] = (
+                self._gather_credentials(connections) if options['secrets'] else [])
+            manifest['private_keys'] = (
+                self._gather_private_keys(connections) if options['private_keys'] else [])
+            self.last_export_counts = {
+                'credentials': len(manifest['credentials']),
+                'private_keys': len(manifest['private_keys']),
+            }
             write_spbk(os.path.expanduser(export_path), manifest, passphrase or None)
-            logger.info("Backup exported to %s (%d credential(s), encrypted=%s)",
-                        export_path, len(manifest['credentials']), bool(passphrase))
+            logger.info("Backup exported to %s (%d credential(s), %d private key(s), encrypted=%s)",
+                        export_path, len(manifest['credentials']),
+                        len(manifest['private_keys']), bool(passphrase))
             return True, None
         except Exception as e:
             error_msg = f"Failed to export backup: {e}"
@@ -196,13 +285,35 @@ class BackupManager:
             logger.error(error_msg)
             return False, error_msg
 
+    def _restore_options_for_manifest(
+        self,
+        manifest: Dict[str, Any],
+        restore_options: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, bool]:
+        included = self.normalize_backup_options(manifest.get('backup_options'))
+        # Legacy JSON/SPBK files predate option metadata; their config sections mean "included".
+        if 'backup_options' not in manifest:
+            included['app_settings'] = 'app_config' in manifest
+            included['ssh_config'] = bool(manifest.get('ssh_config'))
+            included['known_hosts'] = bool(manifest.get('known_hosts'))
+            included['secrets'] = bool(manifest.get('credentials'))
+            included['private_keys'] = bool(manifest.get('private_keys'))
+        requested = dict(DEFAULT_RESTORE_OPTIONS)
+        if restore_options:
+            for key in BACKUP_OPTION_KEYS:
+                if key in restore_options:
+                    requested[key] = bool(restore_options[key])
+        return {key: included[key] and requested[key] for key in BACKUP_OPTION_KEYS}
+
     def _apply_parsed(self, import_data: Dict[str, Any], mode: str,
-                      create_backup: bool) -> Tuple[bool, Optional[str]]:
+                      create_backup: bool,
+                      restore_options: Optional[Dict[str, Any]] = None) -> Tuple[bool, Optional[str]]:
         """Validate, auto-backup, then apply a parsed config payload (replace/merge) and reload.
         Shared by JSON import and ``.spbk`` restore."""
         is_valid, validation_error = self._validate_import_data(import_data)
         if not is_valid:
             return False, validation_error
+        effective_options = self._restore_options_for_manifest(import_data, restore_options)
 
         if create_backup:
             backup_path = self._create_auto_backup()
@@ -210,9 +321,9 @@ class BackupManager:
                 logger.info(f"Created automatic backup at {backup_path}")
 
         if mode == 'replace':
-            success, error = self._import_replace(import_data)
+            success, error = self._import_replace(import_data, effective_options)
         elif mode == 'merge':
-            success, error = self._import_merge(import_data)
+            success, error = self._import_merge(import_data, effective_options)
         else:
             return False, f"Invalid import mode: {mode}"
 
@@ -252,15 +363,50 @@ class BackupManager:
                 logger.warning("Failed to restore a credential", exc_info=True)
         return restored
 
+    def _restore_private_keys(self, manifest: Dict[str, Any]) -> int:
+        """Restore private keys embedded in a backup to their original paths."""
+        restored = 0
+        for item in manifest.get('private_keys') or []:
+            try:
+                path = os.path.expanduser(str(item.get('path') or ''))
+                raw = item.get('content_b64')
+                if not path or not raw:
+                    continue
+                os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
+                with open(path, 'wb') as f:
+                    f.write(base64.b64decode(raw.encode('ascii')))
+                os.chmod(path, 0o600)
+
+                public_path = os.path.expanduser(str(item.get('public_path') or ''))
+                public_raw = item.get('public_content_b64')
+                if public_path and public_raw:
+                    os.makedirs(os.path.dirname(public_path) or '.', exist_ok=True)
+                    with open(public_path, 'wb') as f:
+                        f.write(base64.b64decode(public_raw.encode('ascii')))
+                    os.chmod(public_path, int(item.get('public_mode') or 0o644) & 0o777)
+                restored += 1
+            except Exception:
+                logger.warning("Failed to restore a private key", exc_info=True)
+        return restored
+
     def apply_imported_manifest(self, manifest: Dict[str, Any], mode: str = 'replace',
-                                create_backup: bool = True) -> Tuple[bool, Optional[str], int]:
+                                create_backup: bool = True,
+                                restore_options: Optional[Dict[str, Any]] = None
+                                ) -> Tuple[bool, Optional[str], int, int]:
         """Apply a decrypted ``.spbk`` manifest: config (replace/merge) **and** restore its
-        credentials. Returns ``(success, error, restored_credential_count)``. The caller
-        (UI) is responsible for reading/decrypting the ``.spbk`` first (it owns the passphrase
-        prompt)."""
-        success, error = self._apply_parsed(manifest, mode, create_backup)
-        restored = self._restore_credentials(manifest) if success else 0
-        return success, error, restored
+        credentials/private keys. The caller owns passphrase and option prompts."""
+        effective_options = self._restore_options_for_manifest(manifest, restore_options)
+        success, error = self._apply_parsed(
+            manifest, mode, create_backup, restore_options=effective_options)
+        restored = (
+            self._restore_credentials(manifest)
+            if success and effective_options['secrets'] else 0
+        )
+        restored_keys = (
+            self._restore_private_keys(manifest)
+            if success and effective_options['private_keys'] else 0
+        )
+        return success, error, restored, restored_keys
 
     def _validate_import_data(self, data: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
         """Validate import data structure"""
@@ -274,7 +420,8 @@ class BackupManager:
         if not isinstance(version, int) or version > BACKUP_VERSION:
             return False, f"Unsupported backup version: {version}"
 
-        # Check required fields
+        # Check required fields. New .spbk files may intentionally omit settings,
+        # but legacy JSON imports still require an app config section.
         if 'app_config' not in data:
             return False, "Missing 'app_config' field in import data"
 
@@ -291,11 +438,16 @@ class BackupManager:
 
         return True, None
 
-    def _import_replace(self, import_data: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
+    def _import_replace(
+        self,
+        import_data: Dict[str, Any],
+        options: Optional[Dict[str, bool]] = None,
+    ) -> Tuple[bool, Optional[str]]:
         """Replace all configuration with imported data"""
         try:
+            options = self.normalize_backup_options(options)
             # Import SSH config
-            if import_data.get('ssh_config'):
+            if options['ssh_config'] and import_data.get('ssh_config'):
                 ssh_config_path = self.get_ssh_config_path()
                 os.makedirs(os.path.dirname(ssh_config_path), exist_ok=True)
                 with open(ssh_config_path, 'w', encoding='utf-8') as f:
@@ -305,7 +457,7 @@ class BackupManager:
                 logger.info(f"Replaced SSH config at {ssh_config_path}")
 
             # Import known_hosts if present
-            if import_data.get('known_hosts'):
+            if options['known_hosts'] and import_data.get('known_hosts'):
                 known_hosts_path = self.get_known_hosts_path()
                 if known_hosts_path:
                     os.makedirs(os.path.dirname(known_hosts_path), exist_ok=True)
@@ -315,15 +467,16 @@ class BackupManager:
                     logger.info(f"Replaced known_hosts at {known_hosts_path}")
 
             # Import app config
-            app_config = import_data['app_config']
-            config_file = Path(get_config_dir()) / 'config.json'
-            os.makedirs(config_file.parent, exist_ok=True)
-            with open(config_file, 'w', encoding='utf-8') as f:
-                json.dump(app_config, f, indent=2)
-            logger.info(f"Replaced app config at {config_file}")
+            if options['app_settings']:
+                app_config = import_data['app_config']
+                config_file = Path(get_config_dir()) / 'config.json'
+                os.makedirs(config_file.parent, exist_ok=True)
+                with open(config_file, 'w', encoding='utf-8') as f:
+                    json.dump(app_config, f, indent=2)
+                logger.info(f"Replaced app config at {config_file}")
 
-            # Reload config in memory
-            self.config.config_data = self.config.load_json_config()
+                # Reload config in memory
+                self.config.config_data = self.config.load_json_config()
 
             logger.info("Configuration replaced successfully")
             return True, None
@@ -333,26 +486,32 @@ class BackupManager:
             logger.error(error_msg)
             return False, error_msg
 
-    def _import_merge(self, import_data: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
+    def _import_merge(
+        self,
+        import_data: Dict[str, Any],
+        options: Optional[Dict[str, bool]] = None,
+    ) -> Tuple[bool, Optional[str]]:
         """Merge imported configuration with existing"""
         try:
+            options = self.normalize_backup_options(options)
             # For SSH config, we'll append imported hosts that don't exist
-            if import_data.get('ssh_config'):
+            if options['ssh_config'] and import_data.get('ssh_config'):
                 ssh_config_path = self.get_ssh_config_path()
                 self._merge_ssh_config(ssh_config_path, import_data['ssh_config'])
 
             # For known_hosts, append if in isolated mode
-            if import_data.get('known_hosts'):
+            if options['known_hosts'] and import_data.get('known_hosts'):
                 known_hosts_path = self.get_known_hosts_path()
                 if known_hosts_path:
                     self._merge_known_hosts(known_hosts_path, import_data['known_hosts'])
 
             # Merge app config
-            app_config = import_data['app_config']
-            self._merge_app_config(app_config)
+            if options['app_settings']:
+                app_config = import_data['app_config']
+                self._merge_app_config(app_config)
 
-            # Reload config in memory
-            self.config.config_data = self.config.load_json_config()
+                # Reload config in memory
+                self.config.config_data = self.config.load_json_config()
 
             logger.info("Configuration merged successfully")
             return True, None
