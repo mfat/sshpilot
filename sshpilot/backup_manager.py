@@ -363,8 +363,11 @@ class BackupManager:
                 logger.warning("Failed to restore a credential", exc_info=True)
         return restored
 
-    def _restore_private_keys(self, manifest: Dict[str, Any]) -> int:
-        """Restore private keys embedded in a backup to their original paths."""
+    def _restore_private_keys(self, manifest: Dict[str, Any], mode: str = 'replace') -> int:
+        """Restore private keys embedded in a backup to their original paths.
+
+        In ``merge`` mode, existing key files at the target paths are left untouched.
+        """
         restored = 0
         for item in manifest.get('private_keys') or []:
             try:
@@ -372,18 +375,24 @@ class BackupManager:
                 raw = item.get('content_b64')
                 if not path or not raw:
                     continue
+                if mode == 'merge' and os.path.isfile(path):
+                    logger.info("Skipping existing private key at %s (merge mode)", path)
+                    continue
                 os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
                 with open(path, 'wb') as f:
                     f.write(base64.b64decode(raw.encode('ascii')))
-                os.chmod(path, 0o600)
+                os.chmod(path, int(item.get('mode') or 0o600) & 0o777)
 
                 public_path = os.path.expanduser(str(item.get('public_path') or ''))
                 public_raw = item.get('public_content_b64')
                 if public_path and public_raw:
-                    os.makedirs(os.path.dirname(public_path) or '.', exist_ok=True)
-                    with open(public_path, 'wb') as f:
-                        f.write(base64.b64decode(public_raw.encode('ascii')))
-                    os.chmod(public_path, int(item.get('public_mode') or 0o644) & 0o777)
+                    if mode == 'merge' and os.path.isfile(public_path):
+                        logger.info("Skipping existing public key at %s (merge mode)", public_path)
+                    else:
+                        os.makedirs(os.path.dirname(public_path) or '.', exist_ok=True)
+                        with open(public_path, 'wb') as f:
+                            f.write(base64.b64decode(public_raw.encode('ascii')))
+                        os.chmod(public_path, int(item.get('public_mode') or 0o644) & 0o777)
                 restored += 1
             except Exception:
                 logger.warning("Failed to restore a private key", exc_info=True)
@@ -403,7 +412,7 @@ class BackupManager:
             if success and effective_options['secrets'] else 0
         )
         restored_keys = (
-            self._restore_private_keys(manifest)
+            self._restore_private_keys(manifest, mode)
             if success and effective_options['private_keys'] else 0
         )
         return success, error, restored, restored_keys

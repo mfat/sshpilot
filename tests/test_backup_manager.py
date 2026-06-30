@@ -219,6 +219,100 @@ def test_spbk_private_key_roundtrip_is_opt_in(monkeypatch, tmp_path):
     assert oct(key_path.stat().st_mode & 0o777) == "0o600"
 
 
+def test_spbk_private_key_merge_skips_existing(monkeypatch, tmp_path):
+    """Merge mode must not overwrite private keys that already exist on disk."""
+    monkeypatch.setattr(bm, "get_config_dir", lambda: str(tmp_path / "config"))
+    key_path = tmp_path / "id_ed25519"
+    pub_path = tmp_path / "id_ed25519.pub"
+    key_path.write_bytes(b"EXISTING PRIVATE\n")
+    pub_path.write_bytes(b"EXISTING PUBLIC\n")
+
+    selected = FakeConn("A", "h.example", "alice")
+    selected.keyfile = str(key_path)
+    mgr = bm.BackupManager(FakeConfig(), FakeConnMgr([selected]))
+    path = str(tmp_path / "keys.spbk")
+    ok, err = mgr.export_backup(
+        path,
+        connections=[selected],
+        passphrase="secret",
+        options={
+            "app_settings": False,
+            "ssh_config": False,
+            "known_hosts": False,
+            "secrets": False,
+            "private_keys": True,
+        },
+    )
+    assert ok, err
+    manifest = read_spbk(path, "secret")
+
+    success, error, restored, restored_keys = mgr.apply_imported_manifest(
+        manifest,
+        mode="merge",
+        create_backup=False,
+        restore_options={
+            "app_settings": False,
+            "ssh_config": False,
+            "known_hosts": False,
+            "secrets": False,
+            "private_keys": True,
+        },
+    )
+    assert success, error
+    assert restored == 0
+    assert restored_keys == 0
+    assert key_path.read_bytes() == b"EXISTING PRIVATE\n"
+    assert pub_path.read_bytes() == b"EXISTING PUBLIC\n"
+
+
+def test_spbk_private_key_merge_restores_missing(monkeypatch, tmp_path):
+    """Merge mode still restores keys whose paths do not yet exist."""
+    monkeypatch.setattr(bm, "get_config_dir", lambda: str(tmp_path / "config"))
+    key_path = tmp_path / "id_ed25519"
+    pub_path = tmp_path / "id_ed25519.pub"
+    key_path.write_bytes(b"PRIVATE KEY\n")
+    pub_path.write_bytes(b"PUBLIC KEY\n")
+
+    selected = FakeConn("A", "h.example", "alice")
+    selected.keyfile = str(key_path)
+    mgr = bm.BackupManager(FakeConfig(), FakeConnMgr([selected]))
+    path = str(tmp_path / "keys.spbk")
+    ok, err = mgr.export_backup(
+        path,
+        connections=[selected],
+        passphrase="secret",
+        options={
+            "app_settings": False,
+            "ssh_config": False,
+            "known_hosts": False,
+            "secrets": False,
+            "private_keys": True,
+        },
+    )
+    assert ok, err
+    manifest = read_spbk(path, "secret")
+    key_path.unlink()
+    pub_path.unlink()
+
+    success, error, restored, restored_keys = mgr.apply_imported_manifest(
+        manifest,
+        mode="merge",
+        create_backup=False,
+        restore_options={
+            "app_settings": False,
+            "ssh_config": False,
+            "known_hosts": False,
+            "secrets": False,
+            "private_keys": True,
+        },
+    )
+    assert success, error
+    assert restored == 0
+    assert restored_keys == 1
+    assert key_path.read_bytes() == b"PRIVATE KEY\n"
+    assert pub_path.read_bytes() == b"PUBLIC KEY\n"
+
+
 def test_spbk_restore_honors_secret_option(monkeypatch, tmp_path):
     monkeypatch.setattr(bm, "get_config_dir", lambda: str(tmp_path))
     fake = FakeMgr()
