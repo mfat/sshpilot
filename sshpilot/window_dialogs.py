@@ -591,7 +591,8 @@ class WindowConfigDialogsMixin:
             if not success:
                 self._simple_dialog(_("Import Failed"), error or _("Unknown error"))
                 return
-            self._show_import_success(restored, total, restored_keys, total_keys)
+            skipped_keys = getattr(backup_mgr, 'last_import_skipped_keys', 0)
+            self._show_import_success(restored, total, restored_keys, total_keys, skipped_keys)
 
         if total:
             try:
@@ -605,25 +606,37 @@ class WindowConfigDialogsMixin:
         do_apply()
 
     def _show_import_success(self, restored: int, total: int,
-                             restored_keys: int = 0, total_keys: int = 0):
+                             restored_keys: int = 0, total_keys: int = 0,
+                             skipped_keys: int = 0):
+        # Keys that already existed were left untouched by design (never overwritten), so they
+        # are NOT counted as failures. Genuine key failures are the remainder.
+        failed_keys = max(0, total_keys - restored_keys - skipped_keys)
+        lines = []
         if total == 0 and total_keys == 0:
-            body = _("Backup imported successfully.")
-        elif restored >= total and restored_keys >= total_keys:
-            parts = []
-            if total:
-                parts.append(_("{} credential(s)").format(restored))
-            if total_keys:
-                parts.append(_("{} private key(s)").format(restored_keys))
-            body = _("Backup imported successfully.\n\nRestored {}.").format(
-                _(", ").join(parts))
+            lines.append(_("Backup imported successfully."))
         else:
-            body = _("Configuration imported, but only {restored} of {total} credential(s) "
-                     "and {restored_keys} of {total_keys} private key(s) could be restored. "
-                     "Your selected secret backend may be locked or unavailable, or a key path "
-                     "may not be writable."
-                     ).format(restored=restored, total=total,
-                              restored_keys=restored_keys, total_keys=total_keys)
-        body += _("\n\nIt is recommended to restart SSH Pilot for all changes to take effect.")
+            all_ok = (restored >= total) and (failed_keys == 0)
+            lines.append(_("Backup imported successfully.") if all_ok
+                         else _("Backup imported, with some items skipped."))
+            done = []
+            if restored:
+                done.append(_("{} credential(s)").format(restored))
+            if restored_keys:
+                done.append(_("{} private key(s)").format(restored_keys))
+            if done:
+                lines.append(_("Restored {}.").format(_(", ").join(done)))
+            if skipped_keys:
+                lines.append(_("{} private key(s) already existed and were left untouched — "
+                               "sshPilot never overwrites a private key.").format(skipped_keys))
+            if restored < total:
+                lines.append(_("{} of {} credential(s) could not be restored — the selected "
+                               "secret backend may be locked or unavailable.").format(
+                                   restored, total))
+            if failed_keys:
+                lines.append(_("{} private key(s) could not be written (the target path may "
+                               "not be writable).").format(failed_keys))
+        lines.append(_("It is recommended to restart SSH Pilot for all changes to take effect."))
+        body = "\n\n".join(lines)
 
         success_dialog = Adw.MessageDialog(
             transient_for=self, modal=True, heading=_("Import Successful"), body=body)

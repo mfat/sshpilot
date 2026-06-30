@@ -307,6 +307,44 @@ def test_spbk_private_key_merge_skips_existing(monkeypatch, tmp_path):
     assert pub_path.read_bytes() == b"EXISTING PUBLIC\n"
 
 
+def test_spbk_replace_mode_never_overwrites_private_key(monkeypatch, tmp_path):
+    """Data-loss red line: even in REPLACE mode an existing private key is left untouched;
+    only keys whose path doesn't exist are written, and the rest are reported as skipped."""
+    import base64
+    monkeypatch.setattr(bm, "get_config_dir", lambda: str(tmp_path / "config"))
+    key_path = tmp_path / "id_ed25519"
+    pub_path = tmp_path / "id_ed25519.pub"
+    key_path.write_bytes(b"EXISTING PRIVATE\n")
+    pub_path.write_bytes(b"EXISTING PUBLIC\n")
+    new_path = tmp_path / "id_new"
+
+    mgr = bm.BackupManager(FakeConfig(), FakeConnMgr([]))
+    manifest = {
+        "version": 1, "format": "spbk",
+        "backup_options": {"app_settings": False, "ssh_config": False, "known_hosts": False,
+                           "secrets": False, "private_keys": True},
+        "app_config": {},
+        "private_keys": [
+            {"path": str(key_path), "mode": 0o600,
+             "content_b64": base64.b64encode(b"BACKUP DIFFERENT\n").decode(),
+             "public_path": str(pub_path), "public_mode": 0o644,
+             "public_content_b64": base64.b64encode(b"BACKUP PUB\n").decode()},
+            {"path": str(new_path), "mode": 0o600,
+             "content_b64": base64.b64encode(b"NEW KEY\n").decode()},
+        ],
+    }
+    success, error, restored, restored_keys = mgr.apply_imported_manifest(
+        manifest, mode="replace", create_backup=False,
+        restore_options={"app_settings": False, "ssh_config": False, "known_hosts": False,
+                         "secrets": False, "private_keys": True})
+    assert success, error
+    assert key_path.read_bytes() == b"EXISTING PRIVATE\n"     # NOT overwritten, despite replace
+    assert pub_path.read_bytes() == b"EXISTING PUBLIC\n"      # nor its .pub
+    assert new_path.read_bytes() == b"NEW KEY\n"              # only the non-existing one written
+    assert restored_keys == 1
+    assert mgr.last_import_skipped_keys == 1                  # existing key protected + counted
+
+
 def test_spbk_private_key_merge_skips_public_when_private_exists(monkeypatch, tmp_path):
     """Merge mode treats a private key and its .pub file as one skipped key-pair entry."""
     monkeypatch.setattr(bm, "get_config_dir", lambda: str(tmp_path / "config"))

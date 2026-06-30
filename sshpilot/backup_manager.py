@@ -43,6 +43,7 @@ class BackupManager:
         self.backup_dir = Path(get_config_dir()) / 'backups'
         self.backup_dir.mkdir(parents=True, exist_ok=True)
         self.last_export_counts = {'credentials': 0, 'private_keys': 0}
+        self.last_import_skipped_keys = 0   # existing keys left untouched on the last import
 
     def get_ssh_config_path(self) -> str:
         """Get the current SSH config path based on mode"""
@@ -363,43 +364,47 @@ class BackupManager:
                 logger.warning("Failed to restore a credential", exc_info=True)
         return restored
 
-    def _restore_private_keys(self, manifest: Dict[str, Any], mode: str = 'replace') -> int:
+    def _restore_private_keys(self, manifest: Dict[str, Any]) -> Tuple[int, int]:
         """Restore private keys embedded in a backup to their original paths.
 
-        In ``merge`` mode, existing key files at the target paths are left untouched.
+        **Data loss is the red line:** an existing private (or public) key file at the target
+        path is NEVER overwritten — regardless of replace/merge mode. We prefer a partial
+        import over destroying a key the user already has. Returns
+        ``(written, skipped_existing)`` — ``written`` new keys placed, ``skipped_existing``
+        left untouched because a file was already there.
         """
-        restored = 0
+        written = 0
+        skipped = 0
         for item in manifest.get('private_keys') or []:
             try:
                 path = os.path.expanduser(str(item.get('path') or ''))
                 raw = item.get('content_b64')
                 if not path or not raw:
                     continue
-                if mode == 'merge' and os.path.isfile(path):
-                    logger.info("Skipping existing private key at %s (merge mode)", path)
+                # NEVER overwrite an existing private key — leave it exactly as it is.
+                if os.path.exists(path):
+                    logger.info("Private key already exists; leaving it untouched: %s", path)
+                    skipped += 1
                     continue
-                else:
-                    os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
-                    with open(path, 'wb') as f:
-                        f.write(base64.b64decode(raw.encode('ascii')))
-                    private_mode = int(item.get('mode') or 0o600) & 0o777
-                    # Private keys must never be restored with group/other access.
-                    os.chmod(path, (private_mode & 0o600) or 0o600)
+                os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
+                with open(path, 'wb') as f:
+                    f.write(base64.b64decode(raw.encode('ascii')))
+                private_mode = int(item.get('mode') or 0o600) & 0o777
+                # Private keys must never be restored with group/other access.
+                os.chmod(path, (private_mode & 0o600) or 0o600)
 
+                # The matching .pub: also never overwrite an existing file.
                 public_path = os.path.expanduser(str(item.get('public_path') or ''))
                 public_raw = item.get('public_content_b64')
-                if public_path and public_raw:
-                    if mode == 'merge' and os.path.isfile(public_path):
-                        logger.info("Skipping existing public key at %s (merge mode)", public_path)
-                    else:
-                        os.makedirs(os.path.dirname(public_path) or '.', exist_ok=True)
-                        with open(public_path, 'wb') as f:
-                            f.write(base64.b64decode(public_raw.encode('ascii')))
-                        os.chmod(public_path, int(item.get('public_mode') or 0o644) & 0o777)
-                restored += 1
+                if public_path and public_raw and not os.path.exists(public_path):
+                    os.makedirs(os.path.dirname(public_path) or '.', exist_ok=True)
+                    with open(public_path, 'wb') as f:
+                        f.write(base64.b64decode(public_raw.encode('ascii')))
+                    os.chmod(public_path, int(item.get('public_mode') or 0o644) & 0o777)
+                written += 1
             except Exception:
                 logger.warning("Failed to restore a private key", exc_info=True)
-        return restored
+        return written, skipped
 
     def apply_imported_manifest(self, manifest: Dict[str, Any], mode: str = 'replace',
                                 create_backup: bool = True,
@@ -414,10 +419,13 @@ class BackupManager:
             self._restore_credentials(manifest)
             if success and effective_options['secrets'] else 0
         )
-        restored_keys = (
-            self._restore_private_keys(manifest, mode)
-            if success and effective_options['private_keys'] else 0
+        restored_keys, skipped_keys = (
+            self._restore_private_keys(manifest)
+            if success and effective_options['private_keys'] else (0, 0)
         )
+        # Existing keys we declined to overwrite — surfaced via an attribute to keep the
+        # return shape stable (the import never overwrites a private key).
+        self.last_import_skipped_keys = skipped_keys
         return success, error, restored, restored_keys
 
     def _validate_import_data(self, data: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
