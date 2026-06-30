@@ -48,11 +48,11 @@ class FakeConfig:
 
 
 class FakeConnMgr:
-    ssh_config_path = ""
-    isolated_mode = False
-
-    def __init__(self, conns):
+    def __init__(self, conns, ssh_config_path="", known_hosts_path=None, isolated_mode=False):
         self._conns = conns
+        self.ssh_config_path = ssh_config_path
+        self.known_hosts_path = known_hosts_path
+        self.isolated_mode = isolated_mode
 
     def get_connections(self):
         return list(self._conns)
@@ -129,3 +129,130 @@ def test_spbk_export_plaintext_when_no_passphrase(monkeypatch, tmp_path):
     from sshpilot.backup_archive import spbk_is_encrypted
     assert spbk_is_encrypted(path) is False
     assert read_spbk(path)["credentials"] == []
+
+
+def test_spbk_export_honors_category_options(monkeypatch, tmp_path):
+    monkeypatch.setattr(bm, "get_config_dir", lambda: str(tmp_path))
+    ssh_config = tmp_path / "ssh_config"
+    ssh_config.write_text("Host h.example\n", encoding="utf-8")
+    (tmp_path / "config.json").write_text('{"theme": "dark"}', encoding="utf-8")
+
+    fake = FakeMgr()
+    fake.data[password_spec("h.example", "alice").keyring_account] = "pw-a"
+    monkeypatch.setattr(cmod, "get_secret_manager", lambda: fake)
+
+    selected = FakeConn("A", "h.example", "alice")
+    mgr = bm.BackupManager(FakeConfig(), FakeConnMgr([selected], str(ssh_config)))
+    path = str(tmp_path / "options.spbk")
+    ok, err = mgr.export_backup(
+        path,
+        connections=[selected],
+        passphrase="secret",
+        options={
+            "app_settings": False,
+            "ssh_config": False,
+            "known_hosts": False,
+            "secrets": False,
+            "private_keys": False,
+        },
+    )
+    assert ok, err
+
+    manifest = read_spbk(path, "secret")
+    assert manifest["backup_options"]["app_settings"] is False
+    assert manifest["app_config"] == {}
+    assert manifest["ssh_config"] == ""
+    assert manifest["known_hosts"] is None
+    assert manifest["credentials"] == []
+    assert manifest["private_keys"] == []
+
+
+def test_spbk_private_key_roundtrip_is_opt_in(monkeypatch, tmp_path):
+    monkeypatch.setattr(bm, "get_config_dir", lambda: str(tmp_path / "config"))
+    key_path = tmp_path / "id_ed25519"
+    pub_path = tmp_path / "id_ed25519.pub"
+    key_path.write_bytes(b"PRIVATE KEY\n")
+    pub_path.write_bytes(b"PUBLIC KEY\n")
+    key_path.chmod(0o600)
+
+    selected = FakeConn("A", "h.example", "alice")
+    selected.keyfile = str(key_path)
+    selected.identity_files = [str(key_path)]
+    mgr = bm.BackupManager(FakeConfig(), FakeConnMgr([selected]))
+    path = str(tmp_path / "keys.spbk")
+    ok, err = mgr.export_backup(
+        path,
+        connections=[selected],
+        passphrase="secret",
+        options={
+            "app_settings": False,
+            "ssh_config": False,
+            "known_hosts": False,
+            "secrets": False,
+            "private_keys": True,
+        },
+    )
+    assert ok, err
+
+    manifest = read_spbk(path, "secret")
+    assert len(manifest["private_keys"]) == 1
+    key_path.unlink()
+    pub_path.unlink()
+
+    success, error, restored, restored_keys = mgr.apply_imported_manifest(
+        manifest,
+        mode="replace",
+        create_backup=False,
+        restore_options={
+            "app_settings": False,
+            "ssh_config": False,
+            "known_hosts": False,
+            "secrets": False,
+            "private_keys": True,
+        },
+    )
+    assert success, error
+    assert restored == 0
+    assert restored_keys == 1
+    assert key_path.read_bytes() == b"PRIVATE KEY\n"
+    assert pub_path.read_bytes() == b"PUBLIC KEY\n"
+    assert oct(key_path.stat().st_mode & 0o777) == "0o600"
+
+
+def test_spbk_restore_honors_secret_option(monkeypatch, tmp_path):
+    monkeypatch.setattr(bm, "get_config_dir", lambda: str(tmp_path))
+    fake = FakeMgr()
+    monkeypatch.setattr(ss, "get_secret_manager", lambda: fake)
+
+    mgr = bm.BackupManager(FakeConfig(), FakeConnMgr([]))
+    manifest = {
+        "version": 1,
+        "format": "spbk",
+        "backup_options": {
+            "app_settings": False,
+            "ssh_config": False,
+            "known_hosts": False,
+            "secrets": True,
+            "private_keys": False,
+        },
+        "app_config": {},
+        "credentials": [
+            {"id": "u@h", "type": "password", "host": "h", "username": "u", "secret": "pw"},
+        ],
+    }
+    success, error, restored, restored_keys = mgr.apply_imported_manifest(
+        manifest,
+        mode="replace",
+        create_backup=False,
+        restore_options={
+            "app_settings": False,
+            "ssh_config": False,
+            "known_hosts": False,
+            "secrets": False,
+            "private_keys": False,
+        },
+    )
+    assert success, error
+    assert restored == 0
+    assert restored_keys == 0
+    assert fake.data == {}
