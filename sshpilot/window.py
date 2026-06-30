@@ -644,6 +644,29 @@ def _show_password_passphrase_dialog(
     store_checkbox = Gtk.CheckButton(label=store_label)
     store_checkbox.set_active(False)
     content_box.append(store_checkbox)
+
+    persists_secrets = True
+    try:
+        from .secret_storage import get_secret_manager
+        persists_secrets = get_secret_manager().persists_secrets()
+    except Exception:
+        persists_secrets = True
+    if not persists_secrets:
+        store_checkbox.set_visible(False)
+        no_store_label = Gtk.Label(
+            label=_(
+                "Secret storage is set to SSH Agent Only — passwords and passphrases "
+                "are not saved by sshPilot."
+            ),
+        )
+        no_store_label.set_wrap(True)
+        no_store_label.set_xalign(0)
+        for css in ("dim-label", "caption"):
+            try:
+                no_store_label.add_css_class(css)
+            except Exception:
+                pass
+        content_box.append(no_store_label)
     
     # Add container to dialog's extra child area
     dialog.set_extra_child(content_box)

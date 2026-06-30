@@ -305,6 +305,16 @@ def test_ssh_agent_backend_is_null():
     assert a.delete(password_spec('h', 'u')) is False
 
 
+def test_persists_secrets_false_for_agent(manager):
+    mgr, *_ = manager
+    mgr.register_backend('agent', ss.SSHAgentBackend())
+    assert mgr.persists_secrets() is True
+    mgr.set_selected('agent')
+    assert mgr.persists_secrets() is False
+    mgr.set_selected('auto')
+    assert mgr.persists_secrets() is True
+
+
 def test_agent_selected_stores_nothing_and_blocks_fallback(manager):
     mgr, primary, fallback = manager
     mgr.register_backend('agent', ss.SSHAgentBackend())
