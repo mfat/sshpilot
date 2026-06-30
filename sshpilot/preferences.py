@@ -1603,6 +1603,12 @@ class PreferencesWindow(Adw.Window):
             self.kdbx_db_row = Adw.EntryRow(title=_("KeePass database (.kdbx)"))
             self.kdbx_db_row.set_text(
                 str(self.config.get_setting('secrets.keepassxc.database', '') or ''))
+            kdbx_new_btn = Gtk.Button(icon_name='document-new-symbolic')
+            kdbx_new_btn.set_valign(Gtk.Align.CENTER)
+            kdbx_new_btn.add_css_class('flat')
+            kdbx_new_btn.set_tooltip_text(_("Create new database"))
+            kdbx_new_btn.connect('clicked', self.on_kdbx_create_database)
+            self.kdbx_db_row.add_suffix(kdbx_new_btn)
             kdbx_db_btn = Gtk.Button(icon_name='document-open-symbolic')
             kdbx_db_btn.set_valign(Gtk.Align.CENTER)
             kdbx_db_btn.add_css_class('flat')
@@ -2433,6 +2439,113 @@ class PreferencesWindow(Adw.Window):
 
     def on_kdbx_keyfile_browse(self, _button):
         self._kdbx_file_browse(_("Choose key file"), 'kdbx_keyfile_row')
+
+    def _kdbx_message(self, heading, body):
+        d = Adw.MessageDialog(transient_for=self, modal=True, heading=heading, body=body)
+        d.add_response('ok', _('OK'))
+        d.present()
+
+    def on_kdbx_create_database(self, _button):
+        """Create a brand-new .kdbx, then point the backend at it and unlock it."""
+        try:
+            dialog = Gtk.FileDialog()
+            dialog.set_title(_("Create KeePass Database"))
+            dialog.set_initial_name("secrets.kdbx")
+            filt = Gtk.FileFilter()
+            filt.set_name(_("KeePass database (*.kdbx)"))
+            filt.add_pattern("*.kdbx")
+            filters = Gio.ListStore.new(Gtk.FileFilter)
+            filters.append(filt)
+            dialog.set_filters(filters)
+            dialog.set_default_filter(filt)
+
+            def _picked(dlg, result):
+                try:
+                    f = dlg.save_finish(result)
+                except GLib.Error as e:
+                    if getattr(e, 'code', None) != 2:
+                        logger.debug("create db path selection failed: %s", e)
+                    return
+                if not f:
+                    return
+                path = f.get_path() or ""
+                if not path.endswith(".kdbx"):
+                    path += ".kdbx"
+                if os.path.exists(path):
+                    self._kdbx_message(
+                        _("File already exists"),
+                        _("A file already exists at that path. Use the open button to use it, "
+                          "or choose a new name."))
+                    return
+                self._prompt_new_kdbx_password(path)
+
+            dialog.save(self, None, _picked)
+        except Exception as exc:
+            logger.error("KDBX create dialog failed: %s", exc)
+
+    def _prompt_new_kdbx_password(self, path, error=None):
+        dialog = Adw.MessageDialog(
+            transient_for=self, modal=True, heading=_("Set Master Password"),
+            body=error or _("Choose a master password for the new database “{}”.").format(
+                os.path.basename(path)))
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        pw = Gtk.PasswordEntry(show_peek_icon=True)
+        pw.set_property('placeholder-text', _("Master password"))
+        pw2 = Gtk.PasswordEntry(show_peek_icon=True)
+        pw2.set_property('placeholder-text', _("Confirm password"))
+        pw2.set_property('activates-default', True)
+        box.append(pw)
+        box.append(pw2)
+        dialog.set_extra_child(box)
+        dialog.add_response('cancel', _('Cancel'))
+        dialog.add_response('create', _('Create'))
+        dialog.set_response_appearance('create', Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response('create')
+        dialog.set_close_response('cancel')
+
+        def on_response(dlg, resp):
+            if resp != 'create':
+                return
+            p1, p2 = pw.get_text() or '', pw2.get_text() or ''
+            if not p1:
+                GLib.idle_add(lambda: (self._prompt_new_kdbx_password(
+                    path, _("Enter a master password.")), False)[1])
+                return
+            if p1 != p2:
+                GLib.idle_add(lambda: (self._prompt_new_kdbx_password(
+                    path, _("Passwords don't match — try again.")), False)[1])
+                return
+            self._do_create_kdbx(path, p1)
+
+        dialog.connect('response', on_response)
+        dialog.present()
+        GLib.idle_add(lambda: (pw.grab_focus(), False)[1])
+
+    def _do_create_kdbx(self, path, password):
+        keyfile = ''
+        if hasattr(self, 'kdbx_keyfile_row'):
+            keyfile = (self.kdbx_keyfile_row.get_text() or '').strip()
+        from .secret_storage import get_secret_manager
+        backend = get_secret_manager().selected_backend()
+        if backend is None or not hasattr(backend, 'create_database'):
+            self._kdbx_message(_("Cannot Create Database"),
+                               _("The KeePassXC backend is not selected."))
+            return
+        if not backend.create_database(path, password, keyfile or None):
+            self._kdbx_message(
+                _("Cannot Create Database"),
+                _("Failed to create the database. Make sure pykeepass is installed and the "
+                  "location is writable."))
+            return
+        # Point config/env at the new file (the row's 'changed' handler persists + re-locks)…
+        self.kdbx_db_row.set_text(path)
+        # …then unlock it so the just-typed password isn't asked again.
+        try:
+            backend.unlock(password)
+        except Exception:
+            logger.debug("auto-unlock after create failed", exc_info=True)
+        self._kdbx_message(_("Database Created"),
+                           _("Created and unlocked:\n{}").format(path))
 
     def on_secret_session_timeout_changed(self, row, _pspec):
         """Persist and propagate the session-backend idle unlock timeout."""

@@ -179,6 +179,46 @@ def test_idle_timeout_drops_session(kdbx, monkeypatch):
     assert os.environ.get('SSHPILOT_KDBX_KEY') is None
 
 
+def _fake_create_database(path, password=None, keyfile=None):
+    p = os.path.expanduser(path)
+    with open(p, "wb") as f:
+        f.write(b"")                                       # a real file so is_available() passes
+    backing = FakePyKeePass.backing(p)
+    backing.password = password or "correct"
+    return FakePyKeePass(p, password=backing.password)
+
+
+def test_create_database_then_open(kdbx, monkeypatch, tmp_path):
+    _backend, _db = kdbx
+    monkeypatch.setattr(ss, '_kdbx_create_database', _fake_create_database)
+    new_path = str(tmp_path / "new.kdbx")
+    assert ss.KdbxBackend.create_database(new_path, "newpass") is True
+    assert os.path.exists(new_path)
+    # Point a backend at the new DB and unlock with the chosen password.
+    monkeypatch.setenv('SSHPILOT_KDBX_DATABASE', new_path)
+    nb = ss.KdbxBackend()
+    assert nb.is_available() is True
+    assert nb.unlock("newpass") is True
+    assert nb.is_unlocked() is True
+
+
+def test_create_database_passes_keyfile(monkeypatch):
+    seen = {}
+
+    def fake(path, password=None, keyfile=None):
+        seen.update(path=path, password=password, keyfile=keyfile)
+        return None
+
+    monkeypatch.setattr(ss, '_kdbx_create_database', fake)
+    assert ss.KdbxBackend.create_database('/tmp/x.kdbx', 'pw', keyfile='/k/file') is True
+    assert seen == {'path': '/tmp/x.kdbx', 'password': 'pw', 'keyfile': '/k/file'}
+
+
+def test_create_database_without_pykeepass(monkeypatch):
+    monkeypatch.setattr(ss, '_kdbx_create_database', None)
+    assert ss.KdbxBackend.create_database('/tmp/x.kdbx', 'pw') is False
+
+
 def test_selected_master_spec_keyed_by_db_path(monkeypatch):
     monkeypatch.setenv('SSHPILOT_KDBX_DATABASE', '/vaults/work.kdbx')
     mgr = ss.SecretManager()

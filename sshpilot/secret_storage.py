@@ -82,10 +82,11 @@ except Exception:  # pragma: no cover - optional dependency
     keyring = None
 
 try:  # pragma: no cover - optional dependency (KDBX backend)
-    from pykeepass import PyKeePass
+    from pykeepass import PyKeePass, create_database as _kdbx_create_database
     from pykeepass.exceptions import CredentialsError
 except Exception:  # pragma: no cover - optional dependency
     PyKeePass = None
+    _kdbx_create_database = None
 
     class CredentialsError(Exception):
         pass
@@ -1143,6 +1144,24 @@ class KdbxBackend(SecretBackend):
     def lock(self) -> None:
         with self._lock:
             self._drop_session()
+
+    @staticmethod
+    def create_database(path: str, password: str, keyfile: Optional[str] = None) -> bool:
+        """Create a brand-new ``.kdbx`` at ``path`` (pykeepass' default modern KDBX 4 + Argon2)
+        protected by ``password`` (+ optional existing ``keyfile``). Returns True on success.
+        Creates the file only — the caller unlocks it through the normal path afterwards."""
+        if _kdbx_create_database is None:
+            logger.error("Cannot create KeePass database: pykeepass is not installed")
+            return False
+        try:
+            _kdbx_create_database(
+                os.path.expanduser(path),
+                password=(password or None),
+                keyfile=(os.path.expanduser(keyfile) if keyfile else None))
+            return True
+        except Exception as exc:
+            logger.error("KDBX create_database failed: %s", exc)
+            return False
 
     # -- group / entry helpers ----
     def _group(self, kp):
