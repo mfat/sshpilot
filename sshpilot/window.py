@@ -542,6 +542,7 @@ def show_ssh_password_dialog(
         display_name=prompt_name,
         host=storage_host,
         username=storage_user,
+        connection=connection,
         connection_manager=connection_manager,
         heading=heading,
         body=body,
@@ -557,6 +558,7 @@ def _show_password_passphrase_dialog(
     key_path: Optional[str] = None,
     host: Optional[str] = None,
     username: Optional[str] = None,
+    connection: Optional[Any] = None,
     connection_manager: Optional[Any] = None,
     *,
     heading: Optional[str] = None,
@@ -729,10 +731,19 @@ def _show_password_passphrase_dialog(
                             store_passphrase(key_path, entered_password)
                         except Exception as e:
                             logger.debug(f"Failed to store passphrase: {e}")
-                    elif prompt_type == "password" and host and username and connection_manager:
-                        # Store password
+                    elif prompt_type == "password" and connection_manager:
                         try:
-                            connection_manager.store_password(host, username, entered_password)
+                            if connection is not None and hasattr(
+                                    connection_manager, 'store_connection_password'):
+                                connection_manager.store_connection_password(
+                                    connection, entered_password, username=username)
+                            elif host and username:
+                                from .credential_model import canonical_password_host
+                                canonical = canonical_password_host(
+                                    {'hostname': host, 'host': host, 'username': username})
+                                store_host = canonical or host
+                                connection_manager.store_password(
+                                    store_host, username, entered_password)
                         except Exception as e:
                             logger.debug(f"Failed to store password: {e}")
             else:

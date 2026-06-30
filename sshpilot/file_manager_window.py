@@ -381,27 +381,34 @@ class FileManagerWindow(Adw.Window):
             if not lookup_hosts:
                 lookup_hosts = [host]
             
-            # Try each identifier until we find a password
-            for lookup_host in lookup_hosts:
+            if connection is not None:
                 try:
-                    retrieved = connection_manager.get_password(lookup_host, lookup_user)
+                    retrieved = connection_manager.get_connection_password(connection)
                     if retrieved:
+                        initial_password = retrieved
+                except Exception:
+                    pass
+            if initial_password is None:
+                for lookup_host in lookup_hosts:
+                    try:
+                        retrieved = connection_manager.get_password(lookup_host, lookup_user)
+                        if retrieved:
+                            logger.debug(
+                                "Built-in file manager: Found password for %s@%s using identifier '%s'",
+                                lookup_user,
+                                lookup_host,
+                                lookup_host,
+                            )
+                            initial_password = retrieved
+                            break
+                    except Exception as exc:
                         logger.debug(
-                            "Built-in file manager: Found password for %s@%s using identifier '%s'",
+                            "Built-in file manager: Password lookup failed for %s@%s (identifier '%s'): %s",
                             lookup_user,
                             lookup_host,
-                            lookup_host
+                            lookup_host,
+                            exc,
                         )
-                        initial_password = retrieved
-                        break
-                except Exception as exc:
-                    logger.debug(
-                        "Built-in file manager: Password lookup failed for %s@%s (identifier '%s'): %s",
-                        lookup_user,
-                        lookup_host,
-                        lookup_host,
-                        exc
-                    )
 
         self._manager = create_file_manager_backend(
             host,

@@ -21,7 +21,7 @@ class FakeMgr:
         v = self.data.get(spec.keyring_account)
         return (v, "libsecret") if v else None
 
-    def _all_available_backends(self):
+    def all_available_backends(self):
         return []
 
 

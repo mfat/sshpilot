@@ -16,7 +16,7 @@ backend-level ``SecretSpec`` (``secret_storage``):
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from .secret_storage import (
     SecretSpec,
@@ -36,6 +36,56 @@ _TYPE_FROM_SPEC = {
     "key_passphrase": TYPE_KEY,
 }
 _SPEC_FROM_TYPE = {v: k for k, v in _TYPE_FROM_SPEC.items()}
+
+
+def _conn_attr(conn, name: str, default: str = "") -> str:
+    """Read a string field from a Connection or a plain dict."""
+    if isinstance(conn, dict):
+        return str(conn.get(name) or default)
+    return str(getattr(conn, name, None) or default)
+
+
+def canonical_password_host(conn) -> str:
+    """Canonical keyring host for an SSH connection password.
+
+    Matches :meth:`Connection.get_effective_host`: ``hostname`` → ``host`` →
+    ``nickname``. New passwords are always stored under this key; legacy entries
+  under older aliases are migrated on read.
+    """
+    for key in ("hostname", "host", "nickname"):
+        value = _conn_attr(conn, key).strip()
+        if value:
+            return value
+    get_eff = getattr(conn, "get_effective_host", None)
+    if callable(get_eff):
+        try:
+            return str(get_eff() or "").strip()
+        except Exception:
+            pass
+    return ""
+
+
+def password_host_candidates(conn) -> List[str]:
+    """Host identifiers to probe when looking up a legacy SSH password.
+
+    Order: effective host, ``hostname``, ``host``, ``nickname`` — first hit wins;
+    a non-canonical hit is re-stored under :func:`canonical_password_host`.
+    """
+    get_eff = getattr(conn, "get_effective_host", None)
+    raw = [
+        get_eff() if callable(get_eff) else "",
+        _conn_attr(conn, "hostname"),
+        _conn_attr(conn, "host"),
+        _conn_attr(conn, "nickname"),
+    ]
+    seen: set = set()
+    ordered: List[str] = []
+    for h in raw:
+        h = (h or "").strip()
+        if h and h not in seen:
+            seen.add(h)
+            ordered.append(h)
+    return ordered
 
 
 @dataclass

@@ -179,6 +179,11 @@ def test_lookup_and_delete_reach_nonselected_available_backend(manager):
     assert spec.keyring_account not in extra.data
 
 
+def test_all_available_backends_public_api(manager):
+    mgr, primary, fallback = manager
+    assert mgr.all_available_backends() == mgr._all_available_backends()
+
+
 def test_libsecret_iter_credentials_maps_search_results(monkeypatch):
     # iter_credentials enumerates via Secret.password_search and returns (attributes, secret).
     class FakeValue:
