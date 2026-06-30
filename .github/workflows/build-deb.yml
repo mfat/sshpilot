@@ -83,6 +83,8 @@ jobs:
             echo "         ssh-askpass,"
             echo "         sshpass"
           } >> debian/control
+          # Optional: KeePass (.kdbx) secret backend (degrades gracefully if absent).
+          echo "Recommends: python3-pykeepass" >> debian/control
           echo "Description: Manage your servers with ease" >> debian/control
           echo " SSH Pilot is a user-friendly SSH connection manager featuring built-in tabbed" >> debian/control
           echo " terminal, remote file management, key transfer, port forwarding and more." >> debian/control

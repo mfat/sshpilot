@@ -34,6 +34,8 @@ Requires:       libsecret
 Requires:       sshpass
 Requires:       openssh-askpass
 Requires:       webkitgtk6.0
+# Optional: KeePass (.kdbx) secret backend (degrades gracefully if absent).
+Recommends:     python3-pykeepass
 # For the built-in telnet protocol plugin (degrades gracefully if absent)
 Recommends:     telnet
 
