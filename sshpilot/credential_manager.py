@@ -10,6 +10,11 @@ It is GTK-free and dependency-injected (it never imports GTK or constructs app o
 is unit-testable: pass any connection source exposing ``get_connections()`` (or a plain list of
 connections), and optionally a :class:`SecretManager` and extra key paths.
 
+SSH password host keys are canonicalized at connect time via
+:meth:`ConnectionManager.store_connection_password` /
+:meth:`ConnectionManager.get_connection_password` (see ``credential_model.canonical_password_host``).
+This module still probes legacy host aliases when listing connection-derived passwords.
+
 Eager: :meth:`CredentialManager.list_credentials` resolves every secret value as it lists.
 It reads only what is currently available — a locked session vault (e.g. Bitwarden) simply
 contributes nothing; this never prompts or forces an unlock.
@@ -34,6 +39,7 @@ from .credential_model import (  # noqa: F401
     TYPE_PASSWORD,
     TYPE_SUDO,
     TYPE_KEY,
+    password_host_candidates,
     spec_to_credential,
 )
 from .credential_adapters import SecretBackendAdapter
@@ -91,7 +97,7 @@ class CredentialManager:
     def _merge_enumeration(self, out: Dict[Tuple[str, str], Credential]) -> None:
         """Add enumerated orphans from every available backend that can enumerate."""
         try:
-            backends = self._secrets._all_available_backends()
+            backends = self._secrets.all_available_backends()
         except Exception:
             logger.debug("listing available backends failed", exc_info=True)
             return
@@ -110,7 +116,7 @@ class CredentialManager:
     def _collect_connection_passwords(self, conn, out: Dict[Tuple[str, str], Credential]) -> None:
         username = getattr(conn, "username", "") or ""
         for builder in (password_spec, sudo_password_spec):
-            for host in self._host_candidates(conn):
+            for host in password_host_candidates(conn):
                 spec = builder(host, username)
                 found = self._lookup(spec)
                 if found is None:
@@ -119,27 +125,6 @@ class CredentialManager:
                 cred = spec_to_credential(spec, value, backend, connection=conn)
                 out.setdefault((cred.id, cred.type), cred)
                 break   # first host-variant hit wins for this (connection, kind)
-
-    @staticmethod
-    def _host_candidates(conn) -> List[str]:
-        # Secrets are stored inconsistently under hostname/host/nickname (the connection
-        # write path prefers hostname; read paths like sftp_utils probe all three) — so try
-        # them in that order and stop at the first that has the secret.
-        get_eff = getattr(conn, "get_effective_host", None)
-        raw = [
-            get_eff() if callable(get_eff) else "",
-            getattr(conn, "hostname", "") or "",
-            getattr(conn, "host", "") or "",
-            getattr(conn, "nickname", "") or "",
-        ]
-        seen: set = set()
-        ordered: List[str] = []
-        for h in raw:
-            h = (h or "").strip()
-            if h and h not in seen:
-                seen.add(h)
-                ordered.append(h)
-        return ordered
 
     # -- key passphrases --------------------------------------------------
     def _collect_key_passphrases(self, connections, out: Dict[Tuple[str, str], Credential]) -> None:
@@ -175,6 +160,9 @@ class CredentialManager:
             paths.append(kf)
         for p in (getattr(conn, "identity_files", None) or []):
             if p:
+                paths.append(p)
+        for p in (getattr(conn, "resolved_identity_files", None) or []):
+            if p and p not in paths:
                 paths.append(p)
         return paths
 

@@ -5,7 +5,8 @@ small `IdentityProvider` interface, the identity-side parallel of the credential
 backends in `secret_storage.py`.
 
 - **Credential backends** (`secret_storage.py`) answer *"what password/passphrase
-  do we use?"*
+  do we use?"* See `docs/CREDENTIAL_MANAGER.md` for the export/backup layer
+  (`credential_manager.py`) and canonical SSH password host keys.
 - **Identity providers** (`identity.py`) answer *"which SSH key or agent
   authenticates the connection, and what does the spawned process need in its
   environment for that to work?"*

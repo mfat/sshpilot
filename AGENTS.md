@@ -78,8 +78,9 @@ identically. Modes:
   ssh prompts natively on the TTY.
 
 Credentials are stored/retrieved through a **pluggable secret backend**
-(`secret_storage.py`): `connection_manager.get_password` /
-`askpass_utils.lookup_passphrase` delegate to `SecretManager`. The backend is
+(`secret_storage.py`): `connection_manager.get_connection_password` /
+`get_password` and `askpass_utils.lookup_passphrase` delegate to `SecretManager`.
+The backend is
 selectable via the `secrets.backend` setting — `auto` (platform default:
 libsecret then keyring on Linux, keyring on macOS), or an explicit `libsecret` /
 `keyring` / `pass` (passwordstore.org) / `bitwarden` / `keepassxc` / `agent`, or
@@ -131,6 +132,33 @@ Backend specifics:
   the secret to purge it.
 - Session-backed backends set `session_backed=True` on `SecretBackend` and implement
   `is_unlocked`/`unlock`/`lock`; passive stores leave these as no-ops.
+
+### Credential manager (export / backup layer)
+
+Connect-time storage uses `SecretManager` directly. For a **normalized list** of
+every sshPilot-managed secret (backup `.spbk`, future vault migration), use the
+credential manager stack — see `docs/CREDENTIAL_MANAGER.md`.
+
+- **`credential_model.py`** — `Credential` dataclass; `canonical_password_host` /
+  `password_host_candidates` (canonical SSH password key =
+  `hostname` → `host` → `nickname`).
+- **`credential_manager.py`** — `CredentialManager.list_credentials()` gathers
+  passwords, sudo passwords, and key passphrases (including `resolved_identity_files`
+  from `ssh -G`). Read-only; never prompts; locked vaults contribute nothing.
+- **`credential_adapters.py`** — `SecretBackendAdapter` / `KdbxAdapter` for
+  credential-centric `load_all` / `save` / `delete` (export targets).
+
+**SSH password API (connect-time):**
+
+- **Store:** `ConnectionManager.store_connection_password(connection, password)`
+  — always under the canonical host; clears legacy alias copies.
+- **Lookup:** `ConnectionManager.get_connection_password(connection)` — probes
+  legacy aliases and **migrates** on hit.
+- **Low-level:** `store_password(host, user)` / `get_password(host, user)` for
+  callers that already know the exact key (plugin secrets, etc.).
+
+`SecretManager.lookup_everywhere` and `all_available_backends()` support export;
+normal `lookup` / `delete` honor backend selection.
 
 ### Advanced SSH options (Preferences → command)
 Preferences ▸ SSH Settings persists each advanced option under the `ssh.*`
@@ -257,7 +285,10 @@ to askpass for a password.
   command for external processes), `_build_base_ssh_command` (shared option
   builder used by explicit-command callers like SCP).
 - `connection_manager.py`: `Connection.native_connect()`/`connect()`,
-  persistence of connections to `~/.ssh/config`, credential storage.
+  persistence of connections to `~/.ssh/config`, credential storage
+  (`store_connection_password`, `get_connection_password`, …).
+- `credential_manager.py` / `credential_model.py` / `credential_adapters.py`:
+  normalized credential listing and export (see `docs/CREDENTIAL_MANAGER.md`).
 - `askpass_utils.py`: the askpass helper, keyring lookup, and GTK prompt.
 - `window.py`: `show_ssh_password_dialog`, `resolve_app_modal_parent`,
   `present_for_modal_dialog` — in-app SSH password prompts and Wayland-safe modal

@@ -112,9 +112,10 @@ class KdbxAdapter(BackendAdapter):
     """Standalone KeePass (``.kdbx``) export/import target via ``pykeepass``.
 
     Constructed with a database path + master password (+ optional key file); opens lazily.
-    ``load_all()`` enumerates every entry (mapped to a Credential; the sshPilot type is
-    preserved via a custom property when we wrote it, else defaults to a password).
-    ``save``/``delete`` write to a dedicated group (default ``sshPilot``) and persist the file.
+    ``load_all()`` enumerates entries in the dedicated ``sshPilot`` group (same scope as
+    :class:`~sshpilot.secret_storage.KdbxBackend`); the sshPilot type is preserved via a
+    custom property when we wrote it, else defaults to a password.
+    ``save``/``delete`` write to that group and persist the file.
     """
 
     name = "keepassxc"
@@ -162,7 +163,9 @@ class KdbxAdapter(BackendAdapter):
     def load_all(self) -> List[Credential]:
         kp = self._db()
         out: List[Credential] = []
-        for entry in (kp.entries or []):
+        grp = kp.find_groups(name=self._group_name, first=True)
+        entries = (kp.find_entries(group=grp) or []) if grp is not None else []
+        for entry in entries:
             value = entry.password
             if not value:
                 continue

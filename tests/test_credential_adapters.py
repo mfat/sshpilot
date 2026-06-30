@@ -124,16 +124,22 @@ class FakePyKeePass:
         if FakePyKeePass.raise_on_open:
             raise ca.CredentialsError("bad password")
         self.path = path
-        self.entries = FakePyKeePass._stores.setdefault(path, [])
+        store = FakePyKeePass._stores.setdefault(path, {'all': [], 'group': []})
+        self.entries = store['all']
+        self._group_entries = store['group']
         self.root_group = FakeGroup('root')
+        self._group = FakeGroup('sshPilot')
         self.saved = 0
 
-    def find_entries(self, title=None, first=False):
-        matches = [e for e in self.entries if e.title == title]
+    def find_entries(self, title=None, first=False, group=None):
+        pool = self._group_entries if group is not None else self.entries
+        matches = [e for e in pool if (not title or e.title == title)]
         return (matches[0] if matches else None) if first else matches
 
     def find_groups(self, name=None, first=False):
-        return None
+        if name and name != 'sshPilot':
+            return None if first else []
+        return self._group if first else [self._group]
 
     def add_group(self, parent, name):
         return FakeGroup(name)
@@ -141,10 +147,14 @@ class FakePyKeePass:
     def add_entry(self, group, title, username, password):
         e = FakeEntry(title, username, password)
         self.entries.append(e)
+        if getattr(group, 'name', None) == 'sshPilot':
+            self._group_entries.append(e)
         return e
 
     def delete_entry(self, entry):
         self.entries.remove(entry)
+        if entry in self._group_entries:
+            self._group_entries.remove(entry)
 
     def save(self):
         self.saved += 1
@@ -157,7 +167,6 @@ def _reset_fake_kdbx():
     yield
     FakePyKeePass._stores = {}
     FakePyKeePass.raise_on_open = False
-
 
 def test_kdbx_save_load_roundtrip(monkeypatch):
     monkeypatch.setattr(ca, 'PyKeePass', FakePyKeePass)
@@ -178,6 +187,16 @@ def test_kdbx_save_load_roundtrip(monkeypatch):
     assert {c.id: c.secret for c in ad.load_all()}['u@h'] == 'pw2'
     assert ad.delete(Credential(id='u@h', type=TYPE_PASSWORD)) is True
     assert (TYPE_PASSWORD, 'u@h') not in {(c.type, c.id) for c in ad.load_all()}
+
+
+def test_kdbx_load_all_ignores_entries_outside_sshpilot_group(monkeypatch):
+    monkeypatch.setattr(ca, 'PyKeePass', FakePyKeePass)
+    ad = KdbxAdapter('/tmp/x.kdbx', password='pw')
+    store = FakePyKeePass._stores.setdefault('/tmp/x.kdbx', {'all': [], 'group': []})
+    store['all'].append(FakeEntry('other-user@host', 'u', 'outside'))   # not in sshPilot group
+    ad.save(Credential(id='u@h', type=TYPE_PASSWORD, host='h', username='u', secret='inside'))
+    creds = ad.load_all()
+    assert len(creds) == 1 and creds[0].secret == 'inside'
 
 
 def test_kdbx_wrong_password_raises(monkeypatch):

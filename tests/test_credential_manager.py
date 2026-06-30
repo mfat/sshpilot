@@ -183,3 +183,14 @@ def test_accepts_plain_connection_iterable(secrets):
     cm = CredentialManager([FakeConn('h', hostname='h', username='u')], secret_manager=mgr)
     creds = cm.list_credentials()
     assert len(creds) == 1 and creds[0].secret == 'pw'
+
+
+def test_includes_resolved_identity_files(secrets):
+    mgr, libsecret, keyring = secrets
+    kp = os.path.realpath(os.path.expanduser('/home/u/.ssh/id_resolved'))
+    libsecret.store(passphrase_spec(kp), 'pass')
+    conn = FakeConn('A', hostname='a.example', username='alice')
+    conn.resolved_identity_files = ['/home/u/.ssh/id_resolved']
+    cm = CredentialManager(FakeConnManager([conn]), secret_manager=mgr)
+    creds = {c.id: c for c in cm.list_credentials() if c.type == TYPE_KEY}
+    assert kp in creds and creds[kp].secret == 'pass'

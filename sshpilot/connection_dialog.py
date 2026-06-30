@@ -2273,15 +2273,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 try:
                     mgr = getattr(self.parent_window, 'connection_manager', None)
                     if mgr and hasattr(self.connection, 'username'):
-                        lookup_host = (
-                            getattr(self.connection, 'hostname', '')
-                            or getattr(self.connection, 'host', '')
-                            or getattr(self.connection, 'nickname', '')
-                        )
-                        if lookup_host:
-                            pw = mgr.get_password(lookup_host, self.connection.username)
-                        else:
-                            pw = None
+                        pw = mgr.get_connection_password(self.connection)
                         if pw:
                             self.password_row.set_text(pw)
                 except Exception:

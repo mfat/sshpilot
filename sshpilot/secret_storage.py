@@ -1454,6 +1454,10 @@ class SecretManager:
                 seen.add(name)
         return result
 
+    def all_available_backends(self) -> List[SecretBackend]:
+        """Public view of :meth:`_all_available_backends` for export/migration callers."""
+        return self._all_available_backends()
+
     def available_backends(self) -> List[str]:
         """Names of all registered backends that are currently usable."""
         return [n for n, b in self._backends.items() if b.is_available()]

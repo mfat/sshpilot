@@ -1871,10 +1871,49 @@ class ConnectionManager(GObject.Object):
             logger.warning("No secure storage backend available; password not stored")
         return stored
 
+    def store_connection_password(self, connection, password: str,
+                                  username: Optional[str] = None) -> bool:
+        """Store a connection's SSH password under the canonical host key.
+
+        Clears legacy copies stored under older host aliases (nickname, etc.).
+        """
+        from .credential_model import canonical_password_host, password_host_candidates
+
+        user = (username or getattr(connection, 'username', '') or '').strip()
+        canonical = canonical_password_host(connection)
+        if not canonical or not user or not password:
+            return False
+        stored = self.store_password(canonical, user, password)
+        if stored:
+            for host in password_host_candidates(connection):
+                if host and host != canonical:
+                    self.delete_password(host, user)
+        return stored
+
     def get_password(self, host: str, username: str) -> Optional[str]:
         """Retrieve a password via the selected secret backend."""
         from .secret_storage import get_secret_manager, password_spec
         return get_secret_manager().lookup(password_spec(host, username))
+
+    def get_connection_password(self, connection,
+                                username: Optional[str] = None) -> Optional[str]:
+        """Look up a connection's SSH password, migrating legacy host aliases on hit."""
+        from .credential_model import canonical_password_host, password_host_candidates
+
+        user = (username or getattr(connection, 'username', '') or '').strip()
+        if not user:
+            return None
+        canonical = canonical_password_host(connection)
+        for host in password_host_candidates(connection) or ([canonical] if canonical else []):
+            if not host:
+                continue
+            value = self.get_password(host, user)
+            if value:
+                if canonical and host != canonical:
+                    if self.store_password(canonical, user, value):
+                        self.delete_password(host, user)
+                return value
+        return None
 
     def delete_password(self, host: str, username: str) -> bool:
         """Delete a stored password from all available secret backends."""
@@ -1883,6 +1922,18 @@ class ConnectionManager(GObject.Object):
         if removed_any:
             logger.debug(f"Deleted stored password for {username}@{host}")
         return removed_any
+
+    def delete_connection_passwords(self, connection,
+                                    username: Optional[str] = None) -> bool:
+        """Delete a connection's SSH password from every host alias and backend."""
+        from .credential_model import password_host_candidates
+
+        user = (username or getattr(connection, 'username', '') or '').strip()
+        removed = False
+        for host in password_host_candidates(connection):
+            if host and user and self.delete_password(host, user):
+                removed = True
+        return removed
 
     # --- Plugin secrets ----------------------------------------------------
     #
@@ -2579,12 +2630,6 @@ class ConnectionManager(GObject.Object):
                 target_path,
                 len(new_data.get('forwarding_rules', []) or [])
             )
-            # Capture previous identifiers for credential cleanup
-            prev_host = (
-                getattr(connection, 'hostname', '')
-                or getattr(connection, 'host', '')
-                or getattr(connection, 'nickname', '')
-            )
             prev_user = getattr(connection, 'username', '')
             original_nickname = getattr(connection, 'nickname', '')
 
@@ -2626,29 +2671,19 @@ class ConnectionManager(GObject.Object):
             # Handle password storage/removal
             if 'password' in new_data:
                 pwd = new_data.get('password') or ''
-                # Determine current identifiers after update
-                curr_host = (
-                    new_data.get('hostname')
-                    or new_data.get('host')
-                    or getattr(connection, 'hostname', '')
-                    or getattr(connection, 'host', '')
-                    or getattr(connection, 'nickname', '')
-                )
                 curr_user = new_data.get('username') or getattr(connection, 'username', prev_user)
-                if pwd and curr_host:
-                    self.store_password(curr_host, curr_user, pwd)
+                if pwd:
+                    self.store_connection_password(connection, pwd, username=curr_user)
                 else:
-                    # Remove any stored passwords for both previous and current identifiers
                     try:
-                        if prev_host and prev_user:
-                            self.delete_password(prev_host, prev_user)
+                        self.delete_connection_passwords(connection, username=prev_user)
                     except Exception:
                         pass
-                    try:
-                        if curr_host and curr_user and (curr_host != prev_host or curr_user != prev_user):
-                            self.delete_password(curr_host, curr_user)
-                    except Exception:
-                        pass
+                    if curr_user != prev_user:
+                        try:
+                            self.delete_connection_passwords(connection, username=curr_user)
+                        except Exception:
+                            pass
             
             # DO NOT call load_ssh_config() here - it breaks object references
             
@@ -2669,15 +2704,9 @@ class ConnectionManager(GObject.Object):
             if connection in self.connections:
                 self.connections.remove(connection)
             
-            # Remove password from secure storage
+            # Remove password from secure storage (all host aliases)
             try:
-                host_identifier = (
-                    connection.get_effective_host()
-                    if hasattr(connection, 'get_effective_host')
-                    else connection.hostname
-                )
-                self.delete_password(host_identifier, connection.username)
-
+                self.delete_connection_passwords(connection)
             except Exception as e:
                 logger.warning(f"Failed to remove password from storage: {e}")
             
