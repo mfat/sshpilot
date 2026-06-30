@@ -72,7 +72,7 @@ class WindowConfigDialogsMixin:
             logger.error(f"Failed to show export dialog: {e}")
 
     def _show_export_options_dialog(self, prefill_ids=None, encrypt_default=True,
-                                    option_defaults=None):
+                                    option_defaults=None, error=None):
         """Select backup categories, scoped connections, and encryption."""
         try:
             connections = list(self.connection_manager.get_connections()) \
@@ -90,6 +90,16 @@ class WindowConfigDialogsMixin:
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
         box.set_margin_start(8); box.set_margin_end(8)
         box.set_margin_top(8); box.set_margin_bottom(8)
+
+        # A validation message is shown INSIDE this dialog (not a separate alert, which would
+        # get hidden behind this window when we re-open it).
+        if error:
+            err_label = Gtk.Label(label=error, xalign=0, wrap=True)
+            try:
+                err_label.add_css_class('error')
+            except Exception:
+                pass
+            box.append(err_label)
 
         category_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         category_label = Gtk.Label(label=_("Include"), xalign=0)
@@ -211,19 +221,17 @@ class WindowConfigDialogsMixin:
                 for key, check in option_checks.items()
             }
             if not any(options.values()):
-                self._simple_dialog(_("Nothing selected"),
-                                    _("Choose at least one item to include in the backup."))
+                # Re-open with the selection preserved + the error shown in-dialog.
                 GLib.idle_add(lambda: (self._show_export_options_dialog(
-                    sel_ids, enc_switch.get_active(), options), False)[1])
+                    sel_ids, enc_switch.get_active(), options,
+                    error=_("Choose at least one item to include in the backup.")), False)[1])
                 return
             if enc_switch.get_active():
                 passphrase = pw.get_text() or ''
                 if not passphrase:
-                    # Re-open with the same selection so they don't lose it.
-                    self._simple_dialog(_("Passphrase required"),
-                                        _("Enter a passphrase, or turn off encryption."))
                     GLib.idle_add(lambda: (self._show_export_options_dialog(
-                        sel_ids, True, options), False)[1])
+                        sel_ids, True, options,
+                        error=_("Enter a passphrase, or turn off encryption.")), False)[1])
                     return
                 self._choose_export_path(selected, passphrase, options)
             else:
