@@ -123,14 +123,14 @@ Backend specifics:
   selection-independent). When a saved password exists, `prompt_unlock` auto-unlocks with
   it but still shows the "Unlocking…" spinner; a stale saved password is dropped and the
   manual prompt shown.
-- **`agent`** means *don't store secrets at all*: an `authoritative` null backend.
-  When selected, `store`/`lookup` consult only it (no fallback/fallthrough) so
-  nothing is written to or read from other stores; the user relies on ssh-agent
-  (the existing key-preload path) and ssh's own prompts. `delete` is a no-op on
-  other stores — switch to `auto` or the backend that holds the secret to purge it.
-- New session/null behavior rests on optional `SecretBackend` hooks
-  (`session_backed`, `authoritative`, `is_unlocked`/`unlock`/`lock`) that default
-  to no-ops, so `libsecret`/`keyring`/`pass` are unchanged.
+- **`agent`** means *don't store secrets at all*: a null backend. When explicitly
+  selected, `SecretManager` consults only it (no fallback/fallthrough) so nothing
+  is written to or read from other stores; the user relies on ssh-agent (the existing
+  key-preload path) and ssh's own prompts. `store` returns success as a no-op;
+  `delete` is a no-op on other stores — switch to `auto` or the backend that holds
+  the secret to purge it.
+- Session-backed backends set `session_backed=True` on `SecretBackend` and implement
+  `is_unlocked`/`unlock`/`lock`; passive stores leave these as no-ops.
 
 ### Advanced SSH options (Preferences → command)
 Preferences ▸ SSH Settings persists each advanced option under the `ssh.*`

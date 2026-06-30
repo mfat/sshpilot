@@ -290,6 +290,38 @@ def selected_master_spec(manager: Optional["SecretManager"] = None) -> SecretSpe
 
 
 # ---------------------------------------------------------------------------
+# Session idle timeout (shared by session-backed backends)
+# ---------------------------------------------------------------------------
+
+
+class _SessionIdleTimeout:
+    """Sliding idle window for session-backed backends.
+
+    Driven by ``SSHPILOT_SECRET_SESSION_TIMEOUT`` (seconds; ``0`` = no timeout).
+    """
+
+    def __init__(self) -> None:
+        self._deadline: Optional[float] = None
+
+    @staticmethod
+    def timeout_seconds() -> int:
+        try:
+            return int(os.environ.get("SSHPILOT_SECRET_SESSION_TIMEOUT", "0") or 0)
+        except Exception:
+            return 0
+
+    def touch(self) -> None:
+        secs = self.timeout_seconds()
+        self._deadline = (time.monotonic() + secs) if secs > 0 else None
+
+    def expired(self) -> bool:
+        return self._deadline is not None and time.monotonic() > self._deadline
+
+    def reset(self) -> None:
+        self._deadline = None
+
+
+# ---------------------------------------------------------------------------
 # Backends
 # ---------------------------------------------------------------------------
 
@@ -602,7 +634,7 @@ class BitwardenBackend(SecretBackend):
         self._argv_override: Optional[List[str]] = None
         self._token: Optional[str] = None                # session token (this process)
         self._unlocked = False                           # we unlocked it this session
-        self._deadline: Optional[float] = None           # monotonic; None = no timeout
+        self._idle = _SessionIdleTimeout()
         self._items: Optional[Dict[str, dict]] = None    # name→item; None = not loaded
         self._cache_complete = False                     # _items holds the whole vault
         self._lock = threading.RLock()
@@ -689,30 +721,19 @@ class BitwardenBackend(SecretBackend):
         cannot succeed. Only called in the unlock-decision flow."""
         return self._status() == "unauthenticated"
 
-    # -- idle timeout ----------------------------------------------------
-    @staticmethod
-    def _session_timeout_seconds() -> int:
-        """Idle seconds before the session is dropped (0 = never). Driven by the
-        ``SSHPILOT_SECRET_SESSION_TIMEOUT`` env var set from ``secrets.session_timeout``."""
-        try:
-            return int(os.environ.get("SSHPILOT_SECRET_SESSION_TIMEOUT", "0") or 0)
-        except Exception:
-            return 0
-
     def _touch_deadline(self) -> None:
         """Refresh the idle deadline (sliding window). Caller holds ``self._lock``."""
-        secs = self._session_timeout_seconds()
-        self._deadline = (time.monotonic() + secs) if secs > 0 else None
+        self._idle.touch()
 
     def _expired(self) -> bool:
         """Caller holds ``self._lock``."""
-        return self._deadline is not None and time.monotonic() > self._deadline
+        return self._idle.expired()
 
     def _drop_session(self) -> None:
         """Forget the in-process session + cache (re-lock). Caller holds ``self._lock``."""
         self._token = None
         self._unlocked = False
-        self._deadline = None
+        self._idle.reset()
         self._items = None
         self._cache_complete = False
         os.environ.pop("BW_SESSION", None)
@@ -1017,7 +1038,7 @@ class KdbxBackend(SecretBackend):
     def __init__(self) -> None:
         self._kp = None
         self._cache: Optional[Dict[str, Optional[str]]] = None   # title -> password
-        self._deadline: Optional[float] = None
+        self._idle = _SessionIdleTimeout()
         self._lock = threading.RLock()
 
     # -- config (paths come from env, set by connection_manager / preferences) ----
@@ -1035,26 +1056,17 @@ class KdbxBackend(SecretBackend):
         db = self._database()
         return PyKeePass is not None and bool(db) and os.path.exists(db)
 
-    # -- idle timeout (mirrors BitwardenBackend) ----
-    @staticmethod
-    def _session_timeout_seconds() -> int:
-        try:
-            return int(os.environ.get("SSHPILOT_SECRET_SESSION_TIMEOUT", "0") or 0)
-        except Exception:
-            return 0
-
     def _touch_deadline(self) -> None:
-        secs = self._session_timeout_seconds()
-        self._deadline = (time.monotonic() + secs) if secs > 0 else None
+        self._idle.touch()
 
     def _expired(self) -> bool:
-        return self._deadline is not None and time.monotonic() > self._deadline
+        return self._idle.expired()
 
     def _drop_session(self) -> None:
         """Forget the in-process DB + cache + derived key. Caller holds ``self._lock``."""
         self._kp = None
         self._cache = None
-        self._deadline = None
+        self._idle.reset()
         os.environ.pop(self._ENV_KEY, None)
 
     @staticmethod
@@ -1239,6 +1251,55 @@ class KdbxBackend(SecretBackend):
             logger.error("KDBX delete failed: %s", exc)
             return False
 
+    def iter_credentials(self) -> List[Tuple[Dict[str, str], Optional[str]]]:
+        """Enumerate entries in the dedicated ``sshPilot`` group as ``(attributes, secret)``.
+
+        Empty when locked. Type comes from the ``sshpilot_type`` custom property when set,
+        else from :func:`parse_account` on the entry title (``login.username`` is the hint
+        for email-style SSH usernames)."""
+        kp = self._db()
+        if kp is None:
+            return []
+        out: List[Tuple[Dict[str, str], Optional[str]]] = []
+        try:
+            grp = kp.find_groups(name=self._GROUP, first=True)
+            if grp is None:
+                return []
+            entries = kp.find_entries(group=grp) or []
+            for entry in entries:
+                title = entry.title or ""
+                if not title:
+                    continue
+                cred_type = ""
+                getter = getattr(entry, "get_custom_property", None)
+                if callable(getter):
+                    try:
+                        cred_type = getter(self._TYPE_PROP) or ""
+                    except Exception:
+                        cred_type = ""
+                username_hint = entry.username or None
+                if cred_type:
+                    attrs: Dict[str, str] = {"type": cred_type}
+                    if cred_type == "key_passphrase":
+                        attrs["key_path"] = title
+                    elif cred_type == "vault_master":
+                        attrs["key_path"] = title
+                    else:
+                        parsed = parse_account(title, username_hint=username_hint)
+                        attrs["host"] = parsed.get("host", "")
+                        attrs["username"] = parsed.get("username", "")
+                else:
+                    attrs = parse_account(title, username_hint=username_hint)
+                    if not attrs:
+                        continue
+                value = entry.password or None
+                if not value:
+                    continue
+                out.append((attrs, value))
+        except Exception as exc:
+            logger.debug("KDBX iter_credentials failed: %s", exc)
+        return out
+
 
 class SSHAgentBackend(SecretBackend):
     """The "don't store secrets at all" choice.
@@ -1276,13 +1337,23 @@ class SSHAgentBackend(SecretBackend):
 class SecretManager:
     """Selects and orchestrates secret backends.
 
-    - ``store`` — :meth:`_ordered_backends` only: first available backend in the
-      selected order, falling back on failure (mirrors the old libsecret→keyring
-      fallback).
-    - ``lookup`` / ``delete`` — :meth:`_all_available_backends`: selected order
-      first, then any other registered backend that is available, so secrets
-      stored under a non-selected backend (e.g. ``pass`` while on ``auto``) still
-      resolve and can be cleared.
+    **``auto``** (platform default: libsecret then keyring on Linux, keyring on macOS):
+
+    - ``store`` — first available backend in platform order, falling back on failure.
+    - ``lookup`` / ``delete`` — every available backend (selected order first, then any
+      other registered backend) so secrets stored under a previous backend still resolve
+      and can be cleared after switching.
+
+    **Explicit selection** (any named backend, including ``agent`` and session vaults):
+
+    - ``store`` / ``lookup`` / ``delete`` consult **only** that backend — no fallback on
+      store failure, no read-through to a stale copy elsewhere, and no cross-backend
+      delete. A locked session vault returns nothing/``False`` until unlocked.
+    - If the selected backend is **unavailable**, operations resolve to nothing/``False``
+      and a warning is logged (deduped).
+
+    :meth:`lookup_everywhere` deliberately ignores explicit selection and scans all
+    available backends (for export/migration); locked session vaults contribute nothing.
     """
 
     def __init__(self) -> None:
@@ -1395,6 +1466,11 @@ class SecretManager:
         """Whether the named backend has a lock lifecycle (Bitwarden/Vaultwarden)."""
         backend = self._backends.get((name or "").strip().lower())
         return bool(backend is not None and getattr(backend, "session_backed", False))
+
+    def persists_secrets(self) -> bool:
+        """Whether :meth:`store` would persist secrets (``False`` for explicit ``agent``)."""
+        backend = self.selected_backend()
+        return backend is None or backend.name != "agent"
 
     # -- selection helpers ------------------------------------------------
     def selected_backend(self) -> Optional[SecretBackend]:

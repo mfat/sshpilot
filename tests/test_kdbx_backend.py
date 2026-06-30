@@ -66,9 +66,13 @@ class FakePyKeePass:
     def root_group(self):
         return FakeGroup('root')
 
-    def find_entries(self, title=None, first=False):
-        matches = [e for e in self._b.entries if e.title == title]
-        return (matches[0] if matches else None) if first else matches
+    def find_entries(self, title=None, group=None, first=False):
+        entries = list(self._b.entries)
+        if title is not None:
+            entries = [e for e in entries if e.title == title]
+        if first:
+            return entries[0] if entries else None
+        return entries
 
     def find_groups(self, name=None, first=False):
         return FakeGroup(name)
@@ -174,7 +178,7 @@ def test_idle_timeout_drops_session(kdbx, monkeypatch):
     backend, _db = kdbx
     backend.unlock('correct')
     assert backend.is_unlocked() is True
-    backend._deadline = time.monotonic() - 1                # force expiry
+    backend._idle._deadline = time.monotonic() - 1          # force expiry
     assert backend.is_unlocked() is False
     assert os.environ.get('SSHPILOT_KDBX_KEY') is None
 
@@ -224,3 +228,22 @@ def test_selected_master_spec_keyed_by_db_path(monkeypatch):
     mgr = ss.SecretManager()
     mgr.set_selected('keepassxc')
     assert ss.selected_master_spec(mgr).keyring_account == 'keepassxc-master:/vaults/work.kdbx'
+
+
+def test_iter_credentials_enumerates_sshpilot_group(kdbx):
+    backend, _db = kdbx
+    backend.unlock('correct')
+    backend.store(password_spec('h.example', 'alice'), 'pw-a')
+    backend.store(sudo_password_spec('h.example', 'alice'), 'sudo-a')
+    backend.store(passphrase_spec('/home/u/.ssh/id_ed25519'), 'pass')
+    rows = backend.iter_credentials()
+    assert len(rows) == 3
+    by_type = {attrs.get('type'): secret for attrs, secret in rows}
+    assert by_type['ssh_password'] == 'pw-a'
+    assert by_type['sudo_password'] == 'sudo-a'
+    assert by_type['key_passphrase'] == 'pass'
+
+
+def test_iter_credentials_empty_when_locked(kdbx):
+    backend, _db = kdbx
+    assert backend.iter_credentials() == []

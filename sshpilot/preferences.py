@@ -1657,6 +1657,14 @@ class PreferencesWindow(Adw.Window):
             self._forget_master_btn = forget_btn
             secrets_group.add(self.forget_master_row)
 
+            self.agent_no_store_row = Adw.ActionRow()
+            self.agent_no_store_row.set_title(_("No secret storage"))
+            self.agent_no_store_row.set_subtitle(_(
+                "Passwords and passphrases are not saved by sshPilot. Use ssh-agent "
+                "and SSH's own prompts instead."
+            ))
+            secrets_group.add(self.agent_no_store_row)
+
             # Show the bw/timeout/forget rows only when they apply to the
             # currently-selected backend.
             self._update_secret_rows_visibility(current_backend)
@@ -2210,10 +2218,17 @@ class PreferencesWindow(Adw.Window):
             if hasattr(self, 'forget_master_row'):
                 self.forget_master_row.set_visible(session)
                 self._refresh_forget_master_row()
+            if hasattr(self, 'agent_no_store_row'):
+                self.agent_no_store_row.set_visible(name == 'agent')
             # Tell the user how to set up the bw CLI for the selected backend.
             # (Plain text only — no '<' or '&' — Adw rows parse Pango markup.)
             if hasattr(self, 'secret_backend_row'):
-                if name == 'bitwarden':
+                if name == 'agent':
+                    hint = _(
+                        "Credentials are not persisted — ssh-agent and SSH handle "
+                        "authentication."
+                    )
+                elif name == 'bitwarden':
                     hint = _("Uses the bw CLI. Run “bw login” in a terminal first "
                              "(for a self-hosted Vaultwarden, run “bw config server” first).")
                 else:

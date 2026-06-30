@@ -4,7 +4,8 @@ Each adapter presents one secret store as :class:`Credential` operations:
 
 - :class:`SecretBackendAdapter` wraps a registered ``SecretBackend`` (spec-keyed
   store/lookup/delete) and adds enumeration where the backend supports it (its
-  ``iter_credentials`` hook). keyring/agent have no hook → ``can_enumerate=False``.
+  ``iter_credentials`` hook). keyring/agent have no hook; ``keepassxc`` enumerates
+  the dedicated ``sshPilot`` group when unlocked.
 - :class:`KdbxAdapter` is a standalone pykeepass-backed export/import target (a ``.kdbx``
   file), **not** a connect-time backend in this phase.
 

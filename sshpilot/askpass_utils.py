@@ -401,6 +401,13 @@ def _run_askpass_dialog(key_path: str, log_fn) -> "str | None":
         store_row.set_title("Store passphrase")
         store_row.set_active(False)
 
+        persists_secrets = True
+        try:
+            from .secret_storage import get_secret_manager
+            persists_secrets = get_secret_manager().persists_secrets()
+        except Exception:
+            persists_secrets = True
+
         cancel_btn = Gtk.Button(label="Cancel")
         ok_btn = Gtk.Button(label="Unlock")
         ok_btn.add_css_class("suggested-action")
@@ -440,7 +447,19 @@ def _run_askpass_dialog(key_path: str, log_fn) -> "str | None":
 
         group = Adw.PreferencesGroup()
         group.add(password_row)
-        group.add(store_row)
+        if persists_secrets:
+            group.add(store_row)
+        else:
+            no_store = Gtk.Label(
+                label=(
+                    "Secret storage is set to SSH Agent Only — passphrases are not "
+                    "saved by sshPilot."
+                ),
+            )
+            no_store.set_wrap(True)
+            no_store.set_xalign(0.0)
+            no_store.add_css_class("dim-label")
+            group.add(no_store)
 
         content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18)
         content.set_margin_top(18)
