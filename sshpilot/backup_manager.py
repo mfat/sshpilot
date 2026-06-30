@@ -378,10 +378,13 @@ class BackupManager:
                 if mode == 'merge' and os.path.isfile(path):
                     logger.info("Skipping existing private key at %s (merge mode)", path)
                     continue
-                os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
-                with open(path, 'wb') as f:
-                    f.write(base64.b64decode(raw.encode('ascii')))
-                os.chmod(path, int(item.get('mode') or 0o600) & 0o777)
+                else:
+                    os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
+                    with open(path, 'wb') as f:
+                        f.write(base64.b64decode(raw.encode('ascii')))
+                    private_mode = int(item.get('mode') or 0o600) & 0o777
+                    # Private keys must never be restored with group/other access.
+                    os.chmod(path, (private_mode & 0o600) or 0o600)
 
                 public_path = os.path.expanduser(str(item.get('public_path') or ''))
                 public_raw = item.get('public_content_b64')
