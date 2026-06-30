@@ -58,14 +58,20 @@ class BackupManager:
             return str(Path(get_ssh_dir()) / 'config')
 
     def get_known_hosts_path(self) -> Optional[str]:
-        """Get the current known_hosts path based on mode."""
+        """known_hosts path — **isolated mode only** (sshPilot's own file).
+
+        In default mode this returns ``None`` so the user's GLOBAL ``~/.ssh/known_hosts`` is
+        never backed up, replaced, merged, or otherwise touched: it is shared TOFU state used
+        by all of the user's SSH tooling, not something sshPilot owns."""
         if self.connection_manager:
-            return getattr(self.connection_manager, 'known_hosts_path', None)
-        
+            if getattr(self.connection_manager, 'isolated_mode', False):
+                return getattr(self.connection_manager, 'known_hosts_path', None)
+            return None
+
         use_isolated = self.config.get_setting('ssh.use_isolated_config', False)
         if use_isolated:
             return str(Path(get_config_dir()) / 'known_hosts')
-        return str(Path(get_ssh_dir()) / 'known_hosts')
+        return None
 
     def _current_isolated_mode(self) -> bool:
         """Return the mode that restore targets should keep using after import."""
@@ -127,7 +133,8 @@ class BackupManager:
             export_data['ssh_config'] = ''
             logger.warning(f"SSH config not found at {ssh_config_path}")
 
-        # Export known_hosts from the active mode's path
+        # Export known_hosts — isolated mode only. get_known_hosts_path() returns None in
+        # default mode, so the user's global ~/.ssh/known_hosts is never put into a backup.
         known_hosts_path = self.get_known_hosts_path()
         if not options['known_hosts']:
             export_data['known_hosts'] = None

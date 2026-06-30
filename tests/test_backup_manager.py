@@ -83,7 +83,8 @@ class FakeConnMgr:
 
 
 def test_restore_replace_keeps_current_default_mode(monkeypatch, tmp_path):
-    """An isolated backup restored while in default mode must stay in default mode."""
+    """An isolated backup restored while in default mode stays in default mode AND never
+    touches the user's global ~/.ssh/known_hosts (known_hosts is isolated-only)."""
     config_dir = tmp_path / "config"
     ssh_dir = tmp_path / "ssh"
     config_dir.mkdir()
@@ -99,6 +100,7 @@ def test_restore_replace_keeps_current_default_mode(monkeypatch, tmp_path):
     config = ModeConfig(config_file, isolated=False)
     ssh_config_path = ssh_dir / "config"
     known_hosts_path = ssh_dir / "known_hosts"
+    known_hosts_path.write_text("EXISTING GLOBAL\n", encoding="utf-8")   # the user's real file
     mgr = bm.BackupManager(
         config,
         FakeConnMgr([], str(ssh_config_path), str(known_hosts_path), isolated_mode=False),
@@ -122,10 +124,40 @@ def test_restore_replace_keeps_current_default_mode(monkeypatch, tmp_path):
 
     assert success, error
     assert ssh_config_path.read_text(encoding="utf-8") == "Host isolated-backup\n"
-    assert known_hosts_path.read_text(encoding="utf-8") == "isolated.example ssh-ed25519 AAAA\n"
+    # Global known_hosts is left exactly as it was — never overwritten in default mode.
+    assert known_hosts_path.read_text(encoding="utf-8") == "EXISTING GLOBAL\n"
     restored_config = json.loads(config_file.read_text(encoding="utf-8"))
     assert restored_config["ssh"]["use_isolated_config"] is False
     assert restored_config["ui"]["theme"] == "dark"
+
+
+def test_default_mode_export_excludes_global_known_hosts(monkeypatch, tmp_path):
+    """A default-mode backup must never include the user's global ~/.ssh/known_hosts, even
+    when the 'Known hosts' category is enabled."""
+    config_dir = tmp_path / "config"
+    ssh_dir = tmp_path / "ssh"
+    config_dir.mkdir()
+    ssh_dir.mkdir()
+    monkeypatch.setattr(bm, "get_config_dir", lambda: str(config_dir))
+    monkeypatch.setattr(bm, "get_ssh_dir", lambda: str(ssh_dir))
+    (ssh_dir / "known_hosts").write_text("global.example ssh-ed25519 ZZZ\n", encoding="utf-8")
+    config_file = config_dir / "config.json"
+    config_file.write_text(json.dumps({"ssh": {"use_isolated_config": False}}), encoding="utf-8")
+
+    config = ModeConfig(config_file, isolated=False)
+    mgr = bm.BackupManager(
+        config,
+        FakeConnMgr([], str(ssh_dir / "config"), str(ssh_dir / "known_hosts"),
+                    isolated_mode=False),
+    )
+    path = str(tmp_path / "b.spbk")
+    ok, err = mgr.export_backup(
+        path, connections=[], passphrase=None,
+        options={"app_settings": False, "ssh_config": False, "known_hosts": True,
+                 "secrets": False, "private_keys": False})
+    assert ok, err
+    manifest = read_spbk(path)
+    assert manifest["known_hosts"] is None     # the global file was NOT captured
 
 
 def test_restore_replace_keeps_current_isolated_mode(monkeypatch, tmp_path):
