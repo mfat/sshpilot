@@ -1,5 +1,3 @@
-include sshpilot/vendor/pyxtermjs/*.html
-include sshpilot/vendor/pyxtermjs/LICENSE
 # Bundled xterm.js assets (fallback for non-Debian installs; Debian uses the
 # system libjs-xterm and excludes this directory from the binary package).
 recursive-include sshpilot/vendor/pyxtermjs/xterm *

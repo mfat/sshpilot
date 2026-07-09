@@ -4503,33 +4503,25 @@ class PreferencesWindow(Adw.Window):
         self._update_encoding_config_if_needed(target_code)
 
     def _detect_pyxterm_backend(self):
-        external_error: Optional[str] = None
+        """Detect the embedded PyXterm.js backend.
 
+        It runs xterm.js in-process (no Flask/pyxtermjs server), so it needs only
+        WebKit 6 (GTK4) plus the xterm.js assets (system libjs-xterm or bundled).
+        """
         try:
-            spec = importlib.util.find_spec('pyxtermjs')
-            if spec is None:
-                external_error = 'pyxtermjs module not found'
-            else:
-                __import__('pyxtermjs')
-                return True, None
+            import gi
+            gi.require_version('WebKit', '6.0')
+            from gi.repository import WebKit  # noqa: F401
         except Exception as exc:
-            external_error = str(exc)
-
-        vendored_error: Optional[str] = None
-
+            return False, f'WebKit 6.0 not available: {exc}'
         try:
-            vendored_spec = importlib.util.find_spec('sshpilot.vendor.pyxtermjs')
-            if vendored_spec is not None:
-                return True, None
-            vendored_error = 'vendored pyxtermjs module not found'
-        except Exception as vendored_exc:
-            vendored_error = str(vendored_exc)
-
-        message_parts = [part for part in (external_error, vendored_error) if part]
-        if not message_parts:
-            message_parts.append('pyxtermjs backend unavailable')
-
-        return False, '; '.join(message_parts)
+            import os
+            from .xterm_shell import asset_dir
+            if not os.path.isfile(os.path.join(asset_dir(), 'xterm.js')):
+                return False, 'xterm.js assets not found'
+        except Exception as exc:
+            return False, f'xterm.js assets error: {exc}'
+        return True, None
 
     def _build_backend_choices(self):
         choices = [
@@ -4549,7 +4541,7 @@ class PreferencesWindow(Adw.Window):
                     {
                         'id': 'pyxterm',
                         'label': 'PyXterm.js',
-                        'description': 'Web-based terminal (pyxtermjs)',
+                        'description': 'Embedded xterm.js terminal (in-process, no server)',
                         'available': True,
                         'error': None,
                     }
@@ -4558,22 +4550,10 @@ class PreferencesWindow(Adw.Window):
                 choices.append(
                     {
                         'id': 'pyxterm',
-                        'label': 'PyXterm.js (requires pyxtermjs)',
-                        'description': 'pyxtermjs package not available',
+                        'label': 'PyXterm.js (unavailable)',
+                        'description': 'Requires WebKit 6.0',
                         'available': False,
                         'error': pyxterm_error,
-                    }
-                )
-            # Embedded (Cursor-model) PyXterm.js: in-process PTY bridge, no local
-            # server. Needs WebKit 6; gated the same as PyXterm.js above.
-            if pyxterm_available:
-                choices.append(
-                    {
-                        'id': 'pyxterm2',
-                        'label': 'PyXterm.js (embedded, experimental)',
-                        'description': 'In-process xterm.js bridge — no local server',
-                        'available': True,
-                        'error': None,
                     }
                 )
         return choices

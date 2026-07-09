@@ -29,8 +29,6 @@ Depends: ${python3:Depends},
          python3-secretstorage,
          python3-psutil,
          python3-certifi,
-         python3-flask,
-         python3-simple-websocket,
          libjs-xterm,
          openssh-client
 Recommends: sshpass,

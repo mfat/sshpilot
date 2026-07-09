@@ -120,7 +120,8 @@ class Spike:
             ucm.connect("script-message-received::sshpilotPty", self._on_message)
             self._webview = WebKit.WebView(user_content_manager=ucm)
             self._webview.get_settings().set_property("enable-javascript", True)
-            self._webview.load_html(build_html(), "about:blank")
+            # localhost base URI => secure context => navigator.clipboard available
+            self._webview.load_html(build_html(), "http://localhost/")
             win = Gtk.ApplicationWindow(application=a, title="Embedded terminal spike")
             win.set_default_size(900, 560)
             win.set_child(self._webview)

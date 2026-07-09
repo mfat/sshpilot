@@ -74,7 +74,7 @@ exclude = ["packaging*", "screenshots*", "sshpilot.plugins.examples*"]
 "sshpilot" = ["resources/**/*", "resources/*"]
 # PyXterm.js web-terminal backend: HTML template + bundled xterm.js assets
 # (the latter is a fallback; Debian prefers the system libjs-xterm at runtime).
-"sshpilot.vendor.pyxtermjs" = ["*.html", "xterm/**/*"]
+"sshpilot.vendor.pyxtermjs" = ["xterm/**/*"]
 # Built-in plugin manifests are read from disk by the plugin loader.
 # setuptools does not glob package names here: add a key per built-in plugin.
 "sshpilot.plugins.builtin.ssh_protocol" = ["plugin.json"]

@@ -78,8 +78,7 @@ jobs:
             echo "         python3-cryptography,"
             echo "         python3-secretstorage,"
             echo "         gir1.2-webkit-6.0,"
-            echo "         python3-flask,"
-            echo "         python3-simple-websocket,"
+            echo "         libjs-xterm,"
             echo "         ssh-askpass,"
             echo "         sshpass"
           } >> debian/control

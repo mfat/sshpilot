@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import importlib
 import logging
 import os
-import sys
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional, Protocol, Sequence
 import shlex
@@ -576,15 +574,10 @@ class PyXtermTerminalBackend:
         self.import_error: Optional[Exception] = None
         self._pyxterm = None
         self._vendored_pyxterm = None
-        self._pyxterm_cli_module = "sshpilot.vendor.pyxtermjs"
         self._webview = None
-        self._server = None
         self._terminal_id: Optional[str] = None
         self._child_pid: Optional[int] = None
         self._child_exited_callback: Optional[Callable] = None
-        self._template_backed_up = False
-        self._temp_script_path: Optional[str] = None
-        self._writable_template_path: Optional[str] = None
         self._font_scale: float = 1.0
         self._base_font_size: Optional[int] = None  # Store base font size for zoom calculations
         self._search_addon_loaded = False  # Track if search addon is loaded
@@ -598,33 +591,11 @@ class PyXtermTerminalBackend:
         self.widget: Gtk.Widget = Gtk.Box()
 
         try:
-            vendored_module = None
-            try:
-                vendored_module = importlib.import_module("sshpilot.vendor.pyxtermjs")
-                self._vendored_pyxterm = vendored_module
-            except ModuleNotFoundError:
-                logger.debug("Vendored pyxtermjs module not found")
-                self._vendored_pyxterm = None
-            except Exception as e:
-                logger.debug(f"Failed to import vendored pyxtermjs: {e}")
-                self._vendored_pyxterm = None
-
-            # Try external module first, fall back to vendored if available
-            try:
-                external_module = importlib.import_module("pyxtermjs")
-                pyxterm_module = external_module
-            except ModuleNotFoundError as exc:
-                if vendored_module is None:
-                    # Neither module found - will be caught by outer exception handler
-                    raise ImportError("Neither external nor vendored pyxtermjs module found") from exc
-                logger.debug("External pyxtermjs package not found; using vendored copy")
-                pyxterm_module = vendored_module
-            except Exception as e:
-                if vendored_module is None:
-                    # No fallback available - will be caught by outer exception handler
-                    raise ImportError(f"Failed to import pyxtermjs: {e}") from e
-                logger.debug(f"External pyxtermjs import failed; using vendored copy: {e}")
-                pyxterm_module = vendored_module
+            # The embedded backend needs only WebKit 6 + the xterm.js assets (served
+            # by xterm_shell); it does NOT import the old Flask/WebSocket server, so
+            # the app carries no runtime dependency on flask/simple-websocket.
+            self._vendored_pyxterm = None
+            pyxterm_module = None
 
             # Use WebKit 6.0 (GTK4 compatible) - this is the preferred approach
             try:
@@ -702,400 +673,10 @@ class PyXtermTerminalBackend:
         self.widget.set_hexpand(True)
         self.widget.set_vexpand(True)
 
-    def _on_webview_load_changed(self, webview, load_event, *args):
-        """Called when the WebView load state changes"""
-        try:
-            # Handle different load events using WebKit.LoadEvent enum constants
-            # According to WebKit 6.0 API: LoadEvent enum has STARTED, REDIRECTED, COMMITTED, FINISHED, FAILED
-            if hasattr(self, 'WebKit') and self.WebKit:
-                LoadEvent = self.WebKit.LoadEvent
-                if load_event == LoadEvent.STARTED:
-                    logger.debug("WebView load started")
-                elif load_event == LoadEvent.REDIRECTED:
-                    logger.debug("WebView load redirected")
-                elif load_event == LoadEvent.COMMITTED:
-                    logger.debug("WebView load committed")
-                    # Disable context menu early (on load-committed) to catch it before page fully loads
-                    disable_context_menu_js = """
-                    (function() {
-                        // Disable browser's default context menu
-                        document.addEventListener('contextmenu', function(e) {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            return false;
-                        }, true);
-                        // Also disable on the terminal element if it exists
-                        if (typeof window.term !== 'undefined' && window.term.element) {
-                            window.term.element.addEventListener('contextmenu', function(e) {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                return false;
-                            }, true);
-                        }
-                    })();
-                    """
-                    self._run_javascript(disable_context_menu_js)
-                    logger.debug("Disabled WebView context menu (early, on load-committed)")
-                elif load_event == LoadEvent.FINISHED:
-                    logger.debug("WebView load finished, applying focus and settings")
-                    # Apply focus and settings after WebView is fully loaded
-                    def apply_settings():
-                        try:
-                            logger.debug("WebView load-finished: applying focus and settings")
-                            # Disable context menu again on load-finished (in case it wasn't caught earlier)
-                            disable_context_menu_js = """
-                            (function() {
-                                // Disable browser's default context menu
-                                document.addEventListener('contextmenu', function(e) {
-                                    e.preventDefault();
-                                    e.stopPropagation();
-                                    return false;
-                                }, true);
-                                // Also disable on the terminal element if it exists
-                                if (typeof window.term !== 'undefined' && window.term.element) {
-                                    window.term.element.addEventListener('contextmenu', function(e) {
-                                        e.preventDefault();
-                                        e.stopPropagation();
-                                        return false;
-                                    }, true);
-                                }
-                            })();
-                            """
-                            self._run_javascript(disable_context_menu_js)
-                            logger.debug("Disabled WebView context menu (on load-finished)")
-                            
-                            # Just focus the WebView - HTML template handles terminal focus
-                            self.widget.grab_focus()
-                            
-                            # Apply theme and font after page is loaded
-                            if hasattr(self.owner, 'config'):
-                                theme_name = self.owner.config.get_setting("terminal.theme", "default")
-                                self.apply_theme(theme_name)
-                                
-                                font_string = self.owner.config.get_setting("terminal.font", "Monospace 12")
-                                font_desc = Pango.FontDescription.from_string(font_string)
-                                self.set_font(font_desc)
-                                
-                                # Apply font scale if set
-                                if hasattr(self, '_font_scale'):
-                                    self.set_font_scale(self._font_scale)
-                            
-                            logger.debug("Settings applied after WebView load finished")
-                            
-                            # Now that WebView is fully loaded and terminal is ready, call the spawn callback
-                            # This ensures the terminal is ready before SSH connection is attempted
-                            if hasattr(self, '_pending_spawn_callback') and self._pending_spawn_callback:
-                                callback = self._pending_spawn_callback
-                                user_data = self._pending_spawn_user_data
-                                self._pending_spawn_callback = None
-                                self._pending_spawn_user_data = None
-                                
-                                def _notify() -> bool:
-                                    try:
-                                        callback(self.widget, self._child_pid or 0, None, user_data)
-                                    except TypeError:
-                                        callback(self.widget, None)
-                                    return False
-                                
-                                GLib.idle_add(_notify)
-                                logger.debug("Called deferred spawn callback after WebView is ready")
-                        except Exception:
-                            logger.debug("Failed to apply settings after WebView load", exc_info=True)
-                        return False  # Don't repeat
-                    
-                    # Minimal delay (50ms) to ensure DOM is ready - reduced from 500ms for faster startup
-                    GLib.timeout_add(50, apply_settings)
-                elif load_event == LoadEvent.FAILED:
-                    logger.error("WebView load failed - this may indicate connection refused error")
-                    # Emit connection failed signal to the terminal widget
-                    if hasattr(self.owner, 'emit'):
-                        self.owner.emit('connection-failed', 'Could not connect to PyXterm server: Connection refused')
-                    
-                    # Still call the callback even on failure, so the terminal widget knows spawn completed
-                    # This prevents the terminal from hanging waiting for the callback
-                    if hasattr(self, '_pending_spawn_callback') and self._pending_spawn_callback:
-                        callback = self._pending_spawn_callback
-                        user_data = self._pending_spawn_user_data
-                        self._pending_spawn_callback = None
-                        self._pending_spawn_user_data = None
-                        
-                        def _notify_error() -> bool:
-                            try:
-                                # Pass an error to indicate failure
-                                callback(self.widget, None, Exception("WebView load failed"), user_data)
-                            except TypeError:
-                                callback(self.widget, None)
-                            return False
-                        
-                        GLib.idle_add(_notify_error)
-                        logger.debug("Called deferred spawn callback with error after WebView load failed")
-            else:
-                # Fallback for WebKit2 or if enum is not available
-                # Use integer comparison as fallback (for WebKit2 compatibility)
-                if load_event == 1:  # WEBKIT_LOAD_STARTED
-                    logger.debug("WebView load started")
-                elif load_event == 2:  # WEBKIT_LOAD_REDIRECTED
-                    logger.debug("WebView load redirected")
-                elif load_event == 3:  # WEBKIT_LOAD_COMMITTED
-                    logger.debug("WebView load committed")
-                elif load_event == 4:  # WEBKIT_LOAD_FINISHED
-                    logger.debug("WebView load finished")
-                elif load_event == 5:  # WEBKIT_LOAD_FAILED
-                    logger.error("WebView load failed")
-        except Exception:
-            logger.debug("Error in WebView load-changed handler", exc_info=True)
-
-    def _backup_pyxtermjs_template(self) -> None:
-        """Backup the original pyxtermjs template"""
-        try:
-            import shutil
-
-            module = self._vendored_pyxterm or self._pyxterm
-            if not module:
-                return
-
-            pyxtermjs_path = Path(module.__file__).resolve().parent
-            original_template = pyxtermjs_path / "index.html"
-            backup_template = pyxtermjs_path / "index.html.backup"
-
-            # Skip backup if in Flatpak or if the directory is read-only
-            if is_flatpak():
-                logger.debug("Skipping pyxtermjs template backup in Flatpak (read-only filesystem)")
-                self._template_backed_up = False
-                return
-
-            # Check if we can write to the directory
-            if not os.access(pyxtermjs_path, os.W_OK):
-                logger.debug(f"Skipping pyxtermjs template backup: directory is read-only: {pyxtermjs_path}")
-                self._template_backed_up = False
-                return
-
-            if original_template.exists() and not backup_template.exists():
-                shutil.copy2(original_template, backup_template)
-                self._template_backed_up = True
-                logger.debug("Backed up original pyxtermjs template")
-        except Exception as e:
-            logger.debug(f"Failed to backup pyxtermjs template: {e}")
-            self._template_backed_up = False
-
-    def _replace_pyxtermjs_template(self) -> None:
-        """Replace the pyxtermjs template with our version that includes theme and font settings"""
-        try:
-            import shutil
-            import json
-            import re
-
-            module = self._vendored_pyxterm or self._pyxterm
-            if not module:
-                return
-
-            pyxtermjs_path = Path(module.__file__).resolve().parent
-            original_template = pyxtermjs_path / "index.html"
-            
-            # Determine where to write the modified template
-            # In Flatpak or read-only environments, use writable XDG data directory
-            use_writable_location = False
-            writable_template_path = None
-            
-            if is_flatpak() or not os.access(pyxtermjs_path, os.W_OK):
-                use_writable_location = True
-                # Use XDG data directory for writable template storage
-                data_dir = get_data_dir()
-                template_dir = Path(data_dir) / "pyxtermjs_templates"
-                template_dir.mkdir(parents=True, exist_ok=True)
-                writable_template_path = template_dir / "index.html"
-                logger.debug(f"Using writable location for template: {writable_template_path}")
-            else:
-                writable_template_path = original_template
-            
-            # Store the writable template path for later use in spawn_async
-            self._writable_template_path = str(writable_template_path) if use_writable_location else None
-            
-            # Get theme and font settings from config
-            owner = self.owner
-            if owner and hasattr(owner, 'config') and owner.config:
-                theme_name = owner.config.get_setting("terminal.theme", "default")
-                profile = owner.config.get_terminal_profile(theme_name)
-                font_string = owner.config.get_setting("terminal.font", "Monospace 12")
-            else:
-                # Default fallback
-                profile = {
-                    "foreground": "#FFFFFF",
-                    "background": "#000000",
-                    "cursor_color": "#FFFFFF",
-                    "highlight_background": "#4A90E2",
-                    "highlight_foreground": "#FFFFFF",
-                    "palette": [
-                        "#000000", "#CC0000", "#4E9A06", "#C4A000",
-                        "#3465A4", "#75507B", "#06989A", "#D3D7CF",
-                        "#555753", "#EF2929", "#8AE234", "#FCE94F",
-                        "#729FCF", "#AD7FA8", "#34E2E2", "#EEEEEC"
-                    ]
-                }
-                font_string = "Monospace 12"
-            
-            # Parse font
-            font_desc = Pango.FontDescription.from_string(font_string)
-            font_family = font_desc.get_family() or "Monospace"
-            font_size = font_desc.get_size() / Pango.SCALE
-            
-            # Build theme object for JavaScript
-            palette = profile.get("palette", [])
-            theme_obj = {
-                "background": profile.get("background", "#000000"),
-                "foreground": profile.get("foreground", "#FFFFFF"),
-                "cursor": profile.get("cursor_color", profile.get("foreground", "#FFFFFF")),
-                "selectionBackground": profile.get("highlight_background", "#4A90E2"),
-                "selectionForeground": profile.get("highlight_foreground", profile.get("foreground", "#FFFFFF"))
-            }
-            
-            # Add palette colors if available
-            if palette and len(palette) >= 16:
-                theme_obj["black"] = palette[0]
-                theme_obj["red"] = palette[1]
-                theme_obj["green"] = palette[2]
-                theme_obj["yellow"] = palette[3]
-                theme_obj["blue"] = palette[4]
-                theme_obj["magenta"] = palette[5]
-                theme_obj["cyan"] = palette[6]
-                theme_obj["white"] = palette[7]
-                theme_obj["brightBlack"] = palette[8]
-                theme_obj["brightRed"] = palette[9]
-                theme_obj["brightGreen"] = palette[10]
-                theme_obj["brightYellow"] = palette[11]
-                theme_obj["brightBlue"] = palette[12]
-                theme_obj["brightMagenta"] = palette[13]
-                theme_obj["brightCyan"] = palette[14]
-                theme_obj["brightWhite"] = palette[15]
-            
-            # Read the original template
-            if original_template.exists():
-                template_content = original_template.read_text(encoding='utf-8')
-                
-                # If using writable location, copy original first
-                if use_writable_location:
-                    shutil.copy2(original_template, writable_template_path)
-                    logger.debug(f"Copied original template to writable location: {writable_template_path}")
-                
-                # Replace the hardcoded theme in the Terminal constructor
-                theme_json = json.dumps(theme_obj, indent=10).replace('\n', '\n        ')
-                font_family_escaped = font_family.replace("'", "\\'").replace('"', '\\"')
-                
-                # Replace theme in Terminal constructor
-                theme_pattern = r"theme:\s*\{[^}]*\}"
-                theme_replacement = f"theme: {theme_json}"
-                template_content = re.sub(theme_pattern, theme_replacement, template_content, flags=re.DOTALL)
-                
-                # Update or add font settings in Terminal constructor
-                # Replace existing fontFamily if present
-                font_family_pattern = r"fontFamily:\s*['\"][^'\"]*['\"]"
-                template_content = re.sub(font_family_pattern, f"fontFamily: '{font_family_escaped}'", template_content)
-                
-                # Replace existing fontSize if present
-                font_size_pattern = r"fontSize:\s*\d+"
-                template_content = re.sub(font_size_pattern, f"fontSize: {int(font_size)}", template_content)
-                
-                # If fontFamily or fontSize weren't found, add them after cursorBlink
-                if 'fontFamily:' not in template_content or 'fontSize:' not in template_content:
-                    if 'cursorBlink:' in template_content:
-                        terminal_pattern = r"(cursorBlink:\s*true,)"
-                        font_settings = f"\\1\n        fontFamily: '{font_family_escaped}',\n        fontSize: {int(font_size)},"
-                        template_content = re.sub(terminal_pattern, font_settings, template_content)
-                    elif 'macOptionIsMeta:' in template_content:
-                        terminal_pattern = r"(macOptionIsMeta:\s*true,)"
-                        font_settings = f"\\1\n        fontFamily: '{font_family_escaped}',\n        fontSize: {int(font_size)},"
-                        template_content = re.sub(terminal_pattern, font_settings, template_content)
-                    else:
-                        # Fallback: add after the opening brace of Terminal constructor
-                        terminal_pattern = r"(const term = new Terminal\(\{)"
-                        font_settings = f"\\1\n        fontFamily: '{font_family_escaped}',\n        fontSize: {int(font_size)},"
-                        template_content = re.sub(terminal_pattern, font_settings, template_content)
-                
-                # Also add CSS for font (in case JavaScript font settings don't work)
-                if 'sshpilot-terminal-font' not in template_content:
-                    css_insertion = f"""
-      <style id="sshpilot-terminal-font">
-        .xterm {{
-          font-family: '{font_family_escaped}', monospace !important;
-          font-size: {font_size}pt !important;
-        }}
-        .xterm .xterm-screen {{
-          font-family: '{font_family_escaped}', monospace !important;
-          font-size: {font_size}pt !important;
-        }}
-      </style>
-"""
-                    # Insert before the xterm.css link (served locally, not from a CDN)
-                    template_content = template_content.replace(
-                        '<link\n      rel="stylesheet"\n      href="xterm/xterm.css"\n    />',
-                        css_insertion + '    <link\n      rel="stylesheet"\n      href="xterm/xterm.css"\n    />'
-                    )
-                
-                # Write the modified template to the appropriate location
-                writable_template_path.write_text(template_content, encoding='utf-8')
-                if use_writable_location:
-                    logger.debug(f"Modified pyxtermjs template in writable location with theme {theme_name} and font {font_family} {font_size}pt")
-                else:
-                    logger.debug(f"Modified pyxtermjs template with theme {theme_name} and font {font_family} {font_size}pt")
-            else:
-                logger.warning(f"Template file not found: {original_template}")
-        except Exception as e:
-            logger.debug(f"Failed to replace pyxtermjs template: {e}", exc_info=True)
-
-    def _restore_pyxtermjs_template(self) -> None:
-        """Restore the original pyxtermjs template"""
-        try:
-            import shutil
-
-            module = self._vendored_pyxterm or self._pyxterm
-            if not module:
-                return
-
-            pyxtermjs_path = Path(module.__file__).resolve().parent
-            original_template = pyxtermjs_path / "index.html"
-            backup_template = pyxtermjs_path / "index.html.backup"
-
-            # Skip restore if in Flatpak or if the directory is read-only
-            if is_flatpak():
-                logger.debug("Skipping pyxtermjs template restore in Flatpak (read-only filesystem)")
-                return
-            
-            # Check if we can write to the directory
-            if not os.access(pyxtermjs_path, os.W_OK):
-                logger.debug(f"Skipping pyxtermjs template restore: directory is read-only: {pyxtermjs_path}")
-                return
-
-            if self._template_backed_up and backup_template.exists():
-                shutil.copy2(backup_template, original_template)
-                backup_template.unlink()
-                logger.debug("Restored original pyxtermjs template")
-        except Exception as e:
-            logger.debug(f"Failed to restore pyxtermjs template: {e}")
-
     def destroy(self) -> None:
-        if hasattr(self, '_server_process') and self._server_process:
-            import subprocess
-            try:
-                self._server_process.terminate()
-                self._server_process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self._server_process.kill()
-                self._server_process.wait()
-            except Exception:
-                logger.debug("Failed to close pyxterm server", exc_info=True)
-        self._server_process = None
-        
-        # Restore the original pyxtermjs template
-        self._restore_pyxtermjs_template()
-        
-        # Clean up temporary script if it exists
-        if hasattr(self, '_temp_script_path') and self._temp_script_path:
-            try:
-                import os
-                os.unlink(self._temp_script_path)
-            except Exception:
-                logger.debug("Failed to clean up temporary script", exc_info=True)
-            self._temp_script_path = None
+        # Embedded backend: nothing server-side to tear down. Subclasses
+        # (PyXtermBridgeBackend) close their PTY bridge before calling super().
+        pass
 
     def _run_javascript(self, script: str) -> None:
         """Execute JavaScript in the WebView"""
@@ -1327,332 +908,6 @@ class PyXtermTerminalBackend:
                 f"xterm.js will use UTF-8. Install luit for legacy encoding support."
             )
             return argv
-
-    def spawn_async(
-        self,
-        argv: Sequence[str],
-        env: Optional[Mapping[str, str]] = None,
-        cwd: Optional[str] = None,
-        flags: int = 0,
-        child_setup: Optional[Callable[..., None]] = None,
-        callback: Optional[Callable[[GObject.Object, Optional[Exception]], None]] = None,
-        user_data: Optional[Any] = None,
-    ) -> None:
-        if not self.available:
-            raise RuntimeError("pyxterm backend is not available")
-
-        import subprocess
-        import time
-        import os
-
-        # Find an available port
-        import socket
-        def find_free_port():
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.bind(('', 0))
-                s.listen(1)
-                port = s.getsockname()[1]
-            return port
-
-        # Start pyxtermjs server
-        port = find_free_port()
-        command = list(argv) if argv else None
-        
-        # Get encoding setting from config and wrap command if needed
-        encoding = 'UTF-8'  # Default
-        if self.owner and hasattr(self.owner, 'config') and self.owner.config:
-            encoding = self.owner.config.get_setting('terminal.encoding', 'UTF-8')
-        
-        # Wrap command with encoding transcoder if needed (for legacy encodings)
-        # UTF-8 and UTF-16 are natively supported by xterm.js
-        if command:
-            command = self._wrap_command_with_encoding(command, encoding)
-        
-        # Build pyxtermjs command
-        pyxterm_cmd = [
-            sys.executable,
-            '-m',
-            self._pyxterm_cli_module,
-            '--port', str(port),
-            '--host', '127.0.0.1'
-        ]
-        
-        # Handle the command and arguments properly
-        if command:
-            # For SSH commands, we need to pass the full command as a single string
-            # to avoid issues with argument parsing
-            if command[0] == 'ssh' and len(command) > 1:
-                # Create a temporary script to handle the SSH command properly
-                import tempfile
-                
-                # Create a temporary script file that properly handles the SSH command
-                script_content = '#!/bin/bash\n'
-                script_content += 'exec '
-                
-                # Properly quote each argument to handle spaces and special characters
-                for arg in command:
-                    # Escape any single quotes in the argument
-                    escaped_arg = arg.replace("'", "'\"'\"'")
-                    script_content += f"'{escaped_arg}' "
-                
-                script_content += '\n'
-                
-                # Write to temporary file
-                with tempfile.NamedTemporaryFile(mode='w', suffix='.sh', delete=False) as f:
-                    f.write(script_content)
-                    script_path = f.name
-                
-                # Make it executable
-                os.chmod(script_path, 0o755)
-                
-                # Store the script path for cleanup
-                self._temp_script_path = script_path
-                
-                # Use the script as the command (no additional args needed)
-                pyxterm_cmd.extend(['--command', script_path])
-            elif command[0] == 'bash' and len(command) >= 3 and command[1] == '-lc':
-                # For bash -lc commands, the command string (3rd+ args) needs special handling
-                # because pyxtermjs uses shlex.split() which may incorrectly parse
-                # an already-shell-quoted command string. Create a script instead.
-                import tempfile
-                
-                # Join all arguments after '-lc' to get the full command string
-                # The command string is already shell-quoted from GLib.shell_quote,
-                # so we can use it directly in the script
-                command_string = ' '.join(command[2:]) if len(command) > 2 else ''
-                
-                # Create a temporary script that executes the command
-                script_content = '#!/bin/bash\n'
-                script_content += 'set -e\n'  # Exit on error
-                script_content += f'{command_string}\n'
-                
-                # Write to temporary file
-                with tempfile.NamedTemporaryFile(mode='w', suffix='.sh', delete=False) as f:
-                    f.write(script_content)
-                    script_path = f.name
-                
-                # Make it executable
-                os.chmod(script_path, 0o755)
-                
-                # Store the script path for cleanup
-                self._temp_script_path = script_path
-                
-                # Use the script as the command (no additional args needed)
-                pyxterm_cmd.extend(['--command', script_path])
-            else:
-                # For other commands, separate the executable from arguments
-                # pyxtermjs expects --command to be just the executable and --cmd-args for arguments
-                executable = command[0]
-                args = command[1:] if len(command) > 1 else []
-
-                pyxterm_cmd.extend(['--command', executable])
-                if args:
-                    # Join arguments with proper shell quoting so pyxtermjs can
-                    # reconstruct the argv list without losing grouping (e.g.
-                    # bash -c "<script>").
-                    args_string = ' '.join(shlex.quote(arg) for arg in args)
-                    pyxterm_cmd.extend([f'--cmd-args={args_string}'])
-        else:
-            pyxterm_cmd.extend(['--command', 'bash'])
-
-        try:
-            # Replace the pyxtermjs template with our clean version
-            self._backup_pyxtermjs_template()
-            self._replace_pyxtermjs_template()
-            
-            # Start the pyxtermjs server in its own process group/session so the
-            # parent process remains isolated from termination signals.
-            # Capture stderr for better error reporting
-            import tempfile
-            stderr_file = tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix='.log')
-            stderr_file.close()
-            
-            # Ensure the subprocess can find the sshpilot module
-            subprocess_env = dict(env) if env else dict(os.environ)
-            current_pythonpath = subprocess_env.get('PYTHONPATH', '')
-            # Get the project root (sshpilot directory)
-            project_root = os.path.dirname(os.path.dirname(__file__))
-            if project_root not in current_pythonpath:
-                if current_pythonpath:
-                    subprocess_env['PYTHONPATH'] = f"{project_root}:{current_pythonpath}"
-                else:
-                    subprocess_env['PYTHONPATH'] = project_root
-            
-            # Set template folder environment variable if using writable location
-            if hasattr(self, '_writable_template_path') and self._writable_template_path:
-                template_dir = str(Path(self._writable_template_path).parent)
-                subprocess_env['PYXTERMJS_TEMPLATE_FOLDER'] = template_dir
-                subprocess_env['PYXTERMJS_STATIC_FOLDER'] = template_dir
-                logger.debug(f"Set PYXTERMJS_TEMPLATE_FOLDER to {template_dir}")
-            
-            popen_kwargs: dict[str, Any] = {
-                "stdout": subprocess.DEVNULL,
-                "stderr": open(stderr_file.name, 'w'),
-                "env": subprocess_env,
-            }
-
-            if cwd:
-                popen_kwargs["cwd"] = cwd
-
-            if os.name == "nt":  # pragma: no cover - Windows specific behaviour
-                creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-                if creationflags:
-                    popen_kwargs["creationflags"] = creationflags
-            else:
-                # start_new_session ensures pyxtermjs becomes the leader of a new
-                # session; this mirrors `preexec_fn=os.setsid` for older Python
-                # versions while using the modern API when available.
-                popen_kwargs["start_new_session"] = True
-
-            logger.debug(f"Starting PyXterm server with command: {' '.join(pyxterm_cmd)}")
-            logger.debug(f"Working directory: {cwd}")
-            logger.debug(f"Environment PATH: {env.get('PATH', 'NOT_SET') if env else 'NOT_SET'}")
-
-            self._server_process = subprocess.Popen(
-                pyxterm_cmd,
-                **popen_kwargs,
-            )
-            self._child_pid = self._server_process.pid
-            
-            # Wait for the server to be ready with retry logic
-            # Use shorter delays for faster startup
-            max_retries = 20  # More attempts with shorter delays
-            retry_delay = 0.1  # Reduced from 0.5s to 0.1s for faster startup
-            server_ready = False
-            
-            for attempt in range(max_retries):
-                try:
-                    # Test if the server is responding with shorter timeout
-                    import socket
-                    with socket.create_connection(('127.0.0.1', port), timeout=0.5):
-                        server_ready = True
-                        logger.debug(f"PyXterm server ready on port {port} after {attempt + 1} attempts")
-                        break
-                except (OSError, ConnectionRefusedError) as e:
-                    logger.debug(f"Server not ready yet, attempt {attempt + 1}/{max_retries}: {e}")
-                    # Check if the process is still running
-                    if self._server_process and self._server_process.poll() is not None:
-                        # Read stderr for error details
-                        stderr_content = ""
-                        try:
-                            with open(stderr_file.name) as f:
-                                stderr_content = f.read().strip()
-                        except Exception:
-                            pass
-                        
-                        error_msg = f"PyXterm server process exited early with return code: {self._server_process.returncode}"
-                        if stderr_content:
-                            error_msg += f"\nStderr output: {stderr_content}"
-                        logger.error(error_msg)
-                        break
-                    time.sleep(retry_delay)
-            
-            if not server_ready:
-                # Read stderr for error details
-                stderr_content = ""
-                try:
-                    with open(stderr_file.name) as f:
-                        stderr_content = f.read().strip()
-                except Exception:
-                    pass
-                
-                error_msg = f"PyXterm server failed to start on port {port} after {max_retries} attempts"
-                if stderr_content:
-                    error_msg += f"\nStderr output: {stderr_content}"
-                logger.error(error_msg)
-                raise RuntimeError(error_msg)
-            
-            # Clean up stderr file
-            try:
-                os.unlink(stderr_file.name)
-            except Exception:
-                pass
-            
-            # Load the terminal in WebView
-            if self._webview:
-                # Connect to load-changed signal BEFORE loading to ensure we catch all events
-                try:
-                    self._webview.connect('load-changed', self._on_webview_load_changed)
-                except Exception:
-                    logger.debug("Failed to connect to WebView load-changed signal", exc_info=True)
-                
-                uri = f"http://127.0.0.1:{port}"
-                logger.debug(f"Loading WebView with URI: {uri}")
-                self._webview.load_uri(uri)
-                
-                # Store callback to be called after WebView is fully loaded
-                # This ensures the terminal is ready before the spawn callback fires
-                if callback:
-                    self._pending_spawn_callback = callback
-                    self._pending_spawn_user_data = user_data
-                    logger.debug("Deferred spawn callback until WebView is fully loaded")
-            else:
-                # No WebView, call callback immediately (shouldn't happen, but handle gracefully)
-                if callback:
-                    def _notify() -> bool:
-                        try:
-                            callback(self.widget, self._child_pid or 0, None, user_data)
-                        except TypeError:
-                            callback(self.widget, None)
-                        return False
-                    GLib.idle_add(_notify)
-
-        except Exception as e:
-            # Clean up stderr file if it exists
-            try:
-                if 'stderr_file' in locals():
-                    os.unlink(stderr_file.name)
-            except Exception:
-                pass
-                
-            logger.error(f"Failed to start pyxtermjs server: {e}")
-            if callback:
-                def _notify_error(error=e) -> bool:
-                    try:
-                        callback(self.widget, None, error, user_data)
-                    except TypeError:
-                        callback(self.widget, None)
-                    return False
-                GLib.idle_add(_notify_error)
-
-    def connect_child_exited(self, callback: Callable[[Gtk.Widget, int], None]) -> Any:
-        # pyxtermjs does not expose child-exited notifications directly, but we can
-        # monitor the server process to detect when it exits
-        if not self._server_process:
-            return None
-            
-        # Store the callback for later use
-        self._child_exited_callback = callback
-        
-        # Start monitoring the server process
-        self._monitor_server_process()
-        
-        # Return a dummy handler ID
-        return "pyxtermjs_child_exited"
-
-    def _monitor_server_process(self):
-        """Monitor the pyxtermjs server process for exit"""
-        if not self._server_process or not hasattr(self, '_child_exited_callback'):
-            return
-            
-        def check_process():
-            if self._server_process and self._server_process.poll() is not None:
-                # Process has exited
-                exit_code = self._server_process.returncode
-                logger.debug(f"PyXtermJS server process exited with code: {exit_code}")
-                
-                # Call the child-exited callback
-                if self._child_exited_callback:
-                    try:
-                        self._child_exited_callback(self.widget, exit_code)
-                    except Exception as e:
-                        logger.error(f"Error in child-exited callback: {e}")
-                
-                return False  # Stop monitoring
-            return True  # Continue monitoring
-            
-        # Check every 100ms
-        GLib.timeout_add(100, check_process)
 
     def connect_title_changed(self, callback: Callable[[Gtk.Widget, str], None]) -> Any:
         return None
@@ -2084,6 +1339,8 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
         self._child_exited_cb: Optional[Callable] = None
         self._last_size = (24, 80)
         self._stored_font = None
+        self._recent_output = ""            # rolling tail of PTY output (for get_content)
+        self._output_hook: Optional[Callable] = None  # notified on each output flush
         super().__init__(owner)
         # WebKit2 (GTK3) lacks the UCM script-message bridge this backend needs.
         if getattr(self, "WebKit", None) is None:
@@ -2118,7 +1375,10 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
         try:
             from .xterm_shell import build_shell_html
             html = build_shell_html()
-            self._webview.load_html(html, "about:blank")
+            # Base URI must be a localhost origin: it makes the document a secure
+            # context so navigator.clipboard (copy/paste) is available. "about:blank"
+            # is NOT secure and leaves navigator.clipboard undefined.
+            self._webview.load_html(html, "http://localhost/")
             logger.debug("Loaded embedded xterm shell via load_html")
         except Exception as e:  # noqa: BLE001
             logger.error("Failed to load embedded xterm shell: %s", e, exc_info=True)
@@ -2226,6 +1486,27 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
         import json
         # Batched by the bridge; one evaluate_javascript per flush tick.
         self._run_javascript("window.term && window.term.write(%s);" % json.dumps(chunk))
+        # Keep a rolling tail so get_content() works (PTY auto-fill / failure
+        # classification), then notify any output hook (e.g. the auto-fill watcher).
+        self._recent_output = (self._recent_output + chunk)[-8000:]
+        if self._output_hook is not None:
+            try:
+                self._output_hook()
+            except Exception:  # noqa: BLE001
+                logger.debug("output hook raised", exc_info=True)
+
+    def set_output_hook(self, callback) -> None:
+        """Register a zero-arg callback invoked after each batch of PTY output.
+        Used by the terminal's PTY auto-fill watcher in place of VTE's
+        ``contents-changed`` signal (there is no Vte.Terminal here)."""
+        self._output_hook = callback
+
+    def get_content(self, max_chars: Optional[int] = None) -> Optional[str]:
+        if not self._recent_output:
+            return None
+        if max_chars:
+            return self._recent_output[-max_chars:]
+        return self._recent_output
 
     # ---- PTY-backed capabilities (real ssh child, unlike the server path) -----
 

@@ -19,10 +19,6 @@ Files: io.github.mfat.sshpilot.metainfo.xml
 Copyright: 2025 mFat <newmfat@gmail.com>
 License: CC0-1.0
 
-Files: sshpilot/vendor/pyxtermjs/*
-Copyright: 2018-2022 Chad Smith
-License: Expat
-
 Files: sshpilot/vendor/pyxtermjs/xterm/*
 Copyright: 2017 The xterm.js authors
 License: Expat

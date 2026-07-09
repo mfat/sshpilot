@@ -25,11 +25,7 @@ _ADDONS = (
 
 
 def asset_dir() -> str:
-    """Resolve the xterm.js asset dir: env override → system libjs-xterm → bundled.
-
-    Mirrors ``sshpilot.vendor.pyxtermjs.app.xterm_asset_dir`` (same precedence) but
-    without importing Flask.
-    """
+    """Resolve the xterm.js asset dir: env override → system libjs-xterm → bundled."""
     env = os.environ.get("PYXTERMJS_ASSETS_DIR")
     if env and os.path.isdir(env):
         return env

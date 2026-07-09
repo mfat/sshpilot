@@ -662,24 +662,13 @@ class TerminalWidget(Gtk.Box):
 
         backend_name = (backend_name or "vte").lower()
 
-        if backend_name == "pyxterm2":
-            # Embedded (Cursor-model) backend: in-process PTY bridge, no server.
+        # PyXterm.js is the embedded (in-process PTY bridge) backend — no server.
+        # "pyxterm2" is kept as an alias for any config that set it during testing.
+        if backend_name in ("pyxterm", "pyxterm2"):
             try:
                 backend = PyXtermBridgeBackend(self)
                 if getattr(backend, "available", False):
-                    logger.info("Using PyXterm embedded (bridge) terminal backend")
-                    self._backend_name = "pyxterm2"
-                    return backend
-                logger.warning("PyXterm bridge backend unavailable, falling back to VTE")
-            except Exception as e:
-                logger.error(f"Failed to create PyXterm bridge backend: {e}")
-                logger.warning("PyXterm bridge backend creation failed, falling back to VTE")
-
-        if backend_name == "pyxterm":
-            try:
-                backend = PyXtermTerminalBackend(self)
-                if getattr(backend, "available", False):
-                    logger.info("Using PyXterm terminal backend")
+                    logger.info("Using PyXterm.js embedded terminal backend")
                     self._backend_name = "pyxterm"
                     return backend
                 logger.warning("PyXterm backend unavailable, falling back to VTE")
@@ -1706,6 +1695,17 @@ class TerminalWidget(Gtk.Box):
         self._pty_autofill_done = False
         vte = getattr(self, 'vte', None)
         if vte is None:
+            # No Vte.Terminal (embedded PyXterm backend): drive the same one-shot
+            # watcher from the backend's PTY output stream instead of VTE's
+            # 'contents-changed' signal. get_content()/feed_child() work there too.
+            backend = getattr(self, 'backend', None)
+            if backend is not None and hasattr(backend, 'set_output_hook'):
+                try:
+                    backend.set_output_hook(lambda: self._on_pty_autofill_changed(None))
+                    self._pty_autofill_timeout_id = GLib.timeout_add_seconds(
+                        30, self._cancel_pty_autofill)
+                except Exception:
+                    logger.debug("Could not arm PTY auto-fill via backend", exc_info=True)
             return
         try:
             self._pty_autofill_handler = vte.connect(
@@ -1753,6 +1753,13 @@ class TerminalWidget(Gtk.Box):
             except Exception:
                 pass
             self._pty_autofill_handler = None
+        # Embedded PyXterm backend: stop the output-driven watcher.
+        backend = getattr(self, 'backend', None)
+        if backend is not None and hasattr(backend, 'set_output_hook'):
+            try:
+                backend.set_output_hook(None)
+            except Exception:
+                pass
         tid = getattr(self, '_pty_autofill_timeout_id', None)
         if tid:
             try:
@@ -4811,13 +4818,12 @@ class TerminalWidget(Gtk.Box):
             return False
             
         try:
-            if not hasattr(self, 'vte') or not self.vte:
-                return False
-                
+            # Works for any backend that exposes a real PTY (VTE or the embedded
+            # PyXterm bridge), so it is no longer gated on self.vte.
             pty = None
-            if self.backend:
+            if self.backend and hasattr(self.backend, 'get_pty'):
                 pty = self.backend.get_pty()
-            if pty is None and self.vte is not None:
+            if pty is None and getattr(self, 'vte', None) is not None:
                 try:
                     pty = self.vte.get_pty()
                 except Exception:
