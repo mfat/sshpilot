@@ -4308,14 +4308,16 @@ class PreferencesWindow(Adw.Window):
         # Update visibility based on current backend
         self._update_encoding_row_visibility()
 
+    def _is_pyxterm_backend(self) -> bool:
+        backend = (self.config.get_setting('terminal.backend', 'vte') or 'vte').lower()
+        return backend in ('pyxterm', 'pyxterm2')
+
     def _collect_supported_encodings(self):
         """Collect supported encodings based on current backend"""
-        current_backend = self.config.get_setting('terminal.backend', 'vte').lower()
-        
         # For PyXterm.js backend, provide xterm.js compatible encodings
         # According to https://xtermjs.org/docs/guides/encoding/
         # xterm.js uses UTF-8/UTF-16 natively, legacy encodings via luit/iconv
-        if current_backend == 'pyxterm':
+        if self._is_pyxterm_backend():
             # xterm.js native encodings
             options = [
                 ('UTF-8', 'Unicode (UTF-8)'),
@@ -4458,20 +4460,22 @@ class PreferencesWindow(Adw.Window):
         """Update encoding row visibility based on current backend"""
         if not hasattr(self, 'encoding_row') or self.encoding_row is None:
             return
-        
-        current_backend = self.config.get_setting('terminal.backend', 'vte').lower()
-        
+
+        current_backend = (self.config.get_setting('terminal.backend', 'vte') or 'vte').lower()
+
         # Hide encoding dropdown for VTE backend (VTE handles encoding internally)
         # Show encoding dropdown for PyXterm.js backend (encoding handled at PTY bridge level)
         if current_backend == 'vte':
             self.encoding_row.set_visible(False)
             logger.debug("Hiding encoding dropdown for VTE backend")
-        elif current_backend == 'pyxterm':
+            return
+
+        if self._is_pyxterm_backend():
             self.encoding_row.set_visible(True)
             # Refresh encoding options for PyXterm.js
             self._encoding_options = self._collect_supported_encodings()
             self._encoding_codes = [code for code, _ in self._encoding_options]
-            
+
             # Update the model
             encoding_list = Gtk.StringList()
             for code, description in self._encoding_options:
@@ -4480,14 +4484,15 @@ class PreferencesWindow(Adw.Window):
                     display_label = f"{code} — {description}"
                 encoding_list.append(display_label)
             self.encoding_row.set_model(encoding_list)
-            
+
             # Sync selection
             current_encoding = self.config.get_setting('terminal.encoding', 'UTF-8')
             self._sync_encoding_row_selection(current_encoding, notify_user=False)
             logger.debug("Showing encoding dropdown for PyXterm.js backend")
-        else:
-            # Default: show for unknown backends
-            self.encoding_row.set_visible(True)
+            return
+
+        # Default: show for unknown backends
+        self.encoding_row.set_visible(True)
 
     def on_encoding_selection_changed(self, combo_row, _param):
         if self._encoding_selection_sync:
