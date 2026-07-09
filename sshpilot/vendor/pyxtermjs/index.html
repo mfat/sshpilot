@@ -23,7 +23,7 @@
         height: 100% !important;
       }
     </style>
-    
+
       <style id="sshpilot-terminal-font">
         .xterm {
           font-family: 'Liberation Mono', monospace !important;
@@ -36,52 +36,51 @@
       </style>
     <link
       rel="stylesheet"
-      href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css"
+      href="xterm/xterm.css"
     />
   </head>
   <body>
     <div id="terminal"></div>
 
-    <!-- xterm -->
-    <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-search@0.15.0/lib/addon-search.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.min.js"></script>
+    <!-- xterm (served locally by the app; no CDN) -->
+    <script src="xterm/xterm.js"></script>
+    <script src="xterm/addons/fit/xterm-addon-fit.js"></script>
+    <script src="xterm/addons/webLinks/xterm-addon-web-links.js"></script>
+    <script src="xterm/addons/search/xterm-addon-search.js"></script>
 
     <script>
       const term = new Terminal({
         cursorBlink: true,
-        fontFamily: 'FreeMono',
+        fontFamily: 'PT Mono',
         fontSize: 13,
         macOptionIsMeta: true,
         scrollback: 1000,
         theme: {
-                  "background": "#002B36",
-                  "foreground": "#839496",
-                  "cursor": "#839496",
-                  "selectionBackground": "#073642",
-                  "selectionForeground": "#839496",
-                  "black": "#073642",
-                  "red": "#DC322F",
-                  "green": "#859900",
-                  "yellow": "#B58900",
-                  "blue": "#268BD2",
-                  "magenta": "#D33682",
-                  "cyan": "#2AA198",
-                  "white": "#EEE8D5",
-                  "brightBlack": "#002B36",
-                  "brightRed": "#CB4B16",
-                  "brightGreen": "#586E75",
-                  "brightYellow": "#657B83",
-                  "brightBlue": "#839496",
-                  "brightMagenta": "#6C71C4",
-                  "brightCyan": "#93A1A1",
-                  "brightWhite": "#FDF6E3"
+                  "background": "#000000",
+                  "foreground": "#FFFFFF",
+                  "cursor": "#FFFFFF",
+                  "selectionBackground": "#4A90E2",
+                  "selectionForeground": "#FFFFFF",
+                  "black": "#000000",
+                  "red": "#CC0000",
+                  "green": "#4E9A06",
+                  "yellow": "#C4A000",
+                  "blue": "#3465A4",
+                  "magenta": "#75507B",
+                  "cyan": "#06989A",
+                  "white": "#D3D7CF",
+                  "brightBlack": "#555753",
+                  "brightRed": "#EF2929",
+                  "brightGreen": "#8AE234",
+                  "brightYellow": "#FCE94F",
+                  "brightBlue": "#729FCF",
+                  "brightMagenta": "#AD7FA8",
+                  "brightCyan": "#34E2E2",
+                  "brightWhite": "#EEEEEC"
         }
       });
       term.attachCustomKeyEventHandler(customKeyEventHandler);
-      
+
       const fit = new FitAddon.FitAddon();
       term.loadAddon(fit);
       term.loadAddon(new WebLinksAddon.WebLinksAddon());
@@ -98,41 +97,58 @@
       term.resize(15, 50);
       console.log(`size: ${term.cols} columns, ${term.rows} rows`);
       fit.fit();
-      
+
       // Auto-focus the terminal when it's ready
       setTimeout(() => {
         term.focus();
         console.log('Terminal auto-focused');
       }, 100);
-      
-      const socket = io.connect("/pty");
-      
-      // Expose socket globally so it can be accessed for programmatic input (e.g., broadcast commands)
+
+      // Native WebSocket transport (JSON text frames), no Socket.IO.
+      const wsProto = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const socket = new WebSocket(`${wsProto}//${window.location.host}/pty`);
+
+      // Expose the socket and a small send helper globally so the app can send
+      // programmatic input (e.g. broadcast commands via feed_child).
       window.socket = socket;
-      
+      window.ptySend = function (obj) {
+        if (socket.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify(obj));
+          return true;
+        }
+        return false;
+      };
+
       term.onData((data) => {
         console.log("browser terminal received new data:", data);
-        socket.emit("pty-input", { input: data });
+        window.ptySend({ type: "input", data: data });
       });
 
-      socket.on("pty-output", function (data) {
-        console.log("new output received from server:", data.output);
-        term.write(data.output);
-      });
+      socket.onmessage = (event) => {
+        let msg;
+        try {
+          msg = JSON.parse(event.data);
+        } catch (e) {
+          return;
+        }
+        if (msg.type === "output") {
+          term.write(msg.data);
+        }
+      };
 
-      socket.on("connect", () => {
+      socket.onopen = () => {
         fitToscreen();
-      });
+      };
 
-      socket.on("disconnect", () => {
+      socket.onclose = () => {
         // Handle disconnect if needed
-      });
+      };
 
       function fitToscreen() {
         fit.fit();
-        const dims = { cols: term.cols, rows: term.rows };
+        const dims = { type: "resize", cols: term.cols, rows: term.rows };
         console.log("sending new dimensions to server's pty", dims);
-        socket.emit("resize", dims);
+        window.ptySend(dims);
       }
 
       function debounce(func, wait_ms) {

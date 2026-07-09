@@ -103,7 +103,7 @@ jobs:
           Requires:       python3-cryptography
           Requires:       python3-secretstorage 
           Requires:       python3-flask
-          Requires:       python3-flask-socketio
+          Requires:       python3-simple-websocket
           Requires:       libsecret
           Requires:       sshpass
           Requires:       openssh-askpass

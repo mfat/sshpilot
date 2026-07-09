@@ -2,6 +2,10 @@ Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: sshpilot
 Upstream-Contact: mFat <newmfat@gmail.com>
 Source: https://github.com/mfat/sshpilot
+Comment: The bundled xterm.js assets under sshpilot/vendor/pyxtermjs/xterm/ are a
+ convenience copy for non-Debian installs. The Debian binary package depends on
+ libjs-xterm and excludes them (see debian/rules); the app resolves the system
+ copy at /usr/share/javascript/xterm at runtime.
 
 Files: *
 Copyright: 2025 mFat <newmfat@gmail.com>
@@ -17,6 +21,10 @@ License: CC0-1.0
 
 Files: sshpilot/vendor/pyxtermjs/*
 Copyright: 2018-2022 Chad Smith
+License: Expat
+
+Files: sshpilot/vendor/pyxtermjs/xterm/*
+Copyright: 2017 The xterm.js authors
 License: Expat
 
 License: GPL-3+

@@ -1,51 +1,79 @@
 #!/usr/bin/env python3
+"""Local web-terminal server for sshPilot's PyXterm.js backend.
+
+Transport is a plain WebSocket (via :mod:`simple_websocket`) rather than
+Socket.IO, and the xterm.js assets are served locally (system
+``/usr/share/javascript/xterm`` when present, otherwise a bundled copy) instead
+of from a CDN. This keeps the backend self-contained and offline-capable, with
+no third-party network requests -- a requirement for distribution packaging.
+
+WebSocket protocol (JSON text frames):
+  client -> server: {"type": "input",  "data": "<keystrokes>"}
+                    {"type": "resize", "rows": <int>, "cols": <int>}
+  server -> client: {"type": "output", "data": "<pty output>"}
+"""
 import argparse
-from flask import Flask, render_template
-from flask_socketio import SocketIO
-import pty
-import os
-import subprocess
-import select
-import termios
-import struct
 import fcntl
-import shlex
+import json
 import logging
+import os
+import pty
+import select
+import shlex
+import struct
+import subprocess
 import sys
+import termios
+import threading
+import time
+
+from flask import Flask, render_template, request, send_from_directory
+import simple_websocket
 
 logging.getLogger("werkzeug").setLevel(logging.ERROR)
 
-__version__ = "0.5.0.2"
+__version__ = "0.6.0"
 
-# Allow template folder to be overridden via environment variable (for Flatpak writable locations)
+# Allow template/static folders to be overridden (e.g. Flatpak writable dirs).
 template_folder = os.environ.get("PYXTERMJS_TEMPLATE_FOLDER", ".")
 static_folder = os.environ.get("PYXTERMJS_STATIC_FOLDER", ".")
 
-app = Flask(__name__, template_folder=template_folder, static_folder=static_folder, static_url_path="")
-app.config["SECRET_KEY"] = "secret!"
-app.config["fd"] = None
-app.config["child_pid"] = None
-socketio = SocketIO(app)
+app = Flask(
+    __name__,
+    template_folder=template_folder,
+    static_folder=static_folder,
+    static_url_path="",
+)
+app.config["cmd"] = ["bash"]
+
+# One PTY per server process, streamed to whichever WebSocket is connected.
+_state = {
+    "fd": None,
+    "child_pid": None,
+    "ws": None,
+    "reader_started": False,
+    "lock": threading.Lock(),
+}
+
+
+def xterm_asset_dir():
+    """Directory holding xterm.js assets (xterm.js, xterm.css, addons/...).
+
+    Prefers an explicit override, then the Debian system copy shipped by
+    ``libjs-xterm``, and finally a copy bundled next to this module.
+    """
+    env = os.environ.get("PYXTERMJS_ASSETS_DIR")
+    if env and os.path.isdir(env):
+        return env
+    system = "/usr/share/javascript/xterm"
+    if os.path.isdir(system):
+        return system
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "xterm")
 
 
 def set_winsize(fd, row, col, xpix=0, ypix=0):
-    logging.debug("setting window size with termios")
     winsize = struct.pack("HHHH", row, col, xpix, ypix)
     fcntl.ioctl(fd, termios.TIOCSWINSZ, winsize)
-
-
-def read_and_forward_pty_output():
-    max_read_bytes = 1024 * 20
-    while True:
-        socketio.sleep(0.01)
-        if app.config["fd"]:
-            timeout_sec = 0
-            (data_ready, _, _) = select.select([app.config["fd"]], [], [], timeout_sec)
-            if data_ready:
-                output = os.read(app.config["fd"], max_read_bytes).decode(
-                    errors="ignore"
-                )
-                socketio.emit("pty-output", {"output": output}, namespace="/pty")
 
 
 @app.route("/")
@@ -53,78 +81,94 @@ def index():
     return render_template("index.html")
 
 
-@socketio.on("pty-input", namespace="/pty")
-def pty_input(data):
-    """write to the child pty. The pty sees this as if you are typing in a real
-    terminal.
-    """
-    if app.config["fd"]:
-        logging.debug("received input from browser: %s" % data["input"])
-        os.write(app.config["fd"], data["input"].encode())
+@app.route("/xterm/<path:filename>")
+def xterm_assets(filename):
+    """Serve xterm.js core/addons/css locally (no CDN)."""
+    return send_from_directory(xterm_asset_dir(), filename)
 
 
-@socketio.on("resize", namespace="/pty")
-def resize(data):
-    if app.config["fd"]:
-        logging.debug(f"Resizing window to {data['rows']}x{data['cols']}")
-        set_winsize(app.config["fd"], data["rows"], data["cols"])
+def _read_and_forward_pty_output():
+    """Forward PTY output to the currently connected WebSocket."""
+    max_read_bytes = 1024 * 20
+    while True:
+        fd = _state["fd"]
+        if fd is None:
+            time.sleep(0.02)
+            continue
+        try:
+            data_ready, _, _ = select.select([fd], [], [], 0.05)
+        except (OSError, ValueError):
+            break
+        if not data_ready:
+            continue
+        try:
+            output = os.read(fd, max_read_bytes)
+        except OSError:
+            break
+        if not output:
+            break
+        ws = _state["ws"]
+        if ws is not None:
+            try:
+                ws.send(json.dumps({"type": "output", "data": output.decode(errors="ignore")}))
+            except Exception:
+                # Client went away; keep the PTY alive for the next connection.
+                pass
 
 
-@socketio.on("connect", namespace="/pty")
-def connect():
-    """new client connected"""
-    logging.info("new client connected")
-    if app.config["child_pid"]:
-        # already started child process, don't start another
-        return
-
-    # create child process attached to a pty we can read from and write to
-    (child_pid, fd) = pty.fork()
-    if child_pid == 0:
-        # this is the child process fork.
-        # anything printed here will show up in the pty, including the output
-        # of this subprocess
-        subprocess.run(app.config["cmd"])
-    else:
-        # this is the parent process fork.
-        # store child fd and pid
-        app.config["fd"] = fd
-        app.config["child_pid"] = child_pid
-        set_winsize(fd, 50, 50)
-        cmd = " ".join(shlex.quote(c) for c in app.config["cmd"])
-        # logging/print statements must go after this because... I have no idea why
-        # but if they come before the background task never starts
-        socketio.start_background_task(target=read_and_forward_pty_output)
-
-        logging.info("child pid is " + child_pid)
-        logging.info(
-            f"starting background task with command `{cmd}` to continously read "
-            "and forward pty output to client"
-        )
-        logging.info("task started")
+@app.route("/pty", websocket=True)
+def pty_ws():
+    """WebSocket endpoint: bridge the browser terminal to the child PTY."""
+    ws = simple_websocket.Server(request.environ)
+    with _state["lock"]:
+        _state["ws"] = ws
+        if _state["child_pid"] is None:
+            child_pid, fd = pty.fork()
+            if child_pid == 0:
+                # Child: become the requested command, then exit the fork.
+                try:
+                    subprocess.run(app.config["cmd"])
+                finally:
+                    os._exit(0)
+            _state["fd"] = fd
+            _state["child_pid"] = child_pid
+            set_winsize(fd, 50, 50)
+            logging.info("child pid is %s", child_pid)
+        if not _state["reader_started"]:
+            _state["reader_started"] = True
+            threading.Thread(target=_read_and_forward_pty_output, daemon=True).start()
+    try:
+        while True:
+            message = ws.receive()
+            if message is None:
+                break
+            try:
+                obj = json.loads(message)
+            except (ValueError, TypeError):
+                continue
+            kind = obj.get("type")
+            if kind == "input" and _state["fd"] is not None:
+                os.write(_state["fd"], obj.get("data", "").encode())
+            elif kind == "resize" and _state["fd"] is not None:
+                set_winsize(_state["fd"], int(obj["rows"]), int(obj["cols"]))
+    except simple_websocket.ConnectionClosed:
+        pass
+    finally:
+        if _state["ws"] is ws:
+            _state["ws"] = None
+    return ""
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description=(
-            "A fully functional terminal in your browser. "
-            "https://github.com/cs01/pyxterm.js"
-        ),
+        description="A local web terminal for sshPilot (native WebSocket transport).",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument(
-        "-p", "--port", default=5000, help="port to run server on", type=int
-    )
-    parser.add_argument(
-        "--host",
-        default="127.0.0.1",
-        help="host to run server on (use 0.0.0.0 to allow access from other hosts)",
-    )
+    parser.add_argument("-p", "--port", default=5000, type=int, help="port to run server on")
+    parser.add_argument("--host", default="127.0.0.1", help="host to run server on")
     parser.add_argument("--debug", action="store_true", help="debug the server")
     parser.add_argument("--version", action="store_true", help="print version and exit")
-    parser.add_argument(
-        "--command", default="bash", help="Command to run in the terminal"
-    )
+    parser.add_argument("--command", default="bash", help="Command to run in the terminal")
     parser.add_argument(
         "--cmd-args",
         default="",
@@ -133,39 +177,18 @@ def main():
     args = parser.parse_args()
     if args.version:
         print(__version__)
-        exit(0)
+        return 0
     app.config["cmd"] = [args.command] + shlex.split(args.cmd_args)
-    green = "\033[92m"
-    end = "\033[0m"
-    log_format = (
-        green
-        + "pyxtermjs > "
-        + end
-        + "%(levelname)s (%(funcName)s:%(lineno)s) %(message)s"
-    )
     logging.basicConfig(
-        format=log_format,
+        format="pyxtermjs > %(levelname)s (%(funcName)s:%(lineno)s) %(message)s",
         stream=sys.stdout,
         level=logging.DEBUG if args.debug else logging.INFO,
     )
-    logging.info(f"serving on http://{args.host}:{args.port}")
-    # allow_unsafe_werkzeug=True is needed when running from desktop launcher
-    # This is safe as the server only runs on localhost for local terminal emulation
-    # Try with allow_unsafe_werkzeug first (for newer Flask-SocketIO), fallback if not supported
-    try:
-        socketio.run(app, debug=args.debug, port=args.port, host=args.host, allow_unsafe_werkzeug=True)
-    except TypeError as e:
-        # Fallback for Flask-SocketIO versions that incorrectly pass allow_unsafe_werkzeug to Werkzeug
-        # Set environment variable to bypass Werkzeug's production check
-        # This is safe as the server only runs on localhost
-        if 'allow_unsafe_werkzeug' in str(e):
-            import os
-            # Set environment variable to bypass Werkzeug production warning
-            os.environ['WERKZEUG_RUN_MAIN'] = 'true'
-            socketio.run(app, debug=args.debug, port=args.port, host=args.host)
-        else:
-            raise
+    logging.info("serving on http://%s:%s", args.host, args.port)
+    # threaded=True lets the long-lived WebSocket run alongside asset requests.
+    app.run(host=args.host, port=args.port, debug=args.debug, threaded=True, use_reloader=False)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

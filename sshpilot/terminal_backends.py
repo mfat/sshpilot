@@ -1017,10 +1017,10 @@ class PyXtermTerminalBackend:
         }}
       </style>
 """
-                    # Insert before the xterm.css link
+                    # Insert before the xterm.css link (served locally, not from a CDN)
                     template_content = template_content.replace(
-                        '<link\n      rel="stylesheet"\n      href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css"\n    />',
-                        css_insertion + '    <link\n      rel="stylesheet"\n      href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css"\n    />'
+                        '<link\n      rel="stylesheet"\n      href="xterm/xterm.css"\n    />',
+                        css_insertion + '    <link\n      rel="stylesheet"\n      href="xterm/xterm.css"\n    />'
                     )
                 
                 # Write the modified template to the appropriate location
@@ -1840,39 +1840,39 @@ class PyXtermTerminalBackend:
         return
 
     def feed_child(self, data: bytes) -> None:
-        """Feed raw bytes to the child process input via pyxtermjs WebSocket socket.emit('pty-input')"""
+        """Feed raw bytes to the child process input over the pyxtermjs WebSocket."""
         if not self.available:
             return
-        
+
         try:
             # Convert bytes to string for JavaScript
             # pyxtermjs expects string input and will encode it to bytes for the PTY
             data_str = data.decode('utf-8', errors='replace')
-            
+
             # Use JSON.stringify to safely escape the string for JavaScript
             # This handles all special characters including quotes, backslashes, newlines, etc.
             import json
             data_str_json = json.dumps(data_str)
-            
-            # Send data to PTY via WebSocket using socket.emit('pty-input')
-            # According to pyxtermjs implementation, user input is sent via:
-            # socket.emit("pty-input", { input: data })
-            # The socket is exposed globally as window.socket in the HTML template
+
+            # Send input over the native WebSocket. The HTML template exposes a
+            # window.ptySend(obj) helper (and window.socket) for this purpose;
+            # the server expects {type: "input", data: <str>}.
             write_js = f"""
             (function() {{
-                // Access the socket from global scope (exposed as window.socket in HTML template)
-                if (typeof window.socket !== 'undefined' && typeof window.socket.emit === 'function') {{
-                    var data = {data_str_json};
-                    window.socket.emit("pty-input", {{ input: data }});
-                    return true;
-                }} else {{
-                    console.error("PyXterm: window.socket not available for feed_child");
-                    return false;
+                var payload = {{ type: "input", data: {data_str_json} }};
+                if (typeof window.ptySend === 'function') {{
+                    return window.ptySend(payload);
                 }}
+                if (window.socket && window.socket.readyState === WebSocket.OPEN) {{
+                    window.socket.send(JSON.stringify(payload));
+                    return true;
+                }}
+                console.error("PyXterm: websocket not available for feed_child");
+                return false;
             }})();
             """
             self._run_javascript(write_js)
-            logger.debug(f"Sent {len(data)} bytes to PyXterm terminal via socket.emit('pty-input')")
+            logger.debug(f"Sent {len(data)} bytes to PyXterm terminal via WebSocket")
         except Exception as e:
             logger.error(f"Failed to feed child data to PyXterm backend: {e}", exc_info=True)
 

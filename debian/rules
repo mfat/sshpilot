@@ -32,3 +32,11 @@ override_dh_install:
 	printf '#!/bin/sh\nexec python3 -m sshpilot.main "$$@"\n' \
 	  > debian/sshpilot/usr/bin/sshpilot
 	chmod 0755 debian/sshpilot/usr/bin/sshpilot
+
+# Use the system xterm.js from libjs-xterm rather than the bundled copy: drop
+# the bundled assets from the binary package (the app resolves the system
+# /usr/share/javascript/xterm at runtime). Runs after dh_python3 has finalised
+# the dist-packages layout so the path is stable. Keeps the .deb free of
+# embedded JavaScript.
+execute_after_dh_python3:
+	rm -rf debian/sshpilot/usr/lib/python3*/dist-packages/sshpilot/vendor/pyxtermjs/xterm

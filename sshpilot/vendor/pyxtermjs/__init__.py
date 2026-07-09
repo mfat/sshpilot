@@ -9,9 +9,9 @@ details.
 
 from __future__ import annotations
 
-from .app import app, main, socketio  # noqa: F401
+from .app import app, main  # noqa: F401
 
-__all__ = ["app", "main", "socketio", "__version__", "VENDORED_VERSION"]
+__all__ = ["app", "main", "__version__", "VENDORED_VERSION"]
 
 # The CLI exposes the version defined in app.py; we mirror it here so the
 # vendored package behaves like the upstream distribution.
