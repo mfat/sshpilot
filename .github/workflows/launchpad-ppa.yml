@@ -1,0 +1,105 @@
+name: Publish to Launchpad PPA
+
+# Builds a signed SOURCE package from the pushed tag and uploads it to the
+# Launchpad PPA (ppa:mfat/sshpilot), which then builds the binaries itself.
+# This is separate from the GitHub-Pages APT repo (build-deb.yml → sshpilot-ppa).
+#
+# Required repository secrets:
+#   PPA_GPG_PRIVATE_KEY  base64 of:  gpg --export-secret-keys <KEYID>
+#   PPA_GPG_PASSPHRASE   the passphrase for that key
+# The key's UID email MUST match debian/changelog (mah.fat@gmail.com) and be a
+# confirmed OpenPGP key on the Launchpad account that owns the PPA.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      series:
+        description: 'Space-separated Ubuntu series to target'
+        required: false
+        default: 'noble resolute'
+
+env:
+  PPA: 'ppa:mfat/sshpilot'
+  DEBFULLNAME: 'Mehdi Fattahi'
+  DEBEMAIL: 'mah.fat@gmail.com'
+  # Series built when triggered by a tag push (workflow_dispatch overrides).
+  DEFAULT_SERIES: 'noble resolute'
+
+jobs:
+  launchpad:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install packaging tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            devscripts debhelper dh-python python3-all python3-setuptools \
+            pybuild-plugin-pyproject dput gnupg
+
+      - name: Import GPG signing key
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.PPA_GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.PPA_GPG_PASSPHRASE }}
+        run: |
+          set -e
+          mkdir -p ~/.gnupg && chmod 700 ~/.gnupg
+          echo "allow-loopback-pinentry" > ~/.gnupg/gpg-agent.conf
+          echo "pinentry-mode loopback"  > ~/.gnupg/gpg.conf
+          gpgconf --kill gpg-agent || true
+          echo "$GPG_PRIVATE_KEY" | base64 -d | gpg --batch --import
+          FPR=$(gpg --list-secret-keys --with-colons | awk -F: '/^fpr:/{print $10; exit}')
+          echo "FPR=$FPR" >> "$GITHUB_ENV"
+          # Prime the agent so later debsign/debuild signs non-interactively.
+          echo priming | gpg --batch --yes --pinentry-mode loopback \
+            --passphrase "$GPG_PASSPHRASE" -u "$FPR" --clearsign -o /dev/null
+
+      - name: Determine version and series
+        id: meta
+        run: |
+          set -e
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION=$(python3 -c "import re,pathlib;print(re.search(r'__version__\s*=\s*[\"\']([^\"\']+)',pathlib.Path('sshpilot/__init__.py').read_text()).group(1))")
+          fi
+          SRC_VERSION=$(python3 -c "import re,pathlib;print(re.search(r'__version__\s*=\s*[\"\']([^\"\']+)',pathlib.Path('sshpilot/__init__.py').read_text()).group(1))")
+          if [ "$VERSION" != "$SRC_VERSION" ]; then
+            echo "::error::Tag version ($VERSION) != sshpilot/__init__.py __version__ ($SRC_VERSION)"; exit 1
+          fi
+          SERIES="${{ github.event.inputs.series }}"
+          [ -n "$SERIES" ] || SERIES="$DEFAULT_SERIES"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "series=$SERIES"   >> "$GITHUB_OUTPUT"
+          echo "Version: $VERSION  Series: $SERIES"
+
+      - name: Build and upload source package per series
+        run: |
+          set -e
+          VERSION="${{ steps.meta.outputs.version }}"
+          WORK="$RUNNER_TEMP/build"
+          mkdir -p "$WORK/sshpilot-$VERSION"
+          # Clean upstream export (no .git, no debian/) → orig tarball.
+          git archive HEAD | tar -x -C "$WORK/sshpilot-$VERSION"
+          tar -C "$WORK" --exclude="sshpilot-$VERSION/debian" \
+            -czf "$WORK/sshpilot_${VERSION}.orig.tar.gz" "sshpilot-$VERSION"
+          for SERIES in ${{ steps.meta.outputs.series }}; do
+            echo "::group::$SERIES"
+            SDIR="$WORK/$SERIES/sshpilot-$VERSION"
+            mkdir -p "$WORK/$SERIES"
+            cp -a "$WORK/sshpilot-$VERSION" "$SDIR"
+            cp "$WORK/sshpilot_${VERSION}.orig.tar.gz" "$WORK/$SERIES/"
+            ( cd "$SDIR"
+              # Series-suffixed version so each series is unique in the PPA.
+              dch -b -v "${VERSION}-0ubuntu1~${SERIES}1" -D "$SERIES" \
+                -M "Automated Launchpad build for ${SERIES}."
+              debuild -S -sa --no-lintian -k"$FPR" )
+            dput --force "$PPA" "$WORK/$SERIES/sshpilot_${VERSION}-0ubuntu1~${SERIES}1_source.changes"
+            echo "::endgroup::"
+          done
