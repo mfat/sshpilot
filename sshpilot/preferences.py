@@ -4564,6 +4564,18 @@ class PreferencesWindow(Adw.Window):
                         'error': pyxterm_error,
                     }
                 )
+            # Embedded (Cursor-model) PyXterm.js: in-process PTY bridge, no local
+            # server. Needs WebKit 6; gated the same as PyXterm.js above.
+            if pyxterm_available:
+                choices.append(
+                    {
+                        'id': 'pyxterm2',
+                        'label': 'PyXterm.js (embedded, experimental)',
+                        'description': 'In-process xterm.js bridge — no local server',
+                        'available': True,
+                        'error': None,
+                    }
+                )
         return choices
 
     def _update_backend_row_subtitle(self, index: int):

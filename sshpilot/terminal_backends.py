@@ -631,8 +631,11 @@ class PyXtermTerminalBackend:
                 gi.require_version("WebKit", "6.0")
                 from gi.repository import WebKit
                 self.WebKit = WebKit
-                self._webview = WebKit.WebView()
-                
+                # Factory hook: PyXtermBridgeBackend overrides this to construct the
+                # WebView with a UserContentManager (JS->Python bridge). Base impl is
+                # a plain WebView.
+                self._webview = self._make_webview_webkit6(WebKit)
+
                 # Configure WebView settings to ensure JavaScript is enabled
                 # According to WebKit 6.0 API, JavaScript is enabled by default,
                 # but we explicitly set it for clarity
@@ -684,6 +687,11 @@ class PyXtermTerminalBackend:
         self._pyxterm = pyxterm_module
         self.widget = self._webview
         self.available = True
+
+    def _make_webview_webkit6(self, WebKit):
+        """Construct the WebKit 6 WebView. Overridden by the embedded backend to
+        attach a UserContentManager for the JS->Python bridge."""
+        return WebKit.WebView()
 
     # The pyxterm backend exposes only a subset of the behaviour for now. Each
     # method contains guards so the widget can fall back cleanly.
@@ -2049,5 +2057,224 @@ class PyXtermTerminalBackend:
 
     def get_pty(self) -> Optional[Any]:
         return None
+
+
+class PyXtermBridgeBackend(PyXtermTerminalBackend):
+    """Embedded (Cursor-model) PyXterm backend.
+
+    xterm.js runs in the app's own WebView (assets pre-loaded via ``load_html``)
+    and the PTY is owned + bridged **in-process** via
+    :class:`sshpilot.xterm_pty_bridge.XtermPtyBridge` — no Flask server, no
+    localhost socket, no argv re-serialization. Selected by
+    ``terminal.backend = pyxterm2``.
+
+    Reuses the parent's JS-injection methods verbatim (``apply_theme``,
+    ``set_font``, ``copy_clipboard``, ``paste_clipboard``, ``select_all``,
+    ``set_font_scale``, ``search_*``, ``grab_focus``, ``_run_javascript`` — they
+    all drive ``window.term``); overrides only construction, spawn, PTY, and
+    teardown. Requires WebKit 6 (UserContentManager); falls back to VTE if absent.
+    """
+
+    def __init__(self, owner: "TerminalWidget") -> None:
+        self._ucm = None
+        self._bridge = None
+        self._js_ready = False
+        self._pending_spawn: Optional[dict] = None
+        self._real_child_pid: Optional[int] = None
+        self._child_exited_cb: Optional[Callable] = None
+        self._last_size = (24, 80)
+        self._stored_font = None
+        super().__init__(owner)
+        # WebKit2 (GTK3) lacks the UCM script-message bridge this backend needs.
+        if getattr(self, "WebKit", None) is None:
+            self.available = False
+            self.import_error = RuntimeError(
+                "PyXterm bridge backend requires WebKit 6.0 (UserContentManager)"
+            )
+            return
+        if self.available:
+            self._load_shell()
+
+    # ---- construction: WebView with a JS->Python bridge ----------------------
+
+    def _make_webview_webkit6(self, WebKit):
+        ucm = WebKit.UserContentManager()
+        try:
+            ucm.register_script_message_handler("sshpilotPty", None)
+        except TypeError:  # older WebKit 6 binding: single-arg form
+            ucm.register_script_message_handler("sshpilotPty")
+        ucm.connect("script-message-received::sshpilotPty", self._on_pty_message)
+        self._ucm = ucm
+        webview = WebKit.WebView(user_content_manager=ucm)
+        try:
+            settings = webview.get_settings()
+            if settings:
+                settings.set_property("enable-javascript", True)
+        except Exception:  # noqa: BLE001
+            pass
+        return webview
+
+    def _load_shell(self):
+        try:
+            from .xterm_shell import build_shell_html
+            html = build_shell_html()
+            self._webview.load_html(html, "about:blank")
+            logger.debug("Loaded embedded xterm shell via load_html")
+        except Exception as e:  # noqa: BLE001
+            logger.error("Failed to load embedded xterm shell: %s", e, exc_info=True)
+
+    # ---- JS -> Python messages ----------------------------------------------
+
+    def _on_pty_message(self, ucm, js_value):
+        import json
+        try:
+            if hasattr(js_value, "to_json"):
+                raw = js_value.to_json(0)
+            else:  # older binding
+                raw = js_value.get_js_value().to_json(0)
+            payload = json.loads(raw)
+            if isinstance(payload, str):
+                payload = json.loads(payload)
+        except Exception as e:  # noqa: BLE001
+            logger.debug("Ignoring malformed pty message: %s", e)
+            return
+        kind = payload.get("type")
+        if kind == "ready":
+            self._js_ready = True
+            self._last_size = (payload.get("rows", 24), payload.get("cols", 80))
+            # Re-apply configured theme/font now that window.term exists.
+            try:
+                self.apply_theme()
+            except Exception:  # noqa: BLE001
+                pass
+            if self._stored_font is not None:
+                try:
+                    super().set_font(self._stored_font)
+                except Exception:  # noqa: BLE001
+                    pass
+            if self._pending_spawn is not None:
+                self._do_spawn()
+        elif kind == "input":
+            if self._bridge is not None:
+                self._bridge.write(payload.get("data", ""))
+        elif kind == "resize":
+            self._last_size = (payload.get("rows", 24), payload.get("cols", 80))
+            if self._bridge is not None:
+                self._bridge.resize(*self._last_size)
+
+    # ---- spawn: in-process PTY, reusing the shared argv/env ------------------
+
+    def spawn_async(
+        self,
+        argv: Sequence[str],
+        env: Optional[Mapping[str, str]] = None,
+        cwd: Optional[str] = None,
+        flags: int = 0,
+        child_setup: Optional[Callable[..., None]] = None,
+        callback: Optional[Callable[[GObject.Object, Optional[Exception]], None]] = None,
+        user_data: Optional[Any] = None,
+    ) -> None:
+        if not self.available:
+            raise RuntimeError("pyxterm bridge backend is not available")
+        command = list(argv) if argv else ["bash"]
+        # Same luit encoding wrap as the server-backed pyxterm path.
+        encoding = "UTF-8"
+        if self.owner and getattr(self.owner, "config", None):
+            try:
+                encoding = self.owner.config.get_setting("terminal.encoding", "UTF-8")
+            except Exception:  # noqa: BLE001
+                pass
+        command = list(self._wrap_command_with_encoding(command, encoding))
+        env_list = [f"{k}={v}" for k, v in env.items()] if env else None
+        self._pending_spawn = {
+            "argv": command, "env": env_list, "cwd": cwd,
+            "callback": callback, "user_data": user_data,
+        }
+        # If the page is already loaded, spawn now; else wait for the JS "ready".
+        if self._js_ready:
+            self._do_spawn()
+
+    def _do_spawn(self):
+        pending, self._pending_spawn = self._pending_spawn, None
+        if not pending:
+            return
+        from .xterm_pty_bridge import XtermPtyBridge
+        self._bridge = XtermPtyBridge(
+            on_output=self._on_pty_output,
+            on_exit=self._on_bridge_exit,
+            flush_ms=12,
+        )
+        rows, cols = self._last_size
+
+        def on_spawned(pid, err):
+            cb = pending["callback"]
+            if err is not None:
+                logger.error("PyXterm bridge spawn failed: %s", err)
+                if cb:
+                    cb(self.widget, 0, err, pending["user_data"])
+                return
+            self._real_child_pid = pid
+            if cb:
+                cb(self.widget, pid or 0, None, pending["user_data"])
+
+        self._bridge.spawn(
+            pending["argv"], env=pending["env"], cwd=pending["cwd"],
+            rows=rows, cols=cols, on_spawned=on_spawned,
+        )
+
+    def _on_pty_output(self, chunk: str):
+        import json
+        # Batched by the bridge; one evaluate_javascript per flush tick.
+        self._run_javascript("window.term && window.term.write(%s);" % json.dumps(chunk))
+
+    # ---- PTY-backed capabilities (real ssh child, unlike the server path) -----
+
+    def get_pty(self) -> Optional[Any]:
+        return self._bridge.get_pty() if self._bridge is not None else None
+
+    def get_child_pid(self) -> Optional[int]:
+        return self._real_child_pid
+
+    def feed_child(self, data: bytes) -> None:
+        # Direct to the PTY (keystrokes/broadcast) — no JS round-trip.
+        if self._bridge is not None:
+            self._bridge.write(data)
+
+    def set_font(self, font_desc) -> None:
+        self._stored_font = font_desc
+        super().set_font(font_desc)
+
+    # ---- child-exit + teardown ----------------------------------------------
+
+    def connect_child_exited(self, callback: Callable[[Gtk.Widget, int], None]) -> Any:
+        self._child_exited_cb = callback
+        return "pyxterm_bridge_child_exited"
+
+    def _on_bridge_exit(self, status: int):
+        cb = self._child_exited_cb
+        if cb:
+            try:
+                cb(self.widget, status)
+            except Exception:  # noqa: BLE001
+                logger.debug("child-exited callback raised", exc_info=True)
+
+    def disconnect(self, handler_id: Any) -> None:
+        if handler_id == "pyxterm_bridge_child_exited":
+            self._child_exited_cb = None
+            return
+        super().disconnect(handler_id)
+
+    def destroy(self) -> None:
+        # Ordered, synchronous teardown (see shutdown-segfault history): close the
+        # bridge (removes fd/flush/child sources + PTY) before dropping the WebView.
+        try:
+            if self._bridge is not None:
+                self._bridge.close()
+        finally:
+            self._bridge = None
+            super().destroy()
+
+    def supports_feature(self, feature: str) -> bool:
+        return feature in ("pty",)
 
 

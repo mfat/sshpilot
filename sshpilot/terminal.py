@@ -19,7 +19,12 @@ import pwd
 from datetime import datetime
 from typing import Optional
 from .platform_utils import is_flatpak, is_macos, get_sshpass_path
-from .terminal_backends import BaseTerminalBackend, VTETerminalBackend, PyXtermTerminalBackend
+from .terminal_backends import (
+    BaseTerminalBackend,
+    VTETerminalBackend,
+    PyXtermTerminalBackend,
+    PyXtermBridgeBackend,
+)
 from .plugins.api import PluginContext, ProtocolError
 from .plugins.registry import protocol_registry
 
@@ -656,6 +661,19 @@ class TerminalWidget(Gtk.Box):
                 backend_name = "vte"
 
         backend_name = (backend_name or "vte").lower()
+
+        if backend_name == "pyxterm2":
+            # Embedded (Cursor-model) backend: in-process PTY bridge, no server.
+            try:
+                backend = PyXtermBridgeBackend(self)
+                if getattr(backend, "available", False):
+                    logger.info("Using PyXterm embedded (bridge) terminal backend")
+                    self._backend_name = "pyxterm2"
+                    return backend
+                logger.warning("PyXterm bridge backend unavailable, falling back to VTE")
+            except Exception as e:
+                logger.error(f"Failed to create PyXterm bridge backend: {e}")
+                logger.warning("PyXterm bridge backend creation failed, falling back to VTE")
 
         if backend_name == "pyxterm":
             try:
