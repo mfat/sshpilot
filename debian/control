@@ -36,9 +36,6 @@ Recommends: sshpass,
             python3-pykeepass,
             gir1.2-webkit-6.0,
             ssh-askpass
-Description: SSH connection manager with integrated terminal
- sshPilot is a GTK4/libadwaita SSH connection manager with an integrated
- VTE terminal, port forwarding and tunnelling, and an SFTP file manager.
- .
- It stores connection profiles, integrates with the system keyring for
- credentials, and drives the native OpenSSH client for every connection.
+Description: modern, lightweight SSH connection manager
+ SSH Pilot is a user-friendly, modern and lightweight SSH connection manager
+ for Linux and macOS, with an integrated terminal and SFTP file manager.
