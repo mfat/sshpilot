@@ -377,6 +377,12 @@ class SshPilotApplication(Adw.Application):
         except Exception as exc:
             logger.debug(f"Failed to schedule startup vault unlock: {exc}")
 
+        try:
+            from .xterm_prewarm import schedule_xterm_prewarm
+            schedule_xterm_prewarm(self.config)
+        except Exception as exc:
+            logger.debug(f"Failed to schedule PyXterm prewarm: {exc}")
+
     def on_shutdown(self, app):
         """Clean up all resources when application is shutting down"""
         logger.info("Application shutdown initiated, cleaning up...")

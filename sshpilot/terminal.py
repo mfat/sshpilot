@@ -372,6 +372,8 @@ class TerminalWidget(Gtk.Box):
         # Add terminal to scrolled window and to the box via an overlay with a connecting view
         if self.terminal_widget is not None:
             self.scrolled_window.set_child(self.terminal_widget)
+            if hasattr(self.backend, "ensure_shell_loaded"):
+                self.backend.ensure_shell_loaded()
         self.overlay = Gtk.Overlay()
         self.overlay.set_child(self.scrolled_window)
 

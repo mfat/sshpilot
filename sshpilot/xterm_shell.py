@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+from functools import lru_cache
 from typing import Optional
 
 # xterm.js asset layout mirrors Debian's libjs-xterm (see debian/rules + app.py).
@@ -53,6 +54,22 @@ def build_shell_html(
     seed the initial Terminal options; runtime changes still go through the
     backend's ``apply_theme``/``set_font`` JS injection.
     """
+    if theme is None and font_family is None and font_size is None and background == "#000000":
+        return _build_default_shell_html()
+    return _build_shell_html_impl(theme, font_family, font_size, background)
+
+
+@lru_cache(maxsize=1)
+def _build_default_shell_html() -> str:
+    return _build_shell_html_impl(None, None, None, "#000000")
+
+
+def _build_shell_html_impl(
+    theme: Optional[dict],
+    font_family: Optional[str],
+    font_size: Optional[float],
+    background: str,
+) -> str:
     core = _read(_CORE)
     css = _read(_CSS)
     addons = "\n".join(f"<script>{_read(a)}</script>" for a in _ADDONS)
@@ -106,10 +123,13 @@ def build_shell_html(
   function debounce(fn, ms) {{ let t; return function () {{ clearTimeout(t); t = setTimeout(fn, ms); }}; }}
   window.onresize = debounce(fitToScreen, 50);
 
+  // Size and signal readiness synchronously so Python can flush buffered PTY
+  // output immediately. Defer focus/extra layout to the next frame.
+  fit.fit();
+  send({{ type: "ready", rows: term.rows, cols: term.cols, perfMs: Math.round(performance.now()) }});
   requestAnimationFrame(() => {{
     fitToScreen();
-    setTimeout(() => term.focus(), 50);
-    send({{ type: "ready", rows: term.rows, cols: term.cols }});
+    term.focus();
   }});
 
   // Copy/paste keyboard shortcuts (parity with the old shell).
