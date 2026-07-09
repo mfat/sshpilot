@@ -1682,17 +1682,22 @@ class PyXtermTerminalBackend:
         if not self.available:
             return
         try:
+            # Wrapped in an IIFE returning a boolean: the clipboard call is
+            # async and its Promise must NOT be the script's completion value,
+            # or WebKit's evaluate_javascript_finish raises "Unsupported result
+            # type". The copy still happens when the Promise resolves.
             script = """
-            if (typeof window.term !== 'undefined' && window.term.hasSelection()) {
-                var selection = window.term.getSelection();
-                if (selection) {
-                    navigator.clipboard.writeText(selection).then(function() {
-                        console.log('Text copied to clipboard');
-                    }).catch(function(err) {
-                        console.error('Failed to copy text:', err);
-                    });
+            (function() {
+                if (typeof window.term !== 'undefined' && window.term.hasSelection()) {
+                    var selection = window.term.getSelection();
+                    if (selection) {
+                        navigator.clipboard.writeText(selection).catch(function(err) {
+                            console.error('Failed to copy text:', err);
+                        });
+                    }
                 }
-            }
+                return true;
+            })();
             """
             self._run_javascript(script)
         except Exception as e:
@@ -1703,16 +1708,24 @@ class PyXtermTerminalBackend:
         if not self.available:
             return
         try:
+            # Wrapped in an IIFE returning a boolean so the async readText()
+            # Promise is not the script's completion value (WebKit's
+            # evaluate_javascript_finish rejects Promises with "Unsupported
+            # result type"). The paste runs when the Promise resolves:
+            # term.paste() fires onData -> window.ptySend -> the PTY WebSocket.
             script = """
-            if (typeof navigator !== 'undefined' && navigator.clipboard) {
-                navigator.clipboard.readText().then(function(text) {
-                    if (typeof window.term !== 'undefined') {
-                        window.term.paste(text);
-                    }
-                }).catch(function(err) {
-                    console.error('Failed to paste text:', err);
-                });
-            }
+            (function() {
+                if (typeof navigator !== 'undefined' && navigator.clipboard) {
+                    navigator.clipboard.readText().then(function(text) {
+                        if (typeof window.term !== 'undefined') {
+                            window.term.paste(text);
+                        }
+                    }).catch(function(err) {
+                        console.error('Failed to paste text:', err);
+                    });
+                }
+                return true;
+            })();
             """
             self._run_javascript(script)
         except Exception as e:
