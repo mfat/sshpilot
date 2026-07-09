@@ -244,13 +244,15 @@ class XtermShellPool:
         if payload.get("type") == "ready" and not entry.js_ready:
             entry.js_ready = True
             cls._cancel_warm_timeout(entry)
-            if entry in cls._warming:
+            # Only unowned warmers enter the pool; owned entries (create_for_owner)
+            # must never be appended or discarded here.
+            if entry.owner is None and entry in cls._warming:
                 cls._warming.remove(entry)
-            if len(cls._ready) < _POOL_TARGET:
-                cls._ready.append(entry)
-                logger.debug("PyXterm shell entered ready pool")
-            else:
-                cls._discard_entry(entry)
+                if len(cls._ready) < _POOL_TARGET:
+                    cls._ready.append(entry)
+                    logger.debug("PyXterm shell entered ready pool")
+                else:
+                    cls._discard_entry(entry)
         owner = entry.owner
         if owner is not None and hasattr(owner, "_on_pty_message"):
             owner._on_pty_message(ucm, js_value)
