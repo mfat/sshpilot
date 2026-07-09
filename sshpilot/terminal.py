@@ -1805,14 +1805,19 @@ class TerminalWidget(Gtk.Box):
         """Handle an OSC 0/2 title from the embedded backend: update the tab title
         and, like VTE's termprops path, promote a CONNECTING remote session (a
         remote shell setting its title is login evidence)."""
+        if not title:
+            # Empty title events (e.g. an OSC 0/2 clear during init) are not
+            # evidence — ignore them entirely so they can't promote prematurely.
+            return
         try:
-            if title:
-                remote_dir = self._parse_directory_from_title(title)
-                if remote_dir:
-                    self._current_remote_directory = remote_dir
-                self.emit('title-changed', title)
+            remote_dir = self._parse_directory_from_title(title)
+            if remote_dir:
+                self._current_remote_directory = remote_dir
+            self.emit('title-changed', title)
         except Exception:
             logger.debug("handle_backend_title: title update failed", exc_info=True)
+        # A non-empty remote title is login evidence — promote a CONNECTING remote
+        # session, mirroring VTE's termprops path.
         try:
             from .connection_manager import ConnectionState
             if self.connection_state == ConnectionState.CONNECTING and not self._is_local_terminal():
