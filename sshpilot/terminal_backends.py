@@ -1330,6 +1330,8 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
     teardown. Requires WebKit 6 (UserContentManager); falls back to VTE if absent.
     """
 
+    _PREREADY_MAX_BYTES = 256_000
+
     def __init__(self, owner: "TerminalWidget") -> None:
         self._ucm = None
         self._bridge = None
@@ -1342,8 +1344,10 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
         self._recent_output = ""            # rolling tail of PTY output (for get_content)
         self._output_hook: Optional[Callable] = None  # notified on each output flush
         self._preready_output: list = []    # output produced before the page is ready
+        self._preready_bytes = 0
         self._shell_entry = None
         self._shell_attached = False
+        self._shell_loaded = False
         super().__init__(owner)
         # WebKit2 (GTK3) lacks the UCM script-message bridge this backend needs.
         if getattr(self, "WebKit", None) is None:
@@ -1352,7 +1356,6 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
                 "PyXterm bridge backend requires WebKit 6.0 (UserContentManager)"
             )
             return
-        self._shell_loaded = False
 
     # ---- construction: WebView with a JS->Python bridge ----------------------
 
@@ -1450,6 +1453,7 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
             # prompt) so it appears immediately rather than after a blank gap.
             if self._preready_output:
                 buffered, self._preready_output = "".join(self._preready_output), []
+                self._preready_bytes = 0
                 self._write_to_term(buffered)
             if self._pending_spawn is not None:  # fallback (spawn normally happens early)
                 self._do_spawn()
@@ -1537,6 +1541,10 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
         else:
             # Page not painted yet: buffer, flush on "ready".
             self._preready_output.append(chunk)
+            self._preready_bytes += len(chunk)
+            while self._preready_bytes > self._PREREADY_MAX_BYTES and self._preready_output:
+                dropped = self._preready_output.pop(0)
+                self._preready_bytes -= len(dropped)
         if self._output_hook is not None:
             try:
                 self._output_hook()

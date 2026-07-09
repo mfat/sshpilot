@@ -4671,7 +4671,14 @@ class PreferencesWindow(Adw.Window):
         self._backend_last_valid_index = index
         self.config.set_setting('terminal.backend', backend_id)
         self._update_backend_row_subtitle(index)
-        
+
+        if backend_id in ('pyxterm', 'pyxterm2'):
+            try:
+                from .xterm_prewarm import schedule_xterm_prewarm
+                schedule_xterm_prewarm(self.config)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("Failed to schedule PyXterm prewarm after backend switch: %s", exc)
+
         # Update encoding row visibility when backend changes
         self._update_encoding_row_visibility()
         

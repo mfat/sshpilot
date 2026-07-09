@@ -9,6 +9,7 @@ from typing import Any, Optional
 logger = logging.getLogger(__name__)
 
 _POOL_TARGET = 1
+_WARM_TIMEOUT_SEC = 30
 
 
 @dataclass
@@ -18,6 +19,7 @@ class _ShellEntry:
     js_ready: bool = False
     owner: Any = None
     loaded: bool = False
+    warm_timeout_id: Optional[int] = None
 
 
 class XtermShellPool:
@@ -62,8 +64,10 @@ class XtermShellPool:
         while cls._ready:
             entry = cls._ready.pop(0)
             if not entry.js_ready:
+                cls._discard_entry(entry)
                 continue
             entry.owner = owner
+            # Queued before any spawn output; WebKit runs JS FIFO on this view.
             cls._reset_entry(entry)
             cls.ensure_warming()
             return entry
@@ -88,7 +92,12 @@ class XtermShellPool:
             pass
         cls._reset_entry(entry)
         if entry.js_ready and entry.loaded:
-            cls._ready.append(entry)
+            if len(cls._ready) < _POOL_TARGET:
+                cls._ready.append(entry)
+            else:
+                cls._discard_entry(entry)
+        else:
+            cls._discard_entry(entry)
         cls.ensure_warming()
 
     @classmethod
@@ -97,16 +106,70 @@ class XtermShellPool:
             entry.loaded = True
 
     @classmethod
+    def _discard_entry(cls, entry: Optional[_ShellEntry]) -> None:
+        if entry is None:
+            return
+        cls._cancel_warm_timeout(entry)
+        try:
+            cls._ready.remove(entry)
+        except ValueError:
+            pass
+        try:
+            cls._warming.remove(entry)
+        except ValueError:
+            pass
+        cls._by_ucm.pop(id(entry.ucm), None)
+        try:
+            parent = entry.webview.get_parent()
+            if parent is not None and hasattr(parent, "set_child"):
+                parent.set_child(None)
+        except Exception:  # noqa: BLE001
+            pass
+        entry.webview = None
+        entry.ucm = None
+        entry.owner = None
+
+    @classmethod
+    def _cancel_warm_timeout(cls, entry: _ShellEntry) -> None:
+        if entry.warm_timeout_id is None:
+            return
+        try:
+            import gi
+
+            gi.require_version("GLib", "2.0")
+            from gi.repository import GLib
+
+            GLib.source_remove(entry.warm_timeout_id)
+        except Exception:  # noqa: BLE001
+            pass
+        entry.warm_timeout_id = None
+
+    @classmethod
+    def _on_warm_timeout(cls, entry: _ShellEntry) -> bool:
+        entry.warm_timeout_id = None
+        if entry.js_ready or entry.owner is not None:
+            return False
+        if entry in cls._warming:
+            logger.debug("Discarding PyXterm shell that never reached ready")
+            cls._discard_entry(entry)
+            cls.ensure_warming()
+        return False
+
+    @classmethod
     def _start_warming(cls) -> None:
         try:
             import gi
 
+            gi.require_version("GLib", "2.0")
             gi.require_version("WebKit", "6.0")
-            from gi.repository import WebKit
+            from gi.repository import GLib, WebKit
 
             entry = cls._create_entry(WebKit)
             cls._warming.append(entry)
             cls._load_html(entry)
+            entry.warm_timeout_id = GLib.timeout_add_seconds(
+                _WARM_TIMEOUT_SEC, cls._on_warm_timeout, entry
+            )
             logger.debug("Started warming PyXterm shell for pool")
         except Exception as exc:  # noqa: BLE001
             logger.debug("PyXterm pool warm failed: %s", exc)
@@ -154,6 +217,8 @@ class XtermShellPool:
 
     @classmethod
     def _reset_entry(cls, entry: _ShellEntry) -> None:
+        if entry.webview is None:
+            return
         try:
             script = (
                 "(function(){"
@@ -178,10 +243,14 @@ class XtermShellPool:
             return
         if payload.get("type") == "ready" and not entry.js_ready:
             entry.js_ready = True
+            cls._cancel_warm_timeout(entry)
             if entry in cls._warming:
                 cls._warming.remove(entry)
+            if len(cls._ready) < _POOL_TARGET:
                 cls._ready.append(entry)
                 logger.debug("PyXterm shell entered ready pool")
+            else:
+                cls._discard_entry(entry)
         owner = entry.owner
         if owner is not None and hasattr(owner, "_on_pty_message"):
             owner._on_pty_message(ucm, js_value)
