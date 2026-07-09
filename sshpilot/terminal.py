@@ -1591,8 +1591,22 @@ class TerminalWidget(Gtk.Box):
         self._connect_grace_timer_id = GLib.timeout_add(
             1000, self._on_connect_grace_elapsed
         )
+        # Embedded backend: also scan for evidence on every PTY output batch, so
+        # promotion happens in milliseconds rather than on the 1 s poll tick.
+        backend = getattr(self, 'backend', None)
+        if backend is not None and hasattr(backend, 'add_output_hook'):
+            try:
+                backend.add_output_hook(self._on_bridge_connect_evidence)
+            except Exception:
+                logger.debug("Could not register connect-evidence output hook", exc_info=True)
 
     def _cancel_connect_grace(self):
+        backend = getattr(self, 'backend', None)
+        if backend is not None and hasattr(backend, 'remove_output_hook'):
+            try:
+                backend.remove_output_hook(self._on_bridge_connect_evidence)
+            except Exception:
+                pass
         if getattr(self, '_connect_grace_timer_id', None):
             try:
                 GLib.source_remove(self._connect_grace_timer_id)
@@ -1701,9 +1715,9 @@ class TerminalWidget(Gtk.Box):
             # watcher from the backend's PTY output stream instead of VTE's
             # 'contents-changed' signal. get_content()/feed_child() work there too.
             backend = getattr(self, 'backend', None)
-            if backend is not None and hasattr(backend, 'set_output_hook'):
+            if backend is not None and hasattr(backend, 'add_output_hook'):
                 try:
-                    backend.set_output_hook(lambda: self._on_pty_autofill_changed(None))
+                    backend.add_output_hook(self._pty_autofill_tick)
                     self._pty_autofill_timeout_id = GLib.timeout_add_seconds(
                         30, self._cancel_pty_autofill)
                 except Exception:
@@ -1757,9 +1771,9 @@ class TerminalWidget(Gtk.Box):
             self._pty_autofill_handler = None
         # Embedded PyXterm backend: stop the output-driven watcher.
         backend = getattr(self, 'backend', None)
-        if backend is not None and hasattr(backend, 'set_output_hook'):
+        if backend is not None and hasattr(backend, 'remove_output_hook'):
             try:
-                backend.set_output_hook(None)
+                backend.remove_output_hook(self._pty_autofill_tick)
             except Exception:
                 pass
         tid = getattr(self, '_pty_autofill_timeout_id', None)
@@ -1770,6 +1784,41 @@ class TerminalWidget(Gtk.Box):
                 pass
             self._pty_autofill_timeout_id = None
         return False  # one-shot GLib timeout
+
+    def _pty_autofill_tick(self):
+        """Output-hook adapter for the embedded backend's auto-fill watcher."""
+        self._on_pty_autofill_changed(None)
+
+    def _on_bridge_connect_evidence(self):
+        """Embedded-backend connect-evidence scan, driven by each PTY output batch
+        (registered as an output hook while CONNECTING). Promotes to CONNECTED the
+        instant real remote output appears, instead of waiting for the 1 s poller.
+        Uses the same evidence matcher as the poller, so ssh's own local-side
+        chatter never falsely promotes; failures are left to the poller/child-exit."""
+        from .connection_manager import ConnectionState
+        if self.connection_state != ConnectionState.CONNECTING:
+            return
+        if self._scan_connect_evidence() == 'connected':
+            self._mark_connected()
+
+    def handle_backend_title(self, title):
+        """Handle an OSC 0/2 title from the embedded backend: update the tab title
+        and, like VTE's termprops path, promote a CONNECTING remote session (a
+        remote shell setting its title is login evidence)."""
+        try:
+            if title:
+                remote_dir = self._parse_directory_from_title(title)
+                if remote_dir:
+                    self._current_remote_directory = remote_dir
+                self.emit('title-changed', title)
+        except Exception:
+            logger.debug("handle_backend_title: title update failed", exc_info=True)
+        try:
+            from .connection_manager import ConnectionState
+            if self.connection_state == ConnectionState.CONNECTING and not self._is_local_terminal():
+                self._mark_connected()
+        except Exception:
+            pass
 
     def _classify_exit(self, exit_code, was_connected, extra_text=''):
         """Map an ssh exit into (ConnectionState, reason) from the exit code and

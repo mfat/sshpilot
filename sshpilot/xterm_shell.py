@@ -115,6 +115,8 @@ def _build_shell_html_impl(
 
   term.open(document.getElementById("terminal"));
   term.onData(d => send({{ type: "input", data: d }}));
+  // OSC 0/2 title changes (remote shell prompt) — used as connect evidence.
+  term.onTitleChange(t => send({{ type: "title", title: t }}));
 
   function fitToScreen() {{
     fit.fit();

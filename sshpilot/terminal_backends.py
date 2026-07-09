@@ -1342,7 +1342,7 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
         self._last_size = (24, 80)
         self._stored_font = None
         self._recent_output = ""            # rolling tail of PTY output (for get_content)
-        self._output_hook: Optional[Callable] = None  # notified on each output flush
+        self._output_hooks: list = []       # zero-arg callbacks fired after each flush
         self._preready_output: list = []    # output produced before the page is ready
         self._preready_bytes = 0
         self._shell_entry = None
@@ -1464,6 +1464,15 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
             self._last_size = (payload.get("rows", 24), payload.get("cols", 80))
             if self._bridge is not None:
                 self._bridge.resize(*self._last_size)
+        elif kind == "title":
+            # xterm.js OSC 0/2 title change — parity with VTE's window title +
+            # termprops-based CONNECTING→CONNECTED promotion.
+            owner = self.owner
+            if owner is not None and hasattr(owner, "handle_backend_title"):
+                try:
+                    owner.handle_backend_title(payload.get("title", ""))
+                except Exception:  # noqa: BLE001
+                    logger.debug("handle_backend_title raised", exc_info=True)
 
     # ---- spawn: in-process PTY, reusing the shared argv/env ------------------
 
@@ -1545,17 +1554,24 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
             while self._preready_bytes > self._PREREADY_MAX_BYTES and self._preready_output:
                 dropped = self._preready_output.pop(0)
                 self._preready_bytes -= len(dropped)
-        if self._output_hook is not None:
+        for hook in list(self._output_hooks):
             try:
-                self._output_hook()
+                hook()
             except Exception:  # noqa: BLE001
                 logger.debug("output hook raised", exc_info=True)
 
-    def set_output_hook(self, callback) -> None:
-        """Register a zero-arg callback invoked after each batch of PTY output.
-        Used by the terminal's PTY auto-fill watcher in place of VTE's
-        ``contents-changed`` signal (there is no Vte.Terminal here)."""
-        self._output_hook = callback
+    def add_output_hook(self, callback) -> None:
+        """Subscribe a zero-arg callback invoked after each batch of PTY output.
+        Multiple consumers (PTY auto-fill watcher, connect-evidence scanner) can
+        register; this stands in for VTE's ``contents-changed`` signal."""
+        if callback is not None and callback not in self._output_hooks:
+            self._output_hooks.append(callback)
+
+    def remove_output_hook(self, callback) -> None:
+        try:
+            self._output_hooks.remove(callback)
+        except ValueError:
+            pass
 
     def get_content(self, max_chars: Optional[int] = None) -> Optional[str]:
         if not self._recent_output:
