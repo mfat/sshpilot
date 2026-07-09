@@ -126,7 +126,7 @@ def _build_shell_html_impl(
   // Size and signal readiness synchronously so Python can flush buffered PTY
   // output immediately. Defer focus/extra layout to the next frame.
   fit.fit();
-  send({{ type: "ready", rows: term.rows, cols: term.cols, perfMs: Math.round(performance.now()) }});
+  send({{ type: "ready", rows: term.rows, cols: term.cols }});
   requestAnimationFrame(() => {{
     fitToScreen();
     term.focus();

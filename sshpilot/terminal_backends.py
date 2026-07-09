@@ -18,36 +18,6 @@ from .platform_utils import is_flatpak, get_data_dir
 
 logger = logging.getLogger(__name__)
 
-# #region agent log
-_DEBUG_LOG_PATH = "/home/mahdi/GitHub/sshpilot/.cursor/debug-0594e7.log"
-
-
-def _agent_dbg(location: str, message: str, data: Optional[dict] = None, hypothesis_id: str = "") -> None:
-    import json
-    import time
-
-    try:
-        with open(_DEBUG_LOG_PATH, "a", encoding="utf-8") as fh:
-            fh.write(
-                json.dumps(
-                    {
-                        "sessionId": "0594e7",
-                        "timestamp": int(time.time() * 1000),
-                        "location": location,
-                        "message": message,
-                        "data": data or {},
-                        "hypothesisId": hypothesis_id,
-                        "runId": "post-fix",
-                    }
-                )
-                + "\n"
-            )
-    except Exception:
-        pass
-
-
-# #endregion
-
 
 class BaseTerminalBackend(Protocol):
     """Protocol describing the behaviour a terminal backend must implement."""
@@ -1374,17 +1344,6 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
         self._preready_output: list = []    # output produced before the page is ready
         self._shell_entry = None
         self._shell_attached = False
-        self._debug_t0: float = 0.0
-        import time as _time
-        self._debug_t0 = _time.monotonic()
-        # #region agent log
-        _agent_dbg(
-            "terminal_backends.py:PyXtermBridgeBackend.__init__",
-            "bridge backend init start",
-            {"t0_ms": 0},
-            "E",
-        )
-        # #endregion
         super().__init__(owner)
         # WebKit2 (GTK3) lacks the UCM script-message bridge this backend needs.
         if getattr(self, "WebKit", None) is None:
@@ -1406,15 +1365,6 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
             self._ucm = pooled.ucm
             self._js_ready = True
             self._shell_loaded = True
-            # #region agent log
-            import time as _time
-            _agent_dbg(
-                "terminal_backends.py:_make_webview_webkit6",
-                "acquired pooled shell",
-                {"since_init_ms": int((_time.monotonic() - self._debug_t0) * 1000)},
-                "F",
-            )
-            # #endregion
             return pooled.webview
 
         entry = XtermShellPool.create_for_owner(self, WebKit)
@@ -1448,34 +1398,8 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
                 XtermShellPool.load_for_entry(self._shell_entry)
             else:
                 self._load_shell()
-            # #region agent log
-            import time as _time
-            _agent_dbg(
-                "terminal_backends.py:ensure_shell_loaded",
-                "load_html called",
-                {
-                    "since_init_ms": int((_time.monotonic() - self._debug_t0) * 1000),
-                    "has_parent": self._webview.get_parent() is not None,
-                    "pooled": False,
-                },
-                "A",
-            )
-            # #endregion
         elif self._js_ready:
             self._apply_attached_shell_settings()
-            # #region agent log
-            import time as _time
-            _agent_dbg(
-                "terminal_backends.py:ensure_shell_loaded",
-                "pooled shell attached",
-                {
-                    "since_init_ms": int((_time.monotonic() - self._debug_t0) * 1000),
-                    "has_parent": self._webview.get_parent() is not None,
-                    "pooled": True,
-                },
-                "F",
-            )
-            # #endregion
 
     def _load_shell(self):
         try:
@@ -1508,22 +1432,6 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
         if kind == "ready":
             self._js_ready = True
             self._last_size = (payload.get("rows", 24), payload.get("cols", 80))
-            # #region agent log
-            import time as _time
-            _agent_dbg(
-                "terminal_backends.py:_on_pty_message",
-                "js ready message received",
-                {
-                    "since_init_ms": int((_time.monotonic() - self._debug_t0) * 1000),
-                    "preready_chunks": len(self._preready_output),
-                    "preready_bytes": sum(len(c) for c in self._preready_output),
-                    "js_perf_ms": payload.get("perfMs"),
-                    "js_dom_ms": payload.get("domMs"),
-                    "bridge_alive": self._bridge is not None,
-                },
-                "A",
-            )
-            # #endregion
             # Re-apply configured theme/font now that window.term exists.
             try:
                 self.apply_theme()
@@ -1542,18 +1450,6 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
             # prompt) so it appears immediately rather than after a blank gap.
             if self._preready_output:
                 buffered, self._preready_output = "".join(self._preready_output), []
-                # #region agent log
-                import time as _time
-                _agent_dbg(
-                    "terminal_backends.py:_on_pty_message",
-                    "flushing preready output",
-                    {
-                        "since_init_ms": int((_time.monotonic() - self._debug_t0) * 1000),
-                        "buffer_bytes": len(buffered),
-                    },
-                    "B",
-                )
-                # #endregion
                 self._write_to_term(buffered)
             if self._pending_spawn is not None:  # fallback (spawn normally happens early)
                 self._do_spawn()
@@ -1598,19 +1494,6 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
         # shell/ssh startup overlaps the (slower) page load instead of running after
         # it. Output produced before the page is ready is buffered and flushed on
         # the "ready" message, so the prompt appears the instant the terminal paints.
-        # #region agent log
-        import time as _time
-        _agent_dbg(
-            "terminal_backends.py:spawn_async",
-            "spawn_async called",
-            {
-                "since_init_ms": int((_time.monotonic() - self._debug_t0) * 1000),
-                "js_ready": self._js_ready,
-                "argv0": command[0] if command else None,
-            },
-            "E",
-        )
-        # #endregion
         self._do_spawn()
 
     def _do_spawn(self):
@@ -1626,20 +1509,6 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
         rows, cols = self._last_size
 
         def on_spawned(pid, err):
-            # #region agent log
-            import time as _time
-            _agent_dbg(
-                "terminal_backends.py:_do_spawn.on_spawned",
-                "pty child spawned",
-                {
-                    "since_init_ms": int((_time.monotonic() - self._debug_t0) * 1000),
-                    "pid": pid,
-                    "js_ready": self._js_ready,
-                    "error": str(err) if err else None,
-                },
-                "D",
-            )
-            # #endregion
             cb = pending["callback"]
             if err is not None:
                 logger.error("PyXterm bridge spawn failed: %s", err)
@@ -1657,39 +1526,12 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
 
     def _write_to_term(self, text: str):
         import json
-        # #region agent log
-        import time as _time
-        _agent_dbg(
-            "terminal_backends.py:_write_to_term",
-            "evaluate_javascript write",
-            {
-                "since_init_ms": int((_time.monotonic() - self._debug_t0) * 1000),
-                "text_bytes": len(text),
-            },
-            "B",
-        )
-        # #endregion
         self._run_javascript("window.term && window.term.write(%s);" % json.dumps(text))
 
     def _on_pty_output(self, chunk: str):
         # Keep a rolling tail so get_content() works (PTY auto-fill / failure
         # classification).
         self._recent_output = (self._recent_output + chunk)[-8000:]
-        if not getattr(self, "_debug_first_output_logged", False):
-            self._debug_first_output_logged = True
-            # #region agent log
-            import time as _time
-            _agent_dbg(
-                "terminal_backends.py:_on_pty_output",
-                "first pty output chunk",
-                {
-                    "since_init_ms": int((_time.monotonic() - self._debug_t0) * 1000),
-                    "chunk_bytes": len(chunk),
-                    "js_ready": self._js_ready,
-                },
-                "D",
-            )
-            # #endregion
         if self._js_ready:
             self._write_to_term(chunk)
         else:
