@@ -89,10 +89,7 @@ class WindowConfigDialogsMixin:
 
         dialog = Adw.MessageDialog(
             transient_for=self, modal=True, heading=_("Export Backup"),
-            body=_("Choose what to also include in this backup. Connection profiles (host, port, "
-                   "forwards, and keys) come from SSH config and app settings. When exporting "
-                   "saved passwords or private key files, choose which connections to include "
-                   "those for below."))
+            body=_("Select items to include in this backup."))
 
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
         box.set_size_request(BACKUP_DIALOG_MIN_WIDTH, -1)
@@ -110,9 +107,6 @@ class WindowConfigDialogsMixin:
             box.append(err_label)
 
         category_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        category_label = Gtk.Label(label=_("Include"), xalign=0)
-        category_label.add_css_class('heading')
-        category_box.append(category_label)
 
         def switch_row(label, active=False, caption=None, destructive=False):
             row = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
@@ -232,6 +226,10 @@ class WindowConfigDialogsMixin:
         dest_file = Gtk.CheckButton(label=_("Save to file (.spbk)")); dest_file.set_active(True)
         dest_bw = Gtk.CheckButton(label=_("Save to Bitwarden")); dest_bw.set_group(dest_file)
         dest_box.append(dest_file); dest_box.append(dest_bw)
+        mirror_logins_check = Gtk.CheckButton(
+            label=_("Also copy saved secrets as Bitwarden login items"))
+        mirror_logins_check.set_margin_start(24)
+        dest_box.append(mirror_logins_check)
         box.append(dest_box)
 
         enc_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
@@ -259,9 +257,12 @@ class WindowConfigDialogsMixin:
             enc_row.set_visible(not to_bw)
             pw.set_visible(on)
             caption.set_visible(not on and not to_bw)
+            # "mirror as login items" only makes sense for Bitwarden with secrets included.
+            mirror_logins_check.set_visible(to_bw and secrets_check.get_active())
         enc_switch.connect('notify::active', sync_pw)
         dest_file.connect('notify::active', sync_pw)
         dest_bw.connect('notify::active', sync_pw)
+        secrets_check.connect('notify::active', sync_pw)
         sync_pw()
 
         dialog.set_extra_child(box)
@@ -296,7 +297,9 @@ class WindowConfigDialogsMixin:
                 return
             if dest_bw.get_active():
                 # Bitwarden note destination — no file/passphrase; vault encryption only.
-                self._export_to_bitwarden(selected, options)
+                mirror = (mirror_logins_check.get_active()
+                          and bool(options.get('secrets')))
+                self._export_to_bitwarden(selected, options, mirror_logins=mirror)
                 return
             if enc_switch.get_active():
                 passphrase = pw.get_text() or ''
@@ -342,8 +345,9 @@ class WindowConfigDialogsMixin:
         else:
             alert.present()
 
-    def _export_to_bitwarden(self, connections, options):
-        """Get Bitwarden ready, then store the backup manifest in a secure note."""
+    def _export_to_bitwarden(self, connections, options, mirror_logins=False):
+        """Get Bitwarden ready, then store the backup manifest in a secure note (optionally also
+        mirroring saved secrets as Bitwarden login items)."""
         from .bitwarden_backup_setup import ensure_bitwarden_ready
 
         def after_ready(ready):
@@ -356,9 +360,9 @@ class WindowConfigDialogsMixin:
                 from .secret_storage import get_secret_manager
                 from .bitwarden_backup_setup import progress_dialog
                 name = _("sshPilot Backup {}").format(datetime.now().strftime('%Y-%m-%d %H:%M'))
+                bw = get_secret_manager().get_backend("bitwarden")
                 mgr = BackupManager(self.config, self.connection_manager)
-                backend = BitwardenBackupBackend(
-                    get_secret_manager().get_backend("bitwarden"), item_name=name)
+                backend = BitwardenBackupBackend(bw, item_name=name)
 
                 cancelled = {'v': False}
                 _set_status, close_spinner = progress_dialog(
@@ -371,10 +375,12 @@ class WindowConfigDialogsMixin:
                 def worker():
                     try:
                         entry = mgr.export_to_backend(
-                            backend, connections=connections, options=options)
+                            backend, connections=connections, options=options,
+                            mirror_to=(bw if mirror_logins else None))
                         counts = getattr(mgr, 'last_export_counts', {})
+                        mirror = getattr(mgr, 'last_mirror_counts', None)
                         payload = ('ok', entry.name, counts.get('credentials', 0),
-                                   counts.get('private_keys', 0))
+                                   counts.get('private_keys', 0), mirror)
                     except BackupTooLargeForNote as e:
                         payload = ('toobig', str(e))
                     except Exception as e:
@@ -387,10 +393,13 @@ class WindowConfigDialogsMixin:
                         return   # user cancelled the wait
                     close_spinner()
                     if p[0] == 'ok':
-                        self._simple_dialog(
-                            _("Export Successful"),
-                            _("Backup saved to Bitwarden as “{}”.\n\n{} credential(s) and {} "
-                              "private key(s) included.").format(p[1], p[2], p[3]))
+                        msg = _("Backup saved to Bitwarden as “{}”.\n\n{} credential(s) and {} "
+                                "private key(s) included.").format(p[1], p[2], p[3])
+                        mirror = p[4]
+                        if mirror:
+                            msg += "\n\n" + _("{} secret(s) also copied as Bitwarden login "
+                                              "items.").format(mirror.get('mirrored', 0))
+                        self._simple_dialog(_("Export Successful"), msg)
                     elif p[0] == 'toobig':
                         self._simple_dialog(_("Backup too large for Bitwarden"), p[1])
                     else:

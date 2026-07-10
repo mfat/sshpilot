@@ -960,3 +960,53 @@ def test_import_from_backend_reads_and_applies(monkeypatch, tmp_path):
     assert seen[0][0] == {"version": 1, "app_config": {}}
     assert seen[0][1]["mode"] == "merge"
     assert seen[0][1]["restore_options"] == {"secrets": True}
+
+
+# --- mirror secrets as Bitwarden login items --------------------------------
+
+class _RecSecretBackend:
+    def __init__(self, ok=True):
+        self.stored = []
+        self._ok = ok
+    def store(self, spec, secret):
+        self.stored.append((spec.keyring_account, secret))
+        return self._ok
+
+
+def test_mirror_credentials_to_backend(monkeypatch, tmp_path):
+    monkeypatch.setattr(bm, "get_config_dir", lambda: str(tmp_path))
+    mgr = bm.BackupManager(FakeConfig(), FakeConnMgr([]))
+    backend = _RecSecretBackend()
+    manifest = {"credentials": [
+        {"id": "u@h", "type": "password", "host": "h", "username": "u", "secret": "pw"},
+        {"id": "sudo:u@h", "type": "sudo", "host": "h", "username": "u", "secret": "spw"},
+        {"id": "no-secret", "type": "password", "host": "h", "username": "x", "secret": None},
+    ]}
+    mirrored, failed = mgr.mirror_credentials_to_backend(manifest, backend)
+    assert (mirrored, failed) == (2, 0)                       # the None-secret one is skipped
+    assert ("u@h", "pw") in backend.stored
+    assert ("sudo:u@h", "spw") in backend.stored
+
+
+def test_export_to_backend_mirrors_only_when_secrets_on(monkeypatch, tmp_path):
+    monkeypatch.setattr(bm, "get_config_dir", lambda: str(tmp_path))
+    fake = FakeMgr()
+    fake.data[password_spec("h", "u").keyring_account] = "pw"
+    monkeypatch.setattr(cmod, "get_secret_manager", lambda: fake)
+    conn = FakeConn("A", "h", "u")
+    mgr = bm.BackupManager(FakeConfig(), FakeConnMgr([conn]))
+    note_backend = _RecordingBackend()
+    mirror = _RecSecretBackend()
+
+    base = {"app_settings": False, "ssh_config": False, "known_hosts": False, "private_keys": False}
+    mgr.export_to_backend(note_backend, connections=[conn],
+                          options={**base, "secrets": True}, mirror_to=mirror)
+    assert mgr.last_mirror_counts == {"mirrored": 1, "failed": 0}
+    assert "u@h" in [acct for acct, _s in mirror.stored]
+
+    # secrets off -> no mirroring even if mirror_to is passed.
+    mirror2 = _RecSecretBackend()
+    mgr.export_to_backend(note_backend, connections=[conn],
+                          options={**base, "secrets": False}, mirror_to=mirror2)
+    assert mgr.last_mirror_counts is None
+    assert mirror2.stored == []

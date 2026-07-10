@@ -630,9 +630,10 @@ class _Result:
 class FakeBw:
     """In-memory stand-in for the ``bw`` CLI, installed as ``ss.subprocess.run``."""
 
-    def __init__(self, status="locked", items=None, *, unlock_ok=True):
+    def __init__(self, status="locked", items=None, *, unlock_ok=True, folders=None):
         self.status = status
         self.items = [dict(i) for i in (items or [])]
+        self.folders = [dict(f) for f in (folders or [])]
         self.unlock_ok = unlock_ok
         self.calls = []            # each: bw args (without bin / --nointeraction)
         self.envs = []             # the env dict each call was spawned with
@@ -668,6 +669,14 @@ class FakeBw:
             if search:
                 items = [i for i in items if search.lower() in (i.get("name", "").lower())]
             return _Result(0, json.dumps(items).encode())
+        if cmd[:2] == ['list', 'folders']:
+            return _Result(0, json.dumps(self.folders).encode())
+        if cmd[:2] == ['create', 'folder']:
+            self._n += 1
+            folder = json.loads(base64.b64decode(input).decode())
+            folder["id"] = f"FOLDER{self._n}"
+            self.folders.append(folder)
+            return _Result(0, json.dumps(folder).encode())
         if cmd[:2] == ['create', 'item']:
             self._n += 1
             item = json.loads(base64.b64decode(input).decode())
@@ -963,3 +972,53 @@ def test_bitwarden_no_profile_env_when_unset(monkeypatch):
     b = _make_backend(monkeypatch, fake)
     assert b.unlock('m') is True
     assert all('BITWARDENCLI_APPDATA_DIR' not in e for e in fake.envs)
+
+
+# --- sshPilot folder organization -------------------------------------------
+
+def test_bitwarden_creates_and_files_new_item_in_sshpilot_folder(monkeypatch):
+    fake = FakeBw(status="unlocked", items=[], folders=[])
+    b = _make_backend(monkeypatch, fake)
+    monkeypatch.setenv('BW_SESSION', 'TOK')
+    assert b.store(password_spec('h', 'u'), 'pw') is True
+    # A sshPilot folder was created and the new login item filed under it.
+    assert [f['name'] for f in fake.folders] == ['sshPilot']
+    fid = fake.folders[0]['id']
+    created = next(i for i in fake.items if i.get('name') == 'u@h')
+    assert created.get('folderId') == fid
+    # Folder id is cached — a second store does NOT create another folder.
+    assert b.store(ss.sudo_password_spec('h', 'u'), 'pw2') is True
+    assert sum(1 for c in fake.calls if c[:2] == ['create', 'folder']) == 1
+
+
+def test_bitwarden_reuses_existing_sshpilot_folder(monkeypatch):
+    fake = FakeBw(status="unlocked", items=[], folders=[{"id": "F1", "name": "sshPilot"}])
+    b = _make_backend(monkeypatch, fake)
+    monkeypatch.setenv('BW_SESSION', 'TOK')
+    assert b.store(password_spec('h', 'u'), 'pw') is True
+    assert sum(1 for c in fake.calls if c[:2] == ['create', 'folder']) == 0   # reused
+    created = next(i for i in fake.items if i.get('name') == 'u@h')
+    assert created.get('folderId') == 'F1'
+
+
+def test_bitwarden_existing_item_keeps_its_folder(monkeypatch):
+    fake = FakeBw(status="unlocked",
+                  items=[{"id": "ID1", "name": "u@h",
+                          "login": {"password": "old"}, "folderId": "OTHER"}],
+                  folders=[{"id": "F1", "name": "sshPilot"}])
+    b = _make_backend(monkeypatch, fake)
+    monkeypatch.setenv('BW_SESSION', 'TOK')
+    assert b.store(password_spec('h', 'u'), 'newpw') is True   # updates existing (edit path)
+    updated = next(i for i in fake.items if i.get('id') == 'ID1')
+    assert updated.get('folderId') == 'OTHER'                  # not moved into sshPilot
+
+
+def test_bitwarden_secure_note_filed_in_sshpilot_folder(monkeypatch):
+    fake = FakeBw(status="unlocked", items=[], folders=[])
+    b = _make_backend(monkeypatch, fake)
+    monkeypatch.setenv('BW_SESSION', 'TOK')
+    item_id = b.create_or_update_secure_note("sshPilot Backup X", "SSHPILOT-BACKUP-v1\n...")
+    assert item_id
+    note = next(i for i in fake.items if i.get('id') == item_id)
+    assert note.get('folderId') == fake.folders[0]['id']
+    assert note.get('type') == 2

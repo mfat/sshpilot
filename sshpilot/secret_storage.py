@@ -704,6 +704,7 @@ class BitwardenBackend(SecretBackend):
         self._idle = _SessionIdleTimeout()
         self._items: Optional[Dict[str, dict]] = None    # name→item; None = not loaded
         self._cache_complete = False                     # _items holds the whole vault
+        self._folder_id: Optional[str] = None            # sshPilot folder id; None=unresolved, ''=none
         self._lock = threading.RLock()
 
     @property
@@ -803,6 +804,7 @@ class BitwardenBackend(SecretBackend):
         self._idle.reset()
         self._items = None
         self._cache_complete = False
+        self._folder_id = None
         os.environ.pop("BW_SESSION", None)
 
     def _current_token(self) -> Optional[str]:
@@ -932,6 +934,9 @@ class BitwardenBackend(SecretBackend):
                                 input_bytes=self._encode(item))
                 return item["id"] if res.returncode == 0 else None
             item = {"type": 2, "name": name, "notes": content, "secureNote": {"type": 0}}
+            fid = self._ensure_folder_id(token)
+            if fid:
+                item["folderId"] = fid
             res = self._run(["create", "item"], token=token, input_bytes=self._encode(item))
             if res.returncode != 0:
                 return None
@@ -970,6 +975,36 @@ class BitwardenBackend(SecretBackend):
         except Exception as exc:
             logger.debug("bw read secure note failed: %s", exc)
             return None
+
+    # -- sshPilot folder (organizes the items we create) -----------------------
+    def _ensure_folder_id(self, token: str) -> Optional[str]:
+        """The id of the ``sshPilot`` folder, resolving/creating it once per session. Returns
+        ``None`` (item lands in No Folder) on any failure — never fatal to a store."""
+        with self._lock:
+            if self._folder_id is not None:
+                return self._folder_id or None      # '' sentinel => resolved, absent
+        fid = self._resolve_folder(token) or ""
+        with self._lock:
+            self._folder_id = fid
+        return fid or None
+
+    def _resolve_folder(self, token: str) -> Optional[str]:
+        try:
+            result = self._run(["list", "folders"], token=token)
+            if result.returncode == 0:
+                for folder in json.loads(result.stdout.decode("utf-8", "replace") or "[]"):
+                    if folder.get("name") == SERVICE_NAME and folder.get("id"):
+                        return folder["id"]
+            # Not found — create it (base64-on-stdin, same as `create item`).
+            res = self._run(["create", "folder"], token=token,
+                            input_bytes=self._encode({"name": SERVICE_NAME}))
+            if res.returncode == 0:
+                created = json.loads(res.stdout.decode("utf-8", "replace") or "{}")
+                if isinstance(created, dict):
+                    return created.get("id")
+        except Exception as exc:
+            logger.debug("bw folder resolve/create failed: %s", exc)
+        return None
 
     # -- item cache + operations -----------------------------------------
     def _load_all_items(self, token: str) -> Optional[Dict[str, dict]]:
@@ -1071,6 +1106,9 @@ class BitwardenBackend(SecretBackend):
                 self._cache_put(account, item)
                 return True
             item = self._new_item(account, secret, spec)
+            fid = self._ensure_folder_id(token)
+            if fid:
+                item["folderId"] = fid
             res = self._run(["create", "item"], token=token,
                             input_bytes=self._encode(item))
             if res.returncode != 0:

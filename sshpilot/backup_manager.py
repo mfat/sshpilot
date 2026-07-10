@@ -342,6 +342,8 @@ class BackupManager:
         # Merge diagnostics: wildcard/Match/global stanzas dropped, and partial-name collisions.
         self.last_merge_dropped_globals = 0
         self.last_merge_collisions: List[List[str]] = []
+        # {'mirrored': n, 'failed': n} after an export that also mirrored secrets, else None.
+        self.last_mirror_counts: Optional[Dict[str, int]] = None
 
     def get_ssh_config_path(self) -> str:
         """Get the current SSH config path based on mode"""
@@ -627,17 +629,53 @@ class BackupManager:
 
     def export_to_backend(self, backend, *, connections=None,
                           passphrase: Optional[str] = None,
-                          options: Optional[Dict[str, Any]] = None):
+                          options: Optional[Dict[str, Any]] = None,
+                          mirror_to=None):
         """Build the manifest and hand it to a ``BackupBackend`` (file or Bitwarden). Returns the
         backend's ``BackupEntry``; the backend raises on failure (e.g. ``BackupTooLargeForNote``),
-        which the caller surfaces."""
+        which the caller surfaces.
+
+        When ``mirror_to`` (a secret ``SecretBackend``) is given and secrets are included, the
+        manifest's credentials are ALSO copied into it as normal entries (login items), recorded
+        in ``last_mirror_counts`` — the "mirror secrets" option for a Bitwarden export."""
+        self.last_mirror_counts = None
         manifest = self._build_manifest(connections, options)
         entry = backend.export(manifest, passphrase=passphrase or None)
         logger.info("Backup exported via %s backend (%d credential(s), %d private key(s))",
                     getattr(backend, 'name', '?'),
                     len(manifest.get('credentials') or []),
                     len(manifest.get('private_keys') or []))
+        if mirror_to is not None and self.normalize_backup_options(options)['secrets']:
+            mirrored, failed = self.mirror_credentials_to_backend(manifest, mirror_to)
+            self.last_mirror_counts = {'mirrored': mirrored, 'failed': failed}
         return entry
+
+    def mirror_credentials_to_backend(self, manifest: Dict[str, Any], backend
+                                      ) -> Tuple[int, int]:
+        """Copy the manifest's credentials into ``backend`` as normal entries (updates existing) —
+        the same ``Credential`` → ``credential_to_spec`` → ``store`` path as
+        :meth:`_restore_credentials`, but targeting a specific backend. Returns
+        ``(mirrored, failed)``."""
+        from .credential_model import Credential, credential_to_spec
+        mirrored = failed = 0
+        for c in manifest.get('credentials') or []:
+            secret = c.get('secret')
+            if secret is None:
+                continue
+            try:
+                cred = Credential(
+                    id=c.get('id', ''), type=c.get('type', ''),
+                    host=c.get('host'), username=c.get('username'),
+                    secret=secret, metadata=dict(c.get('metadata') or {}))
+                if backend.store(credential_to_spec(cred), secret):
+                    mirrored += 1
+                else:
+                    failed += 1
+            except Exception:
+                logger.warning("Failed to mirror a credential to the target backend",
+                               exc_info=True)
+                failed += 1
+        return mirrored, failed
 
     def import_from_backend(self, backend, entry, *, mode: str = 'replace',
                             create_backup: bool = True,
