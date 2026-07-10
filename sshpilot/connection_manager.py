@@ -2697,8 +2697,13 @@ class ConnectionManager(GObject.Object):
             logger.error(f"Failed to update connection: {e}")
             return False
 
-    def remove_connection(self, connection: Connection) -> bool:
-        """Remove connection from config and list"""
+    def remove_connection(
+        self,
+        connection: Connection,
+        *,
+        reload_config: bool = True,
+    ) -> bool:
+        """Remove a connection, optionally deferring the final config reload."""
         try:
             # Remove from list
             if connection in self.connections:
@@ -2736,11 +2741,13 @@ class ConnectionManager(GObject.Object):
             # Emit signal
             self.emit('connection-removed', connection)
             
-            # Reload connections so in-memory list reflects latest file state
-            try:
-                self.load_ssh_config()
-            except Exception:
-                pass
+            # Bulk UI deletion defers this expensive full parse until every
+            # selected connection has been persisted.
+            if reload_config:
+                try:
+                    self.load_ssh_config()
+                except Exception:
+                    pass
 
             logger.info(f"Connection removed: {connection}")
             return True

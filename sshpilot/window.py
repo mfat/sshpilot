@@ -5841,16 +5841,45 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             if response not in {'delete', 'close_remove'}:
                 return
 
-            for connection in connections:
-                if not connection:
-                    continue
-                if response == 'close_remove':
-                    self._disconnect_connection_terminals(connection)
-                self.connection_manager.remove_connection(connection)
+            pending = iter(connection for connection in connections if connection)
+            self._deleting_connections_batch = True
 
-            # No automatic selection or focus changes after deletion
-            # Let the connection removal handler manage the UI state
+            def _delete_next_connection():
+                try:
+                    connection = next(pending)
+                except StopIteration:
+                    self._deleting_connections_batch = False
+                    self.group_manager._save_groups()
+                    try:
+                        self.connection_manager.load_ssh_config()
+                    except Exception:
+                        logger.exception(
+                            "Failed to reload connections after batch deletion"
+                        )
+                    return False
+
+                try:
+                    if response == 'close_remove':
+                        self._disconnect_connection_terminals(connection)
+                    self.connection_manager.remove_connection(
+                        connection,
+                        reload_config=False,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to delete connection %s",
+                        getattr(connection, 'nickname', ''),
+                    )
+
+                # Give GTK a chance to process redraws and window-manager
+                # responsiveness checks between potentially blocking keyring
+                # and filesystem operations.
+                GLib.idle_add(_delete_next_connection)
+                return False
+
+            GLib.idle_add(_delete_next_connection)
         except Exception as e:
+            self._deleting_connections_batch = False
             logger.error(f"Failed to delete connections: {e}")
 
     def on_connection_added(self, manager, connection):
@@ -5887,7 +5916,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 group['connections'] = [
                     n for n in group['connections'] if n != connection.nickname
                 ]
-        self.group_manager._save_groups()
+        if not getattr(self, '_deleting_connections_batch', False):
+            self.group_manager._save_groups()
+        self._refresh_group_rows_after_connection_removed(connection)
 
         # Close all terminals for this connection and clean up maps
         terminals = list(self.connection_to_terminals.get(connection, []))
@@ -5929,6 +5960,38 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         # Use idle_add to restore scroll position after UI updates complete
         GLib.idle_add(_restore_scroll_only)
+
+    def _refresh_group_rows_after_connection_removed(self, connection):
+        """Refresh visible group counts after an incremental row removal."""
+        connections_dict = {
+            conn.nickname: conn
+            for conn in self.connection_manager.get_connections()
+        }
+        row = self.connection_list.get_first_child()
+        while row:
+            if isinstance(row, GroupRow):
+                if getattr(row, 'is_tag_group', False):
+                    row.group_info['connections'] = [
+                        nickname
+                        for nickname in row.group_info.get('connections', [])
+                        if nickname != connection.nickname
+                    ]
+                else:
+                    current_group = self.group_manager.groups.get(row.group_id)
+                    if current_group is not None:
+                        row.group_info['connections'] = list(
+                            current_group.get('connections', [])
+                        )
+
+                row.connections_dict = connections_dict
+                if hasattr(row, '_member_rows'):
+                    row._member_rows = [
+                        member
+                        for member in row._member_rows
+                        if getattr(member, 'connection', None) is not connection
+                    ]
+                row._update_display()
+            row = row.get_next_sibling()
 
     def _recompute_connection_state(self, connection):
         """Aggregate per-terminal state into the connection's authoritative state.
