@@ -1,6 +1,7 @@
 import os
 import asyncio
 import logging
+import threading
 from typing import Optional
 
 
@@ -81,23 +82,41 @@ class TerminalManager:
         regardless (the user cancelling their own prompt falls back to SSH's own prompt)."""
         try:
             from .secret_storage import get_secret_manager
-            if not get_secret_manager().selected_needs_unlock():
+            manager = get_secret_manager()
+            if not manager.selected_needs_unlock():
                 return False
             from .secret_unlock_dialog import prompt_unlock
 
-            def _on_done(_success):
-                still_locked = False
-                try:
-                    still_locked = get_secret_manager().selected_needs_unlock()
-                except Exception:
+            def _show_unlock():
+                def _on_done(_success):
                     still_locked = False
-                if (still_locked and _allow_reprompt and not owned[0]
-                        and self._maybe_unlock_secrets_then(retry, _allow_reprompt=False)):
-                    return  # rode a deferred prompt -> our own prompt now drives the retry
-                retry()
+                    try:
+                        still_locked = get_secret_manager().selected_needs_unlock()
+                    except Exception:
+                        still_locked = False
+                    if (still_locked and _allow_reprompt and not owned[0]
+                            and self._maybe_unlock_secrets_then(retry, _allow_reprompt=False)):
+                        return  # rode a deferred prompt -> our own prompt now drives the retry
+                    retry()
 
-            owned = [True]
-            owned[0] = bool(prompt_unlock(self.window, on_done=_on_done))
+                owned = [True]
+                owned[0] = bool(prompt_unlock(self.window, on_done=_on_done))
+
+            # Locked. A vault that isn't signed in can't be unlocked, so decide off the
+            # main thread (``selected_needs_login`` spawns a slow ``bw`` process): when
+            # not signed in, skip the doomed "Unlock vault" dialog and just proceed with
+            # the connection (SSH prompts for auth itself); otherwise show the unlock prompt.
+            def _probe():
+                needs_login = manager.selected_needs_login()
+                GLib.idle_add(lambda: (_after_probe(needs_login), False)[1])
+
+            def _after_probe(needs_login):
+                if needs_login:
+                    retry()  # not signed in -> can't autofill; connect normally
+                    return
+                _show_unlock()
+
+            threading.Thread(target=_probe, daemon=True).start()
             return True
         except Exception as exc:
             logger.error("Secret unlock prompt failed: %s", exc)
