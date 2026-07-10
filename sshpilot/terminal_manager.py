@@ -648,12 +648,12 @@ class TerminalManager:
         except Exception as e:
             logger.error(f"Failed to add terminal tab: {e}")
 
-    def show_local_terminal(self):
+    def show_local_terminal(self, *, title="Local Terminal"):
         logger.info("Show local terminal tab")
         try:
             class LocalConnection:
                 def __init__(self):
-                    self.nickname = "Local Terminal"
+                    self.nickname = title
                     self.hostname = "localhost"
                     self.host = self.hostname
                     self.username = os.getenv('USER', 'user')
@@ -662,7 +662,7 @@ class TerminalManager:
             local_connection = LocalConnection()
             terminal_widget = TerminalWidget(local_connection, self.window.config, self.window.connection_manager)
             terminal_widget.setup_local_shell()
-            self._add_terminal_tab(terminal_widget, "Local Terminal")
+            self._add_terminal_tab(terminal_widget, title)
 
             # Register terminal so theme/font updates affect existing local tabs
             window = self.window

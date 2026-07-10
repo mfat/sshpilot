@@ -224,6 +224,15 @@ class WindowConfigDialogsMixin:
         private_keys_check.connect('notify::active', on_private_keys_toggled)
         sync_connection_controls()
 
+        dest_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        dest_heading = Gtk.Label(label=_("Destination"), xalign=0)
+        dest_heading.add_css_class('heading'); dest_heading.set_margin_top(6)
+        dest_box.append(dest_heading)
+        dest_file = Gtk.CheckButton(label=_("Save to file (.spbk)")); dest_file.set_active(True)
+        dest_bw = Gtk.CheckButton(label=_("Save to Bitwarden")); dest_bw.set_group(dest_file)
+        dest_box.append(dest_file); dest_box.append(dest_bw)
+        box.append(dest_box)
+
         enc_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         enc_label = Gtk.Label(label=_("Encrypt with a passphrase"), xalign=0, hexpand=True)
         enc_switch = Gtk.Switch(active=bool(encrypt_default))
@@ -243,10 +252,15 @@ class WindowConfigDialogsMixin:
         box.append(caption)
 
         def sync_pw(*_a):
-            on = enc_switch.get_active()
+            # Bitwarden uses the vault's own encryption — the passphrase UI only applies to files.
+            to_bw = dest_bw.get_active()
+            on = enc_switch.get_active() and not to_bw
+            enc_row.set_visible(not to_bw)
             pw.set_visible(on)
-            caption.set_visible(not on)
+            caption.set_visible(not on and not to_bw)
         enc_switch.connect('notify::active', sync_pw)
+        dest_file.connect('notify::active', sync_pw)
+        dest_bw.connect('notify::active', sync_pw)
         sync_pw()
 
         dialog.set_extra_child(box)
@@ -278,6 +292,10 @@ class WindowConfigDialogsMixin:
                     sel_ids, enc_switch.get_active(), options,
                     error=_("Select at least one connection to include its saved passwords "
                             "or private keys.")), False)[1])
+                return
+            if dest_bw.get_active():
+                # Bitwarden note destination — no file/passphrase; vault encryption only.
+                self._export_to_bitwarden(selected, options)
                 return
             if enc_switch.get_active():
                 passphrase = pw.get_text() or ''
@@ -322,6 +340,46 @@ class WindowConfigDialogsMixin:
             alert.present(parent)
         else:
             alert.present()
+
+    def _export_to_bitwarden(self, connections, options):
+        """Get Bitwarden ready, then store the backup manifest in a secure note."""
+        from .bitwarden_backup_setup import ensure_bitwarden_ready
+
+        def after_ready(ready):
+            if not ready:
+                return
+
+            def do_export(*_a):
+                from datetime import datetime
+                from .backup_manager import BackupManager
+                from .backup_backends import BitwardenBackupBackend, BackupTooLargeForNote
+                from .secret_storage import get_secret_manager
+                name = _("sshPilot Backup {}").format(datetime.now().strftime('%Y-%m-%d %H:%M'))
+                mgr = BackupManager(self.config, self.connection_manager)
+                backend = BitwardenBackupBackend(
+                    get_secret_manager().get_backend("bitwarden"), item_name=name)
+                try:
+                    entry = mgr.export_to_backend(
+                        backend, connections=connections, options=options)
+                except BackupTooLargeForNote as e:
+                    self._simple_dialog(_("Backup too large for Bitwarden"), str(e))
+                    return
+                except Exception as e:
+                    self._simple_dialog(_("Export Failed"), str(e))
+                    return
+                counts = getattr(mgr, 'last_export_counts', {})
+                self._simple_dialog(
+                    _("Export Successful"),
+                    _("Backup saved to Bitwarden as “{}”.\n\n{} credential(s) and {} private "
+                      "key(s) included.").format(entry.name, counts.get('credentials', 0),
+                                                 counts.get('private_keys', 0)))
+
+            # Reading saved secrets for the manifest may need the CURRENT secrets backend unlocked.
+            self._run_after_vault_unlock_for_secrets(
+                do_export, needed=bool(options.get('secrets')),
+                cancelled_heading=_("Export Cancelled"))
+
+        ensure_bitwarden_ready(self, after_ready)
 
     def _confirm_plaintext_then_export(self, connections, sel_ids, options):
         sensitive_items = []
@@ -419,7 +477,30 @@ class WindowConfigDialogsMixin:
         file_dialog.save(self, None, on_save_response)
 
     def show_import_dialog(self):
-        """Show import configuration dialog"""
+        """Ask where to import from (file or Bitwarden), then run that flow."""
+        logger.info("Show import source dialog")
+        try:
+            dialog = Adw.MessageDialog(
+                transient_for=self, modal=True, heading=_("Import Configuration"),
+                body=_("Import a backup from a file or from your Bitwarden vault."))
+            dialog.add_response('cancel', _('Cancel'))
+            dialog.add_response('bitwarden', _('From Bitwarden'))
+            dialog.add_response('file', _('From File'))
+            dialog.set_default_response('file')
+            dialog.set_close_response('cancel')
+
+            def on_source(_d, resp):
+                if resp == 'file':
+                    self._import_from_file()
+                elif resp == 'bitwarden':
+                    self._import_from_bitwarden()
+            dialog.connect('response', on_source)
+            dialog.present()
+        except Exception as e:
+            logger.error(f"Failed to show import source dialog: {e}")
+
+    def _import_from_file(self):
+        """Show the file chooser for a .spbk / .json import."""
         logger.info("Show import configuration dialog")
         try:
             # Create file chooser dialog for opening
@@ -470,6 +551,72 @@ class WindowConfigDialogsMixin:
             
         except Exception as e:
             logger.error(f"Failed to show import dialog: {e}")
+
+    def _import_from_bitwarden(self):
+        """Ensure Bitwarden is ready, list sshPilot backups, then restore the chosen one."""
+        from .bitwarden_backup_setup import ensure_bitwarden_ready
+
+        def proceed(ready):
+            if not ready:
+                return
+            try:
+                from .backup_backends import BitwardenBackupBackend
+                from .secret_storage import get_secret_manager
+                backend = BitwardenBackupBackend(get_secret_manager().get_backend("bitwarden"))
+                entries = backend.list_exports()
+            except Exception as e:
+                self._simple_dialog(_("Import Failed"), str(e))
+                return
+            if not entries:
+                self._simple_dialog(
+                    _("No backups found"),
+                    _("No sshPilot backups were found in your Bitwarden vault."))
+                return
+            self._show_bitwarden_entry_chooser(backend, entries)
+
+        ensure_bitwarden_ready(self, proceed)
+
+    def _show_bitwarden_entry_chooser(self, backend, entries):
+        dialog = Adw.MessageDialog(
+            transient_for=self, modal=True, heading=_("Import from Bitwarden"),
+            body=_("Choose a backup to restore:"))
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        box.set_margin_start(12); box.set_margin_end(12)
+        box.set_margin_top(12); box.set_margin_bottom(12)
+        radios = []
+        group = None
+        for entry in entries:
+            label = entry.name + (f"  ({entry.date[:10]})" if entry.date else "")
+            rb = Gtk.CheckButton(label=label)
+            if group is None:
+                group = rb
+                rb.set_active(True)
+            else:
+                rb.set_group(group)
+            radios.append((rb, entry))
+            box.append(rb)
+        dialog.set_extra_child(box)
+        dialog.add_response('cancel', _('Cancel'))
+        dialog.add_response('open', _('Restore'))
+        dialog.set_response_appearance('open', Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response('open')
+        dialog.set_close_response('cancel')
+
+        def on_resp(_d, resp):
+            if resp != 'open':
+                return
+            entry = next((e for rb, e in radios if rb.get_active()), None)
+            if entry is None:
+                return
+            try:
+                manifest = backend.read(entry)
+            except Exception as e:
+                self._simple_dialog(_("Import Failed"), str(e))
+                return
+            # Reuse the .spbk apply path — a Bitwarden-note manifest has the same shape.
+            self._show_import_mode_dialog("", manifest=manifest)
+        dialog.connect('response', on_resp)
+        dialog.present()
 
     def _begin_import(self, import_path: str):
         """Route an import by format: .spbk (decrypt as needed) vs legacy JSON."""
