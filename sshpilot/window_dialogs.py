@@ -137,7 +137,7 @@ class WindowConfigDialogsMixin:
         box.append(category_box)
 
         connection_label = Gtk.Label(
-            label=_("Connections for saved secrets and private keys"),
+            label=_("Connections"),
             xalign=0)
         connection_label.add_css_class('heading')
         box.append(connection_label)
