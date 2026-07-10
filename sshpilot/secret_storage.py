@@ -745,7 +745,9 @@ class BitwardenBackend(SecretBackend):
     def describe(self) -> str:
         try:
             from .platform_utils import describe_bw_cli_source
-            src = describe_bw_cli_source()
+            # verify=False: label only, must not spawn ``bw --version`` on the
+            # GTK main thread (describe() runs in the synchronous startup banner).
+            src = describe_bw_cli_source(verify=False)
             if src:
                 return f"{self.name} ({src})"
         except Exception:

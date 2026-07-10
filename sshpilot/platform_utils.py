@@ -198,8 +198,12 @@ def resolve_bw_cli_binding(
     """
     global _bw_binding_cache
     now = time.monotonic()
+    # The shared cache holds a *verified* binding; only read/write it when
+    # verifying, so an unverified label lookup can't hand a stale/unverified
+    # binding to a verify=True caller.
+    use_cache = path_only and verify
     if (
-        path_only
+        use_cache
         and not force_refresh
         and _bw_binding_cache is not None
         and now - _bw_binding_cache[1] < _BW_CACHE_TTL
@@ -212,7 +216,7 @@ def resolve_bw_cli_binding(
         if verified:
             binding = candidate
             break
-    if path_only:
+    if use_cache:
         _bw_binding_cache = (binding, now) if binding else None
     return binding
 
@@ -269,9 +273,15 @@ def resolve_bw_cli(*, force_refresh: bool = False) -> Optional[List[str]]:
     return list(binding.argv_prefix)
 
 
-def describe_bw_cli_source(*, force_refresh: bool = False) -> Optional[str]:
-    """Human-readable label for the active ``bw`` source, if any."""
-    binding = resolve_bw_cli_binding(force_refresh=force_refresh)
+def describe_bw_cli_source(
+    *, force_refresh: bool = False, verify: bool = True
+) -> Optional[str]:
+    """Human-readable label for the active ``bw`` source, if any.
+
+    Pass ``verify=False`` for UI labels that must not block the GTK main thread on
+    the Node ``bw --version`` probe (the source string is the same either way).
+    """
+    binding = resolve_bw_cli_binding(force_refresh=force_refresh, verify=verify)
     return binding.source if binding else None
 
 
