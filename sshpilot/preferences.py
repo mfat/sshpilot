@@ -267,6 +267,8 @@ class PreferencesWindow(Adw.Window):
         self.open_file_manager_externally_row = None
 
         self._config_signal_id = None
+        self._bw_ui_refresh_id = None
+        self._bw_probe_in_flight = False
 
         if hasattr(self.config, 'connect'):
             try:
@@ -300,6 +302,7 @@ class PreferencesWindow(Adw.Window):
 
         # Save on close to persist advanced SSH settings
         self.connect('close-request', self.on_close_request)
+        self.connect('map', self._on_preferences_map)
     
     def setup_navigation_layout(self):
         """Configure split view layout using OverlaySplitView."""
@@ -1569,6 +1572,20 @@ class PreferencesWindow(Adw.Window):
             self.secret_backend_row.connect('notify::selected', self.on_secret_backend_changed)
             secrets_group.add(self.secret_backend_row)
 
+            self.bw_status_row = Adw.ActionRow()
+            self.bw_status_row.set_title(_("Bitwarden status"))
+            self.bw_status_row.set_subtitle(_("Checking…"))
+            self._bw_status_btn = Gtk.Button(label=_("Set up…"))
+            self._bw_status_btn.set_valign(Gtk.Align.CENTER)
+            self._bw_status_btn.connect('clicked', self.on_bw_setup_clicked)
+            self.bw_status_row.add_suffix(self._bw_status_btn)
+            self._bw_logout_btn = Gtk.Button(label=_("Log out"))
+            self._bw_logout_btn.set_valign(Gtk.Align.CENTER)
+            self._bw_logout_btn.add_css_class('destructive-action')
+            self._bw_logout_btn.connect('clicked', self.on_bw_logout_clicked)
+            self.bw_status_row.add_suffix(self._bw_logout_btn)
+            secrets_group.add(self.bw_status_row)
+
             # Bitwarden CLI account/profile (BITWARDENCLI_APPDATA_DIR) — a data dir for a
             # specific account (incl. a self-hosted Vaultwarden). Empty = default account.
             # Only shown when the Bitwarden backend is selected.
@@ -1666,8 +1683,11 @@ class PreferencesWindow(Adw.Window):
             secrets_group.add(self.agent_no_store_row)
 
             # Show the bw/timeout/forget rows only when they apply to the
-            # currently-selected backend.
-            self._update_secret_rows_visibility(current_backend)
+            # currently-selected backend. Bitwarden readiness is probed on idle
+            # so Settings opens immediately (``bw status`` can be slow).
+            self._update_secret_rows_visibility(current_backend, defer_bitwarden_probe=True)
+            if (current_backend or '').strip().lower() == 'bitwarden':
+                self._schedule_bitwarden_ui_refresh()
 
             security_page.add(secrets_group)
 
@@ -2197,7 +2217,129 @@ class PreferencesWindow(Adw.Window):
             except Exception as exc:
                 logger.debug("Failed to propagate pass-through state to shortcut editor: %s", exc)
 
-    def _update_secret_rows_visibility(self, name):
+    def _current_secret_backend_name(self):
+        try:
+            index = self.secret_backend_row.get_selected()
+            ids = getattr(self, '_secret_backend_ids', ['auto'])
+            return ids[index] if 0 <= index < len(ids) else 'auto'
+        except Exception:
+            return str(self.config.get_setting('secrets.backend', 'auto') or 'auto')
+
+    def _schedule_bitwarden_ui_refresh(self):
+        """Probe Bitwarden readiness once on idle (avoid blocking Settings)."""
+        if self._bw_ui_refresh_id is not None:
+            return
+        self._bw_ui_refresh_id = GLib.idle_add(self._refresh_bitwarden_ui_idle)
+
+    def _refresh_bitwarden_ui_idle(self):
+        self._bw_ui_refresh_id = None
+        try:
+            if self._current_secret_backend_name() == 'bitwarden':
+                self._probe_bitwarden_async()
+        except Exception as exc:
+            logger.debug("Deferred Bitwarden UI refresh failed: %s", exc)
+        return False
+
+    def _probe_bitwarden_async(self):
+        """Probe Bitwarden readiness on a worker thread, then update the status row.
+
+        ``bw status`` blocks on a Node subprocess when the vault is locked/signed
+        out; keeping it off the main thread stops Settings from freezing (and stops
+        GNOME's force-quit dialog from appearing after logout). The logout button is
+        only shown once a probe completes, so there is never an in-flight probe
+        racing a state-changing action.
+        """
+        if self._bw_probe_in_flight:
+            return
+        self._bw_probe_in_flight = True
+        self._apply_bitwarden_status_row(pending=True)
+
+        def worker():
+            try:
+                from .bitwarden_setup import probe_bitwarden_status
+                status = probe_bitwarden_status()
+            except Exception:
+                status = None
+            GLib.idle_add(lambda: (self._on_bitwarden_probe_done(status), False)[1])
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_bitwarden_probe_done(self, status):
+        self._bw_probe_in_flight = False
+        try:
+            if self._current_secret_backend_name() == 'bitwarden':
+                self._apply_bitwarden_status_row(status)
+        except Exception:
+            logger.debug("Bitwarden status apply failed", exc_info=True)
+        return False
+
+    def _on_preferences_map(self, *_args):
+        """Refresh Bitwarden rows when Settings is shown (deferred, cached)."""
+        if self._current_secret_backend_name() != 'bitwarden':
+            return
+        self._schedule_bitwarden_ui_refresh()
+
+    def _bitwarden_status_text(self, status=None, *, pending=False):
+        """Status line for the Bitwarden status row."""
+        if pending or status is None:
+            return _("Checking Bitwarden status…")
+        try:
+            from .platform_utils import get_managed_bw_cli_path, resolve_bw_cli_path
+            cli_path = resolve_bw_cli_path()
+            install_path = get_managed_bw_cli_path()
+        except Exception:
+            cli_path = None
+            install_path = None
+        if not status.cli_installed:
+            if install_path:
+                return _(
+                    "The “bw” command was not found.\n\n"
+                    "sshPilot installs the CLI to:\n    {path}"
+                ).format(path=install_path)
+            return _("The “bw” command was not found.")
+        path_line = ""
+        if cli_path:
+            path_line = "\n\n" + _("Using: {path}").format(path=cli_path)
+        if status.is_ready:
+            return _("Signed in and vault unlocked.{path}").format(path=path_line)
+        if status.needs_login:
+            return _("CLI found but you are not signed in.{path}").format(path=path_line)
+        return _("CLI found but the vault is locked.{path}").format(path=path_line)
+
+    def _apply_bitwarden_status_row(self, status=None, *, pending=False):
+        """Update the Bitwarden status row (message + optional action buttons)."""
+        if not hasattr(self, 'bw_status_row'):
+            return
+        self.bw_status_row.set_subtitle(
+            self._bitwarden_status_text(status, pending=pending)
+        )
+        action_btn = getattr(self, '_bw_status_btn', None)
+        logout_btn = getattr(self, '_bw_logout_btn', None)
+        if action_btn is None and logout_btn is None:
+            return
+        if pending or status is None:
+            if action_btn is not None:
+                action_btn.set_visible(False)
+            if logout_btn is not None:
+                logout_btn.set_visible(False)
+            return
+        signed_in = status.cli_installed and not status.needs_login
+        if logout_btn is not None:
+            logout_btn.set_visible(signed_in)
+        if action_btn is None:
+            return
+        if status.is_ready:
+            action_btn.set_visible(False)
+            return
+        action_btn.set_visible(True)
+        if not status.cli_installed:
+            action_btn.set_label(_("Set up…"))
+        elif status.needs_login:
+            action_btn.set_label(_("Sign in…"))
+        else:
+            action_btn.set_label(_("Unlock…"))
+
+    def _update_secret_rows_visibility(self, name, *, defer_bitwarden_probe=False):
         """Show the bw data-directory row only for the Bitwarden backend, and the
         session-timeout row only for session-backed backends."""
         try:
@@ -2210,6 +2352,18 @@ class PreferencesWindow(Adw.Window):
                 session = name == 'bitwarden'
             if hasattr(self, 'bw_profile_row'):
                 self.bw_profile_row.set_visible(name == 'bitwarden')
+            if hasattr(self, 'bw_status_row'):
+                self.bw_status_row.set_visible(name == 'bitwarden')
+            if name == 'bitwarden':
+                # Probe readiness off the main thread: ``bw status`` spawns a slow
+                # Node process (1-3s) whenever the vault is locked or signed out, so
+                # running it here would freeze Settings and can trip GNOME's
+                # force-quit dialog after actions like logout. Show "Checking…" now
+                # and fill the row in when the probe returns. ``defer_bitwarden_probe``
+                # leaves the actual probe to the caller's idle scheduler.
+                self._apply_bitwarden_status_row(pending=True)
+                if not defer_bitwarden_probe:
+                    self._probe_bitwarden_async()
             for attr in ('kdbx_db_row', 'kdbx_keyfile_row'):
                 if hasattr(self, attr):
                     getattr(self, attr).set_visible(name == 'keepassxc')
@@ -2220,8 +2374,6 @@ class PreferencesWindow(Adw.Window):
                 self._refresh_forget_master_row()
             if hasattr(self, 'agent_no_store_row'):
                 self.agent_no_store_row.set_visible(name == 'agent')
-            # Tell the user how to set up the bw CLI for the selected backend.
-            # (Plain text only — no '<' or '&' — Adw rows parse Pango markup.)
             if hasattr(self, 'secret_backend_row'):
                 if name == 'agent':
                     hint = _(
@@ -2229,8 +2381,7 @@ class PreferencesWindow(Adw.Window):
                         "authentication."
                     )
                 elif name == 'bitwarden':
-                    hint = _("Uses the bw CLI. Run “bw login” in a terminal first "
-                             "(for a self-hosted Vaultwarden, run “bw config server” first).")
+                    hint = _("Uses the bw CLI. See bitwarden.com/help/cli.")
                 else:
                     hint = ""
                 try:
@@ -2281,16 +2432,40 @@ class PreferencesWindow(Adw.Window):
             os.environ['SSHPILOT_SECRET_BACKEND'] = name
             self._update_secret_rows_visibility(name)
             logger.info("Secret storage backend set to: %s", name)
+
+            def _done(success):
+                logger.info("Secret backend setup/unlock %s",
+                            "succeeded" if success else "not completed")
+                if name == 'bitwarden':
+                    try:
+                        self._update_secret_rows_visibility(name)
+                    except Exception:
+                        logger.debug("Failed to refresh Bitwarden rows", exc_info=True)
+
+            if name == 'bitwarden':
+                try:
+                    from .bitwarden_setup import (
+                        probe_bitwarden_status,
+                        run_bitwarden_setup,
+                    )
+                    status = probe_bitwarden_status(force_refresh=True)
+                    needs_setup = not status.is_ready
+                    if needs_setup and status.cli_installed:
+                        # Signed in but locked — unlock only, not the full setup wizard.
+                        if not status.needs_login and manager.selected_needs_unlock():
+                            from .secret_unlock_dialog import prompt_unlock
+                            prompt_unlock(self, on_done=_done)
+                            return
+                    if needs_setup:
+                        run_bitwarden_setup(self, on_done=_done)
+                        return
+                except Exception as exc:
+                    logger.debug("Bitwarden setup probe failed: %s", exc)
             # A session-backed backend must be unlocked before it can store/read.
             if manager.selected_needs_unlock():
                 try:
                     from .secret_unlock_dialog import prompt_unlock
 
-                    # prompt_unlock owns its own messaging (login-required /
-                    # wrong-password); we only log the outcome here.
-                    def _done(success):
-                        logger.info("Secret backend unlock %s",
-                                    "succeeded" if success else "not completed")
                     prompt_unlock(self, on_done=_done)
                 except Exception as exc:
                     logger.error("Failed to prompt secret backend unlock: %s", exc)
@@ -2355,6 +2530,89 @@ class PreferencesWindow(Adw.Window):
                 self._write_identity_agent_block()
         except Exception as exc:
             logger.error("Failed to update custom agent socket: %s", exc)
+
+    def on_bw_setup_clicked(self, _button):
+        """Run the Bitwarden CLI install / sign-in / unlock wizard."""
+        try:
+            from .bitwarden_setup import run_bitwarden_setup
+
+            def _done(success):
+                logger.info("Bitwarden setup %s",
+                            "completed" if success else "not completed")
+                try:
+                    from .bitwarden_setup import invalidate_bitwarden_status_cache
+                    invalidate_bitwarden_status_cache()
+                    self._update_secret_rows_visibility('bitwarden')
+                except Exception:
+                    logger.debug("Failed to refresh Bitwarden rows after setup", exc_info=True)
+                if success:
+                    self._refresh_forget_master_row()
+
+            run_bitwarden_setup(self, on_done=_done)
+        except Exception as exc:
+            logger.error("Bitwarden setup failed: %s", exc)
+
+    def on_bw_logout_clicked(self, _button):
+        """Sign out of Bitwarden (``bw logout``) off the main thread."""
+        try:
+            from .bitwarden_setup import invalidate_bitwarden_status_cache, progress_dialog
+            from .platform_utils import invalidate_bw_cli_cache
+            from .secret_storage import get_secret_manager
+
+            backend = get_secret_manager().get_backend('bitwarden')
+            if backend is None or not backend.is_available():
+                return
+            logout_btn = getattr(self, '_bw_logout_btn', None)
+            if logout_btn is not None:
+                logout_btn.set_sensitive(False)
+
+            cancelled = {"v": False}
+
+            def _cancel():
+                cancelled["v"] = True
+
+            _set_status, close = progress_dialog(
+                self, _("Bitwarden"), _("Signing out of Bitwarden…"), on_cancel=_cancel,
+            )
+
+            def worker():
+                ok = False
+                if not cancelled["v"]:
+                    try:
+                        ok = bool(backend.logout())
+                    except Exception:
+                        logger.debug("Bitwarden logout failed", exc_info=True)
+                GLib.idle_add(lambda: (_after_logout(ok), False)[1])
+
+            def _after_logout(ok):
+                close()
+                if logout_btn is not None:
+                    logout_btn.set_sensitive(True)
+                if cancelled["v"]:
+                    return
+                if not ok:
+                    dlg = Adw.MessageDialog(
+                        transient_for=self, modal=True,
+                        heading=_("Log out failed"),
+                        body=_(
+                            "Could not sign out of Bitwarden. "
+                            "Try running “bw logout” in a terminal."
+                        ),
+                    )
+                    dlg.add_response('ok', _('OK'))
+                    dlg.present()
+                    return
+                invalidate_bw_cli_cache()
+                invalidate_bitwarden_status_cache()
+                self._update_secret_rows_visibility('bitwarden')
+                logger.info("Signed out of Bitwarden")
+
+            threading.Thread(target=worker, daemon=True).start()
+        except Exception as exc:
+            logger.error("Bitwarden logout failed: %s", exc)
+            logout_btn = getattr(self, '_bw_logout_btn', None)
+            if logout_btn is not None:
+                logout_btn.set_sensitive(True)
 
     def on_bw_profile_changed(self, row):
         """Persist and propagate the Bitwarden CLI data dir (account/profile). Changing

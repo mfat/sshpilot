@@ -5,7 +5,7 @@ layer that asks the user for the master password and hands it to the selected
 backend's :meth:`SecretManager.unlock_selected`.
 
 It owns the user-facing messaging for the unlock interaction:
-- if the backend has no authenticated account, it tells the user to run ``bw login``
+- if the backend has no authenticated account, it opens the Bitwarden sign-in wizard
   instead of showing a doomed password prompt;
 - on a failed unlock it reports an incorrect-password message.
 ``on_done(success: bool)`` is purely for flow control (success only when actually
@@ -134,10 +134,58 @@ def _spinner_dialog(parent, heading, body):
     return status.set_text, _close, dialog
 
 
+def _prompt_unavailable_session_backend(parent, backend):
+    """Tell the user the selected session backend cannot run (e.g. missing ``bw``)."""
+    name = (getattr(backend, "name", "") or "").strip().lower()
+    friendly = _friendly_backend_name(backend)
+
+    if name == "bitwarden":
+        from .bitwarden_setup import run_bitwarden_setup
+
+        dialog = Adw.MessageDialog(
+            transient_for=parent, modal=True,
+            heading=_("Bitwarden CLI not found"),
+            body=_(
+                "Bitwarden is selected for secret storage, but the “bw” command "
+                "was not found. Passwords and passphrases will not be stored or "
+                "autofilled until the CLI is installed.\n\n"
+                "Open Settings ▸ Security & Credentials to change the backend, "
+                "or set up Bitwarden now."
+            ),
+        )
+        dialog.add_response("dismiss", _("Not now"))
+        dialog.add_response("setup", _("Set up Bitwarden…"))
+        dialog.set_default_response("setup")
+        dialog.set_close_response("dismiss")
+
+        def _respond(_dlg, resp):
+            if resp == "setup":
+                run_bitwarden_setup(parent, interactive=True)
+
+        dialog.connect("response", _respond)
+        dialog.present()
+        return
+
+    _message(
+        parent,
+        _("Secret backend unavailable"),
+        _(
+            "{name} is selected for secret storage but is not available on this "
+            "system. Passwords and passphrases will not be stored or autofilled "
+            "until it is available.\n\n"
+            "Open Settings ▸ Security & Credentials to fix the setup or choose "
+            "another backend."
+        ).format(name=friendly),
+    )
+
+
 def unlock_at_startup(window):
     """If the selected secret backend is session-backed (Bitwarden/Vaultwarden) and
     locked, prompt to unlock it at app startup — so the vault is ready (and warm) before
     the first connection, with the same password dialog + spinner used elsewhere.
+
+    When a session-backed backend is selected but unavailable (e.g. ``bw`` was
+    removed), show a user-facing notice instead of failing silently.
 
     No-op for passive backends or an already-unlocked vault. Safe to schedule via
     ``GLib.idle_add`` from the application's activation. Returns ``False`` so it runs
@@ -151,6 +199,14 @@ def unlock_at_startup(window):
             manager.set_selected(Config().get_setting('secrets.backend', 'auto'))
         except Exception:
             pass
+        backend = manager.selected_backend()
+        if (
+            backend is not None
+            and getattr(backend, "session_backed", False)
+            and not backend.is_available()
+        ):
+            _prompt_unavailable_session_backend(window, backend)
+            return False
         if manager.selected_needs_unlock():
             prompt_unlock(window)
     except Exception:
@@ -316,17 +372,13 @@ def prompt_unlock(parent, *, backend=None, on_done=None):
                     pass
                 on_spinner_closed = lambda *_a: _show_password_dialog()
             elif needs_login:
-                # sshPilot only runs `bw unlock`; signing in (and, for a self-hosted
-                # Vaultwarden, pointing the CLI at the server) is a one-time terminal step.
-                login_body = _(
-                    "Your vault has no signed-in account yet. In a terminal, run “bw "
-                    "login”, then try again. For a self-hosted Vaultwarden, run “bw config "
-                    "server your-server-url” first.")
-                on_spinner_closed = lambda *_a, _body=login_body: _message(
-                    parent,
-                    _("Not signed in"),
-                    _body,
-                    on_closed=lambda: _finish(False),
+                from .bitwarden_setup import _prompt_gui_login
+
+                on_spinner_closed = lambda *_a: (
+                    _prompt_gui_login(
+                        parent, target,
+                        on_done=lambda ok: _finish(ok),
+                    )
                 )
             else:
                 on_spinner_closed = lambda *_a: _message(

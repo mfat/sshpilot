@@ -715,7 +715,11 @@ class BitwardenBackend(SecretBackend):
         ``self._bin`` pins an explicit path (used by tests)."""
         if self._argv_override is not None:
             return list(self._argv_override)
-        return resolve_host_binary(self._bin_name)
+        try:
+            from .platform_utils import resolve_bw_cli
+            return resolve_bw_cli()
+        except Exception:
+            return resolve_host_binary(self._bin_name)
 
     @property
     def _bin(self) -> Optional[str]:
@@ -736,18 +740,25 @@ class BitwardenBackend(SecretBackend):
         return prefix + ["--nointeraction"] + list(args)
 
     def describe(self) -> str:
+        try:
+            from .platform_utils import describe_bw_cli_source
+            src = describe_bw_cli_source()
+            if src:
+                return f"{self.name} ({src})"
+        except Exception:
+            pass
         return self.name
 
     def is_available(self) -> bool:
-        # Cheap: just whether the CLI exists. Lock/unlock state is a separate question
-        # answered by is_unlocked()/needs_login(). Which server/account the CLI talks to
-        # (Bitwarden cloud, a self-hosted Vaultwarden, a specific profile) is configured
-        # by the user via the `bw` CLI + the optional BITWARDENCLI_APPDATA_DIR profile.
-        return self._argv_prefix is not None
+        # ``bw`` on PATH only (verified via ``bw --version``). The Bitwarden desktop
+        # Flatpak bundles ``bw`` but it is not on PATH — install/setup handles that
+        # separately. Lock/unlock state is separate (``is_unlocked()``).
+        available = self._argv_prefix is not None
+        return available
 
     # -- bw subprocess helper --------------------------------------------
     def _run(self, args: List[str], *, token: Optional[str] = None,
-             input_bytes: Optional[bytes] = None):
+             input_bytes: Optional[bytes] = None, extra_env: Optional[dict] = None):
         """Run ``bw <args>`` non-interactively, returning the CompletedProcess.
         ``token`` (if given) is passed as ``BW_SESSION``. ``--nointeraction`` guarantees
         ``bw`` never blocks on stdin (a GUI must never hang on terminal input)."""
@@ -755,6 +766,8 @@ class BitwardenBackend(SecretBackend):
         if not prefix:
             raise RuntimeError("bw is not available")
         env = os.environ.copy()
+        if extra_env:
+            env.update(extra_env)
         if token:
             env["BW_SESSION"] = token
         started = time.monotonic()
@@ -788,6 +801,146 @@ class BitwardenBackend(SecretBackend):
         """True when no account is authenticated (``bw login`` required), so ``bw unlock``
         cannot succeed. Only called in the unlock-decision flow."""
         return self._status() == "unauthenticated"
+
+    @staticmethod
+    def _bw_cli_message(result) -> str:
+        for stream in (result.stderr, result.stdout):
+            text = (stream or b"").decode("utf-8", "replace").strip()
+            if text:
+                return text
+        return ""
+
+    @staticmethod
+    def _login_needs_2fa(message: str, *, twofa_code: Optional[str] = None) -> bool:
+        """True when ``bw login`` failed because a two-step code is still needed.
+
+        With ``--nointeraction``, the CLI cannot prompt for 2FA and often returns the
+        generic ``Login failed.`` message instead of mentioning two-step login."""
+        if (twofa_code or "").strip():
+            return False
+        lower = (message or "").lower().strip().rstrip(".")
+        if lower == "login failed":
+            return True
+        return any(
+            token in lower
+            for token in (
+                "two-step", "two step", "2fa", "two-factor",
+                "verification code", "authenticator",
+                # ``bw login`` (no --method) when 2FA is enabled: "No provider selected."
+                "no provider selected",
+            )
+        )
+
+    @staticmethod
+    def _login_error_message(result) -> str:
+        stdout = (result.stdout or b"").decode("utf-8", "replace").strip()
+        try:
+            data = json.loads(stdout)
+            if isinstance(data, dict) and not data.get("success"):
+                msg = data.get("message")
+                if isinstance(msg, str) and msg.strip():
+                    return msg.strip()
+        except json.JSONDecodeError:
+            pass
+        return BitwardenBackend._bw_cli_message(result) or "login failed"
+
+    @staticmethod
+    def _extract_login_session(result) -> Optional[str]:
+        stdout = (result.stdout or b"").decode("utf-8", "replace").strip()
+        if not stdout:
+            return None
+        try:
+            data = json.loads(stdout)
+            if isinstance(data, dict):
+                if not data.get("success"):
+                    return None
+                inner = data.get("data")
+                if isinstance(inner, str) and inner.strip():
+                    return inner.strip()
+                return None
+        except json.JSONDecodeError:
+            pass
+        if result.returncode == 0 and not stdout.startswith("{"):
+            return stdout
+        return None
+
+    def _store_session_token(self, token: str) -> None:
+        """Persist a ``bw unlock`` / ``bw login --raw`` session key. Caller holds lock."""
+        self._token = token
+        self._unlocked = True
+        os.environ["BW_SESSION"] = token
+        self._touch_deadline()
+
+    def login_with_password(
+        self,
+        email: str,
+        password: str,
+        *,
+        twofa_method: Optional[str] = None,
+        twofa_code: Optional[str] = None,
+        auth_client_secret: Optional[str] = None,
+    ) -> Tuple[bool, str, bool]:
+        """Sign in with email and master password.
+
+        Uses ``bw login … --raw`` so a session key is returned when the CLI unlocks
+        the vault in the same step (per Bitwarden CLI docs). Returns
+        ``(success, error_detail, needs_2fa)``.
+        """
+        if not self._argv_prefix:
+            return False, "bw is not available", False
+        email = (email or "").strip()
+        if not email:
+            return False, "email required", False
+        args = ["login", email, "--passwordenv", "BW_PASSWORD", "--raw", "--response"]
+        method = (twofa_method or "").strip()
+        code = (twofa_code or "").strip()
+        if method and code:
+            args.extend(["--method", method, "--code", code])
+        elif method:
+            # Email 2FA: ``bw login --method 1`` (no code) triggers the verification email.
+            args.extend(["--method", method])
+        extra_env: Dict[str, str] = {"BW_PASSWORD": password or ""}
+        challenge = (auth_client_secret or "").strip()
+        if challenge:
+            extra_env["BW_CLIENTSECRET"] = challenge
+        result = self._run(args, extra_env=extra_env)
+        if result.returncode == 0:
+            token = self._extract_login_session(result)
+            if token:
+                with self._lock:
+                    self._store_session_token(token)
+            return True, "", False
+        detail = self._login_error_message(result)
+        return False, detail, self._login_needs_2fa(detail, twofa_code=code)
+
+    def login_with_api_key(self, client_id: str, client_secret: str) -> Tuple[bool, str]:
+        """Sign in with a personal API key. Returns ``(success, error_detail)``."""
+        if not self._argv_prefix:
+            return False, "bw is not available"
+        client_id = (client_id or "").strip()
+        client_secret = (client_secret or "").strip()
+        if not client_id or not client_secret:
+            return False, "client id and secret required"
+        result = self._run(
+            ["login", "--apikey"],
+            extra_env={"BW_CLIENTID": client_id, "BW_CLIENTSECRET": client_secret},
+        )
+        if result.returncode == 0:
+            return True, ""
+        return False, self._bw_cli_message(result) or "login failed"
+
+    def login_with_sso(self, identifier: Optional[str] = None) -> Tuple[bool, str]:
+        """Start SSO sign-in (opens the system browser). Returns ``(success, error_detail)``."""
+        if not self._argv_prefix:
+            return False, "bw is not available"
+        args = ["login", "--sso"]
+        ident = (identifier or "").strip()
+        if ident:
+            args.append(ident)
+        result = self._run(args)
+        if result.returncode == 0:
+            return True, ""
+        return False, self._bw_cli_message(result) or "sso login failed"
 
     def _touch_deadline(self) -> None:
         """Refresh the idle deadline (sliding window). Caller holds ``self._lock``."""
@@ -860,11 +1013,11 @@ class BitwardenBackend(SecretBackend):
                 # via the CLI (`bw config server <url>` then `bw login`); the app's URL
                 # setting just gates availability and labels the backend.
                 env = os.environ.copy()
-                env["BW_MASTER"] = secret or ""
+                env["BW_PASSWORD"] = secret or ""
                 self._report(progress, "unlocking")
                 started = time.monotonic()
                 result = subprocess.run(
-                    self._bw_argv("unlock", "--passwordenv", "BW_MASTER", "--raw"),
+                    self._bw_argv("unlock", "--passwordenv", "BW_PASSWORD", "--raw"),
                     capture_output=True, env=env, check=False, timeout=self._TIMEOUT,
                 )
                 logger.debug("bw unlock: %.2fs (rc=%s)",
@@ -876,10 +1029,7 @@ class BitwardenBackend(SecretBackend):
                 token = result.stdout.decode("utf-8", "replace").strip()
                 if not token:
                     return False
-                self._token = token
-                self._unlocked = True
-                os.environ["BW_SESSION"] = token
-                self._touch_deadline()
+                self._store_session_token(token)
                 self._report(progress, "loading")
                 # Warm the whole-vault cache now, while the unlock spinner is still up, so
                 # every lookup this session is an in-memory hit (no per-connect bw spawn).
@@ -914,6 +1064,23 @@ class BitwardenBackend(SecretBackend):
         # would add a slow Node subprocess to shutdown.
         with self._lock:
             self._drop_session()
+
+    def logout(self) -> bool:
+        """Sign out of the Bitwarden account (``bw logout``) and drop the session."""
+        with self._lock:
+            self._drop_session()
+        if not self._argv_prefix:
+            return True
+        try:
+            result = self._run(["logout"])
+            if result.returncode != 0:
+                detail = (result.stderr or result.stdout or b"").decode("utf-8", "replace").strip()
+                logger.error("bw logout failed: %s", detail)
+                return False
+            return True
+        except Exception as exc:
+            logger.error("bw logout error: %s", exc)
+            return False
 
     # -- secure notes (used as a backup destination; not login-item secrets) ---------
     def create_or_update_secure_note(self, name: str, content: str) -> Optional[str]:

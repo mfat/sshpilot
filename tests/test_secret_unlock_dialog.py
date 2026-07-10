@@ -46,3 +46,63 @@ def test_prompt_unlock_returns_false_when_riding(monkeypatch):
         assert len(d._pending_callbacks) == 1                            # callback queued
     finally:
         d._pending_callbacks.clear()
+
+
+def test_unlock_at_startup_prompts_when_session_backend_unavailable(monkeypatch):
+    class FakeBackend:
+        name = "bitwarden"
+        session_backed = True
+
+        def is_available(self):
+            return False
+
+    class FakeManager:
+        def set_selected(self, _name):
+            pass
+
+        def selected_backend(self):
+            return FakeBackend()
+
+        def selected_needs_unlock(self):
+            return False
+
+    prompted = []
+    monkeypatch.setattr(d, "get_secret_manager", lambda: FakeManager())
+    monkeypatch.setattr(
+        d, "_prompt_unavailable_session_backend",
+        lambda parent, backend: prompted.append(backend.name),
+    )
+    monkeypatch.setattr(d, "prompt_unlock", lambda *_a, **_k: (_ for _ in ()).throw(
+        AssertionError("prompt_unlock should not run when backend is unavailable")
+    ))
+
+    assert d.unlock_at_startup(None) is False
+    assert prompted == ["bitwarden"]
+
+
+def test_unlock_at_startup_unlocks_when_available(monkeypatch):
+    class FakeBackend:
+        name = "bitwarden"
+        session_backed = True
+
+        def is_available(self):
+            return True
+
+    class FakeManager:
+        def set_selected(self, _name):
+            pass
+
+        def selected_backend(self):
+            return FakeBackend()
+
+        def selected_needs_unlock(self):
+            return True
+
+    unlocked = []
+    monkeypatch.setattr(d, "get_secret_manager", lambda: FakeManager())
+    monkeypatch.setattr(d, "_prompt_unavailable_session_backend", lambda *_a: None)
+    monkeypatch.setattr(d, "prompt_unlock", lambda parent: unlocked.append(parent))
+
+    assert d.unlock_at_startup("win") is False
+    assert unlocked == ["win"]
+

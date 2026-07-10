@@ -86,3 +86,75 @@ def test_get_ssh_dir_override(monkeypatch, tmp_path):
     )
     assert platform_utils.get_ssh_dir() == str(override)
 
+
+def test_managed_bw_cli_path_uses_data_home(monkeypatch, tmp_path):
+    monkeypatch.setattr(platform_utils, "is_flatpak", lambda: False)
+    monkeypatch.setattr(
+        platform_utils.GLib,
+        "get_user_data_dir",
+        lambda: str(tmp_path / "share"),
+        raising=False,
+    )
+    path = platform_utils.get_managed_bw_cli_path()
+    assert path == os.path.join(str(tmp_path / "share"), "sshpilot", "bin", "bw")
+
+
+def test_managed_bw_cli_path_flatpak_uses_host_data(monkeypatch):
+    monkeypatch.setattr(platform_utils, "is_flatpak", lambda: True)
+    monkeypatch.setattr(platform_utils, "_host_env", lambda name: {
+        "HOME": "/home/u",
+        "XDG_DATA_HOME": "/home/u/.local/share",
+    }.get(name))
+    path = platform_utils.get_managed_bw_cli_path()
+    assert path == "/home/u/.local/share/sshpilot/bin/bw"
+
+
+def test_discover_managed_bw_when_not_on_path(monkeypatch, tmp_path):
+    bw_path = tmp_path / "bw"
+    bw_path.write_text("#!/bin/sh\n", encoding="utf-8")
+    bw_path.chmod(0o755)
+
+    monkeypatch.setattr(platform_utils, "resolve_host_binary", lambda _b: None)
+    monkeypatch.setattr(platform_utils, "get_managed_bw_cli_path", lambda: str(bw_path))
+    monkeypatch.setattr(platform_utils, "is_flatpak", lambda: False)
+    monkeypatch.setattr(platform_utils, "_verify_bw_argv", lambda argv: argv == [str(bw_path)])
+    platform_utils.invalidate_bw_cli_cache()
+
+    binding = platform_utils.resolve_bw_cli_binding(force_refresh=True)
+    assert binding is not None
+    assert list(binding.argv_prefix) == [str(bw_path)]
+    assert "sshPilot install" in binding.source
+    assert platform_utils.resolve_bw_cli_path(force_refresh=True) == str(bw_path)
+
+
+def test_discover_legacy_managed_bw_when_new_path_missing(monkeypatch, tmp_path):
+    bw_path = tmp_path / "legacy" / "bw"
+    bw_path.parent.mkdir(parents=True)
+    bw_path.write_text("#!/bin/sh\n", encoding="utf-8")
+    bw_path.chmod(0o755)
+    new_path = str(tmp_path / "new" / "bw")
+
+    monkeypatch.setattr(platform_utils, "resolve_host_binary", lambda _b: None)
+    monkeypatch.setattr(platform_utils, "get_managed_bw_cli_path", lambda: new_path)
+    monkeypatch.setattr(platform_utils, "_legacy_managed_bw_cli_path", lambda: str(bw_path))
+    monkeypatch.setattr(platform_utils, "is_flatpak", lambda: False)
+    monkeypatch.setattr(platform_utils, "_verify_bw_argv", lambda argv: argv == [str(bw_path)])
+    platform_utils.invalidate_bw_cli_cache()
+
+    binding = platform_utils.resolve_bw_cli_binding(force_refresh=True)
+    assert binding is not None
+    assert list(binding.argv_prefix) == [str(bw_path)]
+
+
+def test_resolve_bw_cli_path_flatpak_host_binary(monkeypatch):
+    path = "/home/u/.local/share/sshpilot/bin/bw"
+    monkeypatch.setattr(
+        platform_utils,
+        "resolve_bw_cli_binding",
+        lambda **kw: platform_utils.BwCliBinding(
+            ("/usr/bin/flatpak-spawn", "--host", path),
+            f"sshPilot install ({path})",
+        ),
+    )
+    assert platform_utils.resolve_bw_cli_path() == path
+

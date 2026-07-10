@@ -578,14 +578,16 @@ def test_lookup_in_keyring_ignores_non_keyring_backend_copy(manager):
 def test_bitwarden_is_available_reresolves_bw(monkeypatch):
     # is_available() must reflect a `bw` that appears AFTER the backend is built,
     # so a newly-installed CLI is detected without restarting the app.
+    from sshpilot import platform_utils
+
     present = {'ok': False}
 
-    def fake_resolve(binary):
-        if binary != 'bw' or not present['ok']:
+    def fake_resolve():
+        if not present['ok']:
             return None
         return ['/usr/local/bin/bw']
 
-    monkeypatch.setattr(ss, 'resolve_host_binary', fake_resolve)
+    monkeypatch.setattr(platform_utils, 'resolve_bw_cli', fake_resolve)
     backend = ss.BitwardenBackend()
     assert backend.is_available() is False
     present['ok'] = True                          # bw installed after construction
@@ -593,17 +595,18 @@ def test_bitwarden_is_available_reresolves_bw(monkeypatch):
 
 
 def test_bitwarden_flatpak_uses_host_spawn(monkeypatch):
+    from sshpilot import platform_utils
+
     calls = []
 
-    def fake_resolve(binary):
-        assert binary == 'bw'
+    def fake_resolve():
         return ['/usr/bin/flatpak-spawn', '--host', 'bw']
 
     def fake_run(argv, **kwargs):
         calls.append(list(argv))
         return _Result(0, json.dumps({"status": "locked"}).encode())
 
-    monkeypatch.setattr(ss, 'resolve_host_binary', fake_resolve)
+    monkeypatch.setattr(platform_utils, 'resolve_bw_cli', fake_resolve)
     monkeypatch.setattr(ss.subprocess, 'run', fake_run)
     backend = ss.BitwardenBackend()
     assert backend.is_available() is True
@@ -662,6 +665,38 @@ class FakeBw:
             return _Result(0, b'SESSION\n')
         if cmd[:1] == ['sync'] or cmd[:1] == ['config']:
             return _Result(0, b'')
+        if cmd[:1] == ['logout']:
+            self.status = "unauthenticated"
+            return _Result(0, b'')
+        if cmd[:1] == ['login']:
+            if '--apikey' in cmd:
+                if not (env or {}).get('BW_CLIENTID') or not (env or {}).get('BW_CLIENTSECRET'):
+                    return _Result(1, b'', b'client id and secret required')
+                self.status = "locked"
+                return _Result(0, b'')
+            if cmd[:2] == ['login', '--sso']:
+                self.status = "locked"
+                return _Result(0, b'')
+            email = cmd[1] if len(cmd) > 1 and not cmd[1].startswith('-') else ''
+            if email == 'bad@example.com':
+                return _Result(1, b'', b'Invalid credentials')
+            if '--code' not in cmd and email == '2fa@example.com':
+                return _Result(
+                    1,
+                    b'{"success":false,"message":"Login failed."}',
+                )
+            if email:
+                if '--raw' in cmd:
+                    self.status = "unlocked"
+                    if '--response' in cmd:
+                        return _Result(
+                            0,
+                            json.dumps({"success": True, "data": "LOGIN_SESSION"}).encode(),
+                        )
+                    return _Result(0, b'LOGIN_SESSION\n')
+                self.status = "locked"
+                return _Result(0, b'')
+            return _Result(1, b'', b'email required')
         if cmd[:2] == ['list', 'items']:
             search = cmd[cmd.index('--search') + 1] if '--search' in cmd else None
             self.search_terms.append(search)
@@ -774,6 +809,78 @@ def test_bitwarden_lookup_cache_hit_no_spawn(monkeypatch):
     b._items = {'u@h': {'name': 'u@h', 'id': 'ID1', 'login': {'password': 'cached'}}}
     monkeypatch.setattr(ss.subprocess, 'run', _boom_bw)
     assert b.lookup(password_spec('h', 'u')) == 'cached'
+
+
+def test_bitwarden_logout_runs_bw_logout(monkeypatch):
+    fake = FakeBw(status="unlocked")
+    b = _make_backend(monkeypatch, fake)
+    b._unlocked = True
+    b._token = "TOK"
+    assert b.logout() is True
+    assert fake.calls == [['logout']]
+    assert fake.status == "unauthenticated"
+    assert b.is_unlocked() is False
+
+
+def test_bitwarden_login_with_password(monkeypatch):
+    fake = FakeBw(status="unauthenticated")
+    b = _make_backend(monkeypatch, fake)
+    ok, detail, needs_2fa = b.login_with_password("user@host", "secret")
+    assert ok is True
+    assert needs_2fa is False
+    assert fake.status == "unlocked"
+    assert '--raw' in fake.calls[0]
+    assert '--response' in fake.calls[0]
+    assert fake.calls[0][:3] == ['login', 'user@host', '--passwordenv']
+    assert b.is_unlocked() is True
+    assert os.environ.get("BW_SESSION") == "LOGIN_SESSION"
+
+
+def test_bitwarden_login_with_password_auth_challenge(monkeypatch):
+    fake = FakeBw(status="unauthenticated")
+    b = _make_backend(monkeypatch, fake)
+    ok, _, _ = b.login_with_password(
+        "user@host", "secret", auth_client_secret="challenge-secret",
+    )
+    assert ok is True
+    assert fake.envs[0].get("BW_CLIENTSECRET") == "challenge-secret"
+
+
+def test_bitwarden_login_with_password_needs_2fa(monkeypatch):
+    fake = FakeBw(status="unauthenticated")
+    b = _make_backend(monkeypatch, fake)
+    ok, detail, needs_2fa = b.login_with_password("2fa@example.com", "secret")
+    assert ok is False
+    assert needs_2fa is True
+    assert detail == "Login failed."
+    ok, detail, needs_2fa = b.login_with_password(
+        "2fa@example.com", "secret", twofa_method="1", twofa_code="123456",
+    )
+    assert ok is True
+    assert needs_2fa is False
+
+
+def test_bitwarden_login_needs_2fa_generic_login_failed():
+    assert ss.BitwardenBackend._login_needs_2fa("Login failed.") is True
+    assert ss.BitwardenBackend._login_needs_2fa("Login failed.", twofa_code="123456") is False
+    assert ss.BitwardenBackend._login_needs_2fa("Invalid master password.") is False
+
+
+def test_bitwarden_login_needs_2fa_no_provider_selected():
+    # ``bw login`` (no --method) when 2FA is enabled fails with this message.
+    assert ss.BitwardenBackend._login_needs_2fa("Login failed. No provider selected.") is True
+    # Once a code is supplied, a repeat is a wrong-provider error, not a re-prompt.
+    assert ss.BitwardenBackend._login_needs_2fa(
+        "Login failed. No provider selected.", twofa_code="123456",
+    ) is False
+
+
+def test_bitwarden_login_with_api_key(monkeypatch):
+    fake = FakeBw(status="unauthenticated")
+    b = _make_backend(monkeypatch, fake)
+    ok, detail = b.login_with_api_key("user.clientId", "secret")
+    assert ok is True
+    assert fake.status == "locked"
 
 
 def test_bitwarden_cold_lookup_uses_targeted_search(monkeypatch):
