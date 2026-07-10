@@ -264,7 +264,7 @@ def _prompt_not_signed_in(parent, backend):
 
         def _respond(_dlg, resp):
             if resp == "setup":
-                run_bitwarden_setup(parent, interactive=True)
+                run_bitwarden_setup(parent, interactive=False)
 
         dialog.connect("response", _respond)
         dialog.present()

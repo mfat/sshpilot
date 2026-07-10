@@ -633,20 +633,13 @@ class PyXtermTerminalBackend:
                 self._webview = WebKit2.WebView()
                 logger.debug("Using WebKit2 4.0 (GTK3 compatible)")
             
-            # Disable WebView's native context menu at GTK level
+            # Disable WebView's native context menu. Claiming a GTK gesture does NOT
+            # stop WebKit's built-in menu (WebKit handles it internally); the reliable
+            # way is the WebView's own ``context-menu`` signal — returning True
+            # suppresses the default menu so only sshPilot's custom menu shows.
             try:
-                # Add a gesture controller to intercept right-click events
-                # This prevents the WebView's native context menu from appearing
-                # We claim the event but don't show a menu - the terminal widget's gesture will handle it
-                context_gesture = Gtk.GestureClick()
-                context_gesture.set_button(Gdk.BUTTON_SECONDARY)
-                def _on_webview_right_click(gesture, n_press, x, y):
-                    # Claim the event to prevent WebView's native context menu
-                    # The terminal widget's gesture will handle showing our custom menu
-                    gesture.set_state(Gtk.EventSequenceState.CLAIMED)
-                context_gesture.connect("pressed", _on_webview_right_click)
-                self._webview.add_controller(context_gesture)
-                logger.debug("Added gesture controller to disable WebView native context menu")
+                self._webview.connect("context-menu", lambda *args: True)
+                logger.debug("Suppressed WebView native context menu via context-menu signal")
             except Exception as e:
                 logger.debug(f"Failed to disable WebView native context menu: {e}", exc_info=True)
 

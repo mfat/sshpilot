@@ -3127,6 +3127,10 @@ class TerminalWidget(Gtk.Box):
         """Set up a robust per-terminal context menu and actions."""
         try:
             logger.debug("Setting up terminal context menu...")
+            # Idempotent: drop any controllers/popover from a prior setup pass so we
+            # don't stack duplicate gestures (which open two menus per right-click).
+            self._teardown_context_menu()
+            self._menu_controller_registry = []
             # Per-widget action group
             self._menu_actions = Gio.SimpleActionGroup()
             act_copy = Gio.SimpleAction.new("copy", None)
@@ -3211,13 +3215,33 @@ class TerminalWidget(Gtk.Box):
                 search_section.append(_("Save Output…"), "term.save_contents")
                 self._menu_model.append_section(None, search_section)
 
-            # Popover - set parent to the terminal widget
+            # Popover parent + dismissal strategy.
+            #
+            # A grabbing (autohide) GtkPopover cannot establish its input grab over a
+            # WebKit WebView (the PyXterm.js backend) on Wayland — GDK logs "Tried to
+            # map a grabbing popup with a non-top most parent" and retries every frame,
+            # so the menu maps *without* a working grab and never sees a click-outside.
+            # That's why it only closes by activating an item.
+            #
+            # For the WebView backend, disable autohide (no grab, no warning) and drive
+            # dismissal manually: on the next press in the terminal, on focus-out, and
+            # on Escape. VTE is a normal widget where autohide works, so leave it.
             self._menu_popover = Gtk.PopoverMenu.new_from_model(self._menu_model)
             self._menu_popover.set_has_arrow(True)
-            # Set parent to the terminal widget (use backend widget if vte is None)
-            parent_widget = self.vte if self.vte is not None else (self.backend.widget if self.backend else self.terminal_widget)
+            if self.vte is not None:
+                parent_widget = self.vte
+            else:
+                parent_widget = self.scrolled_window or (
+                    self.backend.widget if self.backend else self.terminal_widget
+                )
             if parent_widget:
                 self._menu_popover.set_parent(parent_widget)
+            self._menu_parent_widget = parent_widget
+
+            self._menu_needs_manual_dismiss = self.vte is None
+            if self._menu_needs_manual_dismiss:
+                self._menu_popover.set_autohide(False)
+                self._install_manual_menu_dismissal(parent_widget)
 
             # Right-click gesture to open the context menu (BUBBLE phase is fine for right-click)
             gesture = Gtk.GestureClick()
@@ -3230,6 +3254,10 @@ class TerminalWidget(Gtk.Box):
                     except Exception:
                         pass
                     logger.debug(f"Context menu gesture: button={btn}, x={x}, y={y}")
+                    # A non-autohide menu (WebView backend) must be dismissed on the
+                    # next press in the terminal — this is the common "click away".
+                    if getattr(self, '_menu_needs_manual_dismiss', False):
+                        self._dismiss_context_menu()
                     if btn not in (Gdk.BUTTON_SECONDARY, 3):
                         logger.debug(f"Not a right-click button: {btn}")
                         return
@@ -3280,11 +3308,24 @@ class TerminalWidget(Gtk.Box):
                             self._link_section_in_menu = False
                     except Exception:
                         pass
-                    # Position popover near click
+                    # Position popover near the click. The gesture is on the backend
+                    # widget; when the popover is parented elsewhere (the scrolling
+                    # container, for the WebView backend) translate the point into the
+                    # parent's coordinate space.
                     try:
+                        px, py = x, y
+                        try:
+                            src = gest.get_widget()
+                            dest = getattr(self, '_menu_parent_widget', None)
+                            if src is not None and dest is not None and src is not dest:
+                                ok, tx, ty = src.translate_coordinates(dest, x, y)
+                                if ok:
+                                    px, py = tx, ty
+                        except Exception:
+                            pass
                         rect = Gdk.Rectangle()
-                        rect.x = int(x)
-                        rect.y = int(y)
+                        rect.x = int(px)
+                        rect.y = int(py)
                         rect.width = 1
                         rect.height = 1
                         self._menu_popover.set_pointing_to(rect)
@@ -3297,15 +3338,16 @@ class TerminalWidget(Gtk.Box):
             gesture.connect('pressed', _on_pressed)
             # Store gesture reference for cleanup
             self._menu_gesture = gesture
-            # Add gesture to the backend widget (VTE or WebView)
+            # Add gesture to the backend widget (VTE or WebView), recorded so a repeat
+            # setup pass removes it instead of stacking a duplicate.
             if self.backend and self.backend.widget:
-                self.backend.widget.add_controller(gesture)
+                self._register_menu_controller(self.backend.widget, gesture)
                 logger.debug(f"Added context menu gesture to backend widget: {type(self.backend).__name__}")
             elif self.vte is not None:
-                self.vte.add_controller(gesture)
+                self._register_menu_controller(self.vte, gesture)
                 logger.debug("Added context menu gesture to VTE widget")
             elif self.terminal_widget is not None:
-                self.terminal_widget.add_controller(gesture)
+                self._register_menu_controller(self.terminal_widget, gesture)
                 logger.debug("Added context menu gesture to terminal widget")
 
             # CAPTURE-phase left-click gesture for Ctrl+click URL opening.
@@ -3354,13 +3396,110 @@ class TerminalWidget(Gtk.Box):
                     except Exception as e:
                         logger.warning(f"URL click failed: {e}")
                 url_gesture.connect('pressed', _on_url_click)
-                self.vte.add_controller(url_gesture)
+                self._register_menu_controller(self.vte, url_gesture)
                 self._url_click_gesture = url_gesture
                 logger.debug("Added CAPTURE-phase Ctrl+click URL gesture to VTE widget")
 
             logger.debug("Terminal context menu setup completed successfully")
         except Exception as e:
             logger.error(f"Context menu setup failed: {e}")
+
+    def _dismiss_context_menu(self):
+        """Hide the context menu popover if it is showing (manual-dismiss backends)."""
+        popover = getattr(self, '_menu_popover', None)
+        if popover is None:
+            return
+        try:
+            if popover.get_visible():
+                popover.popdown()
+        except Exception:
+            pass
+
+    def _register_menu_controller(self, widget, controller):
+        """Attach a context-menu controller and record it so a later teardown can
+        remove exactly what was added (no wrong-widget remove_controller warnings)."""
+        if widget is None or controller is None:
+            return
+        try:
+            widget.add_controller(controller)
+            self._menu_controller_registry.append((widget, controller))
+        except Exception:
+            logger.debug("Failed to add context-menu controller", exc_info=True)
+
+    def _teardown_context_menu(self):
+        """Remove previously-installed context-menu controllers/popover.
+
+        ``setup_terminal()`` (hence ``_setup_context_menu``) can run more than once on
+        the same backend widget — e.g. prewarm adoption sets the terminal up, then
+        ``setup_local_shell`` sets it up again. Without this, each pass stacked another
+        gesture on the same widget, so a single right-click opened two popovers."""
+        for widget, controller in getattr(self, '_menu_controller_registry', []):
+            try:
+                widget.remove_controller(controller)
+            except Exception:
+                pass
+        self._menu_controller_registry = []
+        self._menu_gesture = None
+        self._menu_focus_controller = None
+        self._menu_key_controller = None
+        popover = getattr(self, '_menu_popover', None)
+        if popover is not None:
+            try:
+                popover.popdown()
+            except Exception:
+                pass
+            try:
+                popover.set_parent(None)
+            except Exception:
+                pass
+            self._menu_popover = None
+
+    def _install_manual_menu_dismissal(self, focus_widget):
+        """Dismiss the non-autohide WebView context menu on focus-out and Escape.
+
+        The next in-terminal press is handled by the context-menu gesture itself;
+        this covers clicking to another widget/app (focus leaves the terminal) and
+        the Escape key. A focus-out is honored only after confirming (on idle) that
+        focus did not move *into* the popover, so opening the menu can't self-close.
+        """
+        try:
+            focus_ctl = Gtk.EventControllerFocus()
+
+            def _on_leave(_c):
+                def _maybe_close():
+                    try:
+                        pop = getattr(self, '_menu_popover', None)
+                        if pop is None or not pop.get_visible():
+                            return False
+                        root = pop.get_root()
+                        focus = root.get_focus() if root is not None else None
+                        inside = bool(focus is not None and (focus is pop or focus.is_ancestor(pop)))
+                        if not inside:
+                            pop.popdown()
+                    except Exception:
+                        pass
+                    return False
+                GLib.idle_add(_maybe_close)
+
+            focus_ctl.connect("leave", _on_leave)
+            self._register_menu_controller(focus_widget, focus_ctl)
+            self._menu_focus_controller = focus_ctl
+        except Exception:
+            logger.debug("Could not attach context-menu focus controller", exc_info=True)
+
+        try:
+            key_ctl = Gtk.EventControllerKey()
+
+            def _on_key(_c, keyval, _keycode, _state):
+                if keyval == Gdk.KEY_Escape:
+                    self._dismiss_context_menu()
+                return False
+
+            key_ctl.connect("key-pressed", _on_key)
+            self._register_menu_controller(focus_widget, key_ctl)
+            self._menu_key_controller = key_ctl
+        except Exception:
+            logger.debug("Could not attach context-menu key controller", exc_info=True)
 
     def _install_shortcuts(self):
         """Install custom keyboard shortcuts for terminal operations."""

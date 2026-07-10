@@ -716,7 +716,7 @@ def _prompt_server_url(window, on_chosen: Callable[[str], None]):
 
     def _respond(_d, resp):
         if resp != "continue":
-            on_chosen("")
+            on_chosen(None)  # None = cancelled; "" = US-default server
             return
         selected = dropdown.get_selected()
         if selected == 1:
@@ -1169,6 +1169,9 @@ def _login_wizard(window, bw, on_done: Callable[[bool], None]):
 def _prompt_gui_login(window, bw, on_done: Callable[[bool], None]):
     """Configure the server if needed, then run the sequential sign-in wizard."""
     def _after_server(url: str):
+        if url is None:
+            on_done(False)  # user cancelled the server prompt
+            return
         if not url:
             _login_wizard(window, bw, on_done)
             return
