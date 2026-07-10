@@ -14,6 +14,7 @@ off the main thread.
 """
 
 import logging
+import os
 import threading
 from gettext import gettext as _
 
@@ -22,7 +23,7 @@ gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
 from gi.repository import Gtk, Adw, GLib
 
-from .secret_storage import get_secret_manager, selected_master_spec
+from .secret_storage import get_secret_manager, master_password_spec, selected_master_spec
 
 logger = logging.getLogger(__name__)
 
@@ -157,14 +158,18 @@ def unlock_at_startup(window):
     return False
 
 
-def prompt_unlock(parent, *, on_done=None):
-    """Prompt for the master password and unlock the selected session backend.
+def prompt_unlock(parent, *, backend=None, on_done=None):
+    """Prompt for the master password and unlock a session backend.
 
-    ``on_done(success: bool)`` is invoked on the GLib main loop when finished. If
-    the selected backend is not session-backed, already unlocked, or unavailable,
-    this is a no-op that reports success immediately. The password dialog is shown
-    immediately (no `bw status` pre-probe); whether a failure is "not signed in" vs
-    "wrong password" is decided after the unlock attempt, off the main thread.
+    By default this targets the Preferences-**selected** backend. Pass ``backend`` (a name like
+    ``"bitwarden"`` or a backend object) to unlock THAT backend instead — e.g. Bitwarden used as a
+    backup *destination* while the selected secrets backend is something else.
+
+    ``on_done(success: bool)`` is invoked on the GLib main loop when finished. If the target
+    backend is not session-backed, already unlocked, or unavailable, this is a no-op that reports
+    success immediately. The password dialog is shown immediately (no `bw status` pre-probe);
+    whether a failure is "not signed in" vs "wrong password" is decided after the unlock attempt,
+    off the main thread.
 
     Only one prompt is ever open at a time — concurrent calls ride the in-flight one
     and all their callbacks fire when it resolves.
@@ -177,9 +182,48 @@ def prompt_unlock(parent, *, on_done=None):
     global _unlock_in_progress
     manager = get_secret_manager()
 
+    # Resolve the target backend + its unlock ops. Default is the selected backend; an explicit
+    # `backend` unlocks that one (backup-destination case).
+    if backend is None:
+        target = manager.selected_backend()
+        _needs_unlock = manager.selected_needs_unlock()
+
+        def _do_unlock(pw, progress):
+            return bool(manager.unlock_selected(pw, progress=progress))
+
+        def _needs_login():
+            try:
+                return bool(manager.selected_needs_login())
+            except Exception:
+                return False
+
+        def _master_spec():
+            return selected_master_spec(manager)
+    else:
+        target = manager.get_backend(backend) if isinstance(backend, str) else backend
+
+        def _do_unlock(pw, progress):
+            return bool(target is not None and target.unlock(pw, progress=progress))
+
+        def _needs_login():
+            try:
+                return bool(target is not None and target.needs_login())
+            except Exception:
+                return False
+
+        def _master_spec():
+            name = (getattr(target, "name", "") or "session").strip().lower()
+            profile = (os.environ.get("SSHPILOT_KDBX_DATABASE", "") if name == "keepassxc"
+                       else os.environ.get("BITWARDENCLI_APPDATA_DIR", ""))
+            return master_password_spec(name, profile)
+
+        _needs_unlock = bool(
+            target is not None and getattr(target, "session_backed", False)
+            and target.is_available() and not target.is_unlocked())
+
     # Cheap, non-blocking: session-backed + available + locked. (False also covers
     # "already unlocked", "not a session backend", and "unavailable".)
-    if not manager.selected_needs_unlock():
+    if not _needs_unlock:
         if on_done:
             try:
                 on_done(True)
@@ -214,13 +258,7 @@ def prompt_unlock(parent, *, on_done=None):
                 logger.debug("unlock on_done callback failed", exc_info=True)
         return False  # usable directly with GLib.idle_add
 
-    backend = manager.selected_backend()
-    label = _friendly_backend_name(backend)
-
-    def _master_spec():
-        # The master password is keyed by backend + account/profile and lives in the OS
-        # keyring (never the vault it unlocks). Shared with Preferences' "Forget" button.
-        return selected_master_spec(manager)
+    label = _friendly_backend_name(target)
 
     # Holds the current spinner's (close_fn, dialog) so _after_unlock can dismiss it and
     # sequence _finish off its 'closed' signal. Shared across re-prompts (one at a time).
@@ -245,12 +283,9 @@ def prompt_unlock(parent, *, on_done=None):
                     GLib.idle_add(lambda: (set_status(text), False)[1])
 
             try:
-                ok = bool(manager.unlock_selected(password, progress=_progress))
+                ok = _do_unlock(password, _progress)
                 if not ok:
-                    try:
-                        needs_login = bool(manager.selected_needs_login())
-                    except Exception:
-                        needs_login = False
+                    needs_login = _needs_login()
             except Exception as exc:
                 logger.error("Secret backend unlock failed: %s", exc)
             GLib.idle_add(_after_unlock, ok, needs_login)

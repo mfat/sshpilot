@@ -913,6 +913,64 @@ class BitwardenBackend(SecretBackend):
         with self._lock:
             self._drop_session()
 
+    # -- secure notes (used as a backup destination; not login-item secrets) ---------
+    def create_or_update_secure_note(self, name: str, content: str) -> Optional[str]:
+        """Create or update a **secure note** (item type 2) named ``name`` with ``content`` in its
+        ``notes`` field. Content goes in via base64-on-stdin (no file path — Flatpak-safe). Returns
+        the item id, or ``None`` on failure. Used by the Bitwarden backup destination."""
+        token = self._current_token()
+        if not token or not self._bin:
+            return None
+        try:
+            existing = self._search_item(name, token)
+            if existing and existing.get("id"):
+                item = dict(existing)
+                item["type"] = 2
+                item["notes"] = content
+                item.setdefault("secureNote", {"type": 0})
+                res = self._run(["edit", "item", item["id"]], token=token,
+                                input_bytes=self._encode(item))
+                return item["id"] if res.returncode == 0 else None
+            item = {"type": 2, "name": name, "notes": content, "secureNote": {"type": 0}}
+            res = self._run(["create", "item"], token=token, input_bytes=self._encode(item))
+            if res.returncode != 0:
+                return None
+            created = json.loads(res.stdout.decode("utf-8", "replace") or "{}")
+            return created.get("id") if isinstance(created, dict) else None
+        except Exception as exc:
+            logger.error("bw secure-note store failed: %s", exc)
+            return None
+
+    def list_secure_notes(self, name_prefix: str) -> List[dict]:
+        """Secure-note items whose name starts with ``name_prefix`` (e.g. our backup items)."""
+        token = self._current_token()
+        if not token:
+            return []
+        try:
+            result = self._run(["list", "items", "--search", name_prefix], token=token)
+            if result.returncode != 0:
+                return []
+            return [it for it in json.loads(result.stdout.decode("utf-8", "replace") or "[]")
+                    if it.get("type") == 2 and str(it.get("name", "")).startswith(name_prefix)]
+        except Exception as exc:
+            logger.debug("bw list secure notes failed: %s", exc)
+            return []
+
+    def read_secure_note(self, item_id: str) -> Optional[str]:
+        """Return the ``notes`` content of the secure-note item ``item_id``."""
+        token = self._current_token()
+        if not token:
+            return None
+        try:
+            result = self._run(["get", "item", item_id], token=token)
+            if result.returncode != 0:
+                return None
+            item = json.loads(result.stdout.decode("utf-8", "replace") or "{}")
+            return item.get("notes")
+        except Exception as exc:
+            logger.debug("bw read secure note failed: %s", exc)
+            return None
+
     # -- item cache + operations -----------------------------------------
     def _load_all_items(self, token: str) -> Optional[Dict[str, dict]]:
         """One ``bw list items`` (whole vault) → name→item map. ``None`` on failure so a
@@ -1537,6 +1595,11 @@ class SecretManager:
         """Whether the named backend has a lock lifecycle (Bitwarden/Vaultwarden)."""
         backend = self._backends.get((name or "").strip().lower())
         return bool(backend is not None and getattr(backend, "session_backed", False))
+
+    def get_backend(self, name: str) -> Optional[SecretBackend]:
+        """The registered backend object by name (e.g. ``"bitwarden"``), independent of the
+        Preferences selection — used to drive a backend as a backup destination."""
+        return self._backends.get((name or "").strip().lower())
 
     def persists_secrets(self) -> bool:
         """Whether :meth:`store` would persist secrets (``False`` for explicit ``agent``)."""

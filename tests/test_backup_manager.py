@@ -914,3 +914,49 @@ def test_wildcard_pattern_detection():
     assert bm._is_wildcard_pattern("prod-*")
     assert bm._is_wildcard_pattern("!deny")
     assert not bm._is_wildcard_pattern("concrete-host")
+
+
+# --- backend delegation (export_to_backend / import_from_backend) ------------
+
+class _RecordingBackend:
+    name = "fake"
+    def __init__(self, manifest_to_return=None):
+        self.exported = None
+        self._manifest = manifest_to_return
+    def export(self, manifest, *, passphrase=None):
+        from sshpilot.backup_backends import BackupEntry
+        self.exported = (manifest, passphrase)
+        return BackupEntry(id="itemid", name="itemname")
+    def read(self, entry, *, passphrase=None):
+        return self._manifest
+
+
+def test_export_to_backend_builds_manifest_and_delegates(monkeypatch, tmp_path):
+    monkeypatch.setattr(bm, "get_config_dir", lambda: str(tmp_path))
+    mgr = bm.BackupManager(FakeConfig(), FakeConnMgr([]))
+    backend = _RecordingBackend()
+    entry = mgr.export_to_backend(
+        backend, connections=[], passphrase="pw",
+        options={"app_settings": False, "ssh_config": False, "known_hosts": False,
+                 "secrets": False, "private_keys": False})
+    assert entry.name == "itemname"
+    manifest, passphrase = backend.exported
+    assert passphrase == "pw"
+    assert manifest["format"] == "spbk"          # real manifest was built
+    assert manifest["credentials"] == [] and manifest["private_keys"] == []
+
+
+def test_import_from_backend_reads_and_applies(monkeypatch, tmp_path):
+    from sshpilot.backup_backends import BackupEntry
+    monkeypatch.setattr(bm, "get_config_dir", lambda: str(tmp_path))
+    mgr = bm.BackupManager(FakeConfig(), FakeConnMgr([]))
+    backend = _RecordingBackend(manifest_to_return={"version": 1, "app_config": {}})
+    seen = []
+    monkeypatch.setattr(mgr, "apply_imported_manifest",
+                        lambda manifest, **kw: (seen.append((manifest, kw)) or (True, None, 3, 1)))
+    res = mgr.import_from_backend(backend, BackupEntry(id="x", name="x"),
+                                 mode="merge", restore_options={"secrets": True})
+    assert res == (True, None, 3, 1)
+    assert seen[0][0] == {"version": 1, "app_config": {}}
+    assert seen[0][1]["mode"] == "merge"
+    assert seen[0][1]["restore_options"] == {"secrets": True}

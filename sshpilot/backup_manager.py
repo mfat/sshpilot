@@ -590,23 +590,31 @@ class BackupManager:
                            len(missing), ", ".join(missing))
         return out
 
+    def _build_manifest(self, connections, options: Optional[Dict[str, Any]] = None
+                        ) -> Dict[str, Any]:
+        """The full backup manifest (config + selected credentials + private keys) — the transport-
+        independent payload shared by the ``.spbk`` file and the Bitwarden-note destinations. Also
+        updates ``last_export_counts``."""
+        options = self.normalize_backup_options(options)
+        manifest = self._build_export_data(options)
+        manifest['format'] = 'spbk'
+        manifest['credentials'] = (
+            self._gather_credentials(connections) if options['secrets'] else [])
+        manifest['private_keys'] = (
+            self._gather_private_keys(connections) if options['private_keys'] else [])
+        self.last_export_counts = {
+            'credentials': len(manifest['credentials']),
+            'private_keys': len(manifest['private_keys']),
+        }
+        return manifest
+
     def export_backup(self, export_path: str, *, connections=None,
                       passphrase: Optional[str] = None,
                       options: Optional[Dict[str, Any]] = None) -> Tuple[bool, Optional[str]]:
         """Export a ``.spbk`` backup with user-selected config and secret categories."""
         try:
             from .backup_archive import write_spbk
-            options = self.normalize_backup_options(options)
-            manifest = self._build_export_data(options)
-            manifest['format'] = 'spbk'
-            manifest['credentials'] = (
-                self._gather_credentials(connections) if options['secrets'] else [])
-            manifest['private_keys'] = (
-                self._gather_private_keys(connections) if options['private_keys'] else [])
-            self.last_export_counts = {
-                'credentials': len(manifest['credentials']),
-                'private_keys': len(manifest['private_keys']),
-            }
+            manifest = self._build_manifest(connections, options)
             write_spbk(os.path.expanduser(export_path), manifest, passphrase or None)
             logger.info("Backup exported to %s (%d credential(s), %d private key(s), encrypted=%s)",
                         export_path, len(manifest['credentials']),
@@ -616,6 +624,30 @@ class BackupManager:
             error_msg = f"Failed to export backup: {e}"
             logger.error(error_msg)
             return False, error_msg
+
+    def export_to_backend(self, backend, *, connections=None,
+                          passphrase: Optional[str] = None,
+                          options: Optional[Dict[str, Any]] = None):
+        """Build the manifest and hand it to a ``BackupBackend`` (file or Bitwarden). Returns the
+        backend's ``BackupEntry``; the backend raises on failure (e.g. ``BackupTooLargeForNote``),
+        which the caller surfaces."""
+        manifest = self._build_manifest(connections, options)
+        entry = backend.export(manifest, passphrase=passphrase or None)
+        logger.info("Backup exported via %s backend (%d credential(s), %d private key(s))",
+                    getattr(backend, 'name', '?'),
+                    len(manifest.get('credentials') or []),
+                    len(manifest.get('private_keys') or []))
+        return entry
+
+    def import_from_backend(self, backend, entry, *, mode: str = 'replace',
+                            create_backup: bool = True,
+                            restore_options: Optional[Dict[str, Any]] = None,
+                            passphrase: Optional[str] = None
+                            ) -> Tuple[bool, Optional[str], int, int]:
+        """Read a manifest from a ``BackupBackend`` and apply it via ``apply_imported_manifest``."""
+        manifest = backend.read(entry, passphrase=passphrase or None)
+        return self.apply_imported_manifest(
+            manifest, mode=mode, create_backup=create_backup, restore_options=restore_options)
 
     def import_configuration(
         self, 
