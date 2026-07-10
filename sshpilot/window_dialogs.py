@@ -144,6 +144,7 @@ class WindowConfigDialogsMixin:
 
         select_all = Gtk.CheckButton(label=_("Select all connections"))
         select_all.set_active(False)
+        select_all.add_css_class('selection-mode')
         box.append(select_all)
 
         listbox = Gtk.ListBox()
@@ -159,6 +160,7 @@ class WindowConfigDialogsMixin:
                 label, key = '?', '?'
             cb = Gtk.CheckButton(label=label)
             cb.set_active(key in prefill)
+            cb.add_css_class('selection-mode')
             for edge in ('start', 'end'):
                 getattr(cb, f'set_margin_{edge}')(6)
             for edge in ('top', 'bottom'):
