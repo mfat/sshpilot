@@ -1,6 +1,7 @@
 """Tests for the .spbk credential gather/restore in BackupManager."""
 
 import json
+import os
 
 import sshpilot.backup_manager as bm
 import sshpilot.credential_manager as cmod
@@ -766,3 +767,148 @@ def test_passphrase_credential_rehomed_to_current_home(monkeypatch, tmp_path):
     keys = list(stored.data.keys())
     assert any(str(newhome) in k for k in keys)         # passphrase filed under re-homed path
     assert all("/home/alice" not in k for k in keys)    # never under the source home
+
+
+# --- Include-aware config tree backup + fragment merge -----------------------
+
+def _mk_config_tree(tmp_path):
+    """A default-mode config root with a main file that Includes a fragment dir."""
+    root = tmp_path / "dotssh"
+    (root / "conf.d").mkdir(parents=True)
+    main = root / "config"
+    main.write_text("Include conf.d/*.conf\nHost existing-main\n    HostName m.example\n",
+                    encoding="utf-8")
+    (root / "conf.d" / "base.conf").write_text(
+        "Host in-fragment\n    HostName f.example\n", encoding="utf-8")
+    return root, main
+
+
+def test_export_bundles_include_tree_and_skips_out_of_root(monkeypatch, tmp_path):
+    monkeypatch.setattr(bm, "get_config_dir", lambda: str(tmp_path / "cfg"))
+    root, main = _mk_config_tree(tmp_path)
+    # An included file OUTSIDE the config root must be skipped (not bundled).
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "extra.conf").write_text("Host outside-host\n", encoding="utf-8")
+    main.write_text(main.read_text() + f"Include {outside}/extra.conf\n", encoding="utf-8")
+
+    mgr = bm.BackupManager(FakeConfig(), FakeConnMgr([], ssh_config_path=str(main)))
+    data = mgr._build_export_data({"app_settings": False, "ssh_config": True,
+                                   "known_hosts": False, "secrets": False,
+                                   "private_keys": False})
+    tree = data["ssh_config_files"]
+    frag_rel = os.path.join("conf.d", "base.conf")
+    assert set(tree) >= {"config", frag_rel}
+    assert data["ssh_config_main_rel"] == "config"
+    assert "Host in-fragment" in tree[frag_rel]
+    assert any("extra.conf" in p for p in mgr.last_export_skipped_config_files)
+    assert not any("outside-host" in c for c in tree.values())   # never bundled its content
+
+
+def test_replace_restores_tree_rebased_and_maps_main(monkeypatch, tmp_path):
+    monkeypatch.setattr(bm, "get_config_dir", lambda: str(tmp_path / "cfg"))
+    newhome = tmp_path / "home_bob"
+    newhome.mkdir()
+    monkeypatch.setenv("HOME", str(newhome))
+    target_root = tmp_path / "dotssh"
+    target_root.mkdir()
+    main = target_root / "config"
+
+    import_data = {
+        "source_home": "/home/alice",
+        "ssh_config_main_rel": "config",
+        "ssh_config_files": {
+            "config": "Host a\n    IdentityFile /home/alice/.ssh/id\n",
+            "conf.d/work.conf": "Host work\n    HostName work.example\n",
+        },
+    }
+    mgr = bm.BackupManager(FakeConfig(), FakeConnMgr([], ssh_config_path=str(main)))
+    ok, err = mgr._import_replace(import_data, {"app_settings": False, "ssh_config": True,
+                                               "known_hosts": False, "secrets": False,
+                                               "private_keys": False})
+    assert ok, err
+    main_text = main.read_text()
+    assert f"IdentityFile {newhome}/.ssh/id" in main_text     # home rebased
+    assert "/home/alice" not in main_text
+    assert (target_root / "conf.d" / "work.conf").read_text().count("Host work") == 1
+
+
+def test_merge_fragment_dedups_drops_globals_keeps_unindented(monkeypatch, tmp_path):
+    monkeypatch.setattr(bm, "get_config_dir", lambda: str(tmp_path / "cfg"))
+    root, main = _mk_config_tree(tmp_path)
+    mgr = bm.BackupManager(FakeConfig(), FakeConnMgr([], ssh_config_path=str(main)))
+
+    imported = (
+        "Host in-fragment\n    HostName dup.example\n"        # exists (in a fragment) -> skip
+        "Host newhost\nHostName n.example\nPort 2222\nUser alice\n"  # UNINDENTED -> keep whole
+        "Host *\n    ProxyJump evil.example\n"               # wildcard/global -> drop
+        "Match host foo\n    User m\n"                        # Match -> drop
+        "Host existing-main brand-new\n    HostName x\n"      # partial collision -> skip+report
+    )
+    mgr._merge_ssh_config_fragment(str(main), [imported])
+
+    fragment = root / bm._IMPORT_FRAGMENT_NAME
+    frag = fragment.read_text()
+    assert "Host newhost" in frag and "Port 2222" in frag and "User alice" in frag  # not truncated
+    assert "Host *" not in frag and "ProxyJump" not in frag         # global NOT injected
+    assert "in-fragment" not in frag                                 # dedup saw the fragment
+    assert "brand-new" not in frag                                   # partial collision skipped
+    assert mgr.last_merge_dropped_globals >= 2                       # Host* + Match
+    assert any("brand-new" in " ".join(p) for p in mgr.last_merge_collisions)
+    # main gained exactly one Include for the fragment
+    assert main.read_text().count(f"Include {bm._IMPORT_FRAGMENT_NAME}") == 1
+
+    # Idempotent: re-importing the same hosts adds nothing (fragment is Include-resolved now).
+    before = fragment.read_text()
+    mgr._merge_ssh_config_fragment(str(main), [imported])
+    assert fragment.read_text() == before
+    assert main.read_text().count(f"Include {bm._IMPORT_FRAGMENT_NAME}") == 1
+
+
+def test_merge_no_double_include_when_glob_already_covers(monkeypatch, tmp_path):
+    monkeypatch.setattr(bm, "get_config_dir", lambda: str(tmp_path / "cfg"))
+    root = tmp_path / "dotssh"
+    root.mkdir()
+    main = root / "config"
+    # A glob that will already cover the sshPilot fragment once it's written.
+    main.write_text("Include *.conf\nHost keep\n    HostName k.example\n", encoding="utf-8")
+    mgr = bm.BackupManager(FakeConfig(), FakeConnMgr([], ssh_config_path=str(main)))
+    mgr._merge_ssh_config_fragment(str(main), ["Host newone\n    HostName n.example\n"])
+    assert (root / bm._IMPORT_FRAGMENT_NAME).exists()
+    # No explicit Include added because `Include *.conf` already resolves the fragment.
+    assert "sshpilot-imported.conf" not in main.read_text()
+
+
+# --- SSH config stanza splitter (header-boundary, not indentation) -----------
+
+def test_iter_config_stanzas_boundaries_and_kinds():
+    text = (
+        "Compression yes\n"                       # leading global
+        "Host a b\n    HostName a.ex\n"            # host, multi-pattern
+        "Host c\nHostName c.ex\nPort 2222\n"       # host, UNINDENTED options
+        "Match host d\n    User x\n"               # match
+    )
+    stanzas = list(bm._iter_config_stanzas(text))
+    kinds = [k for k, _p, _b in stanzas]
+    assert kinds == ["global", "host", "host", "match"]
+    # multi-pattern captured fully
+    assert stanzas[1][1] == ["a", "b"]
+    # unindented host keeps ALL its option lines (the old parser dropped these)
+    c_block = "\n".join(stanzas[2][2])
+    assert "Port 2222" in c_block and "HostName c.ex" in c_block
+
+
+def test_ssh_keyword_variants():
+    assert bm._ssh_keyword("Host x") == "host"
+    assert bm._ssh_keyword("Host=x") == "host"
+    assert bm._ssh_keyword("  Host = x") == "host"
+    assert bm._ssh_keyword("\tHostName y") == "hostname"
+    assert bm._ssh_keyword("# comment") == ""
+    assert bm._ssh_keyword("") == ""
+
+
+def test_wildcard_pattern_detection():
+    assert bm._is_wildcard_pattern("*")
+    assert bm._is_wildcard_pattern("prod-*")
+    assert bm._is_wildcard_pattern("!deny")
+    assert not bm._is_wildcard_pattern("concrete-host")

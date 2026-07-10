@@ -7,6 +7,7 @@ import base64
 import json
 import logging
 import os
+import shlex
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, Optional, Tuple, List
@@ -69,6 +70,166 @@ def _rebase_home_in_text(text: str, source_home: Optional[str], target_home: str
     return text.replace(sh + os.sep, th + os.sep)
 
 
+# --- SSH config as an Include-aware file tree --------------------------------
+#
+# The app READS ~/.ssh/config as a tree (Include-resolved) and WRITES it surgically per host,
+# so backups must treat it as a tree too — not one opaque blob. These helpers gather/split it
+# using the same header rules ssh uses, and they never invent a second semantic parser: the
+# splitter only needs to find stanza boundaries (Host/Match headers), exactly the boundary the
+# loader's own edit/delete scanners use.
+
+# A single sshPilot-owned file that merge-imported hosts are written to, referenced by one
+# Include. Deliberately not inside a common ``*.d`` glob dir, so we can add an explicit Include
+# without risking double-inclusion.
+_IMPORT_FRAGMENT_NAME = "sshpilot-imported.conf"
+
+
+def _ssh_config_root(main_path: str) -> str:
+    """Directory that owns the SSH config (``~/.ssh`` default, the app config dir isolated)."""
+    return os.path.dirname(os.path.abspath(os.path.expanduser(main_path))) or os.path.expanduser('~')
+
+
+def _is_under(path: str, root: str) -> bool:
+    ap = os.path.abspath(path)
+    rp = os.path.abspath(root)
+    return ap == rp or ap.startswith(rp + os.sep)
+
+
+def _ssh_keyword(line: str) -> str:
+    """The lowercase SSH directive keyword of a line, honoring ``Key value``, ``Key=value`` and
+    ``Key = value``. Blank/comment lines return ``''``."""
+    s = line.strip()
+    if not s or s.startswith('#'):
+        return ''
+    for i, ch in enumerate(s):
+        if ch.isspace() or ch == '=':
+            return s[:i].lower()
+    return s.lower()
+
+
+def _host_patterns(line: str) -> List[str]:
+    """Patterns from a ``Host a b c`` header line."""
+    s = line.strip()
+    rest = s[4:].lstrip(' =\t') if len(s) >= 4 else ''
+    try:
+        return shlex.split(rest)
+    except ValueError:
+        return rest.split()
+
+
+def _iter_config_stanzas(text: str):
+    """Yield ``(kind, patterns, block_lines)`` for each top-level stanza. ``kind`` is
+    ``'host'``/``'match'``/``'global'`` (the preamble before the first Host/Match). A stanza runs
+    from its header to the next Host/Match header — boundary detection only, never option
+    interpretation, so unusual-but-valid layouts (unindented options, tabs, ``Host=x``) are kept
+    whole instead of being truncated."""
+    cur_kind = 'global'
+    cur_patterns: Optional[List[str]] = None
+    buf: List[str] = []
+    for line in text.splitlines():
+        kw = _ssh_keyword(line)
+        if kw in ('host', 'match'):
+            if buf:
+                yield (cur_kind, cur_patterns, buf)
+            buf = [line]
+            cur_kind = kw
+            cur_patterns = _host_patterns(line) if kw == 'host' else None
+        else:
+            buf.append(line)
+    if buf:
+        yield (cur_kind, cur_patterns, buf)
+
+
+def _is_wildcard_pattern(pattern: str) -> bool:
+    """A Host pattern that isn't a single concrete name (``*``/``?`` wildcards, ``!`` negation)."""
+    return any(ch in pattern for ch in '*?!')
+
+
+def _gather_ssh_config_tree(main_path: str) -> Tuple[Dict[str, str], List[str]]:
+    """Return ``({relpath_from_root: content}, [skipped_abspaths])`` for every file reachable from
+    ``main_path`` via Include that is **user-writable and under the config root**.
+
+    Files outside the root or not writable by us (``/etc/ssh/…``, team-shared, root-owned) are
+    reported as skipped and never bundled — a backup must not ship content the user doesn't own,
+    nor create unwritable restore targets."""
+    from .ssh_config_utils import resolve_ssh_config_files
+    root = _ssh_config_root(main_path)
+    tree: Dict[str, str] = {}
+    skipped: List[str] = []
+    try:
+        files = resolve_ssh_config_files(main_path)
+    except Exception:
+        files = [main_path] if os.path.exists(main_path) else []
+    for f in files:
+        af = os.path.abspath(f)
+        if not _is_under(af, root) or not os.access(af, os.W_OK):
+            if af not in skipped:
+                skipped.append(af)
+            continue
+        try:
+            with open(af, encoding='utf-8') as fh:
+                tree[os.path.relpath(af, root)] = fh.read()
+        except OSError:
+            if af not in skipped:
+                skipped.append(af)
+    return tree, skipped
+
+
+def _existing_host_names(main_path: str) -> set:
+    """All Host patterns already present across the live config tree (Include-aware), so merge
+    dedup sees hosts that live in fragments, not just the main file."""
+    from .ssh_config_utils import resolve_ssh_config_files
+    names: set = set()
+    try:
+        files = resolve_ssh_config_files(main_path)
+    except Exception:
+        files = [main_path]
+    for f in files:
+        try:
+            with open(f, encoding='utf-8') as fh:
+                txt = fh.read()
+        except OSError:
+            continue
+        for kind, patterns, _blk in _iter_config_stanzas(txt):
+            if kind == 'host' and patterns:
+                names.update(patterns)
+    return names
+
+
+def _select_new_host_blocks(imported_texts: List[str], existing_names: set
+                            ) -> Tuple[str, int, List[List[str]]]:
+    """From imported config text(s), pick the concrete Host stanzas that are genuinely new.
+
+    Returns ``(new_block_text, dropped_nonhost, partial_collisions)``:
+    - wildcard/negated ``Host`` stanzas, ``Match`` blocks and top-level globals are dropped
+      (counted) — merge must never inject machine-wide SSH behavior from a backup;
+    - a stanza whose names are all already present is skipped silently;
+    - a stanza where only SOME names collide is skipped and reported (an inherent ambiguity we
+      surface rather than guess)."""
+    kept: List[str] = []
+    dropped = 0
+    collisions: List[List[str]] = []
+    for txt in imported_texts:
+        if not txt:
+            continue
+        for kind, patterns, blk in _iter_config_stanzas(txt):
+            has_content = any(l.strip() and not l.strip().startswith('#') for l in blk)
+            if kind != 'host' or not patterns:
+                if has_content:
+                    dropped += 1
+                continue
+            if any(_is_wildcard_pattern(p) for p in patterns):
+                dropped += 1
+                continue
+            present = [p for p in patterns if p in existing_names]
+            if not present:
+                kept.append('\n'.join(blk).rstrip())
+            elif len(present) < len(patterns):
+                collisions.append(patterns)
+            # else: fully-existing -> skip silently
+    return ('\n\n'.join(kept), dropped, collisions)
+
+
 class BackupManager:
     """Manages configuration backup and restore operations"""
 
@@ -83,6 +244,11 @@ class BackupManager:
         # False when the last restore targeted a backend that does not persist secrets
         # (the "agent"/don't-store backend), so the UI can say so instead of claiming success.
         self.last_import_secrets_persisted = True
+        # SSH-config files skipped on the last export (outside the config root / not writable).
+        self.last_export_skipped_config_files: List[str] = []
+        # Merge diagnostics: wildcard/Match/global stanzas dropped, and partial-name collisions.
+        self.last_merge_dropped_globals = 0
+        self.last_merge_collisions: List[List[str]] = []
 
     def get_ssh_config_path(self) -> str:
         """Get the current SSH config path based on mode"""
@@ -190,6 +356,23 @@ class BackupManager:
         else:
             export_data['ssh_config'] = ''
             logger.warning(f"SSH config not found at {ssh_config_path}")
+
+        # Capture the whole Include-resolved tree (main + user-owned fragments), so hosts that
+        # live in Include'd files are backed up too — not silently dropped. Keyed relative to the
+        # config root, so restore can rebase onto a different machine. ``ssh_config`` (main text)
+        # stays for readers that predate this field.
+        export_data['ssh_config_files'] = {}
+        export_data['ssh_config_main_rel'] = ''
+        self.last_export_skipped_config_files = []
+        if options['ssh_config'] and ssh_config_path and os.path.exists(ssh_config_path):
+            tree, skipped = _gather_ssh_config_tree(ssh_config_path)
+            export_data['ssh_config_files'] = tree
+            export_data['ssh_config_main_rel'] = os.path.relpath(
+                os.path.abspath(ssh_config_path), _ssh_config_root(ssh_config_path))
+            self.last_export_skipped_config_files = skipped
+            if skipped:
+                logger.warning("Excluded %d SSH config file(s) outside your control from the "
+                               "backup: %s", len(skipped), ", ".join(skipped))
 
         # Export known_hosts — isolated mode only. get_known_hosts_path() returns None in
         # default mode, so the user's global ~/.ssh/known_hosts is never put into a backup.
@@ -603,6 +786,41 @@ class BackupManager:
         os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
         _atomic_write_bytes(path, text.encode('utf-8'), mode)
 
+    def _imported_ssh_texts(self, import_data: Dict[str, Any]) -> List[str]:
+        """All imported SSH-config text: every bundled tree file, or the single main blob for a
+        legacy backup. Used by merge so hosts that lived in the source's Include fragments are
+        considered too."""
+        tree = import_data.get('ssh_config_files')
+        if isinstance(tree, dict) and tree:
+            return [v for v in tree.values() if v]
+        main = import_data.get('ssh_config')
+        return [main] if main else []
+
+    def _restore_ssh_tree(self, import_data: Dict[str, Any],
+                          source_home: Optional[str], target_home: str) -> bool:
+        """Restore a bundled Include tree under the target's config root. The source's main file
+        is written to *this* machine's main path (so a default↔isolated difference maps
+        correctly); fragments keep their relative locations. Home paths inside each file are
+        rebased. Returns False for a legacy backup with no tree (caller writes the single blob)."""
+        tree = import_data.get('ssh_config_files')
+        if not isinstance(tree, dict) or not tree:
+            return False
+        main_path = self.get_ssh_config_path()
+        root = _ssh_config_root(main_path)
+        main_rel = import_data.get('ssh_config_main_rel') or ''
+        for rel, content in tree.items():
+            if rel == main_rel:
+                dest = os.path.abspath(main_path)
+            else:
+                dest = os.path.normpath(os.path.join(root, rel))
+                if not _is_under(dest, root):
+                    logger.warning("Skipping unsafe SSH config restore path: %s", rel)
+                    continue
+            text = _rebase_home_in_text(content or '', source_home, target_home)
+            self._atomic_write_text(dest, text, 0o600)
+        logger.info("Restored %d SSH config file(s) under %s", len(tree), root)
+        return True
+
     def _import_replace(
         self,
         import_data: Dict[str, Any],
@@ -613,14 +831,17 @@ class BackupManager:
             options = self.normalize_backup_options(options)
             source_home = import_data.get('source_home')
             target_home = _current_home()
-            # Import SSH config (rebasing home-prefixed IdentityFile/CertificateFile paths onto
-            # this machine), written atomically.
-            if options['ssh_config'] and import_data.get('ssh_config'):
-                ssh_config_path = self.get_ssh_config_path()
-                ssh_text = _rebase_home_in_text(
-                    import_data['ssh_config'], source_home, target_home)
-                self._atomic_write_text(ssh_config_path, ssh_text, 0o600)
-                logger.info(f"Replaced SSH config at {ssh_config_path}")
+            # Import SSH config. Prefer the full Include tree (restores the modular layout);
+            # fall back to the single main-file blob for legacy backups. Home-prefixed paths are
+            # rebased onto this machine and every file is written atomically.
+            if options['ssh_config']:
+                if not self._restore_ssh_tree(import_data, source_home, target_home) \
+                        and import_data.get('ssh_config'):
+                    ssh_config_path = self.get_ssh_config_path()
+                    ssh_text = _rebase_home_in_text(
+                        import_data['ssh_config'], source_home, target_home)
+                    self._atomic_write_text(ssh_config_path, ssh_text, 0o600)
+                    logger.info(f"Replaced SSH config at {ssh_config_path}")
 
             # Import known_hosts if present
             if options['known_hosts'] and import_data.get('known_hosts'):
@@ -659,13 +880,16 @@ class BackupManager:
             options = self.normalize_backup_options(options)
             source_home = import_data.get('source_home')
             target_home = _current_home()
-            # For SSH config, we'll append imported hosts that don't exist (rebasing
-            # home-prefixed paths onto this machine first).
-            if options['ssh_config'] and import_data.get('ssh_config'):
-                ssh_config_path = self.get_ssh_config_path()
-                ssh_text = _rebase_home_in_text(
-                    import_data['ssh_config'], source_home, target_home)
-                self._merge_ssh_config(ssh_config_path, ssh_text)
+            # For SSH config: add only genuinely-new hosts, into a sshPilot-owned Include
+            # fragment — reusing the app's real Include-aware view instead of a second parser.
+            if options['ssh_config']:
+                imported_texts = [
+                    _rebase_home_in_text(t, source_home, target_home)
+                    for t in self._imported_ssh_texts(import_data)
+                ]
+                if imported_texts:
+                    self._merge_ssh_config_fragment(
+                        self.get_ssh_config_path(), imported_texts)
 
             # For known_hosts, append if in isolated mode
             if options['known_hosts'] and import_data.get('known_hosts'):
@@ -689,77 +913,74 @@ class BackupManager:
             logger.error(error_msg)
             return False, error_msg
 
-    def _merge_ssh_config(self, target_path: str, imported_config: str):
-        """Merge SSH config by appending imported hosts that don't exist"""
+    def _merge_ssh_config_fragment(self, main_path: str, imported_texts: List[str]) -> None:
+        """Add only genuinely-new hosts from ``imported_texts`` into a sshPilot-owned Include
+        fragment, then ensure a single ``Include`` references it.
+
+        Dedup is against the fully Include-resolved set of existing Host names (so hosts already
+        living in a fragment are seen). Wildcard/Match/global stanzas are dropped, partial-name
+        collisions are reported. Idempotent: the fragment is itself Include-resolved, so re-import
+        finds its hosts already present and adds nothing."""
+        existing = _existing_host_names(main_path)
+        new_text, dropped, collisions = _select_new_host_blocks(imported_texts, existing)
+        self.last_merge_dropped_globals = dropped
+        self.last_merge_collisions = collisions
+        if dropped:
+            logger.info("Merge dropped %d wildcard/Match/global stanza(s) from the import "
+                        "(never injected into your config)", dropped)
+        if collisions:
+            logger.warning("Merge skipped %d multi-name host(s) that partially collide with "
+                           "existing entries: %s", len(collisions),
+                           "; ".join(" ".join(p) for p in collisions))
+        if not new_text.strip():
+            logger.info("SSH config merge: no new hosts to add")
+            return
+
+        root = _ssh_config_root(main_path)
+        fragment = os.path.join(root, _IMPORT_FRAGMENT_NAME)
+        existing_fragment = ''
+        if os.path.exists(fragment):
+            try:
+                with open(fragment, encoding='utf-8') as f:
+                    existing_fragment = f.read()
+            except OSError:
+                existing_fragment = ''
+        if existing_fragment:
+            body = existing_fragment
+            if not body.endswith('\n'):
+                body += '\n'
+            body += '\n' + new_text + '\n'
+        else:
+            body = "# SSH hosts imported by sshPilot\n\n" + new_text + '\n'
+        self._atomic_write_text(fragment, body, 0o600)
+        self._ensure_include(main_path, fragment)
+        logger.info("Merged SSH hosts into fragment %s", fragment)
+
+    def _ensure_include(self, main_path: str, fragment_path: str) -> None:
+        """Add one ``Include`` for ``fragment_path`` to the main config — unless it is already
+        resolved (via an explicit Include or a glob that already covers it), which avoids
+        double-inclusion (and the duplicate stanzas that would produce)."""
+        from .ssh_config_utils import resolve_ssh_config_files
+        frag_abs = os.path.abspath(fragment_path)
         try:
-            # Read existing config
-            existing_config = ''
-            if os.path.exists(target_path):
-                with open(target_path, encoding='utf-8') as f:
-                    existing_config = f.read()
-
-            # Extract host entries from existing config (simple approach)
-            existing_hosts = self._extract_host_names(existing_config)
-            
-            # Parse imported config
-            imported_lines = imported_config.split('\n')
-            new_entries = []
-            current_entry = []
-            in_host_block = False
-            current_host = None
-
-            for line in imported_lines:
-                stripped = line.strip()
-                if stripped.lower().startswith('host '):
-                    # Start of a new host block
-                    if current_entry and current_host:
-                        # Save previous entry if it's new
-                        if current_host not in existing_hosts:
-                            new_entries.extend(current_entry)
-                            new_entries.append('')  # blank line separator
-                    
-                    # Start new entry
-                    current_entry = [line]
-                    in_host_block = True
-                    # Extract host name
-                    current_host = stripped[5:].strip().split()[0] if len(stripped) > 5 else None
-                elif in_host_block:
-                    current_entry.append(line)
-                    # Check if we've exited the host block
-                    if stripped and not stripped.startswith('#') and not line.startswith((' ', '\t')):
-                        if not stripped.lower().startswith('host '):
-                            # Not indented and not a host directive - end of block
-                            in_host_block = False
-
-            # Add last entry if needed
-            if current_entry and current_host and current_host not in existing_hosts:
-                new_entries.extend(current_entry)
-
-            # Append new entries to existing config
-            if new_entries:
-                os.makedirs(os.path.dirname(target_path), exist_ok=True)
-                with open(target_path, 'a', encoding='utf-8') as f:
-                    if existing_config and not existing_config.endswith('\n'):
-                        f.write('\n')
-                    f.write('\n# Imported entries\n')
-                    f.write('\n'.join(new_entries))
-                os.chmod(target_path, 0o600)
-                logger.info(f"Merged SSH config - added {len([h for h in new_entries if h.strip().lower().startswith('host ')])} new hosts")
-
-        except Exception as e:
-            logger.error(f"Failed to merge SSH config: {e}")
-            raise
-
-    def _extract_host_names(self, config_text: str) -> set:
-        """Extract all Host directive names from SSH config"""
-        hosts = set()
-        for line in config_text.split('\n'):
-            stripped = line.strip()
-            if stripped.lower().startswith('host '):
-                # Extract host patterns
-                host_patterns = stripped[5:].strip().split()
-                hosts.update(host_patterns)
-        return hosts
+            resolved = {os.path.abspath(p) for p in resolve_ssh_config_files(main_path)}
+        except Exception:
+            resolved = set()
+        if frag_abs in resolved:
+            return
+        rel = os.path.relpath(frag_abs, _ssh_config_root(main_path))
+        existing = ''
+        if os.path.exists(main_path):
+            try:
+                with open(main_path, encoding='utf-8') as f:
+                    existing = f.read()
+            except OSError:
+                existing = ''
+        prefix = existing
+        if prefix and not prefix.endswith('\n'):
+            prefix += '\n'
+        self._atomic_write_text(
+            main_path, prefix + f"\n# Added by sshPilot import\nInclude {rel}\n", 0o600)
 
     def _merge_known_hosts(self, target_path: str, imported_hosts: str):
         """Merge known_hosts by appending unique entries"""

@@ -311,13 +311,17 @@ class WindowConfigDialogsMixin:
                     options=options)
                 if success:
                     counts = getattr(backup_mgr, 'last_export_counts', {})
-                    self._simple_dialog(
-                        _("Export Successful"),
-                        _("Backup saved to:\n{}\n\n{} credential(s) and {} private key(s) "
-                          "included; encryption: {}.").format(
-                            export_path, counts.get('credentials', 0),
-                            counts.get('private_keys', 0),
-                            _("on") if passphrase else _("off")))
+                    msg = _("Backup saved to:\n{}\n\n{} credential(s) and {} private key(s) "
+                            "included; encryption: {}.").format(
+                        export_path, counts.get('credentials', 0),
+                        counts.get('private_keys', 0),
+                        _("on") if passphrase else _("off"))
+                    skipped = getattr(backup_mgr, 'last_export_skipped_config_files', []) or []
+                    if skipped:
+                        msg += "\n\n" + _("{} SSH config file(s) outside your ~/.ssh were not "
+                                          "included (system or shared files):\n{}").format(
+                            len(skipped), "\n".join(skipped))
+                    self._simple_dialog(_("Export Successful"), msg)
                 else:
                     self._simple_dialog(_("Export Failed"), error or _("Unknown error"))
 
@@ -666,8 +670,10 @@ class WindowConfigDialogsMixin:
             skipped_keys = getattr(backup_mgr, 'last_import_skipped_keys', 0)
             secrets_persisted = getattr(backup_mgr, 'last_import_secrets_persisted', True)
             skipped_creds = getattr(backup_mgr, 'last_import_skipped_credentials', 0)
+            merge_collisions = getattr(backup_mgr, 'last_merge_collisions', []) or []
             self._show_import_success(restored, total, restored_keys, total_keys,
-                                      skipped_keys, secrets_persisted, skipped_creds)
+                                      skipped_keys, secrets_persisted, skipped_creds,
+                                      merge_collisions=merge_collisions)
 
         self._run_after_vault_unlock_for_secrets(
             do_apply,
@@ -678,7 +684,7 @@ class WindowConfigDialogsMixin:
     def _show_import_success(self, restored: int, total: int,
                              restored_keys: int = 0, total_keys: int = 0,
                              skipped_keys: int = 0, secrets_persisted: bool = True,
-                             skipped_credentials: int = 0):
+                             skipped_credentials: int = 0, merge_collisions=None):
         # Keys that already existed were left untouched by design (never overwritten), so they
         # are NOT counted as failures. Genuine key failures are the remainder.
         failed_keys = max(0, total_keys - restored_keys - skipped_keys)
@@ -718,6 +724,11 @@ class WindowConfigDialogsMixin:
             if failed_keys:
                 lines.append(_("{} private key(s) could not be written (the target path may "
                                "not be writable).").format(failed_keys))
+        if merge_collisions:
+            names = ", ".join(" ".join(p) for p in merge_collisions)
+            lines.append(_("{} imported host(s) were skipped because they share a name with an "
+                           "existing host: {}. Rename or remove the conflict, then import "
+                           "again.").format(len(merge_collisions), names))
         lines.append(_("Reload now to apply the imported configuration. Some settings may still "
                        "need a full restart of sshPilot to take effect."))
         body = "\n\n".join(lines)
