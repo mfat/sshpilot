@@ -165,9 +165,9 @@ class WindowConfigDialogsMixin:
         scrolled.set_child(listbox)
         box.append(scrolled)
 
-        def on_select_all(btn):
+        def on_select_all(switch, *_a):
             for cb, _c, _k in checks:
-                cb.set_active(btn.get_active())
+                cb.set_active(switch.get_active())
         select_all.connect('notify::active', on_select_all)
 
         def sync_connection_controls(*_a):
