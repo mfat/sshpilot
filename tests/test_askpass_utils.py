@@ -66,10 +66,61 @@ def test_lookup_passphrase_handles_home_relative_alias(monkeypatch, tmp_path):
     absolute_path = os.path.realpath(os.path.expanduser(key_path))
 
     assert askpass_utils.store_passphrase(key_path, "super-secret")
-    assert DummySecretModule.store == {absolute_path: "super-secret"}
+    # Stored under the home-relative title so it stays portable across machines.
+    assert DummySecretModule.store == {"~/.ssh/example_key": "super-secret"}
 
+    # Resolvable by the absolute path, the ~ alias, or the raw input on this machine.
     assert askpass_utils.lookup_passphrase(absolute_path) == "super-secret"
     assert askpass_utils.lookup_passphrase(key_path) == "super-secret"
+
+
+def _use_dummy_libsecret(monkeypatch):
+    from sshpilot import secret_storage
+    monkeypatch.setattr(secret_storage, "Secret", DummySecretModule, raising=False)
+    monkeypatch.setattr(secret_storage, "keyring", None, raising=False)
+    monkeypatch.setattr(secret_storage, "is_macos", lambda: False, raising=False)
+    monkeypatch.setattr(secret_storage, "_SCHEMA", None, raising=False)
+    monkeypatch.delenv("SSHPILOT_SECRET_BACKEND", raising=False)
+
+
+def _set_home(monkeypatch, home):
+    from sshpilot import secret_storage
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.setattr(secret_storage, "_MANAGER", None, raising=False)   # rebuild singleton
+
+
+def test_passphrase_autofills_across_different_home(monkeypatch, tmp_path):
+    """A passphrase stored on one machine (home A) autofills on another (home B) — the
+    portable-vault case (KDBX/pass moved between machines with different $HOME/username)."""
+    from sshpilot import askpass_utils
+    _use_dummy_libsecret(monkeypatch)
+
+    alice = tmp_path / "alice"; alice.mkdir()
+    bob = tmp_path / "bob"; bob.mkdir()
+
+    _set_home(monkeypatch, alice)
+    assert askpass_utils.store_passphrase("~/.ssh/id_ed25519", "pw")
+    assert DummySecretModule.store == {"~/.ssh/id_ed25519": "pw"}   # home-relative title
+
+    # Same vault, different machine: the key lives at bob's absolute path now.
+    _set_home(monkeypatch, bob)
+    assert askpass_utils.lookup_passphrase(str(bob / ".ssh" / "id_ed25519")) == "pw"
+    assert askpass_utils.lookup_passphrase("~/.ssh/id_ed25519") == "pw"
+
+
+def test_passphrase_legacy_absolute_entry_still_resolves(monkeypatch, tmp_path):
+    """Entries saved by an older version under an absolute title keep resolving (the lookup
+    still tries the absolute candidate)."""
+    from sshpilot import askpass_utils
+    _use_dummy_libsecret(monkeypatch)
+    _set_home(monkeypatch, tmp_path)
+
+    legacy_abs = os.path.realpath(os.path.join(str(tmp_path), ".ssh", "old_key"))
+    DummySecretModule.store = {legacy_abs: "legacy-pw"}
+
+    assert askpass_utils.lookup_passphrase("~/.ssh/old_key") == "legacy-pw"
+    assert askpass_utils.lookup_passphrase(legacy_abs) == "legacy-pw"
 
 
 def test_clear_passphrase_removes_legacy_alias(monkeypatch, tmp_path):

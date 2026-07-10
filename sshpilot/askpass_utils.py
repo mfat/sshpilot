@@ -69,21 +69,28 @@ _ASKPASS_LOG_IO_LOCK = threading.Lock()
 
 
 def _normalize_key_path_for_storage(key_path: str) -> str:
-    """Return a canonical representation for storing passphrases."""
+    """Return a canonical representation for storing passphrases.
+
+    Keys under ``$HOME`` are stored as a home-relative alias (``~/.ssh/id``) rather than an
+    absolute path, so the same passphrase autofills after moving a portable vault (KDBX/pass) to
+    a machine with a different ``$HOME``/username. The lookup already tries the ``~`` form
+    (:func:`_get_key_path_lookup_candidates`), so legacy absolute entries still resolve. Keys
+    outside home keep their absolute path (they can't be made portable)."""
 
     expanded = os.path.expanduser(key_path)
     try:
-        return os.path.realpath(expanded)
+        resolved = os.path.realpath(expanded)
     except Exception:
         # ``realpath`` can fail on some exotic platforms; fall back to ``abspath``
-        return os.path.abspath(expanded)
+        resolved = os.path.abspath(expanded)
+    return _home_alias_for_path(resolved) or resolved
 
 
 def _home_alias_for_path(path: str) -> str:
     """Return a home-relative alias (~/...) for *path* when applicable."""
 
     try:
-        home = os.path.expanduser("~")
+        home = os.path.realpath(os.path.expanduser("~"))
     except Exception:
         return ""
 
