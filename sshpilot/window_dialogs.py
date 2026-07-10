@@ -138,7 +138,7 @@ class WindowConfigDialogsMixin:
         keys_row, private_keys_check = switch_row(
             _("Private key files"), option_defaults.get('private_keys', False))
         secrets_row, secrets_check = switch_row(
-            _("Saved passwords, sudo passwords, and key passphrases"),
+            _("Saved secrets (passwords and passphrases)"),
             option_defaults.get('secrets', False),
             caption=_("Choose which connections to include saved passwords, passphrases, "
                       "and private key files for."))
@@ -540,7 +540,7 @@ class WindowConfigDialogsMixin:
                     'app_settings': _("App settings and groups"),
                     'ssh_config': _("Connection profiles (SSH config)"),
                     'known_hosts': _("Known hosts"),
-                    'secrets': _("Saved passwords, sudo passwords, and key passphrases"),
+                    'secrets': _("Saved secrets (passwords and passphrases)"),
                     'private_keys': _("Private key files"),
                 }
                 for key in BACKUP_OPTION_KEYS:
