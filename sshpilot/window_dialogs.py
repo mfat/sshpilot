@@ -84,8 +84,10 @@ class WindowConfigDialogsMixin:
 
         dialog = Adw.MessageDialog(
             transient_for=self, modal=True, heading=_("Export Backup"),
-            body=_("Choose what to include in this backup. Saved secrets and private keys "
-                   "are included only for the selected connections."))
+            body=_("Choose what to include in this backup. Connection profiles (host, port, "
+                   "forwards, and keys) come from SSH config and app settings. When exporting "
+                   "saved passwords or private key files, choose which connections to include "
+                   "those for below."))
 
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
         box.set_margin_start(8); box.set_margin_end(8)
@@ -117,7 +119,7 @@ class WindowConfigDialogsMixin:
         app_row, app_settings_check = switch_row(
             _("App settings and groups"), option_defaults.get('app_settings', False))
         ssh_row, ssh_config_check = switch_row(
-            _("SSH config entries"), option_defaults.get('ssh_config', False))
+            _("Connection profiles (SSH config)"), option_defaults.get('ssh_config', False))
         known_row, known_hosts_check = switch_row(
             _("Known hosts"), option_defaults.get('known_hosts', False))
         secrets_row, secrets_check = switch_row(
@@ -136,16 +138,28 @@ class WindowConfigDialogsMixin:
             category_box.append(row)
         box.append(category_box)
 
+        connection_section = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+
         connection_label = Gtk.Label(
-            label=_("Connections"),
+            label=_("Secrets and keys for these connections"),
             xalign=0)
         connection_label.add_css_class('heading')
-        box.append(connection_label)
+        connection_section.append(connection_label)
 
-        select_all = Gtk.CheckButton(label=_("Select all connections"))
+        connection_caption = Gtk.Label(
+            label=_("Choose which connections to include saved passwords, passphrases, "
+                    "and private key files for."),
+            xalign=0, wrap=True)
+        try:
+            connection_caption.add_css_class('dim-label')
+        except Exception:
+            pass
+        connection_section.append(connection_caption)
+
+        select_all = Gtk.CheckButton(label=_("Select all"))
         select_all.set_active(False)
         select_all.add_css_class('selection-mode')
-        box.append(select_all)
+        connection_section.append(select_all)
 
         listbox = Gtk.ListBox()
         listbox.set_selection_mode(Gtk.SelectionMode.NONE)
@@ -171,7 +185,8 @@ class WindowConfigDialogsMixin:
         scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         scrolled.set_min_content_height(180)
         scrolled.set_child(listbox)
-        box.append(scrolled)
+        connection_section.append(scrolled)
+        box.append(connection_section)
 
         def on_select_all(switch, *_a):
             for cb, _c, _k in checks:
@@ -180,9 +195,7 @@ class WindowConfigDialogsMixin:
 
         def sync_connection_controls(*_a):
             needs_connections = secrets_check.get_active() or private_keys_check.get_active()
-            select_all.set_sensitive(needs_connections)
-            listbox.set_sensitive(needs_connections)
-            connection_label.set_sensitive(needs_connections)
+            connection_section.set_visible(needs_connections)
         secrets_check.connect('notify::active', sync_connection_controls)
         private_keys_check.connect('notify::active', sync_connection_controls)
         sync_connection_controls()
@@ -513,7 +526,7 @@ class WindowConfigDialogsMixin:
 
                 labels = {
                     'app_settings': _("App settings and groups"),
-                    'ssh_config': _("SSH config entries"),
+                    'ssh_config': _("Connection profiles (SSH config)"),
                     'known_hosts': _("Known hosts"),
                     'secrets': _("Saved passwords, sudo passwords, and key passphrases"),
                     'private_keys': _("Private key files"),
