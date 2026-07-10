@@ -174,7 +174,7 @@ def test_probe_bitwarden_status_skips_bw_status_when_unlocked(monkeypatch):
             return True
 
         def needs_login(self):
-            raise AssertionError("bw status should not run when already unlocked")
+            raise AssertionError("login check should not run when already unlocked")
 
     monkeypatch.setattr(bs, "is_bw_installed", lambda **kw: True)
     bs.invalidate_bitwarden_status_cache()

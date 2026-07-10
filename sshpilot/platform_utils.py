@@ -29,6 +29,7 @@ def is_windows() -> bool:
 _BITWARDEN_DESKTOP_APP = "com.bitwarden.desktop"
 _BW_VERIFY_TIMEOUT = 20
 _bw_binding_cache: Optional[Tuple["BwCliBinding", float]] = None
+_bw_unverified_cache: Optional[Tuple[Optional[Tuple[str, ...]], float]] = None
 _BW_CACHE_TTL = 30.0
 _host_env_cache: dict[str, Optional[str]] = {}
 
@@ -218,8 +219,46 @@ def resolve_bw_cli_binding(
 
 def invalidate_bw_cli_cache() -> None:
     """Drop cached ``bw`` discovery (e.g. after install/uninstall)."""
-    global _bw_binding_cache
+    global _bw_binding_cache, _bw_unverified_cache
     _bw_binding_cache = None
+    _bw_unverified_cache = None
+
+
+def resolve_bw_cli_unverified() -> Optional[List[str]]:
+    """Argv prefix for ``bw`` discovered on PATH/managed **without** running ``bw
+    --version``.
+
+    Cheap (``shutil.which`` / file checks; under Flatpak a fast ``flatpak-spawn``
+    probe, cached below) — for command-building and UI availability checks that must
+    not block the GTK main thread on a Node cold start. The verifying resolver
+    (:func:`resolve_bw_cli`) stays for install/setup confirmation, which runs
+    off-thread. The discovered argv is identical; only the ``--version`` verification
+    is skipped, so a broken ``bw`` simply fails when actually run.
+    """
+    global _bw_unverified_cache
+    now = time.monotonic()
+    if (
+        _bw_unverified_cache is not None
+        and now - _bw_unverified_cache[1] < _BW_CACHE_TTL
+    ):
+        cached = _bw_unverified_cache[0]
+        return list(cached) if cached else None
+    try:
+        bindings = _discover_bw_cli_bindings(path_only=True)
+    except Exception:
+        bindings = []
+    argv = tuple(bindings[0].argv_prefix) if bindings else None
+    _bw_unverified_cache = (argv, now)
+    return list(argv) if argv else None
+
+
+def bw_cli_discoverable() -> bool:
+    """True when a ``bw`` binary is present on PATH/managed **without** running it.
+
+    For UI availability labels that must not block the GTK main thread on the Node
+    ``bw --version`` probe. See :func:`resolve_bw_cli_unverified`.
+    """
+    return resolve_bw_cli_unverified() is not None
 
 
 def resolve_bw_cli(*, force_refresh: bool = False) -> Optional[List[str]]:

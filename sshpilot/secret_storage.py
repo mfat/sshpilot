@@ -716,8 +716,11 @@ class BitwardenBackend(SecretBackend):
         if self._argv_override is not None:
             return list(self._argv_override)
         try:
-            from .platform_utils import resolve_bw_cli
-            return resolve_bw_cli()
+            # Non-verifying: never run ``bw --version`` here — this is accessed on the
+            # GTK main thread (is_available(), command-building). Verified resolution
+            # (bw --version) stays in is_bw_installed()/probe, which run off-thread.
+            from .platform_utils import resolve_bw_cli_unverified
+            return resolve_bw_cli_unverified()
         except Exception:
             return resolve_host_binary(self._bin_name)
 
@@ -756,6 +759,14 @@ class BitwardenBackend(SecretBackend):
         available = self._argv_prefix is not None
         return available
 
+    def is_discoverable(self) -> bool:
+        """Cheap presence check that never spawns ``bw --version``.
+
+        For UI availability labels on the GTK main thread; ``is_available()`` verifies
+        the binary runs (a Node spawn) and should stay off-thread."""
+        from .platform_utils import bw_cli_discoverable
+        return bw_cli_discoverable()
+
     # -- bw subprocess helper --------------------------------------------
     def _run(self, args: List[str], *, token: Optional[str] = None,
              input_bytes: Optional[bytes] = None, extra_env: Optional[dict] = None):
@@ -780,27 +791,18 @@ class BitwardenBackend(SecretBackend):
                      " ".join(args[:2]), time.monotonic() - started, result.returncode)
         return result
 
-    # -- status / unlock state -------------------------------------------
-    def _status(self) -> Optional[str]:
-        """``bw status`` state ('unauthenticated'|'locked'|'unlocked') or None. Needs no
-        session token."""
-        if not self._bin:
-            return None
-        try:
-            result = self._run(["status"])
-            if result.returncode != 0:
-                return None
-            data = json.loads(result.stdout.decode("utf-8", "replace") or "{}")
-            status = data.get("status")
-            return status if isinstance(status, str) else None
-        except Exception as exc:
-            logger.debug("bw status failed: %s", exc)
-            return None
-
+    # -- login / unlock state --------------------------------------------
     def needs_login(self) -> bool:
         """True when no account is authenticated (``bw login`` required), so ``bw unlock``
         cannot succeed. Only called in the unlock-decision flow."""
-        return self._status() == "unauthenticated"
+        if not self._bin:
+            return False
+        try:
+            result = self._run(["login", "--check"])
+            return result.returncode != 0
+        except Exception as exc:
+            logger.debug("bw login --check failed: %s", exc)
+            return False
 
     @staticmethod
     def _bw_cli_message(result) -> str:
@@ -1788,9 +1790,22 @@ class SecretManager:
         """Public view of :meth:`_all_available_backends` for export/migration callers."""
         return self._all_available_backends()
 
-    def available_backends(self) -> List[str]:
-        """Names of all registered backends that are currently usable."""
-        return [n for n, b in self._backends.items() if b.is_available()]
+    def available_backends(self, *, cheap: bool = False) -> List[str]:
+        """Names of all registered backends that are currently usable.
+
+        ``cheap=True`` uses a backend's ``is_discoverable()`` when it provides one
+        (Bitwarden), avoiding a blocking ``bw --version`` spawn — for UI labels that
+        run on the GTK main thread and only need presence, not a live verification."""
+        out: List[str] = []
+        for name, backend in self._backends.items():
+            probe = getattr(backend, "is_discoverable", None) if cheap else None
+            try:
+                ok = probe() if callable(probe) else backend.is_available()
+            except Exception:
+                ok = False
+            if ok:
+                out.append(name)
+        return out
 
     def registered_backends(self) -> List[str]:
         """Names of every registered backend, available or not (for UI choices)."""

@@ -156,6 +156,22 @@ def test_register_backend_and_available(manager):
     assert custom.data[spec.keyring_account] == 's'
 
 
+def test_available_backends_cheap_uses_discoverable_not_is_available(manager):
+    mgr, _primary, _fallback = manager
+
+    class SessionBackend(FakeBackend):
+        def is_available(self):  # would spawn `bw --version` — must NOT run when cheap
+            raise AssertionError("is_available() must not be called in cheap mode")
+
+        def is_discoverable(self):
+            return True
+
+    mgr.register_backend('bitwarden', SessionBackend('bitwarden'))
+    assert 'bitwarden' in mgr.available_backends(cheap=True)
+    # Non-session backends without is_discoverable still fall back to is_available.
+    assert 'libsecret' in mgr.available_backends(cheap=True)
+
+
 def test_unavailable_backends_skipped(manager):
     mgr, primary, fallback = manager
     primary._available = False
@@ -587,7 +603,9 @@ def test_bitwarden_is_available_reresolves_bw(monkeypatch):
             return None
         return ['/usr/local/bin/bw']
 
-    monkeypatch.setattr(platform_utils, 'resolve_bw_cli', fake_resolve)
+    # is_available() resolves the argv prefix via the non-verifying (cheap) path,
+    # which never spawns `bw --version` on the GTK main thread.
+    monkeypatch.setattr(platform_utils, 'resolve_bw_cli_unverified', fake_resolve)
     backend = ss.BitwardenBackend()
     assert backend.is_available() is False
     present['ok'] = True                          # bw installed after construction
@@ -604,14 +622,14 @@ def test_bitwarden_flatpak_uses_host_spawn(monkeypatch):
 
     def fake_run(argv, **kwargs):
         calls.append(list(argv))
-        return _Result(0, json.dumps({"status": "locked"}).encode())
+        return _Result(0, b'You are logged in!\n')
 
-    monkeypatch.setattr(platform_utils, 'resolve_bw_cli', fake_resolve)
+    monkeypatch.setattr(platform_utils, 'resolve_bw_cli_unverified', fake_resolve)
     monkeypatch.setattr(ss.subprocess, 'run', fake_run)
     backend = ss.BitwardenBackend()
     assert backend.is_available() is True
-    assert backend._status() == 'locked'
-    assert calls == [['/usr/bin/flatpak-spawn', '--host', 'bw', '--nointeraction', 'status']]
+    assert backend.needs_login() is False
+    assert calls == [['/usr/bin/flatpak-spawn', '--host', 'bw', '--nointeraction', 'login', '--check']]
 
 
 def test_non_session_backend_needs_no_unlock(manager):
@@ -658,6 +676,10 @@ class FakeBw:
         self.envs.append(dict(env or {}))
         if cmd[:1] == ['status']:
             return _Result(0, json.dumps({"status": self.status}).encode())
+        if cmd[:2] == ['login', '--check']:
+            if self.status == "unauthenticated":
+                return _Result(1, b'', b'You are not logged in.')
+            return _Result(0, b'You are logged in!\n')
         if cmd[:1] == ['unlock']:
             if self.status == "unauthenticated" or not self.unlock_ok:
                 return _Result(1, b'', b'unlock failed')
@@ -1035,8 +1057,8 @@ def test_bitwarden_lock_clears_session(monkeypatch):
 
 
 def test_bitwarden_needs_login(monkeypatch):
-    # `bw status` reporting 'unauthenticated' surfaces as needs_login() so the UI can
-    # tell the user to run `bw login` instead of failing silently.
+    # `bw login --check` exit 1 surfaces as needs_login() so the UI can tell the user
+    # to run `bw login` instead of failing silently.
     fake = FakeBw(status="unauthenticated")
     b = _make_backend(monkeypatch, fake)
     assert b.needs_login() is True

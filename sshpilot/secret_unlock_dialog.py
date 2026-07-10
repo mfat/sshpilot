@@ -9,7 +9,7 @@ It owns the user-facing messaging for the unlock interaction:
   instead of showing a doomed password prompt;
 - on a failed unlock it reports an incorrect-password message.
 ``on_done(success: bool)`` is purely for flow control (success only when actually
-unlocked). Backend calls that may spawn a process (``bw status``/``bw unlock``) run
+unlocked). Backend calls that may spawn a process (``bw login --check``/``bw unlock``) run
 off the main thread.
 """
 

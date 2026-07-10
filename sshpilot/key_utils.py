@@ -2,13 +2,32 @@
 from __future__ import annotations
 
 import logging
-import subprocess
 from pathlib import Path
 from typing import Dict, Optional, Set
 
 logger = logging.getLogger(__name__)
 
 _SKIPPED_FILENAMES: Set[str] = {"config", "known_hosts", "authorized_keys"}
+
+
+def _looks_like_private_key(file_path: Path) -> bool:
+    """Cheap header sniff for a private SSH key — reads only the first bytes.
+
+    Recognizes the PEM/OpenSSH armor ``-----BEGIN [<type> ]PRIVATE KEY-----`` (which
+    is present for encrypted keys too) and PuTTY ``.ppk`` files. This replaces a
+    per-file ``ssh-keygen`` spawn during key discovery, which was a startup hotspot
+    (one Node/subprocess per ``~/.ssh`` file). Actual key *use* still validates via
+    the SSH connection path.
+    """
+    try:
+        with open(file_path, "rb") as fh:
+            head = fh.read(256)
+    except OSError:
+        return False
+    text = head.decode("utf-8", "ignore")
+    if "PuTTY-User-Key-File-" in text:
+        return True
+    return "-----BEGIN" in text and "PRIVATE KEY-----" in text
 
 
 def _is_private_key(
@@ -19,9 +38,8 @@ def _is_private_key(
 ) -> bool:
     """Return ``True`` when *file_path* looks like a private SSH key.
 
-    The helper optionally caches validation results in *cache* to avoid
-    redundant ``ssh-keygen`` executions. ``skipped_filenames`` allows callers
-    to provide an alternate skip list while defaulting to the shared set.
+    Uses a cheap header sniff (no ``ssh-keygen`` subprocess). Results are optionally
+    memoized in *cache*. ``skipped_filenames`` overrides the default skip list.
     """
     name = file_path.name
     skip_names = skipped_filenames if skipped_filenames is not None else _SKIPPED_FILENAMES
@@ -34,56 +52,10 @@ def _is_private_key(
         if cached is not None:
             return cached
 
-    cmd = ["ssh-keygen", "-y", "-f", key_path, "-P", ""]
-    try:
-        completed = subprocess.run(cmd, capture_output=True, text=True, check=False)
-    except FileNotFoundError:
-        raise
-    except Exception as exc:
-        logger.debug("Failed to run ssh-keygen for %s: %s", key_path, exc, exc_info=True)
-        if cache is not None:
-            cache[key_path] = False
-        return False
-
-    stderr = completed.stderr or ""
-    stdout = completed.stdout or ""
-    stderr_lower = stderr.lower()
-
-    success = completed.returncode == 0
-    if not success:
-        passphrase_hints = (
-            "incorrect passphrase",
-            "passphrase is required",
-            "passphrase required",
-            "no passphrase supplied",
-            "bad passphrase",
-        )
-        if any(hint in stderr_lower for hint in passphrase_hints):
-            success = True
-            logger.debug(
-                "ssh-keygen reported a protected key for %s: %s",
-                key_path,
-                stderr.strip() or stdout.strip() or "passphrase required",
-            )
-        elif "passphrase" in stderr_lower:
-            # Future-proofing: log unexpected passphrase-related output but do not
-            # treat it as success.
-            logger.debug(
-                "ssh-keygen returned passphrase-related output for %s: %s",
-                key_path,
-                stderr.strip() or stdout.strip(),
-            )
-
-    if success:
-        if cache is not None:
-            cache[key_path] = True
-        return True
-
-    message = stderr.strip() or stdout.strip() or f"ssh-keygen exited with {completed.returncode}"
-    logger.debug("ssh-keygen rejected %s: %s", key_path, message)
+    result = _looks_like_private_key(file_path)
     if cache is not None:
-        cache[key_path] = False
-    return False
+        cache[key_path] = result
+    return result
 
 
-__all__ = ["_SKIPPED_FILENAMES", "_is_private_key"]
+__all__ = ["_SKIPPED_FILENAMES", "_is_private_key", "_looks_like_private_key"]

@@ -1529,7 +1529,10 @@ class PreferencesWindow(Adw.Window):
             try:
                 from .secret_storage import get_secret_manager
                 _mgr = get_secret_manager()
-                available = set(_mgr.available_backends())
+                # ``cheap=True``: don't run ``bw --version`` on the main thread just to
+                # label the combo — the Bitwarden status row below reports the real
+                # signed-in/locked/unlocked state.
+                available = set(_mgr.available_backends(cheap=True))
                 registered = _mgr.registered_backends()
             except Exception:
                 available = set()
@@ -2443,24 +2446,10 @@ class PreferencesWindow(Adw.Window):
                         logger.debug("Failed to refresh Bitwarden rows", exc_info=True)
 
             if name == 'bitwarden':
-                try:
-                    from .bitwarden_setup import (
-                        probe_bitwarden_status,
-                        run_bitwarden_setup,
-                    )
-                    status = probe_bitwarden_status(force_refresh=True)
-                    needs_setup = not status.is_ready
-                    if needs_setup and status.cli_installed:
-                        # Signed in but locked — unlock only, not the full setup wizard.
-                        if not status.needs_login and manager.selected_needs_unlock():
-                            from .secret_unlock_dialog import prompt_unlock
-                            prompt_unlock(self, on_done=_done)
-                            return
-                    if needs_setup:
-                        run_bitwarden_setup(self, on_done=_done)
-                        return
-                except Exception as exc:
-                    logger.debug("Bitwarden setup probe failed: %s", exc)
+                # probe_bitwarden_status spawns bw --version/bw status (Node) — run it
+                # off the main thread so switching to Bitwarden doesn't freeze Settings.
+                self._setup_bitwarden_backend_async(manager, _done)
+                return
             # A session-backed backend must be unlocked before it can store/read.
             if manager.selected_needs_unlock():
                 try:
@@ -2471,6 +2460,47 @@ class PreferencesWindow(Adw.Window):
                     logger.error("Failed to prompt secret backend unlock: %s", exc)
         except Exception as exc:
             logger.error("Failed to update secret storage backend: %s", exc)
+
+    def _setup_bitwarden_backend_async(self, manager, on_done):
+        """Probe Bitwarden off the main thread, then unlock or run setup as needed."""
+        from .bitwarden_setup import progress_dialog
+        _set_status, close = progress_dialog(
+            self, _("Bitwarden"), _("Checking Bitwarden…"),
+        )
+
+        def worker():
+            try:
+                from .bitwarden_setup import probe_bitwarden_status
+                status = probe_bitwarden_status(force_refresh=True)
+            except Exception:
+                status = None
+            GLib.idle_add(lambda: (
+                self._after_bitwarden_setup_probe(status, manager, on_done, close),
+                False,
+            )[1])
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _after_bitwarden_setup_probe(self, status, manager, on_done, close):
+        close()
+        from .bitwarden_setup import run_bitwarden_setup
+        if status is not None and status.is_ready:
+            on_done(True)   # already ready — just refresh the rows
+            return
+        # Signed in but locked → unlock only; otherwise run the full setup wizard.
+        if (
+            status is not None
+            and status.cli_installed
+            and not status.needs_login
+            and manager.selected_needs_unlock()
+        ):
+            try:
+                from .secret_unlock_dialog import prompt_unlock
+                prompt_unlock(self, on_done=on_done)
+                return
+            except Exception:
+                logger.debug("Bitwarden unlock prompt failed", exc_info=True)
+        run_bitwarden_setup(self, on_done=on_done)
 
     def _update_identity_rows_visibility(self, name):
         """Show the custom-socket row only when the 'custom' agent is selected."""

@@ -279,10 +279,10 @@ def invalidate_bitwarden_status_cache() -> None:
 
 
 def probe_bitwarden_status(bw=None, *, force_refresh: bool = False) -> BitwardenStatus:
-    """Check CLI presence, sign-in, and unlock state (may spawn ``bw status``).
+    """Check CLI presence, sign-in, and unlock state (may spawn ``bw login --check``).
 
     Results are cached briefly for UI refresh paths (Preferences). When the vault
-    is already unlocked in-process, ``bw status`` is not spawned.
+    is already unlocked in-process, no login probe is spawned.
     """
     global _bw_status_cache
     now = time.monotonic()
@@ -1169,15 +1169,31 @@ def _login_wizard(window, bw, on_done: Callable[[bool], None]):
 def _prompt_gui_login(window, bw, on_done: Callable[[bool], None]):
     """Configure the server if needed, then run the sequential sign-in wizard."""
     def _after_server(url: str):
-        if url and not _configure_server(bw, url):
-            _show_error(
-                window,
-                _("Server configuration failed"),
-                _("Could not set the Bitwarden server URL. Check the address and try again."),
-                on_closed=lambda: on_done(False),
-            )
+        if not url:
+            _login_wizard(window, bw, on_done)
             return
-        _login_wizard(window, bw, on_done)
+        # ``bw config server`` spawns a Node process — run it off the GTK main thread.
+        _set_status, close = progress_dialog(
+            _modal_parent(window), _("Bitwarden"), _("Configuring server…"),
+        )
+
+        def worker():
+            ok = _configure_server(bw, url)
+            GLib.idle_add(lambda: (_after_configure(ok), False)[1])
+
+        def _after_configure(ok):
+            close()
+            if not ok:
+                _show_error(
+                    window,
+                    _("Server configuration failed"),
+                    _("Could not set the Bitwarden server URL. Check the address and try again."),
+                    on_closed=lambda: on_done(False),
+                )
+                return
+            _login_wizard(window, bw, on_done)
+
+        threading.Thread(target=worker, daemon=True).start()
 
     _prompt_server_url(window, _after_server)
 

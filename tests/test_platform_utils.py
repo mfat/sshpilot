@@ -1,6 +1,18 @@
 import os
 
+import pytest
+
 from sshpilot import platform_utils
+
+
+@pytest.fixture(autouse=True)
+def _reset_bw_cli_cache():
+    # These tests populate the module-global bw-CLI discovery caches (often with
+    # tmp_path bindings). Reset around each test so state never leaks to another
+    # test/file (e.g. describe() reading a stale legacy binding).
+    platform_utils.invalidate_bw_cli_cache()
+    yield
+    platform_utils.invalidate_bw_cli_cache()
 
 
 def test_is_flatpak_env(monkeypatch):
