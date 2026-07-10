@@ -321,18 +321,11 @@ class WindowConfigDialogsMixin:
                 else:
                     self._simple_dialog(_("Export Failed"), error or _("Unknown error"))
 
-            # A locked session vault (Bitwarden/KeePass) contributes NO secrets to the gather,
-            # which would silently produce a backup with zero credentials. Unlock it first.
-            if options.get('secrets'):
-                try:
-                    from .secret_storage import get_secret_manager
-                    if get_secret_manager().selected_needs_unlock():
-                        from .secret_unlock_dialog import prompt_unlock
-                        prompt_unlock(self, on_done=do_export)   # proceed even if user cancels
-                        return
-                except Exception:
-                    logger.debug("Pre-export unlock check failed", exc_info=True)
-            do_export()
+            self._run_after_vault_unlock_for_secrets(
+                do_export,
+                needed=bool(options.get('secrets')),
+                cancelled_heading=_("Export Cancelled"),
+            )
 
         file_dialog.save(self, None, on_save_response)
 
@@ -609,13 +602,43 @@ class WindowConfigDialogsMixin:
         warn.connect('response', on_warn)
         warn.present()
 
+    def _run_after_vault_unlock_for_secrets(self, proceed, *, needed: bool,
+                                            cancelled_heading: str):
+        """Run ``proceed()`` once the session vault is unlocked when secrets are involved.
+
+        If the vault is locked, prompt to unlock first. When unlock fails or the user cancels,
+        show ``cancelled_heading`` and do **not** call ``proceed()`` — export/import must not
+        silently continue with zero credentials restored or included."""
+        if not needed:
+            proceed()
+            return
+        try:
+            from .secret_storage import get_secret_manager
+            if not get_secret_manager().selected_needs_unlock():
+                proceed()
+                return
+            from .secret_unlock_dialog import prompt_unlock
+
+            def _on_done(unlocked):
+                if unlocked:
+                    proceed()
+                    return
+                self._simple_dialog(
+                    cancelled_heading,
+                    _("Your secret vault must be unlocked to include or restore saved "
+                      "credentials. Unlock it and try again."))
+
+            prompt_unlock(self, on_done=_on_done)
+        except Exception:
+            logger.debug("Pre-operation vault unlock check failed", exc_info=True)
+            proceed()
+
     def _perform_spbk_import(self, manifest, mode: str, restore_options=None):
         """Apply a decrypted .spbk manifest: config (replace/merge) + restore credentials.
 
         If the manifest carries credentials and the selected secret backend is a **locked
-        session vault** (e.g. Bitwarden), unlock it first so the restores don't silently fail.
-        Proceed-regardless: if the user cancels the unlock we still import and report how many
-        credentials could be restored."""
+        session vault** (e.g. Bitwarden), unlock it first — import is aborted if unlock fails
+        or the user cancels, so credentials are never silently skipped."""
         restore_options = restore_options or {}
         total = (
             len([c for c in (manifest.get('credentials') or [])
@@ -646,16 +669,11 @@ class WindowConfigDialogsMixin:
             self._show_import_success(restored, total, restored_keys, total_keys,
                                       skipped_keys, secrets_persisted, skipped_creds)
 
-        if total:
-            try:
-                from .secret_storage import get_secret_manager
-                if get_secret_manager().selected_needs_unlock():
-                    from .secret_unlock_dialog import prompt_unlock
-                    prompt_unlock(self, on_done=do_apply)   # do_apply runs once unlock resolves
-                    return
-            except Exception:
-                logger.debug("Pre-restore unlock check failed", exc_info=True)
-        do_apply()
+        self._run_after_vault_unlock_for_secrets(
+            do_apply,
+            needed=total > 0,
+            cancelled_heading=_("Import Cancelled"),
+        )
 
     def _show_import_success(self, restored: int, total: int,
                              restored_keys: int = 0, total_keys: int = 0,
