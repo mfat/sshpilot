@@ -84,7 +84,7 @@ class WindowConfigDialogsMixin:
 
         dialog = Adw.MessageDialog(
             transient_for=self, modal=True, heading=_("Export Backup"),
-            body=_("Choose what to include in this backup. Connection profiles (host, port, "
+            body=_("Choose what to also include in this backup. Connection profiles (host, port, "
                    "forwards, and keys) come from SSH config and app settings. When exporting "
                    "saved passwords or private key files, choose which connections to include "
                    "those for below."))
