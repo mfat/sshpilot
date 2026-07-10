@@ -23,6 +23,10 @@ from .preferences import PreferencesWindow
 
 logger = logging.getLogger(__name__)
 
+# Minimum content width for export/import backup dialogs (Adw.MessageDialog sizes to
+# its extra_child; without this they stay uncomfortably narrow).
+BACKUP_DIALOG_MIN_WIDTH = 520
+
 
 class WindowConfigDialogsMixin:
     """Known-hosts editor, preferences, and config export/import dialogs."""
@@ -90,6 +94,7 @@ class WindowConfigDialogsMixin:
                    "those for below."))
 
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        box.set_size_request(BACKUP_DIALOG_MIN_WIDTH, -1)
         box.set_margin_start(8); box.set_margin_end(8)
         box.set_margin_top(8); box.set_margin_bottom(8)
 
@@ -108,12 +113,18 @@ class WindowConfigDialogsMixin:
         category_label.add_css_class('heading')
         category_box.append(category_label)
 
-        def switch_row(label, active=False, caption=None):
+        def switch_row(label, active=False, caption=None, destructive=False):
             row = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
             top = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            text_label = Gtk.Label(label=label, xalign=0, hexpand=True)
+            if destructive:
+                try:
+                    text_label.add_css_class('error')
+                except Exception:
+                    pass
             if caption:
                 text_col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-                text_col.append(Gtk.Label(label=label, xalign=0, hexpand=True))
+                text_col.append(text_label)
                 cap = Gtk.Label(label=caption, xalign=0, wrap=True, hexpand=True)
                 try:
                     cap.add_css_class('dim-label')
@@ -122,7 +133,7 @@ class WindowConfigDialogsMixin:
                 text_col.append(cap)
                 top.append(text_col)
             else:
-                top.append(Gtk.Label(label=label, xalign=0, hexpand=True))
+                top.append(text_label)
             switch = Gtk.Switch(active=bool(active))
             switch.set_valign(Gtk.Align.CENTER)
             top.append(switch)
@@ -136,7 +147,8 @@ class WindowConfigDialogsMixin:
         known_row, known_hosts_check = switch_row(
             _("Known hosts"), option_defaults.get('known_hosts', False))
         keys_row, private_keys_check = switch_row(
-            _("Private key files"), option_defaults.get('private_keys', False))
+            _("Private key files"), option_defaults.get('private_keys', False),
+            destructive=True)
         secrets_row, secrets_check = switch_row(
             _("Saved secrets (passwords and passphrases)"),
             option_defaults.get('secrets', False),
@@ -195,8 +207,21 @@ class WindowConfigDialogsMixin:
         def sync_connection_controls(*_a):
             needs_connections = secrets_check.get_active() or private_keys_check.get_active()
             connection_section.set_visible(needs_connections)
+        def on_private_keys_toggled(switch, _pspec):
+            if not private_keys_alert_guard[0] and switch.get_active():
+                def decline():
+                    private_keys_alert_guard[0] = True
+                    try:
+                        switch.set_active(False)
+                    finally:
+                        private_keys_alert_guard[0] = False
+
+                self._alert_private_keys_export_risk(dialog, on_decline=decline)
+            sync_connection_controls()
+
+        private_keys_alert_guard = [False]
         secrets_check.connect('notify::active', sync_connection_controls)
-        private_keys_check.connect('notify::active', sync_connection_controls)
+        private_keys_check.connect('notify::active', on_private_keys_toggled)
         sync_connection_controls()
 
         enc_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
@@ -270,6 +295,33 @@ class WindowConfigDialogsMixin:
 
         dialog.connect('response', on_response)
         dialog.present()
+
+    def _alert_private_keys_export_risk(self, parent, *, on_decline=None):
+        """Warn before including private key files in a backup."""
+        heading = _("Private Key Files")
+        body = _("It is not recommended to move your private keys to another machine. "
+                 "If you still want to do this, make sure to protect the backup "
+                 "with a passphrase.")
+        if hasattr(Adw, 'AlertDialog'):
+            alert = Adw.AlertDialog(heading=heading, body=body)
+        else:
+            alert = Adw.MessageDialog(
+                transient_for=parent, modal=True, heading=heading, body=body,
+            )
+        alert.add_response('cancel', _('Cancel'))
+        alert.add_response('ok', _('OK'))
+        alert.set_default_response('ok')
+        alert.set_close_response('cancel')
+
+        def on_response(_dlg, resp):
+            if resp != 'ok' and on_decline:
+                on_decline()
+
+        alert.connect('response', on_response)
+        if hasattr(Adw, 'AlertDialog'):
+            alert.present(parent)
+        else:
+            alert.present()
 
     def _confirm_plaintext_then_export(self, connections, sel_ids, options):
         sensitive_items = []
@@ -454,6 +506,7 @@ class WindowConfigDialogsMixin:
             body=error or _("Enter the passphrase used when this backup was created."))
         entry = Gtk.PasswordEntry(show_peek_icon=True)
         entry.set_property('activates-default', True)
+        entry.set_size_request(BACKUP_DIALOG_MIN_WIDTH, -1)
         dialog.set_extra_child(entry)
         dialog.add_response('cancel', _('Cancel'))
         dialog.add_response('ok', _('Unlock'))
@@ -492,6 +545,7 @@ class WindowConfigDialogsMixin:
             
             # Create content box with radio buttons
             content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+            content_box.set_size_request(BACKUP_DIALOG_MIN_WIDTH, -1)
             content_box.set_margin_start(20)
             content_box.set_margin_end(20)
             content_box.set_margin_top(20)
@@ -546,6 +600,11 @@ class WindowConfigDialogsMixin:
                 for key in BACKUP_OPTION_KEYS:
                     row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
                     label = Gtk.Label(label=labels[key], xalign=0, hexpand=True)
+                    if key == 'private_keys':
+                        try:
+                            label.add_css_class('error')
+                        except Exception:
+                            pass
                     check = Gtk.Switch(active=included.get(key, False))
                     check.set_valign(Gtk.Align.CENTER)
                     row.append(label); row.append(check)
