@@ -200,18 +200,85 @@ def unlock_at_startup(window):
         except Exception:
             pass
         backend = manager.selected_backend()
-        if (
-            backend is not None
-            and getattr(backend, "session_backed", False)
-            and not backend.is_available()
-        ):
+        if backend is None or not getattr(backend, "session_backed", False):
+            return False
+        if not backend.is_available():
             _prompt_unavailable_session_backend(window, backend)
             return False
-        if manager.selected_needs_unlock():
-            prompt_unlock(window)
+        if not manager.selected_needs_unlock():
+            return False
+        # Locked. Decide off the main thread whether we can even unlock: an
+        # unauthenticated vault (no ``bw login`` yet) must not get a doomed
+        # master-password prompt at startup — the user signs in later through the
+        # connection or Preferences flow. ``selected_needs_login`` spawns ``bw
+        # status`` (a slow Node process), so keep it off the GTK main thread.
+        def _probe():
+            needs_login = manager.selected_needs_login()
+            GLib.idle_add(lambda: (_startup_unlock_after_probe(window, needs_login), False)[1])
+
+        threading.Thread(target=_probe, daemon=True).start()
     except Exception:
         logger.debug("startup unlock failed", exc_info=True)
     return False
+
+
+def _startup_unlock_after_probe(window, needs_login):
+    """At startup: when signed in but locked, prompt to unlock. When not signed in,
+    show a dismissible notice offering to sign in — never a doomed unlock prompt."""
+    manager = get_secret_manager()
+    if needs_login:
+        backend = manager.selected_backend()
+        if backend is not None:
+            _prompt_not_signed_in(window, backend)
+        return
+    try:
+        if manager.selected_needs_unlock():
+            prompt_unlock(window)
+    except Exception:
+        logger.debug("deferred startup unlock failed", exc_info=True)
+
+
+def _prompt_not_signed_in(parent, backend):
+    """Tell the user the selected vault is installed but not signed in, and offer sign-in."""
+    name = (getattr(backend, "name", "") or "").strip().lower()
+    friendly = _friendly_backend_name(backend)
+
+    if name == "bitwarden":
+        from .bitwarden_setup import run_bitwarden_setup
+
+        dialog = Adw.MessageDialog(
+            transient_for=parent, modal=True,
+            heading=_("Sign in to Bitwarden"),
+            body=_(
+                "Bitwarden is selected for secret storage, but you are not signed "
+                "in. Passwords and passphrases will not be stored or autofilled "
+                "until you sign in and unlock your vault.\n\n"
+                "Open Settings ▸ Security & Credentials to change the backend, or "
+                "sign in now."
+            ),
+        )
+        dialog.add_response("dismiss", _("Not now"))
+        dialog.add_response("setup", _("Sign in…"))
+        dialog.set_default_response("setup")
+        dialog.set_close_response("dismiss")
+
+        def _respond(_dlg, resp):
+            if resp == "setup":
+                run_bitwarden_setup(parent, interactive=True)
+
+        dialog.connect("response", _respond)
+        dialog.present()
+        return
+
+    _message(
+        parent,
+        _("Not signed in"),
+        _(
+            "{name} is selected for secret storage but you are not signed in. "
+            "Passwords and passphrases will not be stored or autofilled until you "
+            "sign in.\n\nOpen Settings ▸ Security & Credentials to fix the setup."
+        ).format(name=friendly),
+    )
 
 
 def prompt_unlock(parent, *, backend=None, on_done=None):

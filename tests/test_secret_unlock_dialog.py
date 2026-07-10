@@ -80,29 +80,37 @@ def test_unlock_at_startup_prompts_when_session_backend_unavailable(monkeypatch)
     assert prompted == ["bitwarden"]
 
 
-def test_unlock_at_startup_unlocks_when_available(monkeypatch):
-    class FakeBackend:
-        name = "bitwarden"
-        session_backed = True
-
-        def is_available(self):
-            return True
-
+def test_startup_unlock_prompts_when_signed_in_but_locked(monkeypatch):
     class FakeManager:
-        def set_selected(self, _name):
-            pass
-
         def selected_backend(self):
-            return FakeBackend()
+            return object()
 
         def selected_needs_unlock(self):
             return True
 
     unlocked = []
     monkeypatch.setattr(d, "get_secret_manager", lambda: FakeManager())
-    monkeypatch.setattr(d, "_prompt_unavailable_session_backend", lambda *_a: None)
     monkeypatch.setattr(d, "prompt_unlock", lambda parent: unlocked.append(parent))
 
-    assert d.unlock_at_startup("win") is False
+    d._startup_unlock_after_probe("win", needs_login=False)
     assert unlocked == ["win"]
+
+
+def test_startup_unlock_notifies_but_does_not_unlock_when_not_signed_in(monkeypatch):
+    # An unauthenticated vault must get a sign-in notice, never a doomed unlock prompt.
+    backend = object()
+
+    class FakeManager:
+        def selected_backend(self):
+            return backend
+
+    notified = []
+    monkeypatch.setattr(d, "get_secret_manager", lambda: FakeManager())
+    monkeypatch.setattr(d, "_prompt_not_signed_in", lambda parent, b: notified.append(b))
+    monkeypatch.setattr(d, "prompt_unlock", lambda *_a, **_k: (_ for _ in ()).throw(
+        AssertionError("must not prompt for unlock when not signed in")
+    ))
+
+    d._startup_unlock_after_probe("win", needs_login=True)
+    assert notified == [backend]
 
