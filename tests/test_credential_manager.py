@@ -123,6 +123,31 @@ def test_extra_key_paths_without_connection(secrets):
     assert creds[0].metadata.get('connections') == []
 
 
+def test_gathers_home_relative_and_legacy_passphrase(secrets, monkeypatch, tmp_path):
+    """Export must find a passphrase whether it was stored under the portable ``~`` title
+    (post home-relative change) or a legacy absolute title, and export both under the ``~`` id."""
+    mgr, libsecret, _keyring = secrets
+    home = tmp_path / "home"
+    (home / ".ssh").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    keyfile = str(home / ".ssh" / "id_ed25519")
+    conn = FakeConn("box", hostname="h", username="me", keyfile=keyfile)
+
+    # New portable (~) title.
+    libsecret.data[passphrase_spec("~/.ssh/id_ed25519").keyring_account] = "pw-new"
+    keys = [c for c in CredentialManager(FakeConnManager([conn]), secret_manager=mgr)
+            .list_credentials(include_orphans=False) if c.type == TYPE_KEY]
+    assert [(c.id, c.secret) for c in keys] == [("~/.ssh/id_ed25519", "pw-new")]
+
+    # Legacy absolute title — still found, still exported under the portable id.
+    libsecret.data.clear()
+    libsecret.data[os.path.realpath(keyfile)] = "pw-old"
+    keys = [c for c in CredentialManager(FakeConnManager([conn]), secret_manager=mgr)
+            .list_credentials(include_orphans=False) if c.type == TYPE_KEY]
+    assert [(c.id, c.secret) for c in keys] == [("~/.ssh/id_ed25519", "pw-old")]
+
+
 def test_no_stored_secret_yields_no_credential(secrets):
     mgr, libsecret, keyring = secrets
     a = FakeConn('A', hostname='a.example', username='alice')     # nothing stored anywhere

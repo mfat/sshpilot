@@ -47,15 +47,51 @@ from .credential_adapters import SecretBackendAdapter
 logger = logging.getLogger(__name__)
 
 
+def _home_relative(path: str) -> str:
+    """Home-relative alias (``~/...``) for a path under ``$HOME``, else ``''``. Mirrors
+    ``askpass_utils._home_alias_for_path``."""
+    if not path:
+        return ""
+    try:
+        home = os.path.realpath(os.path.expanduser("~"))
+    except Exception:
+        return ""
+    if not home:
+        return ""
+    try:
+        rel = os.path.relpath(path, home)
+    except ValueError:
+        return ""
+    if rel in (".", os.curdir):
+        return "~"
+    if rel.startswith(".."):
+        return ""
+    return os.path.join("~", rel)
+
+
 def _canonical_key_path(key_path: str) -> str:
     """Canonical key path used as the passphrase account — mirrors
-    ``askpass_utils._normalize_key_path_for_storage`` (kept local so this module stays
-    GTK-free and dependency-light)."""
-    expanded = os.path.expanduser(key_path or "")
+    ``askpass_utils._normalize_key_path_for_storage``: a home-relative alias (``~/.ssh/id``) for
+    keys under ``$HOME`` so exported passphrases match the portable title storage uses, else the
+    absolute realpath. Kept local so this module stays GTK-free and dependency-light."""
+    if not (key_path or "").strip():
+        return ""
+    expanded = os.path.expanduser(key_path)
     try:
-        return os.path.realpath(expanded)
+        resolved = os.path.realpath(expanded)
     except Exception:
-        return os.path.abspath(expanded)
+        resolved = os.path.abspath(expanded)
+    return _home_relative(resolved) or resolved
+
+
+def _passphrase_lookup_paths(canonical_path: str) -> List[str]:
+    """Accounts to probe for a key passphrase: the canonical (home-relative) title plus its
+    absolute expansion, so both portable ``~`` entries and legacy absolute entries resolve."""
+    out: List[str] = []
+    for p in (canonical_path, os.path.expanduser(canonical_path)):
+        if p and p not in out:
+            out.append(p)
+    return out
 
 
 class CredentialManager:
@@ -143,12 +179,19 @@ class CredentialManager:
         for path, nicknames in refs.items():
             if not path:
                 continue
-            spec = passphrase_spec(path)
-            found = self._lookup(spec)
+            # Probe the portable (~) title AND the legacy absolute one, so a passphrase saved
+            # under either form is included in the export.
+            found = None
+            for candidate in _passphrase_lookup_paths(path):
+                found = self._lookup(passphrase_spec(candidate))
+                if found is not None:
+                    break
             if found is None:
                 continue
             value, backend = found
-            cred = spec_to_credential(spec, value, backend)
+            # Export under the canonical (portable) identity regardless of which title matched,
+            # so restore re-stores it portably.
+            cred = spec_to_credential(passphrase_spec(path), value, backend)
             cred.metadata["connections"] = sorted(n for n in nicknames if n)
             out.setdefault((cred.id, cred.type), cred)
 
