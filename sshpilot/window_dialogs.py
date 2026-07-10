@@ -142,8 +142,9 @@ class WindowConfigDialogsMixin:
         connection_label.add_css_class('heading')
         box.append(connection_label)
 
-        select_all_row, select_all = switch_row(_("Select all connections"), False)
-        box.append(select_all_row)
+        select_all = Gtk.CheckButton(label=_("Select all connections"))
+        select_all.set_active(False)
+        box.append(select_all)
 
         listbox = Gtk.ListBox()
         listbox.set_selection_mode(Gtk.SelectionMode.NONE)
@@ -156,8 +157,13 @@ class WindowConfigDialogsMixin:
                 key = getattr(conn, 'nickname', '') or label
             except Exception:
                 label, key = '?', '?'
-            switch_box, cb = switch_row(label, key in prefill)
-            row = Gtk.ListBoxRow(); row.set_child(switch_box); listbox.append(row)
+            cb = Gtk.CheckButton(label=label)
+            cb.set_active(key in prefill)
+            for edge in ('start', 'end'):
+                getattr(cb, f'set_margin_{edge}')(6)
+            for edge in ('top', 'bottom'):
+                getattr(cb, f'set_margin_{edge}')(4)
+            row = Gtk.ListBoxRow(); row.set_child(cb); listbox.append(row)
             checks.append((cb, conn, key))
         scrolled = Gtk.ScrolledWindow()
         scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
