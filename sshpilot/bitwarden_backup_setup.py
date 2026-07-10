@@ -36,28 +36,45 @@ def _bitwarden_backend():
 
 
 def ensure_bitwarden_ready(window, on_ready):
-    """Ensure `bw` is installed, signed in, and unlocked; then call ``on_ready(bool)``."""
+    """Ensure `bw` is installed, signed in, and unlocked; then call ``on_ready(bool)``.
+
+    Every `bw` probe/operation spawns a slow Node subprocess, so they run on a worker thread and
+    marshal back via ``GLib.idle_add`` — otherwise the GTK main loop freezes (GNOME "not
+    responding")."""
     bw = _bitwarden_backend()
-    if bw is None or not _safe(bw.is_available):
-        _dialog(
-            window, _("Bitwarden CLI not found"),
-            _("Install the Bitwarden CLI (the “bw” command) and try again — e.g. "
-              "“snap install bw”, your package manager, or bitwarden.com/help/cli. "
-              "For a self-hosted Vaultwarden also run “bw config server <url>” once."),
-        ).present()
+    if bw is None:
+        _no_cli_dialog(window).present()
         on_ready(False)
         return
 
-    if _safe(bw.needs_login):
-        # One-time sign-in: open a terminal for `bw login` and wait for it to complete.
-        try:
-            window.terminal_manager.show_local_terminal(title=_("Bitwarden Login"))
-        except Exception:
-            logger.debug("Could not open a local terminal for bw login", exc_info=True)
-        _wait_for_login(window, bw, on_ready)
-        return
+    def probe():
+        available = _safe(bw.is_available)
+        needs_login = _safe(bw.needs_login, default=False) if available else False
+        GLib.idle_add(lambda: (_after_probe(available, needs_login), False)[1])
 
-    _unlock_then_ready(window, bw, on_ready)
+    def _after_probe(available, needs_login):
+        if not available:
+            _no_cli_dialog(window).present()
+            on_ready(False)
+            return
+        if needs_login:
+            try:
+                window.terminal_manager.show_local_terminal(title=_("Bitwarden Login"))
+            except Exception:
+                logger.debug("Could not open a local terminal for bw login", exc_info=True)
+            _wait_for_login(window, bw, on_ready)
+            return
+        _unlock_then_ready(window, bw, on_ready)
+
+    threading.Thread(target=probe, daemon=True).start()
+
+
+def _no_cli_dialog(window):
+    return _dialog(
+        window, _("Bitwarden CLI not found"),
+        _("Install the Bitwarden CLI (the “bw” command) and try again — e.g. "
+          "“snap install bw”, your package manager, or bitwarden.com/help/cli. "
+          "For a self-hosted Vaultwarden also run “bw config server <url>” once."))
 
 
 def _wait_for_login(window, bw, on_ready):

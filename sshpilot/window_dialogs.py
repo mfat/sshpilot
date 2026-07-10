@@ -13,6 +13,7 @@ stay in window.py and resolve via `self`.
 
 import logging
 import os
+import threading
 from datetime import datetime
 
 from gi.repository import Adw, Gio, GLib, Gtk
@@ -350,7 +351,6 @@ class WindowConfigDialogsMixin:
                 return
 
             def do_export(*_a):
-                from datetime import datetime
                 from .backup_manager import BackupManager
                 from .backup_backends import BitwardenBackupBackend, BackupTooLargeForNote
                 from .secret_storage import get_secret_manager
@@ -358,21 +358,35 @@ class WindowConfigDialogsMixin:
                 mgr = BackupManager(self.config, self.connection_manager)
                 backend = BitwardenBackupBackend(
                     get_secret_manager().get_backend("bitwarden"), item_name=name)
-                try:
-                    entry = mgr.export_to_backend(
-                        backend, connections=connections, options=options)
-                except BackupTooLargeForNote as e:
-                    self._simple_dialog(_("Backup too large for Bitwarden"), str(e))
-                    return
-                except Exception as e:
-                    self._simple_dialog(_("Export Failed"), str(e))
-                    return
-                counts = getattr(mgr, 'last_export_counts', {})
-                self._simple_dialog(
-                    _("Export Successful"),
-                    _("Backup saved to Bitwarden as “{}”.\n\n{} credential(s) and {} private "
-                      "key(s) included.").format(entry.name, counts.get('credentials', 0),
-                                                 counts.get('private_keys', 0)))
+
+                # Building the manifest reads secrets (may hit bw) and the note write spawns bw —
+                # all off the main thread so the UI doesn't freeze ("not responding").
+                def worker():
+                    try:
+                        entry = mgr.export_to_backend(
+                            backend, connections=connections, options=options)
+                        counts = getattr(mgr, 'last_export_counts', {})
+                        payload = ('ok', entry.name, counts.get('credentials', 0),
+                                   counts.get('private_keys', 0))
+                    except BackupTooLargeForNote as e:
+                        payload = ('toobig', str(e))
+                    except Exception as e:
+                        logger.error("Bitwarden export failed: %s", e)
+                        payload = ('error', str(e))
+                    GLib.idle_add(lambda: (_report(payload), False)[1])
+
+                def _report(p):
+                    if p[0] == 'ok':
+                        self._simple_dialog(
+                            _("Export Successful"),
+                            _("Backup saved to Bitwarden as “{}”.\n\n{} credential(s) and {} "
+                              "private key(s) included.").format(p[1], p[2], p[3]))
+                    elif p[0] == 'toobig':
+                        self._simple_dialog(_("Backup too large for Bitwarden"), p[1])
+                    else:
+                        self._simple_dialog(_("Export Failed"), p[1])
+
+                threading.Thread(target=worker, daemon=True).start()
 
             # Reading saved secrets for the manifest may need the CURRENT secrets backend unlocked.
             self._run_after_vault_unlock_for_secrets(
@@ -559,20 +573,31 @@ class WindowConfigDialogsMixin:
         def proceed(ready):
             if not ready:
                 return
-            try:
-                from .backup_backends import BitwardenBackupBackend
-                from .secret_storage import get_secret_manager
-                backend = BitwardenBackupBackend(get_secret_manager().get_backend("bitwarden"))
-                entries = backend.list_exports()
-            except Exception as e:
-                self._simple_dialog(_("Import Failed"), str(e))
-                return
-            if not entries:
-                self._simple_dialog(
-                    _("No backups found"),
-                    _("No sshPilot backups were found in your Bitwarden vault."))
-                return
-            self._show_bitwarden_entry_chooser(backend, entries)
+            from .backup_backends import BitwardenBackupBackend
+            from .secret_storage import get_secret_manager
+            backend = BitwardenBackupBackend(get_secret_manager().get_backend("bitwarden"))
+
+            def worker():   # bw list items is slow — keep it off the main thread
+                try:
+                    payload = ('ok', backend.list_exports())
+                except Exception as e:
+                    logger.error("Listing Bitwarden backups failed: %s", e)
+                    payload = ('error', str(e))
+                GLib.idle_add(lambda: (_after_list(payload), False)[1])
+
+            def _after_list(p):
+                if p[0] != 'ok':
+                    self._simple_dialog(_("Import Failed"), p[1])
+                    return
+                entries = p[1]
+                if not entries:
+                    self._simple_dialog(
+                        _("No backups found"),
+                        _("No sshPilot backups were found in your Bitwarden vault."))
+                    return
+                self._show_bitwarden_entry_chooser(backend, entries)
+
+            threading.Thread(target=worker, daemon=True).start()
 
         ensure_bitwarden_ready(self, proceed)
 
@@ -608,13 +633,23 @@ class WindowConfigDialogsMixin:
             entry = next((e for rb, e in radios if rb.get_active()), None)
             if entry is None:
                 return
-            try:
-                manifest = backend.read(entry)
-            except Exception as e:
-                self._simple_dialog(_("Import Failed"), str(e))
-                return
-            # Reuse the .spbk apply path — a Bitwarden-note manifest has the same shape.
-            self._show_import_mode_dialog("", manifest=manifest)
+
+            def worker():   # bw get item is slow — keep it off the main thread
+                try:
+                    payload = ('ok', backend.read(entry))
+                except Exception as e:
+                    logger.error("Reading Bitwarden backup failed: %s", e)
+                    payload = ('error', str(e))
+                GLib.idle_add(lambda: (_after_read(payload), False)[1])
+
+            def _after_read(p):
+                if p[0] != 'ok':
+                    self._simple_dialog(_("Import Failed"), p[1])
+                    return
+                # Reuse the .spbk apply path — a Bitwarden-note manifest has the same shape.
+                self._show_import_mode_dialog("", manifest=p[1])
+
+            threading.Thread(target=worker, daemon=True).start()
         dialog.connect('response', on_resp)
         dialog.present()
 
