@@ -57,17 +57,38 @@ def _rebase_home_path(path: str, source_home: Optional[str], target_home: str) -
     return path
 
 
+# SSH directives whose argument is a path on the LOCAL filesystem — the only lines where a
+# home-prefix rewrite is meaningful. Anything else (RemoteCommand/RemoteForward target the
+# REMOTE host; comments and hostnames are free text) must be left byte-for-byte alone.
+_LOCAL_PATH_DIRECTIVES = frozenset({
+    'identityfile', 'certificatefile', 'identityagent', 'controlpath',
+    'userknownhostsfile', 'globalknownhostsfile', 'include',
+    'pkcs11provider', 'securitykeyprovider', 'xauthlocation', 'revokedhostkeys',
+})
+
+
 def _rebase_home_in_text(text: str, source_home: Optional[str], target_home: str) -> str:
-    """Rewrite home-prefixed absolute paths (e.g. ``IdentityFile /home/alice/.ssh/id``) inside
-    an SSH-config blob so restored per-host paths point at the current home. No-op when there is
-    no recorded source home or it already matches the current home."""
+    """Rewrite home-prefixed absolute paths onto the current home, but ONLY on lines whose
+    directive names a local-filesystem path (``IdentityFile``, ``ControlPath``, ``Include`` …).
+
+    A blind text replace would also corrupt ``RemoteCommand``/``RemoteForward`` arguments (which
+    live on the remote host) and comments that merely mention the old home — so we scope the
+    rewrite per directive."""
     if not text or not source_home:
         return text
     sh = os.path.abspath(str(source_home))
     th = os.path.abspath(str(target_home))
     if sh == th:
         return text
-    return text.replace(sh + os.sep, th + os.sep)
+    needle = sh + os.sep
+    repl = th + os.sep
+    out = []
+    for line in text.splitlines(keepends=True):
+        if needle in line and _ssh_keyword(line) in _LOCAL_PATH_DIRECTIVES:
+            out.append(line.replace(needle, repl))
+        else:
+            out.append(line)
+    return ''.join(out)
 
 
 # --- SSH config as an Include-aware file tree --------------------------------
@@ -145,13 +166,28 @@ def _is_wildcard_pattern(pattern: str) -> bool:
     return any(ch in pattern for ch in '*?!')
 
 
+def _owned_and_readable(path: str) -> bool:
+    """True if we own ``path`` and can read it. Ownership (not writability) is the right test for
+    "a file the user controls" — a defensively read-only (chmod 400) config is still theirs and
+    must be backed up, while a root-owned system file must not be."""
+    try:
+        if not os.access(path, os.R_OK):
+            return False
+        getuid = getattr(os, 'getuid', None)
+        if getuid is None:            # non-POSIX: no ownership concept, fall back to readability
+            return True
+        return os.stat(path).st_uid == getuid()
+    except OSError:
+        return False
+
+
 def _gather_ssh_config_tree(main_path: str) -> Tuple[Dict[str, str], List[str]]:
     """Return ``({relpath_from_root: content}, [skipped_abspaths])`` for every file reachable from
-    ``main_path`` via Include that is **user-writable and under the config root**.
+    ``main_path`` via Include that is **under the config root and owned by the user**.
 
-    Files outside the root or not writable by us (``/etc/ssh/…``, team-shared, root-owned) are
-    reported as skipped and never bundled — a backup must not ship content the user doesn't own,
-    nor create unwritable restore targets."""
+    Files outside the root or not owned by us (``/etc/ssh/…``, team-shared, root-owned) are
+    reported as skipped and never bundled — a backup must not ship content the user doesn't own.
+    Owned-but-read-only files ARE bundled (readability, not writability, is the test)."""
     from .ssh_config_utils import resolve_ssh_config_files
     root = _ssh_config_root(main_path)
     tree: Dict[str, str] = {}
@@ -162,7 +198,7 @@ def _gather_ssh_config_tree(main_path: str) -> Tuple[Dict[str, str], List[str]]:
         files = [main_path] if os.path.exists(main_path) else []
     for f in files:
         af = os.path.abspath(f)
-        if not _is_under(af, root) or not os.access(af, os.W_OK):
+        if not _is_under(af, root) or not _owned_and_readable(af):
             if af not in skipped:
                 skipped.append(af)
             continue
@@ -218,16 +254,61 @@ def _select_new_host_blocks(imported_texts: List[str], existing_names: set
                 if has_content:
                     dropped += 1
                 continue
-            if any(_is_wildcard_pattern(p) for p in patterns):
+            # Keep a stanza as long as it names at least one concrete host; only PURE
+            # wildcard/negation stanzas (Host *, Host prod-*, Host * !x) are global-ish and
+            # dropped. `Host prod !prod-db` keeps `prod`.
+            concrete = [p for p in patterns if not _is_wildcard_pattern(p)]
+            if not concrete:
                 dropped += 1
                 continue
-            present = [p for p in patterns if p in existing_names]
+            present = [p for p in concrete if p in existing_names]
             if not present:
                 kept.append('\n'.join(blk).rstrip())
-            elif len(present) < len(patterns):
+            elif len(present) < len(concrete):
                 collisions.append(patterns)
-            # else: fully-existing -> skip silently
+            # else: all concrete names already exist -> skip silently
     return ('\n\n'.join(kept), dropped, collisions)
+
+
+def _rewrite_include_line(line: str, source_root: Optional[str]) -> str:
+    """Make one ``Include`` line portable for restore onto another machine/mode.
+
+    - relative includes are kept (they resolve under the target config root, where the bundled
+      fragments now live);
+    - absolute includes UNDER the backup's source root become relative (fixes cross-mode restore,
+      where the target root is not the home dir);
+    - absolute includes OUTSIDE the source root were never bundled, so the line is commented out
+      with a note instead of silently re-pointing at the target machine's system files."""
+    if _ssh_keyword(line) != 'include':
+        return line
+    rest = line.strip()[len('include'):].lstrip(' =\t')
+    try:
+        patterns = shlex.split(rest)
+    except ValueError:
+        patterns = rest.split()
+    if not patterns:
+        return line
+    new_patterns: List[str] = []
+    foreign = False
+    for p in patterns:
+        pe = os.path.expanduser(os.path.expandvars(p))
+        if not os.path.isabs(pe):
+            new_patterns.append(p)
+        elif source_root and _is_under(pe, source_root):
+            new_patterns.append(os.path.relpath(pe, source_root))
+        else:
+            foreign = True
+    indent = line[:len(line) - len(line.lstrip())]
+    tail = '\n' if line.endswith('\n') else ''
+    if foreign:
+        return f"{indent}# sshPilot: Include not included in backup: {line.strip()}{tail}"
+    return f"{indent}Include {' '.join(new_patterns)}{tail}"
+
+
+def _rewrite_includes(text: str, source_root: Optional[str]) -> str:
+    """Apply :func:`_rewrite_include_line` to every line of an imported config file."""
+    return ''.join(_rewrite_include_line(line, source_root)
+                   for line in text.splitlines(keepends=True))
 
 
 class BackupManager:
@@ -363,12 +444,15 @@ class BackupManager:
         # stays for readers that predate this field.
         export_data['ssh_config_files'] = {}
         export_data['ssh_config_main_rel'] = ''
+        export_data['ssh_config_root'] = ''
         self.last_export_skipped_config_files = []
         if options['ssh_config'] and ssh_config_path and os.path.exists(ssh_config_path):
             tree, skipped = _gather_ssh_config_tree(ssh_config_path)
             export_data['ssh_config_files'] = tree
             export_data['ssh_config_main_rel'] = os.path.relpath(
                 os.path.abspath(ssh_config_path), _ssh_config_root(ssh_config_path))
+            # Absolute source root, so restore can make absolute Include lines relative.
+            export_data['ssh_config_root'] = _ssh_config_root(ssh_config_path)
             self.last_export_skipped_config_files = skipped
             if skipped:
                 logger.warning("Excluded %d SSH config file(s) outside your control from the "
@@ -800,14 +884,23 @@ class BackupManager:
                           source_home: Optional[str], target_home: str) -> bool:
         """Restore a bundled Include tree under the target's config root. The source's main file
         is written to *this* machine's main path (so a default↔isolated difference maps
-        correctly); fragments keep their relative locations. Home paths inside each file are
-        rebased. Returns False for a legacy backup with no tree (caller writes the single blob)."""
+        correctly); fragments keep their relative locations.
+
+        Each file's ``Include`` lines are made portable (absolute-under-source-root → relative,
+        unbundled/foreign → commented) and its local-path directives are home-rebased. Because
+        this is a full *replace*, config files still reachable under the root afterwards that were
+        NOT part of the backup are removed — otherwise leftover Include'd fragments would silently
+        survive. The pre-import auto-backup captures those files first, so this is reversible.
+
+        Returns False for a legacy backup with no tree (caller writes the single blob)."""
         tree = import_data.get('ssh_config_files')
         if not isinstance(tree, dict) or not tree:
             return False
         main_path = self.get_ssh_config_path()
         root = _ssh_config_root(main_path)
         main_rel = import_data.get('ssh_config_main_rel') or ''
+        source_root = import_data.get('ssh_config_root') or None
+        written: set = set()
         for rel, content in tree.items():
             if rel == main_rel:
                 dest = os.path.abspath(main_path)
@@ -816,10 +909,35 @@ class BackupManager:
                 if not _is_under(dest, root):
                     logger.warning("Skipping unsafe SSH config restore path: %s", rel)
                     continue
-            text = _rebase_home_in_text(content or '', source_home, target_home)
+            text = _rewrite_includes(content or '', source_root)
+            text = _rebase_home_in_text(text, source_home, target_home)
             self._atomic_write_text(dest, text, 0o600)
-        logger.info("Restored %d SSH config file(s) under %s", len(tree), root)
+            written.add(dest)
+        logger.info("Restored %d SSH config file(s) under %s", len(written), root)
+        self._prune_orphaned_config_files(main_path, root, written)
         return True
+
+    def _prune_orphaned_config_files(self, main_path: str, root: str, written: set) -> None:
+        """Remove config files still Include-resolved under ``root`` that this backup did not
+        write — so a Replace doesn't keep the target's pre-existing fragments. Never touches the
+        main file, files outside the root, or files we don't own."""
+        from .ssh_config_utils import resolve_ssh_config_files
+        try:
+            resolved = resolve_ssh_config_files(main_path)
+        except Exception:
+            return
+        main_abs = os.path.abspath(main_path)
+        for f in resolved:
+            af = os.path.abspath(f)
+            if af == main_abs or af in written or not _is_under(af, root):
+                continue
+            if not _owned_and_readable(af):
+                continue
+            try:
+                os.remove(af)
+                logger.info("Replace removed orphaned config fragment not in backup: %s", af)
+            except OSError as exc:
+                logger.warning("Could not remove orphaned config fragment %s: %s", af, exc)
 
     def _import_replace(
         self,

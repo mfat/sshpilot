@@ -52,6 +52,10 @@ _MAX_SCRYPT_R = 32
 _MAX_SCRYPT_P = 16
 _MAX_SALT_LEN = 1024
 _MAX_NONCE_LEN = 64
+# scrypt working set is ~128 * N * r bytes, so bounding N and r *independently* still allows
+# their product to reach multiple GiB (e.g. N=2**20, r=32 -> 4 GiB). Bound the PRODUCT so a
+# crafted header can't OOM the reader; a real backup (N=2**15, r=8) needs only ~32 MiB.
+_MAX_SCRYPT_MEMORY = 256 * 1024 * 1024
 # Ceiling on the inflated manifest, so a zip-bomb payload can't exhaust memory on read.
 # A real manifest is a few MiB at most (JSON + base64 keys); 64 MiB is comfortable headroom.
 _MAX_MANIFEST_BYTES = 64 * 1024 * 1024
@@ -184,6 +188,9 @@ def _validate_enc_params(salt: bytes, nonce: bytes, n: int, r: int, p: int) -> N
         raise SpbkFormatError(f"scrypt r out of range: {r!r}")
     if not (1 <= p <= _MAX_SCRYPT_P):
         raise SpbkFormatError(f"scrypt p out of range: {p!r}")
+    if 128 * n * r > _MAX_SCRYPT_MEMORY:      # bound the working set, not just each factor
+        raise SpbkFormatError(
+            f"scrypt working set too large: 128*{n}*{r} exceeds {_MAX_SCRYPT_MEMORY} bytes")
     if not (8 <= len(salt) <= _MAX_SALT_LEN):
         raise SpbkFormatError(f"invalid salt length: {len(salt)}")
     if not (1 <= len(nonce) <= _MAX_NONCE_LEN):
@@ -224,7 +231,10 @@ def read_spbk(path: str, passphrase: Optional[str] = None) -> dict:
     # Validate the (still-unauthenticated) work factors BEFORE deriving — the GCM tag that would
     # catch tampering is only checked afterwards, so an unbounded n would DoS us before then.
     _validate_enc_params(salt, nonce, n, r, p)
-    key = _derive_key(passphrase, salt, n, r, p)
+    try:
+        key = _derive_key(passphrase, salt, n, r, p)
+    except Exception as exc:                  # OOM/backend error must not escape as a crash
+        raise SpbkFormatError(f"key derivation failed: {exc}") from exc
     try:
         inner = AESGCM(key).decrypt(nonce, payload, header_bytes)
     except InvalidTag as exc:
