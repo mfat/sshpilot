@@ -843,7 +843,7 @@ def test_merge_fragment_dedups_drops_globals_keeps_unindented(monkeypatch, tmp_p
         "Host newhost\nHostName n.example\nPort 2222\nUser alice\n"  # UNINDENTED -> keep whole
         "Host *\n    ProxyJump evil.example\n"               # wildcard/global -> drop
         "Match host foo\n    User m\n"                        # Match -> drop
-        "Host existing-main brand-new\n    HostName x\n"      # partial collision -> skip+report
+        "Host existing-main brand-new\n    HostName x\n"      # partial collision -> split+report
     )
     mgr._merge_ssh_config_fragment(str(main), [imported])
 
@@ -852,7 +852,9 @@ def test_merge_fragment_dedups_drops_globals_keeps_unindented(monkeypatch, tmp_p
     assert "Host newhost" in frag and "Port 2222" in frag and "User alice" in frag  # not truncated
     assert "Host *" not in frag and "ProxyJump" not in frag         # global NOT injected
     assert "in-fragment" not in frag                                 # dedup saw the fragment
-    assert "brand-new" not in frag                                   # partial collision skipped
+    # Partial collision: the new name is imported (split), the existing one is not re-added.
+    assert "Host brand-new" in frag
+    assert "existing-main" not in frag
     assert mgr.last_merge_dropped_globals >= 2                       # Host* + Match
     assert any("brand-new" in " ".join(p) for p in mgr.last_merge_collisions)
     # main gained exactly one Include for the fragment

@@ -22,8 +22,8 @@ BACKUP_OPTION_KEYS = (
     'app_settings',
     'ssh_config',
     'known_hosts',
-    'secrets',
     'private_keys',
+    'secrets',
 )
 DEFAULT_BACKUP_OPTIONS = {
     'app_settings': True,
@@ -262,11 +262,19 @@ def _select_new_host_blocks(imported_texts: List[str], existing_names: set
                 dropped += 1
                 continue
             present = [p for p in concrete if p in existing_names]
+            new_names = [p for p in concrete if p not in existing_names]
             if not present:
                 kept.append('\n'.join(blk).rstrip())
-            elif len(present) < len(concrete):
+            elif new_names:
+                # Partial collision: import only the non-colliding names (rebuild the Host
+                # header, keep the body) instead of dropping the whole stanza — and still report
+                # the collision so the user knows some names were left to the existing hosts.
+                indent = blk[0][:len(blk[0]) - len(blk[0].lstrip())]
+                split_block = [f"{indent}Host {' '.join(new_names)}"] + list(blk[1:])
+                kept.append('\n'.join(split_block).rstrip())
                 collisions.append(patterns)
-            # else: all concrete names already exist -> skip silently
+            # else: every concrete name already exists -> skip silently (a full duplicate,
+            # e.g. re-importing your own backup, is not a reportable collision)
     return ('\n\n'.join(kept), dropped, collisions)
 
 
@@ -327,6 +335,10 @@ class BackupManager:
         self.last_import_secrets_persisted = True
         # SSH-config files skipped on the last export (outside the config root / not writable).
         self.last_export_skipped_config_files: List[str] = []
+        # Referenced private-key files that didn't exist at export time (omitted from the backup).
+        self.last_export_missing_key_files: List[str] = []
+        # Credentials present in a legacy JSON import that this path does not restore (.spbk only).
+        self.last_import_ignored_secrets = 0
         # Merge diagnostics: wildcard/Match/global stanzas dropped, and partial-name collisions.
         self.last_merge_dropped_globals = 0
         self.last_merge_collisions: List[List[str]] = []
@@ -545,9 +557,13 @@ class BackupManager:
     def _gather_private_keys(self, connections) -> List[Dict[str, Any]]:
         """Serialize selected connections' private key files and matching .pub files."""
         out: List[Dict[str, Any]] = []
+        missing: List[str] = []
         for key_path in self._connection_key_paths(connections):
             try:
                 if not os.path.isfile(key_path):
+                    # A referenced key file is gone — record it so export can warn rather than
+                    # silently ship a backup with fewer keys than the user expects.
+                    missing.append(key_path)
                     continue
                 with open(key_path, 'rb') as f:
                     private_raw = f.read()
@@ -568,6 +584,10 @@ class BackupManager:
             except Exception:
                 logger.warning("Failed to include private key in backup: %s", key_path,
                                exc_info=True)
+        self.last_export_missing_key_files = missing
+        if missing:
+            logger.warning("Export: %d referenced key file(s) not found and omitted: %s",
+                           len(missing), ", ".join(missing))
         return out
 
     def export_backup(self, export_path: str, *, connections=None,
@@ -626,6 +646,19 @@ class BackupManager:
                     import_data = json.load(f)
             except json.JSONDecodeError as e:
                 return False, f"Invalid JSON file: {e}"
+
+            # The legacy JSON path restores config only. Record any embedded secrets/keys it will
+            # NOT restore, so the UI can tell the user to use an encrypted .spbk backup instead of
+            # silently dropping them.
+            if isinstance(import_data, dict):
+                self.last_import_ignored_secrets = (
+                    len(import_data.get('credentials') or [])
+                    + len(import_data.get('private_keys') or []))
+                if self.last_import_ignored_secrets:
+                    logger.warning(
+                        "Legacy JSON import contains %d secret/key entr(ies) that this format "
+                        "does not restore; use an encrypted .spbk backup to include them",
+                        self.last_import_ignored_secrets)
 
             return self._apply_parsed(import_data, mode, create_backup)
 

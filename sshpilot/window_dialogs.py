@@ -108,12 +108,25 @@ class WindowConfigDialogsMixin:
         category_label.add_css_class('heading')
         category_box.append(category_label)
 
-        def switch_row(label, active=False):
-            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-            text = Gtk.Label(label=label, xalign=0, hexpand=True)
+        def switch_row(label, active=False, caption=None):
+            row = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            top = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            if caption:
+                text_col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+                text_col.append(Gtk.Label(label=label, xalign=0, hexpand=True))
+                cap = Gtk.Label(label=caption, xalign=0, wrap=True, hexpand=True)
+                try:
+                    cap.add_css_class('dim-label')
+                except Exception:
+                    pass
+                text_col.append(cap)
+                top.append(text_col)
+            else:
+                top.append(Gtk.Label(label=label, xalign=0, hexpand=True))
             switch = Gtk.Switch(active=bool(active))
             switch.set_valign(Gtk.Align.CENTER)
-            row.append(text); row.append(switch)
+            top.append(switch)
+            row.append(top)
             return row, switch
 
         app_row, app_settings_check = switch_row(
@@ -122,11 +135,13 @@ class WindowConfigDialogsMixin:
             _("Connection profiles (SSH config)"), option_defaults.get('ssh_config', False))
         known_row, known_hosts_check = switch_row(
             _("Known hosts"), option_defaults.get('known_hosts', False))
-        secrets_row, secrets_check = switch_row(
-            _("Saved passwords, sudo passwords, and key passphrases"),
-            option_defaults.get('secrets', False))
         keys_row, private_keys_check = switch_row(
             _("Private key files"), option_defaults.get('private_keys', False))
+        secrets_row, secrets_check = switch_row(
+            _("Saved passwords, sudo passwords, and key passphrases"),
+            option_defaults.get('secrets', False),
+            caption=_("Choose which connections to include saved passwords, passphrases, "
+                      "and private key files for."))
         option_checks = {
             'app_settings': app_settings_check,
             'ssh_config': ssh_config_check,
@@ -134,27 +149,11 @@ class WindowConfigDialogsMixin:
             'secrets': secrets_check,
             'private_keys': private_keys_check,
         }
-        for row in (app_row, ssh_row, known_row, secrets_row, keys_row):
+        for row in (app_row, ssh_row, known_row, keys_row, secrets_row):
             category_box.append(row)
         box.append(category_box)
 
         connection_section = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-
-        connection_label = Gtk.Label(
-            label=_("Secrets and keys for these connections"),
-            xalign=0)
-        connection_label.add_css_class('heading')
-        connection_section.append(connection_label)
-
-        connection_caption = Gtk.Label(
-            label=_("Choose which connections to include saved passwords, passphrases, "
-                    "and private key files for."),
-            xalign=0, wrap=True)
-        try:
-            connection_caption.add_css_class('dim-label')
-        except Exception:
-            pass
-        connection_section.append(connection_caption)
 
         select_all = Gtk.CheckButton(label=_("Select all"))
         select_all.set_active(False)
@@ -246,6 +245,14 @@ class WindowConfigDialogsMixin:
                 GLib.idle_add(lambda: (self._show_export_options_dialog(
                     sel_ids, enc_switch.get_active(), options,
                     error=_("Choose at least one item to include in the backup.")), False)[1])
+                return
+            # Secrets/keys are gathered per selected connection — requiring them with nothing
+            # selected would silently produce an empty result.
+            if (options.get('secrets') or options.get('private_keys')) and not selected:
+                GLib.idle_add(lambda: (self._show_export_options_dialog(
+                    sel_ids, enc_switch.get_active(), options,
+                    error=_("Select at least one connection to include its saved passwords "
+                            "or private keys.")), False)[1])
                 return
             if enc_switch.get_active():
                 passphrase = pw.get_text() or ''
@@ -342,6 +349,11 @@ class WindowConfigDialogsMixin:
                         msg += "\n\n" + _("{} SSH config file(s) outside your ~/.ssh were not "
                                           "included (system or shared files):\n{}").format(
                             len(skipped), "\n".join(skipped))
+                    missing_keys = getattr(backup_mgr, 'last_export_missing_key_files', []) or []
+                    if missing_keys:
+                        msg += "\n\n" + _("{} referenced key file(s) were missing and not "
+                                          "included:\n{}").format(
+                            len(missing_keys), "\n".join(missing_keys))
                     self._simple_dialog(_("Export Successful"), msg)
                 else:
                     self._simple_dialog(_("Export Failed"), error or _("Unknown error"))
@@ -655,8 +667,13 @@ class WindowConfigDialogsMixin:
 
             prompt_unlock(self, on_done=_on_done)
         except Exception:
-            logger.debug("Pre-operation vault unlock check failed", exc_info=True)
-            proceed()
+            # If we cannot even verify the vault, abort rather than silently proceed with a
+            # backup/restore that would be missing credentials.
+            logger.warning("Pre-operation vault unlock check failed; aborting", exc_info=True)
+            self._simple_dialog(
+                cancelled_heading,
+                _("Could not verify the secret vault, so the operation was cancelled to avoid "
+                  "leaving saved credentials out. Try again."))
 
     def _perform_spbk_import(self, manifest, mode: str, restore_options=None):
         """Apply a decrypted .spbk manifest: config (replace/merge) + restore credentials.
@@ -692,9 +709,11 @@ class WindowConfigDialogsMixin:
             secrets_persisted = getattr(backup_mgr, 'last_import_secrets_persisted', True)
             skipped_creds = getattr(backup_mgr, 'last_import_skipped_credentials', 0)
             merge_collisions = getattr(backup_mgr, 'last_merge_collisions', []) or []
+            dropped_globals = getattr(backup_mgr, 'last_merge_dropped_globals', 0)
             self._show_import_success(restored, total, restored_keys, total_keys,
                                       skipped_keys, secrets_persisted, skipped_creds,
-                                      merge_collisions=merge_collisions)
+                                      merge_collisions=merge_collisions,
+                                      dropped_globals=dropped_globals)
 
         self._run_after_vault_unlock_for_secrets(
             do_apply,
@@ -705,7 +724,8 @@ class WindowConfigDialogsMixin:
     def _show_import_success(self, restored: int, total: int,
                              restored_keys: int = 0, total_keys: int = 0,
                              skipped_keys: int = 0, secrets_persisted: bool = True,
-                             skipped_credentials: int = 0, merge_collisions=None):
+                             skipped_credentials: int = 0, merge_collisions=None,
+                             dropped_globals: int = 0):
         # Keys that already existed were left untouched by design (never overwritten), so they
         # are NOT counted as failures. Genuine key failures are the remainder.
         failed_keys = max(0, total_keys - restored_keys - skipped_keys)
@@ -747,9 +767,13 @@ class WindowConfigDialogsMixin:
                                "not be writable).").format(failed_keys))
         if merge_collisions:
             names = ", ".join(" ".join(p) for p in merge_collisions)
-            lines.append(_("{} imported host(s) were skipped because they share a name with an "
-                           "existing host: {}. Rename or remove the conflict, then import "
-                           "again.").format(len(merge_collisions), names))
+            lines.append(_("{} imported host(s) shared a name with an existing host; the "
+                           "conflicting names were left as-is: {}.").format(
+                               len(merge_collisions), names))
+        if dropped_globals:
+            lines.append(_("{} global rule(s) from the backup (Host * / Match blocks) were not "
+                           "imported — they affect every connection, so they are not merged "
+                           "automatically.").format(dropped_globals))
         lines.append(_("Reload now to apply the imported configuration. Some settings may still "
                        "need a full restart of sshPilot to take effect."))
         body = "\n\n".join(lines)
@@ -787,11 +811,20 @@ class WindowConfigDialogsMixin:
             
             if success:
                 # Show success dialog with restart suggestion
+                body = _("Configuration imported successfully.")
+                ignored = getattr(backup_mgr, 'last_import_ignored_secrets', 0)
+                if ignored:
+                    body += "\n\n" + _("{} saved password(s)/key(s) in this .json file were not "
+                                       "imported — legacy JSON backups can't restore secrets. "
+                                       "Use an encrypted .spbk backup to include them.").format(
+                                           ignored)
+                body += "\n\n" + _("Reload now to apply it. Some settings may still need a full "
+                                   "restart of sshPilot to take effect.")
                 success_dialog = Adw.MessageDialog(
                     transient_for=self,
                     modal=True,
                     heading=_("Import Successful"),
-                    body=_("Configuration imported successfully.\n\nReload now to apply it. Some settings may still need a full restart of sshPilot to take effect.")
+                    body=body,
                 )
                 success_dialog.add_response('ok', _('OK'))
                 success_dialog.add_response('restart', _('Reload Now'))
