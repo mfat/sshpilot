@@ -10,6 +10,14 @@ import tempfile
 import threading
 from typing import List
 
+# SSH key-path canonicalization lives in secret_storage (the single source of truth, shared with
+# credential export). secret_storage is GTK-free and safe to import in the askpass subprocess.
+from .secret_storage import (
+    home_alias_for_path as _home_alias_for_path,
+    normalize_key_path_for_storage as _normalize_key_path_for_storage,
+    key_path_lookup_candidates as _get_key_path_lookup_candidates,
+)
+
 try:
     import gi
 
@@ -66,82 +74,6 @@ _ASKPASS_LOG_THREAD = None
 _ASKPASS_LOG_THREAD_STOP = threading.Event()
 _ASKPASS_LOG_THREAD_LOCK = threading.Lock()
 _ASKPASS_LOG_IO_LOCK = threading.Lock()
-
-
-def _normalize_key_path_for_storage(key_path: str) -> str:
-    """Return a canonical representation for storing passphrases.
-
-    Keys under ``$HOME`` are stored as a home-relative alias (``~/.ssh/id``) rather than an
-    absolute path, so the same passphrase autofills after moving a portable vault (KDBX/pass) to
-    a machine with a different ``$HOME``/username. The lookup already tries the ``~`` form
-    (:func:`_get_key_path_lookup_candidates`), so legacy absolute entries still resolve. Keys
-    outside home keep their absolute path (they can't be made portable)."""
-
-    expanded = os.path.expanduser(key_path)
-    try:
-        resolved = os.path.realpath(expanded)
-    except Exception:
-        # ``realpath`` can fail on some exotic platforms; fall back to ``abspath``
-        resolved = os.path.abspath(expanded)
-    return _home_alias_for_path(resolved) or resolved
-
-
-def _home_alias_for_path(path: str) -> str:
-    """Return a home-relative alias (~/...) for *path* when applicable."""
-
-    try:
-        home = os.path.realpath(os.path.expanduser("~"))
-    except Exception:
-        return ""
-
-    if not home:
-        return ""
-
-    try:
-        relative = os.path.relpath(path, home)
-    except ValueError:
-        return ""
-
-    if relative in (".", os.curdir):
-        return "~"
-
-    if relative.startswith(".."):
-        return ""
-
-    return os.path.join("~", relative)
-
-
-def _get_key_path_lookup_candidates(key_path: str) -> List[str]:
-    """Return normalized key path variants for lookup and compatibility."""
-
-    if not key_path:
-        return []
-
-    candidates: List[str] = []
-    seen = set()
-
-    def _add(path: str) -> None:
-        if not path:
-            return
-        if path in seen:
-            return
-        seen.add(path)
-        candidates.append(path)
-
-    canonical = _normalize_key_path_for_storage(key_path)
-    _add(canonical)
-
-    expanded = os.path.expanduser(key_path)
-    _add(expanded)
-
-    for base in (canonical, expanded):
-        alias = _home_alias_for_path(base)
-        if alias:
-            _add(alias)
-
-    _add(key_path)
-
-    return candidates
 
 
 def _extract_key_path(prompt: str) -> str:

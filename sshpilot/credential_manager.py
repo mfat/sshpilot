@@ -23,11 +23,12 @@ contributes nothing; this never prompts or forces an unlock.
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any, Dict, Iterable, List, Tuple
 
 from .secret_storage import (
     get_secret_manager,
+    key_path_lookup_candidates,
+    normalize_key_path_for_storage,
     password_spec,
     passphrase_spec,
     sudo_password_spec,
@@ -45,53 +46,6 @@ from .credential_model import (  # noqa: F401
 from .credential_adapters import SecretBackendAdapter
 
 logger = logging.getLogger(__name__)
-
-
-def _home_relative(path: str) -> str:
-    """Home-relative alias (``~/...``) for a path under ``$HOME``, else ``''``. Mirrors
-    ``askpass_utils._home_alias_for_path``."""
-    if not path:
-        return ""
-    try:
-        home = os.path.realpath(os.path.expanduser("~"))
-    except Exception:
-        return ""
-    if not home:
-        return ""
-    try:
-        rel = os.path.relpath(path, home)
-    except ValueError:
-        return ""
-    if rel in (".", os.curdir):
-        return "~"
-    if rel.startswith(".."):
-        return ""
-    return os.path.join("~", rel)
-
-
-def _canonical_key_path(key_path: str) -> str:
-    """Canonical key path used as the passphrase account — mirrors
-    ``askpass_utils._normalize_key_path_for_storage``: a home-relative alias (``~/.ssh/id``) for
-    keys under ``$HOME`` so exported passphrases match the portable title storage uses, else the
-    absolute realpath. Kept local so this module stays GTK-free and dependency-light."""
-    if not (key_path or "").strip():
-        return ""
-    expanded = os.path.expanduser(key_path)
-    try:
-        resolved = os.path.realpath(expanded)
-    except Exception:
-        resolved = os.path.abspath(expanded)
-    return _home_relative(resolved) or resolved
-
-
-def _passphrase_lookup_paths(canonical_path: str) -> List[str]:
-    """Accounts to probe for a key passphrase: the canonical (home-relative) title plus its
-    absolute expansion, so both portable ``~`` entries and legacy absolute entries resolve."""
-    out: List[str] = []
-    for p in (canonical_path, os.path.expanduser(canonical_path)):
-        if p and p not in out:
-            out.append(p)
-    return out
 
 
 class CredentialManager:
@@ -170,11 +124,11 @@ class CredentialManager:
             try:
                 label = getattr(conn, "nickname", "") or getattr(conn, "host", "") or ""
                 for kp in self._connection_key_paths(conn):
-                    refs.setdefault(_canonical_key_path(kp), set()).add(label)
+                    refs.setdefault(normalize_key_path_for_storage(kp), set()).add(label)
             except Exception:
                 logger.debug("collecting key paths for a connection failed", exc_info=True)
         for kp in self._extra_key_paths:
-            refs.setdefault(_canonical_key_path(kp), set())
+            refs.setdefault(normalize_key_path_for_storage(kp), set())
 
         for path, nicknames in refs.items():
             if not path:
@@ -182,7 +136,7 @@ class CredentialManager:
             # Probe the portable (~) title AND the legacy absolute one, so a passphrase saved
             # under either form is included in the export.
             found = None
-            for candidate in _passphrase_lookup_paths(path):
+            for candidate in key_path_lookup_candidates(path):
                 found = self._lookup(passphrase_spec(candidate))
                 if found is not None:
                     break

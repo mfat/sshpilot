@@ -180,9 +180,76 @@ def password_spec(host: str, username: str) -> SecretSpec:
     )
 
 
+# --- SSH key path canonicalization (single source of truth) ------------------
+# Shared by the askpass store/lookup path and by credential export, so the passphrase account
+# is computed identically everywhere (two copies previously drifted and broke .spbk export).
+
+def home_alias_for_path(path: str) -> str:
+    """Home-relative alias (``~/...``) for an ABSOLUTE path under ``$HOME``, else ``''``. Realpaths
+    ``$HOME`` so it matches even when the home dir has symlink components (e.g. macOS ``/Users``
+    vs ``/System/Volumes/Data/Users``). Non-absolute input (already ``~``-relative, or a bare
+    relative path) returns ``''`` — ``relpath`` on it would yield garbage."""
+    if not path or not os.path.isabs(path):
+        return ""
+    try:
+        home = os.path.realpath(os.path.expanduser("~"))
+    except Exception:
+        return ""
+    if not home:
+        return ""
+    try:
+        rel = os.path.relpath(path, home)
+    except ValueError:
+        return ""
+    if rel in (".", os.curdir):
+        return "~"
+    if rel.startswith(".."):
+        return ""
+    return os.path.join("~", rel)
+
+
+def normalize_key_path_for_storage(key_path: str) -> str:
+    """Canonical passphrase account for an SSH key: a home-relative alias (``~/.ssh/id``) for keys
+    under ``$HOME`` — so the same key resolves after moving a portable vault (KDBX/pass) to a
+    machine with a different ``$HOME``/username — else the absolute realpath. Keys outside home
+    can't be made portable and stay absolute."""
+    if not (key_path or "").strip():
+        return ""
+    expanded = os.path.expanduser(key_path)
+    try:
+        resolved = os.path.realpath(expanded)
+    except Exception:
+        resolved = os.path.abspath(expanded)
+    return home_alias_for_path(resolved) or resolved
+
+
+def key_path_lookup_candidates(key_path: str) -> List[str]:
+    """Account variants to probe for a key passphrase: the canonical (home-relative) title, the
+    absolute expansion, home aliases, and the raw input — so both portable ``~`` entries and
+    legacy absolute entries resolve, and passphrases saved under a previous backend still hit."""
+    if not key_path:
+        return []
+    candidates: List[str] = []
+    seen: set = set()
+
+    def _add(path: str) -> None:
+        if path and path not in seen:
+            seen.add(path)
+            candidates.append(path)
+
+    canonical = normalize_key_path_for_storage(key_path)
+    _add(canonical)
+    expanded = os.path.expanduser(key_path)
+    _add(expanded)
+    for base in (canonical, expanded):
+        _add(home_alias_for_path(base))
+    _add(key_path)
+    return candidates
+
+
 def passphrase_spec(canonical_key_path: str) -> SecretSpec:
     """Spec for an SSH key passphrase. ``canonical_key_path`` must already be
-    normalized by the caller (``askpass_utils._normalize_key_path_for_storage``)."""
+    normalized by the caller (:func:`normalize_key_path_for_storage`)."""
     return SecretSpec(
         keyring_service=SERVICE_NAME,
         keyring_account=canonical_key_path,
