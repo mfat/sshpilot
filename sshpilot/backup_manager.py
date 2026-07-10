@@ -34,6 +34,41 @@ DEFAULT_BACKUP_OPTIONS = {
 DEFAULT_RESTORE_OPTIONS = dict(DEFAULT_BACKUP_OPTIONS)
 
 
+def _current_home() -> str:
+    return os.path.abspath(os.path.expanduser('~'))
+
+
+def _rebase_home_path(path: str, source_home: Optional[str], target_home: str) -> str:
+    """Map an absolute path that lived under the backup's *source* home onto the *current*
+    home, so a key backed up as ``/home/alice/.ssh/id`` restores to ``/home/bob/.ssh/id``.
+
+    Paths outside the source home (e.g. ``/etc/ssh/…``), or backups that predate the recorded
+    ``source_home``, are returned unchanged — no guessing."""
+    if not path or not source_home:
+        return path
+    ap = os.path.abspath(os.path.expanduser(str(path)))
+    sh = os.path.abspath(str(source_home))
+    if ap == sh:
+        return target_home
+    prefix = sh + os.sep
+    if ap.startswith(prefix):
+        return os.path.join(target_home, ap[len(prefix):])
+    return path
+
+
+def _rebase_home_in_text(text: str, source_home: Optional[str], target_home: str) -> str:
+    """Rewrite home-prefixed absolute paths (e.g. ``IdentityFile /home/alice/.ssh/id``) inside
+    an SSH-config blob so restored per-host paths point at the current home. No-op when there is
+    no recorded source home or it already matches the current home."""
+    if not text or not source_home:
+        return text
+    sh = os.path.abspath(str(source_home))
+    th = os.path.abspath(str(target_home))
+    if sh == th:
+        return text
+    return text.replace(sh + os.sep, th + os.sep)
+
+
 class BackupManager:
     """Manages configuration backup and restore operations"""
 
@@ -44,6 +79,10 @@ class BackupManager:
         self.backup_dir.mkdir(parents=True, exist_ok=True)
         self.last_export_counts = {'credentials': 0, 'private_keys': 0}
         self.last_import_skipped_keys = 0   # existing keys left untouched on the last import
+        self.last_import_skipped_credentials = 0  # secrets already present, left untouched
+        # False when the last restore targeted a backend that does not persist secrets
+        # (the "agent"/don't-store backend), so the UI can say so instead of claiming success.
+        self.last_import_secrets_persisted = True
 
     def get_ssh_config_path(self) -> str:
         """Get the current SSH config path based on mode"""
@@ -80,7 +119,13 @@ class BackupManager:
         return bool(self.config.get_setting('ssh.use_isolated_config', False))
 
     def _app_config_for_restore(self, app_config: Dict[str, Any]) -> Dict[str, Any]:
-        """Copy imported app settings while preserving the current SSH operation mode."""
+        """Copy imported app settings while preserving machine-specific local settings: the SSH
+        operation mode and the secret-storage backend selection.
+
+        The ``secrets`` subtree (backend choice + absolute vault paths like
+        ``keepassxc.database`` / ``bitwarden.profile``) is specific to *this* machine. Importing
+        the source machine's values would point the selected backend at a file that doesn't exist
+        here, silently disabling all secret save/autofill — so we always keep the local values."""
         restored = dict(app_config)
         ssh_settings = restored.get('ssh')
         if isinstance(ssh_settings, dict):
@@ -89,6 +134,17 @@ class BackupManager:
             ssh_settings = {}
         ssh_settings['use_isolated_config'] = self._current_isolated_mode()
         restored['ssh'] = ssh_settings
+
+        # Keep the local secret-storage selection; never import the source machine's.
+        local_secrets = None
+        try:
+            local_secrets = self.config.config_data.get('secrets')
+        except Exception:
+            local_secrets = None
+        if isinstance(local_secrets, dict):
+            restored['secrets'] = dict(local_secrets)
+        else:
+            restored.pop('secrets', None)   # revert to defaults rather than the source's paths
         return restored
 
     @staticmethod
@@ -111,6 +167,8 @@ class BackupManager:
             'platform': 'flatpak' if is_flatpak() else os.name,
             'config_version': CONFIG_VERSION,
             'backup_options': options,
+            # Home dir at export time, so restore can rebase key/config paths onto this machine.
+            'source_home': _current_home(),
         }
 
         # Export SSH configuration mode
@@ -360,7 +418,13 @@ class BackupManager:
 
     def _restore_credentials(self, manifest: Dict[str, Any]) -> int:
         """Re-store the manifest's credentials into the selected secret backend. Returns the
-        number successfully stored. Each is written via the same path normal saves use."""
+        number newly stored. Each is written via the same path normal saves use.
+
+        **Non-destructive, like private-key restore:** a secret that already exists in the
+        selected backend is left untouched (never clobbered) and counted in
+        ``last_import_skipped_credentials`` — so re-importing an old backup can't silently
+        revert a password the user has since rotated."""
+        self.last_import_skipped_credentials = 0
         creds = manifest.get('credentials') or []
         if not creds:
             return 0
@@ -371,7 +435,22 @@ class BackupManager:
             logger.warning("Credential restore unavailable", exc_info=True)
             return 0
         mgr = get_secret_manager()
+        # The "agent" backend's store() returns True but writes nothing. Don't call it and then
+        # report phantom successes — surface the truth so the user can pick a real backend.
+        try:
+            persists = mgr.persists_secrets()
+        except Exception:
+            persists = True
+        self.last_import_secrets_persisted = persists
+        if not persists:
+            logger.warning(
+                "Selected secret backend does not persist secrets (agent); "
+                "%d credential(s) were NOT restored", len(creds))
+            return 0
         restored = 0
+        skipped = 0
+        source_home = manifest.get('source_home')
+        target_home = _current_home()
         for c in creds:
             try:
                 secret = c.get('secret')
@@ -380,12 +459,40 @@ class BackupManager:
                 cred = Credential(
                     id=c.get('id', ''), type=c.get('type', ''),
                     host=c.get('host'), username=c.get('username'),
-                    secret=secret, metadata=c.get('metadata') or {})
-                if mgr.store(credential_to_spec(cred), secret):
+                    secret=secret, metadata=dict(c.get('metadata') or {}))
+                # A key passphrase is filed under the key's absolute path — rebase it onto this
+                # machine's home so it matches the re-homed key file (and how connections look it
+                # up). Password/sudo creds key on host+user and are left alone.
+                if cred.type == 'key':
+                    old_path = cred.metadata.get('key_path') or cred.id
+                    new_path = _rebase_home_path(old_path, source_home, target_home)
+                    if new_path != old_path:
+                        cred.metadata['key_path'] = new_path
+                        cred.id = new_path
+                spec = credential_to_spec(cred)
+                # Never overwrite a secret that already exists in the selected backend.
+                if self._secret_already_present(mgr, spec):
+                    skipped += 1
+                    continue
+                if mgr.store(spec, secret):
                     restored += 1
             except Exception:
                 logger.warning("Failed to restore a credential", exc_info=True)
+        self.last_import_skipped_credentials = skipped
         return restored
+
+    @staticmethod
+    def _secret_already_present(mgr, spec) -> bool:
+        """True if the selected backend already holds a secret for ``spec`` (so restore leaves
+        it alone). Best-effort: if the manager has no per-selection ``lookup`` we treat it as
+        absent and let the store proceed."""
+        lookup = getattr(mgr, 'lookup', None)
+        if not callable(lookup):
+            return False
+        try:
+            return lookup(spec) is not None
+        except Exception:
+            return False
 
     def _restore_private_keys(self, manifest: Dict[str, Any]) -> Tuple[int, int]:
         """Restore private keys embedded in a backup to their original paths.
@@ -398,9 +505,14 @@ class BackupManager:
         """
         written = 0
         skipped = 0
+        source_home = manifest.get('source_home')
+        target_home = _current_home()
         for item in manifest.get('private_keys') or []:
             try:
-                path = os.path.expanduser(str(item.get('path') or ''))
+                # Rebase the source machine's home onto this one so a laptop backup lands in
+                # /home/<me>/.ssh instead of a non-existent /home/<them>/.ssh.
+                path = _rebase_home_path(
+                    os.path.expanduser(str(item.get('path') or '')), source_home, target_home)
                 raw = item.get('content_b64')
                 if not path or not raw:
                     continue
@@ -417,7 +529,9 @@ class BackupManager:
                 os.chmod(path, (private_mode & 0o600) or 0o600)
 
                 # The matching .pub: also never overwrite an existing file.
-                public_path = os.path.expanduser(str(item.get('public_path') or ''))
+                public_path = _rebase_home_path(
+                    os.path.expanduser(str(item.get('public_path') or '')),
+                    source_home, target_home)
                 public_raw = item.get('public_content_b64')
                 if public_path and public_raw and not os.path.exists(public_path):
                     os.makedirs(os.path.dirname(public_path) or '.', exist_ok=True)
@@ -481,6 +595,14 @@ class BackupManager:
 
         return True, None
 
+    @staticmethod
+    def _atomic_write_text(path: str, text: str, mode: int = 0o600) -> None:
+        """Write ``text`` via the shared tmp+fsync+rename helper so a crash mid-restore can't
+        leave a half-written SSH/app config on disk."""
+        from .backup_archive import _atomic_write_bytes
+        os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
+        _atomic_write_bytes(path, text.encode('utf-8'), mode)
+
     def _import_replace(
         self,
         import_data: Dict[str, Any],
@@ -489,33 +611,31 @@ class BackupManager:
         """Replace all configuration with imported data"""
         try:
             options = self.normalize_backup_options(options)
-            # Import SSH config
+            source_home = import_data.get('source_home')
+            target_home = _current_home()
+            # Import SSH config (rebasing home-prefixed IdentityFile/CertificateFile paths onto
+            # this machine), written atomically.
             if options['ssh_config'] and import_data.get('ssh_config'):
                 ssh_config_path = self.get_ssh_config_path()
-                os.makedirs(os.path.dirname(ssh_config_path), exist_ok=True)
-                with open(ssh_config_path, 'w', encoding='utf-8') as f:
-                    f.write(import_data['ssh_config'])
-                # Ensure correct permissions
-                os.chmod(ssh_config_path, 0o600)
+                ssh_text = _rebase_home_in_text(
+                    import_data['ssh_config'], source_home, target_home)
+                self._atomic_write_text(ssh_config_path, ssh_text, 0o600)
                 logger.info(f"Replaced SSH config at {ssh_config_path}")
 
             # Import known_hosts if present
             if options['known_hosts'] and import_data.get('known_hosts'):
                 known_hosts_path = self.get_known_hosts_path()
                 if known_hosts_path:
-                    os.makedirs(os.path.dirname(known_hosts_path), exist_ok=True)
-                    with open(known_hosts_path, 'w', encoding='utf-8') as f:
-                        f.write(import_data['known_hosts'])
-                    os.chmod(known_hosts_path, 0o600)
+                    self._atomic_write_text(
+                        known_hosts_path, import_data['known_hosts'], 0o600)
                     logger.info(f"Replaced known_hosts at {known_hosts_path}")
 
             # Import app config
             if options['app_settings']:
                 app_config = self._app_config_for_restore(import_data['app_config'])
                 config_file = Path(get_config_dir()) / 'config.json'
-                os.makedirs(config_file.parent, exist_ok=True)
-                with open(config_file, 'w', encoding='utf-8') as f:
-                    json.dump(app_config, f, indent=2)
+                self._atomic_write_text(
+                    str(config_file), json.dumps(app_config, indent=2), 0o600)
                 logger.info(f"Replaced app config at {config_file}")
 
                 # Reload config in memory
@@ -537,10 +657,15 @@ class BackupManager:
         """Merge imported configuration with existing"""
         try:
             options = self.normalize_backup_options(options)
-            # For SSH config, we'll append imported hosts that don't exist
+            source_home = import_data.get('source_home')
+            target_home = _current_home()
+            # For SSH config, we'll append imported hosts that don't exist (rebasing
+            # home-prefixed paths onto this machine first).
             if options['ssh_config'] and import_data.get('ssh_config'):
                 ssh_config_path = self.get_ssh_config_path()
-                self._merge_ssh_config(ssh_config_path, import_data['ssh_config'])
+                ssh_text = _rebase_home_in_text(
+                    import_data['ssh_config'], source_home, target_home)
+                self._merge_ssh_config(ssh_config_path, ssh_text)
 
             # For known_hosts, append if in isolated mode
             if options['known_hosts'] and import_data.get('known_hosts'):
@@ -773,7 +898,9 @@ class BackupManager:
             if not self.backup_dir.exists():
                 return backups
 
-            for backup_file in self.backup_dir.glob('*.json'):
+            candidates = sorted(set(self.backup_dir.glob('*.json'))
+                                | set(self.backup_dir.glob('*.spbk')))
+            for backup_file in candidates:
                 try:
                     stat = backup_file.stat()
                     backups.append({

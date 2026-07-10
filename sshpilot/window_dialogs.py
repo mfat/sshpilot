@@ -303,21 +303,36 @@ class WindowConfigDialogsMixin:
             export_path = file.get_path()
             if not export_path.endswith('.spbk'):
                 export_path += '.spbk'
-            backup_mgr = BackupManager(self.config, self.connection_manager)
-            success, error = backup_mgr.export_backup(
-                export_path, connections=connections, passphrase=passphrase,
-                options=options)
-            if success:
-                counts = getattr(backup_mgr, 'last_export_counts', {})
-                self._simple_dialog(
-                    _("Export Successful"),
-                    _("Backup saved to:\n{}\n\n{} credential(s) and {} private key(s) "
-                      "included; encryption: {}.").format(
-                        export_path, counts.get('credentials', 0),
-                        counts.get('private_keys', 0),
-                        _("on") if passphrase else _("off")))
-            else:
-                self._simple_dialog(_("Export Failed"), error or _("Unknown error"))
+
+            def do_export(*_args):
+                backup_mgr = BackupManager(self.config, self.connection_manager)
+                success, error = backup_mgr.export_backup(
+                    export_path, connections=connections, passphrase=passphrase,
+                    options=options)
+                if success:
+                    counts = getattr(backup_mgr, 'last_export_counts', {})
+                    self._simple_dialog(
+                        _("Export Successful"),
+                        _("Backup saved to:\n{}\n\n{} credential(s) and {} private key(s) "
+                          "included; encryption: {}.").format(
+                            export_path, counts.get('credentials', 0),
+                            counts.get('private_keys', 0),
+                            _("on") if passphrase else _("off")))
+                else:
+                    self._simple_dialog(_("Export Failed"), error or _("Unknown error"))
+
+            # A locked session vault (Bitwarden/KeePass) contributes NO secrets to the gather,
+            # which would silently produce a backup with zero credentials. Unlock it first.
+            if options.get('secrets'):
+                try:
+                    from .secret_storage import get_secret_manager
+                    if get_secret_manager().selected_needs_unlock():
+                        from .secret_unlock_dialog import prompt_unlock
+                        prompt_unlock(self, on_done=do_export)   # proceed even if user cancels
+                        return
+                except Exception:
+                    logger.debug("Pre-export unlock check failed", exc_info=True)
+            do_export()
 
         file_dialog.save(self, None, on_save_response)
 
@@ -549,9 +564,15 @@ class WindowConfigDialogsMixin:
                             GLib.idle_add(lambda: (self._show_import_mode_dialog(
                                 import_path, manifest=manifest), False)[1])
                             return
-                        self._perform_spbk_import(manifest, mode, restore_options)
+                        will_replace_ssh = restore_options.get('ssh_config', False)
+                        self._guard_default_mode_replace(
+                            mode, will_replace_ssh,
+                            lambda: self._perform_spbk_import(manifest, mode, restore_options))
                     else:
-                        self._perform_import(import_path, mode)
+                        # Legacy JSON: we can't see categories up front, so assume ssh_config.
+                        self._guard_default_mode_replace(
+                            mode, True,
+                            lambda: self._perform_import(import_path, mode))
                 dialog.destroy()
             
             dialog.connect('response', on_response)
@@ -559,6 +580,34 @@ class WindowConfigDialogsMixin:
             
         except Exception as e:
             logger.error(f"Failed to show import mode dialog: {e}")
+
+    def _guard_default_mode_replace(self, mode: str, will_replace_ssh: bool, proceed):
+        """Before a Replace that overwrites the GLOBAL ``~/.ssh/config`` (default mode), make the
+        blast radius explicit — that file is shared with ssh/scp/git/rsync and everything else.
+        In isolated mode (sshPilot's own config file) or for Merge, proceed without the prompt."""
+        isolated = bool(getattr(self.connection_manager, 'isolated_mode', False))
+        if mode != 'replace' or not will_replace_ssh or isolated:
+            proceed()
+            return
+        ssh_path = getattr(self.connection_manager, 'ssh_config_path', '') \
+            or os.path.expanduser('~/.ssh/config')
+        warn = Adw.MessageDialog(
+            transient_for=self, modal=True, heading=_("Replace your global SSH config?"),
+            body=_("Replace mode will overwrite {} entirely. That file is shared with ssh, "
+                   "scp, git and every other SSH tool on this machine — any Host blocks, "
+                   "Include and Match rules not managed by sshPilot will be lost.\n\n"
+                   "Choose Merge instead to add hosts without overwriting, or continue to "
+                   "replace. A backup is saved first either way.").format(ssh_path))
+        warn.add_response('cancel', _('Cancel'))
+        warn.add_response('replace', _('Replace Anyway'))
+        warn.set_response_appearance('replace', Adw.ResponseAppearance.DESTRUCTIVE)
+        warn.set_close_response('cancel')
+
+        def on_warn(dlg, resp):
+            if resp == 'replace':
+                proceed()
+        warn.connect('response', on_warn)
+        warn.present()
 
     def _perform_spbk_import(self, manifest, mode: str, restore_options=None):
         """Apply a decrypted .spbk manifest: config (replace/merge) + restore credentials.
@@ -592,7 +641,10 @@ class WindowConfigDialogsMixin:
                 self._simple_dialog(_("Import Failed"), error or _("Unknown error"))
                 return
             skipped_keys = getattr(backup_mgr, 'last_import_skipped_keys', 0)
-            self._show_import_success(restored, total, restored_keys, total_keys, skipped_keys)
+            secrets_persisted = getattr(backup_mgr, 'last_import_secrets_persisted', True)
+            skipped_creds = getattr(backup_mgr, 'last_import_skipped_credentials', 0)
+            self._show_import_success(restored, total, restored_keys, total_keys,
+                                      skipped_keys, secrets_persisted, skipped_creds)
 
         if total:
             try:
@@ -607,15 +659,18 @@ class WindowConfigDialogsMixin:
 
     def _show_import_success(self, restored: int, total: int,
                              restored_keys: int = 0, total_keys: int = 0,
-                             skipped_keys: int = 0):
+                             skipped_keys: int = 0, secrets_persisted: bool = True,
+                             skipped_credentials: int = 0):
         # Keys that already existed were left untouched by design (never overwritten), so they
         # are NOT counted as failures. Genuine key failures are the remainder.
         failed_keys = max(0, total_keys - restored_keys - skipped_keys)
+        # Secrets that already existed were likewise left untouched — not a failure either.
+        failed_creds = max(0, total - restored - skipped_credentials)
         lines = []
         if total == 0 and total_keys == 0:
             lines.append(_("Backup imported successfully."))
         else:
-            all_ok = (restored >= total) and (failed_keys == 0)
+            all_ok = (failed_creds == 0) and (failed_keys == 0)
             lines.append(_("Backup imported successfully.") if all_ok
                          else _("Backup imported, with some items skipped."))
             done = []
@@ -625,23 +680,34 @@ class WindowConfigDialogsMixin:
                 done.append(_("{} private key(s)").format(restored_keys))
             if done:
                 lines.append(_("Restored {}.").format(_(", ").join(done)))
+            if skipped_credentials:
+                lines.append(_("{} credential(s) already existed and were left untouched — "
+                               "sshPilot never overwrites a saved secret.").format(
+                                   skipped_credentials))
             if skipped_keys:
                 lines.append(_("{} private key(s) already existed and were left untouched — "
                                "sshPilot never overwrites a private key.").format(skipped_keys))
-            if restored < total:
-                lines.append(_("{} of {} credential(s) could not be restored — the selected "
-                               "secret backend may be locked or unavailable.").format(
-                                   restored, total))
+            if failed_creds:
+                if not secrets_persisted:
+                    lines.append(_("{} credential(s) were not stored because the selected secret "
+                                   "backend does not save secrets (“agent”). Choose a "
+                                   "storage backend in Preferences ▸ Security & Credentials, "
+                                   "then import again.").format(failed_creds))
+                else:
+                    lines.append(_("{} of {} credential(s) could not be restored — the selected "
+                                   "secret backend may be locked or unavailable.").format(
+                                       failed_creds, total))
             if failed_keys:
                 lines.append(_("{} private key(s) could not be written (the target path may "
                                "not be writable).").format(failed_keys))
-        lines.append(_("It is recommended to restart SSH Pilot for all changes to take effect."))
+        lines.append(_("Reload now to apply the imported configuration. Some settings may still "
+                       "need a full restart of sshPilot to take effect."))
         body = "\n\n".join(lines)
 
         success_dialog = Adw.MessageDialog(
             transient_for=self, modal=True, heading=_("Import Successful"), body=body)
         success_dialog.add_response('ok', _('OK'))
-        success_dialog.add_response('restart', _('Restart Now'))
+        success_dialog.add_response('restart', _('Reload Now'))
         success_dialog.set_response_appearance('restart', Adw.ResponseAppearance.SUGGESTED)
 
         def on_success_response(dialog, response):
@@ -675,10 +741,10 @@ class WindowConfigDialogsMixin:
                     transient_for=self,
                     modal=True,
                     heading=_("Import Successful"),
-                    body=_("Configuration imported successfully.\n\nIt is recommended to restart SSH Pilot for all changes to take effect.")
+                    body=_("Configuration imported successfully.\n\nReload now to apply it. Some settings may still need a full restart of sshPilot to take effect.")
                 )
                 success_dialog.add_response('ok', _('OK'))
-                success_dialog.add_response('restart', _('Restart Now'))
+                success_dialog.add_response('restart', _('Reload Now'))
                 success_dialog.set_response_appearance('restart', Adw.ResponseAppearance.SUGGESTED)
                 
                 def on_success_response(dialog, response):

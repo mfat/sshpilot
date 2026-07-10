@@ -272,6 +272,77 @@ def test_restore_count_reflects_failed_stores(monkeypatch, tmp_path):
     assert mgr._restore_credentials(manifest) == 2
 
 
+def test_restore_preserves_local_secret_backend(monkeypatch, tmp_path):
+    # The secrets.* subtree (backend choice + absolute vault paths) is machine-specific.
+    # Restore must keep the LOCAL selection, not import the source machine's (which would point
+    # the backend at a file that doesn't exist here and silently break autofill).
+    monkeypatch.setattr(bm, "get_config_dir", lambda: str(tmp_path))
+
+    class LocalConfig(FakeConfig):
+        def __init__(self):
+            self.config_data = {"secrets": {"backend": "keepassxc",
+                                            "keepassxc": {"database": "/home/me/local.kdbx"}}}
+
+    mgr = bm.BackupManager(LocalConfig(), FakeConnMgr([]))
+    imported = {"secrets": {"backend": "bitwarden", "bitwarden": {"profile": "/home/you/bw"}},
+                "other": 1}
+    out = mgr._app_config_for_restore(imported)
+    assert out["secrets"]["backend"] == "keepassxc"                 # local kept
+    assert out["secrets"]["keepassxc"]["database"] == "/home/me/local.kdbx"
+    assert "bitwarden" not in out["secrets"]                         # source's not imported
+    assert out["other"] == 1                                         # non-secret settings still flow
+
+
+def test_restore_skips_existing_secrets(monkeypatch, tmp_path):
+    # Non-destructive: a secret already present in the selected backend is left untouched,
+    # counted as skipped, and never re-stored (can't clobber a rotated password).
+    monkeypatch.setattr(bm, "get_config_dir", lambda: str(tmp_path))
+
+    class LookupMgr(FakeMgr):
+        def lookup(self, spec):                   # selected-backend lookup used by the skip check
+            return self.data.get(spec.keyring_account)
+
+    stored = LookupMgr()
+    monkeypatch.setattr(ss, "get_secret_manager", lambda: stored)
+    mgr = bm.BackupManager(FakeConfig(), FakeConnMgr([]))
+    manifest = {"credentials": [
+        {"id": "u@h", "type": "password", "host": "h", "username": "u", "secret": "new-u"},
+        {"id": "v@h", "type": "password", "host": "h", "username": "v", "secret": "new-v"},
+    ]}
+    # Pre-seed one of them with a *different* (rotated) value that must survive.
+    from sshpilot.credential_model import Credential, credential_to_spec
+    existing_spec = credential_to_spec(Credential(
+        id="u@h", type="password", host="h", username="u", secret="ROTATED", metadata={}))
+    stored.data[existing_spec.keyring_account] = "ROTATED"
+
+    restored = mgr._restore_credentials(manifest)
+    assert restored == 1                          # only the absent 'v' was stored
+    assert mgr.last_import_skipped_credentials == 1
+    assert stored.data[existing_spec.keyring_account] == "ROTATED"   # not clobbered
+
+
+def test_restore_reports_zero_for_non_persisting_backend(monkeypatch, tmp_path):
+    # The "agent" backend's store() returns True but writes nothing. Restore must NOT count
+    # those as successes; it reports 0 and flags that secrets were not persisted.
+    monkeypatch.setattr(bm, "get_config_dir", lambda: str(tmp_path))
+
+    class AgentMgr(FakeMgr):
+        def persists_secrets(self):
+            return False
+        def store(self, spec, secret):           # mimics SSHAgentBackend: lies about success
+            return True
+
+    stored = AgentMgr()
+    monkeypatch.setattr(ss, "get_secret_manager", lambda: stored)
+    mgr = bm.BackupManager(FakeConfig(), FakeConnMgr([]))
+    manifest = {"credentials": [
+        {"id": "u@h", "type": "password", "host": "h", "username": "u", "secret": "pw"},
+    ]}
+    assert mgr._restore_credentials(manifest) == 0
+    assert mgr.last_import_secrets_persisted is False
+    assert stored.data == {}                       # store() was never actually called
+
+
 def test_spbk_export_plaintext_when_no_passphrase(monkeypatch, tmp_path):
     monkeypatch.setattr(bm, "get_config_dir", lambda: str(tmp_path))
     fake = FakeMgr()
@@ -633,3 +704,65 @@ def test_spbk_restore_honors_secret_option(monkeypatch, tmp_path):
     assert restored == 0
     assert restored_keys == 0
     assert fake.data == {}
+
+
+# --- cross-device re-homing (P1) --------------------------------------------
+
+def test_rebase_home_path_helper():
+    assert bm._rebase_home_path(
+        "/home/alice/.ssh/id", "/home/alice", "/home/bob") == "/home/bob/.ssh/id"
+    assert bm._rebase_home_path(                       # outside source home -> unchanged
+        "/etc/ssh/id", "/home/alice", "/home/bob") == "/etc/ssh/id"
+    assert bm._rebase_home_path(                       # no recorded source home -> unchanged
+        "/home/alice/.ssh/id", None, "/home/bob") == "/home/alice/.ssh/id"
+
+
+def test_rebase_home_in_text_helper():
+    txt = "Host x\n    IdentityFile /home/alice/.ssh/id\n"
+    out = bm._rebase_home_in_text(txt, "/home/alice", "/home/bob")
+    assert "/home/bob/.ssh/id" in out and "/home/alice" not in out
+    assert bm._rebase_home_in_text(txt, None, "/home/bob") == txt   # no source home -> no-op
+
+
+def test_private_key_restore_rehomes_to_current_home(monkeypatch, tmp_path):
+    import base64
+    monkeypatch.setattr(bm, "get_config_dir", lambda: str(tmp_path / "config"))
+    newhome = tmp_path / "home_bob"
+    newhome.mkdir()
+    monkeypatch.setenv("HOME", str(newhome))
+    manifest = {
+        "source_home": "/home/alice",
+        "private_keys": [{
+            "path": "/home/alice/.ssh/id_ed25519",
+            "mode": 0o600,
+            "content_b64": base64.b64encode(b"PRIVATE\n").decode(),
+        }],
+    }
+    mgr = bm.BackupManager(FakeConfig(), FakeConnMgr([]))
+    written, skipped = mgr._restore_private_keys(manifest)
+    assert (written, skipped) == (1, 0)
+    dest = newhome / ".ssh" / "id_ed25519"
+    assert dest.read_bytes() == b"PRIVATE\n"            # landed under THIS machine's home
+
+
+def test_passphrase_credential_rehomed_to_current_home(monkeypatch, tmp_path):
+    monkeypatch.setattr(bm, "get_config_dir", lambda: str(tmp_path))
+    newhome = tmp_path / "home_bob"
+    newhome.mkdir()
+    monkeypatch.setenv("HOME", str(newhome))
+
+    class LookupMgr(FakeMgr):
+        def lookup(self, spec):
+            return self.data.get(spec.keyring_account)
+
+    stored = LookupMgr()
+    monkeypatch.setattr(ss, "get_secret_manager", lambda: stored)
+    mgr = bm.BackupManager(FakeConfig(), FakeConnMgr([]))
+    manifest = {"source_home": "/home/alice", "credentials": [{
+        "id": "/home/alice/.ssh/id_ed25519", "type": "key",
+        "host": None, "username": None, "secret": "pp",
+        "metadata": {"key_path": "/home/alice/.ssh/id_ed25519"}}]}
+    assert mgr._restore_credentials(manifest) == 1
+    keys = list(stored.data.keys())
+    assert any(str(newhome) in k for k in keys)         # passphrase filed under re-homed path
+    assert all("/home/alice" not in k for k in keys)    # never under the source home
