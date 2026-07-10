@@ -47,12 +47,17 @@ def ensure_bitwarden_ready(window, on_ready):
         on_ready(False)
         return
 
+    from .secret_unlock_dialog import spinner_dialog
+    _set_status, _close_spinner, _spin = spinner_dialog(
+        window, _("Bitwarden"), _("Connecting to Bitwarden…"))
+
     def probe():
         available = _safe(bw.is_available)
         needs_login = _safe(bw.needs_login, default=False) if available else False
         GLib.idle_add(lambda: (_after_probe(available, needs_login), False)[1])
 
     def _after_probe(available, needs_login):
+        _close_spinner()   # hand off to the login/unlock/export UI
         if not available:
             _no_cli_dialog(window).present()
             on_ready(False)

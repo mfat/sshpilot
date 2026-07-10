@@ -354,10 +354,15 @@ class WindowConfigDialogsMixin:
                 from .backup_manager import BackupManager
                 from .backup_backends import BitwardenBackupBackend, BackupTooLargeForNote
                 from .secret_storage import get_secret_manager
+                from .secret_unlock_dialog import spinner_dialog
                 name = _("sshPilot Backup {}").format(datetime.now().strftime('%Y-%m-%d %H:%M'))
                 mgr = BackupManager(self.config, self.connection_manager)
                 backend = BitwardenBackupBackend(
                     get_secret_manager().get_backend("bitwarden"), item_name=name)
+
+                _set_status, close_spinner, _spin = spinner_dialog(
+                    self, _("Export to Bitwarden"),
+                    _("Exporting to Bitwarden — this may take a while…"))
 
                 # Building the manifest reads secrets (may hit bw) and the note write spawns bw —
                 # all off the main thread so the UI doesn't freeze ("not responding").
@@ -376,6 +381,7 @@ class WindowConfigDialogsMixin:
                     GLib.idle_add(lambda: (_report(payload), False)[1])
 
                 def _report(p):
+                    close_spinner()
                     if p[0] == 'ok':
                         self._simple_dialog(
                             _("Export Successful"),
@@ -575,7 +581,10 @@ class WindowConfigDialogsMixin:
                 return
             from .backup_backends import BitwardenBackupBackend
             from .secret_storage import get_secret_manager
+            from .secret_unlock_dialog import spinner_dialog
             backend = BitwardenBackupBackend(get_secret_manager().get_backend("bitwarden"))
+            _set_status, close_spinner, _spin = spinner_dialog(
+                self, _("Import from Bitwarden"), _("Loading backups from Bitwarden…"))
 
             def worker():   # bw list items is slow — keep it off the main thread
                 try:
@@ -586,6 +595,7 @@ class WindowConfigDialogsMixin:
                 GLib.idle_add(lambda: (_after_list(payload), False)[1])
 
             def _after_list(p):
+                close_spinner()
                 if p[0] != 'ok':
                     self._simple_dialog(_("Import Failed"), p[1])
                     return
@@ -633,6 +643,9 @@ class WindowConfigDialogsMixin:
             entry = next((e for rb, e in radios if rb.get_active()), None)
             if entry is None:
                 return
+            from .secret_unlock_dialog import spinner_dialog
+            _set_status, close_spinner, _spin = spinner_dialog(
+                self, _("Import from Bitwarden"), _("Reading backup from Bitwarden…"))
 
             def worker():   # bw get item is slow — keep it off the main thread
                 try:
@@ -643,6 +656,7 @@ class WindowConfigDialogsMixin:
                 GLib.idle_add(lambda: (_after_read(payload), False)[1])
 
             def _after_read(p):
+                close_spinner()
                 if p[0] != 'ok':
                     self._simple_dialog(_("Import Failed"), p[1])
                     return

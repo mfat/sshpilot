@@ -134,6 +134,10 @@ def _spinner_dialog(parent, heading, body):
     return status.set_text, _close, dialog
 
 
+# Public name so other flows (e.g. the Bitwarden backup) can show the same "please wait" spinner.
+spinner_dialog = _spinner_dialog
+
+
 def unlock_at_startup(window):
     """If the selected secret backend is session-backed (Bitwarden/Vaultwarden) and
     locked, prompt to unlock it at app startup — so the vault is ready (and warm) before
