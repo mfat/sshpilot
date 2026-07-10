@@ -956,7 +956,9 @@ class WindowConfigDialogsMixin:
 
         If the manifest carries credentials and the selected secret backend is a **locked
         session vault** (e.g. Bitwarden), unlock it first — import is aborted if unlock fails
-        or the user cancels, so credentials are never silently skipped."""
+        or the user cancels, so credentials are never silently skipped.  Applying a manifest
+        may invoke the selected secret backend once per credential, so keep that work off the
+        GTK main thread and show progress until the result is ready."""
         restore_options = restore_options or {}
         total = (
             len([c for c in (manifest.get('credentials') or [])
@@ -969,27 +971,53 @@ class WindowConfigDialogsMixin:
         )
 
         def do_apply(*_args):
-            try:
-                from .backup_manager import BackupManager
-                backup_mgr = BackupManager(self.config, self.connection_manager)
-                success, error, restored, restored_keys = backup_mgr.apply_imported_manifest(
-                    manifest, mode=mode, create_backup=True, restore_options=restore_options)
-            except Exception as e:
-                logger.error(f"Backup import failed: {e}")
-                self._simple_dialog(_("Import Failed"), str(e))
-                return
-            if not success:
-                self._simple_dialog(_("Import Failed"), error or _("Unknown error"))
-                return
-            skipped_keys = getattr(backup_mgr, 'last_import_skipped_keys', 0)
-            secrets_persisted = getattr(backup_mgr, 'last_import_secrets_persisted', True)
-            skipped_creds = getattr(backup_mgr, 'last_import_skipped_credentials', 0)
-            merge_collisions = getattr(backup_mgr, 'last_merge_collisions', []) or []
-            dropped_globals = getattr(backup_mgr, 'last_merge_dropped_globals', 0)
-            self._show_import_success(restored, total, restored_keys, total_keys,
-                                      skipped_keys, secrets_persisted, skipped_creds,
-                                      merge_collisions=merge_collisions,
-                                      dropped_globals=dropped_globals)
+            from .bitwarden_backup_setup import progress_dialog
+
+            _set_status, close_spinner = progress_dialog(
+                self, _("Import Configuration"),
+                _("Applying backup — this may take a while…"))
+
+            def worker():
+                try:
+                    from .backup_manager import BackupManager
+                    backup_mgr = BackupManager(self.config, self.connection_manager)
+                    success, error, restored, restored_keys = (
+                        backup_mgr.apply_imported_manifest(
+                            manifest, mode=mode, create_backup=True,
+                            restore_options=restore_options)
+                    )
+                    payload = (
+                        'ok', success, error, restored, restored_keys,
+                        getattr(backup_mgr, 'last_import_skipped_keys', 0),
+                        getattr(backup_mgr, 'last_import_secrets_persisted', True),
+                        getattr(backup_mgr, 'last_import_skipped_credentials', 0),
+                        getattr(backup_mgr, 'last_merge_collisions', []) or [],
+                        getattr(backup_mgr, 'last_merge_dropped_globals', 0),
+                    )
+                except Exception as e:
+                    logger.error("Backup import failed: %s", e)
+                    payload = ('error', str(e))
+                GLib.idle_add(lambda: (_report(payload), False)[1])
+
+            def _report(payload):
+                close_spinner()
+                if payload[0] == 'error':
+                    self._simple_dialog(_("Import Failed"), payload[1])
+                    return
+                (_, success, error, restored, restored_keys, skipped_keys,
+                 secrets_persisted, skipped_creds, merge_collisions,
+                 dropped_globals) = payload
+                if not success:
+                    self._simple_dialog(
+                        _("Import Failed"), error or _("Unknown error"))
+                    return
+                self._show_import_success(
+                    restored, total, restored_keys, total_keys,
+                    skipped_keys, secrets_persisted, skipped_creds,
+                    merge_collisions=merge_collisions,
+                    dropped_globals=dropped_globals)
+
+            threading.Thread(target=worker, daemon=True).start()
 
         self._run_after_vault_unlock_for_secrets(
             do_apply,
