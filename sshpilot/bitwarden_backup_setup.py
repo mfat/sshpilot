@@ -14,9 +14,67 @@ import threading
 import time
 
 from gettext import gettext as _
-from gi.repository import Adw, GLib
+from gi.repository import Adw, GLib, Gtk
 
 logger = logging.getLogger(__name__)
+
+
+def progress_dialog(parent, heading, message, *, on_cancel=None):
+    """A fixed-size “please wait” window: a spinner + status message with a header bar (so it has
+    a close/cancel button). Returns ``(set_status, close)`` — ``set_status(text)`` updates the
+    message, ``close()`` dismisses it programmatically. If the user closes it (header X / Esc),
+    ``on_cancel()`` fires once. The size is fixed so it doesn't jump as the message changes."""
+    win = Adw.Window()
+    win.set_modal(True)
+    if parent is not None:
+        win.set_transient_for(parent)
+    win.set_title(heading)
+    win.set_resizable(False)
+    win.set_default_size(420, 170)
+
+    toolbar = Adw.ToolbarView()
+    toolbar.add_top_bar(Adw.HeaderBar())
+    content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
+    content.set_valign(Gtk.Align.CENTER)
+    content.set_vexpand(True)
+    content.set_margin_top(18); content.set_margin_bottom(24)
+    content.set_margin_start(24); content.set_margin_end(24)
+    spinner = Gtk.Spinner()
+    spinner.set_size_request(32, 32)
+    spinner.set_halign(Gtk.Align.CENTER)
+    spinner.start()
+    label = Gtk.Label(label=message)
+    label.set_wrap(True)
+    label.set_justify(Gtk.Justification.CENTER)
+    label.set_halign(Gtk.Align.CENTER)
+    content.append(spinner)
+    content.append(label)
+    toolbar.set_content(content)
+    win.set_content(toolbar)
+
+    state = {"closed": False}
+
+    def _on_close_request(_w):
+        if not state["closed"]:
+            state["closed"] = True
+            spinner.stop()
+            if on_cancel:
+                on_cancel()
+        return False   # allow the close to proceed
+    win.connect("close-request", _on_close_request)
+    win.present()
+
+    def close():
+        if state["closed"]:
+            return
+        state["closed"] = True
+        spinner.stop()
+        try:
+            win.close()
+        except Exception:
+            pass
+
+    return label.set_text, close
 
 
 def _dialog(window, heading, body, *, responses=(("ok", "OK"),)):
@@ -47,9 +105,14 @@ def ensure_bitwarden_ready(window, on_ready):
         on_ready(False)
         return
 
-    from .secret_unlock_dialog import spinner_dialog
-    _set_status, _close_spinner, _spin = spinner_dialog(
-        window, _("Bitwarden"), _("Connecting to Bitwarden…"))
+    cancelled = {"v": False}
+
+    def _cancel():
+        cancelled["v"] = True
+        on_ready(False)
+
+    _set_status, _close_spinner = progress_dialog(
+        window, _("Bitwarden"), _("Connecting to Bitwarden…"), on_cancel=_cancel)
 
     def probe():
         available = _safe(bw.is_available)
@@ -57,6 +120,8 @@ def ensure_bitwarden_ready(window, on_ready):
         GLib.idle_add(lambda: (_after_probe(available, needs_login), False)[1])
 
     def _after_probe(available, needs_login):
+        if cancelled["v"]:
+            return
         _close_spinner()   # hand off to the login/unlock/export UI
         if not available:
             _no_cli_dialog(window).present()
