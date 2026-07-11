@@ -101,10 +101,7 @@ class WindowConfigDialogsMixin:
         header = Adw.HeaderBar()
         header.set_show_start_title_buttons(False)
         header.set_show_end_title_buttons(False)
-        header.set_title_widget(Adw.WindowTitle(
-            title=_("Export Backup"),
-            subtitle=_("Select items to include in this backup."),
-        ))
+        header.set_title_widget(Adw.WindowTitle(title=_("Export Backup")))
 
         cancel_btn = Gtk.Button(label=_("Cancel"))
         cancel_btn.connect('clicked', lambda _b: dialog.close())
