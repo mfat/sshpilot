@@ -522,8 +522,7 @@ class OpenSSHSFTPManager(GObject.GObject):
 
     def _emit_connect_error(self, exc: Exception) -> None:
         message = str(exc)
-        lowered = message.lower()
-        if "permission denied" in lowered or "authentication" in lowered or "password" in lowered:
+        if isinstance(exc, PermissionError):
             self.emit("authentication-required", message)
         else:
             self.emit("connection-error", message)
@@ -683,7 +682,12 @@ class OpenSSHSFTPManager(GObject.GObject):
     def _classify_handshake_failure(self, text: str, exc: Exception) -> Exception:
         text = (text or "").strip()
         lowered = text.lower()
-        if "permission denied" in lowered or "password" in lowered or "publickey" in lowered:
+        auth_failure_markers = (
+            "permission denied",
+            "authentication failed",
+            "too many authentication failures",
+        )
+        if any(marker in lowered for marker in auth_failure_markers):
             return PermissionError(text or "Authentication failed")
         if text:
             from ..scp_utils import classify_sftp_error
