@@ -701,6 +701,7 @@ class BitwardenBackend(SecretBackend):
         self._argv_override: Optional[List[str]] = None
         self._token: Optional[str] = None                # session token (this process)
         self._unlocked = False                           # we unlocked it this session
+        self._needs_login: Optional[bool] = None         # stable CLI account state
         self._idle = _SessionIdleTimeout()
         self._items: Optional[Dict[str, dict]] = None    # name→item; None = not loaded
         self._cache_complete = False                     # _items holds the whole vault
@@ -794,17 +795,36 @@ class BitwardenBackend(SecretBackend):
         return result
 
     # -- login / unlock state --------------------------------------------
-    def needs_login(self) -> bool:
+    def needs_login(self, *, force_refresh: bool = False) -> bool:
         """True when no account is authenticated (``bw login`` required), so ``bw unlock``
-        cannot succeed. Only called in the unlock-decision flow."""
+        cannot succeed.
+
+        Account state is stable until login/logout, so cache it after the first CLI probe.
+        Connection attempts call this path and must not each pay for a slow Node startup.
+        Setup/status UI can use ``force_refresh`` after an out-of-process account change.
+        """
         if not self._bin:
             return False
-        try:
-            result = self._run(["login", "--check"])
-            return result.returncode != 0
-        except Exception as exc:
-            logger.debug("bw login --check failed: %s", exc)
-            return False
+        with self._lock:
+            if self._needs_login is not None and not force_refresh:
+                return self._needs_login
+            try:
+                result = self._run(["login", "--check"])
+                self._needs_login = result.returncode != 0
+                return self._needs_login
+            except Exception as exc:
+                logger.debug("bw login --check failed: %s", exc)
+                return False
+
+    def invalidate_login_state(self) -> None:
+        """Forget the cached CLI account state before an explicit status refresh."""
+        with self._lock:
+            self._needs_login = None
+
+    def _set_needs_login(self, needs_login: bool) -> None:
+        """Record account state after an in-process login/logout operation."""
+        with self._lock:
+            self._needs_login = needs_login
 
     @staticmethod
     def _bw_cli_message(result) -> str:
@@ -909,6 +929,7 @@ class BitwardenBackend(SecretBackend):
             extra_env["BW_CLIENTSECRET"] = challenge
         result = self._run(args, extra_env=extra_env)
         if result.returncode == 0:
+            self._set_needs_login(False)
             token = self._extract_login_session(result)
             if token:
                 with self._lock:
@@ -930,6 +951,7 @@ class BitwardenBackend(SecretBackend):
             extra_env={"BW_CLIENTID": client_id, "BW_CLIENTSECRET": client_secret},
         )
         if result.returncode == 0:
+            self._set_needs_login(False)
             return True, ""
         return False, self._bw_cli_message(result) or "login failed"
 
@@ -943,6 +965,7 @@ class BitwardenBackend(SecretBackend):
             args.append(ident)
         result = self._run(args)
         if result.returncode == 0:
+            self._set_needs_login(False)
             return True, ""
         return False, self._bw_cli_message(result) or "sso login failed"
 
@@ -1033,6 +1056,7 @@ class BitwardenBackend(SecretBackend):
                 token = result.stdout.decode("utf-8", "replace").strip()
                 if not token:
                     return False
+                self._needs_login = False
                 self._store_session_token(token)
                 self._report(progress, "loading")
                 # Warm the whole-vault cache now, while the unlock spinner is still up, so
@@ -1081,6 +1105,7 @@ class BitwardenBackend(SecretBackend):
                 detail = (result.stderr or result.stdout or b"").decode("utf-8", "replace").strip()
                 logger.error("bw logout failed: %s", detail)
                 return False
+            self._set_needs_login(True)
             return True
         except Exception as exc:
             logger.error("bw logout error: %s", exc)

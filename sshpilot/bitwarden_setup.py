@@ -304,9 +304,14 @@ def probe_bitwarden_status(bw=None, *, force_refresh: bool = False) -> Bitwarden
         elif _safe(lambda: bw.is_unlocked(), default=False):
             status = BitwardenStatus(cli_installed=True, needs_login=False, unlocked=True)
         else:
+            def _needs_login():
+                if force_refresh:
+                    return bw.needs_login(force_refresh=True)
+                return bw.needs_login()
+
             status = BitwardenStatus(
                 cli_installed=True,
-                needs_login=_safe(lambda: bw.needs_login(), default=True),
+                needs_login=_safe(_needs_login, default=True),
                 unlocked=False,
             )
     _bw_status_cache = (status, now)
@@ -1138,7 +1143,10 @@ def _login_wizard(window, bw, on_done: Callable[[bool], None]):
                 ok, detail = bw.login_with_sso(data.get("sso_id") or None)
                 if ok:
                     for _ in range(150):
-                        if not _safe(lambda: bw.needs_login(), default=True):
+                        if not _safe(
+                            lambda: bw.needs_login(force_refresh=True),
+                            default=True,
+                        ):
                             break
                         time.sleep(2)
                     else:

@@ -1069,6 +1069,46 @@ def test_bitwarden_needs_login(monkeypatch):
     assert mgr.selected_needs_login() is True
 
 
+def test_bitwarden_needs_login_is_cached_between_connections(monkeypatch):
+    # The connect gate asks on every connection attempt. A signed-out result is stable,
+    # so only the first attempt should pay for the slow `bw` Node process startup.
+    fake = FakeBw(status="unauthenticated")
+    b = _make_backend(monkeypatch, fake)
+
+    assert b.needs_login() is True
+    assert b.needs_login() is True
+    assert b.needs_login() is True
+    assert fake.calls == [['login', '--check']]
+
+
+def test_bitwarden_needs_login_force_refresh_detects_external_login(monkeypatch):
+    # Preferences can explicitly refresh after the account changes outside sshPilot.
+    fake = FakeBw(status="unauthenticated")
+    b = _make_backend(monkeypatch, fake)
+    assert b.needs_login() is True
+
+    fake.status = "locked"
+    assert b.needs_login() is True                  # cached connection hot path
+    assert b.needs_login(force_refresh=True) is False
+    assert b.needs_login() is False                 # refreshed state is now cached
+    assert fake.calls == [['login', '--check'], ['login', '--check']]
+
+
+def test_bitwarden_login_and_logout_update_cached_account_state(monkeypatch):
+    fake = FakeBw(status="unauthenticated")
+    b = _make_backend(monkeypatch, fake)
+    assert b.needs_login() is True
+
+    assert b.login_with_api_key("client", "secret") == (True, "")
+    monkeypatch.setattr(ss.subprocess, 'run', _boom_bw)
+    assert b.needs_login() is False                 # no post-login status spawn
+
+    monkeypatch.setattr(ss.subprocess, 'run', fake.run)
+    assert b.logout() is True
+    monkeypatch.setattr(ss.subprocess, 'run', _boom_bw)
+    assert b.needs_login() is True                  # no post-logout status spawn
+
+
 def test_one_session_backend_no_vaultwarden(monkeypatch):
     # Bitwarden + Vaultwarden were merged into one `bw` backend; there is no separate
     # 'vaultwarden' backend, and availability is bin-only (no server URL gate).
