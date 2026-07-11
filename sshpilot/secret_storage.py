@@ -68,28 +68,70 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-try:  # pragma: no cover - optional dependency
-    import gi
+# Optional dependencies (libsecret / keyring / pykeepass) are resolved lazily so
+# they never load on the startup import chain — pykeepass in particular pulls in
+# lxml/argon2/pycryptodomex (~hundreds of ms) and is only needed by the KeePass
+# backend. Each name starts as ``_UNSET`` ("not probed"); after the first probe it
+# holds the real module/callable or ``None`` ("unavailable"). Tests inject fakes by
+# setting these module globals directly (hence they stay plain module attributes).
+_UNSET = object()
 
-    gi.require_version("Secret", "1")
-    from gi.repository import Secret
-except Exception:  # pragma: no cover - optional dependency
-    Secret = None
+Secret = _UNSET
+keyring = _UNSET
+PyKeePass = _UNSET
+_kdbx_create_database = _UNSET
 
-try:  # pragma: no cover - optional dependency
-    import keyring
-except Exception:  # pragma: no cover - optional dependency
-    keyring = None
+# Fallback so `except CredentialsError:` always has a concrete type even when
+# pykeepass is absent; ``_get_pykeepass`` swaps in pykeepass's real class when it
+# loads (both the raiser and the handler read this module global at runtime, so
+# they always agree).
+class CredentialsError(Exception):
+    pass
 
-try:  # pragma: no cover - optional dependency (KDBX backend)
-    from pykeepass import PyKeePass, create_database as _kdbx_create_database
-    from pykeepass.exceptions import CredentialsError
-except Exception:  # pragma: no cover - optional dependency
-    PyKeePass = None
-    _kdbx_create_database = None
 
-    class CredentialsError(Exception):
-        pass
+def _get_secret():
+    """Return the ``gi.repository.Secret`` module, or ``None`` if unavailable."""
+    global Secret
+    if Secret is _UNSET:
+        try:  # pragma: no cover - optional dependency
+            import gi
+
+            gi.require_version("Secret", "1")
+            from gi.repository import Secret as _mod
+            Secret = _mod
+        except Exception:  # pragma: no cover - optional dependency
+            Secret = None
+    return Secret
+
+
+def _get_keyring():
+    """Return the ``keyring`` module, or ``None`` if unavailable."""
+    global keyring
+    if keyring is _UNSET:
+        try:  # pragma: no cover - optional dependency
+            import keyring as _mod
+            keyring = _mod
+        except Exception:  # pragma: no cover - optional dependency
+            keyring = None
+    return keyring
+
+
+def _get_pykeepass():
+    """Return the ``PyKeePass`` class, or ``None`` if pykeepass is unavailable.
+
+    Also populates the ``_kdbx_create_database`` callable and swaps the module-level
+    ``CredentialsError`` for pykeepass's real class on success.
+    """
+    global PyKeePass, _kdbx_create_database, CredentialsError
+    if PyKeePass is _UNSET:
+        try:  # pragma: no cover - optional dependency (KDBX backend)
+            from pykeepass import PyKeePass as _P, create_database as _c
+            from pykeepass.exceptions import CredentialsError as _CredErr
+            PyKeePass, _kdbx_create_database, CredentialsError = _P, _c, _CredErr
+        except Exception:  # pragma: no cover - optional dependency
+            PyKeePass, _kdbx_create_database = None, None
+    return PyKeePass
+
 
 try:
     from .platform_utils import is_macos, resolve_host_binary
@@ -121,6 +163,7 @@ def get_schema():
     existing entries match.
     """
     global _SCHEMA
+    Secret = _get_secret()
     if Secret is None:
         return None
     if _SCHEMA is None:
@@ -441,6 +484,7 @@ class LibSecretBackend(SecretBackend):
         self._available: Optional[bool] = None
 
     def is_available(self) -> bool:
+        Secret = _get_secret()
         if Secret is None or get_schema() is None:
             return False
         if self._available is None:
@@ -453,6 +497,9 @@ class LibSecretBackend(SecretBackend):
         return self._available
 
     def store(self, spec: SecretSpec, secret: str) -> bool:
+        Secret = _get_secret()
+        if Secret is None:
+            return False
         try:
             Secret.password_store_sync(
                 get_schema(),
@@ -468,6 +515,9 @@ class LibSecretBackend(SecretBackend):
             return False
 
     def lookup(self, spec: SecretSpec) -> Optional[str]:
+        Secret = _get_secret()
+        if Secret is None:
+            return None
         try:
             return Secret.password_lookup_sync(get_schema(), spec.attributes, None)
         except Exception as exc:
@@ -475,6 +525,9 @@ class LibSecretBackend(SecretBackend):
             return None
 
     def delete(self, spec: SecretSpec) -> bool:
+        Secret = _get_secret()
+        if Secret is None:
+            return False
         try:
             return bool(Secret.password_clear_sync(get_schema(), spec.attributes, None))
         except Exception as exc:
@@ -487,6 +540,7 @@ class LibSecretBackend(SecretBackend):
         Searches by the ``application`` attribute (under our schema), so it returns the real
         per-item attributes (``type``/``host``/``username``/``key_path``). The credential
         adapter's ``load_all()`` maps these to :class:`Credential`s."""
+        Secret = _get_secret()
         if Secret is None or get_schema() is None:
             return []
         try:
@@ -518,6 +572,7 @@ class KeyringBackend(SecretBackend):
     name = "keyring"
 
     def describe(self) -> str:
+        keyring = _get_keyring()
         if keyring is None:
             return "keyring"
         try:
@@ -526,6 +581,7 @@ class KeyringBackend(SecretBackend):
             return "keyring"
 
     def is_available(self) -> bool:
+        keyring = _get_keyring()
         if keyring is None:
             return False
         try:
@@ -536,6 +592,9 @@ class KeyringBackend(SecretBackend):
             return False
 
     def store(self, spec: SecretSpec, secret: str) -> bool:
+        keyring = _get_keyring()
+        if keyring is None:
+            return False
         try:
             keyring.set_password(spec.keyring_service, spec.keyring_account, secret)
             return True
@@ -544,6 +603,9 @@ class KeyringBackend(SecretBackend):
             return False
 
     def lookup(self, spec: SecretSpec) -> Optional[str]:
+        keyring = _get_keyring()
+        if keyring is None:
+            return None
         try:
             return keyring.get_password(spec.keyring_service, spec.keyring_account)
         except Exception as exc:
@@ -551,6 +613,9 @@ class KeyringBackend(SecretBackend):
             return None
 
     def delete(self, spec: SecretSpec) -> bool:
+        keyring = _get_keyring()
+        if keyring is None:
+            return False
         try:
             keyring.delete_password(spec.keyring_service, spec.keyring_account)
             return True
@@ -1432,7 +1497,7 @@ class KdbxBackend(SecretBackend):
 
     def is_available(self) -> bool:
         db = self._database()
-        return PyKeePass is not None and bool(db) and os.path.exists(db)
+        return _get_pykeepass() is not None and bool(db) and os.path.exists(db)
 
     def _touch_deadline(self) -> None:
         self._idle.touch()
@@ -1457,6 +1522,7 @@ class KdbxBackend(SecretBackend):
 
     # -- open / unlock ----
     def _open(self, *, password=None, transformed_key=None):
+        PyKeePass = _get_pykeepass()
         if PyKeePass is None:
             raise RuntimeError("pykeepass is not installed")
         db = self._database()
@@ -1540,7 +1606,11 @@ class KdbxBackend(SecretBackend):
         """Create a brand-new ``.kdbx`` at ``path`` (pykeepass' default modern KDBX 4 + Argon2)
         protected by ``password`` (+ optional existing ``keyfile``). Returns True on success.
         Creates the file only — the caller unlocks it through the normal path afterwards."""
-        if _kdbx_create_database is None:
+        # Probe pykeepass only if the create helper hasn't been resolved/injected yet,
+        # so a probe never clobbers a test-injected _kdbx_create_database.
+        if _kdbx_create_database is _UNSET:
+            _get_pykeepass()
+        if not callable(_kdbx_create_database):
             logger.error("Cannot create KeePass database: pykeepass is not installed")
             return False
         try:

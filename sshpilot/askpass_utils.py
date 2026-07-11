@@ -18,18 +18,17 @@ from .secret_storage import (
     key_path_lookup_candidates as _get_key_path_lookup_candidates,
 )
 
-try:
-    import gi
+# libsecret / keyring are imported lazily (and only for a diagnostic log line
+# here) — the real passphrase lookups delegate to secret_storage. Keeping these
+# off the module top-level avoids loading keyring on the startup import chain.
+def _secret_available() -> bool:
+    from .secret_storage import _get_secret
+    return _get_secret() is not None
 
-    gi.require_version("Secret", "1")
-    from gi.repository import Secret
-except Exception:  # pragma: no cover - optional dependency
-    Secret = None
 
-try:
-    import keyring
-except Exception:  # pragma: no cover - optional dependency
-    keyring = None
+def _keyring_available() -> bool:
+    from .secret_storage import _get_keyring
+    return _get_keyring() is not None
 
 try:
     from .platform_utils import is_macos
@@ -575,8 +574,8 @@ def handle_askpass_cli(prompt: str) -> "str | None":
             pass
 
     _log(
-        f"ASKPASS: keyring {'available' if keyring else 'unavailable'}, "
-        f"libsecret {'available' if Secret else 'unavailable'}"
+        f"ASKPASS: keyring {'available' if _keyring_available() else 'unavailable'}, "
+        f"libsecret {'available' if _secret_available() else 'unavailable'}"
     )
     _log(f"ASKPASS called with prompt: {prompt}")
 
