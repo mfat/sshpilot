@@ -322,15 +322,16 @@ class ShortcutsPreferencesPage(PreferencesPageBase):
             row.add_suffix(assign_button)
 
             default_shortcuts = self._default_shortcuts.get(name)
-            reset_button: Optional[Gtk.Widget] = None
-            if current_shortcuts != default_shortcuts:
-                reset_button = Gtk.Button()
-                icon_utils.set_button_icon(reset_button, 'edit-undo-symbolic')
-                reset_button.set_tooltip_text(_('Reset to default'))
-                reset_button.add_css_class('flat')
-                reset_button.set_valign(Gtk.Align.CENTER)
-                reset_button.connect('clicked', self._on_reset_clicked, name)
-                row.add_suffix(reset_button)
+            reset_button = Gtk.Button()
+            icon_utils.set_button_icon(reset_button, 'edit-undo-symbolic')
+            reset_button.set_tooltip_text(_('Reset to default'))
+            reset_button.add_css_class('flat')
+            reset_button.set_valign(Gtk.Align.CENTER)
+            reset_button.set_visible(
+                not self._accelerators_equal(current_shortcuts, default_shortcuts)
+            )
+            reset_button.connect('clicked', self._on_reset_clicked, name)
+            row.add_suffix(reset_button)
 
             self._rows[name] = {
                 'row': row,
@@ -469,6 +470,23 @@ class ShortcutsPreferencesPage(PreferencesPageBase):
             return self._pending_overrides[action_name]
         return self._default_shortcuts.get(action_name)
 
+    @staticmethod
+    def _accelerators_equal(
+        a: Optional[List[str]], b: Optional[List[str]]
+    ) -> bool:
+        """Compare accelerator lists semantically (``<primary>q`` == ``<Control>q``)."""
+
+        def canonical(accels: Optional[List[str]]):
+            if accels is None:
+                return None
+            result = []
+            for accel in accels:
+                success, keyval, mods = Gtk.accelerator_parse(accel)
+                result.append((keyval, int(mods)) if success else (0, 0, accel))
+            return result
+
+        return canonical(a) == canonical(b)
+
     def _on_switch_toggled(self, switch: Gtk.Switch, _pspec, action_name: str):
         if switch.get_active():
             default = self._default_shortcuts.get(action_name)
@@ -506,7 +524,7 @@ class ShortcutsPreferencesPage(PreferencesPageBase):
             normalized = None
         else:
             normalized = list(accelerators)
-            if default is not None and normalized == default:
+            if default is not None and self._accelerators_equal(normalized, default):
                 normalized = None
 
         if normalized is None:
@@ -539,6 +557,13 @@ class ShortcutsPreferencesPage(PreferencesPageBase):
 
             row_data['base_subtitle'] = subtitle
             row.set_subtitle(subtitle)
+
+            reset_button = row_data.get('reset_button')
+            if reset_button is not None:
+                default_shortcuts = self._default_shortcuts.get(action_name)
+                reset_button.set_visible(
+                    not self._accelerators_equal(current_shortcuts, default_shortcuts)
+                )
 
             switch.handler_block_by_func(self._on_switch_toggled)
             switch.set_active(is_enabled)
