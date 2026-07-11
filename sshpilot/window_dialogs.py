@@ -25,6 +25,10 @@ logger = logging.getLogger(__name__)
 
 # Minimum content width for export/import backup dialogs.
 BACKUP_DIALOG_MIN_WIDTH = 520
+# Export uses a normal modal window (wider than the Adw.Dialog sheets).
+BACKUP_EXPORT_WINDOW_WIDTH = 640
+BACKUP_EXPORT_WINDOW_HEIGHT = 720
+BACKUP_EXPORT_CLAMP_MAX = 560
 
 
 class WindowConfigDialogsMixin:
@@ -90,17 +94,13 @@ class WindowConfigDialogsMixin:
         from sshpilot import icon_utils
         option_defaults = BackupManager.normalize_backup_options(option_defaults)
 
-        # Adwaita scaffold: Dialog + HeaderBar title (not a hand-styled MessageDialog body).
-        dialog = Adw.Dialog()
+        # Modal window + Clamp (same scaffold as session manager / key chooser).
+        dialog = Adw.Window(transient_for=self, modal=True)
         dialog.set_title(_("Export Backup"))
-        dialog.set_content_width(BACKUP_DIALOG_MIN_WIDTH)
-        dialog.set_content_height(640)
-        dialog.set_follows_content_size(True)
+        dialog.set_default_size(BACKUP_EXPORT_WINDOW_WIDTH, BACKUP_EXPORT_WINDOW_HEIGHT)
 
         toolbar = Adw.ToolbarView()
         header = Adw.HeaderBar()
-        header.set_show_start_title_buttons(False)
-        header.set_show_end_title_buttons(False)
         header.set_title_widget(Adw.WindowTitle(title=_("Export Backup")))
 
         cancel_btn = Gtk.Button(label=_("Cancel"))
@@ -112,13 +112,22 @@ class WindowConfigDialogsMixin:
         header.pack_end(continue_btn)
         toolbar.add_top_bar(header)
 
-        page = Adw.PreferencesPage()
         scroller = Gtk.ScrolledWindow()
         scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scroller.set_propagate_natural_height(True)
-        scroller.set_child(page)
+        scroller.set_vexpand(True)
+
+        clamp = Adw.Clamp()
+        clamp.set_maximum_size(BACKUP_EXPORT_CLAMP_MAX)
+        clamp.set_margin_top(18)
+        clamp.set_margin_bottom(24)
+        clamp.set_margin_start(12)
+        clamp.set_margin_end(12)
+
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18)
+        clamp.set_child(page)
+        scroller.set_child(clamp)
         toolbar.set_content(scroller)
-        dialog.set_child(toolbar)
+        dialog.set_content(toolbar)
 
         # Validation stays in-dialog (a separate alert would hide behind this window on reopen).
         if error:
@@ -131,7 +140,7 @@ class WindowConfigDialogsMixin:
             err_icon = icon_utils.new_image_from_icon_name('dialog-error-symbolic')
             err_row.add_prefix(err_icon)
             err_group.add(err_row)
-            page.add(err_group)
+            page.append(err_group)
 
         include_group = Adw.PreferencesGroup()
         include_group.set_title(_("Include"))
@@ -218,8 +227,8 @@ class WindowConfigDialogsMixin:
         include_group.add(known_hosts_row)
         include_group.add(private_keys_row)
         include_group.add(secrets_row)
-        page.add(include_group)
-        page.add(keys_conn_group)
+        page.append(include_group)
+        page.append(keys_conn_group)
 
         option_rows = {
             'app_settings': app_settings_row,
@@ -273,7 +282,7 @@ class WindowConfigDialogsMixin:
                     finally:
                         private_keys_alert_guard[0] = False
 
-                self._alert_private_keys_export_risk(self, on_decline=decline)
+                self._alert_private_keys_export_risk(dialog, on_decline=decline)
             sync_connection_controls()
 
         private_keys_alert_guard = [False]
@@ -378,7 +387,7 @@ class WindowConfigDialogsMixin:
         ssh_dir_row = Adw.EntryRow(title=_("Remote directory"))
         ssh_dir_row.set_text(remote_dir or "~/sshpilot-backups/")
         dest_group.add(ssh_dir_row)
-        page.add(dest_group)
+        page.append(dest_group)
 
         enc_group = Adw.PreferencesGroup(title=_("Encryption"))
         enc_group.add_css_class('boxed-list')
@@ -390,7 +399,7 @@ class WindowConfigDialogsMixin:
         enc_group.add(enc_row)
         pw_row = Adw.PasswordEntryRow(title=_("Passphrase"))
         enc_group.add(pw_row)
-        page.add(enc_group)
+        page.append(enc_group)
 
         def _dest_key():
             idx = dest_row.get_selected()
@@ -506,7 +515,7 @@ class WindowConfigDialogsMixin:
                     self._choose_export_path(selected, None, options)
 
         continue_btn.connect('clicked', on_continue)
-        dialog.present(self)
+        dialog.present()
 
     def _alert_private_keys_export_risk(self, parent, *, on_decline=None):
         """Warn before including private key files in a backup."""
