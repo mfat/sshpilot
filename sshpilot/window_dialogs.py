@@ -177,10 +177,10 @@ class WindowConfigDialogsMixin:
         )
         secrets_row.set_show_enable_switch(True)
         secrets_row.set_enable_expansion(bool(option_defaults.get('secrets', False)))
+        secrets_row.set_expanded(False)
 
         select_all_row = Adw.ActionRow(title=_("Select all"))
         select_all_cb = Gtk.CheckButton()
-        select_all_cb.set_active(False)
         select_all_cb.set_valign(Gtk.Align.CENTER)
         select_all_cb.add_css_class('selection-mode')
         select_all_row.add_suffix(select_all_cb)
@@ -194,6 +194,7 @@ class WindowConfigDialogsMixin:
         # (cb, conn, key, action_row) — action_row is reparented when only private keys are on.
         checks = []
         prefill = set(prefill_ids or [])
+        select_all_by_default = not prefill
         for conn in connections:
             try:
                 label = getattr(conn, 'nickname', '') or conn.get_effective_host() or '?'
@@ -202,7 +203,7 @@ class WindowConfigDialogsMixin:
                 label, key = '?', '?'
             conn_row = Adw.ActionRow(title=label)
             cb = Gtk.CheckButton()
-            cb.set_active(key in prefill)
+            cb.set_active(True if select_all_by_default else key in prefill)
             cb.set_valign(Gtk.Align.CENTER)
             cb.add_css_class('selection-mode')
             conn_row.add_suffix(cb)
@@ -242,6 +243,9 @@ class WindowConfigDialogsMixin:
             for cb, _c, _k, _r in checks:
                 cb.set_active(active)
         select_all_cb.connect('notify::active', on_select_all)
+        select_all_cb.set_active(
+            bool(checks) and all(cb.get_active() for cb, _c, _k, _r in checks)
+        )
 
         def _secrets_enabled():
             return bool(secrets_row.get_enable_expansion())
@@ -263,7 +267,6 @@ class WindowConfigDialogsMixin:
             keys_on = private_keys_row.get_active()
             if secrets_on:
                 _reparent_connection_rows(True)
-                secrets_row.set_expanded(True)
                 keys_conn_group.set_visible(False)
             elif keys_on:
                 _reparent_connection_rows(False)
