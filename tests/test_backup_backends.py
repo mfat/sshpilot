@@ -97,23 +97,34 @@ def test_bitwarden_read_foreign_item_raises():
 
 class FakeRunner:
     """In-memory stand-in for OpenSSHSFTPManager.run_command, modelling the remote host as a
-    dict of path -> bytes and parsing the exact commands SSHServerBackupBackend issues."""
-    def __init__(self, avail_kb=99000, rc_preflight=0):
+    dict of path -> bytes and parsing the exact commands SSHServerBackupBackend issues.
+
+    ``avail_kb=None`` simulates an unavailable ``df`` (empty output). ``list_rc`` forces the
+    ``ls`` exit code (e.g. 255 = ssh error, -1 = launch failure)."""
+    def __init__(self, avail_kb=99000, rc_preflight=0, list_rc=None):
         self.files = {}
         self.avail_kb = avail_kb
         self.rc_preflight = rc_preflight
+        self.list_rc = list_rc
         self.calls = []
 
     def run_command(self, cmd, *, input=None, timeout=30):
         self.calls.append(cmd)
-        if cmd.startswith("mkdir -p"):   # preflight: create/write check + df line
+        if cmd.startswith("mkdir -p"):   # preflight: create/write check + (best-effort) df line
             if self.rc_preflight != 0:
                 return self.rc_preflight, b"", "permission denied"
-            return 0, f"/dev/sda1 1000000 1 {self.avail_kb} 1% /home".encode(), ""
+            df = (b"" if self.avail_kb is None
+                  else f"/dev/sda1 1000000 1 {self.avail_kb} 1% /home".encode())
+            return 0, df, ""
         if cmd.startswith("cat > "):      # upload: cat > part && mv part final
             self.files[shlex.split(cmd)[-1]] = input
             return 0, b"", ""
+        if cmd.startswith("rm -f "):      # best-effort .part cleanup
+            self.files.pop(shlex.split(cmd)[-1], None)
+            return 0, b"", ""
         if cmd.startswith("ls "):         # list: ls -1 <dir>/*.spbk 2>/dev/null
+            if self.list_rc is not None:
+                return self.list_rc, b"", "ssh: connect to host failed"
             prefix = shlex.split(cmd)[2][:-len("*.spbk")]
             hits = sorted(k for k in self.files
                           if k.startswith(prefix) and k.endswith(".spbk"))
@@ -147,6 +158,44 @@ def test_ssh_server_preflight_rejects_insufficient_space():
     backend = SSHServerBackupBackend(FakeRunner(avail_kb=0))
     with pytest.raises(BackupError):
         backend.export({"version": 1, "credentials": []})
+
+
+def test_ssh_server_export_succeeds_when_df_unavailable():
+    # A broken/absent df must not fail the backup — the space check is soft.
+    runner = FakeRunner(avail_kb=None)
+    backend = SSHServerBackupBackend(runner, item_name="sshpilot_backup_x.spbk")
+    entry = backend.export({"version": 1, "credentials": []})
+    assert entry.name == "sshpilot_backup_x.spbk"
+
+
+@pytest.mark.parametrize("rc", [255, -1])
+def test_ssh_server_list_raises_on_connect_failure(rc):
+    backend = SSHServerBackupBackend(FakeRunner(list_rc=rc))
+    with pytest.raises(BackupError):
+        backend.list_exports()
+
+
+def test_ssh_server_list_empty_when_no_files():
+    # A missing dir / no matches (rc 1) is a genuine empty, not an error.
+    backend = SSHServerBackupBackend(FakeRunner(list_rc=1))
+    assert backend.list_exports() == []
+
+
+def test_ssh_server_download_raises_on_missing():
+    backend = SSHServerBackupBackend(FakeRunner())
+    with pytest.raises(BackupError):
+        backend.read(BackupEntry(id="~/sshpilot-backups/nope.spbk", name="nope.spbk"),
+                     passphrase="x")
+
+
+def test_q_quotes_metacharacters_but_expands_tilde():
+    from sshpilot.backup_backends import _q
+    assert _q("~/sshpilot-backups") == "~/sshpilot-backups"
+    q = _q("~/my backups; rm -rf x")
+    assert q.startswith("~/")               # tilde stays bare so the remote shell expands it
+    assert q != "~/my backups; rm -rf x"    # the rest is quoted, not bare
+    assert "rm -rf x" in q                  # preserved as literal, inside quotes
+    assert _q("/tmp/abs dir") == "'/tmp/abs dir'"
 
 
 def test_prompt_unlock_targets_given_backend():

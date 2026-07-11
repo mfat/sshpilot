@@ -1,6 +1,6 @@
 """Pluggable backup/restore *destinations* for the manifest that :mod:`backup_manager` builds.
 
-Two transports, same manifest dict:
+Three transports, same manifest dict:
 
 - :class:`SpbkFileBackend` — the local ``.spbk`` file (existing behaviour), via
   :func:`backup_archive.write_spbk` / :func:`backup_archive.read_spbk`.
@@ -9,6 +9,8 @@ Two transports, same manifest dict:
   issues) and no extra passphrase envelope — the note relies on Bitwarden's own vault encryption.
   If the encoded note would exceed the field limit, :class:`BackupTooLargeForNote` is raised so
   the caller can fall back to a ``.spbk`` file.
+- :class:`SSHServerBackupBackend` — a ``.spbk`` file in a directory on one of the user's own SSH
+  servers, transferred over the plain ssh exec channel (``cat``) via a duck-typed ``runner``.
 
 GTK-free. The Bitwarden backend depends only on a small duck-typed object exposing
 ``create_or_update_secure_note`` / ``list_secure_notes`` / ``read_secure_note`` (implemented by
@@ -186,8 +188,11 @@ class SSHServerBackupBackend:
         One round-trip: create the dir, confirm it's writable, and read free space. A launch
         failure (``exit_code == -1``) means we couldn't even reach the host over ssh."""
         qdir = _q(self._dir)
+        # Only the create/write check gates preflight; df is best-effort ("|| true") so a
+        # missing/broken df on the remote doesn't masquerade as a permission error.
         rc, out, err = self._run.run_command(
-            f"mkdir -p {qdir} && test -w {qdir} && df -Pk {qdir} | tail -1", timeout=60)
+            f"mkdir -p {qdir} && test -w {qdir} && {{ df -Pk {qdir} | tail -1 || true; }}",
+            timeout=60)
         if rc == -1:
             raise BackupError(f"Could not connect to the server: {err or 'ssh failed'}")
         if rc != 0:
@@ -216,9 +221,16 @@ class SSHServerBackupBackend:
         self.preflight(len(data))
         remote = self._remote_path(self._name)
         qpart, qfinal = _q(remote + ".part"), _q(remote)
+        # ponytail: whole archive is read into memory for the cat stdin upload — fine for typical
+        # backups (config + secrets); switch to OpenSSHSFTPManager.upload() if large key sets matter.
         rc, out, err = self._run.run_command(
             f"cat > {qpart} && mv {qpart} {qfinal}", input=data, timeout=300)
         if rc != 0:
+            # Best-effort: don't leave a half-written .part behind (it's excluded from listings).
+            try:
+                self._run.run_command(f"rm -f {qpart}", timeout=30)
+            except Exception:
+                pass
             raise BackupError(
                 f"Failed to write the backup to the server: "
                 f"{(err or out.decode('utf-8', 'replace')).strip() or 'unknown error'}")
@@ -226,7 +238,12 @@ class SSHServerBackupBackend:
 
     def list_exports(self) -> List[BackupEntry]:
         qdir = _q(self._dir)
-        rc, out, _err = self._run.run_command(f"ls -1 {qdir}/*.spbk 2>/dev/null", timeout=60)
+        rc, out, err = self._run.run_command(f"ls -1 {qdir}/*.spbk 2>/dev/null", timeout=60)
+        # Distinguish an ssh-level failure (rc 255) or launch failure (rc -1) from a genuinely
+        # empty/missing dir (rc 1/2) — otherwise a connect/auth error looks like "no backups".
+        if rc in (-1, 255):
+            raise BackupError(
+                f"Could not connect to the server: {(err or '').strip() or 'ssh failed'}")
         if rc != 0:
             return []
         entries: List[BackupEntry] = []

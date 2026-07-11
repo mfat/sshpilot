@@ -495,13 +495,39 @@ class WindowConfigDialogsMixin:
         initial_password = getattr(connection, 'password', None) or None
         if not initial_password and self.connection_manager is not None:
             try:
-                initial_password = self.connection_manager.get_password(host_value, username)
+                # Alias-migrating lookup (handles legacy host aliases), same as the file manager.
+                initial_password = self.connection_manager.get_connection_password(connection)
             except Exception:
                 initial_password = None
         return create_file_manager_backend(
             str(host_value), str(username), int(port_value),
             password=initial_password, connection=connection,
             connection_manager=self.connection_manager, ssh_config=ssh_config)
+
+    def _ensure_ssh_backup_password(self, connection) -> bool:
+        """For a password-auth connection with no stored secret, prompt (blocking) so the ssh
+        transfer has credentials. Key/agent/askpass auth needs nothing here. Returns False only
+        if the user cancels the prompt. Must run on the GTK main thread."""
+        from .sftp_utils import _is_password_auth_enabled
+        if not _is_password_auth_enabled(connection):
+            return True
+        if getattr(connection, 'password', None):
+            return True
+        pw = None
+        if self.connection_manager is not None:
+            try:
+                pw = self.connection_manager.get_connection_password(connection)
+            except Exception:
+                pw = None
+        if not pw:
+            from .window import show_ssh_password_dialog  # lazy import avoids a circular import
+            pw = show_ssh_password_dialog(
+                from_widget=self, connection=connection,
+                connection_manager=self.connection_manager)
+            if pw is None:
+                return False   # user cancelled
+        connection.password = pw   # resolve_native_auth reads connection.password
+        return True
 
     def _export_to_ssh_server(self, connections, options, passphrase, target, remote_dir):
         """Store the backup manifest as a ``.spbk`` file in ``remote_dir`` on ``target``."""
@@ -510,7 +536,10 @@ class WindowConfigDialogsMixin:
         from .bitwarden_backup_setup import progress_dialog
 
         def do_export(*_a):
-            name = "sshpilot_backup_{}.spbk".format(datetime.now().strftime('%Y%m%d_%H%M'))
+            if not self._ensure_ssh_backup_password(target):
+                return   # user cancelled the password prompt
+            # Seconds in the name so two exports within the same minute don't clobber each other.
+            name = "sshpilot_backup_{}.spbk".format(datetime.now().strftime('%Y%m%d_%H%M%S'))
             try:
                 runner = self._make_ssh_backup_runner(target)
             except Exception as e:
@@ -897,6 +926,8 @@ class WindowConfigDialogsMixin:
     def _ssh_import_list_backups(self, target, remote_dir):
         from .backup_backends import SSHServerBackupBackend
         from .bitwarden_backup_setup import progress_dialog
+        if not self._ensure_ssh_backup_password(target):
+            return   # user cancelled the password prompt
         try:
             runner = self._make_ssh_backup_runner(target)
         except Exception as e:
@@ -946,6 +977,7 @@ class WindowConfigDialogsMixin:
             on_cancel=lambda: cancelled.__setitem__('v', True))
 
         def worker():
+            tmp_path = None
             try:
                 fd, tmp_path = tempfile.mkstemp(suffix=".spbk")
                 os.close(fd)
@@ -953,18 +985,23 @@ class WindowConfigDialogsMixin:
                 payload = ('ok', tmp_path)
             except Exception as e:
                 logger.error("Downloading SSH backup failed: %s", e)
+                self._safe_unlink(tmp_path)   # download failed after mkstemp — drop the empty temp
                 payload = ('error', str(e))
             GLib.idle_add(lambda: (_after(payload), False)[1])
 
         def _after(p):
             if cancelled['v']:
+                if p[0] == 'ok':
+                    self._safe_unlink(p[1])   # downloaded after cancel — don't leak it
                 return
             close_spinner()
             if p[0] != 'ok':
                 self._simple_dialog(_("Import Failed"), p[1])
                 return
-            # Reuse the .spbk import path — handles encryption prompt + mode dialog + apply.
-            self._begin_import(p[1])
+            tmp = p[1]
+            # Reuse the .spbk import path — handles encryption prompt + mode dialog + apply —
+            # and delete the temp once its manifest has been read (on_cleanup).
+            self._import_spbk(tmp, on_cleanup=lambda: self._safe_unlink(tmp))
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -980,23 +1017,43 @@ class WindowConfigDialogsMixin:
             logger.error(f"Failed to start import: {e}")
             self._simple_dialog(_("Import Failed"), str(e))
 
-    def _import_spbk(self, import_path: str):
-        """Decrypt (if needed) a .spbk, then proceed to the import-mode dialog with its manifest."""
+    @staticmethod
+    def _safe_unlink(path):
+        try:
+            if path:
+                os.unlink(path)
+        except OSError:
+            pass
+
+    def _import_spbk(self, import_path: str, on_cleanup=None):
+        """Decrypt (if needed) a .spbk, then proceed to the import-mode dialog with its manifest.
+
+        ``on_cleanup`` (optional) fires once the manifest is materialised (or on any terminal
+        error) — used to delete a downloaded temp file that's no longer needed."""
         from .backup_archive import read_spbk, spbk_is_encrypted, SpbkError
         try:
             if spbk_is_encrypted(import_path):
-                self._prompt_spbk_passphrase(import_path)
+                self._prompt_spbk_passphrase(import_path, on_cleanup=on_cleanup)
                 return
             manifest = read_spbk(import_path, None)
+            if on_cleanup:
+                on_cleanup()
             self._show_import_mode_dialog(import_path, manifest=manifest)
         except SpbkError as e:
+            if on_cleanup:
+                on_cleanup()
             self._simple_dialog(_("Import Failed"), str(e))
         except Exception as e:
+            if on_cleanup:
+                on_cleanup()
             logger.error(f"Failed to read backup: {e}")
             self._simple_dialog(_("Import Failed"), str(e))
 
-    def _prompt_spbk_passphrase(self, import_path: str, error: str = None):
-        """Prompt for the backup passphrase; retry on a wrong passphrase."""
+    def _prompt_spbk_passphrase(self, import_path: str, error: str = None, on_cleanup=None):
+        """Prompt for the backup passphrase; retry on a wrong passphrase.
+
+        ``on_cleanup`` fires on success, on a fatal error, and on cancel — but NOT between
+        wrong-passphrase retries (it's forwarded to the retry instead)."""
         from .backup_archive import read_spbk, SpbkPassphraseError, SpbkError
         dialog = Adw.MessageDialog(
             transient_for=self, modal=True, heading=_("Encrypted Backup"),
@@ -1013,17 +1070,24 @@ class WindowConfigDialogsMixin:
 
         def on_response(dlg, resp):
             if resp != 'ok':
+                if on_cleanup:
+                    on_cleanup()   # user cancelled — drop any downloaded temp
                 return
             passphrase = entry.get_text() or ''
             try:
                 manifest = read_spbk(import_path, passphrase)
             except SpbkPassphraseError:
                 GLib.idle_add(lambda: (self._prompt_spbk_passphrase(
-                    import_path, _("Wrong passphrase — try again.")), False)[1])
+                    import_path, _("Wrong passphrase — try again."),
+                    on_cleanup=on_cleanup), False)[1])
                 return
             except SpbkError as e:
+                if on_cleanup:
+                    on_cleanup()
                 self._simple_dialog(_("Import Failed"), str(e))
                 return
+            if on_cleanup:
+                on_cleanup()
             self._show_import_mode_dialog(import_path, manifest=manifest)
 
         dialog.connect('response', on_response)
