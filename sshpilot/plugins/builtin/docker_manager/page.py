@@ -89,6 +89,10 @@ class DockerConsolePage(
         # access probe (keyring autofill) or the GUI prompt; fed to ``sudo -S``
         # on captured commands and auto-typed into the PTY for interactive ones.
         self._sudo_passwords: dict[str, str] = {}
+        # Hosts whose SSH login-password prompt was cancelled.  Captured Docker
+        # commands have no TTY, so polling must stay stopped until the user
+        # explicitly retries instead of failing invisibly in the background.
+        self._ssh_auth_blocked: set[str] = set()
         # Container list filter text (search box).
         self._container_query = ""
         # Guards the runtime dropdown against feedback loops when synced in code.
@@ -380,7 +384,7 @@ class DockerConsolePage(
 
         refresh = Gtk.Button(icon_name="view-refresh-symbolic")
         refresh.set_tooltip_text("Refresh")
-        refresh.connect("clicked", lambda _b: self._refresh_visible())
+        refresh.connect("clicked", lambda _b: self._manual_refresh())
         bar.append(refresh)
         return bar
 
@@ -521,6 +525,71 @@ class DockerConsolePage(
             conns = []
         return [c for c in conns if getattr(c, "protocol", "ssh") in ("ssh", "", None)]
 
+    def _ensure_ssh_password(self, nickname: str) -> bool:
+        """Collect a missing SSH login password before captured Docker calls.
+
+        ``ctx.run_command`` is deliberately non-interactive, so password-mode
+        connections cannot fall back to the terminal prompt used by a normal
+        SSH tab.  Prompt here on the GTK thread and put the session password on
+        the connection; the shared native auth resolver then feeds it through
+        the normal sshpass FIFO path.
+        """
+        connection = self._connection_for(nickname)
+        if connection is None:
+            return True
+        try:
+            password_mode = int(getattr(connection, "auth_method", 0) or 0) == 1
+        except (TypeError, ValueError):
+            password_mode = False
+        if not password_mode or getattr(connection, "password", None):
+            self._ssh_auth_blocked.discard(nickname)
+            return True
+
+        manager = getattr(self.ctx, "connection_manager", None)
+        if manager is not None:
+            try:
+                if manager.get_connection_password(connection):
+                    self._ssh_auth_blocked.discard(nickname)
+                    return True
+            except Exception:
+                logger.debug("Docker Console password lookup failed", exc_info=True)
+
+        from ....window import show_ssh_password_dialog
+
+        password = show_ssh_password_dialog(
+            from_widget=self,
+            connection=connection,
+            connection_manager=manager,
+            heading="SSH password required",
+            body=(f"“{nickname}” uses password authentication.\n\n"
+                  "Enter the SSH login password to open Docker Console:"),
+        )
+        if not password:
+            self._ssh_auth_blocked.add(nickname)
+            return False
+        connection.password = password
+        self._ssh_auth_blocked.discard(nickname)
+        return True
+
+    def _show_ssh_auth_required(self) -> None:
+        for placeholder in (
+            self._containers_placeholder,
+            self._images_placeholder,
+            self._compose_placeholder,
+        ):
+            self._set_placeholder_idle(
+                placeholder, "SSH password required — click Refresh to retry")
+        self._pulse_stop(self._stats_pulse)
+        self._stats_pulse.set_visible(False)
+        self._toast("SSH password required to open Docker Console.")
+
+    def _manual_refresh(self) -> None:
+        nick = self._current_nickname()
+        if nick and nick in self._ssh_auth_blocked:
+            self._on_host_changed()
+            return
+        self._refresh_visible()
+
     def _on_host_changed(self, *_a) -> None:
         nick = self._current_nickname()
         if not nick:
@@ -531,6 +600,9 @@ class DockerConsolePage(
         self._syncing_runtime = True
         self._runtime_drop.set_selected(self._runtime_mode_index(nick))
         self._syncing_runtime = False
+        if not self._ensure_ssh_password(nick):
+            self._show_ssh_auth_required()
+            return
         # Move the warm SSH master to the newly selected host.
         self._acquire_multiplex(nick)
 
@@ -765,6 +837,8 @@ class DockerConsolePage(
     def _tick(self) -> bool:
         if self._paused:
             return True  # keep the timer; just skip this round
+        if self._current_nickname() in self._ssh_auth_blocked:
+            return True
         # Only auto-refresh the live views; images is manual. Logs auto-refresh
         # only when its toggle is on.
         name = self._stack.get_visible_child_name()
