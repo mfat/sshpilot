@@ -1,11 +1,10 @@
 """Docker Console plugin.
 
-A management dashboard for the Docker/Podman daemon running on a host you reach
-over SSH. It does NOT talk to a daemon socket or use the docker SDK — every
-operation runs the ``docker``/``podman`` CLI on the host through the app's single
-native SSH path (``ctx.run_command``) and parses ``--format '{{json .}}'`` output
-with stdlib json. Streamed/interactive output (live logs, exec shell) opens a
-terminal tab via ``ctx.open_command_terminal`` (API >= 1.6).
+A management dashboard for the local Docker/Podman daemon or one reached over
+SSH. It does NOT talk to a daemon socket or use the docker SDK — every operation
+runs the ``docker``/``podman`` CLI through the plugin command APIs and parses
+``--format '{{json .}}'`` output with stdlib json. Remote targets retain the
+app's single native SSH/auth path.
 
 Sibling of the ``docker`` *protocol* plugin (which is a per-container connection
 type); this one is the management surface: lifecycle, logs, exec, stats, and
@@ -21,6 +20,8 @@ from ...api import PluginContext, SshPilotPlugin
 logger = logging.getLogger(__name__)
 
 _ICON = "brand-docker-symbolic"
+_LOCAL_TARGET = "__local__"
+_LOCAL_TITLE = "Local"
 
 
 class Plugin(SshPilotPlugin):
@@ -49,8 +50,9 @@ class Plugin(SshPilotPlugin):
         page_id = f"host-{nickname}"
         if page_id not in self._host_pages:
             try:
+                display_name = _LOCAL_TITLE if nickname == _LOCAL_TARGET else nickname
                 self.ctx.ui.register_page(
-                    page_id, f"Docker — {nickname}", _ICON,
+                    page_id, f"Docker — {display_name}", _ICON,
                     lambda nk=nickname: self._build_host_page(nk),
                     add_menu_item=False,
                 )
@@ -66,17 +68,17 @@ class Plugin(SshPilotPlugin):
         return DockerConsolePage(self.ctx, initial_host=nickname)
 
     def _open_last_host(self) -> None:
-        # No host context from the Tools menu → use the last-used host, else the
-        # first SSH connection.
+        # No host context from the Tools menu → use the last-used target, with
+        # Local always available even when there are no saved SSH connections.
         nick = self.ctx.settings.get("last_host", None)
-        if not nick:
+        if nick and nick != _LOCAL_TARGET:
             try:
-                conns = [c for c in self.ctx.list_connections()
-                         if getattr(c, "protocol", "ssh") in ("ssh", "", None)]
+                known = {
+                    connection.nickname for connection in self.ctx.list_connections()
+                    if getattr(connection, "protocol", "ssh") in ("ssh", "", None)
+                }
             except Exception:
-                conns = []
-            nick = conns[0].nickname if conns else None
-        if nick:
-            self._open_host_page(nick)
-        else:
-            self.ctx.ui.notify("No SSH connections to manage Docker on")
+                known = set()
+            if nick not in known:
+                nick = None
+        self._open_host_page(nick or _LOCAL_TARGET)

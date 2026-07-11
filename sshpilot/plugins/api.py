@@ -51,7 +51,9 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 # 1.10: ctx.identities — read-only view of SSH identities from the configured
 #      identity providers (ctx.identities.list() / .is_agent_available()),
 #      paralleling ctx.secrets. See sshpilot.identity / IDENTITY_PROVIDERS.md.
-API_VERSION: Tuple[int, int] = (1, 10)
+# 1.11: ctx.run_local_command / ctx.open_local_command_terminal — captured and
+#      streamed/interactive commands on the local machine (Flatpak-host aware).
+API_VERSION: Tuple[int, int] = (1, 11)
 
 # Stable event names and event payload types live in host.py; re-exported here
 # so plugins import everything from sshpilot.plugins.api. (host.py imports
@@ -551,6 +553,24 @@ class PluginContext:
             nickname, remote_command, title=title,
             pty_prompt=pty_prompt, pty_response=pty_response)
 
+    def open_local_command_terminal(self, command: str, *,
+                                    title: Optional[str] = None,
+                                    pty_prompt: Optional[str] = None,
+                                    pty_response: Optional[str] = None) -> bool:
+        """Open a local terminal tab and run ``command`` in its shell (API >= 1.11).
+
+        Use this for streamed or interactive local output. In Flatpak the
+        existing local-terminal host bridge is reused, so the command runs on
+        the host rather than inside the sandbox. ``pty_prompt`` /
+        ``pty_response`` have the same one-shot auto-fill semantics as
+        :meth:`open_command_terminal`.
+        """
+        if self._host is None:
+            return False
+        return self._host.open_local_command_terminal(
+            command, title=title,
+            pty_prompt=pty_prompt, pty_response=pty_response)
+
     # --- groups -------------------------------------------------------
     def create_group(self, name: str, color: Optional[str] = None) -> Optional[str]:
         """Find-or-create a sidebar group by display name; return its id
@@ -663,6 +683,39 @@ class PluginContext:
         finally:
             if cleanup is not None:
                 cleanup()
+
+    def run_local_command(self, command: str, *, timeout: float = 30,
+                          input: Optional[str] = None) -> "CommandResult":
+        """Run a local shell command and capture its output (API >= 1.11).
+
+        **Blocking** — call from a worker thread. In Flatpak the command is run
+        on the host via ``flatpak-spawn --host``. This is a local execution API;
+        remote commands must continue to use :meth:`run_command`.
+        """
+        import os
+        import shutil
+        import subprocess
+        from ..platform_utils import is_flatpak
+
+        if not command or not str(command).strip():
+            return CommandResult(-1, "", "Command is empty")
+        shell = shutil.which("sh") or "/bin/sh"
+        argv = [shell, "-lc", str(command)]
+        if is_flatpak():
+            spawn = shutil.which("flatpak-spawn")
+            if spawn is None:
+                return CommandResult(
+                    -1, "", "flatpak-spawn is unavailable; cannot run host command")
+            argv = [spawn, "--host", "sh", "-lc", str(command)]
+        try:
+            result = subprocess.run(
+                argv, env=os.environ.copy(), capture_output=True, text=True,
+                timeout=timeout, check=False, input=input)
+            return CommandResult(result.returncode, result.stdout, result.stderr)
+        except subprocess.TimeoutExpired:
+            return CommandResult(-1, "", "Command timed out")
+        except Exception as exc:  # noqa: BLE001 — surface as a failed result
+            return CommandResult(-1, "", str(exc))
 
     def acquire_multiplex(self, nickname: str) -> None:
         """Keep a shared SSH master (ControlMaster) warm for ``nickname`` while a

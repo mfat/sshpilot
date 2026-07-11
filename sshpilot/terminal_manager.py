@@ -667,7 +667,10 @@ class TerminalManager:
         except Exception as e:
             logger.error(f"Failed to add terminal tab: {e}")
 
-    def show_local_terminal(self, *, title="Local Terminal"):
+    def show_local_terminal(self, *, title="Local Terminal",
+                            command: Optional[str] = None,
+                            pty_prompt: Optional[str] = None,
+                            pty_response: Optional[str] = None) -> bool:
         logger.info("Show local terminal tab")
         try:
             class LocalConnection:
@@ -680,6 +683,20 @@ class TerminalManager:
                     self.is_connected = True
             local_connection = LocalConnection()
             terminal_widget = TerminalWidget(local_connection, self.window.config, self.window.connection_manager)
+            if pty_prompt and pty_response is not None:
+                terminal_widget._pty_autofill = (pty_prompt, pty_response)
+            if command and str(command).strip():
+                command_text = str(command).strip()
+
+                def _run_command(*_args):
+                    data = (command_text + "\n").encode("utf-8")
+                    backend = getattr(terminal_widget, "backend", None)
+                    if backend is not None and hasattr(backend, "feed_child"):
+                        backend.feed_child(data)
+                    elif getattr(terminal_widget, "vte", None) is not None:
+                        terminal_widget.vte.feed_child(data)
+
+                terminal_widget.connect("connection-established", _run_command)
             terminal_widget.setup_local_shell()
             self._add_terminal_tab(terminal_widget, title)
 
@@ -716,6 +733,7 @@ class TerminalManager:
                 # Fallback for older versions
                 GLib.timeout_add(100, _focus_local_terminal)
             logger.info("Local terminal tab created successfully")
+            return True
         except Exception as e:
             logger.error(f"Failed to show local terminal: {e}")
             try:
@@ -729,6 +747,7 @@ class TerminalManager:
                 dialog.present()
             except Exception:
                 pass
+            return False
 
     # Terminal discovery (regular tabs + split-view panes)
     def _is_broadcastable_ssh_terminal(self, terminal) -> bool:

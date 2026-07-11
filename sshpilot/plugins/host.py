@@ -503,6 +503,26 @@ class PluginHost:
             logger.exception("open_command_terminal(%r) failed", nickname)
             return False
 
+    def open_local_command_terminal(self, command: str, *,
+                                    title: Optional[str] = None,
+                                    pty_prompt: Optional[str] = None,
+                                    pty_response: Optional[str] = None) -> bool:
+        if self._window is None:
+            logger.warning("open_local_command_terminal before window is ready")
+            return False
+        if not command or not str(command).strip():
+            return False
+        try:
+            return bool(self._window.terminal_manager.show_local_terminal(
+                title=title or "Local Command",
+                command=str(command),
+                pty_prompt=pty_prompt,
+                pty_response=pty_response,
+            ))
+        except Exception:
+            logger.exception("open_local_command_terminal failed")
+            return False
+
     # --- connection groups -------------------------------------------
     def ensure_group(self, name: str, color: Optional[str] = None) -> Optional[str]:
         """Find-or-create a connection group by display name; return its id.

@@ -14,11 +14,9 @@ from sshpilot.plugins.api import API_VERSION, CommandResult, PluginContext
 from sshpilot.plugins.registry import ProtocolRegistry
 
 
-def test_api_version_is_at_least_1_7():
-    # 1.6 added ctx.open_command_terminal; 1.7 added
-    # ctx.ui.register_connection_action. Keep the floor pinned so a regression
-    # that drops an API method is caught.
-    assert API_VERSION >= (1, 7)
+def test_api_version_is_at_least_1_11():
+    # 1.11 added local captured and interactive command APIs.
+    assert API_VERSION >= (1, 11)
 
 
 class _Conn:
@@ -126,6 +124,69 @@ def test_run_command_timeout_is_a_failed_result(monkeypatch):
     monkeypatch.setattr(subprocess, "run", _boom)
     res = _ctx(_Manager([_Conn("web")])).run_command("web", "sleep 99")
     assert res.exit_code == -1 and "timed out" in res.stderr.lower()
+
+
+# --- local commands --------------------------------------------------------
+
+def test_run_local_command_uses_local_shell(monkeypatch):
+    seen = {}
+
+    monkeypatch.setattr("sshpilot.platform_utils.is_flatpak", lambda: False)
+
+    def _fake_run(argv, **kwargs):
+        seen["argv"] = argv
+        seen["input"] = kwargs["input"]
+        return types.SimpleNamespace(returncode=0, stdout="local\n", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    result = _ctx().run_local_command("printf local", input="stdin")
+
+    assert result.ok and result.stdout == "local\n"
+    assert seen["argv"][-2:] == ["-lc", "printf local"]
+    assert seen["input"] == "stdin"
+
+
+def test_run_local_command_uses_flatpak_host(monkeypatch):
+    seen = {}
+
+    monkeypatch.setattr("sshpilot.platform_utils.is_flatpak", lambda: True)
+    monkeypatch.setattr(
+        "shutil.which",
+        lambda name: "/usr/bin/flatpak-spawn" if name == "flatpak-spawn" else None,
+    )
+
+    def _fake_run(argv, **kwargs):
+        seen["argv"] = argv
+        return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    assert _ctx().run_local_command("docker ps").ok
+    assert seen["argv"] == [
+        "/usr/bin/flatpak-spawn", "--host", "sh", "-lc", "docker ps"]
+
+
+def test_open_local_command_terminal_delegates_to_host():
+    calls = []
+    host = types.SimpleNamespace(
+        events=types.SimpleNamespace(),
+        ui=types.SimpleNamespace(),
+        open_local_command_terminal=lambda command, **kwargs:
+            calls.append((command, kwargs)) or True,
+    )
+    ctx = PluginContext(
+        plugin_id="test-plugin", app_config=None,
+        connection_manager=_Manager([]), protocol_registry=ProtocolRegistry(),
+        host=host,
+    )
+
+    assert ctx.open_local_command_terminal(
+        "docker logs -f web", title="Logs",
+        pty_prompt="Password:", pty_response="secret",
+    )
+    assert calls == [(
+        "docker logs -f web",
+        {"title": "Logs", "pty_prompt": "Password:", "pty_response": "secret"},
+    )]
 
 
 # --- files facade ---------------------------------------------------------
