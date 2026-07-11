@@ -79,8 +79,9 @@ class WindowConfigDialogsMixin:
             logger.error(f"Failed to show export dialog: {e}")
 
     def _show_export_options_dialog(self, prefill_ids=None, encrypt_default=True,
-                                    option_defaults=None, error=None):
-        """Select backup categories, scoped connections, and encryption."""
+                                    option_defaults=None, error=None,
+                                    destination='file', target_nick=None, remote_dir=None):
+        """Select backup categories, scoped connections, destination, and encryption."""
         try:
             connections = list(self.connection_manager.get_connections()) \
                 if self.connection_manager else []
@@ -225,13 +226,35 @@ class WindowConfigDialogsMixin:
         dest_heading = Gtk.Label(label=_("Destination"), xalign=0)
         dest_heading.add_css_class('heading'); dest_heading.set_margin_top(6)
         dest_box.append(dest_heading)
-        dest_file = Gtk.CheckButton(label=_("Save to file (.spbk)")); dest_file.set_active(True)
+        dest_file = Gtk.CheckButton(label=_("Save to file (.spbk)"))
         dest_bw = Gtk.CheckButton(label=_("Save to Bitwarden")); dest_bw.set_group(dest_file)
-        dest_box.append(dest_file); dest_box.append(dest_bw)
+        dest_ssh = Gtk.CheckButton(label=_("Save to SSH server")); dest_ssh.set_group(dest_file)
+        dest_file.set_active(destination != 'bitwarden' and destination != 'ssh')
+        dest_bw.set_active(destination == 'bitwarden')
+        dest_ssh.set_active(destination == 'ssh')
+        dest_box.append(dest_file); dest_box.append(dest_bw); dest_box.append(dest_ssh)
         mirror_logins_check = Gtk.CheckButton(
             label=_("Also copy saved secrets as Bitwarden login items"))
         mirror_logins_check.set_margin_start(24)
         dest_box.append(mirror_logins_check)
+
+        # SSH-server target: which of the user's servers + the remote directory. Shown only when
+        # "Save to SSH server" is selected (toggled in sync_pw below).
+        ssh_target_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        ssh_target_box.set_margin_start(24)
+        server_labels = [
+            (getattr(c, 'nickname', '') or (c.get_effective_host() if hasattr(c, 'get_effective_host') else '') or '?')
+            for c in connections]
+        server_dd = Gtk.DropDown.new_from_strings(server_labels or [_("(no saved servers)")])
+        if target_nick:
+            for i, c in enumerate(connections):
+                if getattr(c, 'nickname', None) == target_nick:
+                    server_dd.set_selected(i); break
+        ssh_dir_entry = Gtk.Entry()
+        ssh_dir_entry.set_text(remote_dir or "~/sshpilot-backups/")
+        ssh_dir_entry.set_property('placeholder-text', "~/sshpilot-backups/")
+        ssh_target_box.append(server_dd); ssh_target_box.append(ssh_dir_entry)
+        dest_box.append(ssh_target_box)
         box.append(dest_box)
 
         enc_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
@@ -253,17 +276,27 @@ class WindowConfigDialogsMixin:
         box.append(caption)
 
         def sync_pw(*_a):
-            # Bitwarden uses the vault's own encryption — the passphrase UI only applies to files.
+            # Bitwarden uses the vault's own encryption — the passphrase UI only applies to
+            # files and SSH-server backups.
             to_bw = dest_bw.get_active()
+            to_ssh = dest_ssh.get_active()
+            ssh_target_box.set_visible(to_ssh)
             on = enc_switch.get_active() and not to_bw
             enc_row.set_visible(not to_bw)
             pw.set_visible(on)
             caption.set_visible(not on and not to_bw)
             # "mirror as login items" only makes sense for Bitwarden with secrets included.
             mirror_logins_check.set_visible(to_bw and secrets_check.get_active())
+
+        def on_dest_ssh(*_a):
+            # Backups land on a remote host — default to encrypting them.
+            if dest_ssh.get_active():
+                enc_switch.set_active(True)
+            sync_pw()
         enc_switch.connect('notify::active', sync_pw)
         dest_file.connect('notify::active', sync_pw)
         dest_bw.connect('notify::active', sync_pw)
+        dest_ssh.connect('notify::active', on_dest_ssh)
         secrets_check.connect('notify::active', sync_pw)
         sync_pw()
 
@@ -302,6 +335,35 @@ class WindowConfigDialogsMixin:
                 mirror = (mirror_logins_check.get_active()
                           and bool(options.get('secrets')))
                 self._export_to_bitwarden(selected, options, mirror_logins=mirror)
+                return
+            if dest_ssh.get_active():
+                idx = server_dd.get_selected()
+                if not connections or idx < 0 or idx >= len(connections):
+                    GLib.idle_add(lambda: (self._show_export_options_dialog(
+                        sel_ids, enc_switch.get_active(), options, destination='ssh',
+                        remote_dir=ssh_dir_entry.get_text(),
+                        error=_("Choose a server to back up to.")), False)[1])
+                    return
+                target = connections[idx]
+                remote = ssh_dir_entry.get_text().strip() or "~/sshpilot-backups"
+                target_nick = getattr(target, 'nickname', None)
+                if enc_switch.get_active():
+                    passphrase = pw.get_text() or ''
+                    if not passphrase:
+                        GLib.idle_add(lambda: (self._show_export_options_dialog(
+                            sel_ids, True, options, destination='ssh',
+                            target_nick=target_nick, remote_dir=remote,
+                            error=_("Enter a passphrase, or turn off encryption.")), False)[1])
+                        return
+                    self._export_to_ssh_server(selected, options, passphrase, target, remote)
+                elif options.get('secrets') or options.get('private_keys'):
+                    self._confirm_plaintext_then_export(
+                        selected, sel_ids, options,
+                        on_confirm=lambda: self._export_to_ssh_server(
+                            selected, options, None, target, remote),
+                        destination='ssh', target_nick=target_nick, remote_dir=remote)
+                else:
+                    self._export_to_ssh_server(selected, options, None, target, remote)
                 return
             if enc_switch.get_active():
                 passphrase = pw.get_text() or ''
@@ -416,7 +478,92 @@ class WindowConfigDialogsMixin:
 
         ensure_bitwarden_ready(self, after_ready)
 
-    def _confirm_plaintext_then_export(self, connections, sel_ids, options):
+    def _make_ssh_backup_runner(self, connection):
+        """Build an SFTP-manager (used only for its ``run_command``) targeting ``connection``,
+        exactly as the authorized-keys editor does. Reuses the shared native-auth path."""
+        from .file_manager import create_file_manager_backend
+        host_value = (getattr(connection, 'hostname', '') or getattr(connection, 'host', '')
+                      or getattr(connection, 'nickname', '') or '')
+        username = getattr(connection, 'username', '') or ''
+        port_value = getattr(connection, 'port', 22) or 22
+        ssh_config = None
+        if getattr(self, 'config', None) is not None:
+            try:
+                ssh_config = self.config.get_ssh_config()
+            except Exception:
+                ssh_config = None
+        initial_password = getattr(connection, 'password', None) or None
+        if not initial_password and self.connection_manager is not None:
+            try:
+                initial_password = self.connection_manager.get_password(host_value, username)
+            except Exception:
+                initial_password = None
+        return create_file_manager_backend(
+            str(host_value), str(username), int(port_value),
+            password=initial_password, connection=connection,
+            connection_manager=self.connection_manager, ssh_config=ssh_config)
+
+    def _export_to_ssh_server(self, connections, options, passphrase, target, remote_dir):
+        """Store the backup manifest as a ``.spbk`` file in ``remote_dir`` on ``target``."""
+        from .backup_manager import BackupManager
+        from .backup_backends import SSHServerBackupBackend, BackupError
+        from .bitwarden_backup_setup import progress_dialog
+
+        def do_export(*_a):
+            name = "sshpilot_backup_{}.spbk".format(datetime.now().strftime('%Y%m%d_%H%M'))
+            try:
+                runner = self._make_ssh_backup_runner(target)
+            except Exception as e:
+                logger.error("SSH backup: could not prepare connection: %s", e)
+                self._simple_dialog(_("Export Failed"), str(e))
+                return
+            mgr = BackupManager(self.config, self.connection_manager)
+            backend = SSHServerBackupBackend(runner, remote_dir, item_name=name)
+            who = getattr(target, 'nickname', '') or getattr(target, 'hostname', '') or '?'
+
+            cancelled = {'v': False}
+            _set_status, close_spinner = progress_dialog(
+                self, _("Export to SSH Server"),
+                _("Backing up to {} — this may take a while…").format(who),
+                on_cancel=lambda: cancelled.__setitem__('v', True))
+
+            def worker():
+                try:
+                    entry = mgr.export_to_backend(
+                        backend, connections=connections, passphrase=passphrase,
+                        options=options)
+                    counts = getattr(mgr, 'last_export_counts', {})
+                    payload = ('ok', entry.id, counts.get('credentials', 0),
+                               counts.get('private_keys', 0))
+                except BackupError as e:
+                    payload = ('error', str(e))
+                except Exception as e:
+                    logger.error("SSH server export failed: %s", e)
+                    payload = ('error', str(e))
+                GLib.idle_add(lambda: (_report(payload), False)[1])
+
+            def _report(p):
+                if cancelled['v']:
+                    return
+                close_spinner()
+                if p[0] == 'ok':
+                    self._simple_dialog(
+                        _("Export Successful"),
+                        _("Backup saved to {}:{}\n\n{} credential(s) and {} private key(s) "
+                          "included; encryption: {}.").format(
+                            who, p[1], p[2], p[3], _("on") if passphrase else _("off")))
+                else:
+                    self._simple_dialog(_("Export Failed"), p[1])
+
+            threading.Thread(target=worker, daemon=True).start()
+
+        self._run_after_vault_unlock_for_secrets(
+            do_export, needed=bool(options.get('secrets')),
+            cancelled_heading=_("Export Cancelled"))
+
+    def _confirm_plaintext_then_export(self, connections, sel_ids, options,
+                                       on_confirm=None, destination='file',
+                                       target_nick=None, remote_dir=None):
         sensitive_items = []
         if options.get('secrets'):
             sensitive_items.append(_("saved passwords and passphrases"))
@@ -434,10 +581,14 @@ class WindowConfigDialogsMixin:
 
         def on_warn(dlg, resp):
             if resp == 'plain':
-                self._choose_export_path(connections, None, options)
+                if on_confirm is not None:
+                    on_confirm()
+                else:
+                    self._choose_export_path(connections, None, options)
             else:
                 GLib.idle_add(lambda: (self._show_export_options_dialog(
-                    sel_ids, False, options), False)[1])
+                    sel_ids, False, options, destination=destination,
+                    target_nick=target_nick, remote_dir=remote_dir), False)[1])
         warn.connect('response', on_warn)
         warn.present()
 
@@ -517,9 +668,10 @@ class WindowConfigDialogsMixin:
         try:
             dialog = Adw.MessageDialog(
                 transient_for=self, modal=True, heading=_("Import Configuration"),
-                body=_("Import a backup from a file or from your Bitwarden vault."))
+                body=_("Import a backup from a file, an SSH server, or your Bitwarden vault."))
             dialog.add_response('cancel', _('Cancel'))
             dialog.add_response('bitwarden', _('From Bitwarden'))
+            dialog.add_response('ssh', _('From SSH Server'))
             dialog.add_response('file', _('From File'))
             dialog.set_default_response('file')
             dialog.set_close_response('cancel')
@@ -529,6 +681,8 @@ class WindowConfigDialogsMixin:
                     self._import_from_file()
                 elif resp == 'bitwarden':
                     self._import_from_bitwarden()
+                elif resp == 'ssh':
+                    self._import_from_ssh_server()
             dialog.connect('response', on_source)
             dialog.present()
         except Exception as e:
@@ -630,9 +784,11 @@ class WindowConfigDialogsMixin:
 
         ensure_bitwarden_ready(self, proceed)
 
-    def _show_bitwarden_entry_chooser(self, backend, entries):
+    def _choose_backup_entry(self, entries, *, heading, on_chosen):
+        """Radio list of ``BackupEntry`` items; calls ``on_chosen(entry)`` on the main thread
+        when the user hits Restore. Shared by the Bitwarden and SSH-server import flows."""
         dialog = Adw.MessageDialog(
-            transient_for=self, modal=True, heading=_("Import from Bitwarden"),
+            transient_for=self, modal=True, heading=heading,
             body=_("Choose a backup to restore:"))
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         box.set_margin_start(12); box.set_margin_end(12)
@@ -660,8 +816,13 @@ class WindowConfigDialogsMixin:
             if resp != 'open':
                 return
             entry = next((e for rb, e in radios if rb.get_active()), None)
-            if entry is None:
-                return
+            if entry is not None:
+                on_chosen(entry)
+        dialog.connect('response', on_resp)
+        dialog.present()
+
+    def _show_bitwarden_entry_chooser(self, backend, entries):
+        def on_chosen(entry):
             from .bitwarden_backup_setup import progress_dialog
             cancelled = {'v': False}
             _set_status, close_spinner = progress_dialog(
@@ -687,8 +848,125 @@ class WindowConfigDialogsMixin:
                 self._show_import_mode_dialog("", manifest=p[1])
 
             threading.Thread(target=worker, daemon=True).start()
+
+        self._choose_backup_entry(
+            entries, heading=_("Import from Bitwarden"), on_chosen=on_chosen)
+
+    def _import_from_ssh_server(self):
+        """Pick a server + remote dir, list its sshPilot backups, download one, then import it."""
+        try:
+            connections = list(self.connection_manager.get_connections()) \
+                if self.connection_manager else []
+        except Exception:
+            connections = []
+        if not connections:
+            self._simple_dialog(
+                _("No servers"), _("You have no saved servers to import from."))
+            return
+        dialog = Adw.MessageDialog(
+            transient_for=self, modal=True, heading=_("Import from SSH Server"),
+            body=_("Choose a server and the directory your backups are stored in."))
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        box.set_margin_start(12); box.set_margin_end(12)
+        box.set_margin_top(12); box.set_margin_bottom(12)
+        labels = [getattr(c, 'nickname', '') or '?' for c in connections]
+        server_dd = Gtk.DropDown.new_from_strings(labels)
+        dir_entry = Gtk.Entry()
+        dir_entry.set_text("~/sshpilot-backups/")
+        dir_entry.set_property('placeholder-text', "~/sshpilot-backups/")
+        box.append(server_dd); box.append(dir_entry)
+        dialog.set_extra_child(box)
+        dialog.add_response('cancel', _('Cancel'))
+        dialog.add_response('next', _('Continue'))
+        dialog.set_response_appearance('next', Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response('next')
+        dialog.set_close_response('cancel')
+
+        def on_resp(_d, resp):
+            if resp != 'next':
+                return
+            idx = server_dd.get_selected()
+            if idx < 0 or idx >= len(connections):
+                return
+            target = connections[idx]
+            remote = dir_entry.get_text().strip() or "~/sshpilot-backups"
+            self._ssh_import_list_backups(target, remote)
         dialog.connect('response', on_resp)
         dialog.present()
+
+    def _ssh_import_list_backups(self, target, remote_dir):
+        from .backup_backends import SSHServerBackupBackend
+        from .bitwarden_backup_setup import progress_dialog
+        try:
+            runner = self._make_ssh_backup_runner(target)
+        except Exception as e:
+            self._simple_dialog(_("Import Failed"), str(e))
+            return
+        backend = SSHServerBackupBackend(runner, remote_dir)
+        cancelled = {'v': False}
+        _set_status, close_spinner = progress_dialog(
+            self, _("Import from SSH Server"), _("Loading backups…"),
+            on_cancel=lambda: cancelled.__setitem__('v', True))
+
+        def worker():
+            try:
+                payload = ('ok', backend.list_exports())
+            except Exception as e:
+                logger.error("Listing SSH backups failed: %s", e)
+                payload = ('error', str(e))
+            GLib.idle_add(lambda: (_after(payload), False)[1])
+
+        def _after(p):
+            if cancelled['v']:
+                return
+            close_spinner()
+            if p[0] != 'ok':
+                self._simple_dialog(_("Import Failed"), p[1])
+                return
+            entries = p[1]
+            if not entries:
+                self._simple_dialog(
+                    _("No backups found"),
+                    _("No sshPilot backups were found in {} on that server.").format(remote_dir))
+                return
+            self._choose_backup_entry(
+                entries, heading=_("Import from SSH Server"),
+                on_chosen=lambda entry: self._ssh_import_download(backend, entry))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _ssh_import_download(self, backend, entry):
+        """Download the chosen .spbk to a temp file, then hand off to the normal import path
+        (which handles encryption prompt, mode selection, and apply)."""
+        import tempfile
+        from .bitwarden_backup_setup import progress_dialog
+        cancelled = {'v': False}
+        _set_status, close_spinner = progress_dialog(
+            self, _("Import from SSH Server"), _("Downloading backup…"),
+            on_cancel=lambda: cancelled.__setitem__('v', True))
+
+        def worker():
+            try:
+                fd, tmp_path = tempfile.mkstemp(suffix=".spbk")
+                os.close(fd)
+                backend.download(entry, tmp_path)
+                payload = ('ok', tmp_path)
+            except Exception as e:
+                logger.error("Downloading SSH backup failed: %s", e)
+                payload = ('error', str(e))
+            GLib.idle_add(lambda: (_after(payload), False)[1])
+
+        def _after(p):
+            if cancelled['v']:
+                return
+            close_spinner()
+            if p[0] != 'ok':
+                self._simple_dialog(_("Import Failed"), p[1])
+                return
+            # Reuse the .spbk import path — handles encryption prompt + mode dialog + apply.
+            self._begin_import(p[1])
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def _begin_import(self, import_path: str):
         """Route an import by format: .spbk (decrypt as needed) vs legacy JSON."""

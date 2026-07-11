@@ -21,6 +21,9 @@ import base64
 import gzip
 import json
 import os
+import re
+import shlex
+import tempfile
 from dataclasses import dataclass
 from typing import List, Optional, Protocol
 
@@ -138,3 +141,143 @@ class BitwardenBackupBackend:
         if note is None:
             raise BackupError("Could not read the Bitwarden backup note.")
         return decode_manifest_note(note)
+
+
+# --- SSH server (the user's own host) ----------------------------------------
+
+DEFAULT_SSH_BACKUP_DIR = "~/sshpilot-backups"
+# Timestamp inside app-generated backup filenames (sshpilot_backup_YYYYMMDD_HHMM.spbk).
+_BACKUP_NAME_DATE_RE = re.compile(r"(\d{4})(\d{2})(\d{2})")
+
+
+def _q(path: str) -> str:
+    """Shell-quote a remote path while still letting the remote shell expand a leading ``~/``
+    (``shlex.quote`` would neutralise the tilde). Everything after the tilde is quoted, so a
+    user-typed path with spaces/metacharacters can't break out of the command."""
+    if path == "~":
+        return "~"
+    if path.startswith("~/"):
+        return "~/" + shlex.quote(path[2:])
+    return shlex.quote(path)
+
+
+class SSHServerBackupBackend:
+    """Store the ``.spbk`` archive as a file in a directory on one of the user's own SSH servers.
+
+    Transport is the plain ssh exec channel (``cat``), not the SFTP subsystem, so it works
+    anywhere ssh does. ``runner`` is a duck-typed object exposing
+    ``run_command(cmd, *, input=None, timeout=…) -> (exit_code, stdout_bytes, stderr_text)`` —
+    in the app this is an :class:`OpenSSHSFTPManager` (which rides the shared native-auth path);
+    in tests it is a fake. Kept GTK-free like the other backends."""
+    name = "ssh"
+
+    def __init__(self, runner, remote_dir: str = DEFAULT_SSH_BACKUP_DIR, *, item_name: str = ""):
+        self._run = runner
+        self._dir = (remote_dir or DEFAULT_SSH_BACKUP_DIR).rstrip("/") or DEFAULT_SSH_BACKUP_DIR
+        self._name = item_name or "sshpilot_backup.spbk"
+
+    def _remote_path(self, name: str) -> str:
+        """Logical (unquoted) remote path for ``name`` in the backup dir. Quote at command build."""
+        return f"{self._dir}/{name}"
+
+    def preflight(self, archive_size: int) -> None:
+        """Ensure the remote dir exists and is writable and has room. Raises ``BackupError``.
+
+        One round-trip: create the dir, confirm it's writable, and read free space. A launch
+        failure (``exit_code == -1``) means we couldn't even reach the host over ssh."""
+        qdir = _q(self._dir)
+        rc, out, err = self._run.run_command(
+            f"mkdir -p {qdir} && test -w {qdir} && df -Pk {qdir} | tail -1", timeout=60)
+        if rc == -1:
+            raise BackupError(f"Could not connect to the server: {err or 'ssh failed'}")
+        if rc != 0:
+            raise BackupError(
+                f"Cannot create or write to {self._dir} on the server: "
+                f"{(err or out.decode('utf-8', 'replace')).strip() or 'permission denied'}")
+        avail_kb = _parse_df_avail_kb(out)
+        if avail_kb is not None and avail_kb * 1024 < archive_size * 1.1:
+            raise BackupError(
+                f"Not enough free space on the server: need ~{_human(archive_size)}, "
+                f"only {_human(avail_kb * 1024)} available in {self._dir}.")
+
+    def export(self, manifest: dict, *, passphrase: Optional[str] = None) -> BackupEntry:
+        from .backup_archive import write_spbk
+        with tempfile.NamedTemporaryFile(suffix=".spbk", delete=False) as tmp:
+            tmp_path = tmp.name
+        try:
+            write_spbk(tmp_path, manifest, passphrase or None)
+            with open(tmp_path, "rb") as fh:
+                data = fh.read()
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+        self.preflight(len(data))
+        remote = self._remote_path(self._name)
+        qpart, qfinal = _q(remote + ".part"), _q(remote)
+        rc, out, err = self._run.run_command(
+            f"cat > {qpart} && mv {qpart} {qfinal}", input=data, timeout=300)
+        if rc != 0:
+            raise BackupError(
+                f"Failed to write the backup to the server: "
+                f"{(err or out.decode('utf-8', 'replace')).strip() or 'unknown error'}")
+        return BackupEntry(id=remote, name=self._name)
+
+    def list_exports(self) -> List[BackupEntry]:
+        qdir = _q(self._dir)
+        rc, out, _err = self._run.run_command(f"ls -1 {qdir}/*.spbk 2>/dev/null", timeout=60)
+        if rc != 0:
+            return []
+        entries: List[BackupEntry] = []
+        for line in out.decode("utf-8", "replace").splitlines():
+            path = line.strip()
+            if not path:
+                continue
+            base = path.rsplit("/", 1)[-1]
+            m = _BACKUP_NAME_DATE_RE.search(base)
+            date = f"{m.group(1)}-{m.group(2)}-{m.group(3)}" if m else ""
+            entries.append(BackupEntry(id=path, name=base, date=date))
+        entries.sort(key=lambda e: e.name, reverse=True)
+        return entries
+
+    def download(self, entry: BackupEntry, local_path: str) -> None:
+        """Fetch the raw ``.spbk`` bytes to ``local_path`` (leaves any encryption intact so the
+        existing import flow can prompt for the passphrase)."""
+        rc, out, err = self._run.run_command(f"cat {_q(entry.id)}", timeout=300)
+        if rc != 0:
+            raise BackupError(
+                f"Could not read the backup from the server: {err.strip() or 'unknown error'}")
+        with open(local_path, "wb") as fh:
+            fh.write(out)
+
+    def read(self, entry: BackupEntry, *, passphrase: Optional[str] = None) -> dict:
+        from .backup_archive import read_spbk
+        with tempfile.NamedTemporaryFile(suffix=".spbk", delete=False) as tmp:
+            tmp_path = tmp.name
+        try:
+            self.download(entry, tmp_path)
+            return read_spbk(tmp_path, passphrase or None)
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+
+def _parse_df_avail_kb(out: bytes) -> Optional[int]:
+    """Available KB from a ``df -Pk … | tail -1`` line (POSIX field 4). None if unparseable."""
+    try:
+        fields = out.decode("utf-8", "replace").split()
+        return int(fields[3])
+    except (ValueError, IndexError):
+        return None
+
+
+def _human(num_bytes: float) -> str:
+    size = float(num_bytes)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if size < 1024 or unit == "TB":
+            return f"{size:.0f} {unit}" if unit == "B" else f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} TB"

@@ -2,6 +2,7 @@
 
 import base64
 import os
+import shlex
 
 import pytest
 
@@ -10,6 +11,7 @@ from sshpilot.backup_backends import (
     BackupError,
     BackupTooLargeForNote,
     BitwardenBackupBackend,
+    SSHServerBackupBackend,
     SpbkFileBackend,
     decode_manifest_note,
     encode_manifest_note,
@@ -91,6 +93,60 @@ def test_bitwarden_read_foreign_item_raises():
     backend = BitwardenBackupBackend(bw, item_name="x")
     with pytest.raises(BackupError):
         backend.read(BackupEntry(id=iid, name="someone's note"))
+
+
+class FakeRunner:
+    """In-memory stand-in for OpenSSHSFTPManager.run_command, modelling the remote host as a
+    dict of path -> bytes and parsing the exact commands SSHServerBackupBackend issues."""
+    def __init__(self, avail_kb=99000, rc_preflight=0):
+        self.files = {}
+        self.avail_kb = avail_kb
+        self.rc_preflight = rc_preflight
+        self.calls = []
+
+    def run_command(self, cmd, *, input=None, timeout=30):
+        self.calls.append(cmd)
+        if cmd.startswith("mkdir -p"):   # preflight: create/write check + df line
+            if self.rc_preflight != 0:
+                return self.rc_preflight, b"", "permission denied"
+            return 0, f"/dev/sda1 1000000 1 {self.avail_kb} 1% /home".encode(), ""
+        if cmd.startswith("cat > "):      # upload: cat > part && mv part final
+            self.files[shlex.split(cmd)[-1]] = input
+            return 0, b"", ""
+        if cmd.startswith("ls "):         # list: ls -1 <dir>/*.spbk 2>/dev/null
+            prefix = shlex.split(cmd)[2][:-len("*.spbk")]
+            hits = sorted(k for k in self.files
+                          if k.startswith(prefix) and k.endswith(".spbk"))
+            return (0, "\n".join(hits).encode(), "") if hits else (1, b"", "")
+        if cmd.startswith("cat "):        # download
+            data = self.files.get(shlex.split(cmd)[1])
+            return (0, data, "") if data is not None else (1, b"", "No such file")
+        return 0, b"", ""
+
+
+def test_ssh_server_backend_roundtrip():
+    runner = FakeRunner()
+    manifest = {"version": 1, "ssh_config": "Host a\n", "credentials": [{"id": "u@h"}]}
+    backend = SSHServerBackupBackend(runner, item_name="sshpilot_backup_20260711_1830.spbk")
+    entry = backend.export(manifest, passphrase="pw")
+    assert entry.id == "~/sshpilot-backups/sshpilot_backup_20260711_1830.spbk"
+    assert any(c.startswith("mkdir -p") for c in runner.calls)   # preflight ran
+    listed = backend.list_exports()
+    assert [e.name for e in listed] == ["sshpilot_backup_20260711_1830.spbk"]
+    assert listed[0].date == "2026-07-11"
+    assert backend.read(listed[0], passphrase="pw") == manifest
+
+
+def test_ssh_server_preflight_rejects_unwritable_dir():
+    backend = SSHServerBackupBackend(FakeRunner(rc_preflight=1))
+    with pytest.raises(BackupError):
+        backend.export({"version": 1, "credentials": []})
+
+
+def test_ssh_server_preflight_rejects_insufficient_space():
+    backend = SSHServerBackupBackend(FakeRunner(avail_kb=0))
+    with pytest.raises(BackupError):
+        backend.export({"version": 1, "credentials": []})
 
 
 def test_prompt_unlock_targets_given_backend():
