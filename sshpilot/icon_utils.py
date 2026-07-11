@@ -186,9 +186,9 @@ def new_image_from_icon_name(icon_name: str, size: Optional[int] = None) -> Gtk.
             file_obj = Gio.File.new_for_uri(resource_uri)
             file_icon = Gio.FileIcon.new(file_obj)
             image = Gtk.Image.new_from_gicon(file_icon)
-            
-            logger.debug(f"Loaded bundled icon from resource: {icon_name}")
-            
+
+            # Success is the hot path at window build (dozens of loads);
+            # only log misses below so --verbose startup stays readable.
             if size:
                 image.set_pixel_size(size)
             return image
@@ -230,8 +230,6 @@ def set_icon_from_name(image: Gtk.Image, icon_name: str) -> None:
             file_obj = Gio.File.new_for_uri(resource_uri)
             file_icon = Gio.FileIcon.new(file_obj)
             image.set_from_gicon(file_icon)
-            
-            logger.debug(f"Set bundled icon from resource: {icon_name}")
             return
         except (GLib.Error, Exception) as e:
             logger.debug(f"Bundled icon not found for {icon_name}, using icon theme: {e}")

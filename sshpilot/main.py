@@ -251,13 +251,11 @@ class SshPilotApplication(Adw.Application):
             'toggle_sidebar', ['F9', '<Meta>b'] if mac else ['F9']
         )
 
-        # Detailed shortcut list is verbose noise at INFO. Help → Keyboard
-        # Shortcuts already shows this to users.
-        if logger.isEnabledFor(logging.DEBUG):
-            mod_label = "Cmd" if mac else "Ctrl"
-            logger.debug("Registered keyboard shortcuts:")
-            logger.debug("  %s+N: new-connection", mod_label)
-            logger.debug("  %s+Shift+K: new-key", mod_label)
+        # Per-action registration already logs effective shortcuts above.
+        # Do not emit a partial "Registered keyboard shortcuts" summary —
+        # it previously claimed Ctrl/Cmd+N for new-connection while the
+        # real default is Ctrl/Cmd+Shift+N, and Help → Keyboard Shortcuts
+        # is the user-facing source of truth.
         if mac:
             self.create_action('local-terminal', self.on_local_terminal, ['<Meta><Shift>t'])
             self.create_action('preferences', self.on_preferences, ['<Meta>comma'])
