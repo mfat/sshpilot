@@ -23,8 +23,7 @@ from .platform_utils import get_config_dir
 
 logger = logging.getLogger(__name__)
 
-# Minimum content width for export/import backup dialogs (Adw.MessageDialog sizes to
-# its extra_child; without this they stay uncomfortably narrow).
+# Minimum content width for export/import backup dialogs.
 BACKUP_DIALOG_MIN_WIDTH = 520
 
 
@@ -88,91 +87,105 @@ class WindowConfigDialogsMixin:
         except Exception:
             connections = []
         from .backup_manager import BackupManager
+        from sshpilot import icon_utils
         option_defaults = BackupManager.normalize_backup_options(option_defaults)
 
-        dialog = Adw.MessageDialog(
-            transient_for=self, modal=True, heading=_("Export Backup"),
-            body=_("Select items to include in this backup."))
+        # Adwaita scaffold: Dialog + HeaderBar title (not a hand-styled MessageDialog body).
+        dialog = Adw.Dialog()
+        dialog.set_title(_("Export Backup"))
+        dialog.set_content_width(BACKUP_DIALOG_MIN_WIDTH)
+        dialog.set_content_height(640)
+        dialog.set_follows_content_size(True)
 
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
-        box.set_size_request(BACKUP_DIALOG_MIN_WIDTH, -1)
-        box.set_margin_start(8); box.set_margin_end(8)
-        box.set_margin_top(8); box.set_margin_bottom(8)
+        toolbar = Adw.ToolbarView()
+        header = Adw.HeaderBar()
+        header.set_show_start_title_buttons(False)
+        header.set_show_end_title_buttons(False)
+        header.set_title_widget(Adw.WindowTitle(
+            title=_("Export Backup"),
+            subtitle=_("Select items to include in this backup."),
+        ))
 
-        # A validation message is shown INSIDE this dialog (not a separate alert, which would
-        # get hidden behind this window when we re-open it).
+        cancel_btn = Gtk.Button(label=_("Cancel"))
+        cancel_btn.connect('clicked', lambda _b: dialog.close())
+        header.pack_start(cancel_btn)
+
+        continue_btn = Gtk.Button(label=_("Continue"))
+        continue_btn.add_css_class('suggested-action')
+        header.pack_end(continue_btn)
+        toolbar.add_top_bar(header)
+
+        page = Adw.PreferencesPage()
+        scroller = Gtk.ScrolledWindow()
+        scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroller.set_propagate_natural_height(True)
+        scroller.set_child(page)
+        toolbar.set_content(scroller)
+        dialog.set_child(toolbar)
+
+        # Validation stays in-dialog (a separate alert would hide behind this window on reopen).
         if error:
-            err_label = Gtk.Label(label=error, xalign=0, wrap=True)
+            err_group = Adw.PreferencesGroup()
+            err_row = Adw.ActionRow(title=error)
             try:
-                err_label.add_css_class('error')
+                err_row.add_css_class('error')
             except Exception:
                 pass
-            box.append(err_label)
+            err_icon = icon_utils.new_image_from_icon_name('dialog-error-symbolic')
+            err_row.add_prefix(err_icon)
+            err_group.add(err_row)
+            page.add(err_group)
 
-        category_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        include_group = Adw.PreferencesGroup()
+        include_group.set_title(_("Include"))
+        include_group.set_description(_("Choose what this backup should contain."))
+        include_group.add_css_class('boxed-list')
 
-        def switch_row(label, active=False, caption=None, destructive=False):
-            row = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-            top = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-            text_label = Gtk.Label(label=label, xalign=0, hexpand=True)
-            if destructive:
-                try:
-                    text_label.add_css_class('error')
-                except Exception:
-                    pass
-            if caption:
-                text_col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-                text_col.append(text_label)
-                cap = Gtk.Label(label=caption, xalign=0, wrap=True, hexpand=True)
-                try:
-                    cap.add_css_class('dim-label')
-                except Exception:
-                    pass
-                text_col.append(cap)
-                top.append(text_col)
-            else:
-                top.append(text_label)
-            switch = Gtk.Switch(active=bool(active))
-            switch.set_valign(Gtk.Align.CENTER)
-            top.append(switch)
-            row.append(top)
-            return row, switch
+        def make_switch_row(title, active=False, subtitle=None):
+            row = Adw.SwitchRow(title=title)
+            if subtitle:
+                row.set_subtitle(subtitle)
+            row.set_active(bool(active))
+            return row
 
-        app_row, app_settings_check = switch_row(
+        app_settings_row = make_switch_row(
             _("App settings and groups"), option_defaults.get('app_settings', False))
-        ssh_row, ssh_config_check = switch_row(
+        ssh_config_row = make_switch_row(
             _("Connection profiles (SSH config)"), option_defaults.get('ssh_config', False))
-        known_row, known_hosts_check = switch_row(
+        known_hosts_row = make_switch_row(
             _("Known hosts"), option_defaults.get('known_hosts', False))
-        keys_row, private_keys_check = switch_row(
+
+        private_keys_row = make_switch_row(
             _("Private key files"), option_defaults.get('private_keys', False),
-            destructive=True)
-        secrets_row, secrets_check = switch_row(
-            _("Saved secrets (passwords and passphrases)"),
-            option_defaults.get('secrets', False),
-            caption=_("Choose which connections to include saved passwords, passphrases, "
-                      "and private key files for."))
-        option_checks = {
-            'app_settings': app_settings_check,
-            'ssh_config': ssh_config_check,
-            'known_hosts': known_hosts_check,
-            'secrets': secrets_check,
-            'private_keys': private_keys_check,
-        }
-        for row in (app_row, ssh_row, known_row, keys_row, secrets_row):
-            category_box.append(row)
-        box.append(category_box)
+            subtitle=_("Not recommended — protect the backup with a passphrase if you include keys."))
+        try:
+            private_keys_row.add_css_class('error')
+        except Exception:
+            pass
+        warn_icon = icon_utils.new_image_from_icon_name('dialog-warning-symbolic')
+        private_keys_row.add_prefix(warn_icon)
 
-        connection_section = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        secrets_row = Adw.ExpanderRow(
+            title=_("Saved secrets (passwords and passphrases)"),
+            subtitle=_("Save passwords and passphrases for these connections"),
+        )
+        secrets_row.set_show_enable_switch(True)
+        secrets_row.set_enable_expansion(bool(option_defaults.get('secrets', False)))
 
-        select_all = Gtk.CheckButton(label=_("Select all"))
-        select_all.set_active(False)
-        select_all.add_css_class('selection-mode')
-        connection_section.append(select_all)
+        select_all_row = Adw.ActionRow(title=_("Select all"))
+        select_all_cb = Gtk.CheckButton()
+        select_all_cb.set_active(False)
+        select_all_cb.set_valign(Gtk.Align.CENTER)
+        select_all_cb.add_css_class('selection-mode')
+        select_all_row.add_suffix(select_all_cb)
+        select_all_row.set_activatable(True)
+        select_all_row.connect(
+            'activated',
+            lambda _r: select_all_cb.set_active(not select_all_cb.get_active()),
+        )
+        secrets_row.add_row(select_all_row)
 
-        listbox = Gtk.ListBox()
-        listbox.set_selection_mode(Gtk.SelectionMode.NONE)
-        listbox.add_css_class('boxed-list')
+        # (cb, conn, key, action_row) — action_row is reparented when only private keys are on.
         checks = []
         prefill = set(prefill_ids or [])
         for conn in connections:
@@ -181,206 +194,322 @@ class WindowConfigDialogsMixin:
                 key = getattr(conn, 'nickname', '') or label
             except Exception:
                 label, key = '?', '?'
-            cb = Gtk.CheckButton(label=label)
+            conn_row = Adw.ActionRow(title=label)
+            cb = Gtk.CheckButton()
             cb.set_active(key in prefill)
+            cb.set_valign(Gtk.Align.CENTER)
             cb.add_css_class('selection-mode')
-            for edge in ('start', 'end'):
-                getattr(cb, f'set_margin_{edge}')(6)
-            for edge in ('top', 'bottom'):
-                getattr(cb, f'set_margin_{edge}')(4)
-            row = Gtk.ListBoxRow(); row.set_child(cb); listbox.append(row)
-            checks.append((cb, conn, key))
-        scrolled = Gtk.ScrolledWindow()
-        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scrolled.set_min_content_height(180)
-        scrolled.set_child(listbox)
-        connection_section.append(scrolled)
-        box.append(connection_section)
+            conn_row.add_suffix(cb)
+            conn_row.set_activatable(True)
+            conn_row.connect(
+                'activated',
+                lambda _r, button=cb: button.set_active(not button.get_active()),
+            )
+            secrets_row.add_row(conn_row)
+            checks.append((cb, conn, key, conn_row))
 
-        def on_select_all(switch, *_a):
-            for cb, _c, _k in checks:
-                cb.set_active(switch.get_active())
-        select_all.connect('notify::active', on_select_all)
+        # When only private keys are on, the secrets expander stays collapsed — show the same
+        # connection picks in a sibling group (widgets are reparented, not duplicated).
+        keys_conn_group = Adw.PreferencesGroup(
+            title=_("Connections"),
+            description=_("Select which connections' private key files to include."),
+        )
+        keys_conn_group.add_css_class('boxed-list')
+
+        include_group.add(app_settings_row)
+        include_group.add(ssh_config_row)
+        include_group.add(known_hosts_row)
+        include_group.add(private_keys_row)
+        include_group.add(secrets_row)
+        page.add(include_group)
+        page.add(keys_conn_group)
+
+        option_rows = {
+            'app_settings': app_settings_row,
+            'ssh_config': ssh_config_row,
+            'known_hosts': known_hosts_row,
+            'private_keys': private_keys_row,
+        }
+
+        def on_select_all(*_a):
+            active = select_all_cb.get_active()
+            for cb, _c, _k, _r in checks:
+                cb.set_active(active)
+        select_all_cb.connect('notify::active', on_select_all)
+
+        def _secrets_enabled():
+            return bool(secrets_row.get_enable_expansion())
+
+        def _reparent_connection_rows(to_expander):
+            """Move select-all + connection rows between the expander and keys_conn_group."""
+            rows = [select_all_row] + [r for _cb, _c, _k, r in checks]
+            for row in rows:
+                parent = row.get_parent()
+                if parent is not None:
+                    parent.remove(row)
+                if to_expander:
+                    secrets_row.add_row(row)
+                else:
+                    keys_conn_group.add(row)
 
         def sync_connection_controls(*_a):
-            needs_connections = secrets_check.get_active() or private_keys_check.get_active()
-            connection_section.set_visible(needs_connections)
-        def on_private_keys_toggled(switch, _pspec):
-            if not private_keys_alert_guard[0] and switch.get_active():
+            secrets_on = _secrets_enabled()
+            keys_on = private_keys_row.get_active()
+            if secrets_on:
+                _reparent_connection_rows(True)
+                secrets_row.set_expanded(True)
+                keys_conn_group.set_visible(False)
+            elif keys_on:
+                _reparent_connection_rows(False)
+                keys_conn_group.set_visible(True)
+            else:
+                _reparent_connection_rows(True)
+                keys_conn_group.set_visible(False)
+                secrets_row.set_expanded(False)
+
+        def on_private_keys_toggled(row, _pspec):
+            if not private_keys_alert_guard[0] and row.get_active():
                 def decline():
                     private_keys_alert_guard[0] = True
                     try:
-                        switch.set_active(False)
+                        row.set_active(False)
                     finally:
                         private_keys_alert_guard[0] = False
 
-                self._alert_private_keys_export_risk(dialog, on_decline=decline)
+                self._alert_private_keys_export_risk(self, on_decline=decline)
             sync_connection_controls()
 
         private_keys_alert_guard = [False]
-        secrets_check.connect('notify::active', sync_connection_controls)
-        private_keys_check.connect('notify::active', on_private_keys_toggled)
+        secrets_row.connect('notify::enable-expansion', sync_connection_controls)
+        private_keys_row.connect('notify::active', on_private_keys_toggled)
         sync_connection_controls()
 
-        dest_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-        dest_heading = Gtk.Label(label=_("Destination"), xalign=0)
-        dest_heading.add_css_class('heading'); dest_heading.set_margin_top(6)
-        dest_box.append(dest_heading)
-        dest_file = Gtk.CheckButton(label=_("Save to file (.spbk)"))
-        dest_bw = Gtk.CheckButton(label=_("Save to Bitwarden")); dest_bw.set_group(dest_file)
-        dest_ssh = Gtk.CheckButton(label=_("Save to SSH server")); dest_ssh.set_group(dest_file)
-        dest_file.set_active(destination != 'bitwarden' and destination != 'ssh')
-        dest_bw.set_active(destination == 'bitwarden')
-        dest_ssh.set_active(destination == 'ssh')
-        dest_box.append(dest_file); dest_box.append(dest_bw); dest_box.append(dest_ssh)
-        mirror_logins_check = Gtk.CheckButton(
-            label=_("Also copy saved secrets as Bitwarden login items"))
-        mirror_logins_check.set_margin_start(24)
-        dest_box.append(mirror_logins_check)
+        dest_group = Adw.PreferencesGroup(title=_("Destination"))
+        dest_group.add_css_class('boxed-list')
+        dest_labels = [
+            _("Save to file (.spbk)"),
+            _("Save to Bitwarden"),
+            _("Save to SSH server"),
+        ]
+        dest_keys = ['file', 'bitwarden', 'ssh']
+        dest_row = Adw.ComboRow(title=_("Save to"))
+        dest_row.set_model(Gtk.StringList.new(dest_labels))
+        try:
+            dest_row.set_selected(dest_keys.index(destination))
+        except ValueError:
+            dest_row.set_selected(0)
+        dest_group.add(dest_row)
 
-        # SSH-server target: which of the user's servers + the remote directory. Shown only when
-        # "Save to SSH server" is selected (toggled in sync_pw below).
-        ssh_target_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-        ssh_target_box.set_margin_start(24)
-        server_labels = [
-            (getattr(c, 'nickname', '') or (c.get_effective_host() if hasattr(c, 'get_effective_host') else '') or '?')
-            for c in connections]
-        server_dd = Gtk.DropDown.new_from_strings(server_labels or [_("(no saved servers)")])
+        mirror_logins_row = Adw.SwitchRow(
+            title=_("Also copy saved secrets as Bitwarden login items"),
+            subtitle=_("Creates normal login entries in your vault in addition to the backup note."),
+        )
+        # Indent under the Bitwarden destination so it reads as a dependent option.
+        mirror_indent = Gtk.Box()
+        mirror_indent.set_size_request(20, 1)
+        mirror_logins_row.add_prefix(mirror_indent)
+        dest_group.add(mirror_logins_row)
+
+        # SSH target: searchable inventory host picker (same popover as jump-host / Docker).
+        from .host_picker import show_host_picker
+        selected_ssh_target = [None]
+
+        def _ssh_target_label(conn):
+            if conn is None:
+                return ''
+            return (getattr(conn, 'nickname', '')
+                    or (conn.get_effective_host() if hasattr(conn, 'get_effective_host') else '')
+                    or '?')
+
+        def _ssh_target_subtitle(conn):
+            if conn is None:
+                return _("Choose a server…")
+            host = getattr(conn, 'hostname', '') or getattr(conn, 'host', '')
+            user = getattr(conn, 'username', '')
+            if user and host:
+                return f"{user}@{host}"
+            return host or _("Selected server")
+
+        server_row = Adw.ActionRow(title=_("Server"))
+        server_row.set_activatable(True)
+        chosen_label = Gtk.Label()
+        chosen_label.add_css_class('dim-label')
+        chosen_label.set_valign(Gtk.Align.CENTER)
+        server_row.add_suffix(chosen_label)
+        pick_btn = Gtk.Button()
+        pick_btn.set_icon_name('pan-down-symbolic')
+        pick_btn.set_tooltip_text(_("Pick from inventory"))
+        pick_btn.add_css_class('flat')
+        pick_btn.set_valign(Gtk.Align.CENTER)
+        server_row.add_suffix(pick_btn)
+
+        def _set_ssh_target(conn):
+            selected_ssh_target[0] = conn
+            nick = _ssh_target_label(conn)
+            if conn is None:
+                chosen_label.set_label('')
+                chosen_label.set_visible(False)
+                server_row.set_subtitle(_("Choose a server…"))
+            else:
+                chosen_label.set_label(nick)
+                chosen_label.set_visible(True)
+                server_row.set_subtitle(_ssh_target_subtitle(conn))
+
+        def _open_ssh_host_picker(_widget=None):
+            show_host_picker(
+                self, pick_btn, _set_ssh_target,
+                toast=lambda msg: self._simple_dialog(_("No servers"), msg),
+                connections=connections,
+            )
+
+        pick_btn.connect('clicked', _open_ssh_host_picker)
+        server_row.connect('activated', lambda _r: _open_ssh_host_picker())
+
+        # Prefill: explicit nickname from a prior reopen, else first inventory host
+        # (matches the old DropDown defaulting to index 0).
+        prefill_conn = None
         if target_nick:
-            for i, c in enumerate(connections):
+            for c in connections:
                 if getattr(c, 'nickname', None) == target_nick:
-                    server_dd.set_selected(i); break
-        ssh_dir_entry = Gtk.Entry()
-        ssh_dir_entry.set_text(remote_dir or "~/sshpilot-backups/")
-        ssh_dir_entry.set_property('placeholder-text', "~/sshpilot-backups/")
-        ssh_target_box.append(server_dd); ssh_target_box.append(ssh_dir_entry)
-        dest_box.append(ssh_target_box)
-        box.append(dest_box)
+                    prefill_conn = c
+                    break
+        if prefill_conn is None and connections:
+            prefill_conn = connections[0]
+        _set_ssh_target(prefill_conn)
+        dest_group.add(server_row)
 
-        enc_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        enc_label = Gtk.Label(label=_("Encrypt with a passphrase"), xalign=0, hexpand=True)
-        enc_switch = Gtk.Switch(active=bool(encrypt_default))
-        enc_switch.set_valign(Gtk.Align.CENTER)
-        enc_row.append(enc_label); enc_row.append(enc_switch)
-        enc_row.set_margin_top(6)
-        box.append(enc_row)
+        ssh_dir_row = Adw.EntryRow(title=_("Remote directory"))
+        ssh_dir_row.set_text(remote_dir or "~/sshpilot-backups/")
+        dest_group.add(ssh_dir_row)
+        page.add(dest_group)
 
-        pw = Gtk.PasswordEntry(show_peek_icon=True)
-        pw.set_property('placeholder-text', _("Passphrase"))
-        box.append(pw)
-        caption = Gtk.Label(label=_("Without a passphrase, secrets are written in plain text."))
-        caption.set_xalign(0); caption.set_wrap(True)
-        for css in ('dim-label', 'caption'):
-            try: caption.add_css_class(css)
-            except Exception: pass
-        box.append(caption)
+        enc_group = Adw.PreferencesGroup(title=_("Encryption"))
+        enc_group.add_css_class('boxed-list')
+        enc_row = Adw.SwitchRow(
+            title=_("Encrypt with a passphrase"),
+            subtitle=_("Without a passphrase, secrets are written in plain text."),
+        )
+        enc_row.set_active(bool(encrypt_default))
+        enc_group.add(enc_row)
+        pw_row = Adw.PasswordEntryRow(title=_("Passphrase"))
+        enc_group.add(pw_row)
+        page.add(enc_group)
+
+        def _dest_key():
+            idx = dest_row.get_selected()
+            if 0 <= idx < len(dest_keys):
+                return dest_keys[idx]
+            return 'file'
 
         def sync_pw(*_a):
-            # Bitwarden uses the vault's own encryption — the passphrase UI only applies to
-            # files and SSH-server backups.
-            to_bw = dest_bw.get_active()
-            to_ssh = dest_ssh.get_active()
-            ssh_target_box.set_visible(to_ssh)
-            on = enc_switch.get_active() and not to_bw
-            enc_row.set_visible(not to_bw)
-            pw.set_visible(on)
-            caption.set_visible(not on and not to_bw)
-            # "mirror as login items" only makes sense for Bitwarden with secrets included.
-            mirror_logins_check.set_visible(to_bw and secrets_check.get_active())
+            # Bitwarden uses the vault's own encryption — passphrase UI is for file/SSH only.
+            key = _dest_key()
+            to_bw = key == 'bitwarden'
+            to_ssh = key == 'ssh'
+            server_row.set_visible(to_ssh)
+            ssh_dir_row.set_visible(to_ssh)
+            enc_group.set_visible(not to_bw)
+            on = enc_row.get_active() and not to_bw
+            pw_row.set_visible(on)
+            if to_bw:
+                enc_row.set_subtitle(
+                    _("Bitwarden encrypts the backup with your vault credentials."))
+            else:
+                enc_row.set_subtitle(
+                    _("Without a passphrase, secrets are written in plain text."))
+            mirror_logins_row.set_visible(to_bw and _secrets_enabled())
 
-        def on_dest_ssh(*_a):
-            # Backups land on a remote host — default to encrypting them.
-            if dest_ssh.get_active():
-                enc_switch.set_active(True)
+        def on_dest_changed(*_a):
+            if _dest_key() == 'ssh':
+                enc_row.set_active(True)
             sync_pw()
-        enc_switch.connect('notify::active', sync_pw)
-        dest_file.connect('notify::active', sync_pw)
-        dest_bw.connect('notify::active', sync_pw)
-        dest_ssh.connect('notify::active', on_dest_ssh)
-        secrets_check.connect('notify::active', sync_pw)
+
+        enc_row.connect('notify::active', sync_pw)
+        dest_row.connect('notify::selected', on_dest_changed)
+        secrets_row.connect('notify::enable-expansion', sync_pw)
         sync_pw()
 
-        dialog.set_extra_child(box)
-        dialog.add_response('cancel', _('Cancel'))
-        dialog.add_response('next', _('Continue'))
-        dialog.set_response_appearance('next', Adw.ResponseAppearance.SUGGESTED)
-        dialog.set_default_response('next')
-        dialog.set_close_response('cancel')
+        def reopen(**kwargs):
+            dialog.close()
+            GLib.idle_add(lambda: (self._show_export_options_dialog(**kwargs), False)[1])
 
-        def on_response(dlg, resp):
-            if resp != 'next':
-                return
-            selected = [conn for cb, conn, _k in checks if cb.get_active()]
-            sel_ids = [k for cb, _c, k in checks if cb.get_active()]
-            options = {
-                key: check.get_active()
-                for key, check in option_checks.items()
-            }
+        def on_continue(_btn):
+            selected = [conn for cb, conn, _k, _r in checks if cb.get_active()]
+            sel_ids = [k for cb, _c, k, _r in checks if cb.get_active()]
+            options = {key: row.get_active() for key, row in option_rows.items()}
+            options['secrets'] = _secrets_enabled()
+            dest = _dest_key()
+            encrypt_on = enc_row.get_active()
+            remote_text = ssh_dir_row.get_text()
+            ssh_nick = getattr(selected_ssh_target[0], 'nickname', None) if selected_ssh_target[0] else None
             if not any(options.values()):
-                # Re-open with the selection preserved + the error shown in-dialog.
-                GLib.idle_add(lambda: (self._show_export_options_dialog(
-                    sel_ids, enc_switch.get_active(), options,
-                    error=_("Choose at least one item to include in the backup.")), False)[1])
+                reopen(
+                    prefill_ids=sel_ids, encrypt_default=encrypt_on, option_defaults=options,
+                    destination=dest, target_nick=ssh_nick, remote_dir=remote_text,
+                    error=_("Choose at least one item to include in the backup."))
                 return
-            # Secrets/keys are gathered per selected connection — requiring them with nothing
-            # selected would silently produce an empty result.
             if (options.get('secrets') or options.get('private_keys')) and not selected:
-                GLib.idle_add(lambda: (self._show_export_options_dialog(
-                    sel_ids, enc_switch.get_active(), options,
+                reopen(
+                    prefill_ids=sel_ids, encrypt_default=encrypt_on, option_defaults=options,
+                    destination=dest, target_nick=ssh_nick, remote_dir=remote_text,
                     error=_("Select at least one connection to include its saved passwords "
-                            "or private keys.")), False)[1])
+                            "or private keys."))
                 return
-            if dest_bw.get_active():
-                # Bitwarden note destination — no file/passphrase; vault encryption only.
-                mirror = (mirror_logins_check.get_active()
-                          and bool(options.get('secrets')))
+            if dest == 'bitwarden':
+                dialog.close()
+                mirror = mirror_logins_row.get_active() and bool(options.get('secrets'))
                 self._export_to_bitwarden(selected, options, mirror_logins=mirror)
                 return
-            if dest_ssh.get_active():
-                idx = server_dd.get_selected()
-                if not connections or idx < 0 or idx >= len(connections):
-                    GLib.idle_add(lambda: (self._show_export_options_dialog(
-                        sel_ids, enc_switch.get_active(), options, destination='ssh',
-                        remote_dir=ssh_dir_entry.get_text(),
-                        error=_("Choose a server to back up to.")), False)[1])
+            if dest == 'ssh':
+                target = selected_ssh_target[0]
+                if target is None:
+                    reopen(
+                        prefill_ids=sel_ids, encrypt_default=encrypt_on, option_defaults=options,
+                        destination='ssh', remote_dir=remote_text,
+                        error=_("Choose a server to back up to."))
                     return
-                target = connections[idx]
-                remote = ssh_dir_entry.get_text().strip() or "~/sshpilot-backups"
-                target_nick = getattr(target, 'nickname', None)
-                if enc_switch.get_active():
-                    passphrase = pw.get_text() or ''
+                remote = remote_text.strip() or "~/sshpilot-backups"
+                nick = getattr(target, 'nickname', None)
+                if encrypt_on:
+                    passphrase = pw_row.get_text() or ''
                     if not passphrase:
-                        GLib.idle_add(lambda: (self._show_export_options_dialog(
-                            sel_ids, True, options, destination='ssh',
-                            target_nick=target_nick, remote_dir=remote,
-                            error=_("Enter a passphrase, or turn off encryption.")), False)[1])
+                        reopen(
+                            prefill_ids=sel_ids, encrypt_default=True, option_defaults=options,
+                            destination='ssh', target_nick=nick, remote_dir=remote,
+                            error=_("Enter a passphrase, or turn off encryption."))
                         return
+                    dialog.close()
                     self._export_to_ssh_server(selected, options, passphrase, target, remote)
                 elif options.get('secrets') or options.get('private_keys'):
+                    dialog.close()
                     self._confirm_plaintext_then_export(
                         selected, sel_ids, options,
                         on_confirm=lambda: self._export_to_ssh_server(
                             selected, options, None, target, remote),
-                        destination='ssh', target_nick=target_nick, remote_dir=remote)
+                        destination='ssh', target_nick=nick, remote_dir=remote)
                 else:
+                    dialog.close()
                     self._export_to_ssh_server(selected, options, None, target, remote)
                 return
-            if enc_switch.get_active():
-                passphrase = pw.get_text() or ''
+            if encrypt_on:
+                passphrase = pw_row.get_text() or ''
                 if not passphrase:
-                    GLib.idle_add(lambda: (self._show_export_options_dialog(
-                        sel_ids, True, options,
-                        error=_("Enter a passphrase, or turn off encryption.")), False)[1])
+                    reopen(
+                        prefill_ids=sel_ids, encrypt_default=True, option_defaults=options,
+                        destination='file',
+                        error=_("Enter a passphrase, or turn off encryption."))
                     return
+                dialog.close()
                 self._choose_export_path(selected, passphrase, options)
             else:
+                dialog.close()
                 if options.get('secrets') or options.get('private_keys'):
                     self._confirm_plaintext_then_export(selected, sel_ids, options)
                 else:
                     self._choose_export_path(selected, None, options)
 
-        dialog.connect('response', on_response)
-        dialog.present()
+        continue_btn.connect('clicked', on_continue)
+        dialog.present(self)
 
     def _alert_private_keys_export_risk(self, parent, *, on_decline=None):
         """Warn before including private key files in a backup."""
@@ -892,36 +1021,96 @@ class WindowConfigDialogsMixin:
             self._simple_dialog(
                 _("No servers"), _("You have no saved servers to import from."))
             return
-        dialog = Adw.MessageDialog(
-            transient_for=self, modal=True, heading=_("Import from SSH Server"),
-            body=_("Choose a server and the directory your backups are stored in."))
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        box.set_margin_start(12); box.set_margin_end(12)
-        box.set_margin_top(12); box.set_margin_bottom(12)
-        labels = [getattr(c, 'nickname', '') or '?' for c in connections]
-        server_dd = Gtk.DropDown.new_from_strings(labels)
-        dir_entry = Gtk.Entry()
-        dir_entry.set_text("~/sshpilot-backups/")
-        dir_entry.set_property('placeholder-text', "~/sshpilot-backups/")
-        box.append(server_dd); box.append(dir_entry)
-        dialog.set_extra_child(box)
-        dialog.add_response('cancel', _('Cancel'))
-        dialog.add_response('next', _('Continue'))
-        dialog.set_response_appearance('next', Adw.ResponseAppearance.SUGGESTED)
-        dialog.set_default_response('next')
-        dialog.set_close_response('cancel')
 
-        def on_resp(_d, resp):
-            if resp != 'next':
+        from .host_picker import show_host_picker
+
+        dialog = Adw.Dialog()
+        dialog.set_title(_("Import from SSH Server"))
+        dialog.set_content_width(BACKUP_DIALOG_MIN_WIDTH)
+        dialog.set_follows_content_size(True)
+
+        toolbar = Adw.ToolbarView()
+        header = Adw.HeaderBar()
+        header.set_show_start_title_buttons(False)
+        header.set_show_end_title_buttons(False)
+        header.set_title_widget(Adw.WindowTitle(
+            title=_("Import from SSH Server"),
+            subtitle=_("Choose a server and the directory your backups are stored in."),
+        ))
+        cancel_btn = Gtk.Button(label=_("Cancel"))
+        cancel_btn.connect('clicked', lambda _b: dialog.close())
+        header.pack_start(cancel_btn)
+        continue_btn = Gtk.Button(label=_("Continue"))
+        continue_btn.add_css_class('suggested-action')
+        header.pack_end(continue_btn)
+        toolbar.add_top_bar(header)
+
+        page = Adw.PreferencesPage()
+        group = Adw.PreferencesGroup()
+        group.add_css_class('boxed-list')
+
+        selected_target = [None]
+
+        server_row = Adw.ActionRow(title=_("Server"))
+        server_row.set_activatable(True)
+        chosen_label = Gtk.Label()
+        chosen_label.add_css_class('dim-label')
+        chosen_label.set_valign(Gtk.Align.CENTER)
+        server_row.add_suffix(chosen_label)
+        pick_btn = Gtk.Button()
+        pick_btn.set_icon_name('pan-down-symbolic')
+        pick_btn.set_tooltip_text(_("Pick from inventory"))
+        pick_btn.add_css_class('flat')
+        pick_btn.set_valign(Gtk.Align.CENTER)
+        server_row.add_suffix(pick_btn)
+
+        def _set_target(conn):
+            selected_target[0] = conn
+            if conn is None:
+                chosen_label.set_label('')
+                chosen_label.set_visible(False)
+                server_row.set_subtitle(_("Choose a server…"))
+            else:
+                nick = getattr(conn, 'nickname', '') or '?'
+                host = getattr(conn, 'hostname', '') or getattr(conn, 'host', '')
+                user = getattr(conn, 'username', '')
+                chosen_label.set_label(nick)
+                chosen_label.set_visible(True)
+                server_row.set_subtitle(
+                    f"{user}@{host}" if user and host else (host or _("Selected server")))
+
+        def _open_picker(_widget=None):
+            show_host_picker(
+                self, pick_btn, _set_target,
+                toast=lambda msg: self._simple_dialog(_("No servers"), msg),
+                connections=connections,
+            )
+
+        pick_btn.connect('clicked', _open_picker)
+        server_row.connect('activated', lambda _r: _open_picker())
+        _set_target(connections[0] if connections else None)
+        group.add(server_row)
+
+        dir_row = Adw.EntryRow(title=_("Remote directory"))
+        dir_row.set_text("~/sshpilot-backups/")
+        group.add(dir_row)
+        page.add(group)
+        toolbar.set_content(page)
+        dialog.set_child(toolbar)
+
+        def on_continue(_btn):
+            target = selected_target[0]
+            if target is None:
+                self._simple_dialog(
+                    _("Choose a server"),
+                    _("Pick a server from your inventory to import from."))
                 return
-            idx = server_dd.get_selected()
-            if idx < 0 or idx >= len(connections):
-                return
-            target = connections[idx]
-            remote = dir_entry.get_text().strip() or "~/sshpilot-backups"
+            dialog.close()
+            remote = dir_row.get_text().strip() or "~/sshpilot-backups"
             self._ssh_import_list_backups(target, remote)
-        dialog.connect('response', on_resp)
-        dialog.present()
+
+        continue_btn.connect('clicked', on_continue)
+        dialog.present(self)
 
     def _ssh_import_list_backups(self, target, remote_dir):
         from .backup_backends import SSHServerBackupBackend
@@ -1095,48 +1284,58 @@ class WindowConfigDialogsMixin:
         GLib.idle_add(lambda: (entry.grab_focus(), False)[1])
 
     def _show_import_mode_dialog(self, import_path: str, manifest=None):
-        """Show dialog to select import mode (replace or merge)"""
+        """Show dialog to select import mode (replace or merge)."""
         try:
-            dialog = Adw.MessageDialog(
-                transient_for=self,
-                modal=True,
-                heading=_("Import Configuration"),
-                body=_("Choose how to import the configuration:")
-            )
-            
-            # Create content box with radio buttons
-            content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-            content_box.set_size_request(BACKUP_DIALOG_MIN_WIDTH, -1)
-            content_box.set_margin_start(20)
-            content_box.set_margin_end(20)
-            content_box.set_margin_top(20)
-            content_box.set_margin_bottom(20)
-            
-            # Replace mode radio
-            replace_radio = Gtk.CheckButton()
-            replace_radio.set_label(_("Replace current configuration"))
-            replace_radio.set_active(True)
-            content_box.append(replace_radio)
-            
-            replace_desc = Gtk.Label()
-            replace_desc.set_markup(_("<small>All current settings will be replaced with imported configuration</small>"))
-            replace_desc.set_xalign(0)
-            replace_desc.set_margin_start(24)
-            replace_desc.add_css_class('dim-label')
-            content_box.append(replace_desc)
-            
-            # Merge mode radio
-            merge_radio = Gtk.CheckButton()
-            merge_radio.set_label(_("Merge with current configuration"))
-            merge_radio.set_group(replace_radio)
-            content_box.append(merge_radio)
-            
-            merge_desc = Gtk.Label()
-            merge_desc.set_markup(_("<small>Add new connections and groups, preserve existing ones</small>"))
-            merge_desc.set_xalign(0)
-            merge_desc.set_margin_start(24)
-            merge_desc.add_css_class('dim-label')
-            content_box.append(merge_desc)
+            from sshpilot import icon_utils
+
+            dialog = Adw.Dialog()
+            dialog.set_title(_("Import Configuration"))
+            dialog.set_content_width(BACKUP_DIALOG_MIN_WIDTH)
+            dialog.set_follows_content_size(True)
+
+            toolbar = Adw.ToolbarView()
+            header = Adw.HeaderBar()
+            header.set_show_start_title_buttons(False)
+            header.set_show_end_title_buttons(False)
+            header.set_title_widget(Adw.WindowTitle(
+                title=_("Import Configuration"),
+                subtitle=_("Choose how to import the configuration."),
+            ))
+
+            cancel_btn = Gtk.Button(label=_("Cancel"))
+            cancel_btn.connect('clicked', lambda _b: dialog.close())
+            header.pack_start(cancel_btn)
+
+            import_btn = Gtk.Button(label=_("Import"))
+            import_btn.add_css_class('suggested-action')
+            header.pack_end(import_btn)
+            toolbar.add_top_bar(header)
+
+            page = Adw.PreferencesPage()
+            toolbar.set_content(page)
+            dialog.set_child(toolbar)
+
+            mode_group = Adw.PreferencesGroup(title=_("Import mode"))
+            mode_row = Adw.ComboRow(title=_("Mode"))
+            mode_row.set_model(Gtk.StringList.new([
+                _("Replace current configuration"),
+                _("Merge with current configuration"),
+            ]))
+            mode_row.set_selected(0)
+            mode_row.set_subtitle(
+                _("All current settings will be replaced with the imported configuration."))
+            mode_group.add(mode_row)
+            page.add(mode_group)
+
+            def sync_mode_subtitle(*_a):
+                if mode_row.get_selected() == 0:
+                    mode_row.set_subtitle(
+                        _("All current settings will be replaced with the imported "
+                          "configuration."))
+                else:
+                    mode_row.set_subtitle(
+                        _("Add new connections and groups; preserve existing ones."))
+            mode_row.connect('notify::selected', sync_mode_subtitle)
 
             restore_checks = {}
             if manifest is not None:
@@ -1146,11 +1345,7 @@ class WindowConfigDialogsMixin:
                 included = backup_mgr._restore_options_for_manifest(
                     manifest, restore_options=all_requested)
 
-                restore_label = Gtk.Label(label=_("Restore"), xalign=0)
-                restore_label.add_css_class('heading')
-                restore_label.set_margin_top(12)
-                content_box.append(restore_label)
-
+                restore_group = Adw.PreferencesGroup(title=_("Restore"))
                 labels = {
                     'app_settings': _("App settings and groups"),
                     'ssh_config': _("Connection profiles (SSH config)"),
@@ -1159,75 +1354,59 @@ class WindowConfigDialogsMixin:
                     'private_keys': _("Private key files"),
                 }
                 for key in BACKUP_OPTION_KEYS:
-                    row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-                    label = Gtk.Label(label=labels[key], xalign=0, hexpand=True)
-                    if key == 'private_keys':
-                        try:
-                            label.add_css_class('error')
-                        except Exception:
-                            pass
-                    check = Gtk.Switch(active=included.get(key, False))
-                    check.set_valign(Gtk.Align.CENTER)
-                    row.append(label); row.append(check)
+                    row = Adw.SwitchRow(title=labels[key])
+                    row.set_active(included.get(key, False))
                     row.set_sensitive(included.get(key, False))
                     if not included.get(key, False):
-                        row.set_tooltip_text(_("This backup does not include this item."))
-                    restore_checks[key] = check
-                    content_box.append(row)
-            
-            # Warning label
-            from sshpilot import icon_utils
-            warning_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-            warning_box.set_margin_top(12)
-            warning_icon = icon_utils.new_image_from_icon_name('dialog-warning-symbolic')
-            warning_box.append(warning_icon)
-            warning_label = Gtk.Label()
+                        row.set_subtitle(_("This backup does not include this item."))
+                    if key == 'private_keys':
+                        try:
+                            row.add_css_class('error')
+                        except Exception:
+                            pass
+                        row.add_prefix(
+                            icon_utils.new_image_from_icon_name('dialog-warning-symbolic'))
+                    restore_checks[key] = row
+                    restore_group.add(row)
+                page.add(restore_group)
+
             backup_dir = os.path.join(get_config_dir(), 'backups')
-            warning_label.set_markup(_("<small>A backup will be created automatically before importing.\nBackup location: {}</small>").format(backup_dir))
-            warning_label.set_wrap(True)
-            warning_label.set_xalign(0)
-            warning_label.add_css_class('dim-label')
-            warning_box.append(warning_label)
-            content_box.append(warning_box)
-            
-            dialog.set_extra_child(content_box)
-            
-            dialog.add_response('cancel', _('Cancel'))
-            dialog.add_response('import', _('Import'))
-            dialog.set_response_appearance('import', Adw.ResponseAppearance.SUGGESTED)
-            dialog.set_default_response('import')
-            dialog.set_close_response('cancel')
-            
-            def on_response(dialog, response):
-                if response == 'import':
-                    mode = 'replace' if replace_radio.get_active() else 'merge'
-                    if manifest is not None:
-                        restore_options = {
-                            key: check.get_active()
-                            for key, check in restore_checks.items()
-                        }
-                        if not any(restore_options.values()):
-                            self._simple_dialog(
-                                _("Nothing selected"),
-                                _("Choose at least one item to restore from this backup."))
-                            dialog.destroy()
-                            GLib.idle_add(lambda: (self._show_import_mode_dialog(
-                                import_path, manifest=manifest), False)[1])
-                            return
-                        will_replace_ssh = restore_options.get('ssh_config', False)
-                        self._guard_default_mode_replace(
-                            mode, will_replace_ssh,
-                            lambda: self._perform_spbk_import(manifest, mode, restore_options))
-                    else:
-                        # Legacy JSON: we can't see categories up front, so assume ssh_config.
-                        self._guard_default_mode_replace(
-                            mode, True,
-                            lambda: self._perform_import(import_path, mode))
-                dialog.destroy()
-            
-            dialog.connect('response', on_response)
-            dialog.present()
-            
+            notice_group = Adw.PreferencesGroup()
+            notice_group.set_description(
+                _("A backup will be created automatically before importing.\n"
+                  "Backup location: {}").format(backup_dir))
+            page.add(notice_group)
+
+            def on_import(_btn):
+                mode = 'replace' if mode_row.get_selected() == 0 else 'merge'
+                if manifest is not None:
+                    restore_options = {
+                        key: check.get_active()
+                        for key, check in restore_checks.items()
+                    }
+                    if not any(restore_options.values()):
+                        self._simple_dialog(
+                            _("Nothing selected"),
+                            _("Choose at least one item to restore from this backup."))
+                        dialog.close()
+                        GLib.idle_add(lambda: (self._show_import_mode_dialog(
+                            import_path, manifest=manifest), False)[1])
+                        return
+                    dialog.close()
+                    will_replace_ssh = restore_options.get('ssh_config', False)
+                    self._guard_default_mode_replace(
+                        mode, will_replace_ssh,
+                        lambda: self._perform_spbk_import(manifest, mode, restore_options))
+                else:
+                    # Legacy JSON: we can't see categories up front, so assume ssh_config.
+                    dialog.close()
+                    self._guard_default_mode_replace(
+                        mode, True,
+                        lambda: self._perform_import(import_path, mode))
+
+            import_btn.connect('clicked', on_import)
+            dialog.present(self)
+
         except Exception as e:
             logger.error(f"Failed to show import mode dialog: {e}")
 
