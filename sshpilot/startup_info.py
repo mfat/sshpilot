@@ -19,19 +19,10 @@ try:
 except Exception:
     GTK_AVAILABLE = False
 
-try:
-    import gi
-    gi.require_version('Secret', '1')
-    from gi.repository import Secret
-    LIBSECRET_AVAILABLE = True
-except Exception:
-    LIBSECRET_AVAILABLE = False
-
-try:
-    import keyring
-    KEYRING_AVAILABLE = True
-except Exception:
-    KEYRING_AVAILABLE = False
+# libsecret (gi Secret) and keyring are resolved lazily via secret_storage's
+# accessors inside _get_storage_info — importing them at module load would pull
+# keyring (~127 ms) onto the pre-window startup path via main's top-level
+# `from .startup_info import print_startup_info`.
 
 from . import __version__
 from .platform_utils import is_macos, is_flatpak, get_config_dir, get_ssh_dir, get_sshpass_path
@@ -229,61 +220,69 @@ class StartupInfo:
     def _get_storage_info(self):
         """Get secure storage information"""
         storage = {}
+        from .secret_storage import get_secret_manager, _get_secret, _get_keyring
 
         # libsecret / keyring accessibility is only rendered in the verbose dump,
         # and probing it means a synchronous Secret Service D-Bus connect + a
-        # keyring backend resolve. Skip those on the default path — the concise
-        # summary only needs the effective-backend label computed below.
-        if self.verbose and LIBSECRET_AVAILABLE:
-            try:
-                # Try to connect to Secret Service
-                Secret.Service.get_sync(Secret.ServiceFlags.NONE)
-                storage['libsecret'] = {
-                    'available': True,
-                    'accessible': True,
-                    'backend': 'Secret Service (libsecret)'
-                }
-            except Exception as e:
-                storage['libsecret'] = {
-                    'available': True,
-                    'accessible': False,
-                    'error': str(e)
-                }
+        # keyring backend resolve. The concise summary reads only the
+        # effective-backend label below, so on the default path we skip the
+        # accessibility probe. (The label still resolves the modules via the
+        # manager, but this whole gather runs on idle — off the pre-window path —
+        # since the eager module-level import was removed.)
+        if not self.verbose:
+            storage['libsecret'] = {'available': None, 'accessible': False}
+            storage['keyring'] = {'available': None, 'accessible': False}
         else:
-            storage['libsecret'] = {'available': bool(LIBSECRET_AVAILABLE), 'accessible': False}
+            Secret = _get_secret()
+            if Secret is not None:
+                try:
+                    # Try to connect to Secret Service
+                    Secret.Service.get_sync(Secret.ServiceFlags.NONE)
+                    storage['libsecret'] = {
+                        'available': True,
+                        'accessible': True,
+                        'backend': 'Secret Service (libsecret)'
+                    }
+                except Exception as e:
+                    storage['libsecret'] = {
+                        'available': True,
+                        'accessible': False,
+                        'error': str(e)
+                    }
+            else:
+                storage['libsecret'] = {'available': False, 'accessible': False}
 
-        # Keyring
-        if self.verbose and KEYRING_AVAILABLE:
-            try:
-                backend = keyring.get_keyring()
-                backend_name = backend.__class__.__name__
-                # Check if it's a usable backend (not the fail backend)
-                if 'fail' in backend_name.lower() or 'null' in backend_name.lower():
+            keyring = _get_keyring()
+            if keyring is not None:
+                try:
+                    backend = keyring.get_keyring()
+                    backend_name = backend.__class__.__name__
+                    # Check if it's a usable backend (not the fail backend)
+                    if 'fail' in backend_name.lower() or 'null' in backend_name.lower():
+                        storage['keyring'] = {
+                            'available': True,
+                            'accessible': False,
+                            'backend': backend_name
+                        }
+                    else:
+                        storage['keyring'] = {
+                            'available': True,
+                            'accessible': True,
+                            'backend': backend_name
+                        }
+                except Exception as e:
                     storage['keyring'] = {
                         'available': True,
                         'accessible': False,
-                        'backend': backend_name
+                        'error': str(e)
                     }
-                else:
-                    storage['keyring'] = {
-                        'available': True,
-                        'accessible': True,
-                        'backend': backend_name
-                    }
-            except Exception as e:
-                storage['keyring'] = {
-                    'available': True,
-                    'accessible': False,
-                    'error': str(e)
-                }
-        else:
-            storage['keyring'] = {'available': bool(KEYRING_AVAILABLE), 'accessible': False}
+            else:
+                storage['keyring'] = {'available': False, 'accessible': False}
 
         # Determine effective backend via the pluggable secret manager (respects
         # the configured selection, including 'pass').
         effective_backend = 'none'
         try:
-            from .secret_storage import get_secret_manager
             manager = get_secret_manager()
             try:
                 cfg = self._config
@@ -294,7 +293,9 @@ class StartupInfo:
             except Exception:
                 pass
             effective_backend = manager.active_backend_label()
-            storage['available_backends'] = manager.available_backends()
+            # cheap=True uses is_discoverable() where a backend provides one
+            # (Bitwarden), avoiding a blocking `bw --version` spawn on the idle path.
+            storage['available_backends'] = manager.available_backends(cheap=True)
             try:
                 # Session-backed backends (Bitwarden/Vaultwarden): report whether
                 # the selected one still needs unlocking.
