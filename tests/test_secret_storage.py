@@ -1094,6 +1094,18 @@ def test_bitwarden_needs_login_force_refresh_detects_external_login(monkeypatch)
     assert fake.calls == [['login', '--check'], ['login', '--check']]
 
 
+def test_bitwarden_needs_login_cache_is_scoped_to_profile(monkeypatch):
+    fake = FakeBw(status="unauthenticated")
+    b = _make_backend(monkeypatch, fake)
+    monkeypatch.setenv("BITWARDENCLI_APPDATA_DIR", "/profiles/personal")
+    assert b.needs_login() is True
+
+    fake.status = "locked"
+    monkeypatch.setenv("BITWARDENCLI_APPDATA_DIR", "/profiles/work")
+    assert b.needs_login() is False
+    assert fake.calls == [['login', '--check'], ['login', '--check']]
+
+
 def test_bitwarden_login_and_logout_update_cached_account_state(monkeypatch):
     fake = FakeBw(status="unauthenticated")
     b = _make_backend(monkeypatch, fake)

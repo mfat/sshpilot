@@ -702,6 +702,7 @@ class BitwardenBackend(SecretBackend):
         self._token: Optional[str] = None                # session token (this process)
         self._unlocked = False                           # we unlocked it this session
         self._needs_login: Optional[bool] = None         # stable CLI account state
+        self._login_profile: Optional[str] = None        # profile that state belongs to
         self._idle = _SessionIdleTimeout()
         self._items: Optional[Dict[str, dict]] = None    # name→item; None = not loaded
         self._cache_complete = False                     # _items holds the whole vault
@@ -805,12 +806,18 @@ class BitwardenBackend(SecretBackend):
         """
         if not self._bin:
             return False
+        profile = os.environ.get("BITWARDENCLI_APPDATA_DIR", "")
         with self._lock:
-            if self._needs_login is not None and not force_refresh:
+            if (
+                self._needs_login is not None
+                and self._login_profile == profile
+                and not force_refresh
+            ):
                 return self._needs_login
             try:
                 result = self._run(["login", "--check"])
                 self._needs_login = result.returncode != 0
+                self._login_profile = profile
                 return self._needs_login
             except Exception as exc:
                 logger.debug("bw login --check failed: %s", exc)
@@ -820,11 +827,13 @@ class BitwardenBackend(SecretBackend):
         """Forget the cached CLI account state before an explicit status refresh."""
         with self._lock:
             self._needs_login = None
+            self._login_profile = None
 
     def _set_needs_login(self, needs_login: bool) -> None:
         """Record account state after an in-process login/logout operation."""
         with self._lock:
             self._needs_login = needs_login
+            self._login_profile = os.environ.get("BITWARDENCLI_APPDATA_DIR", "")
 
     @staticmethod
     def _bw_cli_message(result) -> str:
