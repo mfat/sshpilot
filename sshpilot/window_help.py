@@ -228,7 +228,7 @@ class WindowHelpMixin:
             
             # Apply overrides
             if hasattr(app, 'config') and app.config:
-                for action_name in shortcuts.keys():
+                for action_name in list(shortcuts.keys()):
                     try:
                         override = app.config.get_shortcut_override(action_name)
                         if override is not None:
