@@ -61,9 +61,9 @@ from .file_manager_integration import (
     should_hide_external_terminal_options,
     should_hide_file_manager_options,
 )
-from .sshcopyid_window import SshCopyIdWindow, SshCopyIdRunner
-# ScpWindowController is created lazily (see the scp_controller property) so the
-# scp_window module stays off the startup import path.
+# SshCopyIdRunner/SshCopyIdWindow and ScpWindowController are imported lazily
+# (see the sshcopyid_runner / scp_controller properties and their use sites) so
+# the sshcopyid_window and scp_window modules stay off the startup import path.
 from .groups import GroupManager
 from .session_manager import SessionManager
 from .sidebar import (
@@ -927,7 +927,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         # Terminal manager handles terminal-related operations
         self.terminal_manager = TerminalManager(self)
-        self.sshcopyid_runner = SshCopyIdRunner(self)
+        self._sshcopyid_runner = None  # built lazily via the sshcopyid_runner property
         self._scp_controller = None  # built lazily via the scp_controller property
 
         # Add action for activating connections
@@ -955,6 +955,20 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         logger.info("Main window initialized")
 
     @property
+    def sshcopyid_runner(self):
+        """Lazily build the ssh-copy-id runner on first use, keeping the
+        sshcopyid_window module off the startup import path."""
+        if self._sshcopyid_runner is None:
+            from .sshcopyid_window import SshCopyIdRunner
+            self._sshcopyid_runner = SshCopyIdRunner(self)
+        return self._sshcopyid_runner
+
+    @sshcopyid_runner.setter
+    def sshcopyid_runner(self, value):
+        # Preserve the previously-assignable public attribute (e.g. tests inject a runner).
+        self._sshcopyid_runner = value
+
+    @property
     def scp_controller(self):
         """Lazily build the SCP controller on first use, keeping the scp_window
         module off the startup import path."""
@@ -962,6 +976,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             from .scp_window import ScpWindowController
             self._scp_controller = ScpWindowController(self)
         return self._scp_controller
+
+    @scp_controller.setter
+    def scp_controller(self, value):
+        self._scp_controller = value
 
     def _on_config_setting_changed(self, _config, key, value):
         """Synchronize runtime state when configuration values change."""
@@ -5174,6 +5192,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         try:
             logger.info("Main window: Creating SshCopyIdWindow")
             logger.debug("Main window: Initializing SshCopyIdWindow with key_manager and connection_manager")
+            from .sshcopyid_window import SshCopyIdWindow
             win = SshCopyIdWindow(self, connection, self.key_manager, self.connection_manager)
             logger.info("Main window: SshCopyIdWindow created successfully, presenting")
             win.present()
