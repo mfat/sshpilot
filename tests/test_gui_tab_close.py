@@ -22,6 +22,13 @@ def _enable_confirm(gui, on=True):
     gui.window.config.set_setting('confirm-disconnect', on)
 
 
+def _opt_out_checkbox(dialog):
+    checkbox = dialog.get_extra_child()
+    assert checkbox is not None
+    assert checkbox.get_label() == "Don't ask me again"
+    return checkbox
+
+
 def test_close_others_one_dialog_then_confirm(gui):
     gui.open_local_tabs(3)
     _enable_confirm(gui, True)
@@ -95,3 +102,47 @@ def test_single_close_still_confirms(gui):
 
     gui.respond('cancel')
     assert len(gui.user_pages()) == 2  # cancelled, still open
+
+
+def test_single_close_opt_out_disables_future_confirmations(gui):
+    gui.open_local_tabs(3)
+    _enable_confirm(gui, True)
+
+    gui.activate_action('tabmenu-close', target_page=gui.user_pages()[0])
+    dialog = gui.message_dialogs()[0]
+    _opt_out_checkbox(dialog).set_active(True)
+    gui.respond('close')
+
+    assert gui.window.config.get_setting('confirm-disconnect', True) is False
+    assert len(gui.user_pages()) == 2
+
+    gui.activate_action('tabmenu-close', target_page=gui.user_pages()[0])
+    assert gui.message_dialogs() == []
+    assert len(gui.user_pages()) == 1
+
+
+def test_close_others_opt_out_disables_future_confirmations(gui):
+    gui.open_local_tabs(3)
+    _enable_confirm(gui, True)
+    target = gui.user_pages()[1]
+
+    gui.activate_action('tabmenu-close-others', target_page=target)
+    dialog = gui.message_dialogs()[0]
+    _opt_out_checkbox(dialog).set_active(True)
+    gui.respond('close')
+
+    assert gui.window.config.get_setting('confirm-disconnect', True) is False
+    assert gui.user_pages() == [target]
+
+
+def test_cancel_with_opt_out_checked_keeps_confirmation_enabled(gui):
+    gui.open_local_tabs(2)
+    _enable_confirm(gui, True)
+
+    gui.activate_action('tabmenu-close', target_page=gui.user_pages()[0])
+    dialog = gui.message_dialogs()[0]
+    _opt_out_checkbox(dialog).set_active(True)
+    gui.respond('cancel')
+
+    assert gui.window.config.get_setting('confirm-disconnect', True) is True
+    assert len(gui.user_pages()) == 2
