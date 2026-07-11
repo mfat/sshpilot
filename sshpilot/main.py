@@ -63,8 +63,6 @@ def load_resources():
                 # Following GNOME docs: https://developer.gnome.org/documentation/tutorials/themed-icons.html
                 # and GTK4 API: https://docs.gtk.org/gtk4/class.IconTheme.html
                 # We use set_resource_path() to prepend our base path so bundled icons are checked first
-                # Note: Even with resource paths set, the icon theme system may still prioritize
-                # system themes, so we also manually check resources in icon_utils.py
                 try:
                     display = Gdk.Display.get_default()
                     if display:
@@ -103,7 +101,6 @@ if not load_resources():
 from .icon_utils import patch_gtk_image
 patch_gtk_image()
 
-from .window import MainWindow
 from .platform_utils import is_macos, get_data_dir, get_state_dir
 from .file_manager_integration import should_hide_file_manager_options
 from .startup_info import print_startup_info

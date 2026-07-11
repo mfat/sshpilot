@@ -3,6 +3,8 @@ Main Window for SSH Pilot
 Primary UI with connection list, tabs, and terminal management
 """
 
+from __future__ import annotations
+
 import asyncio
 import copy
 import os
@@ -14,7 +16,11 @@ import time
 import shutil
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Dict, Any, List, Tuple
+from typing import TYPE_CHECKING, Optional, Dict, Any, List, Tuple
+
+if TYPE_CHECKING:
+    from .command_blocks import CommandBlocksPanel, CommandBlockStore
+    from .terminal import TerminalWidget
 
 
 import gi
@@ -39,8 +45,6 @@ HAS_TIMED_ANIMATION = hasattr(Adw, 'TimedAnimation')
 from gettext import gettext as _
 
 from .connection_manager import ConnectionManager, Connection, ConnectionState
-from .terminal import TerminalWidget
-from .terminal_manager import TerminalManager
 from .config import Config
 from .key_manager import KeyManager
 from .update_checker import check_for_updates_async
@@ -93,7 +97,6 @@ from . import shutdown
 from .search_utils import connection_matches
 from .shortcut_utils import get_primary_modifier_label
 from .platform_utils import is_macos, get_config_dir
-from .command_blocks import CommandBlocksPanel, CommandBlockStore
 from .context_menu import IconContextMenu
 from .plugins.api import Capability
 from .plugins.registry import capabilities_for
@@ -114,6 +117,11 @@ from .scp_utils import (  # noqa: F401
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _is_terminal_widget(widget) -> bool:
+    from .terminal import TerminalWidget
+    return isinstance(widget, TerminalWidget)
 
 
 _tips_banner_css_installed = False
@@ -925,7 +933,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.setup_connections()
         self.setup_signals()
 
-        # Terminal manager handles terminal-related operations
+        # Terminal manager handles terminal-related operations (import deferred so
+        # terminal.py stays off the window module import path until __init__).
+        from .terminal_manager import TerminalManager
         self.terminal_manager = TerminalManager(self)
         self._sshcopyid_runner = None  # built lazily via the sshcopyid_runner property
         self._scp_controller = None  # built lazily via the scp_controller property
@@ -985,6 +995,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         """Synchronize runtime state when configuration values change."""
         if key == 'command_blocks.always_show_sidebar':
             if bool(value):
+                self._ensure_command_blocks_panel()
                 self._toggle_command_blocks_panel(True)
             return
 
@@ -3848,6 +3859,35 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self._set_content_widget(main_box)
             logger.debug("Set content widget for other split view types")
 
+    def _ensure_command_block_store(self) -> Optional[CommandBlockStore]:
+        """Create the command-block store on first use."""
+        if self.command_block_store is not None:
+            return self.command_block_store
+        app = self.get_application()
+        config = getattr(app, 'config', None) if app else None
+        if config is None:
+            config = getattr(self, 'config', None)
+        if config is None:
+            return None
+        from .command_blocks import CommandBlockStore
+        self.command_block_store = CommandBlockStore(config)
+        return self.command_block_store
+
+    def _ensure_command_blocks_panel(self) -> Optional[CommandBlocksPanel]:
+        """Build the command blocks sidebar on first open (or when always shown)."""
+        if self.command_blocks_panel is not None:
+            return self.command_blocks_panel
+        if self.cmd_split_view is None:
+            return None
+        store = self._ensure_command_block_store()
+        if store is None:
+            return None
+        from .command_blocks import CommandBlocksPanel
+        self.command_blocks_panel = CommandBlocksPanel(self, store)
+        self.cmd_split_view.set_sidebar(self.command_blocks_panel)
+        logger.debug("Command blocks panel created")
+        return self.command_blocks_panel
+
     def _wrap_content_with_command_panel(self, content_widget: Gtk.Widget, *, set_as_window_content: bool = True) -> None:
         """Build a right-side OverlaySplitView for the command blocks panel around content_widget.
 
@@ -3866,9 +3906,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             config = getattr(app, 'config', None) if app else None
             if config is None:
                 config = getattr(self, 'config', None)
-            if self.command_block_store is None and config is not None:
-                self.command_block_store = CommandBlockStore(config)
-
             self.cmd_split_view = Adw.OverlaySplitView()
             self.cmd_split_view.set_sidebar_position(Gtk.PackType.END)
             _always_show = bool(config.get_setting('command_blocks.always_show_sidebar', False)) if config else False
@@ -3887,14 +3924,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self.cmd_split_view.set_hexpand(True)
             self.cmd_split_view.set_vexpand(True)
 
-            if self.command_block_store is not None:
-                self.command_blocks_panel = CommandBlocksPanel(self, self.command_block_store)
-                self.cmd_split_view.set_sidebar(self.command_blocks_panel)
+            if _always_show:
+                self._ensure_command_blocks_panel()
 
             self.cmd_split_view.set_content(content_widget)
             if set_as_window_content:
                 self._set_content_widget(self.cmd_split_view)
-            logger.debug("Command blocks panel created")
+            logger.debug("Command blocks split view created")
         except Exception as exc:
             logger.error("Failed to create command blocks panel: %s", exc)
             if set_as_window_content:
@@ -3907,6 +3943,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         try:
             if visible is None:
                 visible = not self.cmd_split_view.get_show_sidebar()
+            if visible:
+                self._ensure_command_blocks_panel()
             self.cmd_split_view.set_show_sidebar(visible)
             self._command_sidebar_visible = visible
             if self._cmd_blocks_toggle_btn is not None:
@@ -5526,7 +5564,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 return
             
             # Focus the terminal when tab is selected
-            if isinstance(child, TerminalWidget):
+            if _is_terminal_widget(child):
                 # Use a small delay to ensure the widget is fully visible
                 def _focus_on_tab_switch():
                     try:
@@ -6496,7 +6534,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
     def on_run_command_action(self, action=None, param=None):
         """Open the command picker for the right-clicked connection(s) or group."""
-        panel = getattr(self, 'command_blocks_panel', None)
+        panel = self._ensure_command_blocks_panel()
         if panel is None:
             return
         anchor = getattr(self, '_context_menu_row', None) or self
