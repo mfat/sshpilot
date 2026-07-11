@@ -1130,8 +1130,7 @@ class ConnectionManager(GObject.Object):
             from .secret_storage import get_secret_manager
             manager = get_secret_manager()
             try:
-                from .config import Config
-                _cfg = Config()
+                _cfg = self.config
                 selected = _cfg.get_setting('secrets.backend', 'auto')
             except Exception:
                 _cfg = None
@@ -1152,8 +1151,7 @@ class ConnectionManager(GObject.Object):
             os.environ['SSHPILOT_SECRET_BACKEND'] = str(selected or 'auto')
             try:
                 if _cfg is None:
-                    from .config import Config as _C
-                    _cfg = _C()
+                    _cfg = self.config
                 timeout_min = int(_cfg.get_setting('secrets.session_timeout', 0) or 0)
                 os.environ['SSHPILOT_SECRET_SESSION_TIMEOUT'] = str(max(0, timeout_min) * 60)
                 # Bitwarden CLI account/profile (BITWARDENCLI_APPDATA_DIR). Set in the
@@ -1200,8 +1198,7 @@ class ConnectionManager(GObject.Object):
         # configured default provider to child processes and the in-process manager so
         # connection env injection routes through it.
         try:
-            from .config import Config as _IdCfg
-            _idcfg = _IdCfg()
+            _idcfg = self.config
             identity_provider = str(
                 _idcfg.get_setting('identity.provider', 'auto') or 'auto'
             ).strip().lower()

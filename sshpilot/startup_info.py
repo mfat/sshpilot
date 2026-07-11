@@ -51,11 +51,17 @@ class StartupInfo:
     CHECK_FAIL = "[FAIL]"
     CHECK_INFO = "[INFO]"
     
-    def __init__(self, isolated: bool = False):
+    def __init__(self, isolated: bool = False, verbose: bool = False, config=None):
         self.isolated = isolated
+        # The concise (non-verbose) summary only reads the SSH version and the
+        # storage backend label, so the extra tool/keyring probes are gathered
+        # only when they'll actually be printed — they otherwise cost subprocess
+        # spawns and Secret Service D-Bus connects for nothing.
+        self.verbose = verbose
+        self._config = config
         self.info = {}
         self._gather_info()
-    
+
     def _gather_info(self):
         """Gather all system information"""
         self.info = {
@@ -194,19 +200,23 @@ class StartupInfo:
         else:
             tools['ssh'] = {'available': False, 'path': None, 'version': None}
         
-        # sshpass — warm the cache and record availability
+        # sshpass — warm the cache and record availability. The version string
+        # is only shown in the verbose dump, so skip the `sshpass -V` spawn on
+        # the default path.
         sshpass_path = get_sshpass_path()
 
         if sshpass_path:
-            try:
-                import subprocess
-                result = subprocess.run([sshpass_path, '-V'], capture_output=True, text=True, timeout=2)
-                version_output = result.stdout.strip() if result.stdout else result.stderr.strip()
-                # Extract version (e.g., "1.09")
-                version = version_output.split()[1] if len(version_output.split()) > 1 else 'unknown'
-                tools['sshpass'] = {'available': True, 'path': sshpass_path, 'version': version, 'executable': True}
-            except Exception:
-                tools['sshpass'] = {'available': True, 'path': sshpass_path, 'version': 'unknown', 'executable': True}
+            version = 'unknown'
+            if self.verbose:
+                try:
+                    import subprocess
+                    result = subprocess.run([sshpass_path, '-V'], capture_output=True, text=True, timeout=2)
+                    version_output = result.stdout.strip() if result.stdout else result.stderr.strip()
+                    # Extract version (e.g., "1.09")
+                    version = version_output.split()[1] if len(version_output.split()) > 1 else 'unknown'
+                except Exception:
+                    version = 'unknown'
+            tools['sshpass'] = {'available': True, 'path': sshpass_path, 'version': version, 'executable': True}
         else:
             tools['sshpass'] = {'available': False, 'path': None, 'version': None, 'executable': False}
         
@@ -219,9 +229,12 @@ class StartupInfo:
     def _get_storage_info(self):
         """Get secure storage information"""
         storage = {}
-        
-        # libsecret
-        if LIBSECRET_AVAILABLE:
+
+        # libsecret / keyring accessibility is only rendered in the verbose dump,
+        # and probing it means a synchronous Secret Service D-Bus connect + a
+        # keyring backend resolve. Skip those on the default path — the concise
+        # summary only needs the effective-backend label computed below.
+        if self.verbose and LIBSECRET_AVAILABLE:
             try:
                 # Try to connect to Secret Service
                 Secret.Service.get_sync(Secret.ServiceFlags.NONE)
@@ -237,10 +250,10 @@ class StartupInfo:
                     'error': str(e)
                 }
         else:
-            storage['libsecret'] = {'available': False, 'accessible': False}
-        
+            storage['libsecret'] = {'available': bool(LIBSECRET_AVAILABLE), 'accessible': False}
+
         # Keyring
-        if KEYRING_AVAILABLE:
+        if self.verbose and KEYRING_AVAILABLE:
             try:
                 backend = keyring.get_keyring()
                 backend_name = backend.__class__.__name__
@@ -264,8 +277,8 @@ class StartupInfo:
                     'error': str(e)
                 }
         else:
-            storage['keyring'] = {'available': False, 'accessible': False}
-        
+            storage['keyring'] = {'available': bool(KEYRING_AVAILABLE), 'accessible': False}
+
         # Determine effective backend via the pluggable secret manager (respects
         # the configured selection, including 'pass').
         effective_backend = 'none'
@@ -273,8 +286,11 @@ class StartupInfo:
             from .secret_storage import get_secret_manager
             manager = get_secret_manager()
             try:
-                from .config import Config
-                manager.set_selected(Config().get_setting('secrets.backend', 'auto'))
+                cfg = self._config
+                if cfg is None:
+                    from .config import Config
+                    cfg = Config()
+                manager.set_selected(cfg.get_setting('secrets.backend', 'auto'))
             except Exception:
                 pass
             effective_backend = manager.active_backend_label()
@@ -492,7 +508,7 @@ class StartupInfo:
         logger.info("=" * 60)
 
 
-def print_startup_info(isolated: bool = False, verbose: bool = False):
+def print_startup_info(isolated: bool = False, verbose: bool = False, config=None):
     """
     Emit startup information.
 
@@ -502,8 +518,10 @@ def print_startup_info(isolated: bool = False, verbose: bool = False):
             (~40 lines) to stdout — useful for bug reports. When False, only
             log a single-line summary at INFO so default startup output stays
             concise. Re-run with ``--verbose`` to get the full diagnostic.
+        config: Existing Config instance to reuse for the backend lookup,
+            avoiding an extra config.json read.
     """
-    info = StartupInfo(isolated=isolated)
+    info = StartupInfo(isolated=isolated, verbose=verbose, config=config)
 
     if verbose:
         info.print_info()

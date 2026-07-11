@@ -157,9 +157,10 @@ class SshPilotApplication(Adw.Application):
         if fatal_warnings:
             _enable_fatal_gtk_warnings()
 
-        # Print startup information
-        print_startup_info(isolated=isolated, verbose=verbose)
-        
+        # Startup diagnostics are deferred to idle (scheduled at the end of
+        # __init__) so their probing — ssh/sshpass version spawns and a Secret
+        # Service D-Bus connect — never blocks the pre-window main thread.
+
         # Apply saved application theme (light/dark/system)
         self.config = None
         self._default_shortcuts = {}
@@ -334,7 +335,21 @@ class SshPilotApplication(Adw.Application):
         
         # Initialize window reference
         self.window = None
-        
+
+        # Emit startup diagnostics once the main loop is running (i.e. after the
+        # window is created/presented), reusing the app Config so the backend
+        # lookup doesn't re-read config.json.
+        GLib.idle_add(
+            lambda: (
+                print_startup_info(
+                    isolated=self.isolated_mode,
+                    verbose=self.verbose_override,
+                    config=self.config,
+                ),
+                False,
+            )[1]
+        )
+
         logger.info("sshPilot application initialized")
     
     def on_activate(self, app):
@@ -882,13 +897,6 @@ class SshPilotApplication(Adw.Application):
         self._gc_pending = False
         gc.collect()
         return False  # one-shot idle
-
-    def do_activate(self):
-        """Called when the application is activated"""
-        win = self.props.active_window
-        if not win:
-            win = MainWindow(application=self, isolated=self.isolated_mode)
-        win.present()
 
     def on_new_connection(self, action, param):
         """Handle new connection action"""
