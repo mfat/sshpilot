@@ -1435,6 +1435,12 @@ class ConnectionDialog(
         self.connection = connection
         self.connection_manager = connection_manager
         self.is_editing = connection is not None
+        self._original_secret_identity = ({
+            'nickname': getattr(connection, 'nickname', ''),
+            'hostname': getattr(connection, 'hostname', ''),
+            'host': getattr(connection, 'host', ''),
+            'username': getattr(connection, 'username', ''),
+        } if connection is not None else None)
 
         self.force_split_from_group = bool(force_split_from_group)
         self.split_group_source = split_group_source or (getattr(connection, 'source', None) if connection else None)
@@ -3310,12 +3316,17 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         self._persist_connection_meta(nickname_for_meta)
 
         if self.is_editing and self.connection:
-            connection_data['__previous_secret_identity'] = {
-                'nickname': getattr(self.connection, 'nickname', ''),
-                'hostname': getattr(self.connection, 'hostname', ''),
-                'host': getattr(self.connection, 'host', ''),
-                'username': getattr(self.connection, 'username', ''),
-            }
+            original_identity = getattr(self, '_original_secret_identity', None)
+            if original_identity is None:
+                original_identity = {
+                    'nickname': getattr(self.connection, 'nickname', ''),
+                    'hostname': getattr(self.connection, 'hostname', ''),
+                    'host': getattr(self.connection, 'host', ''),
+                    'username': getattr(self.connection, 'username', ''),
+                }
+                self._original_secret_identity = original_identity
+            connection_data['__previous_secret_identity'] = dict(
+                original_identity)
 
         # Update the connection object locally when editing (do not persist here; window handles persistence)
         if self.is_editing and self.connection:
@@ -3411,6 +3422,14 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             _("Saving to {backend}").format(backend=backend_name),
             _("Saving passwords and passphrases to secure storage…"),
         )
+        spinner_state = {'closed': False}
+        try:
+            spinner.connect(
+                'closed',
+                lambda *_args: spinner_state.__setitem__('closed', True),
+            )
+        except Exception:
+            pass
         self._set_secret_save_busy(True)
 
         def _worker():
@@ -3424,25 +3443,26 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                                 connection_data, value, username=username,
                                 previous_connection=previous_identity))
                         else:
-                            removed = bool(manager.delete_connection_passwords(
-                                connection_data, username=username))
+                            manager.delete_connection_passwords(
+                                connection_data, username=username)
                             if previous_identity:
                                 previous_user = previous_identity.get('username') or username
-                                removed = bool(manager.delete_connection_passwords(
+                                manager.delete_connection_passwords(
                                     previous_identity,
-                                    username=previous_user)) or removed
-                            ok = removed
+                                    username=previous_user)
+                            ok = True
                     elif action == 'store':
                         ok = bool(manager.store_key_passphrase(key, value))
                     else:
-                        ok = bool(manager.delete_key_passphrase(key))
+                        manager.delete_key_passphrase(key)
+                        ok = True
                     if not ok:
                         break
             except Exception:
                 logger.exception("Failed to save connection secrets")
                 ok = False
             GLib.idle_add(self._finish_secret_save, connection_data, ok,
-                          close_spinner, spinner, True)
+                          close_spinner, spinner, spinner_state, True)
 
         completion_called = [False]
 
@@ -3452,7 +3472,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 threading.Thread(target=_worker, daemon=True).start()
             else:
                 self._finish_secret_save(
-                    connection_data, False, close_spinner, spinner, False)
+                    connection_data, False, close_spinner, spinner,
+                    spinner_state, False)
 
         # Preserve the established save order: persist connection/config data first, then
         # its credentials. The private marker keeps update_connection from performing the
@@ -3463,7 +3484,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             _after_config_saved(False)
 
     def _finish_secret_save(self, connection_data, ok, close_spinner, spinner,
-                            settings_saved):
+                            spinner_state, settings_saved):
         """Finish an asynchronous secret save on the GTK main thread."""
         def _after_closed(*_args):
             self._set_secret_save_busy(False)
@@ -3478,13 +3499,14 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 ))
 
         connected = False
-        try:
-            spinner.connect('closed', _after_closed)
-            connected = True
-        except Exception:
-            pass
+        if not spinner_state.get('closed'):
+            try:
+                spinner.connect('closed', _after_closed)
+                connected = True
+            except Exception:
+                pass
         close_spinner()
-        if not connected:
+        if not connected or spinner_state.get('closed'):
             _after_closed()
         return False
 
