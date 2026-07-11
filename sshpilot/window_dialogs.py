@@ -316,37 +316,44 @@ class WindowConfigDialogsMixin:
 
         def _ssh_target_label(conn):
             if conn is None:
-                return _("Choose a server…")
+                return ''
             return (getattr(conn, 'nickname', '')
                     or (conn.get_effective_host() if hasattr(conn, 'get_effective_host') else '')
                     or '?')
 
         def _ssh_target_subtitle(conn):
             if conn is None:
-                return _("Pick from your saved connections")
+                return _("Choose a server…")
             host = getattr(conn, 'hostname', '') or getattr(conn, 'host', '')
             user = getattr(conn, 'username', '')
             if user and host:
                 return f"{user}@{host}"
-            return host or ''
-
-        def _set_ssh_target(conn):
-            selected_ssh_target[0] = conn
-            if conn is None:
-                server_row.set_title(_("Server"))
-                server_row.set_subtitle(_("Choose a server…"))
-            else:
-                server_row.set_title(_ssh_target_label(conn))
-                server_row.set_subtitle(
-                    _ssh_target_subtitle(conn) or _("Selected server"))
+            return host or _("Selected server")
 
         server_row = Adw.ActionRow(title=_("Server"))
         server_row.set_activatable(True)
+        chosen_label = Gtk.Label()
+        chosen_label.add_css_class('dim-label')
+        chosen_label.set_valign(Gtk.Align.CENTER)
+        server_row.add_suffix(chosen_label)
         pick_btn = Gtk.Button()
-        pick_btn.set_icon_name('view-list-symbolic')
+        pick_btn.set_icon_name('pan-down-symbolic')
         pick_btn.set_tooltip_text(_("Pick from inventory"))
         pick_btn.add_css_class('flat')
         pick_btn.set_valign(Gtk.Align.CENTER)
+        server_row.add_suffix(pick_btn)
+
+        def _set_ssh_target(conn):
+            selected_ssh_target[0] = conn
+            nick = _ssh_target_label(conn)
+            if conn is None:
+                chosen_label.set_label('')
+                chosen_label.set_visible(False)
+                server_row.set_subtitle(_("Choose a server…"))
+            else:
+                chosen_label.set_label(nick)
+                chosen_label.set_visible(True)
+                server_row.set_subtitle(_ssh_target_subtitle(conn))
 
         def _open_ssh_host_picker(_widget=None):
             show_host_picker(
@@ -357,14 +364,18 @@ class WindowConfigDialogsMixin:
 
         pick_btn.connect('clicked', _open_ssh_host_picker)
         server_row.connect('activated', lambda _r: _open_ssh_host_picker())
-        server_row.add_suffix(pick_btn)
+
+        # Prefill: explicit nickname from a prior reopen, else first inventory host
+        # (matches the old DropDown defaulting to index 0).
+        prefill_conn = None
         if target_nick:
             for c in connections:
                 if getattr(c, 'nickname', None) == target_nick:
-                    _set_ssh_target(c)
+                    prefill_conn = c
                     break
-        if selected_ssh_target[0] is None:
-            _set_ssh_target(None)
+        if prefill_conn is None and connections:
+            prefill_conn = connections[0]
+        _set_ssh_target(prefill_conn)
         dest_group.add(server_row)
 
         ssh_dir_row = Adw.EntryRow(title=_("Remote directory"))
@@ -1040,26 +1051,33 @@ class WindowConfigDialogsMixin:
 
         selected_target = [None]
 
+        server_row = Adw.ActionRow(title=_("Server"))
+        server_row.set_activatable(True)
+        chosen_label = Gtk.Label()
+        chosen_label.add_css_class('dim-label')
+        chosen_label.set_valign(Gtk.Align.CENTER)
+        server_row.add_suffix(chosen_label)
+        pick_btn = Gtk.Button()
+        pick_btn.set_icon_name('pan-down-symbolic')
+        pick_btn.set_tooltip_text(_("Pick from inventory"))
+        pick_btn.add_css_class('flat')
+        pick_btn.set_valign(Gtk.Align.CENTER)
+        server_row.add_suffix(pick_btn)
+
         def _set_target(conn):
             selected_target[0] = conn
             if conn is None:
-                server_row.set_title(_("Server"))
+                chosen_label.set_label('')
+                chosen_label.set_visible(False)
                 server_row.set_subtitle(_("Choose a server…"))
             else:
                 nick = getattr(conn, 'nickname', '') or '?'
                 host = getattr(conn, 'hostname', '') or getattr(conn, 'host', '')
                 user = getattr(conn, 'username', '')
-                server_row.set_title(nick)
+                chosen_label.set_label(nick)
+                chosen_label.set_visible(True)
                 server_row.set_subtitle(
                     f"{user}@{host}" if user and host else (host or _("Selected server")))
-
-        server_row = Adw.ActionRow(title=_("Server"))
-        server_row.set_activatable(True)
-        pick_btn = Gtk.Button()
-        pick_btn.set_icon_name('view-list-symbolic')
-        pick_btn.set_tooltip_text(_("Pick from inventory"))
-        pick_btn.add_css_class('flat')
-        pick_btn.set_valign(Gtk.Align.CENTER)
 
         def _open_picker(_widget=None):
             show_host_picker(
@@ -1070,8 +1088,7 @@ class WindowConfigDialogsMixin:
 
         pick_btn.connect('clicked', _open_picker)
         server_row.connect('activated', lambda _r: _open_picker())
-        server_row.add_suffix(pick_btn)
-        _set_target(None)
+        _set_target(connections[0] if connections else None)
         group.add(server_row)
 
         dir_row = Adw.EntryRow(title=_("Remote directory"))
