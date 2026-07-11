@@ -201,8 +201,7 @@ def test_edit_connection_retains_passphrase_without_keyring():
 
 
 def test_filelisteditor_defers_passphrase_when_vault_locked(monkeypatch):
-    # With a locked session vault, committing a passphrase must NOT store (and fail
-    # silently); it stays pending and is flushed after the save-flow unlock.
+    # Entry signals only validate. Backend I/O is deferred to the save worker.
     import sshpilot.secret_storage as ss
     from sshpilot.connection_dialog import FileListEditor
 
@@ -212,7 +211,8 @@ def test_filelisteditor_defers_passphrase_when_vault_locked(monkeypatch):
     cm = DummyConnectionManager()
     ed._connection_manager = cm
     entry = DummyEntry('secret')
-    ed._rows = [types.SimpleNamespace(_pass_entry=entry, _pass_path='/k', _pass_norm='/k')]
+    ed._rows = [types.SimpleNamespace(
+        _pass_entry=entry, _pass_path='/k', _pass_norm='/k', _pass_initial='')]
 
     sm = ss.get_secret_manager()
     monkeypatch.setattr(sm, 'selected_needs_unlock', lambda: True)
@@ -221,11 +221,11 @@ def test_filelisteditor_defers_passphrase_when_vault_locked(monkeypatch):
     assert cm.stored == {}
     assert ed.has_pending_passphrases() is True
 
-    ed.flush_passphrases()                             # after unlock
-    assert cm.stored == {'/k': 'secret'}
+    assert ed.pending_passphrase_operations() == [('store', '/k', 'secret')]
+    assert cm.stored == {}
 
 
-def test_filelisteditor_stores_passphrase_when_unlocked(monkeypatch):
+def test_filelisteditor_defers_passphrase_when_unlocked(monkeypatch):
     import sshpilot.secret_storage as ss
     from sshpilot.connection_dialog import FileListEditor
 
@@ -234,13 +234,108 @@ def test_filelisteditor_stores_passphrase_when_unlocked(monkeypatch):
     ed._verify = None
     cm = DummyConnectionManager()
     ed._connection_manager = cm
-    ed._rows = []
+    entry = DummyEntry('secret')
+    ed._rows = [types.SimpleNamespace(
+        _pass_entry=entry, _pass_path='/k', _pass_norm='/k', _pass_initial='')]
 
     sm = ss.get_secret_manager()
     monkeypatch.setattr(sm, 'selected_needs_unlock', lambda: False)
 
-    ed._commit_passphrase(DummyEntry('secret'), '/k', '/k')   # unlocked -> stored now
-    assert cm.stored == {'/k': 'secret'}
+    ed._commit_passphrase(entry, '/k', '/k')
+    assert cm.stored == {}
+    assert ed.pending_passphrase_operations() == [('store', '/k', 'secret')]
+
+
+def test_connection_secret_save_runs_backend_io_in_worker(monkeypatch):
+    import sshpilot.connection_dialog as dialog_module
+    import sshpilot.secret_storage as ss
+    import sshpilot.secret_unlock_dialog as unlock_dialog
+
+    calls = []
+
+    class Manager(DummyConnectionManager):
+        def store_connection_password(self, connection, password, username=None,
+                                      previous_connection=None):
+            calls.append(('password', connection['hostname'], username, password))
+            return True
+
+        def store_key_passphrase(self, key_path, value):
+            calls.append((key_path, value))
+            return True
+
+    class Spinner:
+        def connect(self, signal, callback):
+            assert signal == 'closed'
+            self.callback = callback
+
+    spinner = Spinner()
+    monkeypatch.setattr(
+        unlock_dialog,
+        '_spinner_dialog',
+        lambda *_args: (lambda _text: None, lambda: spinner.callback(), spinner),
+    )
+    monkeypatch.setattr(
+        ss.get_secret_manager(),
+        'selected_backend',
+        lambda: types.SimpleNamespace(name='bitwarden'),
+    )
+    monkeypatch.setattr(
+        dialog_module.GLib,
+        'idle_add',
+        lambda callback, *args: callback(*args),
+    )
+
+    pending_threads = []
+
+    class DeferredThread:
+        def __init__(self, target, daemon=False):
+            self.target = target
+            self.daemon = daemon
+
+        def start(self):
+            pending_threads.append(self)
+
+    monkeypatch.setattr(dialog_module.threading, 'Thread', DeferredThread)
+
+    dialog = ConnectionDialog.__new__(ConnectionDialog)
+    dialog.connection_manager = Manager()
+    dialog.key_editor = types.SimpleNamespace(
+        pending_passphrase_operations=lambda: [('store', '/key', 'key-secret')])
+    dialog._save_buttons = []
+    emitted = []
+    closed = []
+
+    def emit(signal, data):
+        emitted.append((signal, dict(data)))
+        data.pop('__save_completion')(True)
+
+    dialog.emit = emit
+    dialog.close = lambda: closed.append(True)
+    dialog.show_error = lambda message: calls.append(('error', message))
+
+    data = {
+        'hostname': 'example.com',
+        'nickname': 'example',
+        'username': 'demo',
+        'password': 'host-secret',
+        'password_changed': True,
+    }
+    dialog._store_secrets_then_save(data)
+
+    assert len(pending_threads) == 1
+    assert pending_threads[0].daemon is True
+    assert calls == []
+    assert emitted[0][0] == 'connection-saved'
+    assert emitted[0][1]['__secret_storage_done'] is True
+    assert closed == []
+
+    pending_threads[0].target()
+
+    assert calls == [
+        ('password', 'example.com', 'demo', 'host-secret'),
+        ('/key', 'key-secret'),
+    ]
+    assert closed == [True]
 
 
 def test_save_gate_detects_pending_passphrase_when_locked(monkeypatch):

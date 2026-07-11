@@ -7725,6 +7725,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
     def on_connection_saved(self, dialog, connection_data):
         """Handle connection saved from dialog"""
+        save_completion = connection_data.pop('__save_completion', None)
+
+        def _complete_save(ok):
+            if callable(save_completion):
+                save_completion(bool(ok))
+
         try:
             if connection_data.get('protocol', 'ssh') != 'ssh':
                 self._on_plugin_connection_saved(dialog, connection_data)
@@ -7797,6 +7803,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 # Update connection in manager first
                 if not self.connection_manager.update_connection(old_connection, connection_data):
                     logger.error("Failed to update connection in SSH config")
+                    _complete_save(False)
                     return
 
                 # Preserve group assignment if nickname changed
@@ -7932,6 +7939,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     # Store the terminal in the connection for later use
                     old_connection._terminal_instance = terminal
                     self._prompt_reconnect(old_connection)
+                _complete_save(True)
                 
             else:
                 # Create new connection
@@ -7994,11 +8002,14 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     # Manually add the connection to the UI since we're not using the signal
                     # Row list was rebuilt from config; no manual add required
                     logger.info(f"Created new connection: {connection_data['nickname']}")
+                    _complete_save(True)
                 else:
                     logger.error("Failed to save connection to SSH config")
+                    _complete_save(False)
                 
         except Exception as e:
             logger.error(f"Failed to save connection: {e}")
+            _complete_save(False)
             # Show error dialog
             error_dialog = Gtk.MessageDialog(
                 transient_for=self,

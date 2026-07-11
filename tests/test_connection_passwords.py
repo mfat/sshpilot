@@ -72,6 +72,27 @@ def test_store_connection_password_uses_canonical_and_clears_aliases(conn_mgr):
     assert 'bob@bnick' not in backend.data
 
 
+def test_store_connection_password_clears_previous_identity(conn_mgr):
+    cm, _mgr, backend = conn_mgr
+    old = {
+        'nickname': 'old-name',
+        'hostname': 'old.example',
+        'username': 'alice',
+    }
+    new = {
+        'nickname': 'new-name',
+        'hostname': 'new.example',
+        'username': 'bob',
+    }
+    backend.data['alice@old.example'] = 'old-pw'
+
+    assert cm.store_connection_password(
+        new, 'new-pw', username='bob', previous_connection=old) is True
+
+    assert backend.data['bob@new.example'] == 'new-pw'
+    assert 'alice@old.example' not in backend.data
+
+
 def test_get_connection_password_migrates_legacy_alias(conn_mgr):
     cm, _mgr, backend = conn_mgr
     conn = FakeConn('bnick', hostname='b.example', username='bob')
