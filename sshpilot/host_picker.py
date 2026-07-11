@@ -75,7 +75,8 @@ def show_host_picker(window, anchor, on_selected, *, toast=None,
 
         info = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         info.set_hexpand(True)
-        lbl = Gtk.Label(label=conn.nickname)
+        display_name = getattr(conn, 'display_name', None) or conn.nickname
+        lbl = Gtk.Label(label=display_name)
         lbl.set_halign(Gtk.Align.START)
         lbl.add_css_class('heading')
         info.append(lbl)
@@ -109,7 +110,8 @@ def show_host_picker(window, anchor, on_selected, *, toast=None,
         if conn is None:
             return False
         host = getattr(conn, 'hostname', '') or getattr(conn, 'host', '')
-        return q in conn.nickname.lower() or q in host.lower()
+        display_name = getattr(conn, 'display_name', None) or conn.nickname
+        return q in display_name.lower() or q in conn.nickname.lower() or q in host.lower()
 
     list_box.set_filter_func(_filter)
     search_entry.connect('search-changed', lambda _e: list_box.invalidate_filter())

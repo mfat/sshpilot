@@ -31,11 +31,13 @@ change without notice.
 | Open a terminal for a connection | `ctx.open_connection(nickname)` |
 | Generate an SSH key | `ctx.generate_key(name, ...)` |
 | Run a one-shot remote command (native SSH/auth path) | `ctx.run_command(nickname, command)` *(1.5)* |
+| Run a one-shot local command (Flatpak-host aware) | `ctx.run_local_command(command)` *(1.11)* |
 | Read resolved SSH config (`ssh -G`) | `ctx.get_effective_ssh_config(nickname)` *(1.5)* |
 | List/delete keys, deploy a key to a host | `ctx.list_keys()` / `ctx.delete_key(path)` / `ctx.copy_key_to_host(nickname, pub)` *(1.5)* |
 | Inspect/drive open terminals | `ctx.list_sessions()` / `ctx.read_terminal(id)` / `ctx.send_terminal(id, text)` *(1.5)* |
 | Persist files / make HTTP calls | `ctx.data_dir`, `ctx.files`, `ctx.http` *(1.5)* |
 | Open a terminal tab running a one-off command (streamed) | `ctx.open_command_terminal(nickname, remote_command, title=)` *(1.6)* |
+| Open a local terminal tab running a command (streamed/interactive) | `ctx.open_local_command_terminal(command, title=)` *(1.11)* |
 | Add an item to the connection right-click menu | `ctx.ui.register_connection_action(action_id, label, icon, callback)` *(1.7)* |
 | Register a page with no menu entry / custom activation | `ctx.ui.register_page(..., add_menu_item=False, on_activate=cb)` *(1.8)* |
 | Keep one SSH connection warm & multiplex calls over it | `ctx.acquire_multiplex(nickname)` / `ctx.release_multiplex(nickname)` *(1.9)* |
@@ -155,6 +157,13 @@ Passed to `activate`. One context per plugin; `ctx.plugin_id` is your manifest i
 - `delete_key(private_path: str) -> bool` — delete a key pair; refuses paths outside the app's key dir. *(after `app_started`)*
 - `copy_key_to_host(nickname: str, public_key_path: str) -> bool` — install a public key on a host via the shared ssh-copy-id/auth path. **Blocking.** *(after `app_started`)*
 - `open_command_terminal(nickname: str, remote_command: str, *, title=None, pty_prompt=None, pty_response=None) -> bool` *(API ≥ 1.6)* — open a new terminal tab running a one-off command on the host over the single native SSH/auth path. Use this for **streamed/interactive** output that `run_command` (one-shot, captured) can't show — e.g. `docker logs -f`, `docker exec -it`, `top`. Optional `pty_prompt`/`pty_response` arm a one-shot auto-fill: the first time `pty_prompt` appears in the terminal output, `pty_response` (plus a newline) is typed into the PTY — useful to answer a remote `sudo` password prompt without putting the secret on a command line. *(after `app_started`)*
+
+### Local commands *(API ≥ 1.11)*
+- `run_local_command(command: str, *, timeout=30, input=None) -> CommandResult` — run a local shell command and capture its output. **Blocking** — call from a worker thread. In Flatpak the command runs on the host via `flatpak-spawn --host`.
+- `open_local_command_terminal(command: str, *, title=None, pty_prompt=None, pty_response=None) -> bool` — open a local terminal and run a streamed/interactive command. It uses the same host-aware local terminal as the rest of sshPilot. *(after `app_started`)*
+
+Use these only for genuinely local work. Remote commands must use `run_command` /
+`open_command_terminal` so they retain sshPilot's unified SSH and authentication path.
 
 ### Connection multiplexing — faster polling *(API ≥ 1.9)*
 If your plugin polls a host (repeated `run_command` calls — a dashboard, a stats
@@ -387,7 +396,7 @@ must be made on the UI thread.
 
 ## 9. Versioning
 
-- `API_VERSION = (major, minor)`, currently `(1, 9)`. Your manifest declares the
+- `API_VERSION = (major, minor)`, currently `(1, 11)`. Your manifest declares the
   **major** you target; the loader skips plugins whose major doesn't match.
 - Minor bumps are additive (new methods/events); your plugin keeps working. Note
   the loader checks only the **major**, so a plugin using a newer minor's API on
@@ -403,7 +412,8 @@ must be made on the UI thread.
   output); `1.7` `ui.register_connection_action` (connection right-click menu);
   `1.8` `ui.register_page(add_menu_item=…, on_activate=…)`; `1.9`
   `acquire_multiplex`/`release_multiplex` (ControlMaster connection reuse for
-  polling plugins — `run_command` reuses the warm master transparently).
+  polling plugins — `run_command` reuses the warm master transparently); `1.10`
+  `identities`; `1.11` `run_local_command`/`open_local_command_terminal`.
 
 ---
 
