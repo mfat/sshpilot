@@ -62,7 +62,8 @@ from .file_manager_integration import (
     should_hide_file_manager_options,
 )
 from .sshcopyid_window import SshCopyIdWindow, SshCopyIdRunner
-from .scp_window import ScpWindowController
+# ScpWindowController is created lazily (see the scp_controller property) so the
+# scp_window module stays off the startup import path.
 from .groups import GroupManager
 from .session_manager import SessionManager
 from .sidebar import (
@@ -927,7 +928,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # Terminal manager handles terminal-related operations
         self.terminal_manager = TerminalManager(self)
         self.sshcopyid_runner = SshCopyIdRunner(self)
-        self.scp_controller = ScpWindowController(self)
+        self._scp_controller = None  # built lazily via the scp_controller property
 
         # Add action for activating connections
         self.activate_action = Gio.SimpleAction.new('activate-connection', None)
@@ -952,6 +953,15 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._schedule_startup_tasks()
 
         logger.info("Main window initialized")
+
+    @property
+    def scp_controller(self):
+        """Lazily build the SCP controller on first use, keeping the scp_window
+        module off the startup import path."""
+        if self._scp_controller is None:
+            from .scp_window import ScpWindowController
+            self._scp_controller = ScpWindowController(self)
+        return self._scp_controller
 
     def _on_config_setting_changed(self, _config, key, value):
         """Synchronize runtime state when configuration values change."""
