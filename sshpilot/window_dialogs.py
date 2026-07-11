@@ -310,17 +310,61 @@ class WindowConfigDialogsMixin:
         mirror_logins_row.add_prefix(mirror_indent)
         dest_group.add(mirror_logins_row)
 
-        server_labels = [
-            (getattr(c, 'nickname', '') or (
-                c.get_effective_host() if hasattr(c, 'get_effective_host') else '') or '?')
-            for c in connections]
-        server_row = Adw.ComboRow(title=_("Server"))
-        server_row.set_model(Gtk.StringList.new(server_labels or [_("(no saved servers)")]))
+        # SSH target: searchable inventory host picker (same popover as jump-host / Docker).
+        from .host_picker import show_host_picker
+        selected_ssh_target = [None]
+
+        def _ssh_target_label(conn):
+            if conn is None:
+                return _("Choose a server…")
+            return (getattr(conn, 'nickname', '')
+                    or (conn.get_effective_host() if hasattr(conn, 'get_effective_host') else '')
+                    or '?')
+
+        def _ssh_target_subtitle(conn):
+            if conn is None:
+                return _("Pick from your saved connections")
+            host = getattr(conn, 'hostname', '') or getattr(conn, 'host', '')
+            user = getattr(conn, 'username', '')
+            if user and host:
+                return f"{user}@{host}"
+            return host or ''
+
+        def _set_ssh_target(conn):
+            selected_ssh_target[0] = conn
+            if conn is None:
+                server_row.set_title(_("Server"))
+                server_row.set_subtitle(_("Choose a server…"))
+            else:
+                server_row.set_title(_ssh_target_label(conn))
+                server_row.set_subtitle(
+                    _ssh_target_subtitle(conn) or _("Selected server"))
+
+        server_row = Adw.ActionRow(title=_("Server"))
+        server_row.set_activatable(True)
+        pick_btn = Gtk.Button()
+        pick_btn.set_icon_name('view-list-symbolic')
+        pick_btn.set_tooltip_text(_("Pick from inventory"))
+        pick_btn.add_css_class('flat')
+        pick_btn.set_valign(Gtk.Align.CENTER)
+
+        def _open_ssh_host_picker(_widget=None):
+            show_host_picker(
+                self, pick_btn, _set_ssh_target,
+                toast=lambda msg: self._simple_dialog(_("No servers"), msg),
+                connections=connections,
+            )
+
+        pick_btn.connect('clicked', _open_ssh_host_picker)
+        server_row.connect('activated', lambda _r: _open_ssh_host_picker())
+        server_row.add_suffix(pick_btn)
         if target_nick:
-            for i, c in enumerate(connections):
+            for c in connections:
                 if getattr(c, 'nickname', None) == target_nick:
-                    server_row.set_selected(i)
+                    _set_ssh_target(c)
                     break
+        if selected_ssh_target[0] is None:
+            _set_ssh_target(None)
         dest_group.add(server_row)
 
         ssh_dir_row = Adw.EntryRow(title=_("Remote directory"))
@@ -386,16 +430,17 @@ class WindowConfigDialogsMixin:
             dest = _dest_key()
             encrypt_on = enc_row.get_active()
             remote_text = ssh_dir_row.get_text()
+            ssh_nick = getattr(selected_ssh_target[0], 'nickname', None) if selected_ssh_target[0] else None
             if not any(options.values()):
                 reopen(
                     prefill_ids=sel_ids, encrypt_default=encrypt_on, option_defaults=options,
-                    destination=dest, remote_dir=remote_text,
+                    destination=dest, target_nick=ssh_nick, remote_dir=remote_text,
                     error=_("Choose at least one item to include in the backup."))
                 return
             if (options.get('secrets') or options.get('private_keys')) and not selected:
                 reopen(
                     prefill_ids=sel_ids, encrypt_default=encrypt_on, option_defaults=options,
-                    destination=dest, remote_dir=remote_text,
+                    destination=dest, target_nick=ssh_nick, remote_dir=remote_text,
                     error=_("Select at least one connection to include its saved passwords "
                             "or private keys."))
                 return
@@ -405,14 +450,13 @@ class WindowConfigDialogsMixin:
                 self._export_to_bitwarden(selected, options, mirror_logins=mirror)
                 return
             if dest == 'ssh':
-                idx = server_row.get_selected()
-                if not connections or idx < 0 or idx >= len(connections):
+                target = selected_ssh_target[0]
+                if target is None:
                     reopen(
                         prefill_ids=sel_ids, encrypt_default=encrypt_on, option_defaults=options,
                         destination='ssh', remote_dir=remote_text,
                         error=_("Choose a server to back up to."))
                     return
-                target = connections[idx]
                 remote = remote_text.strip() or "~/sshpilot-backups"
                 nick = getattr(target, 'nickname', None)
                 if encrypt_on:
@@ -966,36 +1010,90 @@ class WindowConfigDialogsMixin:
             self._simple_dialog(
                 _("No servers"), _("You have no saved servers to import from."))
             return
-        dialog = Adw.MessageDialog(
-            transient_for=self, modal=True, heading=_("Import from SSH Server"),
-            body=_("Choose a server and the directory your backups are stored in."))
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        box.set_margin_start(12); box.set_margin_end(12)
-        box.set_margin_top(12); box.set_margin_bottom(12)
-        labels = [getattr(c, 'nickname', '') or '?' for c in connections]
-        server_dd = Gtk.DropDown.new_from_strings(labels)
-        dir_entry = Gtk.Entry()
-        dir_entry.set_text("~/sshpilot-backups/")
-        dir_entry.set_property('placeholder-text', "~/sshpilot-backups/")
-        box.append(server_dd); box.append(dir_entry)
-        dialog.set_extra_child(box)
-        dialog.add_response('cancel', _('Cancel'))
-        dialog.add_response('next', _('Continue'))
-        dialog.set_response_appearance('next', Adw.ResponseAppearance.SUGGESTED)
-        dialog.set_default_response('next')
-        dialog.set_close_response('cancel')
 
-        def on_resp(_d, resp):
-            if resp != 'next':
+        from .host_picker import show_host_picker
+
+        dialog = Adw.Dialog()
+        dialog.set_title(_("Import from SSH Server"))
+        dialog.set_content_width(BACKUP_DIALOG_MIN_WIDTH)
+        dialog.set_follows_content_size(True)
+
+        toolbar = Adw.ToolbarView()
+        header = Adw.HeaderBar()
+        header.set_show_start_title_buttons(False)
+        header.set_show_end_title_buttons(False)
+        header.set_title_widget(Adw.WindowTitle(
+            title=_("Import from SSH Server"),
+            subtitle=_("Choose a server and the directory your backups are stored in."),
+        ))
+        cancel_btn = Gtk.Button(label=_("Cancel"))
+        cancel_btn.connect('clicked', lambda _b: dialog.close())
+        header.pack_start(cancel_btn)
+        continue_btn = Gtk.Button(label=_("Continue"))
+        continue_btn.add_css_class('suggested-action')
+        header.pack_end(continue_btn)
+        toolbar.add_top_bar(header)
+
+        page = Adw.PreferencesPage()
+        group = Adw.PreferencesGroup()
+        group.add_css_class('boxed-list')
+
+        selected_target = [None]
+
+        def _set_target(conn):
+            selected_target[0] = conn
+            if conn is None:
+                server_row.set_title(_("Server"))
+                server_row.set_subtitle(_("Choose a server…"))
+            else:
+                nick = getattr(conn, 'nickname', '') or '?'
+                host = getattr(conn, 'hostname', '') or getattr(conn, 'host', '')
+                user = getattr(conn, 'username', '')
+                server_row.set_title(nick)
+                server_row.set_subtitle(
+                    f"{user}@{host}" if user and host else (host or _("Selected server")))
+
+        server_row = Adw.ActionRow(title=_("Server"))
+        server_row.set_activatable(True)
+        pick_btn = Gtk.Button()
+        pick_btn.set_icon_name('view-list-symbolic')
+        pick_btn.set_tooltip_text(_("Pick from inventory"))
+        pick_btn.add_css_class('flat')
+        pick_btn.set_valign(Gtk.Align.CENTER)
+
+        def _open_picker(_widget=None):
+            show_host_picker(
+                self, pick_btn, _set_target,
+                toast=lambda msg: self._simple_dialog(_("No servers"), msg),
+                connections=connections,
+            )
+
+        pick_btn.connect('clicked', _open_picker)
+        server_row.connect('activated', lambda _r: _open_picker())
+        server_row.add_suffix(pick_btn)
+        _set_target(None)
+        group.add(server_row)
+
+        dir_row = Adw.EntryRow(title=_("Remote directory"))
+        dir_row.set_text("~/sshpilot-backups/")
+        group.add(dir_row)
+        page.add(group)
+        toolbar.set_content(page)
+        dialog.set_child(toolbar)
+
+        def on_continue(_btn):
+            target = selected_target[0]
+            if target is None:
+                self._simple_dialog(
+                    _("Choose a server"),
+                    _("Pick a server from your inventory to import from."))
                 return
-            idx = server_dd.get_selected()
-            if idx < 0 or idx >= len(connections):
-                return
-            target = connections[idx]
-            remote = dir_entry.get_text().strip() or "~/sshpilot-backups"
+            dialog.close()
+            remote = dir_row.get_text().strip() or "~/sshpilot-backups"
             self._ssh_import_list_backups(target, remote)
-        dialog.connect('response', on_resp)
-        dialog.present()
+
+        continue_btn.connect('clicked', on_continue)
+        dialog.present(self)
 
     def _ssh_import_list_backups(self, target, remote_dir):
         from .backup_backends import SSHServerBackupBackend
