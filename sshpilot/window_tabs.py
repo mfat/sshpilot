@@ -668,9 +668,23 @@ class WindowTabsMixin:
         finally:
             self._suppress_close_confirmation = False
 
-    def _on_bulk_close_response(self, dialog, response_id, close_fn):
+    def _add_disconnect_opt_out(self, dialog):
+        """Add the shared opt-out control to a disconnect confirmation."""
+        checkbox = Gtk.CheckButton(label=_("Don't ask me again"))
+        checkbox.set_halign(Gtk.Align.START)
+        checkbox.set_margin_top(6)
+        dialog.set_extra_child(checkbox)
+        return checkbox
+
+    def _persist_disconnect_opt_out(self, checkbox):
+        """Disable future disconnect confirmations when explicitly requested."""
+        if checkbox.get_active():
+            self.config.set_setting('confirm-disconnect', False)
+
+    def _on_bulk_close_response(self, dialog, response_id, close_fn, checkbox):
         """Handle the single confirmation dialog for a bulk tab close."""
         if response_id == 'close':
+            self._persist_disconnect_opt_out(checkbox)
             self._run_suppressed_close(close_fn)
         dialog.destroy()
 
@@ -705,7 +719,13 @@ class WindowTabsMixin:
             dialog.set_response_appearance('close', Adw.ResponseAppearance.DESTRUCTIVE)
             dialog.set_default_response('close')
             dialog.set_close_response('cancel')
-            dialog.connect('response', self._on_bulk_close_response, close_fn)
+            checkbox = self._add_disconnect_opt_out(dialog)
+            dialog.connect(
+                'response',
+                self._on_bulk_close_response,
+                close_fn,
+                checkbox,
+            )
             dialog.present()
         else:
             # Toggle off, or nothing with a live session to disconnect: close
@@ -747,7 +767,12 @@ class WindowTabsMixin:
                     dialog.set_response_appearance('close', Adw.ResponseAppearance.DESTRUCTIVE)
                     dialog.set_default_response('close')
                     dialog.set_close_response('cancel')
-                    dialog.connect('response', self._on_split_tab_close_response)
+                    checkbox = self._add_disconnect_opt_out(dialog)
+                    dialog.connect(
+                        'response',
+                        self._on_split_tab_close_response,
+                        checkbox,
+                    )
                     dialog.present()
                     return True  # Prevent immediate close; dialog handles it
                 child.cleanup_all()
@@ -789,9 +814,10 @@ class WindowTabsMixin:
             dialog.set_response_appearance('close', Adw.ResponseAppearance.DESTRUCTIVE)
             dialog.set_default_response('close')
             dialog.set_close_response('cancel')
+            checkbox = self._add_disconnect_opt_out(dialog)
             
             # Connect to response signal before showing the dialog
-            dialog.connect('response', self._on_tab_close_response)
+            dialog.connect('response', self._on_tab_close_response, checkbox)
             dialog.present()
             
             # Prevent the default close behavior while we show confirmation
@@ -804,7 +830,7 @@ class WindowTabsMixin:
                 terminal.disconnect()
             return False
 
-    def _on_tab_close_response(self, dialog, response_id):
+    def _on_tab_close_response(self, dialog, response_id, checkbox):
         """Handle the response from the close confirmation dialog."""
         # Retrieve the pending tab info
         tab_view = self._pending_close_tab_view
@@ -812,6 +838,7 @@ class WindowTabsMixin:
         terminal = self._pending_close_terminal
 
         if response_id == 'close':
+            self._persist_disconnect_opt_out(checkbox)
             # User confirmed, disconnect the terminal. The tab will be removed
             # by the AdwTabView once we finish the close operation.
             if terminal and hasattr(terminal, 'disconnect'):
@@ -837,12 +864,13 @@ class WindowTabsMixin:
         self._pending_close_connection = None
         self._pending_close_terminal = None
 
-    def _on_split_tab_close_response(self, dialog, response_id):
+    def _on_split_tab_close_response(self, dialog, response_id, checkbox):
         """Handle the confirmation dialog for closing an entire SplitViewTab."""
         tab_view = getattr(self, '_pending_close_split_tab_view', None)
         page = getattr(self, '_pending_close_split_page', None)
         child = getattr(self, '_pending_close_split_child', None)
         if response_id == 'close':
+            self._persist_disconnect_opt_out(checkbox)
             if child is not None:
                 child.cleanup_all()
             if tab_view is not None and page is not None:
