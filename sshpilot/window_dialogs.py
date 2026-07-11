@@ -139,6 +139,7 @@ class WindowConfigDialogsMixin:
         include_group = Adw.PreferencesGroup()
         include_group.set_title(_("Include"))
         include_group.set_description(_("Choose what this backup should contain."))
+        include_group.add_css_class('boxed-list')
 
         def make_switch_row(title, active=False, subtitle=None):
             row = Adw.SwitchRow(title=title)
@@ -171,8 +172,17 @@ class WindowConfigDialogsMixin:
         secrets_row.set_show_enable_switch(True)
         secrets_row.set_enable_expansion(bool(option_defaults.get('secrets', False)))
 
-        select_all_row = Adw.SwitchRow(title=_("Select all"))
-        select_all_row.set_active(False)
+        select_all_row = Adw.ActionRow(title=_("Select all"))
+        select_all_cb = Gtk.CheckButton()
+        select_all_cb.set_active(False)
+        select_all_cb.set_valign(Gtk.Align.CENTER)
+        select_all_cb.add_css_class('selection-mode')
+        select_all_row.add_suffix(select_all_cb)
+        select_all_row.set_activatable(True)
+        select_all_row.connect(
+            'activated',
+            lambda _r: select_all_cb.set_active(not select_all_cb.get_active()),
+        )
         secrets_row.add_row(select_all_row)
 
         # (cb, conn, key, action_row) — action_row is reparented when only private keys are on.
@@ -204,6 +214,7 @@ class WindowConfigDialogsMixin:
             title=_("Connections"),
             description=_("Select which connections' private key files to include."),
         )
+        keys_conn_group.add_css_class('boxed-list')
 
         include_group.add(app_settings_row)
         include_group.add(ssh_config_row)
@@ -220,11 +231,11 @@ class WindowConfigDialogsMixin:
             'private_keys': private_keys_row,
         }
 
-        def on_select_all(_row, *_a):
-            active = select_all_row.get_active()
+        def on_select_all(*_a):
+            active = select_all_cb.get_active()
             for cb, _c, _k, _r in checks:
                 cb.set_active(active)
-        select_all_row.connect('notify::active', on_select_all)
+        select_all_cb.connect('notify::active', on_select_all)
 
         def _secrets_enabled():
             return bool(secrets_row.get_enable_expansion())
@@ -274,6 +285,7 @@ class WindowConfigDialogsMixin:
         sync_connection_controls()
 
         dest_group = Adw.PreferencesGroup(title=_("Destination"))
+        dest_group.add_css_class('boxed-list')
         dest_labels = [
             _("Save to file (.spbk)"),
             _("Save to Bitwarden"),
@@ -292,6 +304,10 @@ class WindowConfigDialogsMixin:
             title=_("Also copy saved secrets as Bitwarden login items"),
             subtitle=_("Creates normal login entries in your vault in addition to the backup note."),
         )
+        # Indent under the Bitwarden destination so it reads as a dependent option.
+        mirror_indent = Gtk.Box()
+        mirror_indent.set_size_request(20, 1)
+        mirror_logins_row.add_prefix(mirror_indent)
         dest_group.add(mirror_logins_row)
 
         server_labels = [
@@ -313,6 +329,7 @@ class WindowConfigDialogsMixin:
         page.add(dest_group)
 
         enc_group = Adw.PreferencesGroup(title=_("Encryption"))
+        enc_group.add_css_class('boxed-list')
         enc_row = Adw.SwitchRow(
             title=_("Encrypt with a passphrase"),
             subtitle=_("Without a passphrase, secrets are written in plain text."),
