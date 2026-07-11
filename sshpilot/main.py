@@ -105,7 +105,7 @@ patch_gtk_image()
 
 from .window import MainWindow
 from .platform_utils import is_macos, get_data_dir, get_state_dir
-from .preferences import should_hide_file_manager_options
+from .file_manager_integration import should_hide_file_manager_options
 from .startup_info import print_startup_info
 
 class SshPilotApplication(Adw.Application):

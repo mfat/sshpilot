@@ -1118,12 +1118,6 @@ class ConnectionManager(GObject.Object):
 
     def _post_init_slow_path(self):
         """Run slower initialization steps after UI is responsive."""
-        try:
-            # Key scan
-            self.load_ssh_keys()
-        except Exception as e:
-            logger.debug(f"SSH key scan skipped/failed: {e}")
-        
         # Initialize secure storage via the pluggable secret manager.
         self.secure_storage_backend = 'none'
         try:

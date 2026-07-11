@@ -172,78 +172,15 @@ def _install_group_display_preview_css():
     except Exception:
         logger.debug("Failed to install group display preview CSS", exc_info=True)
 
-def macos_third_party_terminal_available() -> bool:
-    """Check if a third-party terminal is available on macOS."""
-    if not is_macos():
-        return False
-
-    terminals = [
-        "iterm2",
-        "ghostty",
-        "alacritty",
-        "iterm",
-        "terminator",
-        "kitty",
-        "tmux",
-        "warp",
-    ]
-
-    applications_dir = "/Applications"
-    try:
-        for entry in os.listdir(applications_dir):
-            lower = entry.lower()
-            if any(lower.startswith(t) and entry.endswith(".app") for t in terminals):
-                return True
-    except Exception:
-        pass
-
-    for terminal in terminals:
-        if shutil.which(terminal):
-            return True
-
-    return False
-
-
-def should_hide_external_terminal_options() -> bool:
-    """Check if external terminal options should be hidden.
-
-    Returns True when running in Flatpak or when on macOS without a supported
-    third-party terminal.
-    """
-    return is_flatpak() or (
-        is_macos() and not macos_third_party_terminal_available()
-    )
-
-
-def should_show_force_internal_file_manager_toggle() -> bool:
-    """Return True when the built-in toggle for forcing the internal manager should be shown."""
-
-    try:
-        if is_macos():
-            return False
-        return bool(has_native_gvfs_support())
-    except Exception as exc:  # pragma: no cover - defensive
-        logger.debug("Failed to determine GVFS availability: %s", exc)
-        return False
-
-
-def should_hide_file_manager_options() -> bool:
-    """Check if file manager options should be hidden.
-
-    File manager UI should only be hidden when neither the native GVFS
-    integration nor the built-in manager are available. This allows the
-    Manage Files button to remain visible on platforms like macOS or Flatpak
-    where the new in-app manager is preferred.
-    """
-
-    try:
-        if has_native_gvfs_support():
-            return False
-        if has_internal_file_manager():
-            return False
-    except Exception as exc:  # pragma: no cover - defensive
-        logger.debug("File manager capability detection failed: %s", exc)
-    return True
+# These capability helpers moved to file_manager_integration so callers that
+# only need a boolean don't pull this heavy Preferences module onto the startup
+# path. Re-exported here for backward compatibility and this module's own uses.
+from .file_manager_integration import (  # noqa: E402,F401
+    macos_third_party_terminal_available,
+    should_hide_external_terminal_options,
+    should_show_force_internal_file_manager_toggle,
+    should_hide_file_manager_options,
+)
 
 
 class PreferencesWindow(Adw.Window):

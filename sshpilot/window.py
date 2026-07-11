@@ -55,8 +55,9 @@ from .connection_sort import (
     apply_connection_sort as apply_sort_to_manager,
 )
 # Port forwarding UI is now integrated into connection_dialog.py
-from .connection_dialog import ConnectionDialog
-from .preferences import (
+# ConnectionDialog is imported lazily at its use site (show_connection_dialog) so
+# the connection-dialog module stays off the startup import path.
+from .file_manager_integration import (
     should_hide_external_terminal_options,
     should_hide_file_manager_options,
 )
@@ -4628,7 +4629,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         split_source_for_dialog = split_group_source or (getattr(connection, 'source', None) if connection else None)
         original_token = split_original_nickname or (connection.nickname if connection else None)
 
-        # Create connection dialog
+        # Create connection dialog (imported lazily to keep it off startup path)
+        from .connection_dialog import ConnectionDialog
         dialog = ConnectionDialog(
             self,
             connection,

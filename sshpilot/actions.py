@@ -7,7 +7,7 @@ from typing import Optional
 from gi.repository import Gio, Gtk, Adw, GLib, Gdk
 from gettext import gettext as _
 
-from .preferences import (
+from .file_manager_integration import (
     should_hide_external_terminal_options,
     should_hide_file_manager_options,
 )

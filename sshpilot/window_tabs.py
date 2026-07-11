@@ -25,7 +25,7 @@ from .plugins.api import Capability
 from .plugins.registry import capabilities_for
 from .connection_display import get_connection_alias, get_connection_host
 from .file_manager_integration import launch_remote_file_manager
-from .preferences import (
+from .file_manager_integration import (
     should_hide_external_terminal_options,
     should_hide_file_manager_options,
 )

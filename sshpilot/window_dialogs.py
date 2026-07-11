@@ -20,7 +20,6 @@ from gi.repository import Adw, Gio, GLib, Gtk
 from gettext import gettext as _
 
 from .platform_utils import get_config_dir
-from .preferences import PreferencesWindow
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +52,9 @@ class WindowConfigDialogsMixin:
             except Exception:
                 self._preferences_window = None
         try:
+            # Imported lazily so the heavy Preferences module stays off the
+            # startup path — it's only needed when the dialog is opened.
+            from .preferences import PreferencesWindow
             preferences_window = PreferencesWindow(self, self.config)
             self._preferences_window = preferences_window
             preferences_window.connect(
