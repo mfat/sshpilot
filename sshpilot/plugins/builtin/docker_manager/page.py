@@ -267,13 +267,20 @@ class DockerConsolePage(
         return self._sudo_passwords.get(nickname) if nickname else None
 
     def _connection_for(self, nickname: str) -> Optional[Any]:
-        for c in self._connections:
-            if getattr(c, "nickname", None) == nickname:
-                return c
+        # Plugin list entries are ConnectionInfo snapshots and intentionally do
+        # not expose SSH-only fields such as ``auth_method`` or ``password``.
+        # Prefer the authoritative Connection object for authentication checks.
         try:
-            return self.ctx.connection_manager.find_connection_by_nickname(nickname)
+            connection = self.ctx.connection_manager.find_connection_by_nickname(
+                nickname)
+            if connection is not None:
+                return connection
         except Exception:
-            return None
+            pass
+        for connection in self._connections:
+            if getattr(connection, "nickname", None) == nickname:
+                return connection
+        return None
 
     def _host_user_for(self, nickname: str) -> tuple[Optional[str], str]:
         """(host, username) used as the keyring identity for the sudo password —

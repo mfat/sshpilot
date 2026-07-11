@@ -28,6 +28,12 @@ def _password_auth_ctx(*, stored_password=None):
         password = None
 
     connection = Connection()
+    connection_info = types.SimpleNamespace(
+        nickname="web",
+        protocol="ssh",
+        host="example.test",
+        username="alice",
+    )
     manager = types.SimpleNamespace(
         find_connection_by_nickname=lambda _nick: connection,
         get_connection_password=lambda _connection: stored_password,
@@ -40,7 +46,9 @@ def _password_auth_ctx(*, stored_password=None):
             get=lambda key, default=None: default,
             set=lambda key, value: None,
         ),
-        list_connections=lambda: [connection],
+        # Plugin APIs return a ConnectionInfo snapshot without auth_method;
+        # password preflight must resolve the authoritative saved Connection.
+        list_connections=lambda: [connection_info],
         open_command_terminal=lambda *args, **kwargs: True,
         ui=types.SimpleNamespace(notify=lambda *args, **kwargs: None),
     )
