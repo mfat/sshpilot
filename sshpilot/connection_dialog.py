@@ -7,6 +7,7 @@ import os
 import logging
 import re
 import subprocess
+import threading
 import types
 from typing import Optional, Dict, Any
 
@@ -1234,6 +1235,7 @@ class FileListEditor(Adw.PreferencesGroup):
                     pass_entry.set_text(existing)
             except Exception:
                 pass
+        row._pass_initial = pass_entry.get_text()
         # Clear the error state as soon as the user edits the value again.
         pass_entry.connect('changed', lambda e: e.remove_css_class('error'))
         # Commit on Enter and when focus leaves the entry.
@@ -1256,6 +1258,7 @@ class FileListEditor(Adw.PreferencesGroup):
         return row
 
     def _commit_passphrase(self, pass_entry, path, norm, force=False):
+        """Validate an edited passphrase; persistence is deferred to dialog save."""
         text = pass_entry.get_text()
         if text and callable(self._verify):
             try:
@@ -1264,27 +1267,9 @@ class FileListEditor(Adw.PreferencesGroup):
                 ok = False
             if not ok:
                 pass_entry.add_css_class('error')
-                return
+                return False
         pass_entry.remove_css_class('error')
-        if self._connection_manager is None:
-            return
-        if not text:
-            # Clearing a passphrase deletes it (not gated by the vault lock state).
-            if hasattr(self._connection_manager, 'delete_key_passphrase'):
-                try:
-                    self._connection_manager.delete_key_passphrase(norm)
-                except Exception:
-                    logger.debug("Failed to delete passphrase for %s", norm, exc_info=True)
-            return
-        # Storing a passphrase needs the selected session vault unlocked. If it is
-        # locked, don't try now (it would fail silently) — defer to the save flow, which
-        # unlocks first, then calls flush_passphrases(force=True).
-        if not force and self._secret_backend_needs_unlock():
-            return
-        try:
-            self._connection_manager.store_key_passphrase(norm, text)
-        except Exception:
-            logger.debug("Failed to store passphrase for %s", norm, exc_info=True)
+        return True
 
     @staticmethod
     def _secret_backend_needs_unlock() -> bool:
@@ -1316,16 +1301,30 @@ class FileListEditor(Adw.PreferencesGroup):
                 pass
         return False
 
-    def flush_passphrases(self) -> None:
-        """Store every non-empty key passphrase now (called after an unlock so secrets
-        land in the chosen vault). Only stores non-empty entries — never deletes — so an
-        entry left blank because the vault was locked is not mistaken for a clear."""
+    def pending_passphrase_operations(self):
+        """Return changed passphrases as GTK-free worker operations.
+
+        Each tuple is ``("store"|"delete", normalized_path, value)``.  Reading and
+        validating entries stays on the GTK thread; only backend I/O uses these snapshots.
+        """
+        operations = []
         for entry, path, norm in self._passphrase_rows():
             try:
-                if entry.get_text():
-                    self._commit_passphrase(entry, path, norm, force=True)
+                if not self._commit_passphrase(entry, path, norm):
+                    return None
+                text = entry.get_text()
+                row = next(
+                    (candidate for candidate in self._rows
+                     if getattr(candidate, '_pass_entry', None) is entry),
+                    None,
+                )
+                initial = getattr(row, '_pass_initial', '') if row is not None else ''
+                if text == initial:
+                    continue
+                operations.append(('store' if text else 'delete', norm, text))
             except Exception:
-                logger.debug("Failed to flush passphrase for %s", norm, exc_info=True)
+                logger.debug("Failed to collect passphrase for %s", norm, exc_info=True)
+        return operations
 
     def _remove_row(self, path, row):
         self._model.remove(path)
@@ -3199,6 +3198,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
 
     def on_save_clicked(self, *_args):
         """Handle save button click or dialog save response"""
+        if getattr(self, '_secret_save_in_progress', False):
+            return
         # Plugin protocols collect their own (declarative) fields; the rest of
         # this method is the SSH path, which serializes to ~/.ssh/config.
         backend = self._selected_protocol_backend()
@@ -3308,6 +3309,14 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         nickname_for_meta = connection_data.get('nickname', '').strip()
         self._persist_connection_meta(nickname_for_meta)
 
+        if self.is_editing and self.connection:
+            connection_data['__previous_secret_identity'] = {
+                'nickname': getattr(self.connection, 'nickname', ''),
+                'hostname': getattr(self.connection, 'hostname', ''),
+                'host': getattr(self.connection, 'host', ''),
+                'username': getattr(self.connection, 'username', ''),
+            }
+
         # Update the connection object locally when editing (do not persist here; window handles persistence)
         if self.is_editing and self.connection:
             try:
@@ -3322,31 +3331,162 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             # Explicitly update forwarding rules to ensure they're fresh
             self.connection.forwarding_rules = forwarding_rules
             
-        # Emit signal with connection data. If a secret is being saved (a host password
-        # or a key passphrase) but the chosen session backend (Bitwarden/Vaultwarden) is
-        # locked or not signed in, unlock first so the secret lands in the chosen vault
-        # instead of failing silently. The prompt owns its own messaging.
+        # Unlock first when needed, then persist all changed secrets in one worker. Secret
+        # backends may invoke external tools (notably ``bw``), so none of this I/O may run
+        # in the GTK signal handler.
         if self._needs_secret_unlock_before_save(connection_data):
             try:
                 from .secret_unlock_dialog import prompt_unlock
 
                 def _after_unlock(ok):
                     if ok:
-                        editor = getattr(self, 'key_editor', None)
-                        if editor is not None:
-                            try:
-                                editor.flush_passphrases()
-                            except Exception:
-                                logger.debug("flush passphrases after unlock failed",
-                                             exc_info=True)
-                    self._emit_connection_saved(connection_data)
+                        self._store_secrets_then_save(connection_data)
+                    else:
+                        self._set_secret_save_busy(False)
 
+                self._set_secret_save_busy(True)
                 prompt_unlock(self, on_done=_after_unlock)
                 return
             except Exception:
-                logger.debug("Secret unlock-on-save gate failed; saving anyway",
-                             exc_info=True)
-        self._emit_connection_saved(connection_data)
+                logger.debug("Secret unlock-on-save gate failed", exc_info=True)
+                self._set_secret_save_busy(False)
+                self.show_error(_("The secure storage backend could not be unlocked."))
+                return
+        self._store_secrets_then_save(connection_data)
+
+    def _set_secret_save_busy(self, busy):
+        self._secret_save_in_progress = bool(busy)
+        for button in getattr(self, '_save_buttons', []) or []:
+            try:
+                button.set_sensitive(not busy)
+            except Exception:
+                pass
+
+    def _store_secrets_then_save(self, connection_data):
+        """Persist changed secrets off-thread, then emit the normal save signal."""
+        operations = []
+        previous_identity = connection_data.pop('__previous_secret_identity', None)
+        manager = getattr(self, 'connection_manager', None)
+        if manager is None:
+            manager = getattr(getattr(self, 'parent_window', None),
+                              'connection_manager', None)
+
+        password = connection_data.get('password') or ''
+        if password or connection_data.get('password_changed'):
+            operations.append(('password', 'store' if password else 'delete', '', password))
+
+        editor = getattr(self, 'key_editor', None)
+        if editor is not None:
+            try:
+                passphrase_operations = editor.pending_passphrase_operations()
+                if passphrase_operations is None:
+                    self._set_secret_save_busy(False)
+                    self.show_error(_("Please correct the invalid key passphrase."))
+                    return
+                operations.extend(
+                    ('passphrase', action, path, value)
+                    for action, path, value in passphrase_operations)
+            except Exception:
+                logger.debug("Failed to collect key passphrase changes", exc_info=True)
+
+        # update_connection normally persists the password synchronously. Mark this save
+        # as pre-handled even when nothing changed so it does not repeat backend I/O.
+        connection_data['__secret_storage_done'] = True
+        if not operations:
+            self._set_secret_save_busy(False)
+            self._emit_connection_saved(connection_data)
+            return
+        if manager is None:
+            self.show_error(_("Secure storage is unavailable."))
+            return
+
+        from .secret_storage import get_secret_manager
+        from .secret_unlock_dialog import _friendly_backend_name, _spinner_dialog
+
+        secret_manager = get_secret_manager()
+        backend = secret_manager.selected_backend()
+        backend_name = _friendly_backend_name(backend)
+        _set_status, close_spinner, spinner = _spinner_dialog(
+            self,
+            _("Saving to {backend}").format(backend=backend_name),
+            _("Saving passwords and passphrases to secure storage…"),
+        )
+        self._set_secret_save_busy(True)
+
+        def _worker():
+            ok = True
+            try:
+                for secret_type, action, key, value in operations:
+                    if secret_type == 'password':
+                        username = connection_data.get('username') or ''
+                        if action == 'store':
+                            ok = bool(manager.store_connection_password(
+                                connection_data, value, username=username,
+                                previous_connection=previous_identity))
+                        else:
+                            removed = bool(manager.delete_connection_passwords(
+                                connection_data, username=username))
+                            if previous_identity:
+                                previous_user = previous_identity.get('username') or username
+                                removed = bool(manager.delete_connection_passwords(
+                                    previous_identity,
+                                    username=previous_user)) or removed
+                            ok = removed
+                    elif action == 'store':
+                        ok = bool(manager.store_key_passphrase(key, value))
+                    else:
+                        ok = bool(manager.delete_key_passphrase(key))
+                    if not ok:
+                        break
+            except Exception:
+                logger.exception("Failed to save connection secrets")
+                ok = False
+            GLib.idle_add(self._finish_secret_save, connection_data, ok,
+                          close_spinner, spinner, True)
+
+        completion_called = [False]
+
+        def _after_config_saved(ok):
+            completion_called[0] = True
+            if ok:
+                threading.Thread(target=_worker, daemon=True).start()
+            else:
+                self._finish_secret_save(
+                    connection_data, False, close_spinner, spinner, False)
+
+        # Preserve the established save order: persist connection/config data first, then
+        # its credentials. The private marker keeps update_connection from performing the
+        # same secret I/O synchronously inside this signal emission.
+        connection_data['__save_completion'] = _after_config_saved
+        self.emit('connection-saved', connection_data)
+        if not completion_called[0]:
+            _after_config_saved(False)
+
+    def _finish_secret_save(self, connection_data, ok, close_spinner, spinner,
+                            settings_saved):
+        """Finish an asynchronous secret save on the GTK main thread."""
+        def _after_closed(*_args):
+            self._set_secret_save_busy(False)
+            if ok:
+                self.close()
+            elif not settings_saved:
+                self.show_error(_("The connection settings could not be saved."))
+            else:
+                self.show_error(_(
+                    "The connection settings were saved, but secure storage rejected "
+                    "a password or passphrase. Please try saving again."
+                ))
+
+        connected = False
+        try:
+            spinner.connect('closed', _after_closed)
+            connected = True
+        except Exception:
+            pass
+        close_spinner()
+        if not connected:
+            _after_closed()
+        return False
 
     def _emit_connection_saved(self, connection_data):
         """Emit the saved signal and close the dialog."""

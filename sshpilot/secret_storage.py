@@ -1256,6 +1256,12 @@ class BitwardenBackend(SecretBackend):
         return base64.b64encode(json.dumps(item).encode("utf-8"))
 
     def store(self, spec: SecretSpec, secret: str) -> bool:
+        # Serialize cache lookup + create/edit as one transaction. UI saves run in
+        # workers, and two concurrent misses must not create duplicate vault items.
+        with self._lock:
+            return self._store_locked(spec, secret)
+
+    def _store_locked(self, spec: SecretSpec, secret: str) -> bool:
         token = self._current_token()
         if not token or not self._bin:
             return False
@@ -1318,6 +1324,10 @@ class BitwardenBackend(SecretBackend):
         return out
 
     def delete(self, spec: SecretSpec) -> bool:
+        with self._lock:
+            return self._delete_locked(spec)
+
+    def _delete_locked(self, spec: SecretSpec) -> bool:
         token = self._current_token()
         if not token or not self._bin:
             return False
@@ -1535,6 +1545,12 @@ class KdbxBackend(SecretBackend):
         return (entry.password if entry else None) or None
 
     def store(self, spec: SecretSpec, secret: str) -> bool:
+        # PyKeePass mutates one in-memory database object and rewrites the whole file.
+        # Serialize the complete transaction now that UI callers may save off-thread.
+        with self._lock:
+            return self._store_locked(spec, secret)
+
+    def _store_locked(self, spec: SecretSpec, secret: str) -> bool:
         kp = self._db()
         if kp is None:
             return False
@@ -1568,6 +1584,10 @@ class KdbxBackend(SecretBackend):
             return False
 
     def delete(self, spec: SecretSpec) -> bool:
+        with self._lock:
+            return self._delete_locked(spec)
+
+    def _delete_locked(self, spec: SecretSpec) -> bool:
         kp = self._db()
         if kp is None:
             return False

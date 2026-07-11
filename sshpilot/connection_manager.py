@@ -1872,10 +1872,12 @@ class ConnectionManager(GObject.Object):
         return stored
 
     def store_connection_password(self, connection, password: str,
-                                  username: Optional[str] = None) -> bool:
+                                  username: Optional[str] = None,
+                                  previous_connection=None) -> bool:
         """Store a connection's SSH password under the canonical host key.
 
-        Clears legacy copies stored under older host aliases (nickname, etc.).
+        Clears legacy copies stored under older host aliases (nickname, etc.) and,
+        when an edited connection changed host or username, its previous identity.
         """
         from .credential_model import canonical_password_host, password_host_candidates
 
@@ -1885,9 +1887,24 @@ class ConnectionManager(GObject.Object):
             return False
         stored = self.store_password(canonical, user, password)
         if stored:
-            for host in password_host_candidates(connection):
-                if host and host != canonical:
-                    self.delete_password(host, user)
+            cleanup = {
+                (host, user)
+                for host in password_host_candidates(connection)
+                if host and host != canonical
+            }
+            if previous_connection:
+                previous_user = (
+                    previous_connection.get('username')
+                    if isinstance(previous_connection, dict)
+                    else getattr(previous_connection, 'username', '')
+                ) or user
+                cleanup.update(
+                    (host, previous_user)
+                    for host in password_host_candidates(previous_connection)
+                    if host and (host != canonical or previous_user != user)
+                )
+            for host, cleanup_user in cleanup:
+                self.delete_password(host, cleanup_user)
         return stored
 
     def get_password(self, host: str, username: str) -> Optional[str]:
@@ -2613,6 +2630,9 @@ class ConnectionManager(GObject.Object):
     def update_connection(self, connection: Connection, new_data: Dict[str, Any]) -> bool:
         """Update an existing connection"""
         try:
+            secret_storage_done = bool(new_data.pop('__secret_storage_done', False))
+            if isinstance(getattr(connection, 'data', None), dict):
+                connection.data.pop('__secret_storage_done', None)
             protocol = (new_data.get('protocol')
                         or getattr(connection, 'protocol', 'ssh') or 'ssh')
             if protocol != 'ssh':
@@ -2669,7 +2689,7 @@ class ConnectionManager(GObject.Object):
                 self.update_ssh_config_file(connection, new_data, original_nickname)
 
             # Handle password storage/removal
-            if 'password' in new_data:
+            if 'password' in new_data and not secret_storage_done:
                 pwd = new_data.get('password') or ''
                 curr_user = new_data.get('username') or getattr(connection, 'username', prev_user)
                 if pwd:
