@@ -18,6 +18,20 @@ from .platform_utils import is_flatpak, get_data_dir
 
 logger = logging.getLogger(__name__)
 
+# CSS absolute units: 1pt = 1/72in, 1px = 1/96in → 1pt = 96/72 px.
+# Pango/VTE and the Preferences font preview use points; xterm.js fontSize is CSS px.
+_PT_TO_CSS_PX = 96.0 / 72.0
+
+
+def pango_points_to_xterm_px(points: float, scale: float = 1.0) -> int:
+    """Convert a Pango/CSS point size to an xterm.js ``fontSize`` (CSS pixels).
+
+    Preferences ▸ Terminal font preview uses ``font-size: Npt``; without this
+    conversion, PyXterm treated ``N`` as pixels and rendered ~25% smaller than
+    the preview (and than VTE at the same setting).
+    """
+    return max(1, int(round(float(points) * _PT_TO_CSS_PX * float(scale))))
+
 
 class BaseTerminalBackend(Protocol):
     """Protocol describing the behaviour a terminal backend must implement."""
@@ -579,7 +593,7 @@ class PyXtermTerminalBackend:
         self._child_pid: Optional[int] = None
         self._child_exited_callback: Optional[Callable] = None
         self._font_scale: float = 1.0
-        self._base_font_size: Optional[int] = None  # Store base font size for zoom calculations
+        self._base_font_size: Optional[float] = None  # Base size in points for zoom
         self._search_addon_loaded = False  # Track if search addon is loaded
         self._current_search_term: Optional[str] = None  # Current search term
         self._current_search_is_regex: bool = False  # Whether current search is regex
@@ -781,20 +795,23 @@ class PyXtermTerminalBackend:
             return
         
         try:
-            # Extract font family and size from Pango font description
+            # Extract font family and size from Pango font description.
+            # Pango size is in points (same unit as Preferences font preview CSS).
             font_family = font_desc.get_family() or "Monospace"
-            font_size = int(font_desc.get_size() / Pango.SCALE)  # Convert from Pango units to points
-            
-            # Store base font size for zoom calculations (only if not already set or if scale is 1.0)
+            font_size_pt = font_desc.get_size() / Pango.SCALE
+
+            # Store base size in points for zoom (convert to px only when applying).
             if self._base_font_size is None or self._font_scale == 1.0:
-                self._base_font_size = font_size
-            
-            # Apply current zoom scale to font size
-            scaled_font_size = int(font_size * self._font_scale)
-            
+                self._base_font_size = font_size_pt
+
+            # xterm.js fontSize is CSS pixels, not points.
+            scaled_font_size_px = pango_points_to_xterm_px(
+                font_size_pt, self._font_scale
+            )
+
             # Escape single quotes in font family for JavaScript
             font_family_escaped = font_family.replace("'", "\\'").replace('"', '\\"')
-            
+
             # Use xterm.js options API to set font (per xterm.js documentation)
             # According to https://xtermjs.org/docs/api/terminal/classes/terminal/
             # We can set multiple options at once or individually
@@ -804,7 +821,7 @@ class PyXtermTerminalBackend:
                 if (typeof window.term !== 'undefined') {{
                     // Set font options (can set individually or together)
                     window.term.options.fontFamily = '{font_family_escaped}';
-                    window.term.options.fontSize = {scaled_font_size};
+                    window.term.options.fontSize = {scaled_font_size_px};
                     
                     // Use setTimeout to ensure font size change is applied before fitting
                     setTimeout(function() {{
@@ -828,7 +845,13 @@ class PyXtermTerminalBackend:
             }})();
             """
             self._run_javascript(font_js)
-            logger.debug(f"Set font to {font_family} {scaled_font_size}pt (base: {font_size}pt, scale: {self._font_scale}x) for PyXterm backend")
+            logger.debug(
+                "Set font to %s %spx (base: %spt, scale: %sx) for PyXterm backend",
+                font_family,
+                scaled_font_size_px,
+                font_size_pt,
+                self._font_scale,
+            )
         except Exception as e:
             logger.debug(f"Failed to set font for PyXterm backend: {e}", exc_info=True)
 
@@ -1018,9 +1041,9 @@ class PyXtermTerminalBackend:
             # Store new scale for later retrieval
             self._font_scale = scale
             
-            # Calculate new font size based on base font size and scale
+            # Base size is stored in points; xterm.js wants CSS pixels.
             if self._base_font_size is not None:
-                new_font_size = int(self._base_font_size * scale)
+                new_font_size = pango_points_to_xterm_px(self._base_font_size, scale)
                 # Change fontSize via xterm.js options API (per xterm.js documentation)
                 # According to https://xtermjs.org/docs/api/terminal/classes/terminal/
                 # fontSize is a Terminal option that can be set via term.options.fontSize

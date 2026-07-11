@@ -51,8 +51,9 @@ def build_shell_html(
     """Return one self-contained HTML document for the embedded terminal.
 
     ``theme`` is an xterm.js theme dict (or None). ``font_family``/``font_size``
-    seed the initial Terminal options; runtime changes still go through the
-    backend's ``apply_theme``/``set_font`` JS injection.
+    seed the initial Terminal options; ``font_size`` is CSS pixels (xterm.js
+    units). Runtime changes still go through the backend's ``apply_theme``/
+    ``set_font`` JS injection, which converts Pango points → CSS pixels.
     """
     if theme is None and font_family is None and font_size is None and background == "#000000":
         return _build_default_shell_html()
