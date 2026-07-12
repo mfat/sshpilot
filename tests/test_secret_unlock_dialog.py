@@ -6,6 +6,8 @@ prompt returns False, so the caller won't silently proceed when a ridden prompt 
 deferred startup unlock) resolves still-locked.
 """
 
+import pytest
+
 import sshpilot.secret_storage as ss
 from sshpilot import secret_unlock_dialog as d
 
@@ -48,10 +50,16 @@ def test_prompt_unlock_returns_false_when_riding(monkeypatch):
         d._pending_callbacks.clear()
 
 
-def test_unlock_at_startup_prompts_when_session_backend_unavailable(monkeypatch):
+@pytest.mark.parametrize("name, session_backed", [
+    ("bitwarden", True),   # session backend
+    ("rbw", False),        # passive backend — same check now covers it
+    ("pass", False),
+])
+def test_unlock_at_startup_prompts_when_backend_unavailable(monkeypatch, name, session_backed):
     class FakeBackend:
-        name = "bitwarden"
-        session_backed = True
+        def __init__(self):
+            self.name = name
+            self.session_backed = session_backed
 
         def is_available(self):
             return False
@@ -69,7 +77,7 @@ def test_unlock_at_startup_prompts_when_session_backend_unavailable(monkeypatch)
     prompted = []
     monkeypatch.setattr(d, "get_secret_manager", lambda: FakeManager())
     monkeypatch.setattr(
-        d, "_prompt_unavailable_session_backend",
+        d, "_prompt_unavailable_backend",
         lambda parent, backend: prompted.append(backend.name),
     )
     monkeypatch.setattr(d, "prompt_unlock", lambda *_a, **_k: (_ for _ in ()).throw(
@@ -77,7 +85,33 @@ def test_unlock_at_startup_prompts_when_session_backend_unavailable(monkeypatch)
     ))
 
     assert d.unlock_at_startup(None) is False
-    assert prompted == ["bitwarden"]
+    assert prompted == [name]   # every selected+unavailable backend is surfaced
+
+
+def test_unlock_at_startup_noop_for_available_passive_backend(monkeypatch):
+    # An available passive backend (rbw installed) has no unlock lifecycle -> no prompt.
+    class FakeBackend:
+        name = "rbw"
+        session_backed = False
+
+        def is_available(self):
+            return True
+
+    class FakeManager:
+        def set_selected(self, _name):
+            pass
+
+        def selected_backend(self):
+            return FakeBackend()
+
+        def selected_needs_unlock(self):
+            raise AssertionError("passive backend must not reach the unlock check")
+
+    monkeypatch.setattr(d, "get_secret_manager", lambda: FakeManager())
+    monkeypatch.setattr(d, "_prompt_unavailable_backend", lambda *_a: (_ for _ in ()).throw(
+        AssertionError("available backend must not prompt unavailable")
+    ))
+    assert d.unlock_at_startup(None) is False
 
 
 def test_startup_unlock_prompts_when_signed_in_but_locked(monkeypatch):

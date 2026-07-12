@@ -134,10 +134,18 @@ def _spinner_dialog(parent, heading, body):
     return status.set_text, _close, dialog
 
 
-def _prompt_unavailable_session_backend(parent, backend):
-    """Tell the user the selected session backend cannot run (e.g. missing ``bw``)."""
+def _prompt_unavailable_backend(parent, backend):
+    """Tell the user the selected secret backend cannot run (missing CLI, database, …).
+
+    Shared by every backend so the startup notice is consistent; each routes to its own
+    remedy (rbw → install + link, Bitwarden → set-up flow, others → a generic notice)."""
     name = (getattr(backend, "name", "") or "").strip().lower()
     friendly = _friendly_backend_name(backend)
+
+    if name == "rbw":
+        from .rbw_setup import _install_dialog
+        _install_dialog(parent)
+        return
 
     if name == "bitwarden":
         from .bitwarden_setup import run_bitwarden_setup
@@ -184,11 +192,12 @@ def unlock_at_startup(window):
     locked, prompt to unlock it at app startup — so the vault is ready (and warm) before
     the first connection, with the same password dialog + spinner used elsewhere.
 
-    When a session-backed backend is selected but unavailable (e.g. ``bw`` was
-    removed), show a user-facing notice instead of failing silently.
+    When *any* selected backend is unavailable (a missing ``bw``/``rbw``/``pass`` CLI, a
+    KeePassXC database that isn't set, …), show a user-facing notice instead of failing
+    silently — the same check for every backend, not just the session ones.
 
-    No-op for passive backends or an already-unlocked vault. Safe to schedule via
-    ``GLib.idle_add`` from the application's activation. Returns ``False`` so it runs
+    No-op for an available passive backend or an already-unlocked vault. Safe to schedule
+    via ``GLib.idle_add`` from the application's activation. Returns ``False`` so it runs
     once when used as an idle source."""
     try:
         from .config import Config
@@ -200,10 +209,18 @@ def unlock_at_startup(window):
         except Exception:
             pass
         backend = manager.selected_backend()
-        if backend is None or not getattr(backend, "session_backed", False):
+        if backend is None:
             return False
+        # Same availability check for every selected backend, not just session ones: if the
+        # chosen store can't run (missing CLI / database), tell the user at startup instead
+        # of silently failing to autofill later. is_available() is a cheap presence check
+        # for all backends (no subprocess), so it's fine on the main loop.
         if not backend.is_available():
-            _prompt_unavailable_session_backend(window, backend)
+            _prompt_unavailable_backend(window, backend)
+            return False
+        # Passive backends (rbw, pass, keyring, …) have no unlock lifecycle — once we know
+        # they're available there is nothing more to do at startup.
+        if not getattr(backend, "session_backed", False):
             return False
         if not manager.selected_needs_unlock():
             return False

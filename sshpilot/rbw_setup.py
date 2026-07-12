@@ -349,19 +349,3 @@ def run_rbw_setup(window, on_done: Optional[Callable[[bool], None]] = None) -> N
         _login_async(window, cb)
 
     _thread(worker)
-
-
-def warn_if_selected_rbw_unavailable(window) -> None:
-    """On startup, warn once if rbw is the selected secret backend but the CLI is missing.
-
-    Availability is a cheap binary-presence check (no subprocess), so this is safe to run
-    on the main loop. Without it the user only discovers the missing CLI when they open
-    Preferences — connections that rely on rbw-stored secrets would silently not autofill."""
-    try:
-        from .secret_storage import get_secret_manager
-        backend = get_secret_manager().selected_backend()
-        if (backend is not None and getattr(backend, "name", "") == "rbw"
-                and not backend.is_available()):
-            _install_dialog(window)
-    except Exception:
-        logger.debug("rbw startup availability check failed", exc_info=True)
