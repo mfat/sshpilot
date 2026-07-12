@@ -6,22 +6,68 @@ import logging
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
 
-from gi.repository import Gtk, Adw
+from gi.repository import Gtk, Adw, Gdk
 
 from gettext import gettext as _
 
 from .platform_utils import is_macos
+from . import icon_utils
 
 logger = logging.getLogger(__name__)
+
+_CSS = b"""
+.startpage-hero {
+    background-color: alpha(@accent_bg_color, 0.15);
+    border: 1px solid alpha(@accent_color, 0.3);
+    border-radius: 16px;
+    min-width: 64px;
+    min-height: 64px;
+}
+.startpage-hero image { color: @accent_color; }
+.startpage-chip { padding: 6px 14px; border-radius: 8px; }
+.startpage-card { padding: 4px; }
+.startpage-status {
+    border-radius: 50%;
+    min-width: 8px;
+    min-height: 8px;
+    background-color: alpha(@window_fg_color, 0.35);
+}
+.startpage-status.online { background-color: @success_color; }
+.startpage-mono {
+    font-family: monospace;
+    font-size: 0.85em;
+}
+.startpage-heading {
+    font-size: 0.8em;
+    font-weight: bold;
+    opacity: 0.6;
+}
+"""
+
+_css_loaded = False
+
+
+def _ensure_css():
+    global _css_loaded
+    if _css_loaded:
+        return
+    display = Gdk.Display.get_default()
+    if display is None:
+        return
+    provider = Gtk.CssProvider()
+    provider.load_from_data(_CSS)
+    Gtk.StyleContext.add_provider_for_display(
+        display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+    )
+    _css_loaded = True
 
 
 class WelcomePage(Gtk.Overlay):
     """Start page shown in the pinned Start tab."""
 
-
-
     def __init__(self, window) -> None:
         super().__init__()
+        _ensure_css()
         self.window = window
         self.connection_manager = window.connection_manager
         self.config = window.config
@@ -29,254 +75,228 @@ class WelcomePage(Gtk.Overlay):
         self.set_vexpand(True)
         self.set_can_focus(False)
 
-        # Placeholder populated after layout is built
         self._pinned_rows_box = None
 
         self.connection_manager.connect_after('connection-removed', self._on_connection_removed)
 
-        # Create a scrolled window to hold all content
         scrolled = Gtk.ScrolledWindow()
         scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         scrolled.set_vexpand(True)
         scrolled.set_hexpand(True)
         scrolled.set_can_focus(False)
-        
-        # Main content box
+
         content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        content_box.set_margin_top(12)
+        content_box.set_margin_top(24)
         content_box.set_margin_bottom(24)
-        # Center vertically; falls back to scrolling when content is taller
-        # than the viewport.
         content_box.set_valign(Gtk.Align.CENTER)
         content_box.set_can_focus(False)
 
-        # Clamp for proper width
         clamp = Adw.Clamp()
-        clamp.set_maximum_size(1200)
+        clamp.set_maximum_size(520)
         clamp.set_tightening_threshold(400)
         clamp.set_child(content_box)
         clamp.set_vexpand(True)
         clamp.set_can_focus(False)
         scrolled.set_child(clamp)
         self.set_child(scrolled)
-        
-        # Get current shortcuts for tooltips
+
         current_shortcuts = self._get_safe_current_shortcuts()
+        content_box.append(self._build_layout(current_shortcuts))
 
-        content_box.append(self._build_action_rows_layout(current_shortcuts))
+        # Footer links pinned to the bottom of the page
+        footer = self._build_footer()
+        footer.set_halign(Gtk.Align.CENTER)
+        footer.set_valign(Gtk.Align.END)
+        footer.set_margin_bottom(12)
+        self.add_overlay(footer)
 
-    def _build_action_rows_layout(self, current_shortcuts):
-        """Build the action rows layout"""
-        # Wrap in clamp to constrain width
-        clamp = Adw.Clamp()
-        clamp.set_maximum_size(600)
-        clamp.set_tightening_threshold(400)
-        clamp.set_vexpand(False)
-        clamp.set_can_focus(False)
-        
-        container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+    # --- Layout ---
 
-        # Pinned connections section (populated dynamically)
-        self._pinned_rows_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        container.append(self._pinned_rows_box)
+    def _build_layout(self, current_shortcuts):
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        box.set_halign(Gtk.Align.CENTER)
+        box.set_margin_start(12)
+        box.set_margin_end(12)
+
+        # Hero icon
+        hero_box = Gtk.Box()
+        hero_box.add_css_class('startpage-hero')
+        hero_box.set_halign(Gtk.Align.CENTER)
+        hero_box.set_valign(Gtk.Align.CENTER)
+        hero_box.set_margin_bottom(16)
+        hero_icon = icon_utils.new_image_from_icon_name('utilities-terminal-symbolic', 28)
+        hero_icon.set_halign(Gtk.Align.CENTER)
+        hero_icon.set_valign(Gtk.Align.CENTER)
+        hero_icon.set_hexpand(True)
+        hero_icon.set_vexpand(True)
+        hero_box.append(hero_icon)
+        box.append(hero_box)
+
+        # Title + subtitle
+        title = Gtk.Label(label=_('SSH Pilot'))
+        title.add_css_class('title-2')
+        title.set_halign(Gtk.Align.CENTER)
+        box.append(title)
+
+        subtitle = Gtk.Label(label=_('Connect to a server or pick up where you left off.'))
+        subtitle.add_css_class('dim-label')
+        subtitle.set_halign(Gtk.Align.CENTER)
+        subtitle.set_justify(Gtk.Justification.CENTER)
+        subtitle.set_wrap(True)
+        subtitle.set_margin_top(4)
+        subtitle.set_margin_bottom(20)
+        box.append(subtitle)
+
+        # Primary action: New connection
+        new_accel = self._get_action_accel_display(current_shortcuts, 'new-connection')
+        btn_content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        btn_content.append(icon_utils.new_image_from_icon_name('list-add-symbolic'))
+        btn_content.append(Gtk.Label(label=_('New connection')))
+        if new_accel:
+            accel_lbl = Gtk.Label(label=new_accel)
+            accel_lbl.set_opacity(0.7)
+            btn_content.append(accel_lbl)
+        new_btn = Gtk.Button()
+        new_btn.set_child(btn_content)
+        new_btn.add_css_class('suggested-action')
+        new_btn.add_css_class('pill')
+        new_btn.set_halign(Gtk.Align.CENTER)
+        new_btn.set_can_focus(False)
+        new_btn.set_margin_bottom(20)
+        new_btn.connect('clicked', lambda *_a: self.window.get_application().activate_action('new-connection'))
+        box.append(new_btn)
+
+        # Quick action chips
+        chips = Gtk.FlowBox()
+        chips.set_selection_mode(Gtk.SelectionMode.NONE)
+        chips.set_halign(Gtk.Align.CENTER)
+        chips.set_max_children_per_line(3)
+        chips.set_column_spacing(8)
+        chips.set_row_spacing(8)
+        chips.set_can_focus(False)
+        chips.set_margin_bottom(28)
+        quick_actions = [
+            ('document-edit-symbolic', _('Edit config'),
+             lambda: self.window.get_application().activate_action('edit-ssh-config')),
+            ('utilities-terminal-symbolic', _('Local terminal'),
+             lambda: self.window.terminal_manager.show_local_terminal()),
+            ('system-run-symbolic', _('Snippets'),
+             self._open_command_blocks_sidebar),
+        ]
+        for icon_name, label, cb in quick_actions:
+            chips.append(self._build_chip(icon_name, label, cb))
+        box.append(chips)
+
+        # Pinned connections / sessions (populated dynamically)
+        self._pinned_rows_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
+        box.append(self._pinned_rows_box)
         self._populate_pinned_rows_box()
 
-        # Getting Started section
-        getting_started_group = Adw.PreferencesGroup()
-        getting_started_group.set_title(_('Quick Actions'))
-        getting_started_group.set_margin_start(12)
-        getting_started_group.set_margin_end(12)
-        getting_started_group.set_margin_top(12)
-        getting_started_group.set_vexpand(False)
-        getting_started_group.set_can_focus(False)
-        getting_started_group.add_css_class('separate')
-        container.append(getting_started_group)
-        
-        # Add New Connection action row
-        new_connection_accel = self._get_action_accel_display(current_shortcuts, 'new-connection')
-        new_connection_row = Adw.ActionRow()
-        new_connection_row.set_title(_('Add a New Connection'))
-        new_connection_row.set_activatable(True)
-        new_connection_row.set_can_focus(False)
-        from sshpilot import icon_utils
-        prefix_img = icon_utils.new_image_from_icon_name('list-add-symbolic')
-        prefix_img.set_can_focus(False)
-        new_connection_row.add_prefix(prefix_img)
-        if new_connection_accel:
-            shortcut_label = Gtk.Label(label=new_connection_accel)
-            shortcut_label.add_css_class('dim-label')
-            shortcut_label.set_can_focus(False)
-            new_connection_row.add_suffix(shortcut_label)
-        new_connection_row.connect('activated', lambda *_: self.window.get_application().activate_action('new-connection'))
-        getting_started_group.add(new_connection_row)
-        
-        # Edit SSH Config action row
-        edit_config_accel = self._get_action_accel_display(current_shortcuts, 'edit-ssh-config')
-        edit_config_row = Adw.ActionRow()
-        edit_config_row.set_title(_('View and Edit SSH Config'))
-        edit_config_row.set_activatable(True)
-        edit_config_row.set_can_focus(False)
-        prefix_img = icon_utils.new_image_from_icon_name('document-edit-symbolic')
-        prefix_img.set_can_focus(False)
-        edit_config_row.add_prefix(prefix_img)
-        if edit_config_accel:
-            shortcut_label = Gtk.Label(label=edit_config_accel)
-            shortcut_label.add_css_class('dim-label')
-            shortcut_label.set_can_focus(False)
-            edit_config_row.add_suffix(shortcut_label)
-        edit_config_row.connect('activated', lambda *_: self.window.get_application().activate_action('edit-ssh-config'))
-        getting_started_group.add(edit_config_row)
-        
-        # Local Terminal action row
-        local_terminal_accel = self._get_action_accel_display(current_shortcuts, 'local-terminal')
-        local_terminal_row = Adw.ActionRow()
-        local_terminal_row.set_title(_('Open Local Terminal'))
-        local_terminal_row.set_activatable(True)
-        local_terminal_row.set_can_focus(False)
-        prefix_img = icon_utils.new_image_from_icon_name('utilities-terminal-symbolic')
-        prefix_img.set_can_focus(False)
-        local_terminal_row.add_prefix(prefix_img)
-        if local_terminal_accel:
-            shortcut_label = Gtk.Label(label=local_terminal_accel)
-            shortcut_label.add_css_class('dim-label')
-            shortcut_label.set_can_focus(False)
-            local_terminal_row.add_suffix(shortcut_label)
-        local_terminal_row.connect('activated', lambda *_: self.window.terminal_manager.show_local_terminal())
-        getting_started_group.add(local_terminal_row)
+        return box
 
-        # Command Blocks action row. Shows the current shortcut only if one is
-        # assigned (disabled by default), like the other rows.
-        cmd_blocks_accel = self._get_action_accel_display(
-            current_shortcuts, 'toggle-command-blocks'
-        )
-        command_blocks_row = Adw.ActionRow()
-        command_blocks_row.set_title(_('Browse Command Snippets'))
-        command_blocks_row.set_activatable(True)
-        command_blocks_row.set_can_focus(False)
-        prefix_img = icon_utils.new_image_from_icon_name('system-run-symbolic')
-        prefix_img.set_can_focus(False)
-        command_blocks_row.add_prefix(prefix_img)
-        if cmd_blocks_accel:
-            shortcut_label = Gtk.Label(label=cmd_blocks_accel)
-            shortcut_label.add_css_class('dim-label')
-            shortcut_label.set_can_focus(False)
-            command_blocks_row.add_suffix(shortcut_label)
-        command_blocks_row.connect(
-            'activated', lambda *_: self._open_command_blocks_sidebar()
-        )
-        getting_started_group.add(command_blocks_row)
-        
-        # Help & Resources section
-        help_group = Adw.PreferencesGroup()
-        help_group.set_title(_('Help'))
-        help_group.set_margin_start(12)
-        help_group.set_margin_end(12)
-        help_group.set_margin_top(24)
-        help_group.set_vexpand(False)
-        help_group.set_can_focus(False)
-        help_group.add_css_class('separate')
-        container.append(help_group)
-        
-        # Shortcuts action row
-        shortcuts_accel = self._get_action_accel_display(current_shortcuts, 'shortcuts')
-        shortcuts_row = Adw.ActionRow()
-        shortcuts_row.set_title(_('Keyboard Shortcuts'))
-        shortcuts_row.set_activatable(True)
-        shortcuts_row.set_can_focus(False)
-        prefix_img = icon_utils.new_image_from_icon_name('preferences-desktop-keyboard-symbolic')
-        prefix_img.set_can_focus(False)
-        shortcuts_row.add_prefix(prefix_img)
-        if shortcuts_accel:
-            shortcut_label = Gtk.Label(label=shortcuts_accel)
-            shortcut_label.add_css_class('dim-label')
-            shortcut_label.set_can_focus(False)
-            shortcuts_row.add_suffix(shortcut_label)
-        shortcuts_row.connect('activated', lambda *_: self.window.show_shortcuts_window())
-        help_group.add(shortcuts_row)
-        
-        # Online help action row
-        help_accel = self._get_action_accel_display(current_shortcuts, 'help')
-        help_row = Adw.ActionRow()
-        help_row.set_title(_('Online Documentation'))
-        help_row.set_activatable(True)
-        help_row.set_can_focus(False)
-        prefix_img = icon_utils.new_image_from_icon_name('help-browser-symbolic')
-        prefix_img.set_can_focus(False)
-        help_row.add_prefix(prefix_img)
-        if help_accel:
-            shortcut_label = Gtk.Label(label=help_accel)
-            shortcut_label.add_css_class('dim-label')
-            shortcut_label.set_can_focus(False)
-            help_row.add_suffix(shortcut_label)
-        help_row.connect('activated', lambda *_: self.open_online_help())
-        help_group.add(help_row)
-        
-        # Set container as child of clamp
-        clamp.set_child(container)
-        
-        return clamp
+    def _build_footer(self):
+        footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        shortcuts_link = Gtk.Button(label=_('Keyboard shortcuts'))
+        shortcuts_link.add_css_class('flat')
+        shortcuts_link.add_css_class('dim-label')
+        shortcuts_link.set_can_focus(False)
+        shortcuts_link.connect('clicked', lambda *_a: self.window.show_shortcuts_window())
+        footer.append(shortcuts_link)
+        sep = Gtk.Label(label='·')
+        sep.add_css_class('dim-label')
+        footer.append(sep)
+        docs_link = Gtk.Button(label=_('Online documentation'))
+        docs_link.add_css_class('flat')
+        docs_link.add_css_class('dim-label')
+        docs_link.set_can_focus(False)
+        docs_link.connect('clicked', lambda *_a: self.open_online_help())
+        footer.append(docs_link)
+        return footer
+
+    def _build_chip(self, icon_name, label, callback):
+        content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        content.append(icon_utils.new_image_from_icon_name(icon_name))
+        content.append(Gtk.Label(label=label))
+        btn = Gtk.Button()
+        btn.set_child(content)
+        btn.add_css_class('startpage-chip')
+        btn.set_can_focus(False)
+        btn.connect('clicked', lambda *_a: callback())
+        return btn
 
     def _open_command_blocks_sidebar(self) -> None:
         """Toggle the command blocks right sidebar from the start page."""
         if hasattr(self.window, '_toggle_command_blocks_panel'):
             self.window._toggle_command_blocks_panel()
-    
+
     # --- Pinned connections ---
 
-    def _build_pinned_section(self) -> 'Adw.PreferencesGroup | None':
-        """Build an Adw.PreferencesGroup of pinned hosts, or None if none are pinned."""
-        from sshpilot import icon_utils
+    def _build_conn_card(self, conn):
+        """Card button for a pinned connection."""
+        online = conn in getattr(self.window, 'active_terminals', {})
+
+        top = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        dot = Gtk.Box()
+        dot.add_css_class('startpage-status')
+        if online:
+            dot.add_css_class('online')
+        dot.set_valign(Gtk.Align.CENTER)
+        top.append(dot)
+        name = Gtk.Label(label=conn.nickname, xalign=0)
+        name.set_ellipsize(3)  # PANGO_ELLIPSIZE_END
+        top.append(name)
+
+        host_label = getattr(conn, 'host', '') or getattr(conn, 'hostname', '')
+        username = getattr(conn, 'username', '')
+        target = f"{username}@{host_label}" if username and host_label else host_label
+        sub = Gtk.Label(label=target, xalign=0)
+        sub.add_css_class('startpage-mono')
+        sub.add_css_class('dim-label')
+        sub.set_ellipsize(3)
+        sub.set_margin_start(14)
+
+        inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        inner.append(top)
+        inner.append(sub)
+
+        card = Gtk.Button()
+        card.set_child(inner)
+        card.add_css_class('card')
+        card.add_css_class('startpage-card')
+        card.set_hexpand(True)
+        card.set_can_focus(False)
+        card.connect('clicked', lambda _b, c=conn: self.window.terminal_manager.connect_to_host(c))
+        return card
+
+    def _build_pinned_section(self):
+        """Grid of pinned host cards, or None if none are pinned."""
         pinned_nicknames = self.config.get_pinned_nicknames()
         if not pinned_nicknames:
             return None
-
         conn_map = {c.nickname: c for c in self.connection_manager.connections}
-        rows_added = 0
-        group = Adw.PreferencesGroup(title=_("Pinned Connections"))
-        group.set_margin_start(12)
-        group.set_margin_end(12)
-        group.set_margin_top(12)
-        group.set_margin_bottom(4)
-        group.set_can_focus(False)
-        group.add_css_class('separate')
 
+        grid = Gtk.FlowBox()
+        grid.set_selection_mode(Gtk.SelectionMode.NONE)
+        grid.set_max_children_per_line(2)
+        grid.set_min_children_per_line(1)
+        grid.set_homogeneous(True)
+        grid.set_column_spacing(8)
+        grid.set_row_spacing(8)
+        grid.set_can_focus(False)
+
+        rows_added = 0
         for nickname in pinned_nicknames:
             conn = conn_map.get(nickname)
             if conn is None:
                 continue
-            row = Adw.ActionRow()
-            row.set_title(nickname)
-            host_label = getattr(conn, 'host', '') or getattr(conn, 'hostname', '')
-            username = getattr(conn, 'username', '')
-            if username and host_label:
-                row.set_subtitle(f"{username}@{host_label}")
-            elif host_label:
-                row.set_subtitle(host_label)
-            row.set_activatable(True)
-            row.set_can_focus(False)
-
-            prefix_img = icon_utils.new_image_from_icon_name('network-server-symbolic')
-            prefix_img.set_can_focus(False)
-            row.add_prefix(prefix_img)
-
-            connect_btn = Gtk.Button(label=_("Connect"))
-            connect_btn.set_valign(Gtk.Align.CENTER)
-            connect_btn.add_css_class('suggested-action')
-            connect_btn.add_css_class('pill')
-            connect_btn.set_can_focus(False)
-            _conn = conn
-            connect_btn.connect('clicked', lambda _b, c=_conn: self.window.terminal_manager.connect_to_host(c))
-            row.add_suffix(connect_btn)
-
-            row.connect('activated', lambda _r, c=_conn: self.window.terminal_manager.connect_to_host(c))
-            group.add(row)
+            grid.append(self._build_conn_card(conn))
             rows_added += 1
+        if rows_added == 0:
+            return None
+        return self._section(_('Pinned Connections'), grid)
 
-        return group if rows_added > 0 else None
-
-    def _build_pinned_sessions_section(self) -> 'Adw.PreferencesGroup | None':
-        """Build an Adw.PreferencesGroup of pinned sessions, or None if none are pinned."""
-        from sshpilot import icon_utils
+    def _build_pinned_sessions_section(self):
+        """Grid of pinned session cards, or None if none are pinned."""
         session_manager = getattr(self.window, 'session_manager', None)
         if session_manager is None:
             return None
@@ -284,46 +304,58 @@ class WelcomePage(Gtk.Overlay):
         if not pinned_names:
             return None
 
-        group = Adw.PreferencesGroup(title=_("Pinned Sessions"))
-        group.set_margin_start(12)
-        group.set_margin_end(12)
-        group.set_margin_top(12)
-        group.set_margin_bottom(4)
-        group.set_can_focus(False)
-        group.add_css_class('separate')
+        grid = Gtk.FlowBox()
+        grid.set_selection_mode(Gtk.SelectionMode.NONE)
+        grid.set_max_children_per_line(2)
+        grid.set_min_children_per_line(1)
+        grid.set_homogeneous(True)
+        grid.set_column_spacing(8)
+        grid.set_row_spacing(8)
+        grid.set_can_focus(False)
 
         rows_added = 0
         for name in pinned_names:
             data = session_manager.get_session(name)
             if not isinstance(data, dict):
                 continue
-            row = Adw.ActionRow()
-            row.set_title(name)
-            tab_count = len(data.get('tabs', []))
-            row.set_subtitle(_("{n} tab(s)").format(n=tab_count))
-            row.set_activatable(True)
-            row.set_can_focus(False)
 
-            prefix_img = icon_utils.new_image_from_icon_name('view-dual-symbolic')
-            prefix_img.set_can_focus(False)
-            row.add_prefix(prefix_img)
+            top = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            top.append(icon_utils.new_image_from_icon_name('view-dual-symbolic'))
+            lbl = Gtk.Label(label=name, xalign=0)
+            lbl.set_ellipsize(3)
+            top.append(lbl)
+            sub = Gtk.Label(
+                label=_("{n} tab(s)").format(n=len(data.get('tabs', []))), xalign=0
+            )
+            sub.add_css_class('dim-label')
+            sub.set_margin_start(24)
+            inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            inner.append(top)
+            inner.append(sub)
 
-            open_btn = Gtk.Button(label=_("Open"))
-            open_btn.set_valign(Gtk.Align.CENTER)
-            open_btn.add_css_class('suggested-action')
-            open_btn.add_css_class('pill')
-            open_btn.set_can_focus(False)
-            open_btn.connect('clicked', lambda _b, n=name, d=data: self.window._prompt_open_session(n, d))
-            row.add_suffix(open_btn)
-
-            row.connect('activated', lambda _r, n=name, d=data: self.window._prompt_open_session(n, d))
-            group.add(row)
+            card = Gtk.Button()
+            card.set_child(inner)
+            card.add_css_class('card')
+            card.add_css_class('startpage-card')
+            card.set_hexpand(True)
+            card.set_can_focus(False)
+            card.connect('clicked', lambda _b, n=name, d=data: self.window._prompt_open_session(n, d))
+            grid.append(card)
             rows_added += 1
+        if rows_added == 0:
+            return None
+        return self._section(_('Pinned Sessions'), grid)
 
-        return group if rows_added > 0 else None
+    def _section(self, title, child):
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        heading = Gtk.Label(label=title, xalign=0)
+        heading.add_css_class('startpage-heading')
+        box.append(heading)
+        box.append(child)
+        return box
 
     def _populate_pinned_rows_box(self):
-        """Fill _pinned_rows_box with the current pinned group (rows layout)."""
+        """Fill _pinned_rows_box with the current pinned sections."""
         if self._pinned_rows_box is None:
             return
         child = self._pinned_rows_box.get_first_child()
@@ -331,12 +363,12 @@ class WelcomePage(Gtk.Overlay):
             nxt = child.get_next_sibling()
             self._pinned_rows_box.remove(child)
             child = nxt
-        group = self._build_pinned_section()
-        if group is not None:
-            self._pinned_rows_box.append(group)
-        sessions_group = self._build_pinned_sessions_section()
-        if sessions_group is not None:
-            self._pinned_rows_box.append(sessions_group)
+        section = self._build_pinned_section()
+        if section is not None:
+            self._pinned_rows_box.append(section)
+        sessions_section = self._build_pinned_sessions_section()
+        if sessions_section is not None:
+            self._pinned_rows_box.append(sessions_section)
 
     def refresh_pinned(self):
         """Rebuild the pinned section after a pin/unpin action."""
@@ -359,7 +391,6 @@ class WelcomePage(Gtk.Overlay):
         if hasattr(self.window, 'add_toast'):
             self.window.add_toast(toast)
         else:
-            # Fallback for older API
             overlay = self.window.get_child()
             if isinstance(overlay, Adw.ToastOverlay):
                 overlay.add_toast(toast)
@@ -374,13 +405,11 @@ class WelcomePage(Gtk.Overlay):
             if not app:
                 return shortcuts
 
-            # Get default registered shortcuts if available
             if hasattr(app, 'get_registered_shortcut_defaults'):
                 defaults = app.get_registered_shortcut_defaults()
                 if isinstance(defaults, dict):
                     shortcuts.update(defaults)
 
-            # Apply user overrides from config if available
             if hasattr(app, 'config') and app.config:
                 for action_name in list(shortcuts.keys()):
                     try:
@@ -410,24 +439,20 @@ class WelcomePage(Gtk.Overlay):
         alt_lbl = '⌥' if mac else 'Alt'
 
         s = accel.strip()
-        # Extract all <token> in order
         tokens = [m.group(1).lower() for m in re.finditer(r'<([^>]+)>', s)]
-        # Remove all <...> to get the key part
         key = re.sub(r'<[^>]+>', '', s).strip()
 
-        # Map tokens to normalized set
         mods = set()
         for t in tokens:
-            if t in ('primary', 'meta', 'cmd', 'command'):  # treat as primary
+            if t in ('primary', 'meta', 'cmd', 'command'):
                 mods.add('primary')
             elif t in ('ctrl', 'control'):
-                mods.add('primary')  # normalize to primary for display
+                mods.add('primary')
             elif t == 'shift':
                 mods.add('shift')
             elif t == 'alt':
                 mods.add('alt')
 
-        # Build parts in consistent order
         parts = []
         if 'primary' in mods:
             parts.append(primary)
@@ -436,7 +461,6 @@ class WelcomePage(Gtk.Overlay):
         if 'alt' in mods:
             parts.append(alt_lbl)
 
-        # Map common key names
         key_map = {
             'comma': ',',
             'slash': '/',
@@ -451,7 +475,6 @@ class WelcomePage(Gtk.Overlay):
             parts.append(key_disp)
 
         disp = '+'.join(parts)
-        # Fallback safety: strip any lingering angle brackets
         disp = re.sub(r'<[^>]+>', '', disp)
         return disp
 
@@ -461,12 +484,10 @@ class WelcomePage(Gtk.Overlay):
             accels = shortcuts.get(action_name)
             if not accels:
                 return ''
-            # If it's a list, use the first; if it's a string, use directly
             accel = accels[0] if isinstance(accels, (list, tuple)) else accels
             return self._format_accelerator_display(accel)
         except Exception:
             return ''
-
 
     def open_online_help(self):
         """Open online help documentation"""
@@ -477,7 +498,6 @@ class WelcomePage(Gtk.Overlay):
             logger.debug("Successfully opened browser")
         except Exception as e:
             logger.error(f"Failed to open browser: {e}")
-            # Fallback: show a dialog with the URL
             try:
                 dialog = Adw.MessageDialog(
                     transient_for=self.window,
