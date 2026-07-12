@@ -188,9 +188,9 @@ class Config(GObject.Object):
                 'sidebar_show_group_count': True,
                 'sidebar_show_connection_status': True,
                 'sidebar_show_port_forwarding': True,
-                'sidebar_show_connection_icon': True,
-                'sidebar_show_group_icon': True,
-                'sidebar_flat_rows': False,
+                'sidebar_show_connection_icon': False,
+                'sidebar_show_group_icon': False,
+                'sidebar_flat_rows': True,
                 # Sidebar behavior (Settings ▸ Sidebar ▸ Sidebar behavior)
                 'sidebar_hide_on_startup': False,
                 'sidebar_hide_on_terminal_open': False,  # incl. local terminals
