@@ -2031,12 +2031,10 @@ class SecretManager:
 
     **``auto``** (platform default: libsecret then keyring on Linux, keyring on macOS):
 
-    - ``store`` — first available backend in platform order, falling back on failure.
-    - ``lookup`` — **only** the platform default local stores (libsecret then keyring on
-      Linux; keyring on macOS). The CLI/session backends (rbw, Bitwarden, pass, keepassxc)
-      are opt-in via explicit selection, so an ``auto`` read stays fast and never spawns a
-      vault CLI per lookup. Cross-backend reads (migration/export) use ``lookup_everywhere``.
-    - ``delete`` — every available backend, so switching backends never orphans a secret.
+    ``store``, ``lookup`` and ``delete`` all act on the platform default local stores only
+    (first available: libsecret then keyring). The CLI/session backends (rbw, Bitwarden,
+    pass, keepassxc) are used only when explicitly selected — so ``auto`` stays fast and
+    never spawns a vault CLI. Cross-backend reads (migration/export) use ``lookup_everywhere``.
 
     **Explicit selection** (any named backend, including ``agent`` and session vaults):
 
@@ -2302,12 +2300,9 @@ class SecretManager:
         return False
 
     def lookup(self, spec: SecretSpec) -> Optional[str]:
-        # ``auto`` queries only the platform default local stores (libsecret, then keyring
-        # on Linux) — never the CLI/session backends (rbw, Bitwarden, pass, keepassxc),
-        # which are opt-in via explicit selection. This keeps the read-through fast (a
-        # local libsecret hit, no ~1s `rbw`/`bw` spawn per askpass lookup). An explicit
-        # selection consults only that backend. Cross-backend reads for migration/export
-        # go through :meth:`lookup_everywhere`, which still scans everything.
+        # ``auto`` == use the platform default local stores only (libsecret then keyring
+        # on Linux); an explicit selection uses that backend only. Cross-backend reads for
+        # migration/export go through :meth:`lookup_everywhere`.
         exclusive = self._exclusive_backend()
         backends = [exclusive] if exclusive is not None else self._ordered_backends()
         for backend in backends:
@@ -2336,8 +2331,11 @@ class SecretManager:
         return None
 
     def delete(self, spec: SecretSpec) -> bool:
+        # Same scope as store/lookup: ``auto`` acts on the platform default local stores
+        # only; an explicit selection acts on that backend only. (Bulk cross-backend
+        # cleanup for migration lives in the credential manager, not here.)
         exclusive = self._exclusive_backend()
-        backends = [exclusive] if exclusive is not None else self._all_available_backends()
+        backends = [exclusive] if exclusive is not None else self._ordered_backends()
         removed = False
         for backend in backends:
             if backend.delete(spec):

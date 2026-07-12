@@ -181,23 +181,23 @@ def test_unavailable_backends_skipped(manager):
     assert mgr.active_backend_name == 'keyring'
 
 
-def test_auto_lookup_is_local_only_but_delete_reaches_everywhere(manager):
-    # `auto` reads ONLY the platform default local stores (libsecret/keyring), so a
-    # secret living only in a non-default backend (e.g. `pass`) does not resolve under
-    # auto — that backend is opt-in via explicit selection. Delete still reaches every
-    # available backend so switching backends never orphans a secret.
+def test_auto_uses_platform_default_stores_only(manager):
+    # `auto` == "use the platform default local store": store/lookup/delete all act on
+    # libsecret/keyring only, never a non-default backend (e.g. `pass`). That backend is
+    # reached only via explicit selection.
     mgr, primary, fallback = manager
     extra = mgr._backends['pass']
     extra._available = True
     spec = password_spec('h', 'u')
     extra.data[spec.keyring_account] = 'in-pass'
 
-    assert mgr.lookup(spec) is None             # auto = libsecret/keyring only, no fallthrough
-    mgr.set_selected('pass')                    # explicit selection reaches it
-    assert mgr.lookup(spec) == 'in-pass'
-    mgr.set_selected('auto')
+    assert mgr.lookup(spec) is None                          # auto: libsecret/keyring only
+    assert mgr.delete(spec) is False                         # auto doesn't touch `pass`
+    assert extra.data.get(spec.keyring_account) == 'in-pass'  # left untouched
 
-    assert mgr.delete(spec) is True             # delete still clears everywhere
+    mgr.set_selected('pass')                                 # explicit selection reaches it
+    assert mgr.lookup(spec) == 'in-pass'
+    assert mgr.delete(spec) is True
     assert spec.keyring_account not in extra.data
 
 
