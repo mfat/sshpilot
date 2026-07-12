@@ -1457,6 +1457,131 @@ class BitwardenBackend(SecretBackend):
                 self._items.pop(account, None)
 
 
+class RbwBackend(SecretBackend):
+    """Bitwarden backend driving the ``rbw`` CLI (https://github.com/doy/rbw).
+
+    A lighter, agent-based alternative to the ``bw`` :class:`BitwardenBackend`,
+    kept entirely separate from it. ``rbw`` talks to the same Bitwarden/Vaultwarden
+    vault but delegates the whole unlock lifecycle to its own ``rbw-agent`` +
+    pinentry, so this backend is **passive** (``session_backed = False``): sshPilot
+    never drives unlock — the agent stays unlocked on its own schedule
+    (``rbw config set lock_timeout``). Every operation is gated on ``rbw unlocked``
+    so a locked vault quietly resolves to nothing/``False`` and never triggers a
+    surprise pinentry prompt on the ``auto`` read-through path.
+
+    Secrets are login items named after ``spec.keyring_account`` (matching the ``bw``
+    backend) with the secret on the first line — ``rbw``'s editor convention, the rest
+    being a note. ``rbw add``/``edit`` read that body from **stdin** when stdin is not a
+    TTY, so no ``$EDITOR`` shim is needed; existing items are updated via ``rbw edit``
+    to avoid duplicates. Every item lives in a dedicated ``sshpilot`` folder (all ops
+    are ``--folder``-scoped) so sshPilot's entries never collide with, or clutter, the
+    user's own vault logins; ``rbw`` creates the folder on first ``add``. GTK-free
+    (importable by the askpass subprocess). Under Flatpak the host ``rbw`` is reached
+    via ``flatpak-spawn --host`` like the other host CLIs.
+    """
+
+    name = "rbw"
+    _TIMEOUT = 120  # seconds — generous enough for a network sync / pinentry
+    _FOLDER = "sshpilot"  # vault folder that isolates our items from the user's logins
+
+    def __init__(self) -> None:
+        self._argv_override: Optional[List[str]] = None
+
+    @property
+    def _argv_prefix(self) -> Optional[List[str]]:
+        """Argv prefix to spawn ``rbw`` (direct path or ``flatpak-spawn --host rbw``),
+        re-resolved on each access so a CLI installed after launch is still found."""
+        if self._argv_override is not None:
+            return list(self._argv_override)
+        return resolve_host_binary("rbw")
+
+    @property
+    def _bin(self) -> Optional[str]:
+        prefix = self._argv_prefix
+        return prefix[-1] if prefix else None
+
+    @_bin.setter
+    def _bin(self, value: Optional[str]) -> None:
+        self._argv_override = [value] if value else None
+
+    def describe(self) -> str:
+        return self.name
+
+    def is_available(self) -> bool:
+        # Binary presence only (cheap, no subprocess) — keeps availability off the hot
+        # path. Unlock state is separate and checked per operation via `rbw unlocked`.
+        return self._argv_prefix is not None
+
+    def _run(self, *args: str, input_text: Optional[str] = None):
+        prefix = self._argv_prefix
+        if not prefix:
+            raise RuntimeError("rbw is not available")
+        return subprocess.run(
+            prefix + list(args),
+            input=(input_text.encode() if input_text is not None else None),
+            capture_output=True,
+            env=os.environ.copy(),
+            check=False,
+            timeout=self._TIMEOUT,
+        )
+
+    def _unlocked(self) -> bool:
+        """Whether ``rbw-agent`` currently holds the vault unlocked. Never prompts."""
+        try:
+            return self._run("unlocked").returncode == 0
+        except Exception:
+            return False
+
+    def _exists(self, name: str) -> bool:
+        try:
+            return self._run("get", "--folder", self._FOLDER, name).returncode == 0
+        except Exception:
+            return False
+
+    def store(self, spec: SecretSpec, secret: str) -> bool:
+        if not self._unlocked():
+            return False
+        name = spec.keyring_account
+        # rbw's editor convention: first line = password, the rest = note. rbw reads
+        # this from stdin because our stdin is a pipe (not a TTY). Update in place with
+        # `edit` when the item already exists so re-saving never leaves a duplicate.
+        body = f"{secret}\nSaved by SSH Pilot\n"
+        try:
+            verb = "edit" if self._exists(name) else "add"
+            res = self._run(verb, "--folder", self._FOLDER, name, input_text=body)
+            if res.returncode != 0:
+                logger.error(
+                    "rbw %s failed: %s", verb,
+                    res.stderr.decode("utf-8", "replace").strip(),
+                )
+            return res.returncode == 0
+        except Exception as exc:
+            logger.error("rbw store failed: %s", exc)
+            return False
+
+    def lookup(self, spec: SecretSpec) -> Optional[str]:
+        if not self._unlocked():
+            return None
+        try:
+            res = self._run("get", "--folder", self._FOLDER, spec.keyring_account)
+            if res.returncode != 0:
+                return None
+            text = res.stdout.decode("utf-8", "replace")
+            return text.split("\n", 1)[0] or None
+        except Exception as exc:
+            logger.debug("rbw lookup failed: %s", exc)
+            return None
+
+    def delete(self, spec: SecretSpec) -> bool:
+        if not self._unlocked():
+            return False
+        try:
+            return self._run("remove", "--folder", self._FOLDER, spec.keyring_account).returncode == 0
+        except Exception as exc:
+            logger.debug("rbw delete failed: %s", exc)
+            return False
+
+
 class KdbxBackend(SecretBackend):
     """KeePass database (``.kdbx``) backend via ``pykeepass`` — a connect-time, read-write store.
 
@@ -1820,6 +1945,7 @@ class SecretManager:
             "keyring": KeyringBackend(),
             "pass": PassBackend(),
             "bitwarden": BitwardenBackend(),
+            "rbw": RbwBackend(),
             "keepassxc": KdbxBackend(),
             "agent": SSHAgentBackend(),
         }

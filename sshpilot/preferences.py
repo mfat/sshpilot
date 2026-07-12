@@ -246,6 +246,7 @@ class PreferencesWindow(Adw.Window):
         self._config_signal_id = None
         self._bw_ui_refresh_id = None
         self._bw_probe_in_flight = False
+        self._rbw_probe_in_flight = False
 
         if hasattr(self.config, 'connect'):
             try:
@@ -1484,12 +1485,13 @@ class PreferencesWindow(Adw.Window):
                 'keyring': _("System keyring"),
                 'pass': _("pass (password store)"),
                 'bitwarden': _("Bitwarden / Vaultwarden (bw CLI)"),
+                'rbw': _("Bitwarden via rbw (agent)"),
                 'keepassxc': _("KeePass database (.kdbx)"),
                 'agent': _("SSH Agent Only"),
             }
             # Offer EVERY registered backend (not just the available ones). Unavailable
             # ones are labelled so the choice is honest.
-            preferred_order = ['libsecret', 'keyring', 'pass', 'bitwarden', 'keepassxc', 'agent']
+            preferred_order = ['libsecret', 'keyring', 'pass', 'bitwarden', 'rbw', 'keepassxc', 'agent']
             ordered_names = [n for n in preferred_order if n in registered]
             ordered_names += [n for n in registered if n not in preferred_order]
             self._secret_backend_ids = ['auto'] + ordered_names
@@ -1524,6 +1526,20 @@ class PreferencesWindow(Adw.Window):
             self._bw_logout_btn.connect('clicked', self.on_bw_logout_clicked)
             self.bw_status_row.add_suffix(self._bw_logout_btn)
             secrets_group.add(self.bw_status_row)
+
+            # rbw (github.com/doy/rbw) status + setup — only shown for the rbw backend.
+            self.rbw_status_row = Adw.ActionRow()
+            self.rbw_status_row.set_title(_("rbw status"))
+            self.rbw_status_row.set_subtitle(_("Checking…"))
+            self._rbw_status_btn = Gtk.Button(label=_("Set up…"))
+            self._rbw_status_btn.set_valign(Gtk.Align.CENTER)
+            self._rbw_status_btn.connect('clicked', self.on_rbw_setup_clicked)
+            self.rbw_status_row.add_suffix(self._rbw_status_btn)
+            self._rbw_lock_btn = Gtk.Button(label=_("Lock"))
+            self._rbw_lock_btn.set_valign(Gtk.Align.CENTER)
+            self._rbw_lock_btn.connect('clicked', self.on_rbw_lock_clicked)
+            self.rbw_status_row.add_suffix(self._rbw_lock_btn)
+            secrets_group.add(self.rbw_status_row)
 
             # Bitwarden CLI account/profile (BITWARDENCLI_APPDATA_DIR) — a data dir for a
             # specific account (incl. a self-hosted Vaultwarden). Empty = default account.
@@ -2258,6 +2274,102 @@ class PreferencesWindow(Adw.Window):
             return
         self._schedule_bitwarden_ui_refresh()
 
+    # -- rbw status row -----------------------------------------------------
+
+    def _rbw_status_text(self, status=None, *, pending=False):
+        """Status line for the rbw status row."""
+        if pending or status is None:
+            return _("Checking rbw status…")
+        if not status.cli_installed:
+            return _("The “rbw” command was not found.")
+        if status.is_ready:
+            return _("Configured and unlocked as {email}.").format(
+                email=status.email or _("your account"))
+        if not status.configured:
+            return _("Installed but no account configured.")
+        return _("Configured but the vault is locked.")
+
+    def _apply_rbw_status_row(self, status=None, *, pending=False):
+        """Update the rbw status row (message + action button labels)."""
+        if not hasattr(self, 'rbw_status_row'):
+            return
+        self.rbw_status_row.set_subtitle(self._rbw_status_text(status, pending=pending))
+        action_btn = getattr(self, '_rbw_status_btn', None)
+        lock_btn = getattr(self, '_rbw_lock_btn', None)
+        if pending or status is None:
+            if action_btn is not None:
+                action_btn.set_visible(False)
+            if lock_btn is not None:
+                lock_btn.set_visible(False)
+            return
+        if lock_btn is not None:
+            lock_btn.set_visible(bool(status.unlocked))
+        if action_btn is not None:
+            action_btn.set_visible(not status.is_ready)
+            action_btn.set_label(
+                _("Set up…") if not status.configured else _("Unlock…"))
+
+    def _probe_rbw_async(self):
+        """Probe rbw readiness off the main thread, then fill in the status row."""
+        if getattr(self, '_rbw_probe_in_flight', False):
+            return
+        self._rbw_probe_in_flight = True
+        self._apply_rbw_status_row(pending=True)
+
+        def worker():
+            try:
+                from .rbw_setup import probe_rbw_status
+                status = probe_rbw_status()
+            except Exception:
+                status = None
+            GLib.idle_add(lambda: (self._on_rbw_probe_done(status), False)[1])
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_rbw_probe_done(self, status):
+        self._rbw_probe_in_flight = False
+        try:
+            if self._current_secret_backend_name() == 'rbw':
+                self._apply_rbw_status_row(status)
+        except Exception:
+            logger.debug("rbw status apply failed", exc_info=True)
+        return False
+
+    def on_rbw_setup_clicked(self, _button):
+        """Run the rbw configure / sign-in / unlock flow."""
+        try:
+            from .rbw_setup import run_rbw_setup
+
+            def _done(_success):
+                self._probe_rbw_async()
+
+            run_rbw_setup(self, on_done=_done)
+        except Exception as exc:
+            logger.error("rbw setup failed: %s", exc)
+
+    def on_rbw_lock_clicked(self, _button):
+        """Lock the rbw agent (``rbw lock``) off the main thread."""
+        btn = getattr(self, '_rbw_lock_btn', None)
+        if btn is not None:
+            btn.set_sensitive(False)
+
+        def worker():
+            try:
+                from .rbw_setup import _run
+                _run("lock")
+            except Exception:
+                logger.debug("rbw lock failed", exc_info=True)
+            GLib.idle_add(lambda: (self._after_rbw_lock(), False)[1])
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _after_rbw_lock(self):
+        btn = getattr(self, '_rbw_lock_btn', None)
+        if btn is not None:
+            btn.set_sensitive(True)
+        self._probe_rbw_async()
+        return False
+
     def _bitwarden_status_text(self, status=None, *, pending=False):
         """Status line for the Bitwarden status row."""
         if pending or status is None:
@@ -2343,6 +2455,11 @@ class PreferencesWindow(Adw.Window):
                 self._apply_bitwarden_status_row(pending=True)
                 if not defer_bitwarden_probe:
                     self._probe_bitwarden_async()
+            if hasattr(self, 'rbw_status_row'):
+                self.rbw_status_row.set_visible(name == 'rbw')
+                if name == 'rbw':
+                    self._apply_rbw_status_row(pending=True)
+                    self._probe_rbw_async()
             for attr in ('kdbx_db_row', 'kdbx_keyfile_row'):
                 if hasattr(self, attr):
                     getattr(self, attr).set_visible(name == 'keepassxc')
@@ -2361,6 +2478,8 @@ class PreferencesWindow(Adw.Window):
                     )
                 elif name == 'bitwarden':
                     hint = _("Uses the bw CLI. See bitwarden.com/help/cli.")
+                elif name == 'rbw':
+                    hint = _("Uses the rbw CLI + agent. Unlock with rbw (github.com/doy/rbw).")
                 else:
                     hint = ""
                 try:
@@ -2415,16 +2534,22 @@ class PreferencesWindow(Adw.Window):
             def _done(success):
                 logger.info("Secret backend setup/unlock %s",
                             "succeeded" if success else "not completed")
-                if name == 'bitwarden':
+                if name in ('bitwarden', 'rbw'):
                     try:
                         self._update_secret_rows_visibility(name)
                     except Exception:
-                        logger.debug("Failed to refresh Bitwarden rows", exc_info=True)
+                        logger.debug("Failed to refresh secret backend rows", exc_info=True)
 
             if name == 'bitwarden':
                 # probe_bitwarden_status spawns bw --version/bw status (Node) — run it
                 # off the main thread so switching to Bitwarden doesn't freeze Settings.
                 self._setup_bitwarden_backend_async(manager, _done)
+                return
+            if name == 'rbw':
+                # rbw owns its own unlock (agent + pinentry); make it ready — installed,
+                # configured, unlocked — prompting only when something is missing.
+                from .rbw_setup import ensure_rbw_ready
+                ensure_rbw_ready(self, _done)
                 return
             # A session-backed backend must be unlocked before it can store/read.
             if manager.selected_needs_unlock():

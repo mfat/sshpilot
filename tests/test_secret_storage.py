@@ -316,6 +316,92 @@ def test_pass_backend_argv(monkeypatch):
     assert calls[-1][0] == ['/usr/bin/pass', 'rm', '-f', 'sshpilot/password/u@h']
 
 
+# --- rbw (github.com/doy/rbw) CLI backend ------------------------------------
+
+def _rbw_fake(*, unlocked=True, get_rc=1, get_out=b''):
+    """Fake subprocess.run for rbw: dispatches on the subcommand.
+
+    ``unlocked`` drives ``rbw unlocked``'s exit code; ``get_rc``/``get_out`` drive
+    ``rbw get`` (used both for lookup and store's existence check)."""
+    calls = []
+
+    class _R:
+        def __init__(self, rc=0, out=b''):
+            self.returncode = rc
+            self.stdout = out
+            self.stderr = b''
+
+    def fake_run(argv, input=None, capture_output=None, env=None, check=None, timeout=None):
+        calls.append((list(argv), input))
+        sub = argv[1]
+        if sub == 'unlocked':
+            return _R(0 if unlocked else 1)
+        if sub == 'get':
+            return _R(get_rc, get_out)
+        return _R(0)
+
+    return calls, fake_run
+
+
+def test_rbw_backend_gated_when_locked(monkeypatch):
+    calls, fake = _rbw_fake(unlocked=False)
+    monkeypatch.setattr(ss.subprocess, 'run', fake)
+    b = ss.RbwBackend(); b._bin = '/usr/bin/rbw'
+    spec = password_spec('h', 'u')
+    assert b.lookup(spec) is None
+    assert b.store(spec, 's') is False
+    assert b.delete(spec) is False
+    # Locked vault must never reach get/add/edit/remove — only `unlocked` was asked.
+    assert calls and all(c[0][1] == 'unlocked' for c in calls)
+
+
+def test_rbw_backend_lookup(monkeypatch):
+    calls, fake = _rbw_fake(unlocked=True, get_rc=0, get_out=b'secretvalue\n')
+    monkeypatch.setattr(ss.subprocess, 'run', fake)
+    b = ss.RbwBackend(); b._bin = '/usr/bin/rbw'
+    assert b.lookup(password_spec('h', 'u')) == 'secretvalue'
+    assert calls[-1][0] == ['/usr/bin/rbw', 'get', '--folder', 'sshpilot', 'u@h']
+
+
+def test_rbw_backend_store_add_then_edit(monkeypatch):
+    spec = password_spec('h', 'u')
+    # Not present -> `add`, item body piped on stdin (first line = password).
+    calls, fake = _rbw_fake(unlocked=True, get_rc=1)
+    monkeypatch.setattr(ss.subprocess, 'run', fake)
+    b = ss.RbwBackend(); b._bin = '/usr/bin/rbw'
+    assert b.store(spec, 'secretvalue') is True
+    assert calls[-1] == (['/usr/bin/rbw', 'add', '--folder', 'sshpilot', 'u@h'], b'secretvalue\nSaved by SSH Pilot\n')
+
+    # Already present -> `edit` (update in place, no duplicate).
+    calls, fake = _rbw_fake(unlocked=True, get_rc=0, get_out=b'old\n')
+    monkeypatch.setattr(ss.subprocess, 'run', fake)
+    b = ss.RbwBackend(); b._bin = '/usr/bin/rbw'
+    assert b.store(spec, 'newsecret') is True
+    assert calls[-1] == (['/usr/bin/rbw', 'edit', '--folder', 'sshpilot', 'u@h'], b'newsecret\nSaved by SSH Pilot\n')
+
+
+def test_rbw_backend_delete(monkeypatch):
+    calls, fake = _rbw_fake(unlocked=True)
+    monkeypatch.setattr(ss.subprocess, 'run', fake)
+    b = ss.RbwBackend(); b._bin = '/usr/bin/rbw'
+    assert b.delete(password_spec('h', 'u')) is True
+    assert calls[-1][0] == ['/usr/bin/rbw', 'remove', '--folder', 'sshpilot', 'u@h']
+
+
+def test_rbw_registered_passive_and_availability(monkeypatch):
+    monkeypatch.setattr(ss, 'is_macos', lambda: False)
+    mgr = ss.SecretManager()
+    assert 'rbw' in mgr.registered_backends()
+    b = mgr.get_backend('rbw')
+    assert isinstance(b, ss.RbwBackend)
+    assert b.session_backed is False           # rbw-agent owns the unlock lifecycle
+    assert mgr.is_session_backed('rbw') is False
+    monkeypatch.setattr(ss, 'resolve_host_binary', lambda name: None)
+    assert b.is_available() is False
+    monkeypatch.setattr(ss, 'resolve_host_binary', lambda name: ['/usr/bin/rbw'])
+    assert b.is_available() is True
+
+
 # --- ssh-agent "don't store" null backend ------------------------------------
 
 def test_ssh_agent_backend_is_null():
