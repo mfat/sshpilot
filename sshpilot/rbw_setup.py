@@ -114,34 +114,30 @@ def probe_rbw_status() -> RbwStatus:
 
 
 def _install_dialog(window) -> None:
-    """Warn that rbw — the selected secret backend — isn't installed, with a clickable
-    link to the project. No install commands: packaging differs per distro and the repo
-    documents it."""
-    dialog = Adw.Window(modal=True)
-    if window is not None:
-        dialog.set_transient_for(window)
-    dialog.set_title(_("rbw not found"))
-    dialog.set_default_size(440, 340)
+    """Compact notice that rbw — the selected secret backend — isn't installed, with a
+    clickable link to the project. Uses the same alert style as the app's other
+    backend-unavailable notices (not a full-page status view). No install commands:
+    packaging differs per distro and the repo documents it."""
+    heading = _("rbw not found")
+    body = _(
+        "SSH Pilot is set to use rbw — an unofficial Bitwarden client — for secret "
+        "storage, but the “rbw” command was not found. Install it, then restart "
+        "SSH Pilot or retry from Preferences ▸ Secret Storage."
+    )
+    body += "\n\n<a href=\"{url}\">{label}</a>".format(
+        url=RBW_HELP_URL, label=_("View rbw on GitHub"))
 
-    toolbar_view = Adw.ToolbarView()
-    toolbar_view.add_top_bar(Adw.HeaderBar())
-
-    status = Adw.StatusPage()
-    status.set_icon_name("dialog-warning-symbolic")
-    status.set_title(_("rbw is not installed"))
-    status.set_description(_(
-        "sshPilot is set to use rbw — an unofficial Bitwarden client — for secret "
-        "storage, but the “rbw” command was not found. Install it, then retry from "
-        "Preferences ▸ Secret Storage (or restart sshPilot)."
-    ))
-
-    link = Gtk.LinkButton.new_with_label(RBW_HELP_URL, _("View rbw on GitHub"))
-    link.set_halign(Gtk.Align.CENTER)
-    status.set_child(link)
-
-    toolbar_view.set_content(status)
-    dialog.set_content(toolbar_view)
-    dialog.present()
+    if hasattr(Adw, "AlertDialog"):
+        dialog = Adw.AlertDialog(heading=heading, body=body)
+        dialog.set_body_use_markup(True)
+        dialog.add_response("ok", _("OK"))
+        dialog.present(window)
+    else:
+        dialog = Adw.MessageDialog(transient_for=window, modal=True,
+                                   heading=heading, body=body)
+        dialog.set_body_use_markup(True)
+        dialog.add_response("ok", _("OK"))
+        dialog.present()
 
 
 def _ready_dialog(window, status: RbwStatus, on_done: Callable[[bool], None]) -> None:
