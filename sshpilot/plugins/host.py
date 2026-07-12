@@ -223,8 +223,12 @@ class UiHost:
             window = self._window
             if window is None:
                 continue
-            # Close the tab if it's still attached.
-            if reg.tab_page is not None:
+            # Close the tab if it's still attached. Skip during shutdown: the
+            # window is being destroyed anyway, and AdwTabView.close_page
+            # snapshots the closing page to a texture for its close animation —
+            # against an already-unrealized surface that raises Gsk-CRITICAL
+            # (gsk_renderer_render_texture: renderer is NULL).
+            if reg.tab_page is not None and not getattr(window, '_is_quitting', False):
                 try:
                     if reg.tab_page in list(window.tab_view.get_pages()):
                         window.tab_view.close_page(reg.tab_page)

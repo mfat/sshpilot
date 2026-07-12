@@ -399,6 +399,20 @@ class SshPilotApplication(Adw.Application):
         """Clean up all resources when application is shutting down"""
         logger.info("Application shutdown initiated, cleaning up...")
 
+        # Mark every window quitting before any teardown. This path (direct app
+        # shutdown) bypasses cleanup_and_quit, which is the only other place
+        # _is_quitting is set — without this the shutdown-race guards
+        # (terminal spawn/colors, Docker Console pulse & refresh timers) never
+        # engage, and a live GLib timer can queue a draw against the disposing
+        # GSK renderer (Gsk-CRITICAL: gsk_renderer_render_texture).
+        try:
+            for window in app.get_windows():
+                window._is_quitting = True
+            if self.window is not None:
+                self.window._is_quitting = True
+        except Exception:
+            logger.debug("Failed to mark windows quitting on shutdown", exc_info=True)
+
         # Notify plugins first (before any teardown), then best-effort
         # deactivate them.
         try:

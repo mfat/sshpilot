@@ -185,11 +185,20 @@ class DockerConsolePage(
         self._pulse_widgets.append(img)
         return img
 
+    def _is_shutting_down(self) -> bool:
+        """True once the toplevel started closing. Timer callbacks bail on this:
+        touching widgets now (especially opacity, which renders via
+        gsk_renderer_render_texture) draws against a disposed GSK renderer."""
+        return bool(getattr(self.get_root(), "_is_quitting", False))
+
     def _pulse_start(self, img: Gtk.Image) -> None:
         if getattr(img, "_pulse_id", None):
             return
 
         def _tick() -> bool:
+            if self._is_shutting_down():
+                img._pulse_id = None  # type: ignore[attr-defined]
+                return False
             img._pulse_phase += 0.18  # type: ignore[attr-defined]
             img.set_opacity(0.3 + 0.7 * (0.5 + 0.5 * math.sin(img._pulse_phase)))
             return True
@@ -894,6 +903,9 @@ class DockerConsolePage(
         self._release_multiplex()
 
     def _tick(self) -> bool:
+        if self._is_shutting_down():
+            self._refresh_source = None
+            return False
         if self._paused:
             return True  # keep the timer; just skip this round
         if self._current_nickname() in self._ssh_auth_blocked:
