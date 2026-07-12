@@ -312,7 +312,7 @@ class WelcomePage(Gtk.Overlay):
             except Exception:
                 return 0
 
-        recent = sorted(connections, key=_last_used, reverse=True)[:5]
+        recent = sorted(connections, key=_last_used, reverse=True)[:4]
         rows = [
             self._min_row(
                 getattr(conn, 'nickname', ''), self._conn_target(conn),
@@ -333,7 +333,7 @@ class WelcomePage(Gtk.Overlay):
             child = nxt
 
         conn_map = {c.nickname: c for c in self.connection_manager.connections}
-        pinned = [conn_map[n] for n in self.config.get_pinned_nicknames() if n in conn_map][:5]
+        pinned = [conn_map[n] for n in self.config.get_pinned_nicknames() if n in conn_map][:4]
         if pinned:
             rows = [
                 self._min_row(
