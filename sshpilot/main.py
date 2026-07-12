@@ -389,6 +389,18 @@ class SshPilotApplication(Adw.Application):
         except Exception as exc:
             logger.debug(f"Failed to schedule startup vault unlock: {exc}")
 
+        # rbw is passive (no unlock prompt above), so if it's the selected backend but the
+        # CLI isn't installed, warn here on startup — otherwise it's only surfaced in
+        # Preferences. Idle-scheduled so it runs after deferred backend-selection init.
+        try:
+            win = self.window or self.props.active_window
+            if win is not None:
+                from .rbw_setup import warn_if_selected_rbw_unavailable
+                GLib.idle_add(
+                    lambda: (warn_if_selected_rbw_unavailable(win), False)[1])
+        except Exception as exc:
+            logger.debug(f"Failed to schedule rbw availability check: {exc}")
+
         try:
             from .xterm_prewarm import schedule_xterm_prewarm
             schedule_xterm_prewarm(self.config)

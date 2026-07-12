@@ -114,15 +114,34 @@ def probe_rbw_status() -> RbwStatus:
 
 
 def _install_dialog(window) -> None:
-    from .bitwarden_setup import _message_dialog
+    """Warn that rbw — the selected secret backend — isn't installed, with a clickable
+    link to the project. No install commands: packaging differs per distro and the repo
+    documents it."""
+    dialog = Adw.Window(modal=True)
+    if window is not None:
+        dialog.set_transient_for(window)
+    dialog.set_title(_("rbw not found"))
+    dialog.set_default_size(440, 340)
 
-    _message_dialog(
-        window, _("rbw not found"),
-        _("Install the ``rbw`` command (an unofficial Bitwarden client) and try "
-          "again. It is packaged for most distributions (e.g. `apt install rbw`, "
-          "`dnf install rbw`, `pacman -S rbw`) or via `cargo install rbw`.\n\n{url}")
-        .format(url=RBW_HELP_URL),
-    ).present()
+    toolbar_view = Adw.ToolbarView()
+    toolbar_view.add_top_bar(Adw.HeaderBar())
+
+    status = Adw.StatusPage()
+    status.set_icon_name("dialog-warning-symbolic")
+    status.set_title(_("rbw is not installed"))
+    status.set_description(_(
+        "sshPilot is set to use rbw — an unofficial Bitwarden client — for secret "
+        "storage, but the “rbw” command was not found. Install it, then retry from "
+        "Preferences ▸ Secret Storage (or restart sshPilot)."
+    ))
+
+    link = Gtk.LinkButton.new_with_label(RBW_HELP_URL, _("View rbw on GitHub"))
+    link.set_halign(Gtk.Align.CENTER)
+    status.set_child(link)
+
+    toolbar_view.set_content(status)
+    dialog.set_content(toolbar_view)
+    dialog.present()
 
 
 def _ready_dialog(window, status: RbwStatus, on_done: Callable[[bool], None]) -> None:
@@ -330,3 +349,19 @@ def run_rbw_setup(window, on_done: Optional[Callable[[bool], None]] = None) -> N
         _login_async(window, cb)
 
     _thread(worker)
+
+
+def warn_if_selected_rbw_unavailable(window) -> None:
+    """On startup, warn once if rbw is the selected secret backend but the CLI is missing.
+
+    Availability is a cheap binary-presence check (no subprocess), so this is safe to run
+    on the main loop. Without it the user only discovers the missing CLI when they open
+    Preferences — connections that rely on rbw-stored secrets would silently not autofill."""
+    try:
+        from .secret_storage import get_secret_manager
+        backend = get_secret_manager().selected_backend()
+        if (backend is not None and getattr(backend, "name", "") == "rbw"
+                and not backend.is_available()):
+            _install_dialog(window)
+    except Exception:
+        logger.debug("rbw startup availability check failed", exc_info=True)
