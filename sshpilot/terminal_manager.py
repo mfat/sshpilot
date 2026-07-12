@@ -83,6 +83,18 @@ class TerminalManager:
         try:
             from .secret_storage import get_secret_manager
             manager = get_secret_manager()
+
+            # rbw is passive (session_backed=False), so selected_needs_unlock() skips it —
+            # but a locked rbw-agent silently yields no secret on connect. Nudge through
+            # rbw's own pinentry (rbw_setup runs `rbw unlock` + sync), then retry regardless
+            # of the result (a cancel falls back to ssh's own prompt, like the bw path).
+            rbw = manager.selected_backend()
+            if (getattr(rbw, "name", "") == "rbw"
+                    and rbw.is_available() and not rbw.is_unlocked()):
+                from .rbw_setup import ensure_rbw_ready
+                ensure_rbw_ready(self.window, lambda _ready: retry())
+                return True
+
             if not manager.selected_needs_unlock():
                 return False
             from .secret_unlock_dialog import prompt_unlock

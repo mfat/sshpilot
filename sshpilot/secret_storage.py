@@ -1482,7 +1482,9 @@ class RbwBackend(SecretBackend):
 
     name = "rbw"
     _TIMEOUT = 120  # seconds — generous enough for a network sync / pinentry
-    _FOLDER = "sshpilot"  # vault folder that isolates our items from the user's logins
+    _FOLDER = SERVICE_NAME  # same vault folder as the ``bw`` backend, so both see the
+    #                         same items when pointed at one vault (and it stays isolated
+    #                         from the user's own logins)
 
     def __init__(self) -> None:
         self._argv_override: Optional[List[str]] = None
@@ -1525,8 +1527,13 @@ class RbwBackend(SecretBackend):
             timeout=self._TIMEOUT,
         )
 
-    def _unlocked(self) -> bool:
-        """Whether ``rbw-agent`` currently holds the vault unlocked. Never prompts."""
+    def is_unlocked(self) -> bool:
+        """Whether ``rbw-agent`` currently holds the vault unlocked. Never prompts.
+
+        Overrides the passive-store default (always ``True``) with the real agent state
+        so callers can detect a locked vault — but ``session_backed`` stays ``False``, so
+        this never routes rbw through the password-collecting unlock dialog (rbw's own
+        pinentry owns unlock). The GTK connect path uses it to nudge via pinentry."""
         try:
             return self._run("unlocked").returncode == 0
         except Exception:
@@ -1539,7 +1546,7 @@ class RbwBackend(SecretBackend):
             return False
 
     def store(self, spec: SecretSpec, secret: str) -> bool:
-        if not self._unlocked():
+        if not self.is_unlocked():
             return False
         name = spec.keyring_account
         # rbw's editor convention: first line = password, the rest = note. rbw reads
@@ -1560,7 +1567,7 @@ class RbwBackend(SecretBackend):
             return False
 
     def lookup(self, spec: SecretSpec) -> Optional[str]:
-        if not self._unlocked():
+        if not self.is_unlocked():
             return None
         try:
             res = self._run("get", "--folder", self._FOLDER, spec.keyring_account)
@@ -1573,7 +1580,7 @@ class RbwBackend(SecretBackend):
             return None
 
     def delete(self, spec: SecretSpec) -> bool:
-        if not self._unlocked():
+        if not self.is_unlocked():
             return False
         try:
             return self._run("remove", "--folder", self._FOLDER, spec.keyring_account).returncode == 0

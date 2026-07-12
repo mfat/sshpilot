@@ -360,7 +360,7 @@ def test_rbw_backend_lookup(monkeypatch):
     monkeypatch.setattr(ss.subprocess, 'run', fake)
     b = ss.RbwBackend(); b._bin = '/usr/bin/rbw'
     assert b.lookup(password_spec('h', 'u')) == 'secretvalue'
-    assert calls[-1][0] == ['/usr/bin/rbw', 'get', '--folder', 'sshpilot', 'u@h']
+    assert calls[-1][0] == ['/usr/bin/rbw', 'get', '--folder', 'sshPilot', 'u@h']
 
 
 def test_rbw_backend_store_add_then_edit(monkeypatch):
@@ -370,14 +370,14 @@ def test_rbw_backend_store_add_then_edit(monkeypatch):
     monkeypatch.setattr(ss.subprocess, 'run', fake)
     b = ss.RbwBackend(); b._bin = '/usr/bin/rbw'
     assert b.store(spec, 'secretvalue') is True
-    assert calls[-1] == (['/usr/bin/rbw', 'add', '--folder', 'sshpilot', 'u@h'], b'secretvalue\nSaved by SSH Pilot\n')
+    assert calls[-1] == (['/usr/bin/rbw', 'add', '--folder', 'sshPilot', 'u@h'], b'secretvalue\nSaved by SSH Pilot\n')
 
     # Already present -> `edit` (update in place, no duplicate).
     calls, fake = _rbw_fake(unlocked=True, get_rc=0, get_out=b'old\n')
     monkeypatch.setattr(ss.subprocess, 'run', fake)
     b = ss.RbwBackend(); b._bin = '/usr/bin/rbw'
     assert b.store(spec, 'newsecret') is True
-    assert calls[-1] == (['/usr/bin/rbw', 'edit', '--folder', 'sshpilot', 'u@h'], b'newsecret\nSaved by SSH Pilot\n')
+    assert calls[-1] == (['/usr/bin/rbw', 'edit', '--folder', 'sshPilot', 'u@h'], b'newsecret\nSaved by SSH Pilot\n')
 
 
 def test_rbw_backend_delete(monkeypatch):
@@ -385,7 +385,7 @@ def test_rbw_backend_delete(monkeypatch):
     monkeypatch.setattr(ss.subprocess, 'run', fake)
     b = ss.RbwBackend(); b._bin = '/usr/bin/rbw'
     assert b.delete(password_spec('h', 'u')) is True
-    assert calls[-1][0] == ['/usr/bin/rbw', 'remove', '--folder', 'sshpilot', 'u@h']
+    assert calls[-1][0] == ['/usr/bin/rbw', 'remove', '--folder', 'sshPilot', 'u@h']
 
 
 def test_rbw_registered_passive_and_availability(monkeypatch):
