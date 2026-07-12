@@ -24,7 +24,16 @@ _CSS = b"""
     min-height: 64px;
 }
 .startpage-hero image { color: @accent_color; }
-.startpage-chip { padding: 6px 14px; border-radius: 8px; }
+.startpage-chip {
+    padding: 7px 16px;
+    border-radius: 9999px;
+    min-height: 0;
+    background: transparent;
+    border: 1px solid alpha(@window_fg_color, 0.18);
+    box-shadow: none;
+}
+.startpage-chip:hover { background: alpha(@window_fg_color, 0.08); }
+.startpage-chip:active { background: alpha(@window_fg_color, 0.14); }
 .startpage-card { padding: 4px; }
 .startpage-status {
     border-radius: 50%;
@@ -171,9 +180,9 @@ class WelcomePage(Gtk.Overlay):
             ('document-edit-symbolic', _('Edit SSH Configuration'),
              lambda _b: self.window.get_application().activate_action('edit-ssh-config'),
              'edit-ssh-config'),
-            ('utilities-terminal-symbolic', _('Local terminal'),
-             lambda _b: self.window.terminal_manager.show_local_terminal(),
-             'local-terminal'),
+            ('preferences-system-symbolic', _('Settings'),
+             lambda _b: self.window.get_application().activate_action('preferences'),
+             'preferences'),
             ('system-run-symbolic', _('Snippets'),
              lambda _b: self._open_command_blocks_sidebar(),
              'toggle-command-blocks'),
@@ -201,13 +210,10 @@ class WelcomePage(Gtk.Overlay):
         revealer.set_margin_bottom(36)
 
         chevron = icon_utils.new_image_from_icon_name('pan-down-symbolic')
-        more_content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        more_content.set_halign(Gtk.Align.CENTER)
-        more_content.append(Gtk.Label(label=_('More')))
-        more_content.append(chevron)
         more_btn = Gtk.Button()
-        more_btn.set_child(more_content)
+        more_btn.set_child(chevron)
         more_btn.add_css_class('flat')
+        more_btn.add_css_class('circular')
         more_btn.set_halign(Gtk.Align.CENTER)
         more_btn.set_can_focus(False)
         more_btn.set_tooltip_text(_('Show more actions'))
@@ -250,7 +256,6 @@ class WelcomePage(Gtk.Overlay):
         fb.set_halign(Gtk.Align.CENTER)
         fb.set_max_children_per_line(3)
         fb.set_min_children_per_line(3)
-        fb.set_homogeneous(True)
         fb.set_column_spacing(8)
         fb.set_row_spacing(8)
         fb.set_can_focus(False)
@@ -267,7 +272,6 @@ class WelcomePage(Gtk.Overlay):
         btn.set_child(content)
         btn.add_css_class('startpage-chip')
         btn.set_can_focus(False)
-        btn.set_hexpand(True)
         if size_group is not None:
             size_group.add_widget(btn)
         btn.set_tooltip_text(self._tooltip(label, action_name))
