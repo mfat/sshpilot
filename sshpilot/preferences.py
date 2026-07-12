@@ -183,6 +183,21 @@ from .file_manager_integration import (  # noqa: E402,F401
 )
 
 
+# Terminal color schemes offered in Preferences, in display order.
+# Display names AND colors both come from Config.terminal_themes (the single
+# source of truth). This tuple only fixes the picker order and which built-in
+# themes are user-selectable — Config also defines 'dark'/'light', which are
+# deliberately omitted from the picker. Keep this in sync with the keys in
+# Config.load_builtin_themes(); tests/test_preferences_scheme_keys.py enforces it.
+SCHEME_KEYS = (
+    'default', 'black_on_white', 'solarized_dark', 'solarized_light',
+    'monokai', 'dracula', 'nord', 'gruvbox_dark', 'one_dark',
+    'tomorrow_night', 'material_dark', 'rose_pine', 'rose_pine_moon',
+    'rose_pine_dawn', 'catppuccin_latte', 'catppuccin_frappe',
+    'catppuccin_macchiato', 'catppuccin_mocha',
+)
+
+
 class PreferencesWindow(Adw.Window):
     """Preferences dialog window"""
     
@@ -453,52 +468,22 @@ class PreferencesWindow(Adw.Window):
             self.color_scheme_row.set_title("Color Scheme")
             self.color_scheme_row.set_subtitle("Terminal color theme")
             
+            # Names come straight from Config.terminal_themes (single source of truth)
+            themes = getattr(self.config, 'terminal_themes', {}) or {}
             color_schemes = Gtk.StringList()
-            color_schemes.append("Default")
-            color_schemes.append("Black on White")
-            color_schemes.append("Solarized Dark")
-            color_schemes.append("Solarized Light")
-            color_schemes.append("Monokai")
-            color_schemes.append("Dracula")
-            color_schemes.append("Nord")
-            color_schemes.append("Gruvbox Dark")
-            color_schemes.append("One Dark")
-            color_schemes.append("Tomorrow Night")
-            color_schemes.append("Material Dark")
-            color_schemes.append("Rosé Pine")
-            color_schemes.append("Rosé Pine Moon")
-            color_schemes.append("Rosé Pine Dawn")
-            color_schemes.append("Catppuccin Latte")
-            color_schemes.append("Catppuccin Frappé")
-            color_schemes.append("Catppuccin Macchiato")
-            color_schemes.append("Catppuccin Mocha")
+            for key in SCHEME_KEYS:
+                color_schemes.append(themes.get(key, {}).get('name', key))
             self.color_scheme_row.set_model(color_schemes)
-            
-            # Set current color scheme from config
+
+            # Select the saved scheme; fall back to the first entry if unknown
             current_scheme_key = self.config.get_setting('terminal.theme', 'default')
-            
-            # Get the display name for the current scheme key
-            theme_mapping = self.get_theme_name_mapping()
-            reverse_mapping = {v: k for k, v in theme_mapping.items()}
-            current_scheme_display = reverse_mapping.get(current_scheme_key, 'Default')
-            
-            # Find the index of the current scheme in the dropdown
-            scheme_names = [
-                "Default", "Black on White", "Solarized Dark", "Solarized Light",
-                "Monokai", "Dracula", "Nord",
-                "Gruvbox Dark", "One Dark", "Tomorrow Night", "Material Dark",
-                "Rosé Pine", "Rosé Pine Moon", "Rosé Pine Dawn",
-                "Catppuccin Latte", "Catppuccin Frappé", "Catppuccin Macchiato", "Catppuccin Mocha"
-            ]
             try:
-                current_index = scheme_names.index(current_scheme_display)
-                self.color_scheme_row.set_selected(current_index)
+                current_index = SCHEME_KEYS.index(current_scheme_key)
             except ValueError:
-                # If the saved scheme isn't found, default to the first option
-                self.color_scheme_row.set_selected(0)
-                # Also update the config to use the default value
-                self.config.set_setting('terminal.theme', 'default')
-            
+                current_index = 0
+                self.config.set_setting('terminal.theme', SCHEME_KEYS[0])
+            self.color_scheme_row.set_selected(current_index)
+
             self.color_scheme_row.connect('notify::selected', self.on_color_scheme_changed)
 
             appearance_group.add(self.color_scheme_row)
@@ -578,12 +563,7 @@ class PreferencesWindow(Adw.Window):
             self.pass_through_switch.set_subtitle(
                 "Disable all keyboard shortcuts, pass all key events directly to terminal"
             )
-            try:
-                pass_through_active = bool(
-                    self.config.get_setting('terminal.pass_through_mode', False)
-                )
-            except Exception:
-                pass_through_active = False
+            pass_through_active = bool(self.config.get_setting('terminal.pass_through_mode', False))
             self._pass_through_enabled = pass_through_active
             self.pass_through_switch.set_active(pass_through_active)
             self.pass_through_switch.connect('notify::active', self.on_pass_through_mode_toggled)
@@ -599,12 +579,7 @@ class PreferencesWindow(Adw.Window):
             self.copy_on_select_switch.set_subtitle(
                 "Automatically copy selected text to the clipboard"
             )
-            try:
-                copy_on_select_active = bool(
-                    self.config.get_setting('terminal.copy_on_select', False)
-                )
-            except Exception:
-                copy_on_select_active = False
+            copy_on_select_active = bool(self.config.get_setting('terminal.copy_on_select', False))
             self.copy_on_select_switch.set_active(copy_on_select_active)
             self.copy_on_select_switch.connect('notify::active', self.on_copy_on_select_toggled)
             mouse_group.add(self.copy_on_select_switch)
@@ -614,12 +589,7 @@ class PreferencesWindow(Adw.Window):
             self.paste_on_right_click_switch.set_subtitle(
                 "Right-click pastes; Shift+right-click opens the menu"
             )
-            try:
-                paste_on_right_click_active = bool(
-                    self.config.get_setting('terminal.paste_on_right_click', False)
-                )
-            except Exception:
-                paste_on_right_click_active = False
+            paste_on_right_click_active = bool(self.config.get_setting('terminal.paste_on_right_click', False))
             self.paste_on_right_click_switch.set_active(paste_on_right_click_active)
             self.paste_on_right_click_switch.connect(
                 'notify::active', self.on_paste_on_right_click_toggled
@@ -4491,34 +4461,6 @@ class PreferencesWindow(Adw.Window):
         for row in (self.default_mode_row, self.isolated_mode_row):
             row.remove_css_class('dim-label')
 
-    def get_theme_name_mapping(self):
-        """Get mapping between display names and config keys"""
-        return {
-            "Default": "default",
-            "Black on White": "black_on_white",
-            "Solarized Dark": "solarized_dark",
-            "Solarized Light": "solarized_light",
-            "Monokai": "monokai",
-            "Dracula": "dracula",
-            "Nord": "nord",
-            "Gruvbox Dark": "gruvbox_dark",
-            "One Dark": "one_dark",
-            "Tomorrow Night": "tomorrow_night",
-            "Material Dark": "material_dark",
-            "Rosé Pine": "rose_pine",
-            "Rosé Pine Moon": "rose_pine_moon",
-            "Rosé Pine Dawn": "rose_pine_dawn",
-            "Catppuccin Latte": "catppuccin_latte",
-            "Catppuccin Frappé": "catppuccin_frappe",
-            "Catppuccin Macchiato": "catppuccin_macchiato",
-            "Catppuccin Mocha": "catppuccin_mocha",
-        }
-    
-    def get_reverse_theme_mapping(self):
-        """Get mapping from config keys to display names"""
-        mapping = self.get_theme_name_mapping()
-        return {v: k for k, v in mapping.items()}
-
     def _initialize_encoding_selector(self, appearance_group):
         self.encoding_row = Adw.ComboRow()
         self.encoding_row.set_title("Encoding")
@@ -4926,277 +4868,70 @@ class PreferencesWindow(Adw.Window):
     def on_color_scheme_changed(self, combo_row, param):
         """Handle terminal color scheme change"""
         selected = combo_row.get_selected()
-        scheme_names = [
-            "Default", "Black on White", "Solarized Dark", "Solarized Light",
-            "Monokai", "Dracula", "Nord",
-            "Gruvbox Dark", "One Dark", "Tomorrow Night", "Material Dark",
-            "Rosé Pine", "Rosé Pine Moon", "Rosé Pine Dawn",
-            "Catppuccin Latte", "Catppuccin Frappé", "Catppuccin Macchiato", "Catppuccin Mocha"
-        ]
-        selected_scheme = scheme_names[selected] if selected < len(scheme_names) else "Default"
-        
-        logger.info(f"Terminal color scheme changed to: {selected_scheme}")
-        
-        # Convert display name to config key
-        theme_mapping = self.get_theme_name_mapping()
-        config_key = theme_mapping.get(selected_scheme, "default")
-        
-        # Save to config using the consistent key
+        config_key = SCHEME_KEYS[selected] if selected < len(SCHEME_KEYS) else 'default'
+
+        logger.info(f"Terminal color scheme changed to: {config_key}")
+
         self.config.set_setting('terminal.theme', config_key)
-        
-        # Apply to all active terminals
         self.apply_color_scheme_to_terminals(config_key)
-        
+
         # Refresh the color preview
         if hasattr(self, 'color_preview_terminal'):
             self.color_preview_terminal.queue_draw()
     
     def draw_color_preview(self, drawing_area, cr, width, height):
-        """Draw a preview of the selected color scheme"""
-        # Get current color scheme
-        current_scheme_key = self.config.get_setting('terminal.theme', 'default')
-        
-        # Get color scheme colors
-        colors = self.get_color_scheme_colors(current_scheme_key)
-        
-        # Draw background
-        bg_color = colors.get('background', '#000000')
-        r, g, b, a = self.hex_to_rgba(bg_color)
-        cr.set_source_rgba(r, g, b, a)
+        """Draw a preview of the selected color scheme.
+
+        Content and metrics scale with the widget size so the preview stays
+        legible on HiDPI displays instead of using fixed pixel offsets.
+        """
+        colors = self.get_color_scheme_colors(
+            self.config.get_setting('terminal.theme', 'default')
+        )
+        fg = self.hex_to_rgba(colors.get('foreground', '#ffffff'))
+        blue = self.hex_to_rgba(colors.get('blue', '#0088ff'))
+        green = self.hex_to_rgba(colors.get('green', '#00ff00'))
+
+        # Background fills the whole area
+        cr.set_source_rgba(*self.hex_to_rgba(colors.get('background', '#000000')))
         cr.paint()
-        
-        # Draw terminal-like content
-        cr.set_font_size(10)
-        
-        # Draw prompt line
-        prompt_color = colors.get('foreground', '#ffffff')
-        r, g, b, a = self.hex_to_rgba(prompt_color)
-        cr.set_source_rgba(r, g, b, a)
-        cr.move_to(10, 25)
-        cr.show_text("user@host:~$ ")
-        
-        # Draw command
-        command_color = colors.get('foreground', '#ffffff')
-        r, g, b, a = self.hex_to_rgba(command_color)
-        cr.set_source_rgba(r, g, b, a)
-        cr.move_to(120, 25)
-        cr.show_text("ls -la")
-        
-        # Draw output lines
-        output_color = colors.get('foreground', '#ffffff')
-        r, g, b, a = self.hex_to_rgba(output_color)
-        cr.set_source_rgba(r, g, b, a)
-        
-        # Directory line
-        cr.move_to(10, 45)
-        cr.show_text("drwxr-xr-x  2 user user 4096 Jan 15 10:30 .")
-        
-        # File line with different color
-        file_color = colors.get('blue', '#0088ff')
-        r, g, b, a = self.hex_to_rgba(file_color)
-        cr.set_source_rgba(r, g, b, a)
-        cr.move_to(10, 65)
-        cr.show_text("-rw-r--r--  1 user user  1234 Jan 15 10:25 file.txt")
-        
-        # Executable file
-        exec_color = colors.get('green', '#00ff00')
-        r, g, b, a = self.hex_to_rgba(exec_color)
-        cr.set_source_rgba(r, g, b, a)
-        cr.move_to(10, 85)
-        cr.show_text("-rwxr-xr-x  1 user user 5678 Jan 15 10:20 script.sh")
-        
-        # Prompt line 2
-        prompt_color = colors.get('foreground', '#ffffff')
-        r, g, b, a = self.hex_to_rgba(prompt_color)
-        cr.set_source_rgba(r, g, b, a)
-        cr.move_to(10, 105)
-        cr.show_text("user@host:~$ ")
-        
+
+        # Scale font/line metrics to the widget so it renders crisply at any size
+        rows = [
+            (fg,    "user@host:~$ ls -la"),
+            (blue,  "drwxr-xr-x  user  documents/"),
+            (fg,    "-rw-r--r--  user  readme.txt"),
+            (green, "-rwxr-xr-x  user  deploy.sh"),
+            (fg,    "user@host:~$ "),
+        ]
+        margin = max(6.0, height * 0.08)
+        line_h = (height - 2 * margin) / len(rows)
+        cr.set_font_size(max(9.0, line_h * 0.62))
+        baseline = margin + line_h * 0.72
+        for color, text in rows:
+            cr.set_source_rgba(*color)
+            cr.move_to(margin, baseline)
+            cr.show_text(text)
+            baseline += line_h
+
     def get_color_scheme_colors(self, scheme_key):
         """Get colors for a specific color scheme"""
-        schemes = {
-            'default': {
-                'background': '#000000',
-                'foreground': '#ffffff',
-                'blue': '#0088ff',
-                'green': '#00ff00',
-                'red': '#ff0000',
-                'yellow': '#ffff00',
-                'magenta': '#ff00ff',
-                'cyan': '#00ffff'
-            },
-            'black_on_white': {
-                'background': '#ffffff',
-                'foreground': '#000000',
-                'blue': '#0000ff',
-                'green': '#00ff00',
-                'red': '#ff0000',
-                'yellow': '#ffff00',
-                'magenta': '#ff00ff',
-                'cyan': '#00ffff'
-            },
-            'solarized_dark': {
-                'background': '#002b36',
-                'foreground': '#839496',
-                'blue': '#268bd2',
-                'green': '#859900',
-                'red': '#dc322f',
-                'yellow': '#b58900',
-                'magenta': '#d33682',
-                'cyan': '#2aa198'
-            },
-            'solarized_light': {
-                'background': '#fdf6e3',
-                'foreground': '#657b83',
-                'blue': '#268bd2',
-                'green': '#859900',
-                'red': '#dc322f',
-                'yellow': '#b58900',
-                'magenta': '#d33682',
-                'cyan': '#2aa198'
-            },
-            'monokai': {
-                'background': '#272822',
-                'foreground': '#f8f8f2',
-                'blue': '#66d9ef',
-                'green': '#a6e22e',
-                'red': '#f92672',
-                'yellow': '#e6db74',
-                'magenta': '#fd5ff0',
-                'cyan': '#a1efe4'
-            },
-            'dracula': {
-                'background': '#282a36',
-                'foreground': '#f8f8f2',
-                'blue': '#6272a4',
-                'green': '#50fa7b',
-                'red': '#ff5555',
-                'yellow': '#f1fa8c',
-                'magenta': '#bd93f9',
-                'cyan': '#8be9fd'
-            },
-            'nord': {
-                'background': '#2e3440',
-                'foreground': '#eceff4',
-                'blue': '#5e81ac',
-                'green': '#a3be8c',
-                'red': '#bf616a',
-                'yellow': '#ebcb8b',
-                'magenta': '#b48ead',
-                'cyan': '#88c0d0'
-            },
-            'gruvbox_dark': {
-                'background': '#282828',
-                'foreground': '#ebdbb2',
-                'blue': '#83a598',
-                'green': '#b8bb26',
-                'red': '#fb4934',
-                'yellow': '#fabd2f',
-                'magenta': '#d3869b',
-                'cyan': '#8ec07c'
-            },
-            'one_dark': {
-                'background': '#282c34',
-                'foreground': '#abb2bf',
-                'blue': '#61afef',
-                'green': '#98c379',
-                'red': '#e06c75',
-                'yellow': '#e5c07b',
-                'magenta': '#c678dd',
-                'cyan': '#56b6c2'
-            },
-            'tomorrow_night': {
-                'background': '#1d1f21',
-                'foreground': '#c5c8c6',
-                'blue': '#81a2be',
-                'green': '#b5bd68',
-                'red': '#cc6666',
-                'yellow': '#f0c674',
-                'magenta': '#b294bb',
-                'cyan': '#8abeb7'
-            },
-            'material_dark': {
-                'background': '#263238',
-                'foreground': '#eeffff',
-                'blue': '#82aaff',
-                'green': '#c3e88d',
-                'red': '#f07178',
-                'yellow': '#ffcb6b',
-                'magenta': '#c792ea',
-                'cyan': '#89ddff'
-            },
-            'rose_pine': {
-                'background': '#191724',
-                'foreground': '#e0def4',
-                'blue': '#9ccfd8',
-                'green': '#31748f',
-                'red': '#eb6f92',
-                'yellow': '#f6c177',
-                'magenta': '#c4a7e7',
-                'cyan': '#ebbcba'
-            },
-            'rose_pine_moon': {
-                'background': '#232136',
-                'foreground': '#e0def4',
-                'blue': '#9ccfd8',
-                'green': '#3e8fb0',
-                'red': '#eb6f92',
-                'yellow': '#f6c177',
-                'magenta': '#c4a7e7',
-                'cyan': '#ea9a97'
-            },
-            'rose_pine_dawn': {
-                'background': '#faf4ed',
-                'foreground': '#464261',
-                'blue': '#56949f',
-                'green': '#286983',
-                'red': '#b4637a',
-                'yellow': '#ea9d34',
-                'magenta': '#907aa9',
-                'cyan': '#d7827e'
-            },
-            'catppuccin_latte': {
-                'background': '#eff1f5',
-                'foreground': '#4c4f69',
-                'blue': '#1e66f5',
-                'green': '#40a02b',
-                'red': '#d20f39',
-                'yellow': '#df8e1d',
-                'magenta': '#8839ef',
-                'cyan': '#179299'
-            },
-            'catppuccin_frappe': {
-                'background': '#303446',
-                'foreground': '#c6d0f5',
-                'blue': '#8caaee',
-                'green': '#a6d189',
-                'red': '#e78284',
-                'yellow': '#e5c890',
-                'magenta': '#ca9ee6',
-                'cyan': '#81c8be'
-            },
-            'catppuccin_macchiato': {
-                'background': '#24273a',
-                'foreground': '#cad3f5',
-                'blue': '#8aadf4',
-                'green': '#a6da95',
-                'red': '#ed8796',
-                'yellow': '#eed49f',
-                'magenta': '#c6a0f6',
-                'cyan': '#8bd5ca'
-            },
-            'catppuccin_mocha': {
-                'background': '#1e1e2e',
-                'foreground': '#cdd6f4',
-                'blue': '#89b4fa',
-                'green': '#a6e3a1',
-                'red': '#f38ba8',
-                'yellow': '#f9e2af',
-                'magenta': '#cba6f7',
-                'cyan': '#94e2d5'
-            }
+        # Derive preview colors from Config.terminal_themes (single source of
+        # truth). ANSI palette order: [0]black [1]red [2]green [3]yellow
+        # [4]blue [5]magenta [6]cyan ...
+        themes = getattr(self.config, 'terminal_themes', {}) or {}
+        theme = themes.get(scheme_key) or themes.get('default') or {}
+        palette = theme.get('palette') or []
+
+        def _p(index, fallback):
+            return palette[index] if index < len(palette) else fallback
+
+        return {
+            'background': theme.get('background', '#000000'),
+            'foreground': theme.get('foreground', '#ffffff'),
+            'green': _p(2, '#00ff00'),
+            'blue': _p(4, '#0088ff'),
         }
-        return schemes.get(scheme_key, schemes['default'])
     
     def hex_to_rgba(self, hex_color):
         """Convert hex color to RGBA values (0-1 range)"""
