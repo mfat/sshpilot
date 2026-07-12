@@ -2579,7 +2579,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     def setup_sidebar(self):
         """Set up the sidebar with connection list"""
         sidebar_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        sidebar_box.add_css_class('sidebar')
         # Ensure sidebar box expands to use full allocated width from NavigationSplitView
         sidebar_box.set_hexpand(True)
         sidebar_box.set_vexpand(True)
@@ -3343,6 +3342,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.sidebar_header_bar.set_title_widget(sidebar_title_label)
 
         sidebar_toolbar_view = Adw.ToolbarView()
+        sidebar_toolbar_view.add_css_class('sidebar')
         sidebar_toolbar_view.add_top_bar(self.sidebar_header_bar)
         sidebar_toolbar_view.set_content(sidebar_box)
 
