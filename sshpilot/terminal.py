@@ -1100,6 +1100,13 @@ class TerminalWidget(Gtk.Box):
 
     def _setup_ssh_terminal(self):
         """Set up terminal with direct SSH command using ssh_connection_builder (called from main thread)"""
+        # Shutdown race guard: the connect worker schedules this via idle_add, so
+        # it can run after cleanup_all() marked this terminal quitting (or the
+        # window began closing). Spawning SSH now leaks a process past shutdown.
+        root = self.get_root() if hasattr(self, 'get_root') else None
+        if getattr(self, '_is_quitting', False) or getattr(root, '_is_quitting', False):
+            logger.debug("Terminal/window quitting, skipping SSH spawn")
+            return
         try:
             # The spawn command comes from the connection's protocol backend
             # (sshpilot.plugins). For SSH ("plugin zero") this is a pure

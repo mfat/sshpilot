@@ -227,6 +227,11 @@ class TerminalManager:
                 pass
 
         def _set_terminal_colors():
+            # Shutdown race guard: this idle callback can fire after the window
+            # started closing. Drawing/connecting now queues rendering against a
+            # disposed GSK renderer and spawns SSH post-cleanup, so bail early.
+            if getattr(window, '_is_quitting', False):
+                return
 
             try:
                 if hasattr(window, 'get_application'):
