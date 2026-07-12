@@ -433,6 +433,13 @@ class PreferencesWindow(Adw.Window):
         # Keep window title static as "Preferences" only
         self.set_title(self._base_header_title)
 
+    @staticmethod
+    def _page_id(title):
+        """Sidebar/stack id derived from a page title. Single source of truth so callers
+        that need to reference a page by id (e.g. the deferred secrets-page probes) can't
+        drift from what ``add_page_to_layout`` registers."""
+        return title.lower().replace(' ', '-')
+
     def add_page_to_layout(self, title, icon_name, page):
         """Add a page to the custom layout"""
         # Create sidebar row
@@ -445,7 +452,7 @@ class PreferencesWindow(Adw.Window):
         except Exception:
             pass
         row.set_title(title)
-        page_id = title.lower().replace(' ', '-')
+        page_id = self._page_id(title)
         row.set_name(page_id)
         
         # Add icon using bundled icon helper
@@ -1647,7 +1654,7 @@ class PreferencesWindow(Adw.Window):
             self._update_secret_rows_visibility(current_backend, defer_status_probe=True)
 
             security_page.add(secrets_group)
-            self._secrets_page_id = "security-&-credentials"
+            self._secrets_page_id = self._page_id("Security & Credentials")
 
             # --- SSH identity provider (parallel to Secret Storage) ---
             identity_group = Adw.PreferencesGroup(
