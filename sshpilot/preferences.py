@@ -247,6 +247,9 @@ class PreferencesWindow(Adw.Window):
         self._bw_ui_refresh_id = None
         self._bw_probe_in_flight = False
         self._rbw_probe_in_flight = False
+        self._secret_backend_selection_sync = False
+        self._secrets_page_probes_done = False
+        self._secrets_page_id = None
 
         if hasattr(self.config, 'connect'):
             try:
@@ -408,6 +411,8 @@ class PreferencesWindow(Adw.Window):
         if row is not None:
             page_name = row.get_name()
             self.content_stack.set_visible_child_name(page_name)
+            if page_name == getattr(self, '_secrets_page_id', None):
+                self._ensure_secrets_page_probes()
             if isinstance(row, Adw.ActionRow):
                 title = row.get_title() or ""
                 self._update_header_title(title)
@@ -1511,7 +1516,6 @@ class PreferencesWindow(Adw.Window):
             self.secret_backend_row.set_selected(current_index)
             self.secret_backend_row.connect('notify::selected', self.on_secret_backend_changed)
             secrets_group.add(self.secret_backend_row)
-            self._refresh_secret_backend_availability()
 
             self.bw_status_row = Adw.ActionRow()
             self.bw_status_row.set_title(_("Bitwarden status"))
@@ -1638,13 +1642,12 @@ class PreferencesWindow(Adw.Window):
             secrets_group.add(self.agent_no_store_row)
 
             # Show the bw/timeout/forget rows only when they apply to the
-            # currently-selected backend. Bitwarden readiness is probed on idle
-            # so Settings opens immediately (``bw status`` can be slow).
-            self._update_secret_rows_visibility(current_backend, defer_bitwarden_probe=True)
-            if (current_backend or '').strip().lower() == 'bitwarden':
-                self._schedule_bitwarden_ui_refresh()
+            # currently-selected backend. Backend probes (``bw status``, rbw, …)
+            # run only when the user opens this page — not on every Settings open.
+            self._update_secret_rows_visibility(current_backend, defer_status_probe=True)
 
             security_page.add(secrets_group)
+            self._secrets_page_id = "security-&-credentials"
 
             # --- SSH identity provider (parallel to Secret Storage) ---
             identity_group = Adw.PreferencesGroup(
@@ -2210,11 +2213,15 @@ class PreferencesWindow(Adw.Window):
             if name not in available:
                 label = _("{backend} (unavailable)").format(backend=label)
             model.append(label)
-        row.set_model(model)
+        self._secret_backend_selection_sync = True
         try:
-            row.set_selected(selected)
-        except Exception:
-            pass
+            row.set_model(model)
+            try:
+                row.set_selected(selected)
+            except Exception:
+                pass
+        finally:
+            self._secret_backend_selection_sync = False
 
     def _refresh_secret_backend_availability(self):
         """Compute backend availability off-thread (keyring/keepassxc probes cost
@@ -2269,10 +2276,36 @@ class PreferencesWindow(Adw.Window):
         return False
 
     def _on_preferences_map(self, *_args):
-        """Refresh Bitwarden rows when Settings is shown (deferred, cached)."""
-        if self._current_secret_backend_name() != 'bitwarden':
+        """Probe secret backends when Settings is shown on the Security page."""
+        if self._is_secrets_page_visible():
+            self._ensure_secrets_page_probes()
+
+    def _is_secrets_page_visible(self) -> bool:
+        page_id = getattr(self, '_secrets_page_id', None)
+        if not page_id:
+            return False
+        stack = getattr(self, 'content_stack', None)
+        if stack is None:
+            return False
+        try:
+            return stack.get_visible_child_name() == page_id
+        except Exception:
+            return False
+
+    def _ensure_secrets_page_probes(self):
+        """Run secret-backend availability + status probes once per Settings window.
+
+        Deferred until the user opens Security & Credentials so opening Settings
+        for other pages does not query vaults or show unlock/setup dialogs."""
+        if getattr(self, '_secrets_page_probes_done', False):
             return
-        self._schedule_bitwarden_ui_refresh()
+        self._secrets_page_probes_done = True
+        self._refresh_secret_backend_availability()
+        try:
+            name = self._current_secret_backend_name()
+            self._update_secret_rows_visibility(name, defer_status_probe=False)
+        except Exception as exc:
+            logger.debug("Deferred secret page probes failed: %s", exc)
 
     # -- rbw status row -----------------------------------------------------
 
@@ -2440,7 +2473,7 @@ class PreferencesWindow(Adw.Window):
         else:
             action_btn.set_label(_("Unlock…"))
 
-    def _update_secret_rows_visibility(self, name, *, defer_bitwarden_probe=False):
+    def _update_secret_rows_visibility(self, name, *, defer_status_probe=False):
         """Show the bw data-directory row only for the Bitwarden backend, and the
         session-timeout row only for session-backed backends."""
         try:
@@ -2460,16 +2493,17 @@ class PreferencesWindow(Adw.Window):
                 # Node process (1-3s) whenever the vault is locked or signed out, so
                 # running it here would freeze Settings and can trip GNOME's
                 # force-quit dialog after actions like logout. Show "Checking…" now
-                # and fill the row in when the probe returns. ``defer_bitwarden_probe``
-                # leaves the actual probe to the caller's idle scheduler.
+                # and fill the row in when the probe returns. ``defer_status_probe``
+                # leaves the actual probe until the Security page is opened.
                 self._apply_bitwarden_status_row(pending=True)
-                if not defer_bitwarden_probe:
+                if not defer_status_probe:
                     self._probe_bitwarden_async()
             if hasattr(self, 'rbw_status_row'):
                 self.rbw_status_row.set_visible(name == 'rbw')
                 if name == 'rbw':
                     self._apply_rbw_status_row(pending=True)
-                    self._probe_rbw_async()
+                    if not defer_status_probe:
+                        self._probe_rbw_async()
             for attr in ('kdbx_db_row', 'kdbx_keyfile_row'):
                 if hasattr(self, attr):
                     getattr(self, attr).set_visible(name == 'keepassxc')
@@ -2528,6 +2562,8 @@ class PreferencesWindow(Adw.Window):
 
     def on_secret_backend_changed(self, combo, _pspec):
         """Persist the selected secret storage backend and apply it live."""
+        if getattr(self, '_secret_backend_selection_sync', False):
+            return
         try:
             index = combo.get_selected()
             ids = getattr(self, '_secret_backend_ids', ['auto'])
