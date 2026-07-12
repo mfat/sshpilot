@@ -1492,8 +1492,12 @@ class RbwBackend(SecretBackend):
     # seconds. Cache the set of item names in our folder from one `rbw list` and
     # answer misses (and `_exists`) from it; only a real hit pays a `get`.
     _NAMES_TTL = 30.0     # seconds; store/delete invalidate immediately
-    _VALUES_TTL = 600.0   # resolved-secret cache; long because passphrases rarely change
-    #                       and store/delete invalidate on any in-app change
+    # Resolved-secret cache lifetime. In-app store/delete invalidate immediately and a
+    # locked agent never serves it (peek() gates on is_unlocked), but an *external* vault
+    # edit (changing a passphrase in Bitwarden/rbw directly) is not seen until this
+    # expires — kept short enough to bound that staleness while still covering a burst of
+    # reconnects.
+    _VALUES_TTL = 300.0
 
     def __init__(self) -> None:
         self._argv_override: Optional[List[str]] = None
@@ -1619,9 +1623,9 @@ class RbwBackend(SecretBackend):
             logger.error("rbw store failed: %s", exc)
             return False
 
-    def peek(self, name: str) -> Optional[str]:
-        """Cache-only value read — never spawns rbw. Backs the askpass IPC fast path so a
-        warm value returns instantly instead of paying a ~1s `rbw get`."""
+    def _cached_value(self, name: str) -> Optional[str]:
+        """Cache-only value read with no unlock check — for callers that already
+        verified the agent is unlocked (e.g. :meth:`lookup`)."""
         with self._values_lock:
             hit = self._values.get(name)
             if hit and (time.monotonic() - hit[1]) < self._VALUES_TTL:
@@ -1630,11 +1634,30 @@ class RbwBackend(SecretBackend):
                 self._values.pop(name, None)
         return None
 
+    def peek(self, name: str) -> Optional[str]:
+        """Cache-only value read for the askpass IPC fast path — never spawns ``rbw get``.
+
+        **Gated on the live agent state.** rbw can lock on its own ``lock_timeout`` (or via
+        the Preferences ``Lock`` button, which runs ``rbw lock`` directly), neither of which
+        clears this cache — so a locked vault must not keep serving cached secrets. The
+        ``rbw unlocked`` check (~ms) enforces that while staying far cheaper than a ``get``."""
+        if not self.is_unlocked():
+            return None
+        return self._cached_value(name)
+
+    def lock(self) -> None:
+        """Drop our in-memory secret/name caches. rbw-agent owns the real lock lifecycle;
+        this wipes what we cached so plaintext doesn't linger after an explicit app lock.
+        (peek() already refuses to serve once the agent is locked, regardless.)"""
+        with self._values_lock:
+            self._values.clear()
+        self._invalidate_names()
+
     def lookup(self, spec: SecretSpec) -> Optional[str]:
         if not self.is_unlocked():
             return None
         name = spec.keyring_account
-        cached = self.peek(name)
+        cached = self._cached_value(name)  # unlock verified above
         if cached is not None:
             return cached
         names = self._folder_names()

@@ -780,9 +780,32 @@ def resolve_passphrase_for_ipc(key_path: str) -> str:
             value = peek(passphrase_spec(candidate).keyring_account)
             if value:
                 return value
-    # Cold cache: warm it off-thread for next time, answer "not found" now.
-    threading.Thread(target=lambda: lookup_passphrase(key_path), daemon=True).start()
+    # Cold cache: warm it off-thread for next time, answer "not found" now. Guard against
+    # piling up concurrent `rbw get`s when ssh retries askpass rapidly for the same key.
+    _warm_passphrase_async(key_path)
     return ""
+
+
+_warming_keys: set = set()
+_warming_lock = threading.Lock()
+
+
+def _warm_passphrase_async(key_path: str) -> None:
+    """Resolve ``key_path`` once in the background to populate the main-app value cache,
+    deduping so rapid askpass retries don't launch a stampede of concurrent lookups."""
+    with _warming_lock:
+        if key_path in _warming_keys:
+            return
+        _warming_keys.add(key_path)
+
+    def _run():
+        try:
+            lookup_passphrase(key_path)
+        finally:
+            with _warming_lock:
+                _warming_keys.discard(key_path)
+
+    threading.Thread(target=_run, daemon=True).start()
 
 
 def clear_passphrase(key_path: str) -> bool:

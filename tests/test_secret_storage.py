@@ -405,6 +405,25 @@ def test_rbw_backend_value_cache(monkeypatch):
     assert ss.RbwBackend().peek('u@h') is None
 
 
+def test_rbw_peek_refuses_when_locked_and_lock_clears_cache(monkeypatch):
+    # Security: a locked agent must not serve cached secrets, and an explicit lock()
+    # wipes the in-memory cache. rbw can auto-lock (lock_timeout) or be locked via the
+    # Preferences button without clearing our cache, so peek() gates on live agent state.
+    import time as _t
+    b = ss.RbwBackend(); b._bin = '/usr/bin/rbw'
+    b._values['u@h'] = ('cachedsecret', _t.monotonic())
+
+    b.is_unlocked = lambda: True
+    assert b.peek('u@h') == 'cachedsecret'
+    b.is_unlocked = lambda: False
+    assert b.peek('u@h') is None            # locked -> never serve the cached value
+
+    b.is_unlocked = lambda: True
+    b._values['u@h'] = ('cachedsecret', _t.monotonic())
+    b.lock()                                 # explicit lock wipes plaintext from memory
+    assert b.peek('u@h') is None
+
+
 def test_rbw_value_cache_invalidated_on_store_and_delete(monkeypatch):
     calls, fake = _rbw_fake(unlocked=True, get_out=b'v1\n', folder_names=('u@h',))
     monkeypatch.setattr(ss.subprocess, 'run', fake)

@@ -2357,6 +2357,16 @@ class PreferencesWindow(Adw.Window):
             try:
                 from .rbw_setup import _run
                 _run("lock")
+                # Also wipe the backend's in-memory secret cache so plaintext doesn't
+                # linger after an explicit lock (peek() already refuses to serve once the
+                # agent is locked, but don't keep the values around either).
+                try:
+                    from .secret_storage import get_secret_manager
+                    be = get_secret_manager().get_backend("rbw")
+                    if be is not None and hasattr(be, "lock"):
+                        be.lock()
+                except Exception:
+                    logger.debug("rbw cache clear failed", exc_info=True)
             except Exception:
                 logger.debug("rbw lock failed", exc_info=True)
             GLib.idle_add(lambda: (self._after_rbw_lock(), False)[1])
