@@ -367,7 +367,14 @@ class WelcomePage(Gtk.Overlay):
             box.append(empty)
             return box
 
-        for conn in connections[:5]:
+        def _last_used(conn):
+            try:
+                return self.config.get_connection_meta(conn.nickname).get('last_used', 0) or 0
+            except Exception:
+                return 0
+
+        recent = sorted(connections, key=_last_used, reverse=True)
+        for conn in recent[:5]:
             host_label = getattr(conn, 'host', '') or getattr(conn, 'hostname', '')
             username = getattr(conn, 'username', '')
             target = f"{username}@{host_label}" if username and host_label else host_label

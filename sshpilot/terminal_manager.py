@@ -866,6 +866,17 @@ class TerminalManager:
         # the authoritative state in the reporting layer instead of writing the
         # boolean here.
         self.window._recompute_connection_state(terminal.connection)
+
+        # Stamp last-used time so the start page can order Recent connections.
+        try:
+            import time
+            nickname = getattr(terminal.connection, 'nickname', None)
+            if nickname:
+                meta = self.window.config.get_connection_meta(nickname)
+                meta['last_used'] = time.time()
+                self.window.config.set_connection_meta(nickname, meta)
+        except Exception:
+            logger.debug("Failed to record last-used time", exc_info=True)
         for row in self.window._rows_for_connection(terminal.connection):
             row.update_status()
             row.queue_draw()
