@@ -6,7 +6,7 @@ import logging
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
 
-from gi.repository import Gtk, Adw, Gdk
+from gi.repository import Gtk, Adw, Gdk, GLib
 
 from gettext import gettext as _
 
@@ -272,6 +272,42 @@ class WelcomePage(Gtk.Overlay):
         btn.connect('clicked', on_click)
         return btn
 
+    def _attach_pinned_context_menu(self, row, conn):
+        """Right-click a pinned row for a single label-only "Unpin" action.
+
+        A plain popover with a flat button (direct ``clicked`` callback) — no Gio
+        action muxer, whose resolution is finicky for a detached popover."""
+        gesture = Gtk.GestureClick()
+        gesture.set_button(3)  # secondary (right) button
+        gesture.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+
+        def _on_pressed(_g, _n, x, y):
+            pop = Gtk.Popover()
+            pop.add_css_class('menu')
+            pop.set_has_arrow(False)
+            item = Gtk.Button()
+            item.set_child(Gtk.Label(label=_('Unpin'), xalign=0))
+            item.add_css_class('flat')
+
+            def _do_unpin(_b):
+                pop.popdown()
+                # _toggle_pin_connections rebuilds the pinned box (destroying this
+                # row + popover), so let the popover finish closing first.
+                GLib.idle_add(
+                    lambda: (self.window._toggle_pin_connections([conn]), False)[1])
+
+            item.connect('clicked', _do_unpin)
+            pop.set_child(item)
+            pop.set_parent(row)
+            pop.connect('closed', lambda p: p.unparent())
+            rect = Gdk.Rectangle()
+            rect.x, rect.y, rect.width, rect.height = int(x), int(y), 1, 1
+            pop.set_pointing_to(rect)
+            pop.popup()
+
+        gesture.connect('pressed', _on_pressed)
+        row.add_controller(gesture)
+
     def _min_section(self, heading_text, rows):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         box.set_hexpand(True)
@@ -335,12 +371,13 @@ class WelcomePage(Gtk.Overlay):
         conn_map = {c.nickname: c for c in self.connection_manager.connections}
         pinned = [conn_map[n] for n in self.config.get_pinned_nicknames() if n in conn_map][:4]
         if pinned:
-            rows = [
-                self._min_row(
+            rows = []
+            for conn in pinned:
+                row = self._min_row(
                     conn.nickname, self._conn_target(conn),
                     lambda _b, c=conn: self.window.terminal_manager.connect_to_host(c))
-                for conn in pinned
-            ]
+                self._attach_pinned_context_menu(row, conn)
+                rows.append(row)
             box.append(self._min_section(_('Pinned'), rows))
 
     def _build_footer(self):
