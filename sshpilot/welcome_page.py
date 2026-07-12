@@ -198,11 +198,6 @@ class WelcomePage(Gtk.Overlay):
         hero_btn.connect('clicked', lambda *_a: self.window.terminal_manager.show_local_terminal())
         inner.append(hero_btn)
 
-        title = Gtk.Label(label='SSH Pilot')
-        title.add_css_class('title-3')
-        title.set_margin_top(12)
-        inner.append(title)
-
         summary = Gtk.Label(
             label=_('{n} connections across {m} groups').format(
                 n=len(connections), m=group_count)
