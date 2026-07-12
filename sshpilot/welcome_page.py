@@ -107,7 +107,7 @@ class WelcomePage(Gtk.Overlay):
         footer = self._build_footer()
         footer.set_halign(Gtk.Align.CENTER)
         footer.set_valign(Gtk.Align.END)
-        footer.set_margin_bottom(12)
+        footer.set_margin_bottom(32)
         self.add_overlay(footer)
 
     # --- Layout ---
@@ -118,33 +118,27 @@ class WelcomePage(Gtk.Overlay):
         box.set_margin_start(12)
         box.set_margin_end(12)
 
-        # Hero icon
-        hero_box = Gtk.Box()
-        hero_box.add_css_class('startpage-hero')
-        hero_box.set_halign(Gtk.Align.CENTER)
-        hero_box.set_valign(Gtk.Align.CENTER)
-        hero_box.set_margin_bottom(16)
+        # Hero icon — button that opens a local terminal
         hero_icon = icon_utils.new_image_from_icon_name('utilities-terminal-symbolic', 28)
-        hero_icon.set_halign(Gtk.Align.CENTER)
-        hero_icon.set_valign(Gtk.Align.CENTER)
-        hero_icon.set_hexpand(True)
-        hero_icon.set_vexpand(True)
-        hero_box.append(hero_icon)
-        box.append(hero_box)
+        hero_btn = Gtk.Button()
+        hero_btn.set_child(hero_icon)
+        hero_btn.add_css_class('startpage-hero')
+        hero_btn.set_halign(Gtk.Align.CENTER)
+        hero_btn.set_valign(Gtk.Align.CENTER)
+        hero_btn.set_margin_bottom(28)
+        hero_btn.set_can_focus(False)
+        hero_btn.set_tooltip_text(_('Open Local Terminal'))
+        hero_btn.connect('clicked', lambda *_a: self.window.terminal_manager.show_local_terminal())
+        box.append(hero_btn)
 
-        # Title + subtitle
-        title = Gtk.Label(label=_('SSH Pilot'))
-        title.add_css_class('title-2')
-        title.set_halign(Gtk.Align.CENTER)
-        box.append(title)
-
-        subtitle = Gtk.Label(label=_('Connect to a server or pick up where you left off.'))
+        # Subtitle
+        subtitle = Gtk.Label(label=_('Double-click a host to connect or create a new connection'))
         subtitle.add_css_class('dim-label')
         subtitle.set_halign(Gtk.Align.CENTER)
         subtitle.set_justify(Gtk.Justification.CENTER)
         subtitle.set_wrap(True)
-        subtitle.set_margin_top(4)
-        subtitle.set_margin_bottom(20)
+        subtitle.set_margin_top(8)
+        subtitle.set_margin_bottom(32)
         box.append(subtitle)
 
         # Primary action: New connection
@@ -162,7 +156,7 @@ class WelcomePage(Gtk.Overlay):
         new_btn.add_css_class('pill')
         new_btn.set_halign(Gtk.Align.CENTER)
         new_btn.set_can_focus(False)
-        new_btn.set_margin_bottom(20)
+        new_btn.set_margin_bottom(32)
         new_btn.connect('clicked', lambda *_a: self.window.get_application().activate_action('new-connection'))
         box.append(new_btn)
 
@@ -174,9 +168,9 @@ class WelcomePage(Gtk.Overlay):
         chips.set_column_spacing(8)
         chips.set_row_spacing(8)
         chips.set_can_focus(False)
-        chips.set_margin_bottom(28)
+        chips.set_margin_bottom(36)
         quick_actions = [
-            ('document-edit-symbolic', _('Edit config'),
+            ('document-edit-symbolic', _('Edit SSH Configuration'),
              lambda: self.window.get_application().activate_action('edit-ssh-config')),
             ('utilities-terminal-symbolic', _('Local terminal'),
              lambda: self.window.terminal_manager.show_local_terminal()),
