@@ -74,6 +74,37 @@ def test_lookup_passphrase_handles_home_relative_alias(monkeypatch, tmp_path):
     assert askpass_utils.lookup_passphrase(key_path) == "super-secret"
 
 
+def test_resolve_passphrase_for_ipc_rbw_cache_only(monkeypatch):
+    """The IPC server resolver answers rbw only from the warm value cache; a cold miss
+    returns '' (client falls back locally) instead of blocking on a slow `rbw get`."""
+    from sshpilot import askpass_utils, secret_storage
+
+    class FakeRbw:
+        def __init__(self):
+            self._cache = {}
+        def peek(self, name):
+            return self._cache.get(name)
+
+    class FakeManager:
+        def __init__(self, rbw):
+            self._rbw = rbw
+        def get_backend(self, name):
+            return self._rbw if name == "rbw" else None
+        def lookup(self, spec):          # used by the background warm thread
+            return None
+
+    rbw = FakeRbw()
+    monkeypatch.setenv("SSHPILOT_SECRET_BACKEND", "rbw")
+    monkeypatch.setattr(secret_storage, "get_secret_manager", lambda: FakeManager(rbw))
+    monkeypatch.setattr(askpass_utils, "get_askpass_log_path", lambda: "/dev/null", raising=False)
+
+    # Cold cache -> "" (fast miss, no blocking); warm cache -> the value.
+    assert askpass_utils.resolve_passphrase_for_ipc("~/.ssh/k") == ""
+    from sshpilot.secret_storage import passphrase_spec
+    rbw._cache[passphrase_spec("~/.ssh/k").keyring_account] = "warmpass"
+    assert askpass_utils.resolve_passphrase_for_ipc("~/.ssh/k") == "warmpass"
+
+
 def _use_dummy_libsecret(monkeypatch):
     from sshpilot import secret_storage
     monkeypatch.setattr(secret_storage, "Secret", DummySecretModule, raising=False)

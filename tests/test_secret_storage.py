@@ -389,6 +389,36 @@ def test_rbw_backend_names_cache_reused(monkeypatch):
     assert sum(1 for c in calls if c[0][1] == 'list') == 1
 
 
+def test_rbw_backend_value_cache(monkeypatch):
+    # A hit is cached: the second lookup and peek() serve the value without a new `rbw get`.
+    calls, fake = _rbw_fake(unlocked=True, get_out=b'topsecret\n', folder_names=('u@h',))
+    monkeypatch.setattr(ss.subprocess, 'run', fake)
+    b = ss.RbwBackend(); b._bin = '/usr/bin/rbw'
+    spec = password_spec('h', 'u')
+    assert b.lookup(spec) == 'topsecret'
+    gets = sum(1 for c in calls if c[0][1] == 'get')
+    assert b.lookup(spec) == 'topsecret'            # served from cache
+    assert sum(1 for c in calls if c[0][1] == 'get') == gets   # no extra `get`
+    assert b.peek('u@h') == 'topsecret'             # cache-only, still no new subprocess
+    assert sum(1 for c in calls if c[0][1] == 'get') == gets
+    # A fresh instance (the askpass subprocess) has no cache.
+    assert ss.RbwBackend().peek('u@h') is None
+
+
+def test_rbw_value_cache_invalidated_on_store_and_delete(monkeypatch):
+    calls, fake = _rbw_fake(unlocked=True, get_out=b'v1\n', folder_names=('u@h',))
+    monkeypatch.setattr(ss.subprocess, 'run', fake)
+    b = ss.RbwBackend(); b._bin = '/usr/bin/rbw'
+    spec = password_spec('h', 'u')
+    assert b.lookup(spec) == 'v1'
+    assert b.peek('u@h') == 'v1'
+    b.store(spec, 'v2')                 # a write must drop the stale cached value
+    assert b.peek('u@h') is None
+    b._values['u@h'] = ('v3', __import__('time').monotonic())
+    b.delete(spec)                      # so must a delete
+    assert b.peek('u@h') is None
+
+
 def test_rbw_backend_store_add_then_edit(monkeypatch):
     spec = password_spec('h', 'u')
     # Not present (folder empty) -> `add`, item body piped on stdin (first line = password).

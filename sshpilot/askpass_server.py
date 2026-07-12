@@ -160,7 +160,10 @@ class AskpassPromptServer:
             key_path = request.get("key_path") or ""
             passphrase = ""
             try:
-                passphrase = askpass_utils.lookup_passphrase(key_path) or ""
+                # Non-blocking: warm-cache/instant answer only, so a slow backend (rbw)
+                # never stalls this socket past the client's timeout. A cold rbw entry
+                # returns "" here and warms in the background for the next connect.
+                passphrase = askpass_utils.resolve_passphrase_for_ipc(key_path) or ""
             except Exception as exc:
                 logger.debug("askpass server: lookup error: %s", exc)
             self._write_reply(

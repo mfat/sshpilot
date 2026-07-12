@@ -624,7 +624,11 @@ def handle_askpass_cli(prompt: str) -> "str | None":
     try:
         from .secret_storage import get_secret_manager
         _selected = (os.environ.get("SSHPILOT_SECRET_BACKEND") or "auto").strip().lower()
-        prefer_ipc = bool(get_secret_manager().is_session_backed(_selected))
+        # Session backends (bw) hold the vault only in the main process, so IPC is the
+        # only warm route. rbw has a shared agent, but a local `rbw get` still costs ~1s
+        # per connect on a large vault — the main app's value cache (via IPC) makes repeat
+        # connects instant, so prefer IPC for it too.
+        prefer_ipc = bool(get_secret_manager().is_session_backed(_selected)) or _selected == "rbw"
     except Exception:
         prefer_ipc = False
 
@@ -750,6 +754,34 @@ def lookup_passphrase(key_path: str) -> str:
         result = manager.lookup(passphrase_spec(candidate))
         if result:
             return result
+    return ""
+
+
+def resolve_passphrase_for_ipc(key_path: str) -> str:
+    """Server-side (main-process) passphrase resolve for the askpass IPC that never blocks
+    on a slow backend.
+
+    For rbw a plain ``rbw get`` costs ~1s, which would exceed the IPC client's short
+    timeout and make it fall back to a *second* local lookup — worse than not using IPC.
+    So for rbw we answer only from the main process's warm value cache; on a cold miss we
+    warm it in the background (so the next connect is instant) and return "" immediately,
+    letting the client fall back locally this once. Other backends already resolve from a
+    warm/instant store, so use the normal path."""
+    selected = (os.environ.get("SSHPILOT_SECRET_BACKEND") or "auto").strip().lower()
+    if selected != "rbw":
+        return lookup_passphrase(key_path)
+
+    from .secret_storage import get_secret_manager, passphrase_spec
+    manager = get_secret_manager()
+    rbw = manager.get_backend("rbw")
+    peek = getattr(rbw, "peek", None)
+    if callable(peek):
+        for candidate in _get_key_path_lookup_candidates(key_path):
+            value = peek(passphrase_spec(candidate).keyring_account)
+            if value:
+                return value
+    # Cold cache: warm it off-thread for next time, answer "not found" now.
+    threading.Thread(target=lambda: lookup_passphrase(key_path), daemon=True).start()
     return ""
 
 

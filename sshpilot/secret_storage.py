@@ -1491,13 +1491,21 @@ class RbwBackend(SecretBackend):
     # probes several keys/candidate paths — mostly *misses* — freezes the UI for
     # seconds. Cache the set of item names in our folder from one `rbw list` and
     # answer misses (and `_exists`) from it; only a real hit pays a `get`.
-    _NAMES_TTL = 30.0  # seconds; store/delete invalidate immediately
+    _NAMES_TTL = 30.0     # seconds; store/delete invalidate immediately
+    _VALUES_TTL = 600.0   # resolved-secret cache; long because passphrases rarely change
+    #                       and store/delete invalidate on any in-app change
 
     def __init__(self) -> None:
         self._argv_override: Optional[List[str]] = None
         self._names: Optional[set] = None      # item names in our folder; None = unfilled
         self._names_at: float = 0.0
         self._names_lock = threading.Lock()
+        # Resolved secret values kept in the (long-lived) main process so repeat lookups
+        # — and the askpass IPC fast path — skip the ~1s `rbw get`. Never populated in the
+        # short-lived askpass subprocess (fresh instance each spawn). Guarded separately
+        # from _names so a cache peek never blocks behind a slow `rbw list`.
+        self._values: Dict[str, Tuple[str, float]] = {}   # name -> (value, monotonic ts)
+        self._values_lock = threading.Lock()
 
     @property
     def _argv_prefix(self) -> Optional[List[str]]:
@@ -1604,15 +1612,31 @@ class RbwBackend(SecretBackend):
                 )
             else:
                 self._invalidate_names()  # a new name may now exist in our folder
+                with self._values_lock:
+                    self._values.pop(name, None)  # re-read the new value next time
             return res.returncode == 0
         except Exception as exc:
             logger.error("rbw store failed: %s", exc)
             return False
 
+    def peek(self, name: str) -> Optional[str]:
+        """Cache-only value read — never spawns rbw. Backs the askpass IPC fast path so a
+        warm value returns instantly instead of paying a ~1s `rbw get`."""
+        with self._values_lock:
+            hit = self._values.get(name)
+            if hit and (time.monotonic() - hit[1]) < self._VALUES_TTL:
+                return hit[0]
+            if hit:
+                self._values.pop(name, None)
+        return None
+
     def lookup(self, spec: SecretSpec) -> Optional[str]:
         if not self.is_unlocked():
             return None
         name = spec.keyring_account
+        cached = self.peek(name)
+        if cached is not None:
+            return cached
         names = self._folder_names()
         if names is not None and name not in names:
             return None  # fast miss — no slow `rbw get` for an item we know isn't there
@@ -1620,8 +1644,11 @@ class RbwBackend(SecretBackend):
             res = self._run("get", "--folder", self._FOLDER, name)
             if res.returncode != 0:
                 return None
-            text = res.stdout.decode("utf-8", "replace")
-            return text.split("\n", 1)[0] or None
+            value = res.stdout.decode("utf-8", "replace").split("\n", 1)[0] or None
+            if value is not None:
+                with self._values_lock:
+                    self._values[name] = (value, time.monotonic())
+            return value
         except Exception as exc:
             logger.debug("rbw lookup failed: %s", exc)
             return None
@@ -1633,6 +1660,8 @@ class RbwBackend(SecretBackend):
             ok = self._run("remove", "--folder", self._FOLDER, spec.keyring_account).returncode == 0
             if ok:
                 self._invalidate_names()
+                with self._values_lock:
+                    self._values.pop(spec.keyring_account, None)
             return ok
         except Exception as exc:
             logger.debug("rbw delete failed: %s", exc)
