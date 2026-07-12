@@ -436,6 +436,7 @@ class OpenSSHSFTPManager(GObject.GObject):
         self._client: Optional[OpenSSHSFTPClient] = None
         self._proc: Optional[subprocess.Popen] = None
         self._sshpass_cleanup: Optional[Callable[[], None]] = None
+        self._closed = False  # set by close(); blocks in-flight connect resurrection
         self._home: Optional[str] = None
         self._stderr_lines: "deque[str]" = deque(maxlen=200)
         self._stderr_thread: Optional[threading.Thread] = None
@@ -627,6 +628,18 @@ class OpenSSHSFTPManager(GObject.GObject):
         # Drain stderr continuously so verbose ssh output can't fill the pipe
         # buffer and block the ssh process mid-session.
         self._start_stderr_drain(proc)
+        # Publish proc + cleanup BEFORE the (blocking) handshake so a concurrent
+        # close() — e.g. app quit against a dead host — can terminate ssh and EOF
+        # its stdout, unblocking client.start() on this worker thread instead of
+        # hanging until ssh's ConnectTimeout fires.
+        with self._lock:
+            if self._closed:
+                self._terminate_proc(proc)
+                if cleanup is not None:
+                    cleanup()
+                return
+            self._proc = proc
+            self._sshpass_cleanup = cleanup
         # On client.close() terminate the ssh subprocess so its stdout EOFs and
         # the reader thread unblocks cleanly (no fd surgery).
         client = OpenSSHSFTPClient(
@@ -643,12 +656,21 @@ class OpenSSHSFTPManager(GObject.GObject):
                 proc.kill()
             if cleanup is not None:
                 cleanup()
+            with self._lock:
+                if self._proc is proc:
+                    self._proc = None
+                    self._sshpass_cleanup = None
             raise self._classify_handshake_failure(self._drained_stderr(), exc) from exc
 
         with self._lock:
-            self._proc = proc
+            if self._closed:
+                # close() ran during the handshake — it already terminated proc
+                # and dropped our refs. Don't resurrect a live connection.
+                self._terminate_proc(proc)
+                if cleanup is not None:
+                    cleanup()
+                return
             self._client = client
-            self._sshpass_cleanup = cleanup
         try:
             self._home = client.realpath(".")
         except Exception:  # pragma: no cover - home is best-effort
@@ -775,6 +797,7 @@ class OpenSSHSFTPManager(GObject.GObject):
         logger.info("OpenSSHSFTPManager.close() called")
         self._stop_keepalive_worker()
         with self._lock:
+            self._closed = True
             client = self._client
             proc = self._proc
             cleanup = self._sshpass_cleanup
