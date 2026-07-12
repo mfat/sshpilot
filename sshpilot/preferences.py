@@ -3267,7 +3267,7 @@ class PreferencesWindow(Adw.Window):
             return _("Inactive")
 
         builtin_group = Adw.PreferencesGroup(title=_("Built-in Plugins"))
-        builtin_group.set_description(_("Changes take effect after restarting sshPilot"))
+        builtin_group.set_description(_("Changes take effect after restarting SSH Pilot"))
         for info in [i for i in infos if i.builtin]:
             # ActionRow + manual switch so the suffixes order as
             # gear, toggle, info (the SwitchRow toggle is forced to the far end).
@@ -3351,7 +3351,7 @@ class PreferencesWindow(Adw.Window):
         self._installed_ids = {i.plugin_id for i in infos}
         self._available_group = Adw.PreferencesGroup(title=_("Available Plugins"))
         self._available_group.set_description(
-            _("From the sshPilot plugin registry. Toggling one on downloads, "
+            _("From the SSH Pilot plugin registry. Toggling one on downloads, "
               "verifies, and installs it (restart to load)."))
         self._available_loading = Adw.ActionRow(title=_("Checking the plugin registry…"))
         spinner = Gtk.Spinner()
@@ -3882,7 +3882,7 @@ class PreferencesWindow(Adw.Window):
         self.config.set_setting('plugins.enabled', sorted(enabled))
         self._rebuild_plugins_page()
         self._alert(_("Plugin installed"),
-                    _("Installed '{}'. Restart sshPilot to load it.").format(
+                    _("Installed '{}'. Restart SSH Pilot to load it.").format(
                         meta.get('name', pid)))
 
     def _confirm_remove_plugin(self, info):
@@ -3910,7 +3910,7 @@ class PreferencesWindow(Adw.Window):
                 self.config.set_setting(key, sorted(ids))
         self._rebuild_plugins_page()
         self._alert(_("Plugin removed"),
-                    _("Removed '{}'. Restart sshPilot to unload it if it was active.").format(
+                    _("Removed '{}'. Restart SSH Pilot to unload it if it was active.").format(
                         info.name))
 
     def _add_plugin_page_gear(self, row, plugin_id):
@@ -3950,7 +3950,7 @@ class PreferencesWindow(Adw.Window):
             disabled.add(plugin_id)
         self.config.set_setting('plugins.disabled', sorted(disabled))
         if row is not None:
-            row.set_subtitle(_("Restart sshPilot to apply"))
+            row.set_subtitle(_("Restart SSH Pilot to apply"))
 
     def _set_user_plugin_enabled(self, plugin_id, on):
         enabled = set(self.config.get_setting('plugins.enabled', []) or [])
@@ -3967,14 +3967,14 @@ class PreferencesWindow(Adw.Window):
         if not active:
             self._set_user_plugin_enabled(plugin_id, False)
             if row is not None:
-                row.set_subtitle(_("Restart sshPilot to apply"))
+                row.set_subtitle(_("Restart SSH Pilot to apply"))
             return
 
         # Enabling runs third-party code with full privileges — get consent first.
         def _accept():
             self._set_user_plugin_enabled(plugin_id, True)
             if row is not None:
-                row.set_subtitle(_("Restart sshPilot to apply"))
+                row.set_subtitle(_("Restart SSH Pilot to apply"))
 
         def _decline():
             # Revert the toggle (the manual switch; ActionRow has no set_active).
