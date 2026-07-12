@@ -101,6 +101,7 @@ class WelcomePage(Gtk.Overlay):
         self.set_child(scrolled)
 
         current_shortcuts = self._get_safe_current_shortcuts()
+        self._shortcuts = current_shortcuts
         content_box.append(self._build_layout(current_shortcuts))
 
         # Footer links pinned to the bottom of the page
@@ -127,7 +128,7 @@ class WelcomePage(Gtk.Overlay):
         hero_btn.set_valign(Gtk.Align.CENTER)
         hero_btn.set_margin_bottom(28)
         hero_btn.set_can_focus(False)
-        hero_btn.set_tooltip_text(_('Open Local Terminal'))
+        hero_btn.set_tooltip_text(self._tooltip(_('Open Local Terminal'), 'local-terminal'))
         hero_btn.connect('clicked', lambda *_a: self.window.terminal_manager.show_local_terminal())
         box.append(hero_btn)
 
@@ -157,29 +158,62 @@ class WelcomePage(Gtk.Overlay):
         new_btn.set_halign(Gtk.Align.CENTER)
         new_btn.set_can_focus(False)
         new_btn.set_margin_bottom(32)
+        new_btn.set_tooltip_text(self._tooltip(_('New connection'), 'new-connection'))
         new_btn.connect('clicked', lambda *_a: self.window.get_application().activate_action('new-connection'))
         box.append(new_btn)
 
+        # Shared size group keeps every chip (both rows) the same width so the
+        # revealed row lines up flush with the first three.
+        chip_sizes = Gtk.SizeGroup(mode=Gtk.SizeGroupMode.HORIZONTAL)
+
         # Quick action chips
-        chips = Gtk.FlowBox()
-        chips.set_selection_mode(Gtk.SelectionMode.NONE)
-        chips.set_halign(Gtk.Align.CENTER)
-        chips.set_max_children_per_line(3)
-        chips.set_column_spacing(8)
-        chips.set_row_spacing(8)
-        chips.set_can_focus(False)
-        chips.set_margin_bottom(36)
-        quick_actions = [
+        chips = self._make_chip_row([
             ('document-edit-symbolic', _('Edit SSH Configuration'),
-             lambda: self.window.get_application().activate_action('edit-ssh-config')),
+             lambda _b: self.window.get_application().activate_action('edit-ssh-config'),
+             'edit-ssh-config'),
             ('utilities-terminal-symbolic', _('Local terminal'),
-             lambda: self.window.terminal_manager.show_local_terminal()),
+             lambda _b: self.window.terminal_manager.show_local_terminal(),
+             'local-terminal'),
             ('system-run-symbolic', _('Snippets'),
-             self._open_command_blocks_sidebar),
-        ]
-        for icon_name, label, cb in quick_actions:
-            chips.append(self._build_chip(icon_name, label, cb))
+             lambda _b: self._open_command_blocks_sidebar(),
+             'toggle-command-blocks'),
+        ], chip_sizes)
+        chips.set_margin_bottom(8)
         box.append(chips)
+
+        # Collapsible "More" actions (hidden by default)
+        more_chips = self._make_chip_row([
+            ('network-server-symbolic', _('Known hosts'),
+             lambda _b: self.window.on_edit_known_hosts_action(None, None),
+             'edit-known-hosts'),
+            ('dialog-password-symbolic', _('Authorized keys'),
+             lambda _b: self.window.on_manage_local_authorized_keys_action(None, None),
+             'manage-local-authorized-keys'),
+            ('send-to-symbolic', _('Copy key to server'),
+             self._copy_key_to_server,
+             None),
+        ], chip_sizes)
+        more_chips.set_margin_top(8)
+        revealer = Gtk.Revealer()
+        revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
+        revealer.set_child(more_chips)
+        revealer.set_reveal_child(False)
+        revealer.set_margin_bottom(36)
+
+        chevron = icon_utils.new_image_from_icon_name('pan-down-symbolic')
+        more_content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        more_content.set_halign(Gtk.Align.CENTER)
+        more_content.append(Gtk.Label(label=_('More')))
+        more_content.append(chevron)
+        more_btn = Gtk.Button()
+        more_btn.set_child(more_content)
+        more_btn.add_css_class('flat')
+        more_btn.set_halign(Gtk.Align.CENTER)
+        more_btn.set_can_focus(False)
+        more_btn.set_tooltip_text(_('Show more actions'))
+        more_btn.connect('clicked', self._on_toggle_more, revealer, chevron)
+        box.append(more_btn)
+        box.append(revealer)
 
         # Pinned connections / sessions (populated dynamically)
         self._pinned_rows_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
@@ -194,6 +228,7 @@ class WelcomePage(Gtk.Overlay):
         shortcuts_link.add_css_class('flat')
         shortcuts_link.add_css_class('dim-label')
         shortcuts_link.set_can_focus(False)
+        shortcuts_link.set_tooltip_text(self._tooltip(_('Keyboard shortcuts'), 'shortcuts'))
         shortcuts_link.connect('clicked', lambda *_a: self.window.show_shortcuts_window())
         footer.append(shortcuts_link)
         sep = Gtk.Label(label='·')
@@ -203,20 +238,73 @@ class WelcomePage(Gtk.Overlay):
         docs_link.add_css_class('flat')
         docs_link.add_css_class('dim-label')
         docs_link.set_can_focus(False)
+        docs_link.set_tooltip_text(self._tooltip(_('Online documentation'), 'help'))
         docs_link.connect('clicked', lambda *_a: self.open_online_help())
         footer.append(docs_link)
         return footer
 
-    def _build_chip(self, icon_name, label, callback):
+    def _make_chip_row(self, actions, size_group=None):
+        """Build a homogeneous 3-column FlowBox of equal-width chip buttons."""
+        fb = Gtk.FlowBox()
+        fb.set_selection_mode(Gtk.SelectionMode.NONE)
+        fb.set_halign(Gtk.Align.CENTER)
+        fb.set_max_children_per_line(3)
+        fb.set_min_children_per_line(3)
+        fb.set_homogeneous(True)
+        fb.set_column_spacing(8)
+        fb.set_row_spacing(8)
+        fb.set_can_focus(False)
+        for icon_name, label, cb, action_name in actions:
+            fb.append(self._build_chip(icon_name, label, cb, action_name, size_group))
+        return fb
+
+    def _build_chip(self, icon_name, label, callback, action_name=None, size_group=None):
         content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        content.set_halign(Gtk.Align.CENTER)
         content.append(icon_utils.new_image_from_icon_name(icon_name))
         content.append(Gtk.Label(label=label))
         btn = Gtk.Button()
         btn.set_child(content)
         btn.add_css_class('startpage-chip')
         btn.set_can_focus(False)
-        btn.connect('clicked', lambda *_a: callback())
+        btn.set_hexpand(True)
+        if size_group is not None:
+            size_group.add_widget(btn)
+        btn.set_tooltip_text(self._tooltip(label, action_name))
+        # clicked passes the button as first arg; callbacks accept it (used as
+        # the popover anchor for Copy key to server).
+        btn.connect('clicked', callback)
         return btn
+
+    def _tooltip(self, text, action_name=None):
+        """Label plus the action's current keyboard shortcut, if one is set."""
+        accel = self._get_action_accel_display(getattr(self, '_shortcuts', {}) or {}, action_name) if action_name else ''
+        return f"{text}  ({accel})" if accel else text
+
+    def _on_toggle_more(self, button, revealer, chevron):
+        reveal = not revealer.get_reveal_child()
+        revealer.set_reveal_child(reveal)
+        icon_utils.set_icon_from_name(chevron, 'pan-up-symbolic' if reveal else 'pan-down-symbolic')
+        button.set_tooltip_text(_('Show fewer actions') if reveal else _('Show more actions'))
+
+    def _copy_key_to_server(self, anchor):
+        """Pick a host, then reuse the window's copy-key entry point for it."""
+        from .host_picker import show_host_picker
+        show_host_picker(self.window, anchor, self._open_copy_key_window,
+                         toast=self._show_toast)
+
+    def _open_copy_key_window(self, connection):
+        win = self.window
+        if not hasattr(win, 'on_copy_key_to_server_action'):
+            return
+        win._context_menu_connection = connection
+        win.on_copy_key_to_server_action(None, None)
+
+    def _show_toast(self, message):
+        try:
+            self.window.add_toast(Adw.Toast.new(message))
+        except Exception:
+            pass
 
     def _open_command_blocks_sidebar(self) -> None:
         """Toggle the command blocks right sidebar from the start page."""
