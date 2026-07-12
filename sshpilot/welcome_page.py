@@ -34,29 +34,18 @@ _CSS = b"""
 }
 .startpage-chip:hover { background: alpha(@window_fg_color, 0.08); }
 .startpage-chip:active { background: alpha(@window_fg_color, 0.14); }
-.startpage-card { padding: 4px; }
-.startpage-status {
-    border-radius: 50%;
-    min-width: 8px;
-    min-height: 8px;
-    background-color: alpha(@window_fg_color, 0.35);
-}
-.startpage-status.online { background-color: @success_color; }
 .startpage-mono {
     font-family: monospace;
     font-size: 0.85em;
 }
-.startpage-heading {
-    font-size: 0.8em;
-    font-weight: bold;
-    opacity: 0.6;
-}
 .startpage-recent-head {
     font-size: 0.8em;
+    font-weight: normal;
     opacity: 0.55;
     padding-bottom: 8px;
     border-bottom: 1px solid alpha(@window_fg_color, 0.12);
 }
+.startpage-recent-row, .startpage-recent-row label { font-weight: normal; }
 .startpage-recent-row {
     padding: 9px 2px;
     background: transparent;
@@ -99,148 +88,53 @@ class WelcomePage(Gtk.Overlay):
         self.set_vexpand(True)
         self.set_can_focus(False)
 
-        self._pinned_rows_box = None
+        self._pinned_box = None
 
         self.connection_manager.connect_after('connection-removed', self._on_connection_removed)
 
         current_shortcuts = self._get_safe_current_shortcuts()
         self._shortcuts = current_shortcuts
 
-        # Two switchable views inside a carousel: the full start page and a
-        # minimal overview. The last-viewed page is remembered across sessions.
-        self._carousel = Adw.Carousel()
-        self._carousel.set_hexpand(True)
-        self._carousel.set_vexpand(True)
-        self._carousel.set_can_focus(False)
-        # Vertical wheel scrolls the inner ScrolledWindow; a horizontal gesture
-        # pages between views. Swipe/drag and the indicator dots also switch.
-        self._carousel.set_allow_scroll_wheel(True)
-        self._carousel.append(self._build_primary_view(current_shortcuts))
-        self._carousel.append(self._build_minimal_view())
+        self.set_child(self._build_minimal_view(current_shortcuts))
 
-        dots = Adw.CarouselIndicatorDots()
-        dots.set_carousel(self._carousel)
-        dots.set_halign(Gtk.Align.CENTER)
-        dots.set_margin_bottom(64)  # sit above the footer overlay
-
-        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        main_box.set_can_focus(False)
-        main_box.append(self._carousel)
-        main_box.append(dots)
-        self.set_child(main_box)
-
-        # Footer links pinned to the bottom of the page
+        # Footer links pinned to the bottom-centre of the page
         footer = self._build_footer()
         footer.set_halign(Gtk.Align.CENTER)
         footer.set_valign(Gtk.Align.END)
         footer.set_margin_bottom(32)
         self.add_overlay(footer)
 
-        self._restore_last_view()
-        self._carousel.connect('page-changed', self._on_view_changed)
+    # --- New connection pill ---
 
-    # --- Views / carousel ---
-
-    def _build_primary_view(self, current_shortcuts):
-        """The full start page (scrollable), unchanged from the original."""
-        scrolled = Gtk.ScrolledWindow()
-        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scrolled.set_vexpand(True)
-        scrolled.set_hexpand(True)
-        scrolled.set_can_focus(False)
-
-        content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        content_box.set_margin_top(24)
-        content_box.set_margin_bottom(24)
-        content_box.set_valign(Gtk.Align.CENTER)
-        content_box.set_can_focus(False)
-
-        clamp = Adw.Clamp()
-        clamp.set_maximum_size(520)
-        clamp.set_tightening_threshold(400)
-        clamp.set_child(content_box)
-        clamp.set_vexpand(True)
-        clamp.set_can_focus(False)
-        scrolled.set_child(clamp)
-
-        content_box.append(self._build_layout(current_shortcuts))
-        return scrolled
-
-    def _restore_last_view(self):
-        """Scroll to the last-viewed carousel page. Deferred to idle so the
-        carousel is allocated before scroll_to positions it."""
-        try:
-            idx = int(self.config.get_setting('ui.welcome_view', 0) or 0)
-        except Exception:
-            idx = 0
-        if not (0 <= idx < self._carousel.get_n_pages()) or idx == 0:
-            return
-        page = self._carousel.get_nth_page(idx)
-        from gi.repository import GLib
-        GLib.idle_add(lambda: (self._carousel.scroll_to(page, False), False)[1])
-
-    def _on_view_changed(self, _carousel, index):
-        try:
-            self.config.set_setting('ui.welcome_view', int(index))
-        except Exception:
-            pass
-
-    # --- Layout ---
-
-    def _build_layout(self, current_shortcuts):
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        box.set_halign(Gtk.Align.CENTER)
-        box.set_margin_start(12)
-        box.set_margin_end(12)
-
-        # Hero icon — button that opens a local terminal
-        hero_icon = icon_utils.new_image_from_icon_name('utilities-terminal-symbolic', 28)
-        hero_btn = Gtk.Button()
-        hero_btn.set_child(hero_icon)
-        hero_btn.add_css_class('startpage-hero')
-        hero_btn.set_halign(Gtk.Align.CENTER)
-        hero_btn.set_valign(Gtk.Align.CENTER)
-        hero_btn.set_margin_bottom(28)
-        hero_btn.set_can_focus(False)
-        hero_btn.set_tooltip_text(self._tooltip(_('Open Local Terminal'), 'local-terminal'))
-        hero_btn.connect('clicked', lambda *_a: self.window.terminal_manager.show_local_terminal())
-        box.append(hero_btn)
-
-        # Subtitle
-        subtitle = Gtk.Label(label=_('Double-click a host to connect or create a new connection'))
-        subtitle.add_css_class('dim-label')
-        subtitle.set_halign(Gtk.Align.CENTER)
-        subtitle.set_justify(Gtk.Justification.CENTER)
-        subtitle.set_wrap(True)
-        subtitle.set_margin_top(8)
-        subtitle.set_margin_bottom(32)
-        box.append(subtitle)
-
-        # Primary action: New connection
-        new_accel = self._get_action_accel_display(current_shortcuts, 'new-connection')
+    def _build_new_connection_pill(self):
         btn_content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         btn_content.append(icon_utils.new_image_from_icon_name('list-add-symbolic'))
         btn_content.append(Gtk.Label(label=_('New connection')))
-        if new_accel:
-            accel_lbl = Gtk.Label(label=new_accel)
-            accel_lbl.set_opacity(0.7)
-            btn_content.append(accel_lbl)
         new_btn = Gtk.Button()
         new_btn.set_child(btn_content)
         new_btn.add_css_class('suggested-action')
         new_btn.add_css_class('pill')
-        new_btn.set_halign(Gtk.Align.CENTER)
         new_btn.set_can_focus(False)
-        new_btn.set_margin_bottom(32)
         new_btn.set_tooltip_text(self._tooltip(_('New connection'), 'new-connection'))
         new_btn.connect('clicked', lambda *_a: self.window.get_application().activate_action('new-connection'))
-        box.append(new_btn)
+        return new_btn
 
-        # Shared size group keeps every chip (both rows) the same width so the
-        # revealed row lines up flush with the first three.
+    # --- Collapsible extra actions ---
+
+    def _build_extras(self, current_shortcuts):
+        """Secondary actions + pinned sections, hidden behind a revealer."""
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        box.set_halign(Gtk.Align.CENTER)
+        box.set_margin_top(8)
+
+        pill = self._build_new_connection_pill()
+        pill.set_halign(Gtk.Align.CENTER)
+        pill.set_margin_bottom(16)
+        box.append(pill)
+
+        # Shared size group keeps every chip (both rows) the same width.
         chip_sizes = Gtk.SizeGroup(mode=Gtk.SizeGroupMode.HORIZONTAL)
 
-        # Quick action chips
         chips = self._make_chip_row([
             ('document-edit-symbolic', _('Edit SSH Configuration'),
              lambda _b: self.window.get_application().activate_action('edit-ssh-config'),
@@ -255,7 +149,6 @@ class WelcomePage(Gtk.Overlay):
         chips.set_margin_bottom(8)
         box.append(chips)
 
-        # Collapsible "More" actions (hidden by default)
         more_chips = self._make_chip_row([
             ('network-server-symbolic', _('Manage Known hosts'),
              lambda _b: self.window.on_edit_known_hosts_action(None, None),
@@ -268,36 +161,15 @@ class WelcomePage(Gtk.Overlay):
              None),
         ], chip_sizes)
         more_chips.set_margin_top(8)
-        revealer = Gtk.Revealer()
-        revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
-        revealer.set_child(more_chips)
-        revealer.set_reveal_child(False)
-        revealer.set_margin_bottom(36)
-
-        chevron = icon_utils.new_image_from_icon_name('pan-down-symbolic')
-        more_btn = Gtk.Button()
-        more_btn.set_child(chevron)
-        more_btn.add_css_class('flat')
-        more_btn.add_css_class('circular')
-        more_btn.set_halign(Gtk.Align.CENTER)
-        more_btn.set_can_focus(False)
-        more_btn.set_tooltip_text(_('Show more actions'))
-        more_btn.connect('clicked', self._on_toggle_more, revealer, chevron)
-        box.append(more_btn)
-        box.append(revealer)
-
-        # Pinned connections / sessions (populated dynamically)
-        self._pinned_rows_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
-        box.append(self._pinned_rows_box)
-        self._populate_pinned_rows_box()
+        box.append(more_chips)
 
         return box
 
-    # --- Minimal view ---
+    # --- Main view ---
 
-    def _build_minimal_view(self):
-        """Compact overview: a group column on the left and a connection list on
-        the right (mirrors sshpilot_start_page_minimal.html)."""
+    def _build_minimal_view(self, current_shortcuts):
+        """Compact start page: clickable terminal hero, connection summary and a
+        Recent list, with the secondary actions tucked behind a revealer."""
         scrolled = Gtk.ScrolledWindow()
         scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         scrolled.set_vexpand(True)
@@ -340,27 +212,94 @@ class WelcomePage(Gtk.Overlay):
         summary.set_margin_bottom(28)
         inner.append(summary)
 
+        lists = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=24)
+        lists.set_hexpand(True)
+        lists.append(self._build_min_connection_list(connections))
+        self._pinned_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        self._pinned_box.set_hexpand(True)
+        lists.append(self._pinned_box)
+        self._populate_pinned_box()
+
         clamp = Adw.Clamp()
         clamp.set_maximum_size(720)
         clamp.set_tightening_threshold(600)
         clamp.set_hexpand(True)
-        clamp.set_child(self._build_min_connection_list(connections))
+        clamp.set_child(lists)
         inner.append(clamp)
+
+        # Secondary actions + pinned sections, hidden by default
+        revealer = Gtk.Revealer()
+        revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
+        revealer.set_child(self._build_extras(current_shortcuts))
+        revealer.set_reveal_child(False)
+
+        chevron = icon_utils.new_image_from_icon_name('pan-down-symbolic')
+        more_btn = Gtk.Button()
+        more_btn.set_child(chevron)
+        more_btn.add_css_class('flat')
+        more_btn.add_css_class('circular')
+        more_btn.set_halign(Gtk.Align.CENTER)
+        more_btn.set_margin_top(16)
+        more_btn.set_can_focus(False)
+        more_btn.set_tooltip_text(_('Show more actions'))
+        more_btn.connect('clicked', self._on_toggle_more, revealer, chevron)
+        inner.append(more_btn)
+        inner.append(revealer)
 
         scrolled.set_child(inner)
         return scrolled
 
-    def _build_min_connection_list(self, connections):
+    # --- Shared row/section widgets ---
+
+    def _min_row(self, title, subtitle, on_click):
+        """A single Recent/Pinned row: title left, subtitle (mono) right."""
+        line = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        name = Gtk.Label(label=title or '', xalign=0)
+        name.set_ellipsize(3)
+        name.set_hexpand(True)
+        line.append(name)
+        if subtitle:
+            addr = Gtk.Label(label=subtitle, xalign=1)
+            addr.add_css_class('startpage-mono')
+            addr.add_css_class('dim-label')
+            addr.set_ellipsize(3)
+            line.append(addr)
+
+        btn = Gtk.Button()
+        btn.set_child(line)
+        btn.add_css_class('startpage-recent-row')
+        btn.set_can_focus(False)
+        btn.connect('clicked', on_click)
+        return btn
+
+    def _min_section(self, heading_text, rows):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         box.set_hexpand(True)
-
-        heading = Gtk.Label(label=_('Recent'), xalign=0)
+        heading = Gtk.Label(label=heading_text, xalign=0)
         heading.set_hexpand(True)
         heading.add_css_class('startpage-recent-head')
         heading.set_margin_bottom(4)
         box.append(heading)
+        for row in rows:
+            box.append(row)
+        return box
 
+    @staticmethod
+    def _conn_target(conn):
+        # Prefer the real hostname/IP; ``host`` is often just the config alias.
+        host = getattr(conn, 'hostname', '') or getattr(conn, 'host', '')
+        user = getattr(conn, 'username', '')
+        return f"{user}@{host}" if user and host else host
+
+    def _build_min_connection_list(self, connections):
         if not connections:
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+            box.set_hexpand(True)
+            heading = Gtk.Label(label=_('Recent'), xalign=0)
+            heading.set_hexpand(True)
+            heading.add_css_class('startpage-recent-head')
+            heading.set_margin_bottom(4)
+            box.append(heading)
             empty = Gtk.Label(label=_('No connections yet'), xalign=0)
             empty.add_css_class('dim-label')
             empty.set_margin_top(8)
@@ -373,31 +312,36 @@ class WelcomePage(Gtk.Overlay):
             except Exception:
                 return 0
 
-        recent = sorted(connections, key=_last_used, reverse=True)
-        for conn in recent[:5]:
-            host_label = getattr(conn, 'host', '') or getattr(conn, 'hostname', '')
-            username = getattr(conn, 'username', '')
-            target = f"{username}@{host_label}" if username and host_label else host_label
+        recent = sorted(connections, key=_last_used, reverse=True)[:5]
+        rows = [
+            self._min_row(
+                getattr(conn, 'nickname', ''), self._conn_target(conn),
+                lambda _b, c=conn: self.window.terminal_manager.connect_to_host(c))
+            for conn in recent
+        ]
+        return self._min_section(_('Recent'), rows)
 
-            line = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-            nick = Gtk.Label(label=getattr(conn, 'nickname', ''), xalign=0)
-            nick.set_ellipsize(3)
-            nick.set_hexpand(True)
-            line.append(nick)
-            addr = Gtk.Label(label=target, xalign=1)
-            addr.add_css_class('startpage-mono')
-            addr.add_css_class('dim-label')
-            addr.set_ellipsize(3)
-            line.append(addr)
+    def _populate_pinned_box(self):
+        """Fill the Pinned section (rows, styled like Recent) below the list."""
+        box = getattr(self, '_pinned_box', None)
+        if box is None:
+            return
+        child = box.get_first_child()
+        while child:
+            nxt = child.get_next_sibling()
+            box.remove(child)
+            child = nxt
 
-            btn = Gtk.Button()
-            btn.set_child(line)
-            btn.add_css_class('startpage-recent-row')
-            btn.set_can_focus(False)
-            btn.connect('clicked', lambda _b, c=conn: self.window.terminal_manager.connect_to_host(c))
-            box.append(btn)
-
-        return box
+        conn_map = {c.nickname: c for c in self.connection_manager.connections}
+        pinned = [conn_map[n] for n in self.config.get_pinned_nicknames() if n in conn_map][:5]
+        if pinned:
+            rows = [
+                self._min_row(
+                    conn.nickname, self._conn_target(conn),
+                    lambda _b, c=conn: self.window.terminal_manager.connect_to_host(c))
+                for conn in pinned
+            ]
+            box.append(self._min_section(_('Pinned'), rows))
 
     def _build_footer(self):
         footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
@@ -547,148 +491,9 @@ class WelcomePage(Gtk.Overlay):
 
     # --- Pinned connections ---
 
-    def _build_conn_card(self, conn):
-        """Card button for a pinned connection."""
-        online = conn in getattr(self.window, 'active_terminals', {})
-
-        top = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        dot = Gtk.Box()
-        dot.add_css_class('startpage-status')
-        if online:
-            dot.add_css_class('online')
-        dot.set_valign(Gtk.Align.CENTER)
-        top.append(dot)
-        name = Gtk.Label(label=conn.nickname, xalign=0)
-        name.set_ellipsize(3)  # PANGO_ELLIPSIZE_END
-        top.append(name)
-
-        host_label = getattr(conn, 'host', '') or getattr(conn, 'hostname', '')
-        username = getattr(conn, 'username', '')
-        target = f"{username}@{host_label}" if username and host_label else host_label
-        sub = Gtk.Label(label=target, xalign=0)
-        sub.add_css_class('startpage-mono')
-        sub.add_css_class('dim-label')
-        sub.set_ellipsize(3)
-        sub.set_margin_start(14)
-
-        inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-        inner.append(top)
-        inner.append(sub)
-
-        card = Gtk.Button()
-        card.set_child(inner)
-        card.add_css_class('card')
-        card.add_css_class('startpage-card')
-        card.set_hexpand(True)
-        card.set_can_focus(False)
-        card.connect('clicked', lambda _b, c=conn: self.window.terminal_manager.connect_to_host(c))
-        return card
-
-    def _build_pinned_section(self):
-        """Grid of pinned host cards, or None if none are pinned."""
-        pinned_nicknames = self.config.get_pinned_nicknames()
-        if not pinned_nicknames:
-            return None
-        conn_map = {c.nickname: c for c in self.connection_manager.connections}
-
-        grid = Gtk.FlowBox()
-        grid.set_selection_mode(Gtk.SelectionMode.NONE)
-        grid.set_max_children_per_line(2)
-        grid.set_min_children_per_line(1)
-        grid.set_homogeneous(True)
-        grid.set_column_spacing(8)
-        grid.set_row_spacing(8)
-        grid.set_can_focus(False)
-
-        rows_added = 0
-        for nickname in pinned_nicknames:
-            conn = conn_map.get(nickname)
-            if conn is None:
-                continue
-            grid.append(self._build_conn_card(conn))
-            rows_added += 1
-        if rows_added == 0:
-            return None
-        return self._section(_('Pinned Connections'), grid)
-
-    def _build_pinned_sessions_section(self):
-        """Grid of pinned session cards, or None if none are pinned."""
-        session_manager = getattr(self.window, 'session_manager', None)
-        if session_manager is None:
-            return None
-        pinned_names = session_manager.get_pinned_session_names()
-        if not pinned_names:
-            return None
-
-        grid = Gtk.FlowBox()
-        grid.set_selection_mode(Gtk.SelectionMode.NONE)
-        grid.set_max_children_per_line(2)
-        grid.set_min_children_per_line(1)
-        grid.set_homogeneous(True)
-        grid.set_column_spacing(8)
-        grid.set_row_spacing(8)
-        grid.set_can_focus(False)
-
-        rows_added = 0
-        for name in pinned_names:
-            data = session_manager.get_session(name)
-            if not isinstance(data, dict):
-                continue
-
-            top = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-            top.append(icon_utils.new_image_from_icon_name('view-dual-symbolic'))
-            lbl = Gtk.Label(label=name, xalign=0)
-            lbl.set_ellipsize(3)
-            top.append(lbl)
-            sub = Gtk.Label(
-                label=_("{n} tab(s)").format(n=len(data.get('tabs', []))), xalign=0
-            )
-            sub.add_css_class('dim-label')
-            sub.set_margin_start(24)
-            inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-            inner.append(top)
-            inner.append(sub)
-
-            card = Gtk.Button()
-            card.set_child(inner)
-            card.add_css_class('card')
-            card.add_css_class('startpage-card')
-            card.set_hexpand(True)
-            card.set_can_focus(False)
-            card.connect('clicked', lambda _b, n=name, d=data: self.window._prompt_open_session(n, d))
-            grid.append(card)
-            rows_added += 1
-        if rows_added == 0:
-            return None
-        return self._section(_('Pinned Sessions'), grid)
-
-    def _section(self, title, child):
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        heading = Gtk.Label(label=title, xalign=0)
-        heading.add_css_class('startpage-heading')
-        box.append(heading)
-        box.append(child)
-        return box
-
-    def _populate_pinned_rows_box(self):
-        """Fill _pinned_rows_box with the current pinned sections."""
-        if self._pinned_rows_box is None:
-            return
-        child = self._pinned_rows_box.get_first_child()
-        while child:
-            nxt = child.get_next_sibling()
-            self._pinned_rows_box.remove(child)
-            child = nxt
-        section = self._build_pinned_section()
-        if section is not None:
-            self._pinned_rows_box.append(section)
-        sessions_section = self._build_pinned_sessions_section()
-        if sessions_section is not None:
-            self._pinned_rows_box.append(sessions_section)
-
     def refresh_pinned(self):
         """Rebuild the pinned section after a pin/unpin action."""
-        self._populate_pinned_rows_box()
+        self._populate_pinned_box()
 
     def _on_connection_removed(self, _manager, connection):
         """Auto-unpin a connection when it is deleted from the inventory."""
