@@ -1468,7 +1468,26 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             .navigation-sidebar row.tinted:selected:active {
               background-color: shade(@accent_bg_color, 0.90);
             }
-            
+
+            /* Accent-bar mode: the coloured left bar is the highlight, so a
+               selected row uses a neutral overlay instead of the accent fill
+               (which would swamp the bar). Every bar-mode row carries
+               .color-bar, and this out-specifies the accent `row:selected`
+               rule above at the same provider priority. */
+            .navigation-sidebar row.color-bar:selected {
+              background-color: alpha(@window_fg_color, 0.10);
+              color: @window_fg_color;
+              box-shadow: none;
+            }
+
+            .navigation-sidebar row.color-bar:selected:hover {
+              background-color: alpha(@window_fg_color, 0.13);
+            }
+
+            .navigation-sidebar row.color-bar:selected:active {
+              background-color: alpha(@window_fg_color, 0.16);
+            }
+
             /* Reorder placeholder: a slim transparent gap row whose child
                DragIndicator draws the accent bar; the list parts around it. */
             .drop-placeholder-row {
@@ -2251,6 +2270,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         show_group_count = self.config.get_setting('ui.sidebar_show_group_count', True)
         show_status = self.config.get_setting('ui.sidebar_show_connection_status', True)
         show_connection_icon = self.config.get_setting('ui.sidebar_show_connection_icon', True)
+        show_group_icon = self.config.get_setting('ui.sidebar_show_group_icon', True)
         flat_rows = self.config.get_setting('ui.sidebar_flat_rows', False)
         
         # Update all rows in the connection list
@@ -2276,6 +2296,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             # Update GroupRow elements
             if hasattr(row, 'count_label'):
                 row.count_label.set_visible(show_group_count)
+            if hasattr(row, 'group_id') and hasattr(row, 'icon'):
+                row.icon.set_visible(show_group_icon)
             
             row = row.get_next_sibling()
 

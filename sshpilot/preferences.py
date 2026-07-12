@@ -716,7 +716,7 @@ class PreferencesWindow(Adw.Window):
             group_appearance_group = Adw.PreferencesGroup(title="Group Appearance")
 
             # Sidebar group color display mode
-            self._group_color_display_values = ['fill', 'badge']
+            self._group_color_display_values = ['fill', 'badge', 'bar']
             self.group_color_display_row = Adw.ComboRow()
             self.group_color_display_row.set_title("Sidebar Group Colors")
             self.group_color_display_row.set_subtitle(
@@ -726,6 +726,7 @@ class PreferencesWindow(Adw.Window):
             color_display_options = Gtk.StringList()
             color_display_options.append("Colored Rows")
             color_display_options.append("Color Badges")
+            color_display_options.append("Accent Bars")
             self.group_color_display_row.set_model(color_display_options)
 
             current_mode = 'fill'
@@ -1191,6 +1192,16 @@ class PreferencesWindow(Adw.Window):
             )
             show_connection_icon_switch.connect('notify::active', self.on_sidebar_show_connection_icon_changed)
             sidebar_group.add(show_connection_icon_switch)
+
+            # Display group icon toggle
+            show_group_icon_switch = Adw.SwitchRow()
+            show_group_icon_switch.set_title("Display Group Icon")
+            show_group_icon_switch.set_subtitle("Show the folder icon in group rows")
+            show_group_icon_switch.set_active(
+                self.config.get_setting('ui.sidebar_show_group_icon', True)
+            )
+            show_group_icon_switch.connect('notify::active', self.on_sidebar_show_group_icon_changed)
+            sidebar_group.add(show_group_icon_switch)
             
             interface_page.add(sidebar_group)
 
@@ -3985,7 +3996,7 @@ class PreferencesWindow(Adw.Window):
         except Exception:
             normalized = 'fill'
 
-        if normalized not in getattr(self, '_group_color_display_values', ['fill', 'badge']):
+        if normalized not in getattr(self, '_group_color_display_values', ['fill', 'badge', 'bar']):
             normalized = 'fill'
 
         target_index = self._group_color_display_values.index(normalized)
@@ -5309,6 +5320,16 @@ class PreferencesWindow(Adw.Window):
                 self.parent_window.update_sidebar_display()
         except Exception as exc:
             logger.error("Failed to update sidebar show connection icon preference: %s", exc)
+
+    def on_sidebar_show_group_icon_changed(self, switch, *args):
+        """Persist the preference for showing the group icon in sidebar."""
+        try:
+            active = bool(switch.get_active())
+            self.config.set_setting('ui.sidebar_show_group_icon', active)
+            if self.parent_window and hasattr(self.parent_window, 'update_sidebar_display'):
+                self.parent_window.update_sidebar_display()
+        except Exception as exc:
+            logger.error("Failed to update sidebar show group icon preference: %s", exc)
 
     def on_open_file_manager_externally_changed(self, switch, *args):
         """Persist whether the file manager should open in a separate window."""
