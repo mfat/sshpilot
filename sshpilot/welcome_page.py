@@ -51,6 +51,21 @@ _CSS = b"""
     font-weight: bold;
     opacity: 0.6;
 }
+.startpage-recent-head {
+    font-size: 0.8em;
+    opacity: 0.55;
+    padding-bottom: 8px;
+    border-bottom: 1px solid alpha(@window_fg_color, 0.12);
+}
+.startpage-recent-row {
+    padding: 9px 2px;
+    background: transparent;
+    box-shadow: none;
+    border-radius: 0;
+    min-height: 0;
+    border-bottom: 1px solid alpha(@window_fg_color, 0.08);
+}
+.startpage-recent-row:hover { background: alpha(@window_fg_color, 0.06); }
 """
 
 _css_loaded = False
@@ -88,6 +103,46 @@ class WelcomePage(Gtk.Overlay):
 
         self.connection_manager.connect_after('connection-removed', self._on_connection_removed)
 
+        current_shortcuts = self._get_safe_current_shortcuts()
+        self._shortcuts = current_shortcuts
+
+        # Two switchable views inside a carousel: the full start page and a
+        # minimal overview. The last-viewed page is remembered across sessions.
+        self._carousel = Adw.Carousel()
+        self._carousel.set_hexpand(True)
+        self._carousel.set_vexpand(True)
+        self._carousel.set_can_focus(False)
+        # Vertical wheel scrolls the inner ScrolledWindow; a horizontal gesture
+        # pages between views. Swipe/drag and the indicator dots also switch.
+        self._carousel.set_allow_scroll_wheel(True)
+        self._carousel.append(self._build_primary_view(current_shortcuts))
+        self._carousel.append(self._build_minimal_view())
+
+        dots = Adw.CarouselIndicatorDots()
+        dots.set_carousel(self._carousel)
+        dots.set_halign(Gtk.Align.CENTER)
+        dots.set_margin_bottom(64)  # sit above the footer overlay
+
+        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        main_box.set_can_focus(False)
+        main_box.append(self._carousel)
+        main_box.append(dots)
+        self.set_child(main_box)
+
+        # Footer links pinned to the bottom of the page
+        footer = self._build_footer()
+        footer.set_halign(Gtk.Align.CENTER)
+        footer.set_valign(Gtk.Align.END)
+        footer.set_margin_bottom(32)
+        self.add_overlay(footer)
+
+        self._restore_last_view()
+        self._carousel.connect('page-changed', self._on_view_changed)
+
+    # --- Views / carousel ---
+
+    def _build_primary_view(self, current_shortcuts):
+        """The full start page (scrollable), unchanged from the original."""
         scrolled = Gtk.ScrolledWindow()
         scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         scrolled.set_vexpand(True)
@@ -107,18 +162,28 @@ class WelcomePage(Gtk.Overlay):
         clamp.set_vexpand(True)
         clamp.set_can_focus(False)
         scrolled.set_child(clamp)
-        self.set_child(scrolled)
 
-        current_shortcuts = self._get_safe_current_shortcuts()
-        self._shortcuts = current_shortcuts
         content_box.append(self._build_layout(current_shortcuts))
+        return scrolled
 
-        # Footer links pinned to the bottom of the page
-        footer = self._build_footer()
-        footer.set_halign(Gtk.Align.CENTER)
-        footer.set_valign(Gtk.Align.END)
-        footer.set_margin_bottom(32)
-        self.add_overlay(footer)
+    def _restore_last_view(self):
+        """Scroll to the last-viewed carousel page. Deferred to idle so the
+        carousel is allocated before scroll_to positions it."""
+        try:
+            idx = int(self.config.get_setting('ui.welcome_view', 0) or 0)
+        except Exception:
+            idx = 0
+        if not (0 <= idx < self._carousel.get_n_pages()) or idx == 0:
+            return
+        page = self._carousel.get_nth_page(idx)
+        from gi.repository import GLib
+        GLib.idle_add(lambda: (self._carousel.scroll_to(page, False), False)[1])
+
+    def _on_view_changed(self, _carousel, index):
+        try:
+            self.config.set_setting('ui.welcome_view', int(index))
+        except Exception:
+            pass
 
     # --- Layout ---
 
@@ -192,7 +257,7 @@ class WelcomePage(Gtk.Overlay):
 
         # Collapsible "More" actions (hidden by default)
         more_chips = self._make_chip_row([
-            ('network-server-symbolic', _('Known hosts'),
+            ('network-server-symbolic', _('Manage Known hosts'),
              lambda _b: self.window.on_edit_known_hosts_action(None, None),
              'edit-known-hosts'),
             ('dialog-password-symbolic', _('Authorized keys'),
@@ -225,6 +290,105 @@ class WelcomePage(Gtk.Overlay):
         self._pinned_rows_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
         box.append(self._pinned_rows_box)
         self._populate_pinned_rows_box()
+
+        return box
+
+    # --- Minimal view ---
+
+    def _build_minimal_view(self):
+        """Compact overview: a group column on the left and a connection list on
+        the right (mirrors sshpilot_start_page_minimal.html)."""
+        scrolled = Gtk.ScrolledWindow()
+        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scrolled.set_vexpand(True)
+        scrolled.set_hexpand(True)
+        scrolled.set_can_focus(False)
+
+        connections = list(getattr(self.connection_manager, 'connections', []) or [])
+        try:
+            group_count = len(self.window.group_manager.get_all_groups())
+        except Exception:
+            group_count = 0
+
+        inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        inner.set_halign(Gtk.Align.FILL)
+        inner.set_hexpand(True)
+        inner.set_valign(Gtk.Align.CENTER)
+        inner.set_margin_top(24)
+        inner.set_margin_bottom(24)
+
+        hero_btn = Gtk.Button()
+        hero_btn.set_child(icon_utils.new_image_from_icon_name('utilities-terminal-symbolic', 28))
+        hero_btn.add_css_class('flat')
+        hero_btn.set_halign(Gtk.Align.CENTER)
+        hero_btn.set_can_focus(False)
+        hero_btn.set_tooltip_text(self._tooltip(_('Open Local Terminal'), 'local-terminal'))
+        hero_btn.connect('clicked', lambda *_a: self.window.terminal_manager.show_local_terminal())
+        inner.append(hero_btn)
+
+        title = Gtk.Label(label='SSH Pilot')
+        title.add_css_class('title-3')
+        title.set_margin_top(12)
+        inner.append(title)
+
+        summary = Gtk.Label(
+            label=_('{n} connections across {m} groups').format(
+                n=len(connections), m=group_count)
+        )
+        summary.add_css_class('dim-label')
+        summary.set_margin_top(2)
+        summary.set_margin_bottom(28)
+        inner.append(summary)
+
+        clamp = Adw.Clamp()
+        clamp.set_maximum_size(720)
+        clamp.set_tightening_threshold(600)
+        clamp.set_hexpand(True)
+        clamp.set_child(self._build_min_connection_list(connections))
+        inner.append(clamp)
+
+        scrolled.set_child(inner)
+        return scrolled
+
+    def _build_min_connection_list(self, connections):
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        box.set_hexpand(True)
+
+        heading = Gtk.Label(label=_('Recent'), xalign=0)
+        heading.set_hexpand(True)
+        heading.add_css_class('startpage-recent-head')
+        heading.set_margin_bottom(4)
+        box.append(heading)
+
+        if not connections:
+            empty = Gtk.Label(label=_('No connections yet'), xalign=0)
+            empty.add_css_class('dim-label')
+            empty.set_margin_top(8)
+            box.append(empty)
+            return box
+
+        for conn in connections[:5]:
+            host_label = getattr(conn, 'host', '') or getattr(conn, 'hostname', '')
+            username = getattr(conn, 'username', '')
+            target = f"{username}@{host_label}" if username and host_label else host_label
+
+            line = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            nick = Gtk.Label(label=getattr(conn, 'nickname', ''), xalign=0)
+            nick.set_ellipsize(3)
+            nick.set_hexpand(True)
+            line.append(nick)
+            addr = Gtk.Label(label=target, xalign=1)
+            addr.add_css_class('startpage-mono')
+            addr.add_css_class('dim-label')
+            addr.set_ellipsize(3)
+            line.append(addr)
+
+            btn = Gtk.Button()
+            btn.set_child(line)
+            btn.add_css_class('startpage-recent-row')
+            btn.set_can_focus(False)
+            btn.connect('clicked', lambda _b, c=conn: self.window.terminal_manager.connect_to_host(c))
+            box.append(btn)
 
         return box
 
