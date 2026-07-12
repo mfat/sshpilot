@@ -1,6 +1,7 @@
 """Preferences dialog and font selection utilities."""
 
 import os
+import functools
 import logging
 import shutil
 import json
@@ -27,8 +28,7 @@ import gi
 gi.require_version('Gtk', '4.0')
 gi.require_version('Gdk', '4.0')
 gi.require_version('Adw', '1')
-gi.require_version('Vte', '3.91')
-from gi.repository import Gtk, Gdk, Adw, Pango, Vte, GLib, Gio
+from gi.repository import Gtk, Gdk, Adw, Pango, GLib, Gio
 
 logger = logging.getLogger(__name__)
 
@@ -196,6 +196,31 @@ SCHEME_KEYS = (
     'rose_pine_dawn', 'catppuccin_latte', 'catppuccin_frappe',
     'catppuccin_macchiato', 'catppuccin_mocha',
 )
+
+
+@functools.lru_cache(maxsize=1)
+def _detect_pyxterm_backend():
+    """Detect the embedded PyXterm.js backend. Result is stable for the process,
+    so memoize it — importing WebKit 6 loads the WebKitGTK shared library on the
+    main thread, which we never want to pay more than once.
+
+    It runs xterm.js in-process (no Flask/pyxtermjs server), so it needs only
+    WebKit 6 (GTK4) plus the xterm.js assets (system libjs-xterm or bundled).
+    Returns ``(available: bool, error: Optional[str])``.
+    """
+    try:
+        import gi
+        gi.require_version('WebKit', '6.0')
+        from gi.repository import WebKit  # noqa: F401
+    except Exception as exc:
+        return False, f'WebKit 6.0 not available: {exc}'
+    try:
+        from .xterm_shell import asset_dir
+        if not os.path.isfile(os.path.join(asset_dir(), 'xterm.js')):
+            return False, 'xterm.js assets not found'
+    except Exception as exc:
+        return False, f'xterm.js assets error: {exc}'
+    return True, None
 
 
 class PreferencesWindow(Adw.Window):
@@ -1446,19 +1471,15 @@ class PreferencesWindow(Adw.Window):
             self.secret_backend_row.set_title("Secret storage backend")
             try:
                 from .secret_storage import get_secret_manager
-                _mgr = get_secret_manager()
-                # ``cheap=True``: don't run ``bw --version`` on the main thread just to
-                # label the combo — the Bitwarden status row below reports the real
-                # signed-in/locked/unlocked state.
-                available = set(_mgr.available_backends(cheap=True))
-                registered = _mgr.registered_backends()
+                self._secret_backend_mgr = get_secret_manager()
+                registered = self._secret_backend_mgr.registered_backends()
             except Exception:
-                available = set()
+                self._secret_backend_mgr = None
                 registered = []
             current_backend = str(self.config.get_setting('secrets.backend', 'auto'))
             if current_backend.strip().lower() == 'vaultwarden':
                 current_backend = 'bitwarden'   # merged into one bw backend
-            backend_labels = {
+            self._secret_backend_labels = {
                 'libsecret': _("System keyring (libsecret)"),
                 'keyring': _("System keyring"),
                 'pass': _("pass (password store)"),
@@ -1472,19 +1493,15 @@ class PreferencesWindow(Adw.Window):
             ordered_names = [n for n in preferred_order if n in registered]
             ordered_names += [n for n in registered if n not in preferred_order]
             self._secret_backend_ids = ['auto'] + ordered_names
-            secret_model = Gtk.StringList()
-            secret_model.append(_("Automatic"))
-            for name in ordered_names:
-                label = backend_labels.get(name, name)
-                if name not in available:
-                    label = _("{backend} (unavailable)").format(backend=label)
-                secret_model.append(label)
+            self._secret_backend_ordered = ordered_names
             # Keep an unknown saved backend visible so the UI matches the config.
             if current_backend not in self._secret_backend_ids:
                 self._secret_backend_ids.append(current_backend)
-                label = backend_labels.get(current_backend, current_backend)
-                secret_model.append(_("{backend} (unavailable)").format(backend=label))
-            self.secret_backend_row.set_model(secret_model)
+                self._secret_backend_ordered = ordered_names + [current_backend]
+            # Probing availability (keyring/keepassxc is_available) costs ~400ms on
+            # the main thread, so show every backend without the "(unavailable)"
+            # suffix now and refine off-thread once the window is up.
+            self._set_secret_backend_model(set(self._secret_backend_ids))
             try:
                 current_index = self._secret_backend_ids.index(current_backend)
             except ValueError:
@@ -1492,6 +1509,7 @@ class PreferencesWindow(Adw.Window):
             self.secret_backend_row.set_selected(current_index)
             self.secret_backend_row.connect('notify::selected', self.on_secret_backend_changed)
             secrets_group.add(self.secret_backend_row)
+            self._refresh_secret_backend_availability()
 
             self.bw_status_row = Adw.ActionRow()
             self.bw_status_row.set_title(_("Bitwarden status"))
@@ -2160,6 +2178,46 @@ class PreferencesWindow(Adw.Window):
         except Exception as exc:
             logger.debug("Deferred Bitwarden UI refresh failed: %s", exc)
         return False
+
+    def _set_secret_backend_model(self, available):
+        """(Re)build the secret-backend combo model, labelling backends not in
+        *available* as unavailable. Preserves the current selection index."""
+        row = getattr(self, 'secret_backend_row', None)
+        if row is None:
+            return
+        labels = getattr(self, '_secret_backend_labels', {})
+        selected = row.get_selected()
+        model = Gtk.StringList()
+        model.append(_("Automatic"))
+        for name in getattr(self, '_secret_backend_ordered', []):
+            label = labels.get(name, name)
+            if name not in available:
+                label = _("{backend} (unavailable)").format(backend=label)
+            model.append(label)
+        row.set_model(model)
+        try:
+            row.set_selected(selected)
+        except Exception:
+            pass
+
+    def _refresh_secret_backend_availability(self):
+        """Compute backend availability off-thread (keyring/keepassxc probes cost
+        ~400ms) and refine the combo labels once done, keeping Settings responsive."""
+        mgr = getattr(self, '_secret_backend_mgr', None)
+        if mgr is None:
+            return
+
+        def worker():
+            try:
+                available = set(mgr.available_backends(cheap=True))
+            except Exception:
+                available = None
+            if available is not None:
+                GLib.idle_add(
+                    lambda: (self._set_secret_backend_model(available), False)[1]
+                )
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def _probe_bitwarden_async(self):
         """Probe Bitwarden readiness on a worker thread, then update the status row.
@@ -4521,38 +4579,11 @@ class PreferencesWindow(Adw.Window):
             options.extend(legacy_encodings)
             return options
         
-        # For VTE backend, use VTE's native encoding support
-        options = []
-        try:
-            terminal = Vte.Terminal()
-            encodings = terminal.get_encodings() or []
-            for item in encodings:
-                code = None
-                description = None
-                if isinstance(item, (list, tuple)):
-                    if len(item) >= 1:
-                        code = item[0]
-                    if len(item) >= 2:
-                        description = item[1]
-                elif isinstance(item, str):
-                    code = item
-                if code:
-                    options.append((code, description or code))
-        except Exception as exc:  # pragma: no cover - depends on VTE runtime
-            logger.debug("Unable to retrieve VTE encodings: %s", exc)
-
-        if not options:
-            options = [('UTF-8', 'Unicode (UTF-8)')]
-        else:
-            codes = [code for code, _ in options]
-            if 'UTF-8' in codes:
-                utf_index = codes.index('UTF-8')
-                if utf_index != 0:
-                    options.insert(0, options.pop(utf_index))
-            else:
-                options.insert(0, ('UTF-8', 'Unicode (UTF-8)'))
-
-        return options
+        # VTE (GTK4) is UTF-8-only and set_encoding is unsupported, so there is
+        # nothing to enumerate — and the encoding row is hidden for VTE anyway
+        # (_update_encoding_row_visibility). Return a static list instead of
+        # instantiating a throwaway Vte.Terminal() on the main thread.
+        return [('UTF-8', 'Unicode (UTF-8)')]
 
     def _sync_encoding_row_selection(self, encoding, notify_user=False):
         if not hasattr(self, 'encoding_row') or self.encoding_row is None:
@@ -4686,25 +4717,8 @@ class PreferencesWindow(Adw.Window):
         self._update_encoding_config_if_needed(target_code)
 
     def _detect_pyxterm_backend(self):
-        """Detect the embedded PyXterm.js backend.
-
-        It runs xterm.js in-process (no Flask/pyxtermjs server), so it needs only
-        WebKit 6 (GTK4) plus the xterm.js assets (system libjs-xterm or bundled).
-        """
-        try:
-            import gi
-            gi.require_version('WebKit', '6.0')
-            from gi.repository import WebKit  # noqa: F401
-        except Exception as exc:
-            return False, f'WebKit 6.0 not available: {exc}'
-        try:
-            import os
-            from .xterm_shell import asset_dir
-            if not os.path.isfile(os.path.join(asset_dir(), 'xterm.js')):
-                return False, 'xterm.js assets not found'
-        except Exception as exc:
-            return False, f'xterm.js assets error: {exc}'
-        return True, None
+        """Detect the embedded PyXterm.js backend (memoized, see module helper)."""
+        return _detect_pyxterm_backend()
 
     def _build_backend_choices(self):
         choices = [
