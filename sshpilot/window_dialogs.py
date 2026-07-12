@@ -296,9 +296,9 @@ class WindowConfigDialogsMixin:
         dest_group = Adw.PreferencesGroup(title=_("Destination"))
         dest_group.add_css_class('boxed-list')
         dest_labels = [
-            _("Save to file (.spbk)"),
-            _("Save to Bitwarden"),
-            _("Save to SSH server"),
+            _("File (.spbk)"),
+            _("Bitwarden"),
+            _("SSH server"),
         ]
         dest_keys = ['file', 'bitwarden', 'ssh']
         dest_row = Adw.ComboRow(title=_("Save to"))
