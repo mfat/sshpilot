@@ -198,8 +198,8 @@ class WelcomePage(Gtk.Overlay):
             ('dialog-password-symbolic', _('Authorized keys'),
              lambda _b: self.window.on_manage_local_authorized_keys_action(None, None),
              'manage-local-authorized-keys'),
-            ('send-to-symbolic', _('Copy key to server'),
-             self._copy_key_to_server,
+            ('brand-docker-symbolic', _('Docker Console'),
+             self._open_docker_console,
              None),
         ], chip_sizes)
         more_chips.set_margin_top(8)
@@ -319,16 +319,39 @@ class WelcomePage(Gtk.Overlay):
         )
         dialog.present()
 
-    def _copy_key_to_server(self, anchor):
-        """Pick a host, then reuse the window's copy-key entry point for it."""
-        self._pick_host(anchor, self._open_copy_key_window)
+    def _open_docker_console(self, anchor):
+        """Open the Docker Console page (it has its own host chooser), or, if the
+        docker-manager plugin is disabled, prompt the user to enable it.
 
-    def _open_copy_key_window(self, connection):
-        win = self.window
-        if not hasattr(win, 'on_copy_key_to_server_action'):
+        Mirrors the Tools-menu entry: open_page honors the page's on_activate.
+        The page is only registered while the plugin is active, so its presence
+        is the enabled signal.
+        """
+        ui = getattr(getattr(self.window, 'plugin_host', None), 'ui', None)
+        manager_id = 'docker-manager:manager'
+        if ui is None or manager_id not in ui.page_ids_for_plugin('docker-manager'):
+            self._prompt_enable_plugin(_('Docker Console'))
             return
-        win._context_menu_connection = connection
-        win.on_copy_key_to_server_action(None, None)
+        ui.open_page(manager_id)
+
+    def _prompt_enable_plugin(self, plugin_name):
+        """Tell the user the plugin is off and offer to open Settings."""
+        dialog = Adw.MessageDialog(
+            transient_for=self.window,
+            modal=True,
+            heading=_('Plugin Disabled'),
+            body=_('The %s plugin is disabled. Enable it from Settings ▸ Plugins to use this feature.') % plugin_name,
+        )
+        dialog.add_response('close', _('Close'))
+        dialog.add_response('open', _('Open Settings'))
+        dialog.set_response_appearance('open', Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response('open')
+        dialog.set_close_response('close')
+        dialog.connect(
+            'response',
+            lambda _d, resp: self.window.show_preferences() if resp == 'open' else None,
+        )
+        dialog.present()
 
     def _open_file_manager(self, anchor):
         """Pick a host, then open the SFTP file manager for it."""
