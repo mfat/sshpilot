@@ -1486,8 +1486,18 @@ class RbwBackend(SecretBackend):
     #                         same items when pointed at one vault (and it stays isolated
     #                         from the user's own logins)
 
+    # A big Bitwarden vault makes every `rbw get` slow: the CLI decrypts all entry
+    # names via per-cipher agent IPC (≈1s at a few thousand items), so a dialog that
+    # probes several keys/candidate paths — mostly *misses* — freezes the UI for
+    # seconds. Cache the set of item names in our folder from one `rbw list` and
+    # answer misses (and `_exists`) from it; only a real hit pays a `get`.
+    _NAMES_TTL = 30.0  # seconds; store/delete invalidate immediately
+
     def __init__(self) -> None:
         self._argv_override: Optional[List[str]] = None
+        self._names: Optional[set] = None      # item names in our folder; None = unfilled
+        self._names_at: float = 0.0
+        self._names_lock = threading.Lock()
 
     @property
     def _argv_prefix(self) -> Optional[List[str]]:
@@ -1539,8 +1549,39 @@ class RbwBackend(SecretBackend):
         except Exception:
             return False
 
+    def _folder_names(self) -> Optional[set]:
+        """Names of items in our folder, cached for ``_NAMES_TTL``. One ``rbw list``
+        (decrypts every name once) instead of one ``rbw get`` per lookup. ``None`` on
+        failure so callers fall back to a direct ``get``. Serialized so a burst of
+        concurrent misses triggers a single list, not one per miss."""
+        with self._names_lock:
+            if self._names is not None and (time.monotonic() - self._names_at) < self._NAMES_TTL:
+                return self._names
+            try:
+                res = self._run("list", "--fields", "name,folder")
+                if res.returncode != 0:
+                    return None
+                names = set()
+                for line in res.stdout.decode("utf-8", "replace").splitlines():
+                    name, _, folder = line.rpartition("\t")  # folder is the last field
+                    if name and folder == self._FOLDER:
+                        names.add(name)
+                self._names = names
+                self._names_at = time.monotonic()
+                return names
+            except Exception as exc:
+                logger.debug("rbw list failed: %s", exc)
+                return None
+
+    def _invalidate_names(self) -> None:
+        with self._names_lock:
+            self._names = None
+
     def _exists(self, name: str) -> bool:
-        try:
+        names = self._folder_names()
+        if names is not None:
+            return name in names
+        try:  # cache unavailable — fall back to a direct probe
             return self._run("get", "--folder", self._FOLDER, name).returncode == 0
         except Exception:
             return False
@@ -1561,6 +1602,8 @@ class RbwBackend(SecretBackend):
                     "rbw %s failed: %s", verb,
                     res.stderr.decode("utf-8", "replace").strip(),
                 )
+            else:
+                self._invalidate_names()  # a new name may now exist in our folder
             return res.returncode == 0
         except Exception as exc:
             logger.error("rbw store failed: %s", exc)
@@ -1569,8 +1612,12 @@ class RbwBackend(SecretBackend):
     def lookup(self, spec: SecretSpec) -> Optional[str]:
         if not self.is_unlocked():
             return None
+        name = spec.keyring_account
+        names = self._folder_names()
+        if names is not None and name not in names:
+            return None  # fast miss — no slow `rbw get` for an item we know isn't there
         try:
-            res = self._run("get", "--folder", self._FOLDER, spec.keyring_account)
+            res = self._run("get", "--folder", self._FOLDER, name)
             if res.returncode != 0:
                 return None
             text = res.stdout.decode("utf-8", "replace")
@@ -1583,7 +1630,10 @@ class RbwBackend(SecretBackend):
         if not self.is_unlocked():
             return False
         try:
-            return self._run("remove", "--folder", self._FOLDER, spec.keyring_account).returncode == 0
+            ok = self._run("remove", "--folder", self._FOLDER, spec.keyring_account).returncode == 0
+            if ok:
+                self._invalidate_names()
+            return ok
         except Exception as exc:
             logger.debug("rbw delete failed: %s", exc)
             return False

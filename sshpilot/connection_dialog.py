@@ -1228,14 +1228,12 @@ class FileListEditor(Adw.PreferencesGroup):
             pass_entry.set_property('placeholder-text', _("Key passphrase"))
         except Exception:
             pass
+        row._pass_initial = ''
+        # A stored passphrase can come from a slow secret backend (rbw on a large vault
+        # is ≈1s per lookup), so load it off the main thread: the dialog opens instantly
+        # and the entry fills in when ready, unless the user is already typing.
         if self._connection_manager is not None:
-            try:
-                existing = self._connection_manager.get_key_passphrase(norm) or ''
-                if existing:
-                    pass_entry.set_text(existing)
-            except Exception:
-                pass
-        row._pass_initial = pass_entry.get_text()
+            self._load_passphrase_async(pass_entry, row, norm)
         # Clear the error state as soon as the user edits the value again.
         pass_entry.connect('changed', lambda e: e.remove_css_class('error'))
         # Commit on Enter and when focus leaves the entry.
@@ -1256,6 +1254,31 @@ class FileListEditor(Adw.PreferencesGroup):
         remove_btn.connect('clicked', lambda _b, p=path, r=row: self._remove_row(p, r))
         row.add_suffix(remove_btn)
         return row
+
+    def _load_passphrase_async(self, pass_entry, row, norm):
+        """Fetch a stored passphrase off the main thread and fill the entry when ready.
+
+        Skips the fill if the user has already typed into the entry, and syncs
+        ``_pass_initial`` to the loaded value so the save flow sees no spurious change.
+        Widget writes are guarded — the dialog may have closed while we waited."""
+        def _apply(value):
+            try:
+                if not pass_entry.get_text():   # don't clobber what the user typed
+                    pass_entry.set_text(value)
+                    row._pass_initial = value
+            except Exception:
+                pass
+            return False  # one-shot idle
+
+        def worker():
+            try:
+                existing = self._connection_manager.get_key_passphrase(norm) or ''
+            except Exception:
+                existing = ''
+            if existing:
+                GLib.idle_add(_apply, existing)
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def _commit_passphrase(self, pass_entry, path, norm, force=False):
         """Validate an edited passphrase; persistence is deferred to dialog save."""
@@ -2137,6 +2160,35 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
     User {getattr(self, 'username_row', None).get_text().strip() if hasattr(self, 'username_row') else 'user'}
     Port {getattr(self, 'port_row', None).get_text().strip() if hasattr(self, 'port_row') else '22'}"""
     
+    def _load_password_async(self):
+        """Fetch the saved SSH password off the main thread and fill the row when ready.
+
+        rbw on a large vault is ≈1s per lookup; doing it inline froze dialog open. Skips
+        the fill if the user is already typing and syncs ``_orig_password`` so the loaded
+        value isn't mistaken for a user edit. Widget writes are guarded (dialog may close)."""
+        mgr = getattr(self.parent_window, 'connection_manager', None)
+        if not mgr or not hasattr(self.connection, 'username'):
+            return
+
+        def _apply(pw):
+            try:
+                if pw and not self.password_row.get_text():
+                    self.password_row.set_text(pw)
+                    self._orig_password = pw
+            except Exception:
+                pass
+            return False  # one-shot idle
+
+        def worker():
+            try:
+                pw = mgr.get_connection_password(self.connection)
+            except Exception:
+                pw = None
+            if pw:
+                GLib.idle_add(_apply, pw)
+
+        threading.Thread(target=worker, daemon=True).start()
+
     def load_connection_data(self):
         """Load connection data into the dialog fields"""
         if not self.is_editing or not self.connection:
@@ -2268,16 +2320,13 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             if hasattr(self.connection, 'password') and self.connection.password:
                 self.password_row.set_text(self.connection.password)
             else:
-                # Fallback: fetch from the selected secret backend (masked in the row)
-                try:
-                    mgr = getattr(self.parent_window, 'connection_manager', None)
-                    if mgr and hasattr(self.connection, 'username'):
-                        pw = mgr.get_connection_password(self.connection)
-                        if pw:
-                            self.password_row.set_text(pw)
-                except Exception:
-                    pass
-            # Capture original password value to detect user changes later
+                # Fallback: fetch from the selected secret backend off the main thread —
+                # rbw on a large vault is ≈1s per lookup and would otherwise freeze the
+                # dialog open. The masked row fills in when ready (see _load_password_async).
+                self._load_password_async()
+            # Capture original password value to detect user changes later. The async
+            # fetch updates this when it fills the row, so a loaded value isn't seen as
+            # a user edit on save.
             try:
                 self._orig_password = self.password_row.get_text()
             except Exception:

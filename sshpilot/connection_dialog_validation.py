@@ -85,13 +85,10 @@ class ConnectionDialogValidationMixin:
                     if current_name_norm and n_norm == current_name_norm:
                         continue
                     names.add(str(n))
-            # Ensure fresh names after deletions
-            try:
-                if hasattr(mgr, 'load_ssh_config'):
-                    mgr.load_ssh_config()
-            except Exception:
-                pass
-            # Ensure current typed value isn't auto-included incorrectly
+            # Names come from the already-loaded connections (show_connection_dialog
+            # reloads once before opening, and they don't change while the dialog is
+            # open). No reload here — it ran *after* names were built anyway, so it only
+            # cost a redundant parse (and a log line) on every field validation.
             self.validator.set_existing_names(names)
         except Exception:
             pass

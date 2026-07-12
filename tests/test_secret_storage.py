@@ -318,11 +318,13 @@ def test_pass_backend_argv(monkeypatch):
 
 # --- rbw (github.com/doy/rbw) CLI backend ------------------------------------
 
-def _rbw_fake(*, unlocked=True, get_rc=1, get_out=b''):
+def _rbw_fake(*, unlocked=True, get_out=b'', folder_names=()):
     """Fake subprocess.run for rbw: dispatches on the subcommand.
 
-    ``unlocked`` drives ``rbw unlocked``'s exit code; ``get_rc``/``get_out`` drive
-    ``rbw get`` (used both for lookup and store's existence check)."""
+    ``unlocked`` drives ``rbw unlocked``'s exit code. ``folder_names`` are the item
+    names present in our folder — served by ``rbw list --fields name,folder`` (the
+    cached membership source for lookup/existence). ``get_out`` is the ``rbw get``
+    body for a present item."""
     calls = []
 
     class _R:
@@ -336,8 +338,12 @@ def _rbw_fake(*, unlocked=True, get_rc=1, get_out=b''):
         sub = argv[1]
         if sub == 'unlocked':
             return _R(0 if unlocked else 1)
+        if sub == 'list':
+            out = ''.join(f'{n}\tsshPilot\n' for n in folder_names).encode()
+            return _R(0, out)
         if sub == 'get':
-            return _R(get_rc, get_out)
+            name = argv[-1]
+            return _R(0, get_out) if name in folder_names else _R(1, b'')
         return _R(0)
 
     return calls, fake_run
@@ -356,24 +362,44 @@ def test_rbw_backend_gated_when_locked(monkeypatch):
 
 
 def test_rbw_backend_lookup(monkeypatch):
-    calls, fake = _rbw_fake(unlocked=True, get_rc=0, get_out=b'secretvalue\n')
+    calls, fake = _rbw_fake(unlocked=True, get_out=b'secretvalue\n', folder_names=('u@h',))
     monkeypatch.setattr(ss.subprocess, 'run', fake)
     b = ss.RbwBackend(); b._bin = '/usr/bin/rbw'
     assert b.lookup(password_spec('h', 'u')) == 'secretvalue'
     assert calls[-1][0] == ['/usr/bin/rbw', 'get', '--folder', 'sshPilot', 'u@h']
 
 
+def test_rbw_backend_lookup_miss_skips_get(monkeypatch):
+    # A name not in our folder resolves from the cached `list` — no slow `rbw get`.
+    calls, fake = _rbw_fake(unlocked=True, folder_names=())
+    monkeypatch.setattr(ss.subprocess, 'run', fake)
+    b = ss.RbwBackend(); b._bin = '/usr/bin/rbw'
+    assert b.lookup(password_spec('h', 'u')) is None
+    assert any(c[0][1] == 'list' for c in calls)
+    assert not any(c[0][1] == 'get' for c in calls)
+
+
+def test_rbw_backend_names_cache_reused(monkeypatch):
+    # A burst of distinct misses triggers a single `rbw list`, not one per lookup.
+    calls, fake = _rbw_fake(unlocked=True, folder_names=())
+    monkeypatch.setattr(ss.subprocess, 'run', fake)
+    b = ss.RbwBackend(); b._bin = '/usr/bin/rbw'
+    for i in range(5):
+        assert b.lookup(password_spec(f'h{i}', 'u')) is None
+    assert sum(1 for c in calls if c[0][1] == 'list') == 1
+
+
 def test_rbw_backend_store_add_then_edit(monkeypatch):
     spec = password_spec('h', 'u')
-    # Not present -> `add`, item body piped on stdin (first line = password).
-    calls, fake = _rbw_fake(unlocked=True, get_rc=1)
+    # Not present (folder empty) -> `add`, item body piped on stdin (first line = password).
+    calls, fake = _rbw_fake(unlocked=True, folder_names=())
     monkeypatch.setattr(ss.subprocess, 'run', fake)
     b = ss.RbwBackend(); b._bin = '/usr/bin/rbw'
     assert b.store(spec, 'secretvalue') is True
     assert calls[-1] == (['/usr/bin/rbw', 'add', '--folder', 'sshPilot', 'u@h'], b'secretvalue\nSaved by SSH Pilot\n')
 
     # Already present -> `edit` (update in place, no duplicate).
-    calls, fake = _rbw_fake(unlocked=True, get_rc=0, get_out=b'old\n')
+    calls, fake = _rbw_fake(unlocked=True, folder_names=('u@h',))
     monkeypatch.setattr(ss.subprocess, 'run', fake)
     b = ss.RbwBackend(); b._bin = '/usr/bin/rbw'
     assert b.store(spec, 'newsecret') is True
