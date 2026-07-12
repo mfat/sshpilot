@@ -3669,6 +3669,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.tab_bar = Adw.TabBar()
         self.tab_bar.set_view(self.tab_view)
         self.tab_bar.set_autohide(False)
+        # Blend with the flat header bar above it (no headerbar fill / seam).
+        self.tab_bar.add_css_class('inline')
 
         # H/V layout toggles after the last tab (tab bar end action)
         from .split_view import create_layout_toggle_buttons
