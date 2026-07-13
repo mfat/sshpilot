@@ -24,7 +24,7 @@ from gi.repository import GLib, Gtk, Adw, Gdk, GdkPixbuf  # noqa: E402
 _MARK_RESOURCE = "/io/github/mfat/sshpilot/icons/scalable/actions/docker-mark-ocean-blue.svg"
 
 from .client import DockerClient  # noqa: E402
-from .dialogs import DockerConsoleSettingsDialog  # noqa: E402
+from .dialogs import DockerConsoleSettingsDialog, TextViewDialog  # noqa: E402
 from . import widgets as w  # noqa: E402
 from .tab_compose import ComposeTabMixin  # noqa: E402
 from .tab_containers import ContainersTabMixin  # noqa: E402
@@ -216,37 +216,93 @@ class DockerConsolePage(
 
     # --- in-content loading placeholders --------------------------------
     def _make_loading_placeholder(self, text: str = "Loading…") -> Gtk.Widget:
-        """A centered pulsing Docker mark + label, used as a Gtk.ListBox
-        placeholder so it shows (only) while a list is empty — i.e. on first
-        load. Built in the loading state so the logo is visible immediately."""
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
-        box.set_valign(Gtk.Align.CENTER)
-        box.set_halign(Gtk.Align.CENTER)
-        box.set_margin_top(24)
-        box.set_margin_bottom(24)
+        """Full-bleed opaque placeholder over a list/grid.
+
+        Must paint an opaque background: as a Gtk.Overlay child it otherwise
+        floats failure stderr (a multi-line “log”) over the window with no
+        backing surface. Content stays centered inside the fill."""
+        w.ensure_placeholder_css()
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        outer.add_css_class("docker-console-placeholder")
+        outer.set_halign(Gtk.Align.FILL)
+        outer.set_valign(Gtk.Align.FILL)
+        outer.set_hexpand(True)
+        outer.set_vexpand(True)
+
+        inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        inner.set_halign(Gtk.Align.CENTER)
+        inner.set_valign(Gtk.Align.CENTER)
+        inner.set_margin_top(24)
+        inner.set_margin_bottom(24)
+        inner.set_margin_start(24)
+        inner.set_margin_end(24)
+
         mark = self._make_docker_mark(56)
         label = Gtk.Label(label=text)
+        label.set_wrap(True)
+        label.set_justify(Gtk.Justification.CENTER)
+        label.set_max_width_chars(56)
+        label.set_selectable(True)
         label.add_css_class("dim-label")
-        box.append(mark)
-        box.append(label)
-        box._pulse = mark    # type: ignore[attr-defined]
-        box._label = label   # type: ignore[attr-defined]
-        return box
+
+        details = Gtk.Button(label="View full error")
+        details.add_css_class("flat")
+        details.set_halign(Gtk.Align.CENTER)
+        details.set_visible(False)
+        details.connect("clicked", lambda _b, ph=outer: self._show_placeholder_details(ph))
+
+        inner.append(mark)
+        inner.append(label)
+        inner.append(details)
+        outer.append(inner)
+        outer._pulse = mark          # type: ignore[attr-defined]
+        outer._label = label         # type: ignore[attr-defined]
+        outer._details_btn = details  # type: ignore[attr-defined]
+        outer._full_text = ""        # type: ignore[attr-defined]
+        return outer
+
+    def _show_placeholder_details(self, ph: Gtk.Widget) -> None:
+        full = getattr(ph, "_full_text", "") or ""
+        if not full:
+            return
+        TextViewDialog(self._window(), "Error details", full).present()
 
     def _set_placeholder_loading(self, ph: Gtk.Widget, text: str = "Loading…") -> None:
         ph.set_visible(True)
+        ph.set_can_target(False)  # clicks fall through to the list underneath
         ph._pulse.set_visible(True)   # type: ignore[attr-defined]
         self._pulse_start(ph._pulse)  # type: ignore[attr-defined]
         ph._label.set_text(text)      # type: ignore[attr-defined]
+        ph._label.remove_css_class("error")  # type: ignore[attr-defined]
+        ph._label.add_css_class("dim-label")  # type: ignore[attr-defined]
+        ph._details_btn.set_visible(False)  # type: ignore[attr-defined]
+        ph._full_text = ""            # type: ignore[attr-defined]
 
-    def _set_placeholder_idle(self, ph: Gtk.Widget, text: str) -> None:
+    def _set_placeholder_idle(self, ph: Gtk.Widget, text: str, *,
+                              error: bool = False) -> None:
         ph.set_visible(True)
         self._pulse_stop(ph._pulse)     # type: ignore[attr-defined]
         ph._pulse.set_visible(False)    # type: ignore[attr-defined]
-        ph._label.set_text(text)        # type: ignore[attr-defined]
+        full = text or ""
+        display, truncated = w.truncate_message(full, w._PLACEHOLDER_MAX_CHARS)
+        ph._full_text = full if truncated else ""  # type: ignore[attr-defined]
+        ph._label.set_text(display)     # type: ignore[attr-defined]
+        if error:
+            ph._label.remove_css_class("dim-label")  # type: ignore[attr-defined]
+            ph._label.add_css_class("error")         # type: ignore[attr-defined]
+        else:
+            ph._label.remove_css_class("error")      # type: ignore[attr-defined]
+            ph._label.add_css_class("dim-label")     # type: ignore[attr-defined]
+        # Allow the details button to receive clicks when shown.
+        show_details = bool(error and truncated)
+        ph._details_btn.set_visible(show_details)  # type: ignore[attr-defined]
+        ph.set_can_target(show_details)
 
     def _hide_placeholder(self, ph: Gtk.Widget) -> None:
         self._pulse_stop(ph._pulse)     # type: ignore[attr-defined]
+        ph._details_btn.set_visible(False)  # type: ignore[attr-defined]
+        ph._full_text = ""              # type: ignore[attr-defined]
+        ph.set_can_target(False)
         ph.set_visible(False)
 
     def _current_nickname(self) -> Optional[str]:
@@ -359,7 +415,7 @@ class DockerConsolePage(
 
     def _toast(self, message: str) -> None:
         try:
-            self.ctx.ui.notify(message)
+            self.ctx.ui.notify(w.truncate_toast(message))
         except Exception:
             logger.debug("notify failed: %s", message)
 
@@ -643,6 +699,8 @@ class DockerConsolePage(
         for placeholder in (
             self._containers_placeholder,
             self._images_placeholder,
+            self._volumes_placeholder,
+            self._networks_placeholder,
             self._compose_placeholder,
         ):
             self._set_placeholder_idle(

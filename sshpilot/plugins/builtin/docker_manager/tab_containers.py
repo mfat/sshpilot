@@ -69,7 +69,8 @@ class ContainersTabMixin:
         w.clear_listbox(self._containers_list)
         if err is not None:
             self._containers = []
-            self._set_placeholder_idle(self._containers_placeholder, w.error_text(err))
+            self._set_placeholder_idle(self._containers_placeholder, w.error_text(err),
+                                       error=True)
             self._refresh_logs_targets()
             return
         self._containers = rows or []

@@ -60,7 +60,8 @@ class ImagesTabMixin:
         w.clear_listbox(self._images_list)
         if err is not None:
             self._cached_images = []
-            self._set_placeholder_idle(self._images_placeholder, w.error_text(err))
+            self._set_placeholder_idle(self._images_placeholder, w.error_text(err),
+                                       error=True)
             return
         self._cached_images = rows or []
         if not rows:

@@ -1023,3 +1023,57 @@ def test_check_sudo():
         rc_wrong, "web", "docker", "bad") == (False, "wrong_password")
     assert DockerConsolePage._check_sudo(
         rc_denied, "web", "docker", "bad") == (False, "not_sudoers")
+
+
+# --- failure placeholder / toast truncation --------------------------------
+
+def test_truncate_message_keeps_short_text():
+    from sshpilot.plugins.builtin.docker_manager import widgets as w
+
+    display, truncated = w.truncate_message("permission denied", 480)
+    assert display == "permission denied"
+    assert truncated is False
+
+
+def test_truncate_message_clips_long_log():
+    from sshpilot.plugins.builtin.docker_manager import widgets as w
+
+    log = "\n".join(f"error line {i}: boom" for i in range(80))
+    display, truncated = w.truncate_message(log, 480)
+    assert truncated is True
+    assert display.endswith("…")
+    assert len(display) < len(log)
+
+
+def test_truncate_toast_collapses_newlines():
+    from sshpilot.plugins.builtin.docker_manager import widgets as w
+
+    toast = w.truncate_toast("failed:\n" + ("x" * 400))
+    assert "\n" not in toast
+    assert toast.endswith("…")
+
+
+def test_placeholder_error_is_opaque_and_truncates():
+    """Failure stderr must not float as a transparent overlay log."""
+    _gtk_or_skip()
+    from sshpilot.plugins.builtin.docker_manager.page import DockerConsolePage
+
+    page = DockerConsolePage(_gtk_ctx(), initial_host="web")
+    ph = page._containers_placeholder
+    assert ph.has_css_class("docker-console-placeholder")
+    assert ph.get_halign().value_nick == "fill"
+    assert ph.get_valign().value_nick == "fill"
+
+    long_err = "\n".join(f"docker: error detail {i}" for i in range(60))
+    page._set_placeholder_idle(ph, long_err, error=True)
+    assert ph.get_visible()
+    assert ph._details_btn.get_visible()
+    assert ph._full_text == long_err
+    assert ph._label.get_text().endswith("…")
+    assert ph._label.has_css_class("error")
+    assert ph.get_can_target() is True
+
+    page._set_placeholder_idle(ph, "No containers")
+    assert ph._details_btn.get_visible() is False
+    assert ph._label.has_css_class("dim-label")
+    assert ph.get_can_target() is False
