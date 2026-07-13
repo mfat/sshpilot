@@ -21,9 +21,14 @@ if sys.platform == "darwin":
     frameworks = (contents / "Frameworks").resolve()
 
     gi_paths = [
-        str(contents / "girepository-1.0"),  # Direct in _internal for onedir
+        # Prefer PyInstaller's GI-hook output (gi_typelibs): on macOS the stock
+        # hooks rewrite shared-library paths to @loader_path/… (see
+        # gir_library_path_fix / pyinstaller#3893). Raw Homebrew typelibs
+        # copied into girepository-1.0 still name bare sonames.
+        str(resources / "gi_typelibs"),
+        str(contents / "gi_typelibs"),
+        str(contents / "girepository-1.0"),
         str(resources / "girepository-1.0"),
-        str(resources / "gi_typelibs"),  # PyInstaller's GI dump
     ]
     os.environ["GI_TYPELIB_PATH"] = ":".join([p for p in gi_paths if Path(p).exists()])
     

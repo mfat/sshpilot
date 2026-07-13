@@ -44,14 +44,18 @@ if [ ! -d ".venv-homebrew" ]; then
     "$PYTHON_PATH" -m venv .venv-homebrew
     echo "✅ Virtual environment created successfully"
 
-    # Activate and install PyInstaller
-    echo "📦 Installing PyInstaller..."
+    # Activate and install PyInstaller + hooks-contrib (certifi, cryptography,
+    # lxml, Cryptodome, argon2, …). hooks-contrib is a separate package.
+    echo "📦 Installing PyInstaller and pyinstaller-hooks-contrib..."
     source .venv-homebrew/bin/activate
-    pip install PyInstaller
+    pip install "PyInstaller" "pyinstaller-hooks-contrib"
     echo "✅ PyInstaller installed successfully"
 else
     echo "📦 Activating existing Homebrew virtual environment..."
     source .venv-homebrew/bin/activate
+    # Ensure hooks-contrib is present even on reused venvs (older builds only
+    # installed PyInstaller).
+    pip install -q "PyInstaller" "pyinstaller-hooks-contrib"
 fi
 
 echo "🔨 Running PyInstaller..."
@@ -60,6 +64,31 @@ python -m PyInstaller --clean --noconfirm packaging/pyinstaller/sshpilot.spec
 # Check if build was successful
 if [ -d "dist/SSHPilot.app" ]; then
     echo "✅ Build successful! Bundle created at: dist/SSHPilot.app"
+
+    # GI typelibs dlopen bare sonames from Contents/Frameworks/ (not a nested
+    # Frameworks/Frameworks/). Fail the build if GtkSourceView is missing —
+    # otherwise the SSH config editor crashes with "must be an interface".
+    FRAMEWORKS_DIR="dist/SSHPilot.app/Contents/Frameworks"
+    echo "🔍 Verifying GtkSourceView dylib in Frameworks root..."
+    if ! ls "$FRAMEWORKS_DIR"/libgtksourceview-5*.dylib >/dev/null 2>&1; then
+        echo "❌ libgtksourceview-5*.dylib not found in $FRAMEWORKS_DIR"
+        echo "   Nested copies under Frameworks/Frameworks/ are not loaded by GI."
+        find dist/SSHPilot.app -name '*gtksourceview*' 2>/dev/null || true
+        exit 1
+    fi
+    # Typelib references libgtksourceview-5.0.dylib; ensure that ABI name exists
+    # even if PyInstaller only copied the versioned real file.
+    if [ ! -e "$FRAMEWORKS_DIR/libgtksourceview-5.0.dylib" ]; then
+        VERSIONED="$(ls "$FRAMEWORKS_DIR"/libgtksourceview-5.*.dylib 2>/dev/null | head -1 || true)"
+        if [ -n "$VERSIONED" ]; then
+            ln -sf "$(basename "$VERSIONED")" "$FRAMEWORKS_DIR/libgtksourceview-5.0.dylib"
+            echo "✅ Created ABI symlink libgtksourceview-5.0.dylib -> $(basename "$VERSIONED")"
+        else
+            echo "❌ Could not create libgtksourceview-5.0.dylib ABI name"
+            exit 1
+        fi
+    fi
+    echo "✅ GtkSourceView dylib present: $(ls "$FRAMEWORKS_DIR"/libgtksourceview-5*.dylib)"
 
     # Bundle sshpass into the correct location expected by hook-gtk_runtime.py
     # (Contents/Resources/bin/ — NOT Contents/MacOS/ which PyInstaller's binaries[] uses)

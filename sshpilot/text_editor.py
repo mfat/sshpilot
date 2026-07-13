@@ -19,13 +19,17 @@ from gi.repository import Adw, Gio, GLib, GObject, Gdk, Gtk, Pango
 
 from .platform_utils import is_macos
 
-# Try to import GtkSourceView for syntax highlighting
+# Try to import GtkSourceView for syntax highlighting.
+# Typelib import alone can succeed when the shared library is missing (e.g. an
+# incomplete PyInstaller bundle); probing a type forces the dylib load so we
+# fall back to Gtk.TextView instead of crashing later with "must be an interface".
 try:
     import gi
     gi.require_version('GtkSource', '5')
     from gi.repository import GtkSource
+    _ = GtkSource.View  # noqa: F841 — force shared-library load
     _HAS_GTKSOURCE = True
-except (ImportError, ValueError, AttributeError):
+except Exception:  # noqa: BLE001 — ImportError/ValueError/GError/TypeError
     _HAS_GTKSOURCE = False
     GtkSource = None
 
@@ -287,22 +291,11 @@ class RemoteFileEditorWindow(Adw.Window):
         
         header_bar.pack_start(zoom_box)
 
-        # Color-scheme chooser — icon-only button on the right, just before Save.
-        # Only meaningful with GtkSource.
-        if self._gtksource_enabled and hasattr(GtkSource, "StyleSchemeChooserWidget"):
-            self._scheme_button = Gtk.MenuButton()
-            self._scheme_button.set_child(icon_utils.new_image_from_icon_name("color-symbolic"))
-            self._scheme_button.set_tooltip_text("Editor color scheme")
-            chooser_scroller = Gtk.ScrolledWindow()
-            chooser_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-            chooser_scroller.set_min_content_width(240)
-            chooser_scroller.set_min_content_height(320)
-            self._scheme_chooser = GtkSource.StyleSchemeChooserWidget()
-            chooser_scroller.set_child(self._scheme_chooser)
-            popover = Gtk.Popover()
-            popover.set_child(chooser_scroller)
-            self._scheme_button.set_popover(popover)
-            header_bar.pack_end(self._scheme_button)
+        # Color-scheme chooser is added after GtkSourceView init succeeds
+        # (_add_scheme_chooser). Creating StyleSchemeChooserWidget before the
+        # shared library is verified crashes with "must be an interface" when
+        # the typelib is present but the dylib is missing from the bundle.
+        self._header_bar = header_bar
 
         toolbar_view.add_top_bar(header_bar)
         
@@ -371,7 +364,9 @@ class RemoteFileEditorWindow(Adw.Window):
         # Create editor widget (SourceView if available, otherwise TextView)
         if not self._init_source_view():
             self._init_text_view()
-        
+        elif self._gtksource_enabled:
+            self._add_scheme_chooser(self._header_bar)
+
         # Connect to buffer changes
         self._buffer.connect("modified-changed", self._on_buffer_modified_changed)
         
@@ -445,6 +440,40 @@ class RemoteFileEditorWindow(Adw.Window):
         # Show initial loading toast
         self._show_toast("Loading…" if self._is_local else "Downloading…", timeout=2)
 
+    def _add_scheme_chooser(self, header_bar: Adw.HeaderBar) -> None:
+        """Add the GtkSource style-scheme chooser to the header bar.
+
+        Must run only after GtkSourceView init succeeded — constructing
+        StyleSchemeChooserWidget is what first loads the shared library for
+        some GI builds, and a missing dylib raises TypeError ("must be an
+        interface") rather than a clean import failure.
+        """
+        if not (self._gtksource_enabled and GtkSource is not None
+                and hasattr(GtkSource, "StyleSchemeChooserWidget")):
+            return
+        from sshpilot import icon_utils
+        try:
+            self._scheme_button = Gtk.MenuButton()
+            self._scheme_button.set_child(
+                icon_utils.new_image_from_icon_name("color-symbolic"))
+            self._scheme_button.set_tooltip_text("Editor color scheme")
+            chooser_scroller = Gtk.ScrolledWindow()
+            chooser_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+            chooser_scroller.set_min_content_width(240)
+            chooser_scroller.set_min_content_height(320)
+            self._scheme_chooser = GtkSource.StyleSchemeChooserWidget()
+            chooser_scroller.set_child(self._scheme_chooser)
+            popover = Gtk.Popover()
+            popover.set_child(chooser_scroller)
+            self._scheme_button.set_popover(popover)
+            header_bar.pack_end(self._scheme_button)
+            self._scheme_chooser.connect(
+                "notify::style-scheme", self._on_scheme_changed)
+        except Exception as e:  # noqa: BLE001 — chooser is optional chrome
+            logger.warning("GtkSource style-scheme chooser unavailable: %s", e)
+            self._scheme_button = None
+            self._scheme_chooser = None
+
     def _init_source_view(self) -> bool:
         """Initialize GtkSourceView if available.
 
@@ -478,11 +507,9 @@ class RemoteFileEditorWindow(Adw.Window):
                 self._buffer = GtkSource.Buffer()
             self._source_view.set_buffer(self._buffer)
 
-            # Apply the saved/auto color scheme, then start listening for changes
-            # (connect after the initial apply so it doesn't fire spuriously).
+            # Apply the saved/auto color scheme, then start listening for dark
+            # mode changes. Scheme-chooser notify is wired in _add_scheme_chooser.
             self._apply_style_scheme()
-            if self._scheme_chooser is not None:
-                self._scheme_chooser.connect("notify::style-scheme", self._on_scheme_changed)
             self._connect_dark_follow()
 
             self._search_settings = GtkSource.SearchSettings()
