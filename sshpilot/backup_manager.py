@@ -105,8 +105,10 @@ def _rebase_home_in_text(text: str, source_home: Optional[str], target_home: str
 _IMPORT_FRAGMENT_NAME = "sshpilot-imported.conf"
 # Marker comment written immediately above our managed Include. Must stay at the *top* of the
 # main config (before any Host/Match): OpenSSH treats directives after a Host/Match as part of
-# that block, so an Include appended at EOF nests inside e.g. ``Host *`` / ``User root`` and
-# first-match-wins then overrides per-host ``User`` from the fragment (Oracle → root).
+# that block, so an Include appended at EOF is nested inside the preceding Host. Then either
+# (a) that Host does not match the target and the fragment is skipped entirely, or (b) a
+# matching ``Host *`` has already set options such as ``User``, which first-match-wins keeps
+# over the fragment's per-host values.
 _IMPORT_INCLUDE_MARKER = "# Added by sshPilot import"
 
 
@@ -209,9 +211,10 @@ def ensure_import_include_at_top(main_path: str, fragment_path: Optional[str] = 
     """Ensure the merge-import ``Include`` is a top-level directive at the start of *main_path*.
 
     OpenSSH nests any directive that appears after a ``Host``/``Match`` inside that block.
-    Appending ``Include sshpilot-imported.conf`` at EOF therefore lands inside a trailing
-    ``Host *`` (common for defaults / IdentityAgent), so ``User root`` from ``Host *``
-    wins over per-host ``User`` values in the fragment.
+    Appending ``Include sshpilot-imported.conf`` at EOF therefore lands inside whatever Host
+    came last (user defaults, a managed IdentityAgent ``Host *``, or an ordinary host). A
+    non-matching outer Host skips the fragment; a matching ``Host *`` can lock in earlier
+    options (e.g. ``User``) via first-match-wins before the fragment's per-host values apply.
 
     Returns True when the main config file was rewritten.
     """
