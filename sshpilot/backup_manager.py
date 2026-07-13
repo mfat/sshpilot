@@ -103,11 +103,213 @@ def _rebase_home_in_text(text: str, source_home: Optional[str], target_home: str
 # Include. Deliberately not inside a common ``*.d`` glob dir, so we can add an explicit Include
 # without risking double-inclusion.
 _IMPORT_FRAGMENT_NAME = "sshpilot-imported.conf"
+# Marker comment written immediately above our managed Include. Must stay at the *top* of the
+# main config (before any Host/Match): OpenSSH treats directives after a Host/Match as part of
+# that block, so an Include appended at EOF nests inside e.g. ``Host *`` / ``User root`` and
+# first-match-wins then overrides per-host ``User`` from the fragment (Oracle → root).
+_IMPORT_INCLUDE_MARKER = "# Added by sshPilot import"
 
 
 def _ssh_config_root(main_path: str) -> str:
     """Directory that owns the SSH config (``~/.ssh`` default, the app config dir isolated)."""
     return os.path.dirname(os.path.abspath(os.path.expanduser(main_path))) or os.path.expanduser('~')
+
+
+def _is_explicit_import_include_line(line: str, fragment_abs: str, config_root: str) -> bool:
+    """True when *line* is an ``Include`` that names our import fragment (not a glob)."""
+    s = line.strip()
+    if not s or s.startswith('#'):
+        return False
+    lowered = s.lower()
+    if not lowered.startswith('include'):
+        return False
+    # ``Include`` + separator (space or =)
+    rest = s[7:]
+    if rest.startswith('='):
+        rest = rest[1:]
+    elif rest[:1] and rest[:1].isspace():
+        rest = rest.lstrip()
+    else:
+        return False
+    try:
+        patterns = shlex.split(rest)
+    except ValueError:
+        return False
+    if len(patterns) != 1:
+        return False
+    pattern = patterns[0]
+    if any(ch in pattern for ch in '*?['):
+        return False
+    from .ssh_config_utils import expand_ssh_tokens
+    expanded = os.path.expanduser(os.path.expandvars(expand_ssh_tokens(pattern)))
+    if not os.path.isabs(expanded):
+        expanded = os.path.join(config_root, expanded)
+    return os.path.abspath(expanded) == os.path.abspath(fragment_abs)
+
+
+def _strip_managed_import_includes(text: str, fragment_abs: str, config_root: str) -> str:
+    """Remove sshPilot-managed ``Include`` lines (and their marker comments) for *fragment_abs*."""
+    if not text:
+        return text
+    lines = text.splitlines(keepends=True)
+    out: List[str] = []
+    i = 0
+    n = len(lines)
+    while i < n:
+        stripped = lines[i].strip()
+        if stripped == _IMPORT_INCLUDE_MARKER:
+            i += 1
+            if i < n and _is_explicit_import_include_line(lines[i], fragment_abs, config_root):
+                i += 1
+            # Drop one blank line that commonly followed our appended block.
+            if i < n and lines[i].strip() == '':
+                i += 1
+            continue
+        if _is_explicit_import_include_line(lines[i], fragment_abs, config_root):
+            i += 1
+            if i < n and lines[i].strip() == '':
+                i += 1
+            continue
+        out.append(lines[i])
+        i += 1
+    return ''.join(out)
+
+
+def _import_include_follows_host_or_match(text: str, fragment_abs: str, config_root: str) -> bool:
+    """True if our managed Include appears after a Host/Match (i.e. nested inside a block)."""
+    seen_block = False
+    for raw in text.splitlines():
+        kw = _ssh_keyword(raw)
+        if kw in ('host', 'match'):
+            seen_block = True
+        if not seen_block:
+            continue
+        if raw.strip() == _IMPORT_INCLUDE_MARKER:
+            return True
+        if _is_explicit_import_include_line(raw, fragment_abs, config_root):
+            return True
+    return False
+
+
+def _import_include_arg(frag_abs: str, config_root: str) -> str:
+    """Return the Include path OpenSSH will resolve with ``-F`` for this config.
+
+    OpenSSH resolves *relative* user-config Includes under ``~/.ssh``, not under the
+    directory of the ``-F`` file. Relative names are therefore only safe when the
+    main config itself lives in ``~/.ssh``; isolated mode (and tests) need an
+    absolute path so ``ssh -F <isolated>`` still finds the fragment.
+    """
+    ssh_dir = os.path.abspath(os.path.expanduser(os.path.join("~", ".ssh")))
+    if os.path.abspath(config_root) == ssh_dir:
+        return os.path.relpath(frag_abs, config_root)
+    return os.path.abspath(frag_abs)
+
+
+def ensure_import_include_at_top(main_path: str, fragment_path: Optional[str] = None) -> bool:
+    """Ensure the merge-import ``Include`` is a top-level directive at the start of *main_path*.
+
+    OpenSSH nests any directive that appears after a ``Host``/``Match`` inside that block.
+    Appending ``Include sshpilot-imported.conf`` at EOF therefore lands inside a trailing
+    ``Host *`` (common for defaults / IdentityAgent), so ``User root`` from ``Host *``
+    wins over per-host ``User`` values in the fragment.
+
+    Returns True when the main config file was rewritten.
+    """
+    main_path = os.path.abspath(os.path.expanduser(main_path))
+    root = _ssh_config_root(main_path)
+    frag_abs = os.path.abspath(
+        fragment_path or os.path.join(root, _IMPORT_FRAGMENT_NAME))
+    if not os.path.isfile(frag_abs):
+        return False
+
+    existing = ''
+    if os.path.exists(main_path):
+        try:
+            with open(main_path, encoding='utf-8') as f:
+                existing = f.read()
+        except OSError:
+            return False
+
+    stripped = _strip_managed_import_includes(existing, frag_abs, root)
+
+    # Is the fragment still pulled in without our explicit Include (e.g. ``Include *.conf``)?
+    still_covered = False
+    try:
+        import tempfile
+        from .ssh_config_utils import resolve_ssh_config_files
+        fd, tmp = tempfile.mkstemp(prefix='sshpilot-inc-', suffix='.conf', dir=root)
+        try:
+            os.close(fd)
+            with open(tmp, 'w', encoding='utf-8') as f:
+                f.write(stripped)
+            # Point includes relative to the real config root: rewrite is same dir as main.
+            # resolve uses the temp file's directory for relative Includes — same root.
+            resolved = {os.path.abspath(p) for p in resolve_ssh_config_files(tmp)}
+            still_covered = frag_abs in resolved
+        finally:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+    except Exception:
+        still_covered = False
+
+    if still_covered:
+        new_text = stripped
+    else:
+        include_arg = _import_include_arg(frag_abs, root)
+        block = f"{_IMPORT_INCLUDE_MARKER}\nInclude {include_arg}\n\n"
+        body = stripped[1:] if stripped.startswith('\n') else stripped
+        new_text = block + body
+
+    if new_text == existing:
+        return False
+
+    # Atomic replace (same pattern as BackupManager._atomic_write_text).
+    tmp_path = main_path + '.tmp'
+    try:
+        with open(tmp_path, 'w', encoding='utf-8') as f:
+            f.write(new_text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, main_path)
+        try:
+            os.chmod(main_path, 0o600)
+        except OSError:
+            pass
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+    logger.info("Placed sshPilot import Include at top of %s", main_path)
+    return True
+
+
+def repair_misplaced_import_include(main_path: str) -> bool:
+    """Rewrite *main_path* when a prior merge left ``Include sshpilot-imported.conf`` nested
+    under a Host/Match block. No-op when the fragment is absent or already top-level."""
+    main_path = os.path.abspath(os.path.expanduser(main_path))
+    root = _ssh_config_root(main_path)
+    frag_abs = os.path.join(root, _IMPORT_FRAGMENT_NAME)
+    if not os.path.isfile(frag_abs) or not os.path.isfile(main_path):
+        return False
+    try:
+        with open(main_path, encoding='utf-8') as f:
+            text = f.read()
+    except OSError:
+        return False
+    if not _import_include_follows_host_or_match(text, frag_abs, root):
+        # Still ensure a top-level Include exists when the fragment is orphaned.
+        from .ssh_config_utils import resolve_ssh_config_files
+        try:
+            resolved = {os.path.abspath(p) for p in resolve_ssh_config_files(main_path)}
+        except Exception:
+            resolved = set()
+        if frag_abs in resolved:
+            return False
+    return ensure_import_include_at_top(main_path, frag_abs)
 
 
 def _is_under(path: str, root: str) -> bool:
@@ -1178,30 +1380,13 @@ class BackupManager:
         logger.info("Merged SSH hosts into fragment %s", fragment)
 
     def _ensure_include(self, main_path: str, fragment_path: str) -> None:
-        """Add one ``Include`` for ``fragment_path`` to the main config — unless it is already
-        resolved (via an explicit Include or a glob that already covers it), which avoids
-        double-inclusion (and the duplicate stanzas that would produce)."""
-        from .ssh_config_utils import resolve_ssh_config_files
-        frag_abs = os.path.abspath(fragment_path)
-        try:
-            resolved = {os.path.abspath(p) for p in resolve_ssh_config_files(main_path)}
-        except Exception:
-            resolved = set()
-        if frag_abs in resolved:
-            return
-        rel = os.path.relpath(frag_abs, _ssh_config_root(main_path))
-        existing = ''
-        if os.path.exists(main_path):
-            try:
-                with open(main_path, encoding='utf-8') as f:
-                    existing = f.read()
-            except OSError:
-                existing = ''
-        prefix = existing
-        if prefix and not prefix.endswith('\n'):
-            prefix += '\n'
-        self._atomic_write_text(
-            main_path, prefix + f"\n# Added by sshPilot import\nInclude {rel}\n", 0o600)
+        """Ensure a top-level ``Include`` for ``fragment_path`` at the start of the main config.
+
+        Must be placed *before* any Host/Match block. Appending at EOF nests the Include
+        inside the preceding Host (often ``Host *`` with ``User root``), and OpenSSH's
+        first-match-wins then overrides per-host User values from the fragment.
+        """
+        ensure_import_include_at_top(main_path, fragment_path)
 
     def _merge_known_hosts(self, target_path: str, imported_hosts: str):
         """Merge known_hosts by appending unique entries"""

@@ -857,14 +857,99 @@ def test_merge_fragment_dedups_drops_globals_keeps_unindented(monkeypatch, tmp_p
     assert "existing-main" not in frag
     assert mgr.last_merge_dropped_globals >= 2                       # Host* + Match
     assert any("brand-new" in " ".join(p) for p in mgr.last_merge_collisions)
-    # main gained exactly one Include for the fragment
-    assert main.read_text().count(f"Include {bm._IMPORT_FRAGMENT_NAME}") == 1
+    # main gained exactly one Include for the fragment — at the TOP (before any Host/Match).
+    main_text = main.read_text()
+    assert main_text.count(bm._IMPORT_FRAGMENT_NAME) >= 1
+    assert main_text.lstrip().startswith(bm._IMPORT_INCLUDE_MARKER)
+    include_lines = [l for l in main_text.splitlines()
+                     if l.strip().lower().startswith("include") and bm._IMPORT_FRAGMENT_NAME in l]
+    assert len(include_lines) == 1
+    first_host = main_text.lower().find("\nhost ")
+    first_include = main_text.find(include_lines[0])
+    assert first_include != -1 and (first_host == -1 or first_include < first_host)
 
     # Idempotent: re-importing the same hosts adds nothing (fragment is Include-resolved now).
     before = fragment.read_text()
     mgr._merge_ssh_config_fragment(str(main), [imported])
     assert fragment.read_text() == before
-    assert main.read_text().count(f"Include {bm._IMPORT_FRAGMENT_NAME}") == 1
+    assert len([l for l in main.read_text().splitlines()
+                if l.strip().lower().startswith("include") and bm._IMPORT_FRAGMENT_NAME in l]) == 1
+
+
+def test_ensure_include_prepends_before_host_star(monkeypatch, tmp_path):
+    """Include must be top-level; appended under Host * lets User root win (Oracle bug)."""
+    monkeypatch.setattr(bm, "get_config_dir", lambda: str(tmp_path / "cfg"))
+    root = tmp_path / "dotssh"
+    root.mkdir()
+    main = root / "config"
+    main.write_text(
+        "Host USA\n    HostName 1.2.3.4\n    User root\n\n"
+        "Host *\n    User root\n    ServerAliveInterval 60\n",
+        encoding="utf-8",
+    )
+    mgr = bm.BackupManager(FakeConfig(), FakeConnMgr([], ssh_config_path=str(main)))
+    mgr._merge_ssh_config_fragment(
+        str(main),
+        ["Host Oracle\n    HostName 150.230.27.23\n    User ubuntu\n    Port 2222\n"
+         "    ProxyJump USA\n"],
+    )
+    text = main.read_text()
+    assert text.startswith(bm._IMPORT_INCLUDE_MARKER + "\n")
+    include_line = text.splitlines()[1]
+    assert include_line.lower().startswith("include") and bm._IMPORT_FRAGMENT_NAME in include_line
+    # Must appear before Host *
+    assert text.find(include_line) < text.lower().find("host *")
+    # Outside ~/.ssh, Include must be absolute so OpenSSH -F resolves it.
+    assert include_line.split(None, 1)[1].startswith(str(root))
+
+    # OpenSSH effective config: User ubuntu, not root from Host *
+    import shutil
+    import subprocess
+    if shutil.which("ssh"):
+        out = subprocess.check_output(
+            ["ssh", "-F", str(main), "-G", "Oracle"], text=True, stderr=subprocess.DEVNULL)
+        opts = {line.split(" ", 1)[0]: line.split(" ", 1)[1]
+                for line in out.splitlines() if " " in line}
+        assert opts.get("user") == "ubuntu"
+        assert opts.get("hostname") == "150.230.27.23"
+        assert opts.get("port") == "2222"
+
+
+def test_repair_relocates_appended_import_include(tmp_path):
+    """Existing installs that appended Include under Host * are healed on repair."""
+    root = tmp_path / "dotssh"
+    root.mkdir()
+    main = root / "config"
+    frag = root / bm._IMPORT_FRAGMENT_NAME
+    frag.write_text(
+        "Host Oracle\n    HostName 150.230.27.23\n    User ubuntu\n    Port 2222\n",
+        encoding="utf-8",
+    )
+    # Simulate the old bug: relative Include appended after Host *
+    main.write_text(
+        "Host *\n    User root\n\n"
+        f"{bm._IMPORT_INCLUDE_MARKER}\nInclude {bm._IMPORT_FRAGMENT_NAME}\n",
+        encoding="utf-8",
+    )
+    assert bm._import_include_follows_host_or_match(
+        main.read_text(), str(frag), str(root))
+    assert bm.repair_misplaced_import_include(str(main)) is True
+    text = main.read_text()
+    assert text.startswith(bm._IMPORT_INCLUDE_MARKER)
+    include_lines = [l for l in text.splitlines()
+                     if l.strip().lower().startswith("include") and bm._IMPORT_FRAGMENT_NAME in l]
+    assert len(include_lines) == 1
+    assert not bm._import_include_follows_host_or_match(text, str(frag), str(root))
+    # Second repair is a no-op
+    assert bm.repair_misplaced_import_include(str(main)) is False
+
+    import shutil
+    import subprocess
+    if shutil.which("ssh"):
+        out = subprocess.check_output(
+            ["ssh", "-F", str(main), "-G", "Oracle"], text=True, stderr=subprocess.DEVNULL)
+        user_lines = [l for l in out.splitlines() if l.startswith("user ")]
+        assert user_lines == ["user ubuntu"]
 
 
 def test_merge_no_double_include_when_glob_already_covers(monkeypatch, tmp_path):

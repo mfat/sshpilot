@@ -1265,6 +1265,16 @@ class ConnectionManager(GObject.Object):
                 return
             else:
                 self._ensure_secure_permissions(self.ssh_config_path, 0o600)
+            # Heal a merge-import Include that was previously appended at EOF (nested
+            # inside Host */User root → OpenSSH first-match-wins overrides fragment Users).
+            try:
+                from .backup_manager import repair_misplaced_import_include
+                if repair_misplaced_import_include(self.ssh_config_path):
+                    logger.info(
+                        "Relocated sshPilot import Include to top of SSH config "
+                        "(was nested under a Host/Match block)")
+            except Exception as exc:
+                logger.debug("Import Include placement repair skipped: %s", exc)
             config_files = resolve_ssh_config_files(self.ssh_config_path)
 
             # Directives that accumulate per ssh_config(5) ("Multiple ...
