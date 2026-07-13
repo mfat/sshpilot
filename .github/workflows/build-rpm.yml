@@ -102,12 +102,12 @@ jobs:
           Requires:       gtksourceview5 >= 5.0
           Requires:       python3-cryptography
           Requires:       python3-secretstorage 
+          Requires:       python3-flask
+          Requires:       python3-flask-socketio
           Requires:       libsecret
           Requires:       sshpass
           Requires:       openssh-askpass
           Requires:       webkitgtk6.0
-          # Optional: KeePass (.kdbx) secret backend (degrades gracefully if absent).
-          Recommends:     python3-pykeepass
 
           %description
           SSH Pilot is a user-friendly SSH connection manager featuring built-in tabbed terminal, remote file management, key transfer, port forwarding and more. It's an alternative to Putty, Termius and Mobaxterm.

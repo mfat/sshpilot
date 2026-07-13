@@ -1,6 +1,0 @@
-version=4
-# Upstream releases are published as GitHub tags (vX.Y.Z), not on PyPI, so this
-# tracks the tag list rather than the pypi.debian.net redirector.
-opts="filenamemangle=s%(?:.*?/)?v?(\d[\d.]*)\.tar\.gz%sshpilot-$1.tar.gz%" \
-  https://github.com/mfat/sshpilot/tags \
-  (?:.*?/)?v?(\d[\d.]*)\.tar\.gz

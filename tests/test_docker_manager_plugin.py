@@ -124,8 +124,7 @@ def test_connection_action_opens_per_host_tab_and_reuses_it():
 
 
 def test_tools_menu_opens_last_used_host():
-    connection = types.SimpleNamespace(nickname="beta", protocol="ssh")
-    ctx = _fake_ctx(last_host="beta", connections=(connection,))
+    ctx = _fake_ctx(last_host="beta")
     plugin = Plugin()
     plugin.activate(ctx)
     on_activate = next(p[4]["on_activate"] for p in ctx.ui.pages if p[0] == "manager")
@@ -133,15 +132,13 @@ def test_tools_menu_opens_last_used_host():
     assert "host-beta" in ctx.ui.opened
 
 
-def test_tools_menu_no_connections_opens_local_console():
+def test_tools_menu_no_connections_notifies():
     ctx = _fake_ctx(last_host=None, connections=())
     plugin = Plugin()
     plugin.activate(ctx)
     on_activate = next(p[4]["on_activate"] for p in ctx.ui.pages if p[0] == "manager")
     on_activate()
-    assert ctx.ui.opened == ["host-__local__"]
-    local = next(p for p in ctx.ui.pages if p[0] == "host-__local__")
-    assert local[1] == "Docker — Local"
+    assert not ctx.ui.opened and ctx.ui.toasts
 
 
 def test_activate_without_register_connection_action_is_safe():

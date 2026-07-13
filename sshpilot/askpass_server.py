@@ -12,18 +12,11 @@ the main app is not running or the socket is unreachable, the helper falls back
 to its own standalone window, so there is no regression.
 
 Protocol (newline-delimited JSON over ``AF_UNIX``):
-  prompt request (helper -> app): {"token", "type": "passphrase", "key_path", "prompt"}
-  prompt reply   (app -> helper):
+  request (helper -> app): {"token", "type": "passphrase", "key_path", "prompt"}
+  reply   (app -> helper):
     {"ok": true,  "passphrase": "..."}   user entered a passphrase
     {"ok": false}                         user cancelled (no fallback)
     {"ok": false, "fallback": true}       app can't prompt now -> use standalone
-
-  lookup request (helper -> app): {"token", "type": "lookup", "key_path"}
-  lookup reply   (app -> helper):
-    {"ok": true,  "passphrase": "..."}   resolved from the app's warm secret cache
-    {"ok": false}                         not found / not cached (helper falls back)
-  The lookup request never prompts — it lets the askpass helper reuse the main
-  process's already-unlocked secret cache instead of cold-loading the vault itself.
 """
 
 import json
@@ -152,24 +145,6 @@ class AskpassPromptServer:
         if not self._is_authorized(request):
             logger.debug("askpass server: invalid/unauthorized request")
             self._write_reply(connection, reply)
-            return
-
-        # Non-prompting fast path: resolve a passphrase from the main process's
-        # warm secret cache so the askpass subprocess never cold-loads the vault.
-        if request.get("type") == "lookup":
-            key_path = request.get("key_path") or ""
-            passphrase = ""
-            try:
-                # Non-blocking: warm-cache/instant answer only, so a slow backend (rbw)
-                # never stalls this socket past the client's timeout. A cold rbw entry
-                # returns "" here and warms in the background for the next connect.
-                passphrase = askpass_utils.resolve_passphrase_for_ipc(key_path) or ""
-            except Exception as exc:
-                logger.debug("askpass server: lookup error: %s", exc)
-            self._write_reply(
-                connection,
-                {"ok": True, "passphrase": passphrase} if passphrase else {"ok": False},
-            )
             return
 
         if request.get("type") != "passphrase":

@@ -148,12 +148,10 @@ def _build_diagnostic_bundle(log_lines: List[str], total_lines: int,
     whole thing is wrapped to render as a single Markdown code block when
     pasted into GitHub / Discourse / etc.
     """
-    # Import here so this module stays cheap to import. verbose=True so the
-    # diagnostic bundle captures full storage/tool probing (libsecret & keyring
-    # accessibility, sshpass version), which the concise startup path skips.
+    # Import here so this module stays cheap to import.
     try:
         from .startup_info import StartupInfo
-        info = StartupInfo(verbose=True).info
+        info = StartupInfo().info
     except Exception:
         info = {}
 
@@ -304,10 +302,10 @@ def build_diagnostics_zip(dest_path: str) -> str:
             if path not in seen and os.path.isfile(path):
                 zf.write(path, arcname='logs/' + os.path.basename(path))
 
-        # System / runtime info. verbose=True for full storage/tool probing.
+        # System / runtime info.
         try:
             from .startup_info import StartupInfo
-            info = StartupInfo(verbose=True).info
+            info = StartupInfo().info
         except Exception as exc:  # pragma: no cover - defensive
             info = {"error": "could not collect system info: %s" % exc}
         zf.writestr('system-info.txt', json.dumps(info, indent=2, default=str))

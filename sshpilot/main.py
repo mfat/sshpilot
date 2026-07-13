@@ -63,6 +63,8 @@ def load_resources():
                 # Following GNOME docs: https://developer.gnome.org/documentation/tutorials/themed-icons.html
                 # and GTK4 API: https://docs.gtk.org/gtk4/class.IconTheme.html
                 # We use set_resource_path() to prepend our base path so bundled icons are checked first
+                # Note: Even with resource paths set, the icon theme system may still prioritize
+                # system themes, so we also manually check resources in icon_utils.py
                 try:
                     display = Gdk.Display.get_default()
                     if display:
@@ -101,8 +103,9 @@ if not load_resources():
 from .icon_utils import patch_gtk_image
 patch_gtk_image()
 
+from .window import MainWindow
 from .platform_utils import is_macos, get_data_dir, get_state_dir
-from .file_manager_integration import should_hide_file_manager_options
+from .preferences import should_hide_file_manager_options
 from .startup_info import print_startup_info
 
 class SshPilotApplication(Adw.Application):
@@ -154,10 +157,9 @@ class SshPilotApplication(Adw.Application):
         if fatal_warnings:
             _enable_fatal_gtk_warnings()
 
-        # Startup diagnostics are deferred to idle (scheduled at the end of
-        # __init__) so their probing — ssh/sshpass version spawns and a Secret
-        # Service D-Bus connect — never blocks the pre-window main thread.
-
+        # Print startup information
+        print_startup_info(isolated=isolated, verbose=verbose)
+        
         # Apply saved application theme (light/dark/system)
         self.config = None
         self._default_shortcuts = {}
@@ -304,21 +306,7 @@ class SshPilotApplication(Adw.Application):
         
         # Initialize window reference
         self.window = None
-
-        # Emit startup diagnostics once the main loop is running (i.e. after the
-        # window is created/presented), reusing the app Config so the backend
-        # lookup doesn't re-read config.json.
-        GLib.idle_add(
-            lambda: (
-                print_startup_info(
-                    isolated=self.isolated_mode,
-                    verbose=self.verbose_override,
-                    config=self.config,
-                ),
-                False,
-            )[1]
-        )
-
+        
         logger.info("sshPilot application initialized")
     
     def on_activate(self, app):
@@ -349,41 +337,9 @@ class SshPilotApplication(Adw.Application):
         except Exception as exc:
             logger.debug(f"Failed to start askpass prompt server: {exc}")
 
-        # If a session-backed secret backend (Bitwarden/Vaultwarden) is selected and
-        # locked, prompt to unlock it now (password dialog + spinner) so the vault is
-        # ready before the first connection. Scheduled on idle so it runs after the
-        # connection manager's deferred backend-selection init.
-        try:
-            win = self.window or self.props.active_window
-            if win is not None:
-                from . import secret_unlock_dialog
-                GLib.idle_add(secret_unlock_dialog.unlock_at_startup, win)
-        except Exception as exc:
-            logger.debug(f"Failed to schedule startup vault unlock: {exc}")
-
-        try:
-            from .xterm_prewarm import schedule_xterm_prewarm
-            schedule_xterm_prewarm(self.config)
-        except Exception as exc:
-            logger.debug(f"Failed to schedule PyXterm prewarm: {exc}")
-
     def on_shutdown(self, app):
         """Clean up all resources when application is shutting down"""
         logger.info("Application shutdown initiated, cleaning up...")
-
-        # Mark every window quitting before any teardown. This path (direct app
-        # shutdown) bypasses cleanup_and_quit, which is the only other place
-        # _is_quitting is set — without this the shutdown-race guards
-        # (terminal spawn/colors, Docker Console pulse & refresh timers) never
-        # engage, and a live GLib timer can queue a draw against the disposing
-        # GSK renderer (Gsk-CRITICAL: gsk_renderer_render_texture).
-        try:
-            for window in app.get_windows():
-                window._is_quitting = True
-            if self.window is not None:
-                self.window._is_quitting = True
-        except Exception:
-            logger.debug("Failed to mark windows quitting on shutdown", exc_info=True)
 
         # Notify plugins first (before any teardown), then best-effort
         # deactivate them.
@@ -849,6 +805,13 @@ class SshPilotApplication(Adw.Application):
         self._gc_pending = False
         gc.collect()
         return False  # one-shot idle
+
+    def do_activate(self):
+        """Called when the application is activated"""
+        win = self.props.active_window
+        if not win:
+            win = MainWindow(application=self, isolated=self.isolated_mode)
+        win.present()
 
     def on_new_connection(self, action, param):
         """Handle new connection action"""

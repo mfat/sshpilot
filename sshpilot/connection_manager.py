@@ -20,18 +20,34 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple, Union, Set
 
 from .ssh_config_utils import resolve_ssh_config_files, get_effective_ssh_config, expand_ssh_tokens
-from .platform_utils import get_config_dir, get_ssh_dir
+from .platform_utils import is_macos, get_config_dir, get_ssh_dir
 from .key_utils import _is_private_key
 from .ssh_connection_builder import build_ssh_connection, ConnectionContext
 
+try:
+    import gi
+    gi.require_version('Secret', '1')
+    from gi.repository import Secret
+except Exception:
+    Secret = None
+try:
+    import keyring
+except Exception:
+    keyring = None
 import socket
 import time
 from gi.repository import GObject, GLib
 from .askpass_utils import (
     clear_passphrase,
+    get_secret_schema,
     lookup_passphrase,
     store_passphrase,
 )
+
+if Secret is not None:
+    _SECRET_SCHEMA = get_secret_schema()
+else:
+    _SECRET_SCHEMA = None
 
 # Set up asyncio event loop for GTK integration
 if os.name == 'posix':
@@ -818,8 +834,11 @@ class ConnectionManager(GObject.Object):
         self.ssh_config_path = ''
         self.known_hosts_path = ''
 
-        # Diagnostic label of the active secret backend (set during init).
+        # Track credential storage state
+        self.libsecret_available = False
         self.secure_storage_backend = 'uninitialized'
+        self._keyring_backend_name: Optional[str] = None
+        self._keyring_used = False
 
         # Initialize SSH config paths
         self.set_isolated_mode(isolated_mode)
@@ -948,6 +967,37 @@ class ConnectionManager(GObject.Object):
             return identifier
         return f"connection-{id(connection)}"
 
+    def _get_keyring_backend_name(self) -> str:
+        """Return a descriptive name for the active keyring backend."""
+
+        if self._keyring_backend_name:
+            return self._keyring_backend_name
+        if keyring is None:
+            return 'unavailable'
+        try:
+            backend = keyring.get_keyring()
+            self._keyring_backend_name = backend.__class__.__name__
+        except Exception:
+            self._keyring_backend_name = 'unavailable'
+        return self._keyring_backend_name
+
+    def _should_use_keyring_fallback(self, *, force: bool = False) -> bool:
+        """Return True when we should consult the cross-platform keyring."""
+
+        if keyring is None:
+            return False
+        if force:
+            return True
+        if self.secure_storage_backend in ('uninitialized', 'none'):
+            return True
+        if self.secure_storage_backend.startswith('keyring'):
+            return True
+        if self._keyring_used:
+            return True
+        if is_macos():
+            return True
+        return False
+
     def set_isolated_mode(self, isolated: bool):
         """Switch between standard and isolated SSH configuration"""
         self.isolated_mode = bool(isolated)
@@ -1027,75 +1077,6 @@ class ConnectionManager(GObject.Object):
             raise
         self._ensure_secure_permissions(path, 0o600)
 
-    # -- managed global identity defaults (Host *) -----------------------
-    _MANAGED_BEGIN = "# >>> sshpilot: identity defaults (managed) >>>"
-    _MANAGED_END = "# <<< sshpilot: identity defaults (managed) <<<"
-
-    @classmethod
-    def _strip_managed_block(cls, text: str):
-        """Remove the sentinel-delimited managed block from *text*.
-
-        Returns ``(new_text, removed)``. When no managed block is present the text is
-        returned byte-for-byte unchanged (``removed=False``) so we never churn the file.
-        """
-        if cls._MANAGED_BEGIN not in text:
-            return text, False
-        lines = text.splitlines(keepends=True)
-        out, i, n, removed = [], 0, len(text.splitlines(keepends=True)), False
-        while i < n:
-            if lines[i].strip() == cls._MANAGED_BEGIN:
-                removed = True
-                i += 1
-                while i < n and lines[i].strip() != cls._MANAGED_END:
-                    i += 1
-                i += 1  # skip the END marker line
-                if i < n and lines[i].strip() == "":   # consume one trailing blank line
-                    i += 1
-                continue
-            out.append(lines[i])
-            i += 1
-        return "".join(out), removed
-
-    def apply_global_identity_agent(self, socket: Optional[str]) -> bool:
-        """Write/update/remove a managed global ``Host *`` block setting ``IdentityAgent``
-        to *socket* in ``~/.ssh/config``. A falsy *socket* removes the managed block.
-
-        Idempotent and non-destructive: only the sentinel-delimited block is touched, so
-        all other user content (including a user's own ``Host *``) is preserved. The block
-        is placed at end of file, so per-host blocks (earlier) win ssh's first-match
-        semantics and a per-connection ``IdentityAgent`` still overrides this default.
-        """
-        path = self.ssh_config_path
-        if not path:
-            return False
-        socket = (socket or "").strip()
-        try:
-            existing = ""
-            if os.path.exists(path):
-                with open(path, "r", encoding="utf-8") as f:
-                    existing = f.read()
-            stripped, _removed = self._strip_managed_block(existing)
-            if socket:
-                block = (f"{self._MANAGED_BEGIN}\n"
-                         f"Host *\n"
-                         f"    IdentityAgent {socket}\n"
-                         f"{self._MANAGED_END}\n")
-                base = stripped.rstrip("\n")
-                new_text = (base + "\n\n" + block) if base.strip() else block
-            else:
-                new_text = stripped
-            if new_text == existing:
-                return True  # already in the desired state — no write
-            if not new_text and not os.path.exists(path):
-                return True  # nothing to remove and no file to create
-            self._safe_write_config(path, new_text)
-            logger.info("Updated managed IdentityAgent block (%s)",
-                        socket or "removed")
-            return True
-        except Exception as exc:
-            logger.error("Failed to apply global IdentityAgent: %s", exc)
-            return False
-
     def _normalize_path(self, path: str) -> str:
         """Expand user/env vars and return absolute, non-empty paths."""
         if not path or not str(path).strip():
@@ -1118,100 +1099,36 @@ class ConnectionManager(GObject.Object):
 
     def _post_init_slow_path(self):
         """Run slower initialization steps after UI is responsive."""
-        # Initialize secure storage via the pluggable secret manager.
-        self.secure_storage_backend = 'none'
         try:
-            from .secret_storage import get_secret_manager
-            manager = get_secret_manager()
-            try:
-                _cfg = self.config
-                selected = _cfg.get_setting('secrets.backend', 'auto')
-            except Exception:
-                _cfg = None
-                selected = 'auto'
-            # The legacy separate 'vaultwarden' backend was merged into 'bitwarden'
-            # (one `bw` CLI). Migrate an old selection so it keeps working.
-            if str(selected).strip().lower() == 'vaultwarden':
-                selected = 'bitwarden'
-                try:
-                    if _cfg is not None:
-                        _cfg.set_setting('secrets.backend', 'bitwarden')
-                except Exception:
-                    pass
-            manager.set_selected(selected)
-            # Propagate the selection (and session-backend settings) to child
-            # processes (e.g. the askpass helper) so they resolve the same backend
-            # and can read session-backed secrets non-interactively.
-            os.environ['SSHPILOT_SECRET_BACKEND'] = str(selected or 'auto')
-            try:
-                if _cfg is None:
-                    _cfg = self.config
-                timeout_min = int(_cfg.get_setting('secrets.session_timeout', 0) or 0)
-                os.environ['SSHPILOT_SECRET_SESSION_TIMEOUT'] = str(max(0, timeout_min) * 60)
-                # Bitwarden CLI account/profile (BITWARDENCLI_APPDATA_DIR). Set in the
-                # process env so every `bw` spawn — and the inherited askpass subprocess —
-                # uses the same account.
-                profile = str(_cfg.get_setting('secrets.bitwarden.profile', '') or '').strip()
-                if profile:
-                    os.environ['BITWARDENCLI_APPDATA_DIR'] = os.path.expanduser(profile)
-                else:
-                    os.environ.pop('BITWARDENCLI_APPDATA_DIR', None)
-                os.environ.pop('SSHPILOT_VAULTWARDEN_SERVER', None)  # retired
-                # KeePass (.kdbx) backend: database + optional key file paths, so the backend
-                # and the inherited askpass subprocess open the same file.
-                kdbx_db = str(_cfg.get_setting('secrets.keepassxc.database', '') or '').strip()
-                if kdbx_db:
-                    os.environ['SSHPILOT_KDBX_DATABASE'] = os.path.expanduser(kdbx_db)
-                else:
-                    os.environ.pop('SSHPILOT_KDBX_DATABASE', None)
-                kdbx_kf = str(_cfg.get_setting('secrets.keepassxc.keyfile', '') or '').strip()
-                if kdbx_kf:
-                    os.environ['SSHPILOT_KDBX_KEYFILE'] = os.path.expanduser(kdbx_kf)
-                else:
-                    os.environ.pop('SSHPILOT_KDBX_KEYFILE', None)
-            except Exception:
-                pass
-            self.secure_storage_backend = manager.active_backend_label()
-            logger.info(
-                "Secure storage backend: %s (selected=%s)",
-                self.secure_storage_backend, selected,
-            )
-            # Surface (don't silently swallow) an explicit selection that can't work.
-            try:
-                sel_be = manager.selected_backend()
-                if sel_be is not None and not sel_be.is_available():
-                    logger.warning(
-                        "Selected secret backend '%s' is unavailable — secrets will not "
-                        "be stored or autofilled until it is available or you change the "
-                        "backend in Preferences.", selected)
-            except Exception:
-                pass
+            # Key scan
+            self.load_ssh_keys()
         except Exception as e:
-            logger.warning("Secret manager initialization failed: %s", e)
-        # Identity provider selection (parallel to the secret backend): propagate the
-        # configured default provider to child processes and the in-process manager so
-        # connection env injection routes through it.
-        try:
-            _idcfg = self.config
-            identity_provider = str(
-                _idcfg.get_setting('identity.provider', 'auto') or 'auto'
-            ).strip().lower()
-            agent_socket = str(
-                _idcfg.get_setting('identity.agent_socket', '') or ''
-            ).strip()
-            os.environ['SSHPILOT_IDENTITY_PROVIDER'] = identity_provider
-            if agent_socket:
-                os.environ['SSHPILOT_IDENTITY_AGENT_SOCKET'] = agent_socket
-            else:
-                os.environ.pop('SSHPILOT_IDENTITY_AGENT_SOCKET', None)
-            from .identity import get_identity_manager
-            mgr = get_identity_manager()
-            mgr.set_selected(identity_provider)
-            # Reconcile the managed Host * IdentityAgent block with the saved selection.
-            directives = dict(mgr.selected_config_directives())
-            self.apply_global_identity_agent(directives.get('IdentityAgent'))
-        except Exception as exc:
-            logger.debug("Identity provider initialization failed: %s", exc)
+            logger.debug(f"SSH key scan skipped/failed: {e}")
+        
+        # Initialize secure storage (can be slow)
+        self.secure_storage_backend = 'none'
+        self.libsecret_available = False
+        if not is_macos() and Secret is not None:
+            try:
+                Secret.Service.get_sync(Secret.ServiceFlags.NONE)
+                self.libsecret_available = True
+
+                self.secure_storage_backend = 'libsecret'
+                logger.info("Secure storage backend: libsecret (Secret Service)")
+            except Exception as e:
+                logger.warning(f"libsecret backend unavailable: {e}")
+        if not self.libsecret_available and keyring is not None:
+            try:
+                backend = keyring.get_keyring()
+                backend_name = backend.__class__.__name__
+                self._keyring_backend_name = backend_name
+                self.secure_storage_backend = f"keyring:{backend_name}"
+                logger.info("Secure storage backend: keyring (%s)", backend_name)
+            except Exception as e:
+                logger.info(
+                    "Keyring module present but no usable backend; passwords will not be stored (%s)",
+                    e,
+                )
         if self.secure_storage_backend == 'none':
             logger.info("Secure storage backend: unavailable; password storage disabled")
         return False  # run once
@@ -1855,101 +1772,151 @@ class ConnectionManager(GObject.Object):
         return keys
 
     def store_password(self, host: str, username: str, password: str):
-        """Store a password via the selected secret backend (see secret_storage)."""
-        from .secret_storage import get_secret_manager, password_spec
-        stored = get_secret_manager().store(password_spec(host, username), password)
-        if not stored:
-            logger.warning("No secure storage backend available; password not stored")
-        return stored
-
-    def store_connection_password(self, connection, password: str,
-                                  username: Optional[str] = None,
-                                  previous_connection=None) -> bool:
-        """Store a connection's SSH password under the canonical host key.
-
-        Clears legacy copies stored under older host aliases (nickname, etc.) and,
-        when an edited connection changed host or username, its previous identity.
-        """
-        from .credential_model import canonical_password_host, password_host_candidates
-
-        user = (username or getattr(connection, 'username', '') or '').strip()
-        canonical = canonical_password_host(connection)
-        if not canonical or not user or not password:
-            return False
-        stored = self.store_password(canonical, user, password)
-        if stored:
-            cleanup = {
-                (host, user)
-                for host in password_host_candidates(connection)
-                if host and host != canonical
-            }
-            if previous_connection:
-                previous_user = (
-                    previous_connection.get('username')
-                    if isinstance(previous_connection, dict)
-                    else getattr(previous_connection, 'username', '')
-                ) or user
-                cleanup.update(
-                    (host, previous_user)
-                    for host in password_host_candidates(previous_connection)
-                    if host and (host != canonical or previous_user != user)
+        """Store password securely in system keyring"""
+        # Prefer libsecret on Linux when available
+        libsecret_failed = False
+        if not is_macos() and self.libsecret_available and _SECRET_SCHEMA is not None:
+            try:
+                attributes = {
+                    'application': _SERVICE_NAME,
+                    'type': 'ssh_password',
+                    'host': host,
+                    'username': username,
+                }
+                Secret.password_store_sync(
+                    _SECRET_SCHEMA,
+                    attributes,
+                    Secret.COLLECTION_DEFAULT,
+                    f'{_SERVICE_NAME}: {username}@{host}',
+                    password,
+                    None,
                 )
-            for host, cleanup_user in cleanup:
-                self.delete_password(host, cleanup_user)
-        return stored
+                logger.debug(f"Password stored for {username}@{host} via libsecret")
+                return True
+            except Exception as e:
+                logger.error(f"Failed to store password (libsecret): {e}")
+                libsecret_failed = True
+
+        # Fallback to cross-platform keyring (macOS Keychain, etc.)
+        if self._should_use_keyring_fallback(force=libsecret_failed):
+            backend_name = self._get_keyring_backend_name()
+            try:
+                keyring.set_password(_SERVICE_NAME, f"{username}@{host}", password)
+                logger.debug(
+                    "Password stored for %s@%s via keyring backend %s",
+                    username,
+                    host,
+                    backend_name,
+                )
+                self._keyring_used = True
+                return True
+            except Exception as e:
+                logger.error(
+                    "Failed to store password (keyring:%s): %s",
+                    backend_name,
+                    e,
+                )
+        logger.warning("No secure storage backend available; password not stored")
+        return False
 
     def get_password(self, host: str, username: str) -> Optional[str]:
-        """Retrieve a password via the selected secret backend."""
-        from .secret_storage import get_secret_manager, password_spec
-        return get_secret_manager().lookup(password_spec(host, username))
+        """Retrieve password from system keyring"""
+        # Try libsecret first
+        if not is_macos() and self.libsecret_available and _SECRET_SCHEMA is not None:
+            try:
+                attributes = {
+                    'application': _SERVICE_NAME,
+                    'type': 'ssh_password',
+                    'host': host,
+                    'username': username,
+                }
+                password = Secret.password_lookup_sync(_SECRET_SCHEMA, attributes, None)
+                if password is not None:
+                    logger.debug(f"Password retrieved for {username}@{host} via libsecret")
+                    return password
+            except Exception as e:
+                logger.error(f"Error retrieving password (libsecret) for {username}@{host}: {e}")
 
-    def get_connection_password(self, connection,
-                                username: Optional[str] = None) -> Optional[str]:
-        """Look up a connection's SSH password, migrating legacy host aliases on hit."""
-        from .credential_model import canonical_password_host, password_host_candidates
-
-        user = (username or getattr(connection, 'username', '') or '').strip()
-        if not user:
-            return None
-        canonical = canonical_password_host(connection)
-        for host in password_host_candidates(connection) or ([canonical] if canonical else []):
-            if not host:
-                continue
-            value = self.get_password(host, user)
-            if value:
-                if canonical and host != canonical:
-                    if self.store_password(canonical, user, value):
-                        self.delete_password(host, user)
-                return value
+        # Fallback to keyring
+        if self._should_use_keyring_fallback():
+            backend_name = self._get_keyring_backend_name()
+            try:
+                pw = keyring.get_password(_SERVICE_NAME, f"{username}@{host}")
+                if pw:
+                    self._keyring_used = True
+                    logger.debug(
+                        "Password retrieved for %s@%s via keyring backend %s",
+                        username,
+                        host,
+                        backend_name,
+                    )
+                return pw
+            except Exception as e:
+                message = str(e)
+                if 'kwallet' in message.lower():
+                    logger.debug(
+                        "Keyring backend %s unavailable during retrieval for %s@%s: %s",
+                        backend_name,
+                        username,
+                        host,
+                        e,
+                    )
+                else:
+                    logger.error(
+                        "Error retrieving password (keyring:%s) for %s@%s: %s",
+                        backend_name,
+                        username,
+                        host,
+                        e,
+                    )
         return None
 
     def delete_password(self, host: str, username: str) -> bool:
-        """Delete a stored password from all available secret backends."""
-        from .secret_storage import get_secret_manager, password_spec
-        removed_any = get_secret_manager().delete(password_spec(host, username))
+        """Delete stored password for host/user from system keyring"""
+        removed_any = False
+        # Try libsecret first
+        if not is_macos() and self.libsecret_available and _SECRET_SCHEMA is not None:
+            try:
+                attributes = {
+                    'application': _SERVICE_NAME,
+                    'type': 'ssh_password',
+                    'host': host,
+                    'username': username,
+                }
+                removed_any = Secret.password_clear_sync(_SECRET_SCHEMA, attributes, None) or removed_any
+            except Exception as e:
+                logger.error(f"Error deleting password (libsecret) for {username}@{host}: {e}")
+
+        # Also attempt keyring cleanup so both stores are cleared if both were used
+        if self._should_use_keyring_fallback():
+            backend_name = self._get_keyring_backend_name()
+            try:
+                keyring.delete_password(_SERVICE_NAME, f"{username}@{host}")
+                removed_any = True or removed_any
+                logger.debug(
+                    "Password entry cleared via keyring backend %s for %s@%s",
+                    backend_name,
+                    username,
+                    host,
+                )
+            except Exception as e:
+                logger.debug(
+                    "Keyring backend %s failed to delete %s@%s: %s",
+                    backend_name,
+                    username,
+                    host,
+                    e,
+                )
         if removed_any:
             logger.debug(f"Deleted stored password for {username}@{host}")
         return removed_any
 
-    def delete_connection_passwords(self, connection,
-                                    username: Optional[str] = None) -> bool:
-        """Delete a connection's SSH password from every host alias and backend."""
-        from .credential_model import password_host_candidates
-
-        user = (username or getattr(connection, 'username', '') or '').strip()
-        removed = False
-        for host in password_host_candidates(connection):
-            if host and user and self.delete_password(host, user):
-                removed = True
-        return removed
-
     # --- Plugin secrets ----------------------------------------------------
     #
     # Namespaced per plugin id so a plugin can never read another plugin's
-    # (or a connection's) secrets. Reuses the store_password() path — which routes
-    # through the configurable secret backend (see secret_storage.py) — with a
-    # reserved host identifier: real SSH hosts are stored under their hostname,
-    # plugin secrets under 'sshpilot-plugin/<id>'.
+    # (or a connection's) secrets. Reuses the store_password() dual-backend
+    # path with a reserved host identifier: real SSH hosts are stored under
+    # their hostname, plugin secrets under 'sshpilot-plugin/<id>'.
 
     @staticmethod
     def _plugin_secret_host(plugin_id: str) -> str:
@@ -1983,10 +1950,8 @@ class ConnectionManager(GObject.Object):
     def _ensure_ssh_agent(self) -> bool:
         """Ensure ssh-agent is running and export environment variables"""
         try:
-            # Check if ssh-agent is already running (via the identity provider so
-            # the agent-presence check lives in one place).
-            from .providers.system_agent import SystemAgentProvider
-            if SystemAgentProvider().is_available():
+            # Check if ssh-agent is already running
+            if os.environ.get('SSH_AUTH_SOCK'):
                 logger.debug("SSH agent already running")
                 return True
             
@@ -2621,9 +2586,6 @@ class ConnectionManager(GObject.Object):
     def update_connection(self, connection: Connection, new_data: Dict[str, Any]) -> bool:
         """Update an existing connection"""
         try:
-            secret_storage_done = bool(new_data.pop('__secret_storage_done', False))
-            if isinstance(getattr(connection, 'data', None), dict):
-                connection.data.pop('__secret_storage_done', None)
             protocol = (new_data.get('protocol')
                         or getattr(connection, 'protocol', 'ssh') or 'ssh')
             if protocol != 'ssh':
@@ -2640,6 +2602,12 @@ class ConnectionManager(GObject.Object):
                 connection.nickname,
                 target_path,
                 len(new_data.get('forwarding_rules', []) or [])
+            )
+            # Capture previous identifiers for credential cleanup
+            prev_host = (
+                getattr(connection, 'hostname', '')
+                or getattr(connection, 'host', '')
+                or getattr(connection, 'nickname', '')
             )
             prev_user = getattr(connection, 'username', '')
             original_nickname = getattr(connection, 'nickname', '')
@@ -2680,21 +2648,31 @@ class ConnectionManager(GObject.Object):
                 self.update_ssh_config_file(connection, new_data, original_nickname)
 
             # Handle password storage/removal
-            if 'password' in new_data and not secret_storage_done:
+            if 'password' in new_data:
                 pwd = new_data.get('password') or ''
+                # Determine current identifiers after update
+                curr_host = (
+                    new_data.get('hostname')
+                    or new_data.get('host')
+                    or getattr(connection, 'hostname', '')
+                    or getattr(connection, 'host', '')
+                    or getattr(connection, 'nickname', '')
+                )
                 curr_user = new_data.get('username') or getattr(connection, 'username', prev_user)
-                if pwd:
-                    self.store_connection_password(connection, pwd, username=curr_user)
+                if pwd and curr_host:
+                    self.store_password(curr_host, curr_user, pwd)
                 else:
+                    # Remove any stored passwords for both previous and current identifiers
                     try:
-                        self.delete_connection_passwords(connection, username=prev_user)
+                        if prev_host and prev_user:
+                            self.delete_password(prev_host, prev_user)
                     except Exception:
                         pass
-                    if curr_user != prev_user:
-                        try:
-                            self.delete_connection_passwords(connection, username=curr_user)
-                        except Exception:
-                            pass
+                    try:
+                        if curr_host and curr_user and (curr_host != prev_host or curr_user != prev_user):
+                            self.delete_password(curr_host, curr_user)
+                    except Exception:
+                        pass
             
             # DO NOT call load_ssh_config() here - it breaks object references
             
@@ -2708,21 +2686,22 @@ class ConnectionManager(GObject.Object):
             logger.error(f"Failed to update connection: {e}")
             return False
 
-    def remove_connection(
-        self,
-        connection: Connection,
-        *,
-        reload_config: bool = True,
-    ) -> bool:
-        """Remove a connection, optionally deferring the final config reload."""
+    def remove_connection(self, connection: Connection) -> bool:
+        """Remove connection from config and list"""
         try:
             # Remove from list
             if connection in self.connections:
                 self.connections.remove(connection)
             
-            # Remove password from secure storage (all host aliases)
+            # Remove password from secure storage
             try:
-                self.delete_connection_passwords(connection)
+                host_identifier = (
+                    connection.get_effective_host()
+                    if hasattr(connection, 'get_effective_host')
+                    else connection.hostname
+                )
+                self.delete_password(host_identifier, connection.username)
+
             except Exception as e:
                 logger.warning(f"Failed to remove password from storage: {e}")
             
@@ -2752,13 +2731,11 @@ class ConnectionManager(GObject.Object):
             # Emit signal
             self.emit('connection-removed', connection)
             
-            # Bulk UI deletion defers this expensive full parse until every
-            # selected connection has been persisted.
-            if reload_config:
-                try:
-                    self.load_ssh_config()
-                except Exception:
-                    pass
+            # Reload connections so in-memory list reflects latest file state
+            try:
+                self.load_ssh_config()
+            except Exception:
+                pass
 
             logger.info(f"Connection removed: {connection}")
             return True

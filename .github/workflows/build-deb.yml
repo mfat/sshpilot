@@ -78,12 +78,11 @@ jobs:
             echo "         python3-cryptography,"
             echo "         python3-secretstorage,"
             echo "         gir1.2-webkit-6.0,"
-            echo "         libjs-xterm,"
+            echo "         python3-flask,"
+            echo "         python3-flask-socketio,"
             echo "         ssh-askpass,"
             echo "         sshpass"
           } >> debian/control
-          # Optional: KeePass (.kdbx) secret backend (degrades gracefully if absent).
-          echo "Recommends: python3-pykeepass" >> debian/control
           echo "Description: Manage your servers with ease" >> debian/control
           echo " SSH Pilot is a user-friendly SSH connection manager featuring built-in tabbed" >> debian/control
           echo " terminal, remote file management, key transfer, port forwarding and more." >> debian/control

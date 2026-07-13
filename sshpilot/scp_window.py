@@ -245,7 +245,7 @@ class ScpWindowController:
         lookup_host = hostname_value or host_value
         if connection_manager:
             try:
-                saved_password = connection_manager.get_connection_password(connection)
+                saved_password = connection_manager.get_password(lookup_host, connection.username)
             except Exception:
                 saved_password = None
 

@@ -13,8 +13,7 @@ optdepends=('inetutils: Telnet protocol support'
             'mosh: Mosh protocol support'
             'kubectl: Kubernetes protocol support'
             'docker: Docker/Podman protocol support'
-            'picocom: Serial console protocol support'
-            'python-pykeepass: KeePass (.kdbx) secret backend')
+            'picocom: Serial console protocol support')
 arch=('any')
 sha256sums=('28d8caf38558a0f50bb052a259358c49fdb26a3ade902e9ad3de16353a5b55f5')
 source=("${pkgname}-${pkgver}.tar.gz::${url}/archive/refs/tags/v${pkgver}.tar.gz")

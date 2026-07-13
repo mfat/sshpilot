@@ -77,88 +77,11 @@ identically. Modes:
 - **Askpass disabled** (the `use-askpass` setting is off): set no `SSH_ASKPASS`;
   ssh prompts natively on the TTY.
 
-Credentials are stored/retrieved through a **pluggable secret backend**
-(`secret_storage.py`): `connection_manager.get_connection_password` /
-`get_password` and `askpass_utils.lookup_passphrase` delegate to `SecretManager`.
-The backend is
-selectable via the `secrets.backend` setting — `auto` (platform default:
-libsecret then keyring on Linux, keyring on macOS), or an explicit `libsecret` /
-`keyring` / `pass` (passwordstore.org) / `bitwarden` / `keepassxc` / `agent`, or
-a registered custom backend. With **`auto`**, reads/deletes fall through to every
-available backend so secrets aren't orphaned when the selection changes; with an
-**explicit** backend, `store`/`lookup`/`delete` consult only that backend. The askpass helper
-(`askpass_utils.py`) is the program ssh invokes; it looks the passphrase up via the
-selected backend and, failing that, shows a GTK prompt. Keyring autofill + the
-askpass prompt are advertised features — keep them working.
-
-Backend specifics:
-- **KeePassXC** can be used two ways: (a) enable its GUI *Secret Service integration* and
-  select `libsecret` (same `org.freedesktop.secrets` D-Bus API); or (b) the dedicated
-  **`keepassxc`** backend (`KdbxBackend`, `secret_storage.py`) which opens a `.kdbx` file
-  **directly** via `pykeepass`. The KDBX format is a static encrypted file (no session), but
-  the backend is `session_backed=True`: `unlock(master_password)` opens the file (+ optional
-  key file from `secrets.keepassxc.keyfile`), warms a `title→password` cache, and exports the
-  derived `transformed_key` as `SSHPILOT_KDBX_KEY` so the askpass subprocess opens the file
-  fast (no Argon2) without re-prompting — same env posture as `BW_SESSION`, never persisted,
-  dropped on idle/exit. DB + keyfile paths come from `secrets.keepassxc.*` → exported as
-  `SSHPILOT_KDBX_DATABASE`/`_KEYFILE`. Read-write: secrets are stored in a dedicated `sshPilot`
-  group (entry title = the account; sshPilot type in a custom property). Caveat: don't keep
-  the same `.kdbx` open in KeePassXC while sshPilot writes (`kp.save()` can conflict).
-- **`bitwarden`** is *session-backed* (`bw` CLI). One backend covers Bitwarden cloud
-  **and** self-hosted **Vaultwarden** (and any account) — which server/account the CLI
-  talks to is the CLI's own config plus the optional **account/profile**
-  `secrets.bitwarden.profile` (a `bw` data dir, exported as `BITWARDENCLI_APPDATA_DIR`
-  into the process env so every `bw` spawn and the askpass subprocess use that account).
-  It must be unlocked (master password) before secrets resolve; the unlock token is
-  cached in-process and exported as `BW_SESSION` so the askpass subprocess can read
-  non-interactively. The token is dropped after `secrets.session_timeout` idle minutes
-  (propagated as `SSHPILOT_SECRET_SESSION_TIMEOUT` seconds) and on app shutdown. The GTK
-  unlock prompt lives in `secret_unlock_dialog.py` (the core module stays GTK-free and
-  never prompts); it is driven from Preferences and lazily from
-  `terminal_manager.connect_to_host`. Signing in (`bw login`, and `bw config server <url>`
-  first for a self-hosted Vaultwarden) is a one-time user step in a terminal — the app
-  only runs `bw unlock`. The prompt has an opt-in **"Remember master password"** that
-  saves it to the **platform keyring** (libsecret/keyring) — never the vault it unlocks —
-  via `SecretManager.store_in_keyring`/`lookup_in_keyring`/`delete_in_keyring` and
-  `master_password_spec` (keyed by backend + `BITWARDENCLI_APPDATA_DIR` profile,
-  selection-independent). When a saved password exists, `prompt_unlock` auto-unlocks with
-  it but still shows the "Unlocking…" spinner; a stale saved password is dropped and the
-  manual prompt shown.
-- **`agent`** means *don't store secrets at all*: a null backend. When explicitly
-  selected, `SecretManager` consults only it (no fallback/fallthrough) so nothing
-  is written to or read from other stores; the user relies on ssh-agent (the existing
-  key-preload path) and ssh's own prompts. `store` returns success as a no-op;
-  `delete` is a no-op on other stores — switch to `auto` or the backend that holds
-  the secret to purge it.
-- Session-backed backends set `session_backed=True` on `SecretBackend` and implement
-  `is_unlocked`/`unlock`/`lock`; passive stores leave these as no-ops.
-
-### Credential manager (export / backup layer)
-
-Connect-time storage uses `SecretManager` directly. For a **normalized list** of
-every sshPilot-managed secret (backup `.spbk`, future vault migration), use the
-credential manager stack — see `docs/CREDENTIAL_MANAGER.md`.
-
-- **`credential_model.py`** — `Credential` dataclass; `canonical_password_host` /
-  `password_host_candidates` (canonical SSH password key =
-  `hostname` → `host` → `nickname`).
-- **`credential_manager.py`** — `CredentialManager.list_credentials()` gathers
-  passwords, sudo passwords, and key passphrases (including `resolved_identity_files`
-  from `ssh -G`). Read-only; never prompts; locked vaults contribute nothing.
-- **`credential_adapters.py`** — `SecretBackendAdapter` / `KdbxAdapter` for
-  credential-centric `load_all` / `save` / `delete` (export targets).
-
-**SSH password API (connect-time):**
-
-- **Store:** `ConnectionManager.store_connection_password(connection, password)`
-  — always under the canonical host; clears legacy alias copies.
-- **Lookup:** `ConnectionManager.get_connection_password(connection)` — probes
-  legacy aliases and **migrates** on hit.
-- **Low-level:** `store_password(host, user)` / `get_password(host, user)` for
-  callers that already know the exact key (plugin secrets, etc.).
-
-`SecretManager.lookup_everywhere` and `all_available_backends()` support export;
-normal `lookup` / `delete` honor backend selection.
+Credentials are stored/retrieved via libsecret/keyring
+(`connection_manager.get_password` / `askpass_utils.lookup_passphrase`). The
+askpass helper (`askpass_utils.py`) is the program ssh invokes; it looks the
+passphrase up in the keyring and, failing that, shows a GTK prompt. Keyring
+autofill + the askpass prompt are advertised features — keep them working.
 
 ### Advanced SSH options (Preferences → command)
 Preferences ▸ SSH Settings persists each advanced option under the `ssh.*`
@@ -285,10 +208,7 @@ to askpass for a password.
   command for external processes), `_build_base_ssh_command` (shared option
   builder used by explicit-command callers like SCP).
 - `connection_manager.py`: `Connection.native_connect()`/`connect()`,
-  persistence of connections to `~/.ssh/config`, credential storage
-  (`store_connection_password`, `get_connection_password`, …).
-- `credential_manager.py` / `credential_model.py` / `credential_adapters.py`:
-  normalized credential listing and export (see `docs/CREDENTIAL_MANAGER.md`).
+  persistence of connections to `~/.ssh/config`, credential storage.
 - `askpass_utils.py`: the askpass helper, keyring lookup, and GTK prompt.
 - `window.py`: `show_ssh_password_dialog`, `resolve_app_modal_parent`,
   `present_for_modal_dialog` — in-app SSH password prompts and Wayland-safe modal

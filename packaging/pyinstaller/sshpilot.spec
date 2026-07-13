@@ -1,7 +1,7 @@
 # sshpilot.spec — build with: pyinstaller --clean sshpilot.spec
 import os, sys, glob, platform, sysconfig
 from pathlib import Path
-from PyInstaller.utils.hooks import collect_submodules, collect_data_files, collect_dynamic_libs
+from PyInstaller.utils.hooks import collect_submodules, collect_data_files
 
 # Resolve the current Python site-packages directory dynamically
 site_packages_dir = Path(sysconfig.get_path("platlib"))
@@ -172,24 +172,6 @@ hiddenimports += ["keyring.backends", "keyring.backends.macOS", "keyring.backend
 # Ship certifi so the HTTPS update check can verify TLS certs inside the bundle
 # (PyInstaller's certifi hook collects cacert.pem once certifi is importable).
 hiddenimports += ["certifi"]
-
-# KeePass (.kdbx) secret backend: pykeepass + its (partly compiled) deps. The import is
-# lazy/optional, so PyInstaller's import-following may miss it — collect explicitly so the
-# self-contained bundle can offer the backend. Wrapped so a missing dep never breaks the build.
-for _kp_mod in ("pykeepass", "construct", "Cryptodome", "argon2", "argon2_cffi_bindings", "lxml"):
-    try:
-        hiddenimports += collect_submodules(_kp_mod)
-    except Exception:
-        pass
-try:
-    datas += collect_data_files("pykeepass")
-except Exception:
-    pass
-for _kp_bin in ("lxml", "Cryptodome", "argon2_cffi_bindings"):
-    try:
-        binaries += collect_dynamic_libs(_kp_bin)
-    except Exception:
-        pass
 
 block_cipher = None
 

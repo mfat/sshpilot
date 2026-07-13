@@ -217,25 +217,16 @@ def open_remote_in_file_manager(
         lookup_user = user
         if connection is not None:
             lookup_user = getattr(connection, "username", None) or user
-
-        if connection is not None:
+        
+        for lookup_host in lookup_hosts:
             try:
-                retrieved = connection_manager.get_connection_password(connection)
+                retrieved = connection_manager.get_password(lookup_host, lookup_user)
                 if retrieved:
                     logger.debug("External file manager: Found password, skipping SSH verification")
                     has_password = True
+                    break
             except Exception:
                 pass
-        if not has_password:
-            for lookup_host in lookup_hosts:
-                try:
-                    retrieved = connection_manager.get_password(lookup_host, lookup_user)
-                    if retrieved:
-                        logger.debug("External file manager: Found password, skipping SSH verification")
-                        has_password = True
-                        break
-                except Exception:
-                    pass
 
     # If no password found and password auth is enabled, show password dialog before verification
     if not has_password and connection_manager is not None:
@@ -409,42 +400,34 @@ def _mount_and_open_sftp(
                 lookup_hosts
             )
             
-            # Try connection-scoped lookup (migrates legacy host aliases), then each identifier
-            if connection is not None:
+            # Try each identifier until we find a password
+            for lookup_host in lookup_hosts:
                 try:
-                    retrieved = connection_manager.get_connection_password(connection)
+                    retrieved = connection_manager.get_password(lookup_host, lookup_user)
                     if retrieved:
-                        password = retrieved
-                except Exception:
-                    pass
-            if not password:
-                for lookup_host in lookup_hosts:
-                    try:
-                        retrieved = connection_manager.get_password(lookup_host, lookup_user)
-                        if retrieved:
-                            logger.debug(
-                                "External file manager: Password found for %s@%s using identifier '%s'",
-                                lookup_user,
-                                lookup_host,
-                                lookup_host,
-                            )
-                            password = retrieved
-                            break
-                        else:
-                            logger.debug(
-                                "External file manager: No password found for %s@%s using identifier '%s'",
-                                lookup_user,
-                                lookup_host,
-                                lookup_host,
-                            )
-                    except Exception as exc:
                         logger.debug(
-                            "Password lookup failed for %s@%s (identifier '%s'): %s",
+                            "External file manager: Password found for %s@%s using identifier '%s'",
                             lookup_user,
                             lookup_host,
-                            lookup_host,
-                            exc,
+                            lookup_host
                         )
+                        password = retrieved
+                        break
+                    else:
+                        logger.debug(
+                            "External file manager: No password found for %s@%s using identifier '%s'",
+                            lookup_user,
+                            lookup_host,
+                            lookup_host
+                        )
+                except Exception as exc:
+                    logger.debug(
+                        "Password lookup failed for %s@%s (identifier '%s'): %s",
+                        lookup_user,
+                        lookup_host,
+                        lookup_host,
+                        exc
+                    )
 
         # If no password found and password auth is enabled, show password dialog before mounting
         if not password and connection_manager is not None:

@@ -1,8 +1,0 @@
-Bundled xterm.js assets (core + fit/search/webLinks addons), taken verbatim
-from Debian's libjs-xterm 5.3.0 (/usr/share/javascript/xterm/). MIT licensed
-(see ../LICENSE is GPL for pyxtermjs; xterm.js itself is MIT, Copyright (c)
-2017 The xterm.js authors).
-
-At runtime sshpilot prefers the system copy (/usr/share/javascript/xterm) when
-present and only falls back to these bundled files, so Debian packages should
-depend on libjs-xterm and exclude this directory from the binary package.

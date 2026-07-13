@@ -22,10 +22,6 @@ dependencies = [
     "keyring>=24.3",
     "psutil>=5.9.0",
     "certifi>=2023.7.22",
-    # KeePass (.kdbx) credential adapter (export/import). Imported lazily; the KDBX
-    # adapter reports unavailable if it (or its deps: lxml/pycryptodomex/argon2-cffi)
-    # is missing, so the rest of the app is unaffected.
-    "pykeepass>=4.0",
 ]
 
 [project.optional-dependencies]
@@ -56,9 +52,6 @@ exclude = ["packaging*", "screenshots*", "sshpilot.plugins.examples*"]
 # does not pick it up automatically. Without this the wheel ships no gresource
 # and the app fails at startup with "can't load gresource".
 "sshpilot" = ["resources/**/*", "resources/*"]
-# PyXterm.js web-terminal backend: HTML template + bundled xterm.js assets
-# (the latter is a fallback; Debian prefers the system libjs-xterm at runtime).
-"sshpilot.vendor.pyxtermjs" = ["xterm/**/*"]
 # Built-in plugin manifests are read from disk by the plugin loader.
 # setuptools does not glob package names here: add a key per built-in plugin.
 "sshpilot.plugins.builtin.ssh_protocol" = ["plugin.json"]

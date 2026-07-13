@@ -72,26 +72,3 @@ def test_edit_preserves_supplied_host_tokens():
     })
     # Supplied tokens are respected (not overwritten by the nickname-only refresh).
     assert conn.data['__host_tokens'] == ['web1', 'web1-alias']
-
-
-def test_update_skips_password_io_prehandled_by_dialog_worker():
-    conn = Connection({
-        'nickname': 'web1',
-        'hostname': '10.0.0.1',
-        'username': 'u',
-    })
-    cm = _make_cm()
-    cm.connections = [conn]
-    calls = []
-    cm.store_connection_password = lambda *a, **k: calls.append((a, k))
-
-    assert cm.update_connection(conn, {
-        'nickname': 'web1',
-        'hostname': '10.0.0.1',
-        'username': 'u',
-        'password': 'secret',
-        '__secret_storage_done': True,
-    })
-
-    assert calls == []
-    assert '__secret_storage_done' not in conn.data

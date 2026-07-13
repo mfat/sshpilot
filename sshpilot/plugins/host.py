@@ -223,12 +223,8 @@ class UiHost:
             window = self._window
             if window is None:
                 continue
-            # Close the tab if it's still attached. Skip during shutdown: the
-            # window is being destroyed anyway, and AdwTabView.close_page
-            # snapshots the closing page to a texture for its close animation —
-            # against an already-unrealized surface that raises Gsk-CRITICAL
-            # (gsk_renderer_render_texture: renderer is NULL).
-            if reg.tab_page is not None and not getattr(window, '_is_quitting', False):
+            # Close the tab if it's still attached.
+            if reg.tab_page is not None:
                 try:
                     if reg.tab_page in list(window.tab_view.get_pages()):
                         window.tab_view.close_page(reg.tab_page)
@@ -505,26 +501,6 @@ class PluginHost:
             return True
         except Exception:
             logger.exception("open_command_terminal(%r) failed", nickname)
-            return False
-
-    def open_local_command_terminal(self, command: str, *,
-                                    title: Optional[str] = None,
-                                    pty_prompt: Optional[str] = None,
-                                    pty_response: Optional[str] = None) -> bool:
-        if self._window is None:
-            logger.warning("open_local_command_terminal before window is ready")
-            return False
-        if not command or not str(command).strip():
-            return False
-        try:
-            return bool(self._window.terminal_manager.show_local_terminal(
-                title=title or "Local Command",
-                command=str(command),
-                pty_prompt=pty_prompt,
-                pty_response=pty_response,
-            ))
-        except Exception:
-            logger.exception("open_local_command_terminal failed")
             return False
 
     # --- connection groups -------------------------------------------

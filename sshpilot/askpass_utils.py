@@ -10,25 +10,18 @@ import tempfile
 import threading
 from typing import List
 
-# SSH key-path canonicalization lives in secret_storage (the single source of truth, shared with
-# credential export). secret_storage is GTK-free and safe to import in the askpass subprocess.
-from .secret_storage import (
-    home_alias_for_path as _home_alias_for_path,
-    normalize_key_path_for_storage as _normalize_key_path_for_storage,
-    key_path_lookup_candidates as _get_key_path_lookup_candidates,
-)
+try:
+    import gi
 
-# libsecret / keyring are imported lazily (and only for a diagnostic log line
-# here) — the real passphrase lookups delegate to secret_storage. Keeping these
-# off the module top-level avoids loading keyring on the startup import chain.
-def _secret_available() -> bool:
-    from .secret_storage import _get_secret
-    return _get_secret() is not None
+    gi.require_version("Secret", "1")
+    from gi.repository import Secret
+except Exception:  # pragma: no cover - optional dependency
+    Secret = None
 
-
-def _keyring_available() -> bool:
-    from .secret_storage import _get_keyring
-    return _get_keyring() is not None
+try:
+    import keyring
+except Exception:  # pragma: no cover - optional dependency
+    keyring = None
 
 try:
     from .platform_utils import is_macos
@@ -75,6 +68,75 @@ _ASKPASS_LOG_THREAD_LOCK = threading.Lock()
 _ASKPASS_LOG_IO_LOCK = threading.Lock()
 
 
+def _normalize_key_path_for_storage(key_path: str) -> str:
+    """Return a canonical representation for storing passphrases."""
+
+    expanded = os.path.expanduser(key_path)
+    try:
+        return os.path.realpath(expanded)
+    except Exception:
+        # ``realpath`` can fail on some exotic platforms; fall back to ``abspath``
+        return os.path.abspath(expanded)
+
+
+def _home_alias_for_path(path: str) -> str:
+    """Return a home-relative alias (~/...) for *path* when applicable."""
+
+    try:
+        home = os.path.expanduser("~")
+    except Exception:
+        return ""
+
+    if not home:
+        return ""
+
+    try:
+        relative = os.path.relpath(path, home)
+    except ValueError:
+        return ""
+
+    if relative in (".", os.curdir):
+        return "~"
+
+    if relative.startswith(".."):
+        return ""
+
+    return os.path.join("~", relative)
+
+
+def _get_key_path_lookup_candidates(key_path: str) -> List[str]:
+    """Return normalized key path variants for lookup and compatibility."""
+
+    if not key_path:
+        return []
+
+    candidates: List[str] = []
+    seen = set()
+
+    def _add(path: str) -> None:
+        if not path:
+            return
+        if path in seen:
+            return
+        seen.add(path)
+        candidates.append(path)
+
+    canonical = _normalize_key_path_for_storage(key_path)
+    _add(canonical)
+
+    expanded = os.path.expanduser(key_path)
+    _add(expanded)
+
+    for base in (canonical, expanded):
+        alias = _home_alias_for_path(base)
+        if alias:
+            _add(alias)
+
+    _add(key_path)
+
+    return candidates
+
+
 def _extract_key_path(prompt: str) -> str:
     """Extract key path from an SSH passphrase prompt string."""
     import re
@@ -96,13 +158,22 @@ def _extract_key_path(prompt: str) -> str:
 
 
 def get_secret_schema() -> "Secret.Schema":
-    """Return the shared Secret.Schema for stored secrets.
+    """Return the shared Secret.Schema for stored secrets."""
 
-    Delegates to :func:`sshpilot.secret_storage.get_schema` so a single schema
-    definition is shared by all backends and call sites.
-    """
-    from .secret_storage import get_schema
-    return get_schema()
+    global _SCHEMA
+    if _SCHEMA is None and Secret is not None:
+        _SCHEMA = Secret.Schema.new(
+            "io.github.mfat.sshpilot",
+            Secret.SchemaFlags.NONE,
+            {
+                "application": Secret.SchemaAttributeType.STRING,
+                "type": Secret.SchemaAttributeType.STRING,
+                "key_path": Secret.SchemaAttributeType.STRING,
+                "host": Secret.SchemaAttributeType.STRING,
+                "username": Secret.SchemaAttributeType.STRING,
+            },
+        )
+    return _SCHEMA
 
 
 def get_askpass_log_path() -> str:
@@ -339,13 +410,6 @@ def _run_askpass_dialog(key_path: str, log_fn) -> "str | None":
         store_row.set_title("Store passphrase")
         store_row.set_active(False)
 
-        persists_secrets = True
-        try:
-            from .secret_storage import get_secret_manager
-            persists_secrets = get_secret_manager().persists_secrets()
-        except Exception:
-            persists_secrets = True
-
         cancel_btn = Gtk.Button(label="Cancel")
         ok_btn = Gtk.Button(label="Unlock")
         ok_btn.add_css_class("suggested-action")
@@ -385,19 +449,7 @@ def _run_askpass_dialog(key_path: str, log_fn) -> "str | None":
 
         group = Adw.PreferencesGroup()
         group.add(password_row)
-        if persists_secrets:
-            group.add(store_row)
-        else:
-            no_store = Gtk.Label(
-                label=(
-                    "Secret storage is set to SSH Agent Only — passphrases are not "
-                    "saved by sshPilot."
-                ),
-            )
-            no_store.set_wrap(True)
-            no_store.set_xalign(0.0)
-            no_store.add_css_class("dim-label")
-            group.add(no_store)
+        group.add(store_row)
 
         content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18)
         content.set_margin_top(18)
@@ -505,57 +557,6 @@ def _route_passphrase_to_main_app(
     return (True, None)
 
 
-def _lookup_via_main_app(key_path: str, log_fn) -> "str | None":
-    """Resolve a stored passphrase via the running main app's warm cache.
-
-    The askpass subprocess has no secret cache of its own, so with a session
-    backend (Bitwarden) a direct lookup cold-loads the whole vault from ``bw`` on
-    every invocation (~seconds). The main process already holds the unlocked vault
-    in memory, so ask it over the existing askpass IPC socket. Returns the
-    passphrase, or ``None`` when unavailable (caller falls back to a local lookup).
-    This never prompts — it only reads an already-resolved/cached value.
-    """
-    import json
-    import socket
-
-    sock_path = os.environ.get("SSHPILOT_ASKPASS_SOCKET", "")
-    token = os.environ.get("SSHPILOT_ASKPASS_TOKEN", "")
-    if not sock_path or not token or not key_path:
-        return None
-
-    request = json.dumps({"token": token, "type": "lookup", "key_path": key_path})
-    try:
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-            # Short timeout on purpose: a warm-cache answer is near-instant when the
-            # main loop is free (the common case). When the loop is blocked (combined
-            # auth runs build_ssh_connection under run_until_complete on the main
-            # thread), it can't service this socket — so time out quickly and let the
-            # caller fall back to a local lookup rather than stalling the whole connect.
-            client.settimeout(1.5)
-            client.connect(sock_path)
-            client.sendall((request + "\n").encode("utf-8"))
-            chunks = []
-            while b"\n" not in b"".join(chunks):
-                data = client.recv(4096)
-                if not data:
-                    break
-                chunks.append(data)
-    except Exception as exc:
-        log_fn(f"ASKPASS: main-app lookup unavailable ({exc})")
-        return None
-
-    raw = b"".join(chunks).split(b"\n", 1)[0].strip()
-    if not raw:
-        return None
-    try:
-        reply = json.loads(raw.decode("utf-8"))
-    except Exception:
-        return None
-    if reply.get("ok") and reply.get("passphrase"):
-        return reply.get("passphrase")
-    return None
-
-
 def handle_askpass_cli(prompt: str) -> "str | None":
     """Handle --askpass CLI mode (re-invoked by SSH as SSH_ASKPASS handler).
 
@@ -574,8 +575,8 @@ def handle_askpass_cli(prompt: str) -> "str | None":
             pass
 
     _log(
-        f"ASKPASS: keyring {'available' if _keyring_available() else 'unavailable'}, "
-        f"libsecret {'available' if _secret_available() else 'unavailable'}"
+        f"ASKPASS: keyring {'available' if keyring else 'unavailable'}, "
+        f"libsecret {'available' if Secret else 'unavailable'}"
     )
     _log(f"ASKPASS called with prompt: {prompt}")
 
@@ -612,48 +613,14 @@ def handle_askpass_cli(prompt: str) -> "str | None":
         except Exception as exc:
             _log(f"ASKPASS: Error reading session passphrase file: {exc}")
 
-    # Resolve the passphrase from storage. Two routes:
-    #   * local — read the selected backend in this subprocess. Instant for the platform
-    #     stores (libsecret/keyring), but for a session vault (Bitwarden/Vaultwarden) it
-    #     cold-starts `bw` (~1-2s) because the in-memory vault cache lives in the *main*
-    #     process, not here.
-    #   * main-app IPC — ask the running app, which already holds the unlocked vault in
-    #     memory, to resolve from its warm cache (near-instant, no `bw` spawn).
-    # So for a session vault try IPC first (cache hit) and fall back to the local `bw`
-    # lookup; for platform stores do the instant local read first.
-    try:
-        from .secret_storage import get_secret_manager
-        _selected = (os.environ.get("SSHPILOT_SECRET_BACKEND") or "auto").strip().lower()
-        # Session backends (bw) hold the vault only in the main process, so IPC is the
-        # only warm route. rbw has a shared agent, but a local `rbw get` still costs ~1s
-        # per connect on a large vault — the main app's value cache (via IPC) makes repeat
-        # connects instant, so prefer IPC for it too.
-        prefer_ipc = bool(get_secret_manager().is_session_backed(_selected)) or _selected == "rbw"
-    except Exception:
-        prefer_ipc = False
-
-    def _resolve_local():
-        for candidate in _get_key_path_lookup_candidates(key_path):
-            passphrase = lookup_passphrase(candidate)
-            if passphrase:
-                _log(f"ASKPASS: Found passphrase for {candidate}")
-                return passphrase
-            _log(f"ASKPASS: No passphrase found for {candidate}")
-        return None
-
-    def _resolve_main_app():
-        value = _lookup_via_main_app(key_path, _log)
-        if value:
-            _log("ASKPASS: passphrase resolved via main-app cache")
-        return value
-
-    resolvers = ((_resolve_main_app, _resolve_local) if prefer_ipc
-                 else (_resolve_local, _resolve_main_app))
-    for resolve in resolvers:
-        value = resolve()
-        if value:
+    # Check keyring / libsecret for stored passphrases
+    for candidate in _get_key_path_lookup_candidates(key_path):
+        passphrase = lookup_passphrase(candidate)
+        if passphrase:
+            _log(f"ASKPASS: Found passphrase for {candidate}")
             _log("ASKPASS: Returning passphrase to caller")
-            return value
+            return passphrase
+        _log(f"ASKPASS: No passphrase found for {candidate}")
 
     # Fall back to the built-in GUI dialog, unless the user has turned it off in
     # settings — in that case defer to SSH / the system keyring prompt.
@@ -725,129 +692,193 @@ def run_askpass_and_write(prompt: str) -> int:
 
 
 def store_passphrase(key_path: str, passphrase: str) -> bool:
-    """Store a key passphrase via the selected secret backend."""
+    """Store a key passphrase using keyring (macOS) or libsecret (Linux)."""
 
     if not key_path:
         return False
 
-    from .secret_storage import get_secret_manager, passphrase_spec
-
     canonical_path = _normalize_key_path_for_storage(key_path)
-    return get_secret_manager().store(passphrase_spec(canonical_path), passphrase)
+
+    # Try keyring first (macOS)
+    if keyring and is_macos():
+        try:
+            keyring.set_password('sshPilot', canonical_path, passphrase)
+            return True
+        except Exception as e:
+            logger.debug(f"Failed to store passphrase in keyring: {e}")
+            return False
+
+    # Fall back to libsecret (Linux)
+    schema = get_secret_schema()
+    if not schema:
+        return False
+    attributes = {
+        "application": "sshPilot",
+        "type": "key_passphrase",
+        "key_path": canonical_path,
+    }
+    try:
+        Secret.password_store_sync(
+            schema,
+            attributes,
+            Secret.COLLECTION_DEFAULT,
+            f"SSH Key Passphrase: {os.path.basename(canonical_path)}",
+            passphrase,
+            None,
+        )
+        return True
+    except Exception:
+        return False
 
 
 def lookup_passphrase(key_path: str) -> str:
-    """Look up a key passphrase via the selected secret backend.
-
-    Tries each normalized candidate path; the backend itself falls through to the
-    platform default stores so passphrases saved under a previous backend resolve.
-    """
+    """Look up a key passphrase using keyring (macOS) or libsecret (Linux)."""
 
     candidates = _get_key_path_lookup_candidates(key_path)
     if not candidates:
         return ""
 
-    from .secret_storage import get_secret_manager, passphrase_spec
+    # Try keyring first (macOS)
+    if keyring and is_macos():
+        for candidate in candidates:
+            try:
+                passphrase = keyring.get_password('sshPilot', candidate)
+            except Exception as e:
+                logger.debug(f"Failed to retrieve passphrase from keyring: {e}")
+                break
 
-    manager = get_secret_manager()
+            if passphrase:
+                return passphrase
+
+    # Fall back to libsecret (Linux)
+    schema = get_secret_schema()
+    if not schema:
+        return ""
     for candidate in candidates:
-        result = manager.lookup(passphrase_spec(candidate))
+        attributes = {
+            "application": "sshPilot",
+            "type": "key_passphrase",
+            "key_path": candidate,
+        }
+        try:
+            result = Secret.password_lookup_sync(schema, attributes, None)
+        except Exception:
+            continue
         if result:
             return result
     return ""
 
 
-def resolve_passphrase_for_ipc(key_path: str) -> str:
-    """Server-side (main-process) passphrase resolve for the askpass IPC that never blocks
-    on a slow backend.
-
-    For rbw a plain ``rbw get`` costs ~1s, which would exceed the IPC client's short
-    timeout and make it fall back to a *second* local lookup — worse than not using IPC.
-    So for rbw we answer only from the main process's warm value cache; on a cold miss we
-    warm it in the background (so the next connect is instant) and return "" immediately,
-    letting the client fall back locally this once. Other backends already resolve from a
-    warm/instant store, so use the normal path."""
-    selected = (os.environ.get("SSHPILOT_SECRET_BACKEND") or "auto").strip().lower()
-    if selected != "rbw":
-        return lookup_passphrase(key_path)
-
-    from .secret_storage import get_secret_manager, passphrase_spec
-    manager = get_secret_manager()
-    rbw = manager.get_backend("rbw")
-    peek = getattr(rbw, "peek", None)
-    if callable(peek):
-        for candidate in _get_key_path_lookup_candidates(key_path):
-            value = peek(passphrase_spec(candidate).keyring_account)
-            if value:
-                return value
-    # Cold cache: warm it off-thread for next time, answer "not found" now. Guard against
-    # piling up concurrent `rbw get`s when ssh retries askpass rapidly for the same key.
-    _warm_passphrase_async(key_path)
-    return ""
-
-
-_warming_keys: set = set()
-_warming_lock = threading.Lock()
-
-
-def _warm_passphrase_async(key_path: str) -> None:
-    """Resolve ``key_path`` once in the background to populate the main-app value cache,
-    deduping so rapid askpass retries don't launch a stampede of concurrent lookups."""
-    with _warming_lock:
-        if key_path in _warming_keys:
-            return
-        _warming_keys.add(key_path)
-
-    def _run():
-        try:
-            lookup_passphrase(key_path)
-        finally:
-            with _warming_lock:
-                _warming_keys.discard(key_path)
-
-    threading.Thread(target=_run, daemon=True).start()
-
-
 def clear_passphrase(key_path: str) -> bool:
-    """Remove a stored key passphrase from all available secret backends."""
+    """Remove a stored key passphrase using keyring (macOS) or libsecret (Linux)."""
 
     candidates = _get_key_path_lookup_candidates(key_path)
     if not candidates:
         return False
 
-    from .secret_storage import get_secret_manager, passphrase_spec
+    # Try keyring first (macOS)
+    if keyring and is_macos():
+        removed_any = False
+        for candidate in candidates:
+            try:
+                keyring.delete_password('sshPilot', candidate)
+                removed_any = True
+            except Exception as e:
+                logger.debug(f"Failed to delete passphrase from keyring: {e}")
+        if removed_any:
+            return True
 
-    manager = get_secret_manager()
+    # Fall back to libsecret (Linux)
+    schema = get_secret_schema()
+    if not schema:
+        return False
     removed_any = False
     for candidate in candidates:
-        if manager.delete(passphrase_spec(candidate)):
-            removed_any = True
+        attributes = {
+            "application": "sshPilot",
+            "type": "key_passphrase",
+            "key_path": candidate,
+        }
+        try:
+            if Secret.password_clear_sync(schema, attributes, None):
+                removed_any = True
+        except Exception:
+            continue
     return removed_any
 
 
-def store_sudo_password(host: str, username: str, password: str) -> bool:
-    """Store a host's **sudo** password via the selected secret backend.
+def _sudo_keyring_account(host: str, username: str) -> str:
+    """macOS keyring account label for a host's sudo password."""
+    return f"sudo:{username or ''}@{host or ''}"
 
-    Routed through :class:`SecretManager` (like SSH passwords/passphrases) so it
-    honours the user's chosen backend instead of always hitting libsecret/keyring.
-    Kept under its own ``type=sudo_password`` schema (see ``sudo_password_spec``)
-    so it never collides with the SSH login password."""
+
+def store_sudo_password(host: str, username: str, password: str) -> bool:
+    """Store a host's **sudo** password (keyring on macOS, libsecret on Linux).
+
+    Kept under its own ``type=sudo_password`` schema so it never collides with
+    the SSH login password (``type=ssh_password`` in ``connection_manager``)."""
     if not host:
         return False
 
-    from .secret_storage import get_secret_manager, sudo_password_spec
+    if keyring and is_macos():
+        try:
+            keyring.set_password('sshPilot', _sudo_keyring_account(host, username), password)
+            return True
+        except Exception as e:
+            logger.debug(f"Failed to store sudo password in keyring: {e}")
+            return False
 
-    return get_secret_manager().store(sudo_password_spec(host, username), password)
+    schema = get_secret_schema()
+    if not schema:
+        return False
+    attributes = {
+        "application": "sshPilot",
+        "type": "sudo_password",
+        "host": host,
+        "username": username or "",
+    }
+    try:
+        Secret.password_store_sync(
+            schema,
+            attributes,
+            Secret.COLLECTION_DEFAULT,
+            f"sshPilot sudo password: {username or ''}@{host}",
+            password,
+            None,
+        )
+        return True
+    except Exception:
+        return False
 
 
 def lookup_sudo_password(host: str, username: str) -> str:
-    """Look up a host's stored sudo password ("" if none) via the secret backend."""
+    """Look up a host's stored sudo password ("" if none)."""
     if not host:
         return ""
 
-    from .secret_storage import get_secret_manager, sudo_password_spec
+    if keyring and is_macos():
+        try:
+            password = keyring.get_password('sshPilot', _sudo_keyring_account(host, username))
+        except Exception as e:
+            logger.debug(f"Failed to retrieve sudo password from keyring: {e}")
+            password = None
+        if password:
+            return password
 
-    return get_secret_manager().lookup(sudo_password_spec(host, username)) or ""
+    schema = get_secret_schema()
+    if not schema:
+        return ""
+    attributes = {
+        "application": "sshPilot",
+        "type": "sudo_password",
+        "host": host,
+        "username": username or "",
+    }
+    try:
+        result = Secret.password_lookup_sync(schema, attributes, None)
+    except Exception:
+        return ""
+    return result or ""
 
 
 def clear_sudo_password(host: str, username: str) -> bool:
@@ -855,9 +886,27 @@ def clear_sudo_password(host: str, username: str) -> bool:
     if not host:
         return False
 
-    from .secret_storage import get_secret_manager, sudo_password_spec
+    if keyring and is_macos():
+        try:
+            keyring.delete_password('sshPilot', _sudo_keyring_account(host, username))
+            return True
+        except Exception as e:
+            logger.debug(f"Failed to delete sudo password from keyring: {e}")
+            return False
 
-    return get_secret_manager().delete(sudo_password_spec(host, username))
+    schema = get_secret_schema()
+    if not schema:
+        return False
+    attributes = {
+        "application": "sshPilot",
+        "type": "sudo_password",
+        "host": host,
+        "username": username or "",
+    }
+    try:
+        return bool(Secret.password_clear_sync(schema, attributes, None))
+    except Exception:
+        return False
 
 
 # Substrings in sudo's stderr when the user cannot use sudo at all (as opposed to

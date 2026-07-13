@@ -65,21 +65,6 @@ def _install_sidebar_color_css():
         .accent-cyan { background-color: #5be7ff; }
         .accent-gray { background-color: #d3d7db; }
 
-        /* Accent-bar group colour: a straight vertical bar on the leading edge.
-           The transparent border is reserved on every bar-mode row so coloured
-           and uncoloured rows stay aligned; the per-row provider only overrides
-           border-left-color. Only rows with an actual colour (``.color-bar-colored``)
-           pin their *leading* (left) corners square — a rounded corner with a
-           single coloured border renders broken in GTK, and that colour lives on
-           the left border. The trailing (right) corners follow the theme, so a
-           selected row keeps its rounded highlight while the colour bar stays
-           sharp. Uncoloured bar rows round both sides with the theme. */
-        .color-bar { border-left: 3px solid transparent; }
-        .color-bar-colored {
-            border-top-left-radius: 0;
-            border-bottom-left-radius: 0;
-        }
-
         /* Virtual tag group rows use the osd style; the default row hover
            replaces the background with a near-transparent overlay, leaving
            osd's white text unreadable in light mode. Keep it dark. */
@@ -89,22 +74,6 @@ def _install_sidebar_color_css():
         provider.load_from_data(css.encode("utf-8"))
         Gtk.StyleContext.add_provider_for_display(
             display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
-        )
-
-        # Keep the coloured accent bar's leading (left) edge square in every
-        # state. The theme rounds selected/focused rows at APPLICATION priority;
-        # in GTK's cascade provider priority beats specificity, so a USER-priority
-        # rule wins regardless of the theme's :selected:focus-within specificity.
-        # Only coloured rows pin their left corners (so the selected row's right
-        # corners still round, and uncoloured rows round both sides); the bar
-        # width/style is held on every bar row so the reserve stays consistent.
-        square = Gtk.CssProvider()
-        square.load_from_data(
-            b".color-bar { border-left-width: 3px; border-left-style: solid; }"
-            b".color-bar-colored { border-top-left-radius: 0; border-bottom-left-radius: 0; }"
-        )
-        Gtk.StyleContext.add_provider_for_display(
-            display, square, Gtk.STYLE_PROVIDER_PRIORITY_USER
         )
         _COLOR_CSS_INSTALLED = True
     except Exception:
@@ -198,7 +167,7 @@ def _get_color_display_mode(config) -> str:
     except Exception:
         return 'fill'
 
-    if mode not in {'fill', 'badge', 'bar'}:
+    if mode not in {'fill', 'badge'}:
         return 'fill'
     return mode
 
@@ -297,97 +266,6 @@ def _set_tint_card_color(row: Gtk.Widget, rgba: Gdk.RGBA):
         )
     except Exception:
         logger.debug("Failed to apply tinted color", exc_info=True)
-
-
-def _clear_tint(row: Gtk.Widget):
-    row.remove_css_class("tinted")
-    provider = getattr(row, '_tint_provider', None)
-    if provider:
-        try:
-            row.get_style_context().remove_provider(provider)
-        except Exception:
-            pass
-        row._tint_provider = None  # type: ignore[attr-defined]
-
-
-def _set_bar_card_color(row: Gtk.Widget, rgba: Gdk.RGBA):
-    """Colour the row's leading accent bar (the ``.color-bar`` border-left).
-
-    Only the colour is per-row; the bar width and ``border-radius:0`` are static
-    in the shared CSS. The provider is scoped to this widget's style context,
-    same as the ``.tinted`` fill.
-    """
-    try:
-        color = rgba.to_string()
-    except Exception:
-        return
-    try:
-        provider = Gtk.CssProvider()
-        css_data = f"""
-        .color-bar {{
-            border-left-color: {color};
-        }}
-        """
-        provider.load_from_data(css_data.encode('utf-8'))
-
-        old = getattr(row, '_bar_provider', None)
-        if old:
-            try:
-                row.get_style_context().remove_provider(old)
-            except Exception:
-                pass
-
-        row._bar_provider = provider  # type: ignore[attr-defined]
-        row.get_style_context().add_provider(
-            provider, Gtk.STYLE_PROVIDER_PRIORITY_USER
-        )
-    except Exception:
-        logger.debug("Failed to apply accent bar color", exc_info=True)
-
-
-def _clear_bar(row: Gtk.Widget):
-    row.remove_css_class("color-bar")
-    row.remove_css_class("color-bar-colored")
-    provider = getattr(row, '_bar_provider', None)
-    if provider:
-        try:
-            row.get_style_context().remove_provider(provider)
-        except Exception:
-            pass
-        row._bar_provider = None  # type: ignore[attr-defined]
-
-
-def _apply_row_color(row: Gtk.Widget, mode: str, rgba: Optional[Gdk.RGBA]):
-    """Apply the selected group-color treatment to a sidebar row.
-
-    Modes: ``fill`` (tinted card), ``badge`` (color dot), ``bar`` (leading
-    accent bar). The three are mutually exclusive, so we always clear the other
-    two first. ``row`` must expose ``color_badge`` and ``_update_color_badge``.
-    """
-    _clear_tint(row)
-    _clear_bar(row)
-    row.color_badge.set_visible(False)
-
-    if mode == 'bar':
-        # Reserve the (transparent) bar on every row so coloured and uncoloured
-        # rows keep the same content offset; colour it only when set. The
-        # ``color-bar-colored`` marker (only on rows with an actual colour) is
-        # what pins the sharp leading edge — uncoloured rows round both sides.
-        row.add_css_class("color-bar")
-        if rgba:
-            row.add_css_class("color-bar-colored")
-            _set_bar_card_color(row, rgba)
-        return
-
-    if not rgba:
-        return
-
-    if mode == 'badge':
-        row._update_color_badge(rgba)
-        row.color_badge.set_visible(True)
-    else:  # fill
-        row.add_css_class("tinted")
-        _set_tint_card_color(row, _fill_rgba(rgba) or rgba)
 
 # ---------------------------------------------------------------------------
 # Row widgets
@@ -519,9 +397,6 @@ class GroupRow(Gtk.ListBoxRow):
         icon = icon_utils.new_image_from_icon_name("folder-symbolic")
         icon.set_icon_size(Gtk.IconSize.NORMAL)
         icon.set_valign(Gtk.Align.CENTER)  # Center vertically relative to text
-        config = getattr(self.group_manager, 'config', None)
-        show_group_icon = config.get_setting('ui.sidebar_show_group_icon', True) if config else True
-        icon.set_visible(show_group_icon)
         content.append(icon)
         self.icon = icon
 
@@ -873,7 +748,35 @@ class GroupRow(Gtk.ListBoxRow):
         # Keep our own colour when set; otherwise inherit the nearest coloured
         # ancestor so nested groups read as part of their parent.
         rgba = _resolve_group_color_by_id(self.group_manager, self.group_id)
-        _apply_row_color(self, mode, rgba)
+
+        if mode == 'badge':
+            self.remove_css_class("tinted")
+            if hasattr(self, '_tint_provider') and self._tint_provider:
+                try:
+                    self.get_style_context().remove_provider(self._tint_provider)
+                except Exception:
+                    pass
+                self._tint_provider = None
+
+            if rgba:
+                self._update_color_badge(rgba)
+                self.color_badge.set_visible(True)
+            else:
+                self.color_badge.set_visible(False)
+        else:
+            self.color_badge.set_visible(False)
+            if rgba:
+                tint = _fill_rgba(rgba) or rgba
+                self.add_css_class("tinted")
+                _set_tint_card_color(self, tint)
+            else:
+                self.remove_css_class("tinted")
+                if hasattr(self, '_tint_provider') and self._tint_provider:
+                    try:
+                        self.get_style_context().remove_provider(self._tint_provider)
+                    except Exception:
+                        pass
+                    self._tint_provider = None
 
     def _update_color_badge(self, rgba: Gdk.RGBA):
         r = int(rgba.red * 255)
@@ -1344,7 +1247,34 @@ class ConnectionRow(Gtk.ListBoxRow):
     def _apply_group_color_style(self):
         mode = _get_color_display_mode(getattr(self, 'config', None))
         rgba = self._resolve_group_color()
-        _apply_row_color(self, mode, rgba)
+
+        if mode == 'badge':
+            self.remove_css_class("tinted")
+            if hasattr(self, '_tint_provider') and self._tint_provider:
+                try:
+                    self.get_style_context().remove_provider(self._tint_provider)
+                except Exception:
+                    pass
+                self._tint_provider = None
+
+            if rgba:
+                self._update_color_badge(rgba)
+                self.color_badge.set_visible(True)
+            else:
+                self.color_badge.set_visible(False)
+        else:
+            self.color_badge.set_visible(False)
+            if rgba:
+                self.add_css_class("tinted")
+                _set_tint_card_color(self, _fill_rgba(rgba) or rgba)
+            else:
+                self.remove_css_class("tinted")
+                if hasattr(self, '_tint_provider') and self._tint_provider:
+                    try:
+                        self.get_style_context().remove_provider(self._tint_provider)
+                    except Exception:
+                        pass
+                    self._tint_provider = None
 
     def _update_color_badge(self, rgba: Gdk.RGBA):
         r = int(rgba.red * 255)

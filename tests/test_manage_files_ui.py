@@ -121,19 +121,18 @@ def test_manage_files_action_visible_on_other_platforms(monkeypatch):
 
 
 def test_should_hide_file_manager_options(monkeypatch):
-    # should_hide_file_manager_options moved to file_manager_integration (it's
-    # re-exported from preferences); patch its deps where the function lives.
-    fmi = prepare_file_manager_integration(monkeypatch)
-    monkeypatch.setattr(fmi, "has_native_gvfs_support", lambda: False)
-    monkeypatch.setattr(fmi, "has_internal_file_manager", lambda: False)
-    assert fmi.should_hide_file_manager_options()
+    setup_gi(monkeypatch)
+    prefs = reload_module("sshpilot.preferences")
+    monkeypatch.setattr(prefs, "has_native_gvfs_support", lambda: False)
+    monkeypatch.setattr(prefs, "has_internal_file_manager", lambda: False)
+    assert prefs.should_hide_file_manager_options()
 
-    monkeypatch.setattr(fmi, "has_internal_file_manager", lambda: True)
-    assert not fmi.should_hide_file_manager_options()
+    monkeypatch.setattr(prefs, "has_internal_file_manager", lambda: True)
+    assert not prefs.should_hide_file_manager_options()
 
-    monkeypatch.setattr(fmi, "has_internal_file_manager", lambda: False)
-    monkeypatch.setattr(fmi, "has_native_gvfs_support", lambda: True)
-    assert not fmi.should_hide_file_manager_options()
+    monkeypatch.setattr(prefs, "has_internal_file_manager", lambda: False)
+    monkeypatch.setattr(prefs, "has_native_gvfs_support", lambda: True)
+    assert not prefs.should_hide_file_manager_options()
 
 
 def test_launch_remote_file_manager_prefers_gvfs(monkeypatch):
