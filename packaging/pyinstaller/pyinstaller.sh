@@ -104,11 +104,25 @@ if [ -d "dist/SSHPilot.app" ]; then
         echo "⚠️  sshpass not found in PATH; bundle will require system sshpass"
     fi
 
-    # Ad-hoc sign the app bundle — prevents "damaged app" Gatekeeper error when downloaded
+    # Ad-hoc sign LAST — after sshpass + the GtkSourceView symlink — so the
+    # signature seals the final bundle. Signing earlier (e.g. in the spec) then
+    # modifying the bundle yields an inconsistent signature and the dreaded
+    # "app is damaged and can't be opened" error on downloaded copies.
+    #
+    # This is ad-hoc (--sign -): no Developer ID, so it can't be notarized and
+    # Gatekeeper still shows "unidentified developer" on first open (right-click
+    # ▸ Open, or `xattr -dr com.apple.quarantine SSHPilot.app`). A *valid*
+    # ad-hoc signature is what keeps users on that recoverable path instead of
+    # the "damaged" dead-end. --deep is fine for ad-hoc; it would need replacing
+    # with inside-out signing + entitlements only if real notarization is added.
     echo "🔐 Ad-hoc code signing app bundle..."
     codesign --sign - --force --deep --timestamp=none "dist/SSHPilot.app"
-    codesign --verify --verbose "dist/SSHPilot.app" 2>&1 || true
-    echo "✅ App bundle signed (ad-hoc)"
+    if codesign --verify --strict --verbose=2 "dist/SSHPilot.app"; then
+        echo "✅ App bundle signed (ad-hoc) and signature verified"
+    else
+        echo "❌ codesign --verify failed — downloaded builds will show 'app is damaged'"
+        exit 1
+    fi
 
     # Create DMG file using create-dmg
     echo "📦 Creating DMG file..."
