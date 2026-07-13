@@ -41,7 +41,7 @@ class ComposeTabMixin:
             if "compose" in str(err).lower() or "is not a docker command" in str(err).lower():
                 msg = ("Docker Compose is not available on this host.\n"
                        "Install the Compose plugin to manage stacks here.")
-            self._set_placeholder_idle(self._compose_placeholder, msg)
+            self._set_placeholder_idle(self._compose_placeholder, msg, error=True)
             return
         if not rows:
             self._set_placeholder_idle(self._compose_placeholder, "No compose projects")

@@ -1023,3 +1023,81 @@ def test_check_sudo():
         rc_wrong, "web", "docker", "bad") == (False, "wrong_password")
     assert DockerConsolePage._check_sudo(
         rc_denied, "web", "docker", "bad") == (False, "not_sudoers")
+
+
+# --- failure placeholder / toast truncation --------------------------------
+
+def test_truncate_message_keeps_short_text():
+    from sshpilot.plugins.builtin.docker_manager import widgets as w
+
+    display, truncated = w.truncate_message("permission denied", 480)
+    assert display == "permission denied"
+    assert truncated is False
+
+
+def test_truncate_message_clips_long_log():
+    from sshpilot.plugins.builtin.docker_manager import widgets as w
+
+    log = "\n".join(f"error line {i}: boom" for i in range(80))
+    display, truncated = w.truncate_message(log, 480)
+    assert truncated is True
+    assert display.endswith("…")
+    assert len(display) < len(log)
+
+
+def test_truncate_toast_collapses_newlines():
+    from sshpilot.plugins.builtin.docker_manager import widgets as w
+
+    toast = w.truncate_toast("failed:\n" + ("x" * 400))
+    assert "\n" not in toast
+    assert toast.endswith("…")
+
+
+def test_placeholder_error_is_opaque_and_truncates():
+    """Failure stderr must not float as a transparent overlay log."""
+    _gtk_or_skip()
+    from sshpilot.plugins.builtin.docker_manager.page import DockerConsolePage
+
+    page = DockerConsolePage(_gtk_ctx(), initial_host="web")
+    ph = page._containers_placeholder
+    assert ph.has_css_class("docker-console-placeholder")
+    assert ph.get_halign().value_nick == "fill"
+    assert ph.get_valign().value_nick == "fill"
+
+    long_err = "\n".join(f"docker: error detail {i}" for i in range(60))
+    page._set_placeholder_idle(ph, long_err, error=True)
+    assert ph.get_visible()
+    assert ph._details_btn.get_visible()
+    assert ph._full_text == long_err
+    assert ph._err_scroll.get_visible()
+    buf = ph._err_view.get_buffer()
+    start, end = buf.get_bounds()
+    shown = buf.get_text(start, end, False)
+    assert shown.endswith("…")
+    assert ph._err_view.get_editable() is False
+    assert ph._err_view.get_cursor_visible() is True
+    assert ph.get_can_target() is True
+
+    # Short errors stay selectable (can_target) even without "View full error".
+    page._set_placeholder_idle(ph, "permission denied", error=True)
+    assert ph._err_scroll.get_visible()
+    assert ph._details_btn.get_visible() is False
+    assert ph.get_can_target() is True
+
+    page._set_placeholder_idle(ph, "No containers")
+    assert ph._details_btn.get_visible() is False
+    assert ph._err_scroll.get_visible() is False
+    assert ph._label.get_visible()
+    assert ph.get_can_target() is False
+
+
+def test_text_view_dialog_is_selectable():
+    _gtk_or_skip()
+    from sshpilot.plugins.builtin.docker_manager.dialogs import TextViewDialog
+
+    dlg = TextViewDialog(None, "Error details", "copy me\nline 2")
+    assert dlg._view.get_editable() is False
+    assert dlg._view.get_cursor_visible() is True
+    buf = dlg._view.get_buffer()
+    start, end = buf.get_bounds()
+    assert "copy me" in buf.get_text(start, end, False)
