@@ -99,7 +99,7 @@ jobs:
               # Series-suffixed version so each series is unique in the PPA.
               dch -b -v "${VERSION}-0ubuntu1~${SERIES}1" -D "$SERIES" \
                 -M "Automated Launchpad build for ${SERIES}."
-              debuild -S -sa --no-lintian -k"$FPR" )
+              debuild --no-lintian -k"$FPR" -S -sa )
             dput --force "$PPA" "$WORK/$SERIES/sshpilot_${VERSION}-0ubuntu1~${SERIES}1_source.changes"
             echo "::endgroup::"
           done
