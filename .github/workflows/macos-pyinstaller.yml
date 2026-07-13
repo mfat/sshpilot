@@ -148,11 +148,15 @@ jobs:
             echo "=== DEBUG: SSHPilot.app structure ==="
             find dist/SSHPilot.app -name "*.so" -o -name "*.dylib" -o -name "SSHPilot" | head -20
             echo "=== DEBUG: Checking for gtksourceview5 files ==="
-            if find dist/SSHPilot.app -name "*gtksourceview*" | grep -q .; then
-              echo "=== DEBUG: Found gtksourceview5 files ==="
-              find dist/SSHPilot.app -name "*gtksourceview*" | head -10
+            if [ -e "dist/SSHPilot.app/Contents/Frameworks/libgtksourceview-5.0.dylib" ] \
+               || ls dist/SSHPilot.app/Contents/Frameworks/libgtksourceview-5*.dylib >/dev/null 2>&1; then
+              echo "=== DEBUG: Found gtksourceview5 at Frameworks root (required for GI) ==="
+              ls -la dist/SSHPilot.app/Contents/Frameworks/libgtksourceview-5*.dylib
             else
-              echo "=== DEBUG: WARNING - No gtksourceview5 files found in bundle ==="
+              echo "=== DEBUG: ERROR - libgtksourceview-5 missing from Contents/Frameworks/ ==="
+              echo "=== DEBUG: Nested Frameworks/Frameworks copies are NOT loaded by GI ==="
+              find dist/SSHPilot.app -name "*gtksourceview*" || true
+              exit 1
             fi
             echo "=== DEBUG: Checking for gtksourceview5 share data ==="
             if [ -d "dist/SSHPilot.app/Contents/Resources/share/gtksourceview-5" ]; then

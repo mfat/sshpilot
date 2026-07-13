@@ -32,13 +32,16 @@ from gettext import gettext as _
 
 from gi.repository import Adw, Gio, GLib, GObject, Gdk, Gtk
 
-# Try to import GtkSourceView for syntax highlighting
+# Try to import GtkSourceView for syntax highlighting.
+# Probe a type so a missing shared library (incomplete bundle) disables GtkSource
+# instead of failing later with a cryptic GI error.
 try:
     import gi
     gi.require_version('GtkSource', '5')
     from gi.repository import GtkSource
+    _ = GtkSource.View  # noqa: F841 — force shared-library load
     _HAS_GTKSOURCE = True
-except (ImportError, ValueError, AttributeError):
+except Exception:  # noqa: BLE001 — ImportError/ValueError/GError/TypeError
     _HAS_GTKSOURCE = False
     GtkSource = None
 

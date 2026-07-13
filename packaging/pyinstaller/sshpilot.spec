@@ -9,6 +9,10 @@ site_packages_dir = Path(sysconfig.get_path("platlib"))
 # This spec lives in packaging/pyinstaller/; anchor paths to the repo root.
 ROOT = os.path.abspath(os.path.join(SPECPATH, os.pardir, os.pardir))
 
+# Local helpers for GI dylib placement (must live next to this spec).
+sys.path.insert(0, SPECPATH)
+from gtk_bundle import collect_homebrew_dylibs  # noqa: E402
+
 app_name = "SSHPilot"
 entry_py = os.path.join(ROOT, "run.py")
 icon_file = os.path.join(ROOT, "packaging", "macos", "sshpilot.icns")
@@ -55,14 +59,9 @@ gtk_libs_patterns = [
     "libicu*.dylib",
 ]
 
-binaries = []
-for pat in gtk_libs_patterns:
-    for src in glob.glob(os.path.join(hb_lib, pat)):
-        # Special handling for VTE and Adwaita libraries to avoid nested Frameworks structure
-        if "vte" in pat.lower() or "adwaita" in pat.lower():
-            binaries.append((src, "."))  # Place directly in Frameworks root
-        else:
-            binaries.append((src, "Frameworks"))
+# Place GI dylibs at Contents/Frameworks/ (dest "."). Nested Frameworks/Frameworks
+# breaks typelib dlopen of bare sonames such as libgtksourceview-5.0.dylib.
+binaries = collect_homebrew_dylibs(hb_lib, gtk_libs_patterns)
 
 # GI typelibs
 datas = []

@@ -90,6 +90,20 @@ jobs:
           fi
           echo "=== CHECK: sshpass x86_64 architecture verified ==="
 
+      - name: Verify GtkSourceView dylib at Frameworks root
+        run: |
+          # GI typelibs dlopen bare sonames from Contents/Frameworks/ only.
+          FRAMEWORKS="dist/SSHPilot.app/Contents/Frameworks"
+          if [ -e "$FRAMEWORKS/libgtksourceview-5.0.dylib" ] \
+             || ls "$FRAMEWORKS"/libgtksourceview-5*.dylib >/dev/null 2>&1; then
+            echo "=== CHECK: GtkSourceView dylib at Frameworks root ==="
+            ls -la "$FRAMEWORKS"/libgtksourceview-5*.dylib
+          else
+            echo "=== ERROR: libgtksourceview-5 missing from $FRAMEWORKS ==="
+            find dist/SSHPilot.app -name "*gtksourceview*" 2>/dev/null || true
+            exit 1
+          fi
+
 
       - name: Determine artifact names
         id: artifact-info
