@@ -124,7 +124,6 @@ class _FakeSFTPServer(threading.Thread):
                     names = state["children"]
                     body = p.pack_uint32(rid) + p.pack_uint32(len(names))
                     for name in names:
-                        full = handle  # unused
                         child_path = None
                         # reconstruct child path from any matching fs entry
                         for cand in self.fs:
@@ -364,6 +363,80 @@ def _wait_for(predicate, timeout=3.0):
     return False
 
 
+@pytest.mark.parametrize(
+    "stderr",
+    [
+        (
+            "ash: /usr/libexec/sftp-server: not found\n"
+            "Connection closed.\n"
+            "Connection closed"
+        ),
+        (
+            "debug1: Authentications that can continue: publickey,password\n"
+            "debug1: Authentication succeeded (publickey).\n"
+            "ash: /usr/libexec/sftp-server: not found\n"
+            "Connection closed."
+        ),
+    ],
+)
+def test_manager_classifies_missing_sftp_as_connection_error(
+    backend_modules, monkeypatch, stderr
+):
+    _, ob, _ = backend_modules
+    from sshpilot.scp_utils import SFTP_UNAVAILABLE_MESSAGE
+
+    manager = ob.OpenSSHSFTPManager("host", "user")
+    emitted = []
+    monkeypatch.setattr(manager, "emit", lambda *args: emitted.append(args))
+
+    exc = manager._classify_handshake_failure(
+        stderr, EOFError("SFTP stream closed")
+    )
+    manager._emit_connect_error(exc)
+
+    assert type(exc) is OSError
+    assert str(exc) == SFTP_UNAVAILABLE_MESSAGE
+    assert emitted == [("connection-error", SFTP_UNAVAILABLE_MESSAGE)]
+    manager.close()
+
+
+def test_manager_classifies_permission_denied_as_authentication_error(
+    backend_modules, monkeypatch
+):
+    _, ob, _ = backend_modules
+    manager = ob.OpenSSHSFTPManager("host", "user")
+    emitted = []
+    monkeypatch.setattr(manager, "emit", lambda *args: emitted.append(args))
+    stderr = "Permission denied (publickey,password)."
+
+    exc = manager._classify_handshake_failure(
+        stderr, EOFError("SFTP stream closed")
+    )
+    manager._emit_connect_error(exc)
+
+    assert isinstance(exc, PermissionError)
+    assert emitted == [("authentication-required", stderr)]
+    manager.close()
+
+
+def test_manager_routes_connect_errors_by_exception_type(
+    backend_modules, monkeypatch
+):
+    _, ob, _ = backend_modules
+    manager = ob.OpenSSHSFTPManager("host", "user")
+    emitted = []
+    monkeypatch.setattr(manager, "emit", lambda *args: emitted.append(args))
+
+    manager._emit_connect_error(
+        OSError("Authentication succeeded; SFTP subsystem failed")
+    )
+
+    assert emitted == [
+        ("connection-error", "Authentication succeeded; SFTP subsystem failed")
+    ]
+    manager.close()
+
+
 def test_manager_listdir_emits_directory_loaded(backend_modules, monkeypatch):
     _, ob, proto = backend_modules
     manager, server, emitted = _make_manager(ob, proto, monkeypatch)
@@ -464,7 +537,7 @@ def test_keepalive_emits_operation_error_after_failures(backend_modules, monkeyp
 
     class _DeadClient:
         def realpath(self, _p):
-            raise IOError("probe failed")
+            raise OSError("probe failed")
 
     manager._client = _DeadClient()
     manager._read_keepalive_config()

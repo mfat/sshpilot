@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import importlib
 
-import pytest
 
 from sshpilot.connection_manager import ConnectionManager
 
@@ -202,7 +201,10 @@ class _NoConflictChecker:
 def _make_dialog(monkeypatch):
     """A ConnectionDialog built via __new__, with the GTK/port-checker bits stubbed."""
     cd_mod = importlib.import_module("sshpilot.connection_dialog")
-    monkeypatch.setattr(cd_mod, "get_port_checker", lambda: _NoConflictChecker())
+    pf_mod = importlib.import_module("sshpilot.connection_dialog_port_forwarding")
+    # _save_rule_from_editor now lives in the port-forwarding mixin and resolves
+    # get_port_checker from that module's namespace, so patch it there.
+    monkeypatch.setattr(pf_mod, "get_port_checker", lambda: _NoConflictChecker())
     dialog = cd_mod.ConnectionDialog.__new__(cd_mod.ConnectionDialog)
     dialog.forwarding_rules = []
     dialog.load_port_forwarding_rules = lambda: None

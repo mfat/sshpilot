@@ -8,7 +8,6 @@ leaner and makes the quit logic reusable.
 
 from gettext import gettext as _
 import logging
-import time
 
 from gi.repository import Gtk, GLib, Adw
 
@@ -109,6 +108,12 @@ def _perform_cleanup_and_quit(window, connections_to_disconnect):
                     process_manager.terminals.clear()
             except Exception as e:
                 logger.debug(f"Final SSH cleanup failed: {e}")
+            try:
+                # Drop any cached session-backend unlock token (e.g. BW_SESSION).
+                from .secret_storage import get_secret_manager
+                get_secret_manager().lock_all()
+            except Exception as e:
+                logger.debug(f"Secret session lock on shutdown failed: {e}")
             window.active_terminals.clear()
 
             # Clean up state and quit
@@ -263,7 +268,7 @@ def _disconnect_terminal_safely(terminal):
 
 __all__ = [
     "cleanup_and_quit",
-    "show_reconnecting_message",
     "hide_reconnecting_message",
+    "show_reconnecting_message",
 ]
 

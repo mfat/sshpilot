@@ -5,10 +5,7 @@ Dialog for adding/editing SSH connections
 
 import os
 import logging
-import gettext
 import re
-import ipaddress
-import socket
 import subprocess
 import threading
 import types
@@ -44,10 +41,19 @@ except (ImportError, AttributeError):  # pragma: no cover - used in tests withou
 
     GLib = _DummyGLib
     GObject.SignalFlags = types.SimpleNamespace(RUN_FIRST=None)
-from .port_utils import get_port_checker
 from .platform_utils import is_macos, get_ssh_dir, get_config_dir
+from .ssh_key_fingerprint import (
+    _fingerprint_for_path,
+    _fingerprint_for_pub_line,
+)
+from .ssh_connection_validator import (  # SSHConnectionValidator also re-exported for tests/back-compat
+    SSHConnectionValidator,
+    ValidationResult,
+)
 from .path_list import PathList
-from . import wol
+from .connection_dialog_validation import ConnectionDialogValidationMixin
+from .connection_dialog_field_helpers import ConnectionDialogFieldHelpersMixin
+from .connection_dialog_port_forwarding import ConnectionDialogPortForwardingMixin
 from .plugins.registry import protocol_registry
 
 # Initialize gettext
@@ -177,170 +183,6 @@ def _set_action_row_child(row, widget):
         widget.set_hexpand(True)
         row.add_prefix(widget)
 
-
-class ValidationResult:
-    def __init__(self, is_valid: bool = True, message: str = "", severity: str = "info"):
-        self.is_valid = is_valid
-        self.message = message
-        self.severity = severity  # "error", "warning", "info"
-
-class SSHConnectionValidator:
-    def __init__(self):
-        self.reserved_usernames = {
-            'root', 'daemon', 'bin', 'sys', 'sync', 'games', 'man', 'lp', 'mail',
-            'news', 'uucp', 'proxy', 'www-data', 'backup', 'list', 'irc', 'gnats',
-            'nobody', 'systemd-timesync', 'systemd-network', 'systemd-resolve'
-        }
-        self.common_ssh_ports = {22, 2222, 222, 2022}
-        self.system_ports = set(range(1, 1024))
-        self.service_ports = {
-            21: "FTP", 22: "SSH", 23: "Telnet", 25: "SMTP", 53: "DNS",
-            80: "HTTP", 110: "POP3", 143: "IMAP", 443: "HTTPS",
-            993: "IMAPS", 995: "POP3S", 3389: "RDP", 5432: "PostgreSQL",
-            3306: "MySQL", 27017: "MongoDB", 6379: "Redis", 5672: "RabbitMQ"
-        }
-        self.existing_names: set[str] = set()
-        self.valid_tlds = {
-            'com','org','net','edu','gov','mil','int','biz','info','name','pro','aero','coop','museum',
-            'local','localhost','test','invalid',
-            'us','uk','ca','au','de','fr','jp','cn','ru','br','in','it','es','mx','kr','nl','se','no','dk','fi','ch','at','be','ie'
-        }
-
-    def set_existing_names(self, names: set[str]):
-        self.existing_names = {str(n).strip().lower() for n in (names or set())}
-
-    def validate_connection_name(self, name: str) -> 'ValidationResult':
-        if not name or not name.strip():
-            return ValidationResult(False, _("Connection name is required"), "error")
-        name = name.strip()
-        if re.search(r"\s", name):
-            return ValidationResult(False, _("Connection name cannot contain whitespace"), "error")
-        if name.strip().lower() in self.existing_names:
-            return ValidationResult(False, _("Nickname already exists"), "error")
-        return ValidationResult(True, _("Valid connection name"))
-
-    def _validate_ip_address(self, ip_str: str) -> 'ValidationResult':
-        try:
-            ip = ipaddress.ip_address(ip_str)
-            if ip.is_loopback:
-                return ValidationResult(True, _("Loopback address (localhost)"), "info")
-            elif ip.is_private:
-                return ValidationResult(True, _("Private network address"), "info")
-            elif ip.is_multicast:
-                return ValidationResult(True, _("Multicast address"), "warning")
-            elif getattr(ip, 'is_reserved', False):
-                return ValidationResult(True, _("Reserved IP address"), "warning")
-            elif ip.version == 4 and str(ip).startswith('169.254.'):
-                return ValidationResult(True, _("Link-local address"), "warning")
-            return ValidationResult(True, _("Valid IPv{ver} address").format(ver=ip.version))
-        except ValueError:
-            return ValidationResult(False, _("Invalid IP address format"), "error")
-
-    def _validate_hostname(self, hostname: str) -> 'ValidationResult':
-        if len(hostname) > 253:
-            return ValidationResult(False, _("Hostname too long (max 253 characters)"), "error")
-        # Reject leading/trailing dot and consecutive dots
-        if hostname.startswith('.'):
-            return ValidationResult(False, _("Hostname cannot start with dot"), "error")
-        if hostname.endswith('.'):
-            return ValidationResult(False, _("Hostname cannot end with dot"), "error")
-        if '..' in hostname:
-            return ValidationResult(False, _("Hostname cannot contain consecutive dots"), "error")
-        if not re.match(r'^[a-zA-Z0-9]([a-zA-Z0-9\-\.]*[a-zA-Z0-9])?$', hostname):
-            return ValidationResult(False, _("Invalid hostname format"), "error")
-        labels = hostname.split('.')
-        for label in labels:
-            if not label:
-                return ValidationResult(False, _("Empty hostname segment"), "error")
-            if len(label) > 63:
-                return ValidationResult(False, _("Hostname segment too long (max 63 chars)"), "error")
-            if label.startswith('-') or label.endswith('-'):
-                return ValidationResult(False, _("Hostname segment cannot start/end with hyphen"), "error")
-            # Disallow all-digit TLDs and label of only digits for TLD
-            # We'll check the last label separately as TLD
-        if hostname.lower() in ['localhost', '127.0.0.1', '::1']:
-            return ValidationResult(True, _("Local hostname"), "info")
-        if '.' not in hostname:
-            return ValidationResult(True, _("Consider using fully qualified domain name"), "warning")
-        # Validate TLD: must start with a letter, not all-digit
-        tld = labels[-1]
-        if not re.match(r'^[A-Za-z][A-Za-z0-9-]{1,}$', tld):
-            return ValidationResult(False, _("Invalid top-level domain"), "error")
-        if re.fullmatch(r'\d+', tld):
-            return ValidationResult(False, _("Invalid top-level domain"), "error")
-        # Warn if TLD unknown/uncommon (alphabetic, not in list, not 2-letter ccTLD)
-        if tld.isalpha() and tld.lower() not in self.valid_tlds and len(tld) != 2:
-            return ValidationResult(True, _("Unknown or uncommon top-level domain"), "warning")
-        return ValidationResult(True, _("Valid hostname"))
-
-    def validate_hostname(self, hostname: str, allow_empty: bool = False) -> 'ValidationResult':
-        if not hostname or not hostname.strip():
-            if allow_empty:
-                return ValidationResult(True, "")
-            return ValidationResult(False, _("Hostname is required"), "error")
-        hostname = hostname.strip()
-        ip_result = self._validate_ip_address(hostname)
-        if ip_result.is_valid or not ip_result.message.startswith("Invalid IP"):
-            return ip_result
-        # If looks like numeric IPv4 but invalid, treat as error explicitly
-        if re.fullmatch(r"[0-9.]+", hostname):
-            return ValidationResult(False, _("Invalid IPv4 address format"), "error")
-        # Pure structural validation (avoid DNS on typing to reduce lag)
-        return self._validate_hostname(hostname)
-
-    def validate_port(self, port: str, context: str = "SSH") -> 'ValidationResult':
-        if not port or not str(port).strip():
-            return ValidationResult(False, _("Port is required"), "error")
-        try:
-            port_num = int(str(port).strip())
-        except ValueError:
-            return ValidationResult(False, _("Port must be a number"), "error")
-        if not (1 <= port_num <= 65535):
-            return ValidationResult(False, _("Port must be between 1-65535"), "error")
-        if port_num in self.system_ports:
-            if port_num in self.service_ports:
-                service = self.service_ports[port_num]
-                if context == "SSH" and port_num in self.common_ssh_ports:
-                    return ValidationResult(True, _("Standard {svc} port").format(svc=service), "info")
-                else:
-                    return ValidationResult(True, _("System port for {svc} service").format(svc=service), "warning")
-            else:
-                return ValidationResult(True, _("System port - requires administrator privileges"), "warning")
-        if context == "SSH" and port_num not in self.common_ssh_ports:
-            if port_num in self.service_ports:
-                service = self.service_ports[port_num]
-                return ValidationResult(True, _("Unusual for SSH - typically used for {svc}").format(svc=service), "warning")
-            elif port_num > 49152:
-                return ValidationResult(True, _("Dynamic port range"), "info")
-        return ValidationResult(True, _("Valid port number"))
-
-    def validate_username(self, username: str) -> 'ValidationResult':
-        if not username or not username.strip():
-            return ValidationResult(False, _("Username is required"), "error")
-        return ValidationResult(True, _("Valid username"))
-
-    def verify_key_passphrase(self, key_path: str, passphrase: str) -> bool:
-        """Verify that the passphrase matches the private key using ssh-keygen -y"""
-        if not key_path or not os.path.exists(key_path):
-            return False
-        
-        try:
-            # Run ssh-keygen -y to test the passphrase
-            result = subprocess.run([
-                'ssh-keygen', '-y', '-P', passphrase, '-f', key_path
-            ], capture_output=True, text=True, timeout=10)
-            
-            # Exit code 0 means the passphrase is valid
-            return result.returncode == 0
-        except subprocess.TimeoutExpired:
-            logger.error(f"Timeout verifying passphrase for key: {key_path}")
-            return False
-        except subprocess.CalledProcessError:
-            # This shouldn't happen since we're capturing output, but handle it
-            return False
-        except Exception as e:
-            logger.error(f"Error verifying passphrase for key {key_path}: {e}")
-            return False
 
 class SSHConfigEntry(GObject.Object):
     """Data model for SSH config entries"""
@@ -886,54 +728,6 @@ def _ensure_key_badge_css():
     _KEY_BADGE_CSS_REGISTERED = True
 
 
-# --- SSH key fingerprint helpers (type · SHA256 · comment) -------------------
-_FINGERPRINT_CACHE: Dict[str, tuple] = {}
-
-
-def _parse_keygen_line(line: str) -> tuple:
-    """Parse an ``ssh-keygen -l`` line into (type_label, "SHA256:…", comment).
-
-    Example line: ``256 SHA256:abc… user@host (ED25519)``.
-    """
-    parts = (line or "").strip().split()
-    if len(parts) < 2:
-        return ("", "", "")
-    fingerprint = parts[1]
-    key_type = parts[-1].strip("()") if parts[-1].startswith("(") else ""
-    comment = " ".join(parts[2:-1]) if len(parts) > 3 else (parts[2] if len(parts) > 2 else "")
-    return (key_type, fingerprint, comment)
-
-
-def _fingerprint_for_path(path: str) -> tuple:
-    """(type_label, fingerprint, comment) for a key file, via ``ssh-keygen -lf``."""
-    expanded = os.path.expanduser(path or "")
-    if expanded in _FINGERPRINT_CACHE:
-        return _FINGERPRINT_CACHE[expanded]
-    result = ("", "", "")
-    try:
-        proc = subprocess.run(["ssh-keygen", "-lf", expanded],
-                              capture_output=True, text=True, timeout=5)
-        if proc.returncode == 0:
-            result = _parse_keygen_line(proc.stdout)
-    except Exception:
-        logger.debug("ssh-keygen fingerprint failed for %s", path, exc_info=True)
-    _FINGERPRINT_CACHE[expanded] = result
-    return result
-
-
-def _fingerprint_for_pub_line(pub_line: str) -> tuple:
-    """(type_label, fingerprint, comment) for a public-key line (e.g. ssh-add -L)."""
-    try:
-        proc = subprocess.run(["ssh-keygen", "-lf", "-"],
-                              input=(pub_line or "") + "\n",
-                              capture_output=True, text=True, timeout=5)
-        if proc.returncode == 0:
-            return _parse_keygen_line(proc.stdout)
-    except Exception:
-        logger.debug("ssh-keygen fingerprint (stdin) failed", exc_info=True)
-    return ("", "", "")
-
-
 def _accent_hex():
     """Current libadwaita accent colour as #RRGGBB (theme-aware)."""
     try:
@@ -1434,13 +1228,12 @@ class FileListEditor(Adw.PreferencesGroup):
             pass_entry.set_property('placeholder-text', _("Key passphrase"))
         except Exception:
             pass
+        row._pass_initial = ''
+        # A stored passphrase can come from a slow secret backend (rbw on a large vault
+        # is ≈1s per lookup), so load it off the main thread: the dialog opens instantly
+        # and the entry fills in when ready, unless the user is already typing.
         if self._connection_manager is not None:
-            try:
-                existing = self._connection_manager.get_key_passphrase(norm) or ''
-                if existing:
-                    pass_entry.set_text(existing)
-            except Exception:
-                pass
+            self._load_passphrase_async(pass_entry, row, norm)
         # Clear the error state as soon as the user edits the value again.
         pass_entry.connect('changed', lambda e: e.remove_css_class('error'))
         # Commit on Enter and when focus leaves the entry.
@@ -1449,6 +1242,10 @@ class FileListEditor(Adw.PreferencesGroup):
         focus.connect('leave', lambda _c, e=pass_entry, p=path, n=norm: self._commit_passphrase(e, p, n))
         pass_entry.add_controller(focus)
         row.add_suffix(pass_entry)
+        # Track the entry on the row so the save flow can flush all passphrases at once.
+        row._pass_entry = pass_entry
+        row._pass_path = path
+        row._pass_norm = norm
 
         remove_btn = Gtk.Button(icon_name='user-trash-symbolic')
         remove_btn.add_css_class('flat')
@@ -1458,7 +1255,33 @@ class FileListEditor(Adw.PreferencesGroup):
         row.add_suffix(remove_btn)
         return row
 
-    def _commit_passphrase(self, pass_entry, path, norm):
+    def _load_passphrase_async(self, pass_entry, row, norm):
+        """Fetch a stored passphrase off the main thread and fill the entry when ready.
+
+        Skips the fill if the user has already typed into the entry, and syncs
+        ``_pass_initial`` to the loaded value so the save flow sees no spurious change.
+        Widget writes are guarded — the dialog may have closed while we waited."""
+        def _apply(value):
+            try:
+                if not pass_entry.get_text():   # don't clobber what the user typed
+                    pass_entry.set_text(value)
+                    row._pass_initial = value
+            except Exception:
+                pass
+            return False  # one-shot idle
+
+        def worker():
+            try:
+                existing = self._connection_manager.get_key_passphrase(norm) or ''
+            except Exception:
+                existing = ''
+            if existing:
+                GLib.idle_add(_apply, existing)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _commit_passphrase(self, pass_entry, path, norm, force=False):
+        """Validate an edited passphrase; persistence is deferred to dialog save."""
         text = pass_entry.get_text()
         if text and callable(self._verify):
             try:
@@ -1467,16 +1290,64 @@ class FileListEditor(Adw.PreferencesGroup):
                 ok = False
             if not ok:
                 pass_entry.add_css_class('error')
-                return
+                return False
         pass_entry.remove_css_class('error')
-        if self._connection_manager is not None:
+        return True
+
+    @staticmethod
+    def _secret_backend_needs_unlock() -> bool:
+        try:
+            from .secret_storage import get_secret_manager
+            return bool(get_secret_manager().selected_needs_unlock())
+        except Exception:
+            return False
+
+    def _passphrase_rows(self):
+        """(entry, path, norm) for each key row that carries a passphrase entry."""
+        out = []
+        for row in self._rows:
+            entry = getattr(row, '_pass_entry', None)
+            if entry is not None:
+                out.append((entry, getattr(row, '_pass_path', None),
+                            getattr(row, '_pass_norm', None)))
+        return out
+
+    def has_pending_passphrases(self) -> bool:
+        """True if any key row holds a non-empty passphrase to store on save."""
+        if not self._with_passphrase:
+            return False
+        for entry, _p, _n in self._passphrase_rows():
             try:
-                if text:
-                    self._connection_manager.store_key_passphrase(norm, text)
-                elif hasattr(self._connection_manager, 'delete_key_passphrase'):
-                    self._connection_manager.delete_key_passphrase(norm)
+                if entry.get_text():
+                    return True
             except Exception:
-                logger.debug("Failed to store/delete passphrase for %s", norm, exc_info=True)
+                pass
+        return False
+
+    def pending_passphrase_operations(self):
+        """Return changed passphrases as GTK-free worker operations.
+
+        Each tuple is ``("store"|"delete", normalized_path, value)``.  Reading and
+        validating entries stays on the GTK thread; only backend I/O uses these snapshots.
+        """
+        operations = []
+        for entry, path, norm in self._passphrase_rows():
+            try:
+                if not self._commit_passphrase(entry, path, norm):
+                    return None
+                text = entry.get_text()
+                row = next(
+                    (candidate for candidate in self._rows
+                     if getattr(candidate, '_pass_entry', None) is entry),
+                    None,
+                )
+                initial = getattr(row, '_pass_initial', '') if row is not None else ''
+                if text == initial:
+                    continue
+                operations.append(('store' if text else 'delete', norm, text))
+            except Exception:
+                logger.debug("Failed to collect passphrase for %s", norm, exc_info=True)
+        return operations
 
     def _remove_row(self, path, row):
         self._model.remove(path)
@@ -1566,7 +1437,12 @@ class FileListEditor(Adw.PreferencesGroup):
             except Exception:
                 logger.debug("FileListEditor browse() failed", exc_info=True)
 
-class ConnectionDialog(Adw.Window):
+class ConnectionDialog(
+    Adw.Window,
+    ConnectionDialogValidationMixin,
+    ConnectionDialogFieldHelpersMixin,
+    ConnectionDialogPortForwardingMixin,
+):
     """Dialog for adding/editing SSH connections using custom layout with pinned buttons"""
     
     __gtype_name__ = 'ConnectionDialog'
@@ -2022,7 +1898,7 @@ class ConnectionDialog(Adw.Window):
     @staticmethod
     def _read_pub(pub_path):
         try:
-            with open(pub_path, 'r') as f:
+            with open(pub_path) as f:
                 parts = f.read().split()
             return parts if len(parts) >= 2 else None
         except Exception:
@@ -2284,6 +2160,35 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
     User {getattr(self, 'username_row', None).get_text().strip() if hasattr(self, 'username_row') else 'user'}
     Port {getattr(self, 'port_row', None).get_text().strip() if hasattr(self, 'port_row') else '22'}"""
     
+    def _load_password_async(self):
+        """Fetch the saved SSH password off the main thread and fill the row when ready.
+
+        rbw on a large vault is ≈1s per lookup; doing it inline froze dialog open. Skips
+        the fill if the user is already typing and syncs ``_orig_password`` so the loaded
+        value isn't mistaken for a user edit. Widget writes are guarded (dialog may close)."""
+        mgr = getattr(self.parent_window, 'connection_manager', None)
+        if not mgr or not hasattr(self.connection, 'username'):
+            return
+
+        def _apply(pw):
+            try:
+                if pw and not self.password_row.get_text():
+                    self.password_row.set_text(pw)
+                    self._orig_password = pw
+            except Exception:
+                pass
+            return False  # one-shot idle
+
+        def worker():
+            try:
+                pw = mgr.get_connection_password(self.connection)
+            except Exception:
+                pw = None
+            if pw:
+                GLib.idle_add(_apply, pw)
+
+        threading.Thread(target=worker, daemon=True).start()
+
     def load_connection_data(self):
         """Load connection data into the dialog fields"""
         if not self.is_editing or not self.connection:
@@ -2325,7 +2230,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             return
 
         try:
-            keyfile_path = None
             # Load basic connection data
             if hasattr(self.connection, 'nickname'):
                 self.nickname_row.set_text(self.connection.nickname or "")
@@ -2416,24 +2320,13 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             if hasattr(self.connection, 'password') and self.connection.password:
                 self.password_row.set_text(self.connection.password)
             else:
-                # Fallback: fetch from keyring so the dialog shows stored password (masked)
-                try:
-                    mgr = getattr(self.parent_window, 'connection_manager', None)
-                    if mgr and hasattr(self.connection, 'username'):
-                        lookup_host = (
-                            getattr(self.connection, 'hostname', '')
-                            or getattr(self.connection, 'host', '')
-                            or getattr(self.connection, 'nickname', '')
-                        )
-                        if lookup_host:
-                            pw = mgr.get_password(lookup_host, self.connection.username)
-                        else:
-                            pw = None
-                        if pw:
-                            self.password_row.set_text(pw)
-                except Exception:
-                    pass
-            # Capture original password value to detect user changes later
+                # Fallback: fetch from the selected secret backend off the main thread —
+                # rbw on a large vault is ≈1s per lookup and would otherwise freeze the
+                # dialog open. The masked row fills in when ready (see _load_password_async).
+                self._load_password_async()
+            # Capture original password value to detect user changes later. The async
+            # fetch updates this when it fills the row, so a loaded value isn't seen as
+            # a user edit on save.
             try:
                 self._orig_password = self.password_row.get_text()
             except Exception:
@@ -2553,310 +2446,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             self._loading_connection_data = False
 
 
-    
-    # --- Inline validation helpers ---
-    def _apply_validation_to_row(self, row, result):
-        try:
-            if hasattr(row, 'set_subtitle'):
-                row.set_subtitle(result.message or "")
-        except Exception:
-            pass
-        # Tooltips on row and entry
-        try:
-            if hasattr(row, 'set_tooltip_text'):
-                row.set_tooltip_text(result.message or None)
-            entry = row.get_child() if hasattr(row, 'get_child') else None
-            if entry is not None and hasattr(entry, 'set_tooltip_text'):
-                entry.set_tooltip_text(result.message or None)
-        except Exception:
-            pass
-        # CSS classes: clear, then set per severity
-        try:
-            row.remove_css_class('error')
-            row.remove_css_class('warning')
-        except Exception:
-            pass
-        try:
-            if hasattr(result, 'is_valid') and not result.is_valid:
-                row.add_css_class('error')
-            elif hasattr(result, 'severity') and result.severity == 'warning':
-                row.add_css_class('warning')
-        except Exception:
-            pass
-
-    def _update_existing_names_in_validator(self):
-        try:
-            mgr = getattr(self.parent_window, 'connection_manager', None)
-            names = set()
-            if mgr and hasattr(mgr, 'connections'):
-                # Normalize current connection name (when editing) to exclude it from duplicates
-                current_name_norm = ''
-                try:
-                    if self.is_editing and self.connection:
-                        current_name_norm = str(getattr(self.connection, 'nickname', '')).strip().lower()
-                except Exception:
-                    current_name_norm = ''
-                for conn in mgr.connections or []:
-                    n = getattr(conn, 'nickname', None)
-                    if not n:
-                        continue
-                    n_norm = str(n).strip().lower()
-                    # Exclude the current connection by name (case-insensitive), not by object identity
-                    if current_name_norm and n_norm == current_name_norm:
-                        continue
-                    names.add(str(n))
-            # Ensure fresh names after deletions
-            try:
-                if hasattr(mgr, 'load_ssh_config'):
-                    mgr.load_ssh_config()
-            except Exception:
-                pass
-            # Ensure current typed value isn't auto-included incorrectly
-            self.validator.set_existing_names(names)
-        except Exception:
-            pass
-
-    def _validate_field_row(self, field_name: str, row, context: str = "SSH"):
-        text = (row.get_text() if hasattr(row, 'get_text') else "")
-        if field_name == 'name':
-            self._update_existing_names_in_validator()
-            result = self.validator.validate_connection_name(text)
-        elif field_name == 'hostname':
-            raw = (text or '').strip()
-            if raw.startswith('[') and raw.endswith(']') and len(raw) > 2:
-                raw = raw[1:-1]
-            result = self.validator.validate_hostname(raw, allow_empty=True)
-        elif field_name == 'port':
-            result = self.validator.validate_port(text, context)
-        elif field_name == 'username':
-            result = self.validator.validate_username(text)
-        else:
-            # Default: valid
-            class _Dummy:
-                is_valid = True
-                message = ""
-                severity = "info"
-            result = _Dummy()
-        # Store and apply to UI
-        self.validation_results[field_name] = result
-        self._apply_validation_to_row(row, result)
-        # Update save buttons after each validation
-        self._update_save_buttons()
-        return result
-
-    def _update_save_buttons(self):
-        try:
-            has_errors = any(
-                (k in self.validation_results and not self.validation_results[k].is_valid)
-                for k in ('name', 'hostname', 'port', 'username')
-            )
-            enabled = not has_errors
-            for btn in getattr(self, '_save_buttons', []) or []:
-                try:
-                    btn.set_sensitive(enabled)
-                except Exception:
-                    pass
-            if hasattr(self, 'set_response_enabled'):
-                try:
-                    self.set_response_enabled('save', enabled)
-                except Exception:
-                    pass
-        except Exception:
-            pass
-    def _row_set_message(self, row, message: str, is_error: bool = True):
-        try:
-            if hasattr(row, 'set_subtitle'):
-                row.set_subtitle(message or "")
-        except Exception:
-            pass
-        # Also mirror the message into tooltips for visibility/accessibility
-        try:
-            if hasattr(row, 'set_tooltip_text'):
-                row.set_tooltip_text(message or None)
-        except Exception:
-            pass
-        try:
-            entry = row.get_child() if hasattr(row, 'get_child') else None
-            if entry is not None and hasattr(entry, 'set_tooltip_text'):
-                entry.set_tooltip_text(message or None)
-        except Exception:
-            pass
-        try:
-            if is_error:
-                row.add_css_class('error')
-            else:
-                row.remove_css_class('error')
-        except Exception:
-            pass
-
-    def _row_clear_message(self, row):
-        self._row_set_message(row, "", is_error=False)
-
-    def _connect_row_validation(self, row, validator_callable):
-        # Prefer notify::text on Adw.EntryRow, fallback to child Gtk.Entry changed
-        try:
-            row.connect('notify::text', lambda r, p: validator_callable(r))
-            return
-        except Exception:
-            pass
-        try:
-            entry = row.get_child() if hasattr(row, 'get_child') else None
-            if entry is not None:
-                entry.connect('changed', lambda e: validator_callable(row))
-        except Exception:
-            pass
-
-    def _validate_required_row(self, row, label_text: str):
-        text = (row.get_text() if hasattr(row, 'get_text') else "").strip()
-        if not text:
-            self._row_set_message(row, _(f"{label_text} is required"), is_error=True)
-            return False
-        self._row_clear_message(row)
-        return True
-
-    def _is_nickname_taken(self, name: str) -> bool:
-        try:
-            mgr = getattr(self.parent_window, 'connection_manager', None)
-            if mgr is None or not hasattr(mgr, 'connections'):
-                return False
-            normalized = (name or '').strip().lower()
-            current_name_norm = ''
-            try:
-                if self.is_editing and self.connection:
-                    current_name_norm = str(getattr(self.connection, 'nickname', '')).strip().lower()
-            except Exception:
-                current_name_norm = ''
-            for conn in getattr(mgr, 'connections', []) or []:
-                other_name = getattr(conn, 'nickname', None)
-                if not other_name:
-                    continue
-                other_norm = str(other_name).strip().lower()
-                # Skip the same connection object and also skip the current connection name when editing
-                if current_name_norm and (conn is self.connection or other_norm == current_name_norm):
-                    continue
-                if other_norm == normalized:
-                    return True
-        except Exception:
-            return False
-        return False
-
-    def _validate_nickname_row(self, row):
-        text = (row.get_text() if hasattr(row, 'get_text') else "").strip()
-        if not text:
-            self._row_set_message(row, _("Nickname is required"), is_error=True)
-            return False
-        if self._is_nickname_taken(text):
-            self._row_set_message(row, _("Nickname already exists"), is_error=True)
-            return False
-        self._row_clear_message(row)
-        return True
-
-    def _validate_host_row(self, row, allow_empty: bool = False):
-        text = (row.get_text() if hasattr(row, 'get_text') else "").strip()
-        if not text:
-            if allow_empty:
-                self._row_clear_message(row)
-                return True
-            self._row_set_message(row, _("Host is required"), is_error=True)
-            return False
-        # Support bracketed IPv6 like [::1]
-        text_unbr = text[1:-1] if (text.startswith('[') and text.endswith(']') and len(text) > 2) else text
-        lower = text_unbr.lower()
-        if lower in ("localhost",):
-            self._row_clear_message(row)
-            return True
-        try:
-            ipaddress.ip_address(text_unbr)
-            self._row_clear_message(row)
-            return True
-        except Exception:
-            # digits/dots but not valid ip → error
-            if re.fullmatch(r"[0-9.]+", text_unbr):
-                self._row_set_message(row, _("Invalid IPv4 address"), is_error=True)
-                return False
-            # RFC1123-ish hostname
-            hostname_regex = re.compile(r"^(?=.{1,253}$)(?!-)[A-Za-z0-9-]{1,63}(?<!-)(\.(?!-)[A-Za-z0-9-]{1,63}(?<!-))*\.?$")
-            if not hostname_regex.match(text_unbr):
-                self._row_set_message(row, _("Invalid hostname"), is_error=True)
-                return False
-        self._row_clear_message(row)
-        return True
-
-    def _validate_port_row(self, row, label_text: str = "Port"):
-        text = (row.get_text() if hasattr(row, 'get_text') else "").strip()
-        if not text:
-            self._row_set_message(row, _(f"{label_text} is required"), is_error=True)
-            return False
-        try:
-            value = int(text)
-            if value < 1 or value > 65535:
-                self._row_set_message(row, _("Port must be between 1 and 65535"), is_error=True)
-                return False
-            # Clear errors; we are not styling warnings inline
-            self._row_clear_message(row)
-            return True
-        except Exception:
-            self._row_set_message(row, _("Port must be a number"), is_error=True)
-            return False
-
-    def _install_inline_validators(self):
-        # General page fields
-        if hasattr(self, 'nickname_row'):
-            self._connect_row_validation(self.nickname_row, lambda r: self._validate_field_row('name', r))
-        if hasattr(self, 'username_row'):
-            self._connect_row_validation(self.username_row, lambda r: self._validate_field_row('username', r))
-        if hasattr(self, 'hostname_row'):
-            self._connect_row_validation(self.hostname_row, lambda r: self._validate_field_row('hostname', r))
-        if hasattr(self, 'port_row'):
-            self._connect_row_validation(self.port_row, lambda r: self._validate_field_row('port', r, context="SSH"))
-
-    def _run_initial_validation(self):
-        try:
-            if hasattr(self, 'nickname_row'):
-                self._validate_field_row('name', self.nickname_row)
-            if hasattr(self, 'username_row'):
-                self._validate_field_row('username', self.username_row)
-            if hasattr(self, 'hostname_row'):
-                self._validate_field_row('hostname', self.hostname_row)
-            if hasattr(self, 'port_row'):
-                self._validate_field_row('port', self.port_row, context="SSH")
-        except Exception:
-            pass
-
-    def _focus_row(self, row):
-        try:
-            if hasattr(self, 'present'):
-                self.present()
-        except Exception:
-            pass
-        try:
-            widget = row.get_child() if hasattr(row, 'get_child') else row
-            if hasattr(widget, 'grab_focus'):
-                widget.grab_focus()
-        except Exception:
-            pass
-
-    def _validate_all_required_for_save(self) -> Optional[Gtk.Widget]:
-        """Validate all visible fields; return the first invalid row (or None)."""
-        # General
-        if hasattr(self, 'nickname_row'):
-            res = self._validate_field_row('name', self.nickname_row)
-            if not res.is_valid:
-                return self.nickname_row
-        if hasattr(self, 'username_row'):
-            res = self._validate_field_row('username', self.username_row)
-            if not res.is_valid:
-                return self.username_row
-        if hasattr(self, 'hostname_row'):
-            res = self._validate_field_row('hostname', self.hostname_row)
-            if not res.is_valid:
-                return self.hostname_row
-        if hasattr(self, 'port_row'):
-            res = self._validate_field_row('port', self.port_row, context="SSH")
-            if not res.is_valid:
-                return self.port_row
-        return None
-    
     def build_authentication_groups(self):
         """Build PreferencesGroups for authentication settings."""
         cm = getattr(self, 'connection_manager', None)
@@ -3293,922 +2882,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
 
         return commands_group
     
-    def load_port_forwarding_rules(self):
-        """Load port forwarding rules from the connection and update UI"""
-        if not hasattr(self, 'rules_list') or not hasattr(self, 'forwarding_rules'):
-            return
-            
-        # Clear existing rules UI
-        while self.rules_list.get_first_child():
-            self.rules_list.remove(self.rules_list.get_first_child())
-        
-        # Show placeholder if no rules
-        if not self.forwarding_rules:
-            self.rules_list.append(self.placeholder)
-            return
-        
-        # Hide placeholder since we have rules
-        if self.placeholder.get_parent():
-            self.placeholder.unparent()
-        
-        # Process each forwarding rule
-        for rule in self.forwarding_rules:
-            if not rule.get('enabled', True):
-                continue
-                
-            rule_type = rule.get('type', '')
-            
-            # Create a row for the rule
-            row = Adw.ActionRow()
-            row.set_selectable(False)
-            
-            # Set appropriate icon and title based on rule type
-            from sshpilot import icon_utils
-            if rule_type == 'local':
-                row.set_title(_("Local Port Forwarding"))
-                row.add_prefix(icon_utils.new_image_from_icon_name("network-transmit-receive-symbolic"))
-                description = _("Local {local_port} → {remote_host}:{remote_port}").format(
-                    local_port=rule.get('listen_port', ''),
-                    remote_host=rule.get('remote_host', ''),
-                    remote_port=rule.get('remote_port', '')
-                )
-            elif rule_type == 'remote':
-                row.set_title(_("Remote Port Forwarding"))
-                row.add_prefix(icon_utils.new_image_from_icon_name("network-receive-symbolic"))
-                listen_addr = rule.get('listen_addr') or ''
-                listen_port = rule.get('listen_port', '')
-                remote_src = f"{listen_addr}:{listen_port}" if listen_addr else f"{listen_port}"
-                dest_host = rule.get('local_host') or rule.get('remote_host') or ''
-                dest_port = rule.get('local_port') or rule.get('remote_port') or ''
-                if rule.get('socks') or not (dest_host or dest_port):
-                    description = _("Remote {src} → SOCKS").format(src=remote_src)
-                else:
-                    description = _("Remote {src} → {dest_host}:{dest_port}").format(
-                        src=remote_src, dest_host=dest_host, dest_port=dest_port
-                    )
-            elif rule_type == 'dynamic':
-                row.set_title(_("Dynamic Port Forwarding (SOCKS)"))
-                row.add_prefix(icon_utils.new_image_from_icon_name("network-workgroup-symbolic"))
-                description = _("SOCKS proxy on port {port}").format(
-                    port=rule.get('listen_port', '')
-                )
-            else:
-                continue
-                
-            # Add description
-            row.set_subtitle(description)
-            
-            # Add delete button
-            delete_button = Gtk.Button(
-                icon_name="user-trash-symbolic",
-                valign=Gtk.Align.CENTER,
-                css_classes=["flat", "error"]
-            )
-            delete_button.connect("clicked", self.on_delete_forwarding_rule_clicked, rule)
-            row.add_suffix(delete_button)
-            
-            # Add edit button
-            edit_button = Gtk.Button(
-                icon_name="document-edit-symbolic",
-                valign=Gtk.Align.CENTER,
-                css_classes=["flat"]
-            )
-            edit_button.connect("clicked", self.on_edit_forwarding_rule_clicked, rule)
-            row.add_suffix(edit_button)
-            
-            # Add the row to the list
-            self.rules_list.append(row)
-        
-        # Show the rules list
-        self.rules_list.show()
-    
-    def on_delete_forwarding_rule_clicked(self, button, rule):
-        """Handle delete port forwarding rule button click"""
-        if not hasattr(self, 'forwarding_rules'):
-            return
-
-        # Remove the rule from the list
-        self.forwarding_rules = [r for r in self.forwarding_rules if r != rule]
-
-        # Reload the rules UI
-        self.load_port_forwarding_rules()
-
-        logger.info(f"Deleted port forwarding rule: {rule}")
-    
-    def on_edit_forwarding_rule_clicked(self, button, rule):
-        """Handle edit port forwarding rule button click"""
-        logger.info(f"Edit port forwarding rule clicked: {rule}")
-        self._open_rule_editor(existing_rule=rule)
-    
-    def on_add_forwarding_rule_clicked(self, button):
-        """Handle add port forwarding rule button click"""
-        logger.info("Add port forwarding rule clicked")
-        self._open_rule_editor(existing_rule=None)
-    
-    def on_view_port_info_clicked(self, button):
-        """Handle view port info button click"""
-        self._show_port_info_dialog()
-
-    def _open_rule_editor(self, existing_rule=None):
-        """Open an Adw.Window to add/edit a forwarding rule."""
-        # Create Adw.Window
-        dialog = Adw.Window()
-        dialog.set_title(_("Port Forwarding Rule Editor"))
-        dialog.set_default_size(500, -1)  # 500px width, auto height
-        dialog.set_modal(True)
-        dialog.set_transient_for(self)
-
-        # Create content box
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
-
-        # Type selector
-        type_model = Gtk.StringList()
-        type_model.append(_("Local"))
-        type_model.append(_("Remote"))
-        type_model.append(_("Dynamic"))
-        type_row = Adw.ComboRow()
-        type_row.set_title(_("Type"))
-        type_row.set_model(type_model)
-
-        listen_addr_row = Adw.EntryRow(title=_("Bind address (optional)"))
-        listen_port_row = Adw.EntryRow()
-        listen_port_row.set_title(_("Local port"))
-        try:
-            lpe2 = listen_port_row.get_child()
-            if lpe2 and hasattr(lpe2, 'set_input_purpose'):
-                lpe2.set_input_purpose(Gtk.InputPurpose.DIGITS)
-            if lpe2 and hasattr(lpe2, 'set_max_length'):
-                lpe2.set_max_length(5)
-        except Exception:
-            pass
-
-        remote_host_row = Adw.EntryRow(title=_("Host"))
-        remote_port_row = Adw.EntryRow()
-        remote_port_row.set_title(_("Port"))
-        try:
-            rpe2 = remote_port_row.get_child()
-            if rpe2 and hasattr(rpe2, 'set_input_purpose'):
-                rpe2.set_input_purpose(Gtk.InputPurpose.DIGITS)
-            if rpe2 and hasattr(rpe2, 'set_max_length'):
-                rpe2.set_max_length(5)
-        except Exception:
-            pass
-
-        # Pack rows
-        group = Adw.PreferencesGroup()
-        group.add(type_row)
-        group.add(listen_addr_row)
-        group.add(listen_port_row)
-        group.add(remote_host_row)
-        group.add(remote_port_row)
-        box.append(group)
-        
-        # Create header bar with buttons
-        header_bar = Adw.HeaderBar()
-        header_bar.set_show_end_title_buttons(True)
-        
-        # Add buttons to header bar
-        cancel_button = Gtk.Button(label=_("Cancel"))
-        cancel_button.add_css_class("flat")
-        header_bar.pack_start(cancel_button)
-        
-        save_button = Gtk.Button(label=_("Save"))
-        save_button.add_css_class("suggested-action")
-        header_bar.pack_end(save_button)
-        
-        # Create main container
-        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        main_box.append(header_bar)
-        main_box.append(box)
-        
-        # Set content for Adw.Window
-        dialog.set_content(main_box)
-
-        # Populate when editing
-        if existing_rule:
-            t = existing_rule.get('type', 'local')
-            type_row.set_selected({'local':0,'remote':1,'dynamic':2}.get(t,0))
-            listen_addr_row.set_text(str(existing_rule.get('listen_addr', 'localhost')))
-            try:
-                listen_port_row.set_text(str(int(existing_rule.get('listen_port', 0) or 0)))
-            except Exception:
-                listen_port_row.set_text(str(existing_rule.get('listen_port', '')))
-            if t == 'remote':
-                # For remote rules, the destination is local_host/local_port.
-                # A single-argument (SOCKS) rule has no destination — leave the
-                # fields blank so it round-trips as SOCKS instead of being forced
-                # into a localhost destination on save.
-                if existing_rule.get('socks') or not (
-                    existing_rule.get('local_host') or existing_rule.get('local_port')
-                ):
-                    remote_host_row.set_text('')
-                    remote_port_row.set_text('')
-                else:
-                    remote_host_row.set_text(str(existing_rule.get('local_host', 'localhost')))
-                    try:
-                        remote_port_row.set_text(str(int(existing_rule.get('local_port', 0) or 0)))
-                    except Exception:
-                        remote_port_row.set_text(str(existing_rule.get('local_port', '')))
-            else:
-                remote_host_row.set_text(str(existing_rule.get('remote_host', 'localhost')))
-                try:
-                    remote_port_row.set_text(str(int(existing_rule.get('remote_port', 0) or 0)))
-                except Exception:
-                    remote_port_row.set_text(str(existing_rule.get('remote_port', '')))
-        else:
-            type_row.set_selected(0)
-            # Sane defaults for a new rule
-            listen_addr_row.set_text('localhost')
-            listen_port_row.set_text('8080')
-            remote_host_row.set_text('localhost')
-            remote_port_row.set_text('22')
-
-        # Avoid shadowing translation function '_' by using a local alias
-        t = _
-        previous_type_idx = type_row.get_selected()
-        def _sync_visibility(*args):
-            nonlocal previous_type_idx
-            idx = type_row.get_selected()
-            # Apply label set per type
-            if idx == 0:
-                # Local
-                listen_addr_row.set_visible(False)
-                listen_port_row.set_title(t("Local Port"))
-                remote_host_row.set_visible(True)
-                remote_host_row.set_title(t("Target Host"))
-                remote_port_row.set_visible(True)
-                remote_port_row.set_title(t("Target Port"))
-            elif idx == 1:
-                # Remote
-                listen_addr_row.set_visible(True)
-                listen_addr_row.set_title(t("Remote host (optional)"))
-                listen_port_row.set_title(t("Remote port"))
-                remote_host_row.set_visible(True)
-                remote_host_row.set_title(t("Destination host"))
-                remote_port_row.set_visible(True)
-                remote_port_row.set_title(t("Destination port"))
-            else:
-                # Dynamic
-                listen_addr_row.set_visible(True)
-                listen_addr_row.set_title(t("Bind address (optional)"))
-                listen_port_row.set_title(t("Local port"))
-                remote_host_row.set_visible(False)
-                remote_port_row.set_visible(False)
-            self._apply_rule_editor_defaults_for_type(
-                idx,
-                listen_addr_row,
-                listen_port_row,
-                remote_host_row,
-                remote_port_row,
-                previous_type_idx,
-            )
-            previous_type_idx = idx
-        type_row.connect('notify::selected', _sync_visibility)
-        _sync_visibility()
-
-        # Handle button clicks
-        def _on_cancel_clicked(button):
-            dialog.destroy()
-        
-        def _on_save_clicked(button):
-            self._save_rule_from_editor(existing_rule, type_row, listen_addr_row, listen_port_row, remote_host_row, remote_port_row)
-            dialog.destroy()
-        
-        cancel_button.connect('clicked', _on_cancel_clicked)
-        save_button.connect('clicked', _on_save_clicked)
-        
-        # Show the window
-        dialog.present()
-
-    def _save_rule_from_editor(self, existing_rule, type_row, listen_addr_row, listen_port_row, remote_host_row, remote_port_row):
-        idx = type_row.get_selected()
-        rtype = 'local' if idx == 0 else ('remote' if idx == 1 else 'dynamic')
-        listen_addr = listen_addr_row.get_text().strip()
-        try:
-            listen_port = int((listen_port_row.get_text() or '0').strip() or '0')
-        except Exception:
-            listen_port = 0
-        if listen_port <= 0 or listen_port > 65535:
-            self.show_error(_("Please enter a valid listen port (1–65535)"))
-            return
-        
-        # Check for port conflicts (for local and dynamic forwarding)
-        if rtype in ['local', 'dynamic']:
-            try:
-                port_checker = get_port_checker()
-                conflicts = port_checker.get_port_conflicts([listen_port], listen_addr or 'localhost')
-                
-                if conflicts:
-                    port, port_info = conflicts[0]
-                    conflict_msg = _("Port {port} is already in use").format(port=port)
-                    if port_info.process_name:
-                        conflict_msg += _(" by {process} (PID: {pid})").format(
-                            process=port_info.process_name, 
-                            pid=port_info.pid
-                        )
-                    
-                    # Suggest alternative port
-                    alt_port = port_checker.find_available_port(listen_port, listen_addr or 'localhost')
-                    if alt_port:
-                        conflict_msg += _("\n\nSuggested alternative: port {alt_port}").format(alt_port=alt_port)
-                    
-                    # Show error dialog with conflict information
-                    self.show_error(conflict_msg)
-                    return
-                    
-            except Exception as e:
-                logger.debug(f"Could not check port conflict for {listen_port}: {e}")
-                # Continue without port checking if there's an error
-        rule = {
-            'type': rtype,
-            'enabled': True,
-            # RemoteForward binds on the REMOTE host: an empty bind address means
-            # "let the remote/GatewayPorts decide" (loopback by default), so keep
-            # it empty rather than pinning localhost. Local/dynamic bind locally
-            # and keep defaulting to localhost.
-            'listen_addr': listen_addr if rtype == 'remote' else (listen_addr or 'localhost'),
-            'listen_port': listen_port,
-        }
-        if rtype == 'local':
-            # LocalForward: [listen_addr:]listen_port remote_host:remote_port
-            # The destination is mandatory and must be a valid port.
-            try:
-                remote_port = int((remote_port_row.get_text() or '0').strip() or '0')
-            except Exception:
-                remote_port = 0
-            if remote_port <= 0 or remote_port > 65535:
-                self.show_error(_("Please enter a valid destination port (1–65535)"))
-                return
-            rule['remote_host'] = remote_host_row.get_text().strip() or 'localhost'
-            rule['remote_port'] = remote_port
-        elif rtype == 'remote':
-            # RemoteForward: [listen_addr:]listen_port [local_host:local_port]
-            # With no destination it is a reverse SOCKS proxy (single-argument
-            # form, ssh_config(5)). An empty destination is therefore valid and
-            # means SOCKS rather than a malformed forward.
-            dest_host = remote_host_row.get_text().strip()
-            try:
-                dest_port = int((remote_port_row.get_text() or '0').strip() or '0')
-            except Exception:
-                dest_port = 0
-            if not dest_host and dest_port <= 0:
-                rule['socks'] = True
-            else:
-                if dest_port <= 0 or dest_port > 65535:
-                    self.show_error(_("Please enter a valid destination port (1–65535)"))
-                    return
-                rule['local_host'] = dest_host or 'localhost'
-                rule['local_port'] = dest_port
-
-        if not hasattr(self, 'forwarding_rules') or self.forwarding_rules is None:
-            self.forwarding_rules = []
-
-        if existing_rule and existing_rule in self.forwarding_rules:
-            idx_existing = self.forwarding_rules.index(existing_rule)
-            self.forwarding_rules[idx_existing] = rule
-        else:
-            self.forwarding_rules.append(rule)
-
-        self.load_port_forwarding_rules()
-
-    def _apply_rule_editor_defaults_for_type(
-        self,
-        idx,
-        listen_addr_row,
-        listen_port_row,
-        remote_host_row,
-        remote_port_row,
-        previous_idx=None,
-    ):
-        """Apply defaults for rule editor fields based on selected forwarding type."""
-        try:
-            if idx == 0:  # Local
-                if not listen_addr_row.get_text().strip():
-                    listen_addr_row.set_text('localhost')
-                try:
-                    if int((listen_port_row.get_text() or '0').strip() or '0') == 0:
-                        listen_port_row.set_text('8080')
-                except Exception:
-                    listen_port_row.set_text('8080')
-
-                # When switching from Remote to Local, always reset the local
-                # target host to localhost instead of carrying remote destination.
-                if previous_idx == 1:
-                    remote_host_row.set_text('localhost')
-                elif not remote_host_row.get_text().strip():
-                    remote_host_row.set_text('localhost')
-
-                try:
-                    if int((remote_port_row.get_text() or '0').strip() or '0') == 0:
-                        remote_port_row.set_text('22')
-                except Exception:
-                    remote_port_row.set_text('22')
-            elif idx == 1:  # Remote
-                # The bind address is on the REMOTE host and is optional — keep it
-                # empty by default. On a real switch into Remote, clear whatever a
-                # previous type seeded so it starts blank; on the initial load of
-                # an existing rule leave the populated value untouched.
-                if previous_idx is not None and previous_idx != idx:
-                    listen_addr_row.set_text('')
-                try:
-                    if int((listen_port_row.get_text() or '0').strip() or '0') == 0:
-                        listen_port_row.set_text('8080')
-                except Exception:
-                    listen_port_row.set_text('8080')
-                # Only seed a destination when the user actively switches into
-                # Remote from another type; on the initial load we leave it as-is
-                # so an existing single-argument (SOCKS) rule keeps its blank
-                # destination instead of being silently turned into a forward.
-                if previous_idx is not None and previous_idx != idx:
-                    if not remote_host_row.get_text().strip():
-                        remote_host_row.set_text('localhost')
-                    try:
-                        if int((remote_port_row.get_text() or '0').strip() or '0') == 0:
-                            remote_port_row.set_text('22')
-                    except Exception:
-                        remote_port_row.set_text('22')
-            else:  # Dynamic
-                if not listen_addr_row.get_text().strip():
-                    listen_addr_row.set_text('localhost')
-                try:
-                    if int((listen_port_row.get_text() or '0').strip() or '0') == 0:
-                        listen_port_row.set_text('1080')
-                except Exception:
-                    listen_port_row.set_text('1080')
-        except Exception:
-            pass
-    
-    def _show_port_info_dialog(self):
-        """Show a window with current port information"""
-        # Create Adw.Window
-        parent_win = self.get_transient_for() if hasattr(self, 'get_transient_for') else None
-        dialog = Adw.Window()
-        dialog.set_title(_("Port Information"))
-        dialog.set_default_size(600, 400)
-        dialog.set_modal(True)
-        if parent_win:
-            dialog.set_transient_for(parent_win)
-        
-        box = Gtk.Box(
-            orientation=Gtk.Orientation.VERTICAL, 
-            spacing=12,
-            margin_top=12,
-            margin_bottom=12,
-            margin_start=12,
-            margin_end=12
-        )
-        
-        # Header with refresh button
-        header_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        header_label = Gtk.Label()
-        header_label.set_markup(f"<b>{_('Currently Listening Ports')}</b>")
-        header_label.set_halign(Gtk.Align.START)
-        header_label.set_hexpand(True)
-        header_box.append(header_label)
-        
-        from sshpilot import icon_utils
-        refresh_button = Gtk.Button()
-        icon_utils.set_button_icon(refresh_button, "view-refresh-symbolic")
-        refresh_button.set_tooltip_text(_("Refresh port information"))
-        header_box.append(refresh_button)
-        
-        box.append(header_box)
-        
-        # Scrolled window for port list
-        scrolled = Gtk.ScrolledWindow()
-        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scrolled.set_vexpand(True)
-        
-        # Port list
-        port_list = Gtk.ListBox()
-        port_list.set_selection_mode(Gtk.SelectionMode.NONE)
-        port_list.add_css_class("boxed-list")
-        scrolled.set_child(port_list)
-        
-        box.append(scrolled)
-        
-        def refresh_port_info():
-            """Refresh the port information display"""
-            # Clear existing items
-            while row := port_list.get_first_child():
-                port_list.remove(row)
-            
-            try:
-                port_checker = get_port_checker()
-                ports = port_checker.get_listening_ports(refresh=True)
-                
-                if not ports:
-                    # Show empty state
-                    empty_row = Adw.ActionRow()
-                    empty_row.set_title(_("No listening ports found"))
-                    empty_row.set_subtitle(_("All ports appear to be available"))
-                    port_list.append(empty_row)
-                    return
-                
-                # Sort ports by port number
-                ports.sort(key=lambda p: p.port)
-                
-                for port_info in ports:
-                    row = Adw.ActionRow()
-                    
-                    # Title: Port and protocol
-                    title = f"{_('Port')} {port_info.port}/{port_info.protocol.upper()}"
-                    if port_info.address != "0.0.0.0":
-                        title += f" ({port_info.address})"
-                    row.set_title(title)
-                    
-                    # Subtitle: Process information
-                    if port_info.process_name and port_info.pid:
-                        subtitle = f"{port_info.process_name} (PID: {port_info.pid})"
-                    elif port_info.process_name:
-                        subtitle = port_info.process_name
-                    elif port_info.pid:
-                        subtitle = f"PID: {port_info.pid}"
-                    else:
-                        subtitle = _("Unknown process")
-                    
-                    row.set_subtitle(subtitle)
-                    
-                    # Add icon based on port type
-                    from sshpilot import icon_utils
-                    if port_info.port < 1024:
-                        icon = icon_utils.new_image_from_icon_name("security-high-symbolic")
-                        icon.set_tooltip_text(_("System port (requires root)"))
-                    else:
-                        icon = icon_utils.new_image_from_icon_name("network-transmit-receive-symbolic")
-                    
-                    row.add_prefix(icon)
-                    port_list.append(row)
-                    
-            except Exception as e:
-                logger.error(f"Error refreshing port info: {e}")
-                error_row = Adw.ActionRow()
-                error_row.set_title(_("Error loading port information"))
-                error_row.set_subtitle(str(e))
-                port_list.append(error_row)
-        
-        # Connect refresh button
-        refresh_button.connect("clicked", lambda *_: refresh_port_info())
-        
-        # Create header bar with window controls
-        header_bar = Adw.HeaderBar()
-        header_bar.set_show_end_title_buttons(True)
-        
-        # Create main container
-        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        main_box.append(header_bar)
-        main_box.append(box)
-        
-        # Set content for Adw.Window
-        dialog.set_content(main_box)
-        
-        # Load initial data
-        refresh_port_info()
-        
-        # Ensure dialog closes when the window controller is activated
-        dialog.connect("close-request", lambda *_: dialog.destroy())
-        
-        # Show the window
-        dialog.present()
-
-    def _autosave_forwarding_changes(self):
-        """Disabled autosave to avoid log floods; saving occurs on dialog Save."""
-        return
-
-    def _on_wol_detect_mac_clicked(self, button):
-        """Detect MAC from ARP in a background thread and update wol_mac_row."""
-        host = (self.hostname_row.get_text() or '').strip()
-        if not host:
-            self._row_set_message(self.wol_mac_row, _("Enter hostname first"), is_error=True)
-            return
-        try:
-            port_val = int((self.port_row.get_text() or '22').strip() or '22')
-        except ValueError:
-            port_val = 22
-        button.set_sensitive(False)
-        mac_row = self.wol_mac_row
-        detect_btn = button
-
-        def _detect():
-            mac = wol.get_mac_from_arp(host, port=port_val, trigger_first=True)
-            GLib.idle_add(_apply_result, mac)
-
-        def _apply_result(mac):
-            try:
-                detect_btn.set_sensitive(True)
-                if mac:
-                    mac_row.set_text(mac)
-                    self._row_set_message(mac_row, _("MAC detected"), is_error=False)
-                else:
-                    self._row_set_message(
-                        mac_row,
-                        _("Not found. Is the host on and on the same subnet?"),
-                        is_error=True,
-                    )
-            except Exception as e:
-                logger.debug("WoL detect callback: %s", e)
-                detect_btn.set_sensitive(True)
-
-        t = threading.Thread(target=_detect, daemon=True)
-        t.start()
-
-    def _show_host_picker_popover(self, button):
-        """Show a popover to pick a jump host from the saved connection inventory."""
-        if not self.connection_manager:
-            return
-
-        current_nickname = getattr(self.connection, 'nickname', '') if self.connection else ''
-        candidates = [
-            c for c in self.connection_manager.connections
-            if c.nickname != current_nickname
-        ]
-        if not candidates:
-            return
-
-        popover = Gtk.Popover()
-        popover.set_parent(button)
-        popover.set_has_arrow(True)
-
-        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        outer.set_margin_top(8)
-        outer.set_margin_bottom(8)
-        outer.set_margin_start(8)
-        outer.set_margin_end(8)
-        outer.set_size_request(280, -1)
-
-        search_entry = Gtk.SearchEntry()
-        search_entry.set_placeholder_text(_("Filter hosts…"))
-        outer.append(search_entry)
-
-        scrolled = Gtk.ScrolledWindow()
-        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scrolled.set_size_request(-1, min(300, len(candidates) * 56 + 8))
-
-        list_box = Gtk.ListBox()
-        list_box.set_selection_mode(Gtk.SelectionMode.SINGLE)
-        list_box.add_css_class('boxed-list')
-
-        def _make_row(conn):
-            row = Gtk.ListBoxRow()
-            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-            box.set_margin_top(6)
-            box.set_margin_bottom(6)
-            box.set_margin_start(8)
-            box.set_margin_end(8)
-            lbl_nick = Gtk.Label(label=conn.nickname)
-            lbl_nick.set_halign(Gtk.Align.START)
-            lbl_nick.add_css_class('heading')
-            box.append(lbl_nick)
-            host_str = getattr(conn, 'host', '') or getattr(conn, 'hostname', '')
-            user_str = getattr(conn, 'username', '')
-            subtitle = f"{user_str}@{host_str}" if user_str and host_str else host_str
-            if subtitle:
-                lbl_host = Gtk.Label(label=subtitle)
-                lbl_host.set_halign(Gtk.Align.START)
-                lbl_host.add_css_class('caption')
-                lbl_host.add_css_class('dim-label')
-                box.append(lbl_host)
-            row.set_child(box)
-            row._conn = conn
-            return row
-
-        for c in candidates:
-            list_box.append(_make_row(c))
-
-        def _filter_func(row):
-            query = search_entry.get_text().lower().strip()
-            if not query:
-                return True
-            conn = getattr(row, '_conn', None)
-            if conn is None:
-                return False
-            host_str = getattr(conn, 'host', '') or getattr(conn, 'hostname', '')
-            return query in conn.nickname.lower() or query in host_str.lower()
-
-        list_box.set_filter_func(_filter_func)
-        search_entry.connect('search-changed', lambda _e: list_box.invalidate_filter())
-
-        def _on_row_activated(_lb, row):
-            conn = getattr(row, '_conn', None)
-            if conn is None:
-                return
-            host_str = getattr(conn, 'host', '') or getattr(conn, 'hostname', '')
-            jump_target = conn.nickname
-            current = self.proxy_jump_row.get_text().strip()
-            if current:
-                self._set_text_without_completion(
-                    self.proxy_jump_row, current.rstrip(',') + ',' + jump_target
-                )
-            else:
-                self._set_text_without_completion(self.proxy_jump_row, jump_target)
-            popover.popdown()
-
-        list_box.connect('row-activated', _on_row_activated)
-        scrolled.set_child(list_box)
-        outer.append(scrolled)
-        popover.set_child(outer)
-        popover.popup()
-        search_entry.grab_focus()
-
-    def _tag_candidates(self):
-        """Known tags for inline completion in the tags row."""
-        cfg = getattr(self.parent_window, 'config', None)
-        if cfg is None or not hasattr(cfg, 'get_all_tags'):
-            return []
-        return [t for t, _n in cfg.get_all_tags()]
-
-    def _jump_host_candidates(self):
-        """Saved connection nicknames for inline completion in the jump hosts row."""
-        if not self.connection_manager:
-            return []
-        current = getattr(self.connection, 'nickname', '') if self.connection else ''
-        return sorted(
-            (c.nickname for c in self.connection_manager.connections
-             if c.nickname and c.nickname != current),
-            key=str.casefold,
-        )
-
-    def _setup_comma_autocomplete(self, row, get_candidates, separator=", "):
-        """Install inline completion + Tab-accept on a comma-separated EntryRow.
-
-        Completes the segment being typed at the end of the entry with the
-        first candidate (case-insensitive prefix match, already-listed values
-        skipped); the suggested suffix is selected so typing replaces it.
-        Tab accepts the suggestion and appends *separator* for the next value.
-        State lives on the row (row._ac_state); programmatic set_text should
-        go through _set_text_without_completion.
-        """
-        state = {'busy': False, 'prev_len': 0, 'active': False}
-        row._ac_state = state
-
-        def on_changed(_editable):
-            if state['busy']:
-                return
-            state['active'] = False
-            text = row.get_text()
-            prev_len = state['prev_len']
-            state['prev_len'] = len(text)
-            if len(text) <= prev_len:
-                return  # deletion (e.g. backspacing a suggestion) — don't re-complete
-            try:
-                cursor = row.get_position()
-            except Exception:
-                return
-            from .tag_groups import complete_tag_text
-            try:
-                result = complete_tag_text(text, cursor, get_candidates())
-            except Exception:
-                result = None
-            if result is None:
-                return
-            completed, select_start = result
-            state['busy'] = True
-            try:
-                row.set_text(completed)
-                # Keep prev_len at the typed text's length so deleting the
-                # selected suggestion doesn't immediately re-trigger completion.
-                state['prev_len'] = select_start
-                row.select_region(select_start, -1)
-                state['active'] = True
-            except Exception:
-                pass
-            finally:
-                state['busy'] = False
-
-        def on_key_pressed(_controller, keyval, _keycode, _modifier):
-            if keyval not in (Gdk.KEY_Tab, Gdk.KEY_KP_Tab):
-                return False
-            if not state['active']:
-                return False
-            bounds = row.get_selection_bounds()
-            text = row.get_text()
-            # Only act while the suggestion (selection reaching the end) is live.
-            if not bounds or bounds[1] != len(text):
-                state['active'] = False
-                return False
-            state['busy'] = True
-            try:
-                new_text = text + separator
-                row.set_text(new_text)
-                state['prev_len'] = len(new_text)
-                row.set_position(len(new_text))
-            except Exception:
-                return False
-            finally:
-                state['busy'] = False
-            state['active'] = False
-            return True
-
-        row.connect('changed', on_changed)
-        # Capture phase so Tab wins over the focus chain only when handled.
-        key_ctrl = Gtk.EventControllerKey()
-        key_ctrl.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
-        key_ctrl.connect('key-pressed', on_key_pressed)
-        row.add_controller(key_ctrl)
-
-    def _set_text_without_completion(self, row, text):
-        """Set a row's text without triggering its inline completion."""
-        state = getattr(row, '_ac_state', None)
-        if state:
-            state['busy'] = True
-        try:
-            row.set_text(text)
-            if state:
-                state['prev_len'] = len(text)
-                state['active'] = False
-        finally:
-            if state:
-                state['busy'] = False
-
-    def _show_tag_picker_popover(self, button):
-        """Show a popover to pick from the tags already used by other connections."""
-        cfg = getattr(self.parent_window, 'config', None)
-        if cfg is None or not hasattr(cfg, 'get_all_tags'):
-            return
-        try:
-            candidates = cfg.get_all_tags()
-        except Exception:
-            candidates = []
-        if not candidates:
-            return
-
-        popover = Gtk.Popover()
-        popover.set_parent(button)
-        popover.set_has_arrow(True)
-
-        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        outer.set_margin_top(8)
-        outer.set_margin_bottom(8)
-        outer.set_margin_start(8)
-        outer.set_margin_end(8)
-        outer.set_size_request(280, -1)
-
-        search_entry = Gtk.SearchEntry()
-        search_entry.set_placeholder_text(_("Filter tags…"))
-        outer.append(search_entry)
-
-        scrolled = Gtk.ScrolledWindow()
-        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scrolled.set_size_request(-1, min(300, len(candidates) * 44 + 8))
-
-        list_box = Gtk.ListBox()
-        list_box.set_selection_mode(Gtk.SelectionMode.SINGLE)
-        list_box.add_css_class('boxed-list')
-
-        def _make_row(tag, count):
-            row = Gtk.ListBoxRow()
-            box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-            box.set_margin_top(6)
-            box.set_margin_bottom(6)
-            box.set_margin_start(8)
-            box.set_margin_end(8)
-            icon = Gtk.Image.new_from_icon_name('tag-symbolic')
-            icon.set_valign(Gtk.Align.CENTER)
-            box.append(icon)
-            lbl = Gtk.Label(label=tag)
-            lbl.set_halign(Gtk.Align.START)
-            lbl.set_hexpand(True)
-            lbl.add_css_class('heading')
-            box.append(lbl)
-            lbl_count = Gtk.Label(label=_("{n} connections").format(n=count))
-            lbl_count.add_css_class('caption')
-            lbl_count.add_css_class('dim-label')
-            box.append(lbl_count)
-            row.set_child(box)
-            row._tag = tag
-            return row
-
-        for tag, count in candidates:
-            list_box.append(_make_row(tag, count))
-
-        def _filter_func(row):
-            query = search_entry.get_text().lower().strip()
-            if not query:
-                return True
-            tag = getattr(row, '_tag', None)
-            return bool(tag) and query in tag.lower()
-
-        list_box.set_filter_func(_filter_func)
-        search_entry.connect('search-changed', lambda _e: list_box.invalidate_filter())
-
-        def _on_row_activated(_lb, row):
-            tag = getattr(row, '_tag', None)
-            if not tag:
-                return
-            from .tag_groups import add_tag_to_list
-            current = [t.strip() for t in self.tags_row.get_text().split(',') if t.strip()]
-            tags, changed = add_tag_to_list(current, tag)
-            if changed:
-                self._set_text_without_completion(self.tags_row, ', '.join(tags))
-            popover.popdown()
-
-        list_box.connect('row-activated', _on_row_activated)
-        scrolled.set_child(list_box)
-        outer.append(scrolled)
-        popover.set_child(outer)
-        popover.popup()
-        search_entry.grab_focus()
-
     def on_cancel_clicked(self, button):
         """Handle cancel button click"""
         self.close()
@@ -4574,6 +3247,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
 
     def on_save_clicked(self, *_args):
         """Handle save button click or dialog save response"""
+        if getattr(self, '_secret_save_in_progress', False):
+            return
         # Plugin protocols collect their own (declarative) fields; the rest of
         # this method is the SSH path, which serializes to ~/.ssh/config.
         backend = self._selected_protocol_backend()
@@ -4683,6 +3358,14 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         nickname_for_meta = connection_data.get('nickname', '').strip()
         self._persist_connection_meta(nickname_for_meta)
 
+        if self.is_editing and self.connection:
+            connection_data['__previous_secret_identity'] = {
+                'nickname': getattr(self.connection, 'nickname', ''),
+                'hostname': getattr(self.connection, 'hostname', ''),
+                'host': getattr(self.connection, 'host', ''),
+                'username': getattr(self.connection, 'username', ''),
+            }
+
         # Update the connection object locally when editing (do not persist here; window handles persistence)
         if self.is_editing and self.connection:
             try:
@@ -4697,9 +3380,183 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             # Explicitly update forwarding rules to ensure they're fresh
             self.connection.forwarding_rules = forwarding_rules
             
-        # Emit signal with connection data
+        # Unlock first when needed, then persist all changed secrets in one worker. Secret
+        # backends may invoke external tools (notably ``bw``), so none of this I/O may run
+        # in the GTK signal handler.
+        if self._needs_secret_unlock_before_save(connection_data):
+            try:
+                from .secret_unlock_dialog import prompt_unlock
+
+                def _after_unlock(ok):
+                    if ok:
+                        self._store_secrets_then_save(connection_data)
+                    else:
+                        self._set_secret_save_busy(False)
+
+                self._set_secret_save_busy(True)
+                prompt_unlock(self, on_done=_after_unlock)
+                return
+            except Exception:
+                logger.debug("Secret unlock-on-save gate failed", exc_info=True)
+                self._set_secret_save_busy(False)
+                self.show_error(_("The secure storage backend could not be unlocked."))
+                return
+        self._store_secrets_then_save(connection_data)
+
+    def _set_secret_save_busy(self, busy):
+        self._secret_save_in_progress = bool(busy)
+        for button in getattr(self, '_save_buttons', []) or []:
+            try:
+                button.set_sensitive(not busy)
+            except Exception:
+                pass
+
+    def _store_secrets_then_save(self, connection_data):
+        """Persist changed secrets off-thread, then emit the normal save signal."""
+        operations = []
+        previous_identity = connection_data.pop('__previous_secret_identity', None)
+        manager = getattr(self, 'connection_manager', None)
+        if manager is None:
+            manager = getattr(getattr(self, 'parent_window', None),
+                              'connection_manager', None)
+
+        password = connection_data.get('password') or ''
+        if password or connection_data.get('password_changed'):
+            operations.append(('password', 'store' if password else 'delete', '', password))
+
+        editor = getattr(self, 'key_editor', None)
+        if editor is not None:
+            try:
+                passphrase_operations = editor.pending_passphrase_operations()
+                if passphrase_operations is None:
+                    self._set_secret_save_busy(False)
+                    self.show_error(_("Please correct the invalid key passphrase."))
+                    return
+                operations.extend(
+                    ('passphrase', action, path, value)
+                    for action, path, value in passphrase_operations)
+            except Exception:
+                logger.debug("Failed to collect key passphrase changes", exc_info=True)
+
+        # update_connection normally persists the password synchronously. Mark this save
+        # as pre-handled even when nothing changed so it does not repeat backend I/O.
+        connection_data['__secret_storage_done'] = True
+        if not operations:
+            self._set_secret_save_busy(False)
+            self._emit_connection_saved(connection_data)
+            return
+        if manager is None:
+            self.show_error(_("Secure storage is unavailable."))
+            return
+
+        from .secret_storage import get_secret_manager
+        from .secret_unlock_dialog import _friendly_backend_name, _spinner_dialog
+
+        secret_manager = get_secret_manager()
+        backend = secret_manager.selected_backend()
+        backend_name = _friendly_backend_name(backend)
+        _set_status, close_spinner, spinner = _spinner_dialog(
+            self,
+            _("Saving to {backend}").format(backend=backend_name),
+            _("Saving passwords and passphrases to secure storage…"),
+        )
+        self._set_secret_save_busy(True)
+
+        def _worker():
+            ok = True
+            try:
+                for secret_type, action, key, value in operations:
+                    if secret_type == 'password':
+                        username = connection_data.get('username') or ''
+                        if action == 'store':
+                            ok = bool(manager.store_connection_password(
+                                connection_data, value, username=username,
+                                previous_connection=previous_identity))
+                        else:
+                            removed = bool(manager.delete_connection_passwords(
+                                connection_data, username=username))
+                            if previous_identity:
+                                previous_user = previous_identity.get('username') or username
+                                removed = bool(manager.delete_connection_passwords(
+                                    previous_identity,
+                                    username=previous_user)) or removed
+                            ok = removed
+                    elif action == 'store':
+                        ok = bool(manager.store_key_passphrase(key, value))
+                    else:
+                        ok = bool(manager.delete_key_passphrase(key))
+                    if not ok:
+                        break
+            except Exception:
+                logger.exception("Failed to save connection secrets")
+                ok = False
+            GLib.idle_add(self._finish_secret_save, connection_data, ok,
+                          close_spinner, spinner, True)
+
+        completion_called = [False]
+
+        def _after_config_saved(ok):
+            completion_called[0] = True
+            if ok:
+                threading.Thread(target=_worker, daemon=True).start()
+            else:
+                self._finish_secret_save(
+                    connection_data, False, close_spinner, spinner, False)
+
+        # Preserve the established save order: persist connection/config data first, then
+        # its credentials. The private marker keeps update_connection from performing the
+        # same secret I/O synchronously inside this signal emission.
+        connection_data['__save_completion'] = _after_config_saved
+        self.emit('connection-saved', connection_data)
+        if not completion_called[0]:
+            _after_config_saved(False)
+
+    def _finish_secret_save(self, connection_data, ok, close_spinner, spinner,
+                            settings_saved):
+        """Finish an asynchronous secret save on the GTK main thread."""
+        def _after_closed(*_args):
+            self._set_secret_save_busy(False)
+            if ok:
+                self.close()
+            elif not settings_saved:
+                self.show_error(_("The connection settings could not be saved."))
+            else:
+                self.show_error(_(
+                    "The connection settings were saved, but secure storage rejected "
+                    "a password or passphrase. Please try saving again."
+                ))
+
+        connected = False
+        try:
+            spinner.connect('closed', _after_closed)
+            connected = True
+        except Exception:
+            pass
+        close_spinner()
+        if not connected:
+            _after_closed()
+        return False
+
+    def _emit_connection_saved(self, connection_data):
+        """Emit the saved signal and close the dialog."""
         self.emit('connection-saved', connection_data)
         self.close()
+
+    def _needs_secret_unlock_before_save(self, connection_data) -> bool:
+        """True when saving would store a secret — a host password or a key passphrase —
+        and the selected session backend (Bitwarden/Vaultwarden) is locked or not signed
+        in, so it should be unlocked before the secret is stored."""
+        try:
+            from .secret_storage import get_secret_manager
+            if not get_secret_manager().selected_needs_unlock():
+                return False
+            pw = connection_data.get('password')
+            if pw and str(pw).strip():
+                return True
+            editor = getattr(self, 'key_editor', None)
+            return bool(editor is not None and editor.has_pending_passphrases())
+        except Exception:
+            return False
 
     def show_error(self, message):
         """Show error message"""

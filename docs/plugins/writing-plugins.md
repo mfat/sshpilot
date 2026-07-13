@@ -171,6 +171,8 @@ the authoritative reference; this is the practical map.
   `ctx.add_connection_group(...)`.
 - **Secrets/settings (per-plugin, namespaced):** `ctx.secrets.get/set/delete`
   (OS keyring), `ctx.settings.get/set` (app config).
+- **Identities (read-only):** `ctx.identities.list()` (SSH identities from the
+  configured providers, e.g. ssh-agent keys), `ctx.identities.is_agent_available()`.
 - **UI:** `ctx.ui.register_page(page_id, title, icon_name, factory)`,
   `ctx.ui.open_page(page_id)`, `ctx.ui.notify(message)`;
   `ctx.ui.register_connection_action(action_id, label, icon_name, callback)`

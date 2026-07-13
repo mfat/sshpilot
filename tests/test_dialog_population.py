@@ -256,7 +256,6 @@ def _real_gtk_available():
 @pytest.mark.skipif(not _real_gtk_available(), reason="needs real libadwaita (gi is stubbed under the suite)")
 def test_dialog_load_save_round_trip(tmp_path):
     from types import SimpleNamespace
-    import gi
     from gi.repository import Gtk
     from sshpilot.connection_dialog import ConnectionDialog
 

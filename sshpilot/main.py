@@ -63,8 +63,6 @@ def load_resources():
                 # Following GNOME docs: https://developer.gnome.org/documentation/tutorials/themed-icons.html
                 # and GTK4 API: https://docs.gtk.org/gtk4/class.IconTheme.html
                 # We use set_resource_path() to prepend our base path so bundled icons are checked first
-                # Note: Even with resource paths set, the icon theme system may still prioritize
-                # system themes, so we also manually check resources in icon_utils.py
                 try:
                     display = Gdk.Display.get_default()
                     if display:
@@ -103,9 +101,8 @@ if not load_resources():
 from .icon_utils import patch_gtk_image
 patch_gtk_image()
 
-from .window import MainWindow
 from .platform_utils import is_macos, get_data_dir, get_state_dir
-from .preferences import should_hide_file_manager_options
+from .file_manager_integration import should_hide_file_manager_options
 from .startup_info import print_startup_info
 
 class SshPilotApplication(Adw.Application):
@@ -157,13 +154,20 @@ class SshPilotApplication(Adw.Application):
         if fatal_warnings:
             _enable_fatal_gtk_warnings()
 
-        # Print startup information
-        print_startup_info(isolated=isolated, verbose=verbose)
-        
+        # Startup diagnostics are deferred to idle (scheduled at the end of
+        # __init__) so their probing — ssh/sshpass version spawns and a Secret
+        # Service D-Bus connect — never blocks the pre-window main thread.
+
         # Apply saved application theme (light/dark/system)
         self.config = None
         self._default_shortcuts = {}
         self._action_order = []
+        # Names that appear in the shortcut editor and respect config overrides
+        # but are NOT applied via set_accels_for_action — they are triggered by a
+        # dedicated handler (e.g. SplitViewTab's CAPTURE-phase key controller).
+        # Claiming their accelerators globally would stop the keys reaching a
+        # normal terminal outside that context. See register_custom_shortcut.
+        self._custom_shortcut_names = set()
         self._accelerators_enabled = True
         self.accelerators_enabled = True
         self._config_handler = None
@@ -217,15 +221,23 @@ class SshPilotApplication(Adw.Application):
                 self.create_action('manage-files', self.on_manage_files, ['<Meta><Shift>o'])
             logger.debug("Using macOS-specific shortcuts (Meta key = Command key)")
         else:
-            # Linux/Windows shortcuts using Primary key
+            # Linux/Windows shortcuts using Primary key.
+            # Several defaults are disabled ([]) or rebound to avoid clashing with
+            # CLI tools / keyboard layouts; "safe" = combos GNOME Terminal/Ptyxis
+            # also grab (so a terminal never forwards them to the shell). Disabled
+            # actions stay listed/assignable in the shortcut editor.
             self.create_action('quit', self.on_quit_action, ['<primary><shift>q'])
-            self.create_action('new-connection', self.on_new_connection, ['<primary>n'])
-            self.create_action('open-new-connection-tab', self.on_open_new_connection_tab, ['<primary><alt>n'])
-            self.create_action('toggle-list', self.on_toggle_list, ['<primary><shift>l'])
+            # Ctrl+N clashes with readline/apps → rebind to Ctrl+Shift+N.
+            self.create_action('new-connection', self.on_new_connection, ['<primary><shift>n'])
+            # Ctrl+Alt+N clashes with AltGr/WM → disabled by default.
+            self.create_action('open-new-connection-tab', self.on_open_new_connection_tab, [])
+            # Not a terminal-standard combo → disabled by default.
+            self.create_action('toggle-list', self.on_toggle_list, [])
             self.create_action('search', self.on_search, ['<primary>f'])
             self.create_action('terminal-search', self.on_terminal_search, ['<primary><shift>f'])
             self.create_action('new-key', self.on_new_key, ['<primary><shift>k'])
-            self.create_action('edit-ssh-config', self.on_edit_ssh_config, ['<primary><shift>e'])
+            # Not a terminal-standard combo → disabled by default.
+            self.create_action('edit-ssh-config', self.on_edit_ssh_config, [])
             if not should_hide_file_manager_options():
                 self.create_action('manage-files', self.on_manage_files, ['<primary><shift>o'])
             logger.debug("Using Linux/Windows shortcuts (Primary key = Ctrl key)")
@@ -254,7 +266,8 @@ class SshPilotApplication(Adw.Application):
             self.create_action('preferences', self.on_preferences, ['<primary>comma'])
             self.create_action('tab-close', self.on_tab_close, ['<primary><shift>w'])
             self.create_action('broadcast-command', self.on_broadcast_command, ['<primary><shift>b'])
-            self.create_action('new-split-view-tab', self.on_new_split_view_tab, ['<primary><shift>s'])
+            # App-specific combo, not terminal-standard → disabled by default.
+            self.create_action('new-split-view-tab', self.on_new_split_view_tab, [])
         
         self.create_action('about', self.on_about)
         self.create_action('help', self.on_help, ['F1'])
@@ -276,7 +289,20 @@ class SshPilotApplication(Adw.Application):
             self.create_action('tab-overview', self.on_tab_overview, ['<Meta><Shift>Tab'])
         else:
             self.create_action('tab-overview', self.on_tab_overview, ['<primary><shift>Tab'])
-        
+
+        # Split-view shortcuts: editor-listed and override-able, triggered by
+        # SplitViewTab's CAPTURE-phase handler (not global accelerators).
+        # Disabled ([]) by default — the original Ctrl+Alt+HJKL / Ctrl+Alt+Shift
+        # / Ctrl+Shift combos clashed with CLI tools and keyboard layouts. They
+        # remain listed in the editor so users can assign their own. See
+        # SplitViewTab._on_key_pressed.
+        for _name in (
+            'split-focus-left', 'split-focus-down', 'split-focus-up', 'split-focus-right',
+            'split-resize-left', 'split-resize-down', 'split-resize-up', 'split-resize-right',
+            'split-layout-horizontal', 'split-layout-vertical', 'split-add-pane',
+        ):
+            self.register_custom_shortcut(_name, [])
+
         # Connect to signals
         self.connect('shutdown', self.on_shutdown)
         self.connect('activate', self.on_activate)
@@ -306,7 +332,21 @@ class SshPilotApplication(Adw.Application):
         
         # Initialize window reference
         self.window = None
-        
+
+        # Emit startup diagnostics once the main loop is running (i.e. after the
+        # window is created/presented), reusing the app Config so the backend
+        # lookup doesn't re-read config.json.
+        GLib.idle_add(
+            lambda: (
+                print_startup_info(
+                    isolated=self.isolated_mode,
+                    verbose=self.verbose_override,
+                    config=self.config,
+                ),
+                False,
+            )[1]
+        )
+
         logger.info("sshPilot application initialized")
     
     def on_activate(self, app):
@@ -337,9 +377,41 @@ class SshPilotApplication(Adw.Application):
         except Exception as exc:
             logger.debug(f"Failed to start askpass prompt server: {exc}")
 
+        # If a session-backed secret backend (Bitwarden/Vaultwarden) is selected and
+        # locked, prompt to unlock it now (password dialog + spinner) so the vault is
+        # ready before the first connection. Scheduled on idle so it runs after the
+        # connection manager's deferred backend-selection init.
+        try:
+            win = self.window or self.props.active_window
+            if win is not None:
+                from . import secret_unlock_dialog
+                GLib.idle_add(secret_unlock_dialog.unlock_at_startup, win)
+        except Exception as exc:
+            logger.debug(f"Failed to schedule startup vault unlock: {exc}")
+
+        try:
+            from .xterm_prewarm import schedule_xterm_prewarm
+            schedule_xterm_prewarm(self.config)
+        except Exception as exc:
+            logger.debug(f"Failed to schedule PyXterm prewarm: {exc}")
+
     def on_shutdown(self, app):
         """Clean up all resources when application is shutting down"""
         logger.info("Application shutdown initiated, cleaning up...")
+
+        # Mark every window quitting before any teardown. This path (direct app
+        # shutdown) bypasses cleanup_and_quit, which is the only other place
+        # _is_quitting is set — without this the shutdown-race guards
+        # (terminal spawn/colors, Docker Console pulse & refresh timers) never
+        # engage, and a live GLib timer can queue a draw against the disposing
+        # GSK renderer (Gsk-CRITICAL: gsk_renderer_render_texture).
+        try:
+            for window in app.get_windows():
+                window._is_quitting = True
+            if self.window is not None:
+                self.window._is_quitting = True
+        except Exception:
+            logger.debug("Failed to mark windows quitting on shutdown", exc_info=True)
 
         # Notify plugins first (before any teardown), then best-effort
         # deactivate them.
@@ -687,7 +759,9 @@ class SshPilotApplication(Adw.Application):
         self.add_action(action)
         if name not in self._action_order:
             self._action_order.append(name)
-        self._default_shortcuts[name] = list(shortcuts) if shortcuts else None
+        # ``[]`` (disabled but still listed/assignable in the editor) must be
+        # preserved distinctly from ``None`` (no shortcut, hidden from editor).
+        self._default_shortcuts[name] = list(shortcuts) if shortcuts is not None else None
         self._apply_shortcut_for_action(name)
 
     def register_window_shortcut(self, name, shortcuts):
@@ -697,10 +771,39 @@ class SshPilotApplication(Adw.Application):
         action to exist yet."""
         if name not in self._action_order:
             self._action_order.append(name)
-        self._default_shortcuts[name] = list(shortcuts) if shortcuts else None
+        self._default_shortcuts[name] = list(shortcuts) if shortcuts is not None else None
         self._apply_shortcut_for_action(name)
 
+    def register_custom_shortcut(self, name, shortcuts):
+        """Register a shortcut that appears in the editor and respects config
+        overrides but is NOT applied via ``set_accels_for_action``.
+
+        Used for shortcuts handled by a dedicated controller (e.g. split-view
+        pane navigation, intercepted in the CAPTURE phase before VTE). They must
+        not claim a global accelerator, or the keys would stop reaching a normal
+        terminal outside that context. The owning handler reads the effective
+        accelerators via ``get_effective_shortcuts``."""
+        if name not in self._action_order:
+            self._action_order.append(name)
+        self._default_shortcuts[name] = list(shortcuts) if shortcuts is not None else None
+        self._custom_shortcut_names.add(name)
+
+    def get_effective_shortcuts(self, name):
+        """Return the effective accelerators for an action (override or default)."""
+        default = self._default_shortcuts.get(name)
+        override = None
+        if self.config is not None:
+            try:
+                override = self.config.get_shortcut_override(name)
+            except Exception:
+                override = None
+        return override if override is not None else default
+
     def _apply_shortcut_for_action(self, name: str):
+        # Custom shortcuts (handled by a dedicated controller) are never applied
+        # as global accelerators; the owning handler reads them from config.
+        if name in getattr(self, '_custom_shortcut_names', set()):
+            return
         default = self._default_shortcuts.get(name)
         override = None
         if self.config is not None:
@@ -805,13 +908,6 @@ class SshPilotApplication(Adw.Application):
         self._gc_pending = False
         gc.collect()
         return False  # one-shot idle
-
-    def do_activate(self):
-        """Called when the application is activated"""
-        win = self.props.active_window
-        if not win:
-            win = MainWindow(application=self, isolated=self.isolated_mode)
-        win.present()
 
     def on_new_connection(self, action, param):
         """Handle new connection action"""
@@ -1080,6 +1176,29 @@ class SshPilotApplication(Adw.Application):
 _crash_log_fp = None  # module-global so the fd stays open for the process lifetime
 
 
+def _rotate_previous_crash_log(log_dir):
+    """Move a non-empty ``crash.log`` left by a previous run aside.
+
+    ``crash.log`` is only written when a run crashes, so a non-empty
+    ``crash.log`` in ``log_dir`` means the *previous* run crashed. Rotate it to
+    ``crash.log.previous`` and return that path so the UI can offer to report
+    it. Return ``None`` when there is nothing to preserve. Best-effort: any
+    failure is swallowed and returns ``None`` (the caller still starts a fresh
+    log). This is pure file I/O — it arms no faulthandler — so it is safe to
+    unit-test without colliding with pytest's own faulthandler.
+    """
+    try:
+        path = os.path.join(log_dir, 'crash.log')
+        if os.path.exists(path) and os.path.getsize(path) > 0:
+            preserved = os.path.join(log_dir, 'crash.log.previous')
+            os.replace(path, preserved)
+            return preserved
+    except Exception:
+        logging.getLogger(__name__).debug(
+            "Could not rotate previous crash.log", exc_info=True)
+    return None
+
+
 def _enable_crash_diagnostics():
     """Dump all-thread Python tracebacks (and leave a core) on fatal signals.
 
@@ -1104,14 +1223,7 @@ def _enable_crash_diagnostics():
         os.makedirs(log_dir, exist_ok=True)
         path = os.path.join(log_dir, 'crash.log')
         # Preserve a crash report left behind by the previous run.
-        try:
-            if os.path.exists(path) and os.path.getsize(path) > 0:
-                preserved = os.path.join(log_dir, 'crash.log.previous')
-                os.replace(path, preserved)
-                previous_crash = preserved
-        except Exception:
-            logging.getLogger(__name__).debug(
-                "Could not rotate previous crash.log", exc_info=True)
+        previous_crash = _rotate_previous_crash_log(log_dir)
         # Fresh log for this run so the next startup's detection stays clean.
         _crash_log_fp = open(path, 'w', buffering=1)
         faulthandler.enable(file=_crash_log_fp, all_threads=True)

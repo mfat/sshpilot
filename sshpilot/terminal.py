@@ -4,12 +4,9 @@ Integrated VTE terminal with SSH connection handling using system SSH client
 """
 
 import os
-import sys
 import logging
 import signal
 import time
-import random
-import json
 import re
 import gi
 from gettext import gettext as _
@@ -20,11 +17,14 @@ import subprocess
 import shutil
 import pwd
 from datetime import datetime
-from typing import Optional, List
-from .port_utils import get_port_checker
+from typing import Optional
 from .platform_utils import is_flatpak, is_macos, get_sshpass_path
-from .terminal_backends import BaseTerminalBackend, VTETerminalBackend, PyXtermTerminalBackend
-from .ssh_connection_builder import build_ssh_connection, ConnectionContext
+from .terminal_backends import (
+    BaseTerminalBackend,
+    VTETerminalBackend,
+    PyXtermTerminalBackend,
+    PyXtermBridgeBackend,
+)
 from .plugins.api import PluginContext, ProtocolError
 from .plugins.registry import protocol_registry
 
@@ -372,6 +372,8 @@ class TerminalWidget(Gtk.Box):
         # Add terminal to scrolled window and to the box via an overlay with a connecting view
         if self.terminal_widget is not None:
             self.scrolled_window.set_child(self.terminal_widget)
+            if hasattr(self.backend, "ensure_shell_loaded"):
+                self.backend.ensure_shell_loaded()
         self.overlay = Gtk.Overlay()
         self.overlay.set_child(self.scrolled_window)
 
@@ -662,11 +664,13 @@ class TerminalWidget(Gtk.Box):
 
         backend_name = (backend_name or "vte").lower()
 
-        if backend_name == "pyxterm":
+        # PyXterm.js is the embedded (in-process PTY bridge) backend — no server.
+        # "pyxterm2" is kept as an alias for any config that set it during testing.
+        if backend_name in ("pyxterm", "pyxterm2"):
             try:
-                backend = PyXtermTerminalBackend(self)
+                backend = PyXtermBridgeBackend(self)
                 if getattr(backend, "available", False):
-                    logger.info("Using PyXterm terminal backend")
+                    logger.info("Using PyXterm.js embedded terminal backend")
                     self._backend_name = "pyxterm"
                     return backend
                 logger.warning("PyXterm backend unavailable, falling back to VTE")
@@ -821,7 +825,7 @@ class TerminalWidget(Gtk.Box):
         except Exception:
             pass
 
-    def _set_disconnected_banner_visible(self, visible: bool, message: str = None):
+    def _set_disconnected_banner_visible(self, visible: bool, message: Optional[str] = None):
         try:
             # Allow callers (e.g., ssh-copy-id dialog) to suppress the red banner entirely
             if getattr(self, '_suppress_disconnect_banner', False):
@@ -1096,6 +1100,13 @@ class TerminalWidget(Gtk.Box):
 
     def _setup_ssh_terminal(self):
         """Set up terminal with direct SSH command using ssh_connection_builder (called from main thread)"""
+        # Shutdown race guard: the connect worker schedules this via idle_add, so
+        # it can run after cleanup_all() marked this terminal quitting (or the
+        # window began closing). Spawning SSH now leaks a process past shutdown.
+        root = self.get_root() if hasattr(self, 'get_root') else None
+        if getattr(self, '_is_quitting', False) or getattr(root, '_is_quitting', False):
+            logger.debug("Terminal/window quitting, skipping SSH spawn")
+            return
         try:
             # The spawn command comes from the connection's protocol backend
             # (sshpilot.plugins). For SSH ("plugin zero") this is a pure
@@ -1167,6 +1178,12 @@ class TerminalWidget(Gtk.Box):
                 env = os.environ.copy()
                 use_askpass = False
                 password_value = None
+
+            # Route identity/agent env injection through the selected identity provider
+            # (default: system ssh-agent), so all injection goes through one seam and
+            # honors the configured default. Idempotent over the inherited environment.
+            from .identity import get_identity_manager
+            env = get_identity_manager().apply_selected_to_env(env)
 
             # Remember whether a stored password was supplied this attempt, so an
             # auth failure can say "saved password rejected" rather than a generic
@@ -1281,7 +1298,7 @@ class TerminalWidget(Gtk.Box):
                 if "sshpass" in str(e) and "No such file or directory" in str(e):
                     logger.error("sshpass binary not found, falling back to askpass")
                     # Fall back to askpass method
-                    self._fallback_to_askpass(ssh_cmd, env_list)
+                    self._fallback_to_askpass(ssh_cmd, env_list, working_dir)
                 else:
                     self._on_connection_failed(str(e))
                 return
@@ -1320,7 +1337,7 @@ class TerminalWidget(Gtk.Box):
             logger.error(f"Failed to setup SSH terminal: {e}")
             self._on_connection_failed(str(e))
     
-    def _fallback_to_askpass(self, ssh_cmd, env_list):
+    def _fallback_to_askpass(self, ssh_cmd, env_list, working_dir=None):
         """Fallback when sshpass fails - allow interactive prompting"""
         try:
             logger.info("Falling back to interactive password prompt")
@@ -1581,8 +1598,22 @@ class TerminalWidget(Gtk.Box):
         self._connect_grace_timer_id = GLib.timeout_add(
             1000, self._on_connect_grace_elapsed
         )
+        # Embedded backend: also scan for evidence on every PTY output batch, so
+        # promotion happens in milliseconds rather than on the 1 s poll tick.
+        backend = getattr(self, 'backend', None)
+        if backend is not None and hasattr(backend, 'add_output_hook'):
+            try:
+                backend.add_output_hook(self._on_bridge_connect_evidence)
+            except Exception:
+                logger.debug("Could not register connect-evidence output hook", exc_info=True)
 
     def _cancel_connect_grace(self):
+        backend = getattr(self, 'backend', None)
+        if backend is not None and hasattr(backend, 'remove_output_hook'):
+            try:
+                backend.remove_output_hook(self._on_bridge_connect_evidence)
+            except Exception:
+                pass
         if getattr(self, '_connect_grace_timer_id', None):
             try:
                 GLib.source_remove(self._connect_grace_timer_id)
@@ -1687,6 +1718,17 @@ class TerminalWidget(Gtk.Box):
         self._pty_autofill_done = False
         vte = getattr(self, 'vte', None)
         if vte is None:
+            # No Vte.Terminal (embedded PyXterm backend): drive the same one-shot
+            # watcher from the backend's PTY output stream instead of VTE's
+            # 'contents-changed' signal. get_content()/feed_child() work there too.
+            backend = getattr(self, 'backend', None)
+            if backend is not None and hasattr(backend, 'add_output_hook'):
+                try:
+                    backend.add_output_hook(self._pty_autofill_tick)
+                    self._pty_autofill_timeout_id = GLib.timeout_add_seconds(
+                        30, self._cancel_pty_autofill)
+                except Exception:
+                    logger.debug("Could not arm PTY auto-fill via backend", exc_info=True)
             return
         try:
             self._pty_autofill_handler = vte.connect(
@@ -1734,6 +1776,13 @@ class TerminalWidget(Gtk.Box):
             except Exception:
                 pass
             self._pty_autofill_handler = None
+        # Embedded PyXterm backend: stop the output-driven watcher.
+        backend = getattr(self, 'backend', None)
+        if backend is not None and hasattr(backend, 'remove_output_hook'):
+            try:
+                backend.remove_output_hook(self._pty_autofill_tick)
+            except Exception:
+                pass
         tid = getattr(self, '_pty_autofill_timeout_id', None)
         if tid:
             try:
@@ -1742,6 +1791,46 @@ class TerminalWidget(Gtk.Box):
                 pass
             self._pty_autofill_timeout_id = None
         return False  # one-shot GLib timeout
+
+    def _pty_autofill_tick(self):
+        """Output-hook adapter for the embedded backend's auto-fill watcher."""
+        self._on_pty_autofill_changed(None)
+
+    def _on_bridge_connect_evidence(self):
+        """Embedded-backend connect-evidence scan, driven by each PTY output batch
+        (registered as an output hook while CONNECTING). Promotes to CONNECTED the
+        instant real remote output appears, instead of waiting for the 1 s poller.
+        Uses the same evidence matcher as the poller, so ssh's own local-side
+        chatter never falsely promotes; failures are left to the poller/child-exit."""
+        from .connection_manager import ConnectionState
+        if self.connection_state != ConnectionState.CONNECTING:
+            return
+        if self._scan_connect_evidence() == 'connected':
+            self._mark_connected()
+
+    def handle_backend_title(self, title):
+        """Handle an OSC 0/2 title from the embedded backend: update the tab title
+        and, like VTE's termprops path, promote a CONNECTING remote session (a
+        remote shell setting its title is login evidence)."""
+        if not title:
+            # Empty title events (e.g. an OSC 0/2 clear during init) are not
+            # evidence — ignore them entirely so they can't promote prematurely.
+            return
+        try:
+            remote_dir = self._parse_directory_from_title(title)
+            if remote_dir:
+                self._current_remote_directory = remote_dir
+            self.emit('title-changed', title)
+        except Exception:
+            logger.debug("handle_backend_title: title update failed", exc_info=True)
+        # A non-empty remote title is login evidence — promote a CONNECTING remote
+        # session, mirroring VTE's termprops path.
+        try:
+            from .connection_manager import ConnectionState
+            if self.connection_state == ConnectionState.CONNECTING and not self._is_local_terminal():
+                self._mark_connected()
+        except Exception:
+            pass
 
     def _classify_exit(self, exit_code, was_connected, extra_text=''):
         """Map an ssh exit into (ConnectionState, reason) from the exit code and
@@ -1811,14 +1900,6 @@ class TerminalWidget(Gtk.Box):
         except Exception as e:
             logger.debug(f"Failed to present forwarding error dialog: {e}")
         return False
-
-    def set_group_color(self, color: Optional[str]):
-        """Update the stored group color and refresh the theme if needed."""
-        self.group_color = color if color else None
-        try:
-            self.apply_theme()
-        except Exception:
-            logger.debug("Failed to reapply theme after group color update", exc_info=True)
 
     @staticmethod
     def _mix_rgba(base: Gdk.RGBA, other: Gdk.RGBA, ratio: float) -> Gdk.RGBA:
@@ -1944,7 +2025,7 @@ class TerminalWidget(Gtk.Box):
 
             # Prepare palette colors (16 ANSI colors)
             palette_colors = None
-            if 'palette' in profile and profile['palette']:
+            if profile.get('palette'):
                 palette_colors = []
                 for color_hex in profile['palette']:
                     color = Gdk.RGBA()
@@ -2322,7 +2403,6 @@ class TerminalWidget(Gtk.Box):
         after paste.  Now that cursor shape is driven from Python (set_cursor),
         the grab_focus is not needed here.
         """
-        pass
 
     def _on_vte_motion(self, controller, x, y):
         """Detect URL under the mouse cursor (both OSC 8 links and plain-text regexes)."""
@@ -2483,15 +2563,15 @@ class TerminalWidget(Gtk.Box):
     def _apply_terminal_encoding(self, encoding_value, update_config_on_fallback=True):
         # For PyXterm.js backend, encoding is handled at PTY bridge level (via luit)
         # No need to validate against VTE's supported encodings
-        if self.backend and hasattr(self.backend, '__class__'):
-            backend_name = self.backend.__class__.__name__
-            if backend_name == 'PyXtermTerminalBackend':
-                # PyXterm.js handles encoding via luit at PTY bridge level
-                # Accept any encoding - it will be wrapped with luit if needed
-                requested = encoding_value.strip() if isinstance(encoding_value, str) else ''
-                if requested:
-                    logger.debug("Encoding '%s' will be handled at PTY bridge level for PyXterm.js backend", requested)
-                return False
+        if isinstance(self.backend, PyXtermTerminalBackend):
+            # Applied on spawn (luit wrap); existing sessions need reconnect.
+            requested = encoding_value.strip() if isinstance(encoding_value, str) else ''
+            if requested:
+                logger.debug(
+                    "Encoding '%s' will be handled at PTY bridge level for PyXterm.js backend",
+                    requested,
+                )
+            return False
         
         # For VTE backend, validate encoding against VTE's supported list
         supported = self._get_supported_encodings()
@@ -2836,8 +2916,11 @@ class TerminalWidget(Gtk.Box):
             
             logger.info(f"Launching agent-based shell via flatpak-spawn with size {cols}x{rows}...")
             
-            # Environment for agent
-            env = os.environ.copy()
+            # Environment for agent. Route env injection through the selected identity
+            # provider so child processes (e.g. ssh run from this shell) reach the
+            # user's ssh-agent via the same seam as SSH connections.
+            from .identity import get_identity_manager
+            env = get_identity_manager().apply_selected_to_env(os.environ.copy())
             # Set TERM to a proper value only if missing or set to "dumb"
             if 'TERM' not in env or env.get('TERM', '').lower() == 'dumb':
                 env['TERM'] = 'xterm-256color'
@@ -2878,7 +2961,10 @@ class TerminalWidget(Gtk.Box):
         Set up local shell using direct spawn (legacy approach).
         This is the fallback when agent is not available.
         """
-        env = os.environ.copy()
+        # Route env injection through the selected identity provider (one seam for all
+        # SSH_AUTH_SOCK injection); idempotent over the inherited environment.
+        from .identity import get_identity_manager
+        env = get_identity_manager().apply_selected_to_env(os.environ.copy())
 
         # Determine the user's preferred shell
         shell = None
@@ -3048,6 +3134,10 @@ class TerminalWidget(Gtk.Box):
         """Set up a robust per-terminal context menu and actions."""
         try:
             logger.debug("Setting up terminal context menu...")
+            # Idempotent: drop any controllers/popover from a prior setup pass so we
+            # don't stack duplicate gestures (which open two menus per right-click).
+            self._teardown_context_menu()
+            self._menu_controller_registry = []
             # Per-widget action group
             self._menu_actions = Gio.SimpleActionGroup()
             act_copy = Gio.SimpleAction.new("copy", None)
@@ -3132,13 +3222,33 @@ class TerminalWidget(Gtk.Box):
                 search_section.append(_("Save Output…"), "term.save_contents")
                 self._menu_model.append_section(None, search_section)
 
-            # Popover - set parent to the terminal widget
+            # Popover parent + dismissal strategy.
+            #
+            # A grabbing (autohide) GtkPopover cannot establish its input grab over a
+            # WebKit WebView (the PyXterm.js backend) on Wayland — GDK logs "Tried to
+            # map a grabbing popup with a non-top most parent" and retries every frame,
+            # so the menu maps *without* a working grab and never sees a click-outside.
+            # That's why it only closes by activating an item.
+            #
+            # For the WebView backend, disable autohide (no grab, no warning) and drive
+            # dismissal manually: on the next press in the terminal, on focus-out, and
+            # on Escape. VTE is a normal widget where autohide works, so leave it.
             self._menu_popover = Gtk.PopoverMenu.new_from_model(self._menu_model)
             self._menu_popover.set_has_arrow(True)
-            # Set parent to the terminal widget (use backend widget if vte is None)
-            parent_widget = self.vte if self.vte is not None else (self.backend.widget if self.backend else self.terminal_widget)
+            if self.vte is not None:
+                parent_widget = self.vte
+            else:
+                parent_widget = self.scrolled_window or (
+                    self.backend.widget if self.backend else self.terminal_widget
+                )
             if parent_widget:
                 self._menu_popover.set_parent(parent_widget)
+            self._menu_parent_widget = parent_widget
+
+            self._menu_needs_manual_dismiss = self.vte is None
+            if self._menu_needs_manual_dismiss:
+                self._menu_popover.set_autohide(False)
+                self._install_manual_menu_dismissal(parent_widget)
 
             # Right-click gesture to open the context menu (BUBBLE phase is fine for right-click)
             gesture = Gtk.GestureClick()
@@ -3151,6 +3261,10 @@ class TerminalWidget(Gtk.Box):
                     except Exception:
                         pass
                     logger.debug(f"Context menu gesture: button={btn}, x={x}, y={y}")
+                    # A non-autohide menu (WebView backend) must be dismissed on the
+                    # next press in the terminal — this is the common "click away".
+                    if getattr(self, '_menu_needs_manual_dismiss', False):
+                        self._dismiss_context_menu()
                     if btn not in (Gdk.BUTTON_SECONDARY, 3):
                         logger.debug(f"Not a right-click button: {btn}")
                         return
@@ -3201,11 +3315,24 @@ class TerminalWidget(Gtk.Box):
                             self._link_section_in_menu = False
                     except Exception:
                         pass
-                    # Position popover near click
+                    # Position popover near the click. The gesture is on the backend
+                    # widget; when the popover is parented elsewhere (the scrolling
+                    # container, for the WebView backend) translate the point into the
+                    # parent's coordinate space.
                     try:
+                        px, py = x, y
+                        try:
+                            src = gest.get_widget()
+                            dest = getattr(self, '_menu_parent_widget', None)
+                            if src is not None and dest is not None and src is not dest:
+                                ok, tx, ty = src.translate_coordinates(dest, x, y)
+                                if ok:
+                                    px, py = tx, ty
+                        except Exception:
+                            pass
                         rect = Gdk.Rectangle()
-                        rect.x = int(x)
-                        rect.y = int(y)
+                        rect.x = int(px)
+                        rect.y = int(py)
                         rect.width = 1
                         rect.height = 1
                         self._menu_popover.set_pointing_to(rect)
@@ -3218,15 +3345,16 @@ class TerminalWidget(Gtk.Box):
             gesture.connect('pressed', _on_pressed)
             # Store gesture reference for cleanup
             self._menu_gesture = gesture
-            # Add gesture to the backend widget (VTE or WebView)
+            # Add gesture to the backend widget (VTE or WebView), recorded so a repeat
+            # setup pass removes it instead of stacking a duplicate.
             if self.backend and self.backend.widget:
-                self.backend.widget.add_controller(gesture)
+                self._register_menu_controller(self.backend.widget, gesture)
                 logger.debug(f"Added context menu gesture to backend widget: {type(self.backend).__name__}")
             elif self.vte is not None:
-                self.vte.add_controller(gesture)
+                self._register_menu_controller(self.vte, gesture)
                 logger.debug("Added context menu gesture to VTE widget")
             elif self.terminal_widget is not None:
-                self.terminal_widget.add_controller(gesture)
+                self._register_menu_controller(self.terminal_widget, gesture)
                 logger.debug("Added context menu gesture to terminal widget")
 
             # CAPTURE-phase left-click gesture for Ctrl+click URL opening.
@@ -3275,13 +3403,110 @@ class TerminalWidget(Gtk.Box):
                     except Exception as e:
                         logger.warning(f"URL click failed: {e}")
                 url_gesture.connect('pressed', _on_url_click)
-                self.vte.add_controller(url_gesture)
+                self._register_menu_controller(self.vte, url_gesture)
                 self._url_click_gesture = url_gesture
                 logger.debug("Added CAPTURE-phase Ctrl+click URL gesture to VTE widget")
 
             logger.debug("Terminal context menu setup completed successfully")
         except Exception as e:
             logger.error(f"Context menu setup failed: {e}")
+
+    def _dismiss_context_menu(self):
+        """Hide the context menu popover if it is showing (manual-dismiss backends)."""
+        popover = getattr(self, '_menu_popover', None)
+        if popover is None:
+            return
+        try:
+            if popover.get_visible():
+                popover.popdown()
+        except Exception:
+            pass
+
+    def _register_menu_controller(self, widget, controller):
+        """Attach a context-menu controller and record it so a later teardown can
+        remove exactly what was added (no wrong-widget remove_controller warnings)."""
+        if widget is None or controller is None:
+            return
+        try:
+            widget.add_controller(controller)
+            self._menu_controller_registry.append((widget, controller))
+        except Exception:
+            logger.debug("Failed to add context-menu controller", exc_info=True)
+
+    def _teardown_context_menu(self):
+        """Remove previously-installed context-menu controllers/popover.
+
+        ``setup_terminal()`` (hence ``_setup_context_menu``) can run more than once on
+        the same backend widget — e.g. prewarm adoption sets the terminal up, then
+        ``setup_local_shell`` sets it up again. Without this, each pass stacked another
+        gesture on the same widget, so a single right-click opened two popovers."""
+        for widget, controller in getattr(self, '_menu_controller_registry', []):
+            try:
+                widget.remove_controller(controller)
+            except Exception:
+                pass
+        self._menu_controller_registry = []
+        self._menu_gesture = None
+        self._menu_focus_controller = None
+        self._menu_key_controller = None
+        popover = getattr(self, '_menu_popover', None)
+        if popover is not None:
+            try:
+                popover.popdown()
+            except Exception:
+                pass
+            try:
+                popover.set_parent(None)
+            except Exception:
+                pass
+            self._menu_popover = None
+
+    def _install_manual_menu_dismissal(self, focus_widget):
+        """Dismiss the non-autohide WebView context menu on focus-out and Escape.
+
+        The next in-terminal press is handled by the context-menu gesture itself;
+        this covers clicking to another widget/app (focus leaves the terminal) and
+        the Escape key. A focus-out is honored only after confirming (on idle) that
+        focus did not move *into* the popover, so opening the menu can't self-close.
+        """
+        try:
+            focus_ctl = Gtk.EventControllerFocus()
+
+            def _on_leave(_c):
+                def _maybe_close():
+                    try:
+                        pop = getattr(self, '_menu_popover', None)
+                        if pop is None or not pop.get_visible():
+                            return False
+                        root = pop.get_root()
+                        focus = root.get_focus() if root is not None else None
+                        inside = bool(focus is not None and (focus is pop or focus.is_ancestor(pop)))
+                        if not inside:
+                            pop.popdown()
+                    except Exception:
+                        pass
+                    return False
+                GLib.idle_add(_maybe_close)
+
+            focus_ctl.connect("leave", _on_leave)
+            self._register_menu_controller(focus_widget, focus_ctl)
+            self._menu_focus_controller = focus_ctl
+        except Exception:
+            logger.debug("Could not attach context-menu focus controller", exc_info=True)
+
+        try:
+            key_ctl = Gtk.EventControllerKey()
+
+            def _on_key(_c, keyval, _keycode, _state):
+                if keyval == Gdk.KEY_Escape:
+                    self._dismiss_context_menu()
+                return False
+
+            key_ctl.connect("key-pressed", _on_key)
+            self._register_menu_controller(focus_widget, key_ctl)
+            self._menu_key_controller = key_ctl
+        except Exception:
+            logger.debug("Could not attach context-menu key controller", exc_info=True)
 
     def _install_shortcuts(self):
         """Install custom keyboard shortcuts for terminal operations."""
@@ -3640,7 +3865,7 @@ class TerminalWidget(Gtk.Box):
         self._set_disconnected_banner_visible(False)
         self.last_error_message = None
         
-    def _on_connection_lost(self, message: str = None):
+    def _on_connection_lost(self, message: Optional[str] = None):
         """Handle SSH connection loss"""
         if self.is_connected:
             logger.info(f"SSH connection to {self.connection.hostname} lost")
@@ -3660,7 +3885,6 @@ class TerminalWidget(Gtk.Box):
 
     def _on_terminal_input(self, widget, text, size):
         """Handle input from the terminal (handled automatically by VTE)"""
-        pass
             
     def _on_terminal_resize(self, widget, width, height):
         """Handle terminal resize events"""
@@ -3894,7 +4118,6 @@ class TerminalWidget(Gtk.Box):
         root = self.get_root() if hasattr(self, 'get_root') else None
         is_quitting = bool(getattr(root, '_is_quitting', False))
 
-        was_connected = self.is_connected
         if self.is_connected:
             logger.debug(f"Disconnecting SSH session {self.session_id}...")
             self.is_connected = False
@@ -4311,7 +4534,6 @@ class TerminalWidget(Gtk.Box):
     def on_bell(self, terminal):
         """Handle terminal bell"""
         # Could implement visual bell or notification here
-        pass
 
     def _on_selection_changed(self, *_args):
         """Copy-on-select: mirror the terminal selection into the clipboard when
@@ -4798,13 +5020,12 @@ class TerminalWidget(Gtk.Box):
             return False
             
         try:
-            if not hasattr(self, 'vte') or not self.vte:
-                return False
-                
+            # Works for any backend that exposes a real PTY (VTE or the embedded
+            # PyXterm bridge), so it is no longer gated on self.vte.
             pty = None
-            if self.backend:
+            if self.backend and hasattr(self.backend, 'get_pty'):
                 pty = self.backend.get_pty()
-            if pty is None and self.vte is not None:
+            if pty is None and getattr(self, 'vte', None) is not None:
                 try:
                     pty = self.vte.get_pty()
                 except Exception:
@@ -5471,7 +5692,6 @@ class TerminalWidget(Gtk.Box):
     
     def _on_drop_leave(self, drop_target):
         """Handle drag leave event."""
-        pass
     
     def _on_file_drop(self, drop_target, value, x, y):
         """Handle file drop event - initiate SCP upload."""
@@ -5554,8 +5774,6 @@ class TerminalWidget(Gtk.Box):
                     import time
                     import random
                     import subprocess
-                    import shutil
-                    from .ssh_utils import build_connection_ssh_options
                     
                     # Generate unique temp file name using timestamp and random number
                     temp_filename = f"/tmp/sshpilot_pwd_{int(time.time())}_{random.randint(1000, 9999)}.txt"
@@ -5564,7 +5782,7 @@ class TerminalWidget(Gtk.Box):
                     # Use $$ to get shell PID for uniqueness, or use the generated filename
                     pwd_cmd = f"pwd > {temp_filename}\n"
                     
-                    logger.debug(f"Sending pwd command to terminal: {repr(pwd_cmd)}")
+                    logger.debug(f"Sending pwd command to terminal: {pwd_cmd!r}")
                     
                     # Send command to terminal backend
                     if hasattr(self, 'backend') and self.backend and hasattr(self.backend, 'feed_child'):
@@ -5630,7 +5848,7 @@ class TerminalWidget(Gtk.Box):
                     except Exception:
                         pass  # Ignore cleanup errors
                     
-                    logger.debug(f"pwd file read result: returncode={result.returncode}, stdout={repr(result.stdout)}, stderr={repr(result.stderr)}")
+                    logger.debug(f"pwd file read result: returncode={result.returncode}, stdout={result.stdout!r}, stderr={result.stderr!r}")
                     
                     if result.returncode == 0:
                         if result.stdout:

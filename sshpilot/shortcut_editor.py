@@ -68,6 +68,17 @@ ACTION_LABELS: Dict[str, str] = {
     'new-split-view-tab': _('New Split View Tab'),
     'toggle-command-blocks': _('Command Blocks Sidebar'),
     'toggle_sidebar': _('Toggle Sidebar'),
+    'split-focus-left': _('Focus Pane Left'),
+    'split-focus-down': _('Focus Pane Down'),
+    'split-focus-up': _('Focus Pane Up'),
+    'split-focus-right': _('Focus Pane Right'),
+    'split-resize-left': _('Resize Pane Left'),
+    'split-resize-down': _('Resize Pane Down'),
+    'split-resize-up': _('Resize Pane Up'),
+    'split-resize-right': _('Resize Pane Right'),
+    'split-layout-horizontal': _('Split Side by Side'),
+    'split-layout-vertical': _('Split Top / Bottom'),
+    'split-add-pane': _('Add Pane'),
 }
 
 PASS_THROUGH_NOTICE = _('Shortcuts disabled while terminal pass-through mode is active')
@@ -259,6 +270,10 @@ class ShortcutsPreferencesPage(PreferencesPageBase):
         tab_group = Adw.PreferencesGroup()
         tab_group.set_title(_('Tab Management'))
 
+        split_group = Adw.PreferencesGroup()
+        split_group.set_title(_('Split View'))
+        split_group.set_description(_('Active whenever a split view tab is open.'))
+
         # Categorize actions
         general_actions = ['quit', 'preferences', 'help', 'shortcuts', 'toggle_sidebar']
         connection_actions = [
@@ -273,6 +288,11 @@ class ShortcutsPreferencesPage(PreferencesPageBase):
         terminal_actions = ['local-terminal', 'terminal-search', 'broadcast-command', 'toggle-command-blocks']
         tab_actions = ['tab-next', 'tab-prev', 'tab-move-left', 'tab-move-right',
                        'tab-close', 'tab-overview', 'new-split-view-tab']
+        split_actions = [
+            'split-focus-left', 'split-focus-down', 'split-focus-up', 'split-focus-right',
+            'split-resize-left', 'split-resize-down', 'split-resize-up', 'split-resize-right',
+            'split-layout-horizontal', 'split-layout-vertical', 'split-add-pane',
+        ]
 
         for name in self._action_names:
             row = Adw.ActionRow()
@@ -302,15 +322,16 @@ class ShortcutsPreferencesPage(PreferencesPageBase):
             row.add_suffix(assign_button)
 
             default_shortcuts = self._default_shortcuts.get(name)
-            reset_button: Optional[Gtk.Widget] = None
-            if current_shortcuts != default_shortcuts:
-                reset_button = Gtk.Button()
-                icon_utils.set_button_icon(reset_button, 'edit-undo-symbolic')
-                reset_button.set_tooltip_text(_('Reset to default'))
-                reset_button.add_css_class('flat')
-                reset_button.set_valign(Gtk.Align.CENTER)
-                reset_button.connect('clicked', self._on_reset_clicked, name)
-                row.add_suffix(reset_button)
+            reset_button = Gtk.Button()
+            icon_utils.set_button_icon(reset_button, 'edit-undo-symbolic')
+            reset_button.set_tooltip_text(_('Reset to default'))
+            reset_button.add_css_class('flat')
+            reset_button.set_valign(Gtk.Align.CENTER)
+            reset_button.set_visible(
+                not self._accelerators_equal(current_shortcuts, default_shortcuts)
+            )
+            reset_button.connect('clicked', self._on_reset_clicked, name)
+            row.add_suffix(reset_button)
 
             self._rows[name] = {
                 'row': row,
@@ -334,11 +355,14 @@ class ShortcutsPreferencesPage(PreferencesPageBase):
             elif name in tab_actions:
                 tab_group.add(row)
                 logger.debug(f"Added {name} to Tab Management group")
+            elif name in split_actions:
+                split_group.add(row)
+                logger.debug(f"Added {name} to Split View group")
             else:
                 general_group.add(row)
                 logger.debug(f"Added {name} to General group (fallback)")
 
-        for group in (general_group, connection_group, terminal_group, tab_group):
+        for group in (general_group, connection_group, terminal_group, tab_group, split_group):
             try:
                 group.add_css_class('boxed-list')
             except Exception:
@@ -350,42 +374,6 @@ class ShortcutsPreferencesPage(PreferencesPageBase):
                 except AttributeError:
                     self._shortcuts_container.add(group)
             logger.debug(f"Prepared group '{group.get_title()}' with {len(list(group))} children")
-
-        # Split view shortcuts are hardcoded (CAPTURE-phase handler in SplitViewTab)
-        # and are not customizable — show them as a read-only reference group.
-        split_group = Adw.PreferencesGroup()
-        split_group.set_title(_('Split View'))
-        split_group.set_description(_('These shortcuts are active whenever a split view tab is open. They cannot be customized.'))
-        _SPLIT_SHORTCUTS = [
-            ('Ctrl+Alt+H', _('Focus pane left')),
-            ('Ctrl+Alt+J', _('Focus pane down')),
-            ('Ctrl+Alt+K', _('Focus pane up')),
-            ('Ctrl+Alt+L', _('Focus pane right')),
-            ('Ctrl+Alt+Shift+H', _('Resize pane left')),
-            ('Ctrl+Alt+Shift+J', _('Resize pane down')),
-            ('Ctrl+Alt+Shift+K', _('Resize pane up')),
-            ('Ctrl+Alt+Shift+L', _('Resize pane right')),
-            ('Ctrl+Shift+\\', _('Side-by-side layout')),
-            ('Ctrl+Shift+-', _('Top / bottom layout')),
-            ('Ctrl+Shift+N', _('Add pane')),
-            ('Ctrl+Shift+W', _('Close focused pane')),
-            ('Alt+1 … Alt+4', _('Focus pane by number')),
-        ]
-        for accel, label in _SPLIT_SHORTCUTS:
-            row = Adw.ActionRow()
-            row.set_title(label)
-            row.set_subtitle(accel)
-            split_group.add(row)
-        try:
-            split_group.add_css_class('boxed-list')
-        except Exception:
-            pass
-        self._groups_list.append(split_group)
-        if self._shortcuts_container is not None:
-            try:
-                self._shortcuts_container.append(split_group)
-            except AttributeError:
-                self._shortcuts_container.add(split_group)
 
         self.set_pass_through_enabled(self._pass_through_enabled)
 
@@ -482,6 +470,23 @@ class ShortcutsPreferencesPage(PreferencesPageBase):
             return self._pending_overrides[action_name]
         return self._default_shortcuts.get(action_name)
 
+    @staticmethod
+    def _accelerators_equal(
+        a: Optional[List[str]], b: Optional[List[str]]
+    ) -> bool:
+        """Compare accelerator lists semantically (``<primary>q`` == ``<Control>q``)."""
+
+        def canonical(accels: Optional[List[str]]):
+            if accels is None:
+                return None
+            result = []
+            for accel in accels:
+                success, keyval, mods = Gtk.accelerator_parse(accel)
+                result.append((keyval, int(mods)) if success else (0, 0, accel))
+            return result
+
+        return canonical(a) == canonical(b)
+
     def _on_switch_toggled(self, switch: Gtk.Switch, _pspec, action_name: str):
         if switch.get_active():
             default = self._default_shortcuts.get(action_name)
@@ -519,7 +524,7 @@ class ShortcutsPreferencesPage(PreferencesPageBase):
             normalized = None
         else:
             normalized = list(accelerators)
-            if default is not None and normalized == default:
+            if default is not None and self._accelerators_equal(normalized, default):
                 normalized = None
 
         if normalized is None:
@@ -552,6 +557,13 @@ class ShortcutsPreferencesPage(PreferencesPageBase):
 
             row_data['base_subtitle'] = subtitle
             row.set_subtitle(subtitle)
+
+            reset_button = row_data.get('reset_button')
+            if reset_button is not None:
+                default_shortcuts = self._default_shortcuts.get(action_name)
+                reset_button.set_visible(
+                    not self._accelerators_equal(current_shortcuts, default_shortcuts)
+                )
 
             switch.handler_block_by_func(self._on_switch_toggled)
             switch.set_active(is_enabled)

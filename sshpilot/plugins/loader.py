@@ -89,7 +89,7 @@ def _read_manifest(directory: Path) -> Optional[dict]:
     if not manifest.is_file():
         return None
     try:
-        with open(manifest, "r", encoding="utf-8") as fh:
+        with open(manifest, encoding="utf-8") as fh:
             return json.load(fh)
     except (OSError, ValueError) as exc:
         logger.error("Invalid plugin manifest %s: %s", manifest, exc)
@@ -123,7 +123,7 @@ def _load_builtin(make_ctx,
     except ImportError:
         logger.error("Built-in plugin package missing")
         return loaded
-    pkg_dir = Path(list(builtin_pkg.__path__)[0])
+    pkg_dir = Path(next(iter(builtin_pkg.__path__)))
     for child in sorted(pkg_dir.iterdir()):
         meta = _read_manifest(child) if child.is_dir() else None
         if not meta or not _api_compatible(meta):
@@ -237,7 +237,7 @@ def _builtin_plugin_dir() -> Optional[Path]:
         builtin_pkg = importlib.import_module(BUILTIN_PACKAGE)
     except ImportError:
         return None
-    return Path(list(builtin_pkg.__path__)[0])
+    return Path(next(iter(builtin_pkg.__path__)))
 
 
 def discover_plugins() -> List[PluginInfo]:

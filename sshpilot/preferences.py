@@ -1,8 +1,8 @@
 """Preferences dialog and font selection utilities."""
 
 import os
+import functools
 import logging
-import subprocess
 import shutil
 import json
 import hashlib
@@ -21,14 +21,14 @@ from .file_manager_integration import (
     has_native_gvfs_support,
 )
 from .shortcut_editor import ShortcutsPreferencesPage
+from .monospace_font_dialog import MonospaceFontDialog
 
 
 import gi
 gi.require_version('Gtk', '4.0')
 gi.require_version('Gdk', '4.0')
 gi.require_version('Adw', '1')
-gi.require_version('Vte', '3.91')
-from gi.repository import Gtk, Gdk, Adw, Pango, PangoFT2, Vte, GLib, Gio
+from gi.repository import Gtk, Gdk, Adw, Pango, GLib, Gio
 
 logger = logging.getLogger(__name__)
 
@@ -172,339 +172,55 @@ def _install_group_display_preview_css():
     except Exception:
         logger.debug("Failed to install group display preview CSS", exc_info=True)
 
-def macos_third_party_terminal_available() -> bool:
-    """Check if a third-party terminal is available on macOS."""
-    if not is_macos():
-        return False
-
-    terminals = [
-        "iterm2",
-        "ghostty",
-        "alacritty",
-        "iterm",
-        "terminator",
-        "kitty",
-        "tmux",
-        "warp",
-    ]
-
-    applications_dir = "/Applications"
-    try:
-        for entry in os.listdir(applications_dir):
-            lower = entry.lower()
-            if any(lower.startswith(t) and entry.endswith(".app") for t in terminals):
-                return True
-    except Exception:
-        pass
-
-    for terminal in terminals:
-        if shutil.which(terminal):
-            return True
-
-    return False
+# These capability helpers moved to file_manager_integration so callers that
+# only need a boolean don't pull this heavy Preferences module onto the startup
+# path. Re-exported here for backward compatibility and this module's own uses.
+from .file_manager_integration import (  # noqa: E402,F401
+    macos_third_party_terminal_available,
+    should_hide_external_terminal_options,
+    should_show_force_internal_file_manager_toggle,
+    should_hide_file_manager_options,
+)
 
 
-def should_hide_external_terminal_options() -> bool:
-    """Check if external terminal options should be hidden.
+# Terminal color schemes offered in Preferences, in display order.
+# Display names AND colors both come from Config.terminal_themes (the single
+# source of truth). This tuple only fixes the picker order and which built-in
+# themes are user-selectable — Config also defines 'dark'/'light', which are
+# deliberately omitted from the picker. Keep this in sync with the keys in
+# Config.load_builtin_themes(); tests/test_preferences_scheme_keys.py enforces it.
+SCHEME_KEYS = (
+    'default', 'black_on_white', 'solarized_dark', 'solarized_light',
+    'monokai', 'dracula', 'nord', 'gruvbox_dark', 'one_dark',
+    'tomorrow_night', 'material_dark', 'rose_pine', 'rose_pine_moon',
+    'rose_pine_dawn', 'catppuccin_latte', 'catppuccin_frappe',
+    'catppuccin_macchiato', 'catppuccin_mocha',
+)
 
-    Returns True when running in Flatpak or when on macOS without a supported
-    third-party terminal.
+
+@functools.lru_cache(maxsize=1)
+def _detect_pyxterm_backend():
+    """Detect the embedded PyXterm.js backend. Result is stable for the process,
+    so memoize it — importing WebKit 6 loads the WebKitGTK shared library on the
+    main thread, which we never want to pay more than once.
+
+    It runs xterm.js in-process (no Flask/pyxtermjs server), so it needs only
+    WebKit 6 (GTK4) plus the xterm.js assets (system libjs-xterm or bundled).
+    Returns ``(available: bool, error: Optional[str])``.
     """
-    return is_flatpak() or (
-        is_macos() and not macos_third_party_terminal_available()
-    )
-
-
-def should_show_force_internal_file_manager_toggle() -> bool:
-    """Return True when the built-in toggle for forcing the internal manager should be shown."""
-
     try:
-        if is_macos():
-            return False
-        return bool(has_native_gvfs_support())
-    except Exception as exc:  # pragma: no cover - defensive
-        logger.debug("Failed to determine GVFS availability: %s", exc)
-        return False
-
-
-def should_hide_file_manager_options() -> bool:
-    """Check if file manager options should be hidden.
-
-    File manager UI should only be hidden when neither the native GVFS
-    integration nor the built-in manager are available. This allows the
-    Manage Files button to remain visible on platforms like macOS or Flatpak
-    where the new in-app manager is preferred.
-    """
-
+        import gi
+        gi.require_version('WebKit', '6.0')
+        from gi.repository import WebKit  # noqa: F401
+    except Exception as exc:
+        return False, f'WebKit 6.0 not available: {exc}'
     try:
-        if has_native_gvfs_support():
-            return False
-        if has_internal_file_manager():
-            return False
-    except Exception as exc:  # pragma: no cover - defensive
-        logger.debug("File manager capability detection failed: %s", exc)
-    return True
-
-class MonospaceFontDialog(Adw.Window):
-    def __init__(self, parent=None, current_font="Monospace 12"):
-        super().__init__()
-        
-        self.set_title("Select Terminal Font")
-        self.set_default_size(500, 600)
-        self.set_transient_for(parent)
-        self.set_modal(True)
-        
-        # Store callback
-        self.callback = None
-        
-        # Parse current font
-        self.current_font_desc = Pango.FontDescription.from_string(current_font)
-        
-        # Create main content
-        self.setup_ui()
-        self.populate_fonts()
-        
-    def setup_ui(self):
-        # Main box
-        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        main_box.set_margin_top(12)
-        main_box.set_margin_bottom(12)
-        main_box.set_margin_start(12)
-        main_box.set_margin_end(12)
-        
-        # Header
-        header = Adw.HeaderBar()
-        header.set_show_start_title_buttons(False)
-        header.set_show_end_title_buttons(False)
-        
-        # Cancel button
-        cancel_btn = Gtk.Button(label="Cancel")
-        cancel_btn.connect("clicked", self.on_cancel)
-        header.pack_start(cancel_btn)
-        
-        # Select button
-        select_btn = Gtk.Button(label="Select")
-        select_btn.add_css_class("suggested-action")
-        select_btn.connect("clicked", self.on_select)
-        header.pack_end(select_btn)
-        
-        # Create search entry
-        self.search_entry = Gtk.SearchEntry()
-        self.search_entry.set_placeholder_text("Search fonts...")
-        self.search_entry.connect("search-changed", self.on_search_changed)
-        
-        # Create font list
-        self.font_model = Gtk.ListStore(str, str, object)  # display_name, family, font_desc
-        self.font_filter = Gtk.TreeModelFilter(child_model=self.font_model)
-        self.font_filter.set_visible_func(self.filter_fonts)
-        
-        self.font_view = Gtk.TreeView(model=self.font_filter)
-        self.font_view.set_headers_visible(False)
-        
-        # Font name column
-        name_renderer = Gtk.CellRendererText()
-        name_column = Gtk.TreeViewColumn("Font", name_renderer, text=0)
-        self.font_view.append_column(name_column)
-        
-        # Selection handling
-        selection = self.font_view.get_selection()
-        selection.connect("changed", self.on_selection_changed)
-        
-        # Scrolled window for font list
-        scrolled = Gtk.ScrolledWindow()
-        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scrolled.set_child(self.font_view)
-        scrolled.set_vexpand(True)
-        
-        # Size selection
-        size_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        size_label = Gtk.Label(label="Size:")
-        size_label.set_halign(Gtk.Align.START)
-        
-        self.size_spin = Gtk.SpinButton.new_with_range(6, 72, 1)
-        self.size_spin.set_value(self.current_font_desc.get_size() / Pango.SCALE)
-        self.size_spin.connect("value-changed", self.on_size_changed)
-        
-        size_box.append(size_label)
-        size_box.append(self.size_spin)
-        
-        # Preview text
-        preview_frame = Gtk.Frame()
-        preview_frame.set_label("Preview")
-
-        self.preview_label = Gtk.Label()
-        self.preview_label.set_text(
-            "The quick brown fox jumps over the lazy dog\n0123456789 !@#$%^&*()_+-=[]{}|;:,.<>?"
-        )
-        self.preview_label.set_margin_top(12)
-        self.preview_label.set_margin_bottom(12)
-        self.preview_label.set_margin_start(12)
-        self.preview_label.set_margin_end(12)
-        self.preview_label.set_selectable(True)
-        self.preview_label.set_wrap(True)
-        self.preview_label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
-        self.preview_label.set_xalign(0.0)
-
-        preview_scroller = Gtk.ScrolledWindow()
-        preview_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        preview_scroller.set_min_content_height(140)
-        preview_scroller.set_max_content_height(140)
-        preview_scroller.set_hexpand(True)
-        preview_scroller.set_vexpand(False)
-        preview_scroller.set_child(self.preview_label)
-
-        preview_frame.set_child(preview_scroller)
-        
-        # Add everything to main box
-        main_box.append(header)
-        main_box.append(self.search_entry)
-        main_box.append(scrolled)
-        main_box.append(size_box)
-        main_box.append(preview_frame)
-        
-        self.set_content(main_box)
-        
-    def populate_fonts(self):
-        # Get font map
-        fontmap = PangoFT2.FontMap.new()
-        families = fontmap.list_families()
-        
-        monospace_families = []
-        for family in families:
-            if family.is_monospace():
-                family_name = family.get_name()
-                
-                # Get available faces for this family
-                faces = family.list_faces()
-                for face in faces:
-                    face_name = face.get_face_name()
-                    
-                    # Create font description
-                    desc = Pango.FontDescription()
-                    desc.set_family(family_name)
-                    desc.set_size(12 * Pango.SCALE)
-                    
-                    # Set style if not regular
-                    if face_name.lower() != "regular":
-                        if "bold" in face_name.lower():
-                            desc.set_weight(Pango.Weight.BOLD)
-                        if "italic" in face_name.lower() or "oblique" in face_name.lower():
-                            desc.set_style(Pango.Style.ITALIC)
-                    
-                    # Display name
-                    if face_name.lower() == "regular":
-                        display_name = family_name
-                    else:
-                        display_name = f"{family_name} {face_name}"
-                    
-                    monospace_families.append((display_name, family_name, desc))
-        
-        # Sort by family name
-        monospace_families.sort(key=lambda x: x[0].lower())
-        
-        # Add to model
-        for display_name, family_name, desc in monospace_families:
-            self.font_model.append([display_name, family_name, desc])
-            
-        # Select current font if possible
-        self.select_current_font()
-        
-    def select_current_font(self):
-        current_family = self.current_font_desc.get_family()
-        if not current_family:
-            return
-            
-        iter = self.font_model.get_iter_first()
-        while iter:
-            family = self.font_model.get_value(iter, 1)
-            if family.lower() == current_family.lower():
-                # Convert to filter iter
-                filter_iter = self.font_filter.convert_child_iter_to_iter(iter)
-                if filter_iter[1]:  # Check if conversion was successful
-                    selection = self.font_view.get_selection()
-                    selection.select_iter(filter_iter[1])
-                    
-                    # Scroll to selection
-                    path = self.font_filter.get_path(filter_iter[1])
-                    self.font_view.scroll_to_cell(path, None, False, 0.0, 0.0)
-                break
-            iter = self.font_model.iter_next(iter)
-    
-    def filter_fonts(self, model, iter, data):
-        search_text = self.search_entry.get_text().lower()
-        if not search_text:
-            return True
-            
-        font_name = model.get_value(iter, 0).lower()
-        return search_text in font_name
-    
-    def on_search_changed(self, entry):
-        self.font_filter.refilter()
-    
-    def on_selection_changed(self, selection):
-        model, iter = selection.get_selected()
-        if iter:
-            font_desc = model.get_value(iter, 2).copy()
-            font_desc.set_size(int(self.size_spin.get_value()) * Pango.SCALE)
-            self.update_preview(font_desc)
-    
-    def on_size_changed(self, spin):
-        selection = self.font_view.get_selection()
-        model, iter = selection.get_selected()
-        if iter:
-            font_desc = model.get_value(iter, 2).copy()
-            font_desc.set_size(int(spin.get_value()) * Pango.SCALE)
-            self.update_preview(font_desc)
-    
-    def update_preview(self, font_desc):
-        # Remove previous CSS provider if it exists
-        if hasattr(self, '_css_provider'):
-            context = self.preview_label.get_style_context()
-            context.remove_provider(self._css_provider)
-        
-        # Create CSS for the font
-        css = f"""
-        .preview-font {{
-            font-family: "{font_desc.get_family()}";
-            font-size: {font_desc.get_size() / Pango.SCALE}pt;
-            font-weight: normal;
-            font-style: normal;
-        """
-        
-        if font_desc.get_weight() == Pango.Weight.BOLD:
-            css += "font-weight: bold;"
-        if font_desc.get_style() == Pango.Style.ITALIC:
-            css += "font-style: italic;"
-            
-        css += "}"
-        
-        # Apply CSS
-        self._css_provider = Gtk.CssProvider()
-        self._css_provider.load_from_data(css.encode())
-        
-        context = self.preview_label.get_style_context()
-        context.add_provider(self._css_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
-        
-        # Ensure the class is added (but only once)
-        if not context.has_class("preview-font"):
-            context.add_class("preview-font")
-    
-    def on_cancel(self, button):
-        self.close()
-    
-    def on_select(self, button):
-        selection = self.font_view.get_selection()
-        model, iter = selection.get_selected()
-        if iter and self.callback:
-            font_desc = model.get_value(iter, 2).copy()
-            font_desc.set_size(int(self.size_spin.get_value()) * Pango.SCALE)
-            font_string = font_desc.to_string()
-            self.callback(font_string)
-        self.close()
-    
-    def set_callback(self, callback):
-        """Set callback function that receives the selected font string"""
-        self.callback = callback
+        from .xterm_shell import asset_dir
+        if not os.path.isfile(os.path.join(asset_dir(), 'xterm.js')):
+            return False, 'xterm.js assets not found'
+    except Exception as exc:
+        return False, f'xterm.js assets error: {exc}'
+    return True, None
 
 
 class PreferencesWindow(Adw.Window):
@@ -528,6 +244,12 @@ class PreferencesWindow(Adw.Window):
         self.open_file_manager_externally_row = None
 
         self._config_signal_id = None
+        self._bw_ui_refresh_id = None
+        self._bw_probe_in_flight = False
+        self._rbw_probe_in_flight = False
+        self._secret_backend_selection_sync = False
+        self._secrets_page_probes_done = False
+        self._secrets_page_id = None
 
         if hasattr(self.config, 'connect'):
             try:
@@ -561,6 +283,7 @@ class PreferencesWindow(Adw.Window):
 
         # Save on close to persist advanced SSH settings
         self.connect('close-request', self.on_close_request)
+        self.connect('map', self._on_preferences_map)
     
     def setup_navigation_layout(self):
         """Configure split view layout using OverlaySplitView."""
@@ -688,6 +411,8 @@ class PreferencesWindow(Adw.Window):
         if row is not None:
             page_name = row.get_name()
             self.content_stack.set_visible_child_name(page_name)
+            if page_name == getattr(self, '_secrets_page_id', None):
+                self._ensure_secrets_page_probes()
             if isinstance(row, Adw.ActionRow):
                 title = row.get_title() or ""
                 self._update_header_title(title)
@@ -708,12 +433,26 @@ class PreferencesWindow(Adw.Window):
         # Keep window title static as "Preferences" only
         self.set_title(self._base_header_title)
 
+    @staticmethod
+    def _page_id(title):
+        """Sidebar/stack id derived from a page title. Single source of truth so callers
+        that need to reference a page by id (e.g. the deferred secrets-page probes) can't
+        drift from what ``add_page_to_layout`` registers."""
+        return title.lower().replace(' ', '-')
+
     def add_page_to_layout(self, title, icon_name, page):
         """Add a page to the custom layout"""
         # Create sidebar row
         row = Adw.ActionRow()
+        # Sidebar titles are plain text; disable Pango markup before setting the title
+        # so characters like '&' (e.g. "Security & Credentials") render literally
+        # instead of failing markup parsing and showing an empty label.
+        try:
+            row.set_use_markup(False)
+        except Exception:
+            pass
         row.set_title(title)
-        page_id = title.lower().replace(' ', '-')
+        page_id = self._page_id(title)
         row.set_name(page_id)
         
         # Add icon using bundled icon helper
@@ -767,52 +506,22 @@ class PreferencesWindow(Adw.Window):
             self.color_scheme_row.set_title("Color Scheme")
             self.color_scheme_row.set_subtitle("Terminal color theme")
             
+            # Names come straight from Config.terminal_themes (single source of truth)
+            themes = getattr(self.config, 'terminal_themes', {}) or {}
             color_schemes = Gtk.StringList()
-            color_schemes.append("Default")
-            color_schemes.append("Black on White")
-            color_schemes.append("Solarized Dark")
-            color_schemes.append("Solarized Light")
-            color_schemes.append("Monokai")
-            color_schemes.append("Dracula")
-            color_schemes.append("Nord")
-            color_schemes.append("Gruvbox Dark")
-            color_schemes.append("One Dark")
-            color_schemes.append("Tomorrow Night")
-            color_schemes.append("Material Dark")
-            color_schemes.append("Rosé Pine")
-            color_schemes.append("Rosé Pine Moon")
-            color_schemes.append("Rosé Pine Dawn")
-            color_schemes.append("Catppuccin Latte")
-            color_schemes.append("Catppuccin Frappé")
-            color_schemes.append("Catppuccin Macchiato")
-            color_schemes.append("Catppuccin Mocha")
+            for key in SCHEME_KEYS:
+                color_schemes.append(themes.get(key, {}).get('name', key))
             self.color_scheme_row.set_model(color_schemes)
-            
-            # Set current color scheme from config
+
+            # Select the saved scheme; fall back to the first entry if unknown
             current_scheme_key = self.config.get_setting('terminal.theme', 'default')
-            
-            # Get the display name for the current scheme key
-            theme_mapping = self.get_theme_name_mapping()
-            reverse_mapping = {v: k for k, v in theme_mapping.items()}
-            current_scheme_display = reverse_mapping.get(current_scheme_key, 'Default')
-            
-            # Find the index of the current scheme in the dropdown
-            scheme_names = [
-                "Default", "Black on White", "Solarized Dark", "Solarized Light",
-                "Monokai", "Dracula", "Nord",
-                "Gruvbox Dark", "One Dark", "Tomorrow Night", "Material Dark",
-                "Rosé Pine", "Rosé Pine Moon", "Rosé Pine Dawn",
-                "Catppuccin Latte", "Catppuccin Frappé", "Catppuccin Macchiato", "Catppuccin Mocha"
-            ]
             try:
-                current_index = scheme_names.index(current_scheme_display)
-                self.color_scheme_row.set_selected(current_index)
+                current_index = SCHEME_KEYS.index(current_scheme_key)
             except ValueError:
-                # If the saved scheme isn't found, default to the first option
-                self.color_scheme_row.set_selected(0)
-                # Also update the config to use the default value
-                self.config.set_setting('terminal.theme', 'default')
-            
+                current_index = 0
+                self.config.set_setting('terminal.theme', SCHEME_KEYS[0])
+            self.color_scheme_row.set_selected(current_index)
+
             self.color_scheme_row.connect('notify::selected', self.on_color_scheme_changed)
 
             appearance_group.add(self.color_scheme_row)
@@ -892,12 +601,7 @@ class PreferencesWindow(Adw.Window):
             self.pass_through_switch.set_subtitle(
                 "Disable all keyboard shortcuts, pass all key events directly to terminal"
             )
-            try:
-                pass_through_active = bool(
-                    self.config.get_setting('terminal.pass_through_mode', False)
-                )
-            except Exception:
-                pass_through_active = False
+            pass_through_active = bool(self.config.get_setting('terminal.pass_through_mode', False))
             self._pass_through_enabled = pass_through_active
             self.pass_through_switch.set_active(pass_through_active)
             self.pass_through_switch.connect('notify::active', self.on_pass_through_mode_toggled)
@@ -913,12 +617,7 @@ class PreferencesWindow(Adw.Window):
             self.copy_on_select_switch.set_subtitle(
                 "Automatically copy selected text to the clipboard"
             )
-            try:
-                copy_on_select_active = bool(
-                    self.config.get_setting('terminal.copy_on_select', False)
-                )
-            except Exception:
-                copy_on_select_active = False
+            copy_on_select_active = bool(self.config.get_setting('terminal.copy_on_select', False))
             self.copy_on_select_switch.set_active(copy_on_select_active)
             self.copy_on_select_switch.connect('notify::active', self.on_copy_on_select_toggled)
             mouse_group.add(self.copy_on_select_switch)
@@ -928,12 +627,7 @@ class PreferencesWindow(Adw.Window):
             self.paste_on_right_click_switch.set_subtitle(
                 "Right-click pastes; Shift+right-click opens the menu"
             )
-            try:
-                paste_on_right_click_active = bool(
-                    self.config.get_setting('terminal.paste_on_right_click', False)
-                )
-            except Exception:
-                paste_on_right_click_active = False
+            paste_on_right_click_active = bool(self.config.get_setting('terminal.paste_on_right_click', False))
             self.paste_on_right_click_switch.set_active(paste_on_right_click_active)
             self.paste_on_right_click_switch.connect(
                 'notify::active', self.on_paste_on_right_click_toggled
@@ -1030,7 +724,7 @@ class PreferencesWindow(Adw.Window):
             group_appearance_group = Adw.PreferencesGroup(title="Group Appearance")
 
             # Sidebar group color display mode
-            self._group_color_display_values = ['fill', 'badge']
+            self._group_color_display_values = ['fill', 'badge', 'bar']
             self.group_color_display_row = Adw.ComboRow()
             self.group_color_display_row.set_title("Sidebar Group Colors")
             self.group_color_display_row.set_subtitle(
@@ -1040,6 +734,7 @@ class PreferencesWindow(Adw.Window):
             color_display_options = Gtk.StringList()
             color_display_options.append("Colored Rows")
             color_display_options.append("Color Badges")
+            color_display_options.append("Accent Bars")
             self.group_color_display_row.set_model(color_display_options)
 
             current_mode = 'fill'
@@ -1505,6 +1200,16 @@ class PreferencesWindow(Adw.Window):
             )
             show_connection_icon_switch.connect('notify::active', self.on_sidebar_show_connection_icon_changed)
             sidebar_group.add(show_connection_icon_switch)
+
+            # Display group icon toggle
+            show_group_icon_switch = Adw.SwitchRow()
+            show_group_icon_switch.set_title("Display Group Icon")
+            show_group_icon_switch.set_subtitle("Show the folder icon in group rows")
+            show_group_icon_switch.set_active(
+                self.config.get_setting('ui.sidebar_show_group_icon', True)
+            )
+            show_group_icon_switch.connect('notify::active', self.on_sidebar_show_group_icon_changed)
+            sidebar_group.add(show_group_icon_switch)
             
             interface_page.add(sidebar_group)
 
@@ -1715,6 +1420,12 @@ class PreferencesWindow(Adw.Window):
             advanced_page.set_title("Advanced")
             advanced_page.set_icon_name("applications-system-symbolic")
 
+            # Security & Credentials page — secret storage + identity provider live here
+            # (built below alongside the Advanced page, then registered as its own page).
+            security_page = Adw.PreferencesPage()
+            security_page.set_title("Security & Credentials")
+            security_page.set_icon_name("dialog-password-symbolic")
+
             # Operation mode selection
             operation_group = Adw.PreferencesGroup(title="Operation Mode")
 
@@ -1757,6 +1468,256 @@ class PreferencesWindow(Adw.Window):
             self._update_operation_mode_styles()
 
             advanced_page.add(operation_group)
+
+            # Secret storage backend selection
+            secrets_group = Adw.PreferencesGroup(
+                title="Secret Storage",
+                description=_(
+                    "Where sshPilot stores passwords and key passphrases. "
+                    "Switching does not migrate existing secrets.\n"
+                    "Note: Bitwarden/Vaultwarden keep the unlocked session token in the "
+                    "environment while sshPilot runs, so other programs running as your "
+                    "user can read the vault until you quit."
+                ),
+            )
+            self.secret_backend_row = Adw.ComboRow()
+            self.secret_backend_row.set_title("Secret storage backend")
+            try:
+                from .secret_storage import get_secret_manager
+                self._secret_backend_mgr = get_secret_manager()
+                registered = self._secret_backend_mgr.registered_backends()
+            except Exception:
+                self._secret_backend_mgr = None
+                registered = []
+            current_backend = str(self.config.get_setting('secrets.backend', 'auto'))
+            if current_backend.strip().lower() == 'vaultwarden':
+                current_backend = 'bitwarden'   # merged into one bw backend
+            self._secret_backend_labels = {
+                'libsecret': _("System keyring (libsecret)"),
+                'keyring': _("System keyring"),
+                'pass': _("pass (password store)"),
+                'bitwarden': _("Bitwarden / Vaultwarden (bw CLI)"),
+                'rbw': _("Bitwarden via rbw (agent)"),
+                'keepassxc': _("KeePass database (.kdbx)"),
+                'agent': _("SSH Agent Only"),
+            }
+            # Offer EVERY registered backend (not just the available ones). Unavailable
+            # ones are labelled so the choice is honest.
+            preferred_order = ['libsecret', 'keyring', 'pass', 'bitwarden', 'rbw', 'keepassxc', 'agent']
+            ordered_names = [n for n in preferred_order if n in registered]
+            ordered_names += [n for n in registered if n not in preferred_order]
+            self._secret_backend_ids = ['auto'] + ordered_names
+            self._secret_backend_ordered = ordered_names
+            # Keep an unknown saved backend visible so the UI matches the config.
+            if current_backend not in self._secret_backend_ids:
+                self._secret_backend_ids.append(current_backend)
+                self._secret_backend_ordered = ordered_names + [current_backend]
+            # Probing availability (keyring/keepassxc is_available) costs ~400ms on
+            # the main thread, so show every backend without the "(unavailable)"
+            # suffix now and refine off-thread once the window is up.
+            self._set_secret_backend_model(set(self._secret_backend_ids))
+            try:
+                current_index = self._secret_backend_ids.index(current_backend)
+            except ValueError:
+                current_index = 0
+            self.secret_backend_row.set_selected(current_index)
+            self.secret_backend_row.connect('notify::selected', self.on_secret_backend_changed)
+            secrets_group.add(self.secret_backend_row)
+
+            self.bw_status_row = Adw.ActionRow()
+            self.bw_status_row.set_title(_("Bitwarden status"))
+            self.bw_status_row.set_subtitle(_("Checking…"))
+            self._bw_status_btn = Gtk.Button(label=_("Set up…"))
+            self._bw_status_btn.set_valign(Gtk.Align.CENTER)
+            self._bw_status_btn.connect('clicked', self.on_bw_setup_clicked)
+            self.bw_status_row.add_suffix(self._bw_status_btn)
+            self._bw_logout_btn = Gtk.Button(label=_("Log out"))
+            self._bw_logout_btn.set_valign(Gtk.Align.CENTER)
+            self._bw_logout_btn.add_css_class('destructive-action')
+            self._bw_logout_btn.connect('clicked', self.on_bw_logout_clicked)
+            self.bw_status_row.add_suffix(self._bw_logout_btn)
+            secrets_group.add(self.bw_status_row)
+
+            # rbw (github.com/doy/rbw) status + setup — only shown for the rbw backend.
+            self.rbw_status_row = Adw.ActionRow()
+            self.rbw_status_row.set_title(_("rbw status"))
+            self.rbw_status_row.set_subtitle(_("Checking…"))
+            self._rbw_status_btn = Gtk.Button(label=_("Set up…"))
+            self._rbw_status_btn.set_valign(Gtk.Align.CENTER)
+            self._rbw_status_btn.connect('clicked', self.on_rbw_setup_clicked)
+            self.rbw_status_row.add_suffix(self._rbw_status_btn)
+            self._rbw_lock_btn = Gtk.Button(label=_("Lock"))
+            self._rbw_lock_btn.set_valign(Gtk.Align.CENTER)
+            self._rbw_lock_btn.connect('clicked', self.on_rbw_lock_clicked)
+            self.rbw_status_row.add_suffix(self._rbw_lock_btn)
+            secrets_group.add(self.rbw_status_row)
+
+            # Bitwarden CLI account/profile (BITWARDENCLI_APPDATA_DIR) — a data dir for a
+            # specific account (incl. a self-hosted Vaultwarden). Empty = default account.
+            # Only shown when the Bitwarden backend is selected.
+            self.bw_profile_row = Adw.EntryRow(title=_("bw data directory (account/profile)"))
+            self.bw_profile_row.set_text(
+                str(self.config.get_setting('secrets.bitwarden.profile', '') or '')
+            )
+            try:
+                from .platform_utils import is_flatpak
+                flatpak_note = _(
+                    " Under Flatpak, use the host path (e.g. /home/you/.config/Bitwarden CLI) "
+                    "or leave empty for the host default — the app runs `bw` on the host."
+                ) if is_flatpak() else ""
+                self.bw_profile_row.set_tooltip_text(_(
+                    "Optional. Path to a `bw` data directory (BITWARDENCLI_APPDATA_DIR) for "
+                    "a specific account. Empty = the default account. Leave empty for a "
+                    "single Bitwarden account.{flatpak_note}"
+                ).format(flatpak_note=flatpak_note))
+            except Exception:
+                pass
+            browse_btn = Gtk.Button(icon_name='folder-open-symbolic')
+            browse_btn.set_valign(Gtk.Align.CENTER)
+            browse_btn.add_css_class('flat')
+            browse_btn.set_tooltip_text(_("Choose data directory"))
+            browse_btn.connect('clicked', self.on_bw_profile_browse)
+            self.bw_profile_row.add_suffix(browse_btn)
+            self.bw_profile_row.connect('changed', self.on_bw_profile_changed)
+            secrets_group.add(self.bw_profile_row)
+
+            # KeePass (.kdbx) database + optional key file — only shown for the KeePassXC
+            # backend. The master password is typed per launch (not stored here).
+            self.kdbx_db_row = Adw.EntryRow(title=_("KeePass database (.kdbx)"))
+            self.kdbx_db_row.set_text(
+                str(self.config.get_setting('secrets.keepassxc.database', '') or ''))
+            kdbx_new_btn = Gtk.Button(icon_name='document-new-symbolic')
+            kdbx_new_btn.set_valign(Gtk.Align.CENTER)
+            kdbx_new_btn.add_css_class('flat')
+            kdbx_new_btn.set_tooltip_text(_("Create new database"))
+            kdbx_new_btn.connect('clicked', self.on_kdbx_create_database)
+            self.kdbx_db_row.add_suffix(kdbx_new_btn)
+            kdbx_db_btn = Gtk.Button(icon_name='document-open-symbolic')
+            kdbx_db_btn.set_valign(Gtk.Align.CENTER)
+            kdbx_db_btn.add_css_class('flat')
+            kdbx_db_btn.set_tooltip_text(_("Choose database file"))
+            kdbx_db_btn.connect('clicked', self.on_kdbx_database_browse)
+            self.kdbx_db_row.add_suffix(kdbx_db_btn)
+            self.kdbx_db_row.connect('changed', self.on_kdbx_database_changed)
+            secrets_group.add(self.kdbx_db_row)
+
+            self.kdbx_keyfile_row = Adw.EntryRow(title=_("Key file (optional)"))
+            self.kdbx_keyfile_row.set_text(
+                str(self.config.get_setting('secrets.keepassxc.keyfile', '') or ''))
+            kdbx_kf_btn = Gtk.Button(icon_name='document-open-symbolic')
+            kdbx_kf_btn.set_valign(Gtk.Align.CENTER)
+            kdbx_kf_btn.add_css_class('flat')
+            kdbx_kf_btn.set_tooltip_text(_("Choose key file"))
+            kdbx_kf_btn.connect('clicked', self.on_kdbx_keyfile_browse)
+            self.kdbx_keyfile_row.add_suffix(kdbx_kf_btn)
+            self.kdbx_keyfile_row.connect('changed', self.on_kdbx_keyfile_changed)
+            secrets_group.add(self.kdbx_keyfile_row)
+
+            # Idle minutes before a session-backed vault (Bitwarden/Vaultwarden)
+            # re-asks for the master password. 0 = keep unlocked until app exit.
+            self.secret_session_timeout_row = Adw.SpinRow.new_with_range(0, 1440, 5)
+            self.secret_session_timeout_row.set_title(_("Vault lock timeout (minutes)"))
+            self.secret_session_timeout_row.set_subtitle(
+                _("Re-ask for the master password after this idle time. 0 = until app exits.")
+            )
+            self.secret_session_timeout_row.set_value(
+                int(self.config.get_setting('secrets.session_timeout', 0) or 0)
+            )
+            self.secret_session_timeout_row.connect(
+                'notify::value', self.on_secret_session_timeout_changed
+            )
+            secrets_group.add(self.secret_session_timeout_row)
+
+            # Forget a remembered master password (saved in the OS keyring via the unlock
+            # dialog's "Remember" option). This is the only way to clear it once saved,
+            # since auto-unlock then skips the dialog. Shown for session-backed backends.
+            self.forget_master_row = Adw.ActionRow(title=_("Saved master password"))
+            forget_btn = Gtk.Button(label=_("Forget"))
+            forget_btn.set_valign(Gtk.Align.CENTER)
+            forget_btn.add_css_class('destructive-action')
+            forget_btn.connect('clicked', self.on_forget_master_password)
+            self.forget_master_row.add_suffix(forget_btn)
+            self._forget_master_btn = forget_btn
+            secrets_group.add(self.forget_master_row)
+
+            self.agent_no_store_row = Adw.ActionRow()
+            self.agent_no_store_row.set_title(_("No secret storage"))
+            self.agent_no_store_row.set_subtitle(_(
+                "Passwords and passphrases are not saved by sshPilot. Use ssh-agent "
+                "and SSH's own prompts instead."
+            ))
+            secrets_group.add(self.agent_no_store_row)
+
+            # Show the bw/timeout/forget rows only when they apply to the
+            # currently-selected backend. Backend probes (``bw status``, rbw, …)
+            # run only when the user opens this page — not on every Settings open.
+            self._update_secret_rows_visibility(current_backend, defer_status_probe=True)
+
+            security_page.add(secrets_group)
+            self._secrets_page_id = self._page_id("Security & Credentials")
+
+            # --- SSH identity provider (parallel to Secret Storage) ---
+            identity_group = Adw.PreferencesGroup(
+                title=_("SSH Identity"),
+                description=_(
+                    "Default identity provider whose agent/keys are offered to "
+                    "connections. The per-connection key is set on each connection "
+                    "(IdentityFile); this is the global default."
+                ),
+            )
+            self.identity_provider_row = Adw.ComboRow()
+            self.identity_provider_row.set_title(_("Default SSH agent"))
+            try:
+                from .identity import get_identity_manager
+                _imgr = get_identity_manager()
+                id_registered = _imgr.registered_providers()
+                id_available = {p.name for p in _imgr.available_providers()}
+            except Exception:
+                id_registered = ['system-agent']
+                id_available = set()
+            id_labels = {'onepassword': _("1Password")}
+            current_provider = str(
+                self.config.get_setting('identity.provider', 'auto')
+            ).strip().lower()
+            # 'auto' already means the system ssh-agent, so it is not listed twice;
+            # 'file-key' is per-key, not a global default. 'custom' is a free-form socket.
+            id_order = [n for n in id_registered
+                        if n not in ('system-agent', 'file-key')]
+            self._identity_provider_ids = ['auto'] + id_order + ['custom']
+            id_model = Gtk.StringList()
+            id_model.append(_("Automatic (system ssh-agent)"))
+            for name in id_order:
+                label = id_labels.get(name, name)
+                if name not in id_available:
+                    label = _("{provider} (unavailable)").format(provider=label)
+                id_model.append(label)
+            id_model.append(_("Custom socket…"))
+            if current_provider not in self._identity_provider_ids:
+                self._identity_provider_ids.append(current_provider)
+                id_model.append(_("{provider} (unavailable)").format(
+                    provider=id_labels.get(current_provider, current_provider)))
+            self.identity_provider_row.set_model(id_model)
+            try:
+                id_index = self._identity_provider_ids.index(current_provider)
+            except ValueError:
+                id_index = 0
+            self.identity_provider_row.set_selected(id_index)
+            self.identity_provider_row.connect(
+                'notify::selected', self.on_identity_provider_changed)
+            identity_group.add(self.identity_provider_row)
+
+            # Custom agent socket — only shown when "Custom socket…" is selected. Written
+            # as a global `Host *` IdentityAgent directive to ~/.ssh/config.
+            self.identity_agent_socket_row = Adw.EntryRow(
+                title=_("Custom agent socket (IdentityAgent)"))
+            self.identity_agent_socket_row.set_text(
+                str(self.config.get_setting('identity.agent_socket', '') or ''))
+            self.identity_agent_socket_row.connect(
+                'changed', self.on_identity_agent_socket_changed)
+            identity_group.add(self.identity_agent_socket_row)
+            self._update_identity_rows_visibility(current_provider)
+
+            security_page.add(identity_group)
 
             # Application behavior group
             behavior_group = Adw.PreferencesGroup(title="Application Behavior")
@@ -2171,6 +2132,7 @@ class PreferencesWindow(Adw.Window):
             self.add_page_to_layout("Shortcuts", "preferences-desktop-keyboard-shortcuts-symbolic", shortcuts_page)
             self.add_page_to_layout("Groups", "folder-open-symbolic", groups_page)
             self.add_page_to_layout("SSH Options", "network-workgroup-symbolic", ssh_settings_page)
+            self.add_page_to_layout("Security & Credentials", "dialog-password-symbolic", security_page)
             self.add_page_to_layout("Updates", "software-update-available-symbolic", updates_page)
             plugins_page = self._create_plugins_page()
             self.add_page_to_layout("Plugins", "application-x-addon-symbolic", plugins_page)
@@ -2219,6 +2181,837 @@ class PreferencesWindow(Adw.Window):
                 self.shortcuts_editor_page.set_pass_through_enabled(active)
             except Exception as exc:
                 logger.debug("Failed to propagate pass-through state to shortcut editor: %s", exc)
+
+    def _current_secret_backend_name(self):
+        try:
+            index = self.secret_backend_row.get_selected()
+            ids = getattr(self, '_secret_backend_ids', ['auto'])
+            return ids[index] if 0 <= index < len(ids) else 'auto'
+        except Exception:
+            return str(self.config.get_setting('secrets.backend', 'auto') or 'auto')
+
+    def _schedule_bitwarden_ui_refresh(self):
+        """Probe Bitwarden readiness once on idle (avoid blocking Settings)."""
+        if self._bw_ui_refresh_id is not None:
+            return
+        self._bw_ui_refresh_id = GLib.idle_add(self._refresh_bitwarden_ui_idle)
+
+    def _refresh_bitwarden_ui_idle(self):
+        self._bw_ui_refresh_id = None
+        try:
+            if self._current_secret_backend_name() == 'bitwarden':
+                self._probe_bitwarden_async()
+        except Exception as exc:
+            logger.debug("Deferred Bitwarden UI refresh failed: %s", exc)
+        return False
+
+    def _set_secret_backend_model(self, available):
+        """(Re)build the secret-backend combo model, labelling backends not in
+        *available* as unavailable. Preserves the current selection index."""
+        row = getattr(self, 'secret_backend_row', None)
+        if row is None:
+            return
+        labels = getattr(self, '_secret_backend_labels', {})
+        selected = row.get_selected()
+        model = Gtk.StringList()
+        model.append(_("Automatic"))
+        for name in getattr(self, '_secret_backend_ordered', []):
+            label = labels.get(name, name)
+            if name not in available:
+                label = _("{backend} (unavailable)").format(backend=label)
+            model.append(label)
+        self._secret_backend_selection_sync = True
+        try:
+            row.set_model(model)
+            try:
+                row.set_selected(selected)
+            except Exception:
+                pass
+        finally:
+            self._secret_backend_selection_sync = False
+
+    def _refresh_secret_backend_availability(self):
+        """Compute backend availability off-thread (keyring/keepassxc probes cost
+        ~400ms) and refine the combo labels once done, keeping Settings responsive."""
+        mgr = getattr(self, '_secret_backend_mgr', None)
+        if mgr is None:
+            return
+
+        def worker():
+            try:
+                available = set(mgr.available_backends(cheap=True))
+            except Exception:
+                available = None
+            if available is not None:
+                GLib.idle_add(
+                    lambda: (self._set_secret_backend_model(available), False)[1]
+                )
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _probe_bitwarden_async(self):
+        """Probe Bitwarden readiness on a worker thread, then update the status row.
+
+        ``bw status`` blocks on a Node subprocess when the vault is locked/signed
+        out; keeping it off the main thread stops Settings from freezing (and stops
+        GNOME's force-quit dialog from appearing after logout). The logout button is
+        only shown once a probe completes, so there is never an in-flight probe
+        racing a state-changing action.
+        """
+        if self._bw_probe_in_flight:
+            return
+        self._bw_probe_in_flight = True
+        self._apply_bitwarden_status_row(pending=True)
+
+        def worker():
+            try:
+                from .bitwarden_setup import probe_bitwarden_status
+                status = probe_bitwarden_status()
+            except Exception:
+                status = None
+            GLib.idle_add(lambda: (self._on_bitwarden_probe_done(status), False)[1])
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_bitwarden_probe_done(self, status):
+        self._bw_probe_in_flight = False
+        try:
+            if self._current_secret_backend_name() == 'bitwarden':
+                self._apply_bitwarden_status_row(status)
+        except Exception:
+            logger.debug("Bitwarden status apply failed", exc_info=True)
+        return False
+
+    def _on_preferences_map(self, *_args):
+        """Probe secret backends when Settings is shown on the Security page."""
+        if self._is_secrets_page_visible():
+            self._ensure_secrets_page_probes()
+
+    def _is_secrets_page_visible(self) -> bool:
+        page_id = getattr(self, '_secrets_page_id', None)
+        if not page_id:
+            return False
+        stack = getattr(self, 'content_stack', None)
+        if stack is None:
+            return False
+        try:
+            return stack.get_visible_child_name() == page_id
+        except Exception:
+            return False
+
+    def _ensure_secrets_page_probes(self):
+        """Run secret-backend availability + status probes once per Settings window.
+
+        Deferred until the user opens Security & Credentials so opening Settings
+        for other pages does not query vaults or show unlock/setup dialogs."""
+        if getattr(self, '_secrets_page_probes_done', False):
+            return
+        self._secrets_page_probes_done = True
+        self._refresh_secret_backend_availability()
+        try:
+            name = self._current_secret_backend_name()
+            self._update_secret_rows_visibility(name, defer_status_probe=False)
+        except Exception as exc:
+            logger.debug("Deferred secret page probes failed: %s", exc)
+
+    # -- rbw status row -----------------------------------------------------
+
+    def _rbw_status_text(self, status=None, *, pending=False):
+        """Status line for the rbw status row."""
+        if pending or status is None:
+            return _("Checking rbw status…")
+        if not status.cli_installed:
+            return _("The “rbw” command was not found.")
+        if status.is_ready:
+            return _("Configured and unlocked as {email}.").format(
+                email=status.email or _("your account"))
+        if not status.configured:
+            return _("Installed but no account configured.")
+        return _("Configured but the vault is locked.")
+
+    def _apply_rbw_status_row(self, status=None, *, pending=False):
+        """Update the rbw status row (message + action button labels)."""
+        if not hasattr(self, 'rbw_status_row'):
+            return
+        self.rbw_status_row.set_subtitle(self._rbw_status_text(status, pending=pending))
+        action_btn = getattr(self, '_rbw_status_btn', None)
+        lock_btn = getattr(self, '_rbw_lock_btn', None)
+        if pending or status is None:
+            if action_btn is not None:
+                action_btn.set_visible(False)
+            if lock_btn is not None:
+                lock_btn.set_visible(False)
+            return
+        if lock_btn is not None:
+            lock_btn.set_visible(bool(status.unlocked))
+        if action_btn is not None:
+            action_btn.set_visible(not status.is_ready)
+            action_btn.set_label(
+                _("Set up…") if not status.configured else _("Unlock…"))
+
+    def _probe_rbw_async(self):
+        """Probe rbw readiness off the main thread, then fill in the status row."""
+        if getattr(self, '_rbw_probe_in_flight', False):
+            return
+        self._rbw_probe_in_flight = True
+        self._apply_rbw_status_row(pending=True)
+
+        def worker():
+            try:
+                from .rbw_setup import probe_rbw_status
+                status = probe_rbw_status()
+            except Exception:
+                status = None
+            GLib.idle_add(lambda: (self._on_rbw_probe_done(status), False)[1])
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_rbw_probe_done(self, status):
+        self._rbw_probe_in_flight = False
+        try:
+            if self._current_secret_backend_name() == 'rbw':
+                self._apply_rbw_status_row(status)
+        except Exception:
+            logger.debug("rbw status apply failed", exc_info=True)
+        return False
+
+    def on_rbw_setup_clicked(self, _button):
+        """Run the rbw configure / sign-in / unlock flow."""
+        try:
+            from .rbw_setup import run_rbw_setup
+
+            def _done(_success):
+                self._probe_rbw_async()
+
+            run_rbw_setup(self, on_done=_done)
+        except Exception as exc:
+            logger.error("rbw setup failed: %s", exc)
+
+    def on_rbw_lock_clicked(self, _button):
+        """Lock the rbw agent (``rbw lock``) off the main thread."""
+        btn = getattr(self, '_rbw_lock_btn', None)
+        if btn is not None:
+            btn.set_sensitive(False)
+
+        def worker():
+            try:
+                from .rbw_setup import _run
+                _run("lock")
+                # Also wipe the backend's in-memory secret cache so plaintext doesn't
+                # linger after an explicit lock (peek() already refuses to serve once the
+                # agent is locked, but don't keep the values around either).
+                try:
+                    from .secret_storage import get_secret_manager
+                    be = get_secret_manager().get_backend("rbw")
+                    if be is not None and hasattr(be, "lock"):
+                        be.lock()
+                except Exception:
+                    logger.debug("rbw cache clear failed", exc_info=True)
+            except Exception:
+                logger.debug("rbw lock failed", exc_info=True)
+            GLib.idle_add(lambda: (self._after_rbw_lock(), False)[1])
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _after_rbw_lock(self):
+        btn = getattr(self, '_rbw_lock_btn', None)
+        if btn is not None:
+            btn.set_sensitive(True)
+        self._probe_rbw_async()
+        return False
+
+    def _bitwarden_status_text(self, status=None, *, pending=False):
+        """Status line for the Bitwarden status row."""
+        if pending or status is None:
+            return _("Checking Bitwarden status…")
+        try:
+            from .platform_utils import get_managed_bw_cli_path, resolve_bw_cli_path
+            cli_path = resolve_bw_cli_path()
+            install_path = get_managed_bw_cli_path()
+        except Exception:
+            cli_path = None
+            install_path = None
+        if not status.cli_installed:
+            if install_path:
+                return _(
+                    "The “bw” command was not found.\n\n"
+                    "sshPilot installs the CLI to:\n    {path}"
+                ).format(path=install_path)
+            return _("The “bw” command was not found.")
+        path_line = ""
+        if cli_path:
+            path_line = "\n\n" + _("Using: {path}").format(path=cli_path)
+        if status.is_ready:
+            return _("Signed in and vault unlocked.{path}").format(path=path_line)
+        if status.needs_login:
+            return _("CLI found but you are not signed in.{path}").format(path=path_line)
+        return _("CLI found but the vault is locked.{path}").format(path=path_line)
+
+    def _apply_bitwarden_status_row(self, status=None, *, pending=False):
+        """Update the Bitwarden status row (message + optional action buttons)."""
+        if not hasattr(self, 'bw_status_row'):
+            return
+        self.bw_status_row.set_subtitle(
+            self._bitwarden_status_text(status, pending=pending)
+        )
+        action_btn = getattr(self, '_bw_status_btn', None)
+        logout_btn = getattr(self, '_bw_logout_btn', None)
+        if action_btn is None and logout_btn is None:
+            return
+        if pending or status is None:
+            if action_btn is not None:
+                action_btn.set_visible(False)
+            if logout_btn is not None:
+                logout_btn.set_visible(False)
+            return
+        signed_in = status.cli_installed and not status.needs_login
+        if logout_btn is not None:
+            logout_btn.set_visible(signed_in)
+        if action_btn is None:
+            return
+        if status.is_ready:
+            action_btn.set_visible(False)
+            return
+        action_btn.set_visible(True)
+        if not status.cli_installed:
+            action_btn.set_label(_("Set up…"))
+        elif status.needs_login:
+            action_btn.set_label(_("Sign in…"))
+        else:
+            action_btn.set_label(_("Unlock…"))
+
+    def _update_secret_rows_visibility(self, name, *, defer_status_probe=False):
+        """Show the bw data-directory row only for the Bitwarden backend, and the
+        session-timeout row only for session-backed backends."""
+        try:
+            name = (name or 'auto').strip().lower()
+            session = False
+            try:
+                from .secret_storage import get_secret_manager
+                session = get_secret_manager().is_session_backed(name)
+            except Exception:
+                session = name == 'bitwarden'
+            if hasattr(self, 'bw_profile_row'):
+                self.bw_profile_row.set_visible(name == 'bitwarden')
+            if hasattr(self, 'bw_status_row'):
+                self.bw_status_row.set_visible(name == 'bitwarden')
+            if name == 'bitwarden':
+                # Probe readiness off the main thread: ``bw status`` spawns a slow
+                # Node process (1-3s) whenever the vault is locked or signed out, so
+                # running it here would freeze Settings and can trip GNOME's
+                # force-quit dialog after actions like logout. Show "Checking…" now
+                # and fill the row in when the probe returns. ``defer_status_probe``
+                # leaves the actual probe until the Security page is opened.
+                self._apply_bitwarden_status_row(pending=True)
+                if not defer_status_probe:
+                    self._probe_bitwarden_async()
+            if hasattr(self, 'rbw_status_row'):
+                self.rbw_status_row.set_visible(name == 'rbw')
+                if name == 'rbw':
+                    self._apply_rbw_status_row(pending=True)
+                    if not defer_status_probe:
+                        self._probe_rbw_async()
+            for attr in ('kdbx_db_row', 'kdbx_keyfile_row'):
+                if hasattr(self, attr):
+                    getattr(self, attr).set_visible(name == 'keepassxc')
+            if hasattr(self, 'secret_session_timeout_row'):
+                self.secret_session_timeout_row.set_visible(session)
+            if hasattr(self, 'forget_master_row'):
+                self.forget_master_row.set_visible(session)
+                self._refresh_forget_master_row()
+            if hasattr(self, 'agent_no_store_row'):
+                self.agent_no_store_row.set_visible(name == 'agent')
+            if hasattr(self, 'secret_backend_row'):
+                if name == 'agent':
+                    hint = _(
+                        "Credentials are not persisted — ssh-agent and SSH handle "
+                        "authentication."
+                    )
+                elif name == 'bitwarden':
+                    hint = _("Uses the bw CLI. See bitwarden.com/help/cli.")
+                elif name == 'rbw':
+                    hint = _("Uses the rbw CLI + agent. Unlock with rbw (github.com/doy/rbw).")
+                else:
+                    hint = ""
+                try:
+                    self.secret_backend_row.set_subtitle(hint)
+                except Exception:
+                    pass
+        except Exception as exc:
+            logger.debug("Failed to update secret rows visibility: %s", exc)
+
+    def _refresh_forget_master_row(self):
+        """Reflect whether a master password is currently saved in the keyring."""
+        if not hasattr(self, 'forget_master_row'):
+            return
+        saved = False
+        try:
+            from .secret_storage import get_secret_manager, selected_master_spec
+            saved = bool(get_secret_manager().lookup_in_keyring(selected_master_spec()))
+        except Exception:
+            saved = False
+        self.forget_master_row.set_subtitle(
+            _("Remembered in your system keyring.") if saved
+            else _("Not saved. Use “Remember master password” when unlocking.")
+        )
+        if hasattr(self, '_forget_master_btn'):
+            self._forget_master_btn.set_sensitive(saved)
+
+    def on_forget_master_password(self, _button):
+        """Delete the remembered master password from the OS keyring."""
+        try:
+            from .secret_storage import get_secret_manager, selected_master_spec
+            get_secret_manager().delete_in_keyring(selected_master_spec())
+            logger.info("Forgot saved vault master password")
+        except Exception:
+            logger.debug("Failed to forget master password", exc_info=True)
+        self._refresh_forget_master_row()
+
+    def on_secret_backend_changed(self, combo, _pspec):
+        """Persist the selected secret storage backend and apply it live."""
+        if getattr(self, '_secret_backend_selection_sync', False):
+            return
+        try:
+            index = combo.get_selected()
+            ids = getattr(self, '_secret_backend_ids', ['auto'])
+            name = ids[index] if 0 <= index < len(ids) else 'auto'
+            self.config.set_setting('secrets.backend', name)
+            from .secret_storage import get_secret_manager
+            manager = get_secret_manager()
+            manager.set_selected(name)
+            # Propagate to child processes (e.g. the askpass helper).
+            os.environ['SSHPILOT_SECRET_BACKEND'] = name
+            self._update_secret_rows_visibility(name)
+            logger.info("Secret storage backend set to: %s", name)
+
+            def _done(success):
+                logger.info("Secret backend setup/unlock %s",
+                            "succeeded" if success else "not completed")
+                if name in ('bitwarden', 'rbw'):
+                    try:
+                        self._update_secret_rows_visibility(name)
+                    except Exception:
+                        logger.debug("Failed to refresh secret backend rows", exc_info=True)
+
+            if name == 'bitwarden':
+                # probe_bitwarden_status spawns bw --version/bw status (Node) — run it
+                # off the main thread so switching to Bitwarden doesn't freeze Settings.
+                self._setup_bitwarden_backend_async(manager, _done)
+                return
+            if name == 'rbw':
+                # rbw owns its own unlock (agent + pinentry); make it ready — installed,
+                # configured, unlocked — prompting only when something is missing.
+                from .rbw_setup import ensure_rbw_ready
+                ensure_rbw_ready(self, _done)
+                return
+            # A session-backed backend must be unlocked before it can store/read.
+            if manager.selected_needs_unlock():
+                try:
+                    from .secret_unlock_dialog import prompt_unlock
+
+                    prompt_unlock(self, on_done=_done)
+                except Exception as exc:
+                    logger.error("Failed to prompt secret backend unlock: %s", exc)
+        except Exception as exc:
+            logger.error("Failed to update secret storage backend: %s", exc)
+
+    def _setup_bitwarden_backend_async(self, manager, on_done):
+        """Probe Bitwarden off the main thread, then unlock or run setup as needed."""
+        from .bitwarden_setup import progress_dialog
+        _set_status, close = progress_dialog(
+            self, _("Bitwarden"), _("Checking Bitwarden…"),
+        )
+
+        def worker():
+            try:
+                from .bitwarden_setup import probe_bitwarden_status
+                status = probe_bitwarden_status(force_refresh=True)
+            except Exception:
+                status = None
+            GLib.idle_add(lambda: (
+                self._after_bitwarden_setup_probe(status, manager, on_done, close),
+                False,
+            )[1])
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _after_bitwarden_setup_probe(self, status, manager, on_done, close):
+        close()
+        from .bitwarden_setup import run_bitwarden_setup
+        if status is not None and status.is_ready:
+            on_done(True)   # already ready — just refresh the rows
+            return
+        # Signed in but locked → unlock only; otherwise run the full setup wizard.
+        if (
+            status is not None
+            and status.cli_installed
+            and not status.needs_login
+            and manager.selected_needs_unlock()
+        ):
+            try:
+                from .secret_unlock_dialog import prompt_unlock
+                prompt_unlock(self, on_done=on_done)
+                return
+            except Exception:
+                logger.debug("Bitwarden unlock prompt failed", exc_info=True)
+        run_bitwarden_setup(self, on_done=on_done)
+
+    def _update_identity_rows_visibility(self, name):
+        """Show the custom-socket row only when the 'custom' agent is selected."""
+        try:
+            if hasattr(self, 'identity_agent_socket_row'):
+                self.identity_agent_socket_row.set_visible(
+                    (name or '').strip().lower() == 'custom')
+        except Exception as exc:
+            logger.debug("Failed to update identity rows visibility: %s", exc)
+
+    def _write_identity_agent_block(self):
+        """Reconcile the managed `Host *` IdentityAgent block in ~/.ssh/config with the
+        current selection (the identity manager resolves the socket; system/auto removes
+        the block)."""
+        try:
+            from .identity import get_identity_manager
+            directives = dict(get_identity_manager().selected_config_directives())
+            socket = directives.get('IdentityAgent')
+            cm = getattr(self.parent_window, 'connection_manager', None)
+            if cm is not None and hasattr(cm, 'apply_global_identity_agent'):
+                cm.apply_global_identity_agent(socket)
+        except Exception as exc:
+            logger.error("Failed to write managed IdentityAgent block: %s", exc)
+
+    def on_identity_provider_changed(self, combo, _pspec):
+        """Persist the selected default SSH agent and apply it live — writing/removing the
+        managed `Host *` IdentityAgent block for fixed-socket agents."""
+        try:
+            index = combo.get_selected()
+            ids = getattr(self, '_identity_provider_ids', ['auto'])
+            name = ids[index] if 0 <= index < len(ids) else 'auto'
+            self.config.set_setting('identity.provider', name)
+            os.environ['SSHPILOT_IDENTITY_PROVIDER'] = name
+            try:
+                from .identity import get_identity_manager
+                get_identity_manager().set_selected(name)
+            except Exception:
+                pass
+            self._update_identity_rows_visibility(name)
+            self._write_identity_agent_block()
+            logger.info("Default SSH agent set to: %s", name)
+        except Exception as exc:
+            logger.error("Failed to update default SSH agent: %s", exc)
+
+    def on_identity_agent_socket_changed(self, row):
+        """Persist and propagate the custom agent socket; if 'custom' is selected, rewrite
+        the managed IdentityAgent block."""
+        try:
+            socket = (row.get_text() or '').strip()
+            self.config.set_setting('identity.agent_socket', socket)
+            if socket:
+                os.environ['SSHPILOT_IDENTITY_AGENT_SOCKET'] = socket
+            else:
+                os.environ.pop('SSHPILOT_IDENTITY_AGENT_SOCKET', None)
+            selected = str(self.config.get_setting('identity.provider', 'auto')).strip().lower()
+            if selected == 'custom':
+                self._write_identity_agent_block()
+        except Exception as exc:
+            logger.error("Failed to update custom agent socket: %s", exc)
+
+    def on_bw_setup_clicked(self, _button):
+        """Run the Bitwarden CLI install / sign-in / unlock wizard."""
+        try:
+            from .bitwarden_setup import run_bitwarden_setup
+
+            def _done(success):
+                logger.info("Bitwarden setup %s",
+                            "completed" if success else "not completed")
+                try:
+                    from .bitwarden_setup import invalidate_bitwarden_status_cache
+                    invalidate_bitwarden_status_cache()
+                    self._update_secret_rows_visibility('bitwarden')
+                except Exception:
+                    logger.debug("Failed to refresh Bitwarden rows after setup", exc_info=True)
+                if success:
+                    self._refresh_forget_master_row()
+
+            run_bitwarden_setup(self, on_done=_done)
+        except Exception as exc:
+            logger.error("Bitwarden setup failed: %s", exc)
+
+    def on_bw_logout_clicked(self, _button):
+        """Sign out of Bitwarden (``bw logout``) off the main thread."""
+        try:
+            from .bitwarden_setup import invalidate_bitwarden_status_cache, progress_dialog
+            from .platform_utils import invalidate_bw_cli_cache
+            from .secret_storage import get_secret_manager
+
+            backend = get_secret_manager().get_backend('bitwarden')
+            if backend is None or not backend.is_available():
+                return
+            logout_btn = getattr(self, '_bw_logout_btn', None)
+            if logout_btn is not None:
+                logout_btn.set_sensitive(False)
+
+            cancelled = {"v": False}
+
+            def _cancel():
+                cancelled["v"] = True
+
+            _set_status, close = progress_dialog(
+                self, _("Bitwarden"), _("Signing out of Bitwarden…"), on_cancel=_cancel,
+            )
+
+            def worker():
+                ok = False
+                if not cancelled["v"]:
+                    try:
+                        ok = bool(backend.logout())
+                    except Exception:
+                        logger.debug("Bitwarden logout failed", exc_info=True)
+                GLib.idle_add(lambda: (_after_logout(ok), False)[1])
+
+            def _after_logout(ok):
+                close()
+                if logout_btn is not None:
+                    logout_btn.set_sensitive(True)
+                if cancelled["v"]:
+                    return
+                if not ok:
+                    dlg = Adw.MessageDialog(
+                        transient_for=self, modal=True,
+                        heading=_("Log out failed"),
+                        body=_(
+                            "Could not sign out of Bitwarden. "
+                            "Try running “bw logout” in a terminal."
+                        ),
+                    )
+                    dlg.add_response('ok', _('OK'))
+                    dlg.present()
+                    return
+                invalidate_bw_cli_cache()
+                invalidate_bitwarden_status_cache()
+                self._update_secret_rows_visibility('bitwarden')
+                logger.info("Signed out of Bitwarden")
+
+            threading.Thread(target=worker, daemon=True).start()
+        except Exception as exc:
+            logger.error("Bitwarden logout failed: %s", exc)
+            logout_btn = getattr(self, '_bw_logout_btn', None)
+            if logout_btn is not None:
+                logout_btn.set_sensitive(True)
+
+    def on_bw_profile_changed(self, row):
+        """Persist and propagate the Bitwarden CLI data dir (account/profile). Changing
+        the account re-locks the vault so a stale session can't leak across accounts."""
+        try:
+            profile = (row.get_text() or '').strip()
+            prev = str(os.environ.get('BITWARDENCLI_APPDATA_DIR', '') or '')
+            self.config.set_setting('secrets.bitwarden.profile', profile)
+            if profile:
+                os.environ['BITWARDENCLI_APPDATA_DIR'] = os.path.expanduser(profile)
+            else:
+                os.environ.pop('BITWARDENCLI_APPDATA_DIR', None)
+            # Account changed → drop any cached session/items for the old account.
+            if os.environ.get('BITWARDENCLI_APPDATA_DIR', '') != prev:
+                try:
+                    from .secret_storage import get_secret_manager
+                    be = get_secret_manager().selected_backend()
+                    if be is not None and hasattr(be, 'lock'):
+                        be.lock()
+                except Exception:
+                    pass
+        except Exception as exc:
+            logger.error("Failed to update bw profile: %s", exc)
+
+    def on_bw_profile_browse(self, _button):
+        """Folder chooser for the bw data directory."""
+        try:
+            dialog = Gtk.FileDialog()
+            dialog.set_title(_("Choose bw data directory"))
+
+            def _picked(dlg, result):
+                try:
+                    folder = dlg.select_folder_finish(result)
+                    if folder is not None and hasattr(self, 'bw_profile_row'):
+                        self.bw_profile_row.set_text(folder.get_path() or '')
+                except Exception:
+                    pass  # user cancelled / no selection
+
+            dialog.select_folder(self, None, _picked)
+        except Exception as exc:
+            logger.debug("bw profile browse failed: %s", exc)
+
+    def _relock_selected_session_backend(self):
+        try:
+            from .secret_storage import get_secret_manager
+            be = get_secret_manager().selected_backend()
+            if be is not None and hasattr(be, 'lock'):
+                be.lock()
+        except Exception:
+            pass
+
+    def on_kdbx_database_changed(self, row):
+        """Persist + propagate the KeePass database path; re-lock on change."""
+        try:
+            path = (row.get_text() or '').strip()
+            self.config.set_setting('secrets.keepassxc.database', path)
+            if path:
+                os.environ['SSHPILOT_KDBX_DATABASE'] = os.path.expanduser(path)
+            else:
+                os.environ.pop('SSHPILOT_KDBX_DATABASE', None)
+            self._relock_selected_session_backend()
+        except Exception as exc:
+            logger.error("Failed to update KeePass database path: %s", exc)
+
+    def on_kdbx_keyfile_changed(self, row):
+        """Persist + propagate the KeePass key file path; re-lock on change."""
+        try:
+            path = (row.get_text() or '').strip()
+            self.config.set_setting('secrets.keepassxc.keyfile', path)
+            if path:
+                os.environ['SSHPILOT_KDBX_KEYFILE'] = os.path.expanduser(path)
+            else:
+                os.environ.pop('SSHPILOT_KDBX_KEYFILE', None)
+            self._relock_selected_session_backend()
+        except Exception as exc:
+            logger.error("Failed to update KeePass key file path: %s", exc)
+
+    def _kdbx_file_browse(self, title, row_attr):
+        try:
+            dialog = Gtk.FileDialog()
+            dialog.set_title(title)
+
+            def _picked(dlg, result):
+                try:
+                    f = dlg.open_finish(result)
+                    if f is not None and hasattr(self, row_attr):
+                        getattr(self, row_attr).set_text(f.get_path() or '')
+                except Exception:
+                    pass  # cancelled / no selection
+
+            dialog.open(self, None, _picked)
+        except Exception as exc:
+            logger.debug("KDBX file browse failed: %s", exc)
+
+    def on_kdbx_database_browse(self, _button):
+        self._kdbx_file_browse(_("Choose KeePass database"), 'kdbx_db_row')
+
+    def on_kdbx_keyfile_browse(self, _button):
+        self._kdbx_file_browse(_("Choose key file"), 'kdbx_keyfile_row')
+
+    def _kdbx_message(self, heading, body):
+        d = Adw.MessageDialog(transient_for=self, modal=True, heading=heading, body=body)
+        d.add_response('ok', _('OK'))
+        d.present()
+
+    def on_kdbx_create_database(self, _button):
+        """Create a brand-new .kdbx, then point the backend at it and unlock it."""
+        try:
+            dialog = Gtk.FileDialog()
+            dialog.set_title(_("Create KeePass Database"))
+            dialog.set_initial_name("secrets.kdbx")
+            filt = Gtk.FileFilter()
+            filt.set_name(_("KeePass database (*.kdbx)"))
+            filt.add_pattern("*.kdbx")
+            filters = Gio.ListStore.new(Gtk.FileFilter)
+            filters.append(filt)
+            dialog.set_filters(filters)
+            dialog.set_default_filter(filt)
+
+            def _picked(dlg, result):
+                try:
+                    f = dlg.save_finish(result)
+                except GLib.Error as e:
+                    if getattr(e, 'code', None) != 2:
+                        logger.debug("create db path selection failed: %s", e)
+                    return
+                if not f:
+                    return
+                path = f.get_path() or ""
+                if not path.endswith(".kdbx"):
+                    path += ".kdbx"
+                if os.path.exists(path):
+                    self._kdbx_message(
+                        _("File already exists"),
+                        _("A file already exists at that path. Use the open button to use it, "
+                          "or choose a new name."))
+                    return
+                self._prompt_new_kdbx_password(path)
+
+            dialog.save(self, None, _picked)
+        except Exception as exc:
+            logger.error("KDBX create dialog failed: %s", exc)
+
+    def _prompt_new_kdbx_password(self, path, error=None):
+        dialog = Adw.MessageDialog(
+            transient_for=self, modal=True, heading=_("Set Master Password"),
+            body=error or _("Choose a master password for the new database “{}”.").format(
+                os.path.basename(path)))
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        pw = Gtk.PasswordEntry(show_peek_icon=True)
+        pw.set_property('placeholder-text', _("Master password"))
+        pw2 = Gtk.PasswordEntry(show_peek_icon=True)
+        pw2.set_property('placeholder-text', _("Confirm password"))
+        pw2.set_property('activates-default', True)
+        box.append(pw)
+        box.append(pw2)
+        dialog.set_extra_child(box)
+        dialog.add_response('cancel', _('Cancel'))
+        dialog.add_response('create', _('Create'))
+        dialog.set_response_appearance('create', Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response('create')
+        dialog.set_close_response('cancel')
+
+        def on_response(dlg, resp):
+            if resp != 'create':
+                return
+            p1, p2 = pw.get_text() or '', pw2.get_text() or ''
+            if not p1:
+                GLib.idle_add(lambda: (self._prompt_new_kdbx_password(
+                    path, _("Enter a master password.")), False)[1])
+                return
+            if p1 != p2:
+                GLib.idle_add(lambda: (self._prompt_new_kdbx_password(
+                    path, _("Passwords don't match — try again.")), False)[1])
+                return
+            self._do_create_kdbx(path, p1)
+
+        dialog.connect('response', on_response)
+        dialog.present()
+        GLib.idle_add(lambda: (pw.grab_focus(), False)[1])
+
+    def _do_create_kdbx(self, path, password):
+        keyfile = ''
+        if hasattr(self, 'kdbx_keyfile_row'):
+            keyfile = (self.kdbx_keyfile_row.get_text() or '').strip()
+        from .secret_storage import get_secret_manager
+        backend = get_secret_manager().selected_backend()
+        if backend is None or not hasattr(backend, 'create_database'):
+            self._kdbx_message(_("Cannot Create Database"),
+                               _("The KeePassXC backend is not selected."))
+            return
+        if not backend.create_database(path, password, keyfile or None):
+            self._kdbx_message(
+                _("Cannot Create Database"),
+                _("Failed to create the database. Make sure pykeepass is installed and the "
+                  "location is writable."))
+            return
+        # Point config/env at the new file (the row's 'changed' handler persists + re-locks)…
+        self.kdbx_db_row.set_text(path)
+        # …then unlock it so the just-typed password isn't asked again.
+        try:
+            backend.unlock(password)
+        except Exception:
+            logger.debug("auto-unlock after create failed", exc_info=True)
+        self._kdbx_message(_("Database Created"),
+                           _("Created and unlocked:\n{}").format(path))
+
+    def on_secret_session_timeout_changed(self, row, _pspec):
+        """Persist and propagate the session-backend idle unlock timeout."""
+        try:
+            minutes = int(row.get_value())
+            self.config.set_setting('secrets.session_timeout', minutes)
+            os.environ['SSHPILOT_SECRET_SESSION_TIMEOUT'] = str(max(0, minutes) * 60)
+        except Exception as exc:
+            logger.error("Failed to update secret session timeout: %s", exc)
 
     def on_copy_on_select_toggled(self, switch, _pspec):
         """Persist the terminal copy-on-selection preference."""
@@ -2517,7 +3310,7 @@ class PreferencesWindow(Adw.Window):
             return _("Inactive")
 
         builtin_group = Adw.PreferencesGroup(title=_("Built-in Plugins"))
-        builtin_group.set_description(_("Changes take effect after restarting sshPilot"))
+        builtin_group.set_description(_("Changes take effect after restarting SSH Pilot"))
         for info in [i for i in infos if i.builtin]:
             # ActionRow + manual switch so the suffixes order as
             # gear, toggle, info (the SwitchRow toggle is forced to the far end).
@@ -2601,7 +3394,7 @@ class PreferencesWindow(Adw.Window):
         self._installed_ids = {i.plugin_id for i in infos}
         self._available_group = Adw.PreferencesGroup(title=_("Available Plugins"))
         self._available_group.set_description(
-            _("From the sshPilot plugin registry. Toggling one on downloads, "
+            _("From the SSH Pilot plugin registry. Toggling one on downloads, "
               "verifies, and installs it (restart to load)."))
         self._available_loading = Adw.ActionRow(title=_("Checking the plugin registry…"))
         spinner = Gtk.Spinner()
@@ -3132,7 +3925,7 @@ class PreferencesWindow(Adw.Window):
         self.config.set_setting('plugins.enabled', sorted(enabled))
         self._rebuild_plugins_page()
         self._alert(_("Plugin installed"),
-                    _("Installed '{}'. Restart sshPilot to load it.").format(
+                    _("Installed '{}'. Restart SSH Pilot to load it.").format(
                         meta.get('name', pid)))
 
     def _confirm_remove_plugin(self, info):
@@ -3160,7 +3953,7 @@ class PreferencesWindow(Adw.Window):
                 self.config.set_setting(key, sorted(ids))
         self._rebuild_plugins_page()
         self._alert(_("Plugin removed"),
-                    _("Removed '{}'. Restart sshPilot to unload it if it was active.").format(
+                    _("Removed '{}'. Restart SSH Pilot to unload it if it was active.").format(
                         info.name))
 
     def _add_plugin_page_gear(self, row, plugin_id):
@@ -3200,7 +3993,7 @@ class PreferencesWindow(Adw.Window):
             disabled.add(plugin_id)
         self.config.set_setting('plugins.disabled', sorted(disabled))
         if row is not None:
-            row.set_subtitle(_("Restart sshPilot to apply"))
+            row.set_subtitle(_("Restart SSH Pilot to apply"))
 
     def _set_user_plugin_enabled(self, plugin_id, on):
         enabled = set(self.config.get_setting('plugins.enabled', []) or [])
@@ -3217,14 +4010,14 @@ class PreferencesWindow(Adw.Window):
         if not active:
             self._set_user_plugin_enabled(plugin_id, False)
             if row is not None:
-                row.set_subtitle(_("Restart sshPilot to apply"))
+                row.set_subtitle(_("Restart SSH Pilot to apply"))
             return
 
         # Enabling runs third-party code with full privileges — get consent first.
         def _accept():
             self._set_user_plugin_enabled(plugin_id, True)
             if row is not None:
-                row.set_subtitle(_("Restart sshPilot to apply"))
+                row.set_subtitle(_("Restart SSH Pilot to apply"))
 
         def _decline():
             # Revert the toggle (the manual switch; ActionRow has no set_active).
@@ -3409,7 +4202,7 @@ class PreferencesWindow(Adw.Window):
         except Exception:
             normalized = 'fill'
 
-        if normalized not in getattr(self, '_group_color_display_values', ['fill', 'badge']):
+        if normalized not in getattr(self, '_group_color_display_values', ['fill', 'badge', 'bar']):
             normalized = 'fill'
 
         target_index = self._group_color_display_values.index(normalized)
@@ -3625,7 +4418,6 @@ class PreferencesWindow(Adw.Window):
     def save_advanced_ssh_settings(self):
         """Persist advanced SSH settings from the preferences UI"""
         try:
-            native_value = False
             connect_timeout = None
             connection_attempts = None
             keepalive_interval = None
@@ -3905,34 +4697,6 @@ class PreferencesWindow(Adw.Window):
         for row in (self.default_mode_row, self.isolated_mode_row):
             row.remove_css_class('dim-label')
 
-    def get_theme_name_mapping(self):
-        """Get mapping between display names and config keys"""
-        return {
-            "Default": "default",
-            "Black on White": "black_on_white",
-            "Solarized Dark": "solarized_dark",
-            "Solarized Light": "solarized_light",
-            "Monokai": "monokai",
-            "Dracula": "dracula",
-            "Nord": "nord",
-            "Gruvbox Dark": "gruvbox_dark",
-            "One Dark": "one_dark",
-            "Tomorrow Night": "tomorrow_night",
-            "Material Dark": "material_dark",
-            "Rosé Pine": "rose_pine",
-            "Rosé Pine Moon": "rose_pine_moon",
-            "Rosé Pine Dawn": "rose_pine_dawn",
-            "Catppuccin Latte": "catppuccin_latte",
-            "Catppuccin Frappé": "catppuccin_frappe",
-            "Catppuccin Macchiato": "catppuccin_macchiato",
-            "Catppuccin Mocha": "catppuccin_mocha",
-        }
-    
-    def get_reverse_theme_mapping(self):
-        """Get mapping from config keys to display names"""
-        mapping = self.get_theme_name_mapping()
-        return {v: k for k, v in mapping.items()}
-
     def _initialize_encoding_selector(self, appearance_group):
         self.encoding_row = Adw.ComboRow()
         self.encoding_row.set_title("Encoding")
@@ -3958,14 +4722,16 @@ class PreferencesWindow(Adw.Window):
         # Update visibility based on current backend
         self._update_encoding_row_visibility()
 
+    def _is_pyxterm_backend(self) -> bool:
+        backend = (self.config.get_setting('terminal.backend', 'vte') or 'vte').lower()
+        return backend in ('pyxterm', 'pyxterm2')
+
     def _collect_supported_encodings(self):
         """Collect supported encodings based on current backend"""
-        current_backend = self.config.get_setting('terminal.backend', 'vte').lower()
-        
         # For PyXterm.js backend, provide xterm.js compatible encodings
         # According to https://xtermjs.org/docs/guides/encoding/
         # xterm.js uses UTF-8/UTF-16 natively, legacy encodings via luit/iconv
-        if current_backend == 'pyxterm':
+        if self._is_pyxterm_backend():
             # xterm.js native encodings
             options = [
                 ('UTF-8', 'Unicode (UTF-8)'),
@@ -3991,38 +4757,11 @@ class PreferencesWindow(Adw.Window):
             options.extend(legacy_encodings)
             return options
         
-        # For VTE backend, use VTE's native encoding support
-        options = []
-        try:
-            terminal = Vte.Terminal()
-            encodings = terminal.get_encodings() or []
-            for item in encodings:
-                code = None
-                description = None
-                if isinstance(item, (list, tuple)):
-                    if len(item) >= 1:
-                        code = item[0]
-                    if len(item) >= 2:
-                        description = item[1]
-                elif isinstance(item, str):
-                    code = item
-                if code:
-                    options.append((code, description or code))
-        except Exception as exc:  # pragma: no cover - depends on VTE runtime
-            logger.debug("Unable to retrieve VTE encodings: %s", exc)
-
-        if not options:
-            options = [('UTF-8', 'Unicode (UTF-8)')]
-        else:
-            codes = [code for code, _ in options]
-            if 'UTF-8' in codes:
-                utf_index = codes.index('UTF-8')
-                if utf_index != 0:
-                    options.insert(0, options.pop(utf_index))
-            else:
-                options.insert(0, ('UTF-8', 'Unicode (UTF-8)'))
-
-        return options
+        # VTE (GTK4) is UTF-8-only and set_encoding is unsupported, so there is
+        # nothing to enumerate — and the encoding row is hidden for VTE anyway
+        # (_update_encoding_row_visibility). Return a static list instead of
+        # instantiating a throwaway Vte.Terminal() on the main thread.
+        return [('UTF-8', 'Unicode (UTF-8)')]
 
     def _sync_encoding_row_selection(self, encoding, notify_user=False):
         if not hasattr(self, 'encoding_row') or self.encoding_row is None:
@@ -4108,20 +4847,22 @@ class PreferencesWindow(Adw.Window):
         """Update encoding row visibility based on current backend"""
         if not hasattr(self, 'encoding_row') or self.encoding_row is None:
             return
-        
-        current_backend = self.config.get_setting('terminal.backend', 'vte').lower()
-        
+
+        current_backend = (self.config.get_setting('terminal.backend', 'vte') or 'vte').lower()
+
         # Hide encoding dropdown for VTE backend (VTE handles encoding internally)
         # Show encoding dropdown for PyXterm.js backend (encoding handled at PTY bridge level)
         if current_backend == 'vte':
             self.encoding_row.set_visible(False)
             logger.debug("Hiding encoding dropdown for VTE backend")
-        elif current_backend == 'pyxterm':
+            return
+
+        if self._is_pyxterm_backend():
             self.encoding_row.set_visible(True)
             # Refresh encoding options for PyXterm.js
             self._encoding_options = self._collect_supported_encodings()
             self._encoding_codes = [code for code, _ in self._encoding_options]
-            
+
             # Update the model
             encoding_list = Gtk.StringList()
             for code, description in self._encoding_options:
@@ -4130,14 +4871,15 @@ class PreferencesWindow(Adw.Window):
                     display_label = f"{code} — {description}"
                 encoding_list.append(display_label)
             self.encoding_row.set_model(encoding_list)
-            
+
             # Sync selection
             current_encoding = self.config.get_setting('terminal.encoding', 'UTF-8')
             self._sync_encoding_row_selection(current_encoding, notify_user=False)
             logger.debug("Showing encoding dropdown for PyXterm.js backend")
-        else:
-            # Default: show for unknown backends
-            self.encoding_row.set_visible(True)
+            return
+
+        # Default: show for unknown backends
+        self.encoding_row.set_visible(True)
 
     def on_encoding_selection_changed(self, combo_row, _param):
         if self._encoding_selection_sync:
@@ -4153,33 +4895,8 @@ class PreferencesWindow(Adw.Window):
         self._update_encoding_config_if_needed(target_code)
 
     def _detect_pyxterm_backend(self):
-        external_error: Optional[str] = None
-
-        try:
-            spec = importlib.util.find_spec('pyxtermjs')
-            if spec is None:
-                external_error = 'pyxtermjs module not found'
-            else:
-                __import__('pyxtermjs')
-                return True, None
-        except Exception as exc:
-            external_error = str(exc)
-
-        vendored_error: Optional[str] = None
-
-        try:
-            vendored_spec = importlib.util.find_spec('sshpilot.vendor.pyxtermjs')
-            if vendored_spec is not None:
-                return True, None
-            vendored_error = 'vendored pyxtermjs module not found'
-        except Exception as vendored_exc:
-            vendored_error = str(vendored_exc)
-
-        message_parts = [part for part in (external_error, vendored_error) if part]
-        if not message_parts:
-            message_parts.append('pyxtermjs backend unavailable')
-
-        return False, '; '.join(message_parts)
+        """Detect the embedded PyXterm.js backend (memoized, see module helper)."""
+        return _detect_pyxterm_backend()
 
     def _build_backend_choices(self):
         choices = [
@@ -4199,7 +4916,7 @@ class PreferencesWindow(Adw.Window):
                     {
                         'id': 'pyxterm',
                         'label': 'PyXterm.js',
-                        'description': 'Web-based terminal (pyxtermjs)',
+                        'description': 'Embedded xterm.js terminal (in-process, no server)',
                         'available': True,
                         'error': None,
                     }
@@ -4208,8 +4925,8 @@ class PreferencesWindow(Adw.Window):
                 choices.append(
                     {
                         'id': 'pyxterm',
-                        'label': 'PyXterm.js (requires pyxtermjs)',
-                        'description': 'pyxtermjs package not available',
+                        'label': 'PyXterm.js (unavailable)',
+                        'description': 'Requires WebKit 6.0',
                         'available': False,
                         'error': pyxterm_error,
                     }
@@ -4324,7 +5041,14 @@ class PreferencesWindow(Adw.Window):
         self._backend_last_valid_index = index
         self.config.set_setting('terminal.backend', backend_id)
         self._update_backend_row_subtitle(index)
-        
+
+        if backend_id in ('pyxterm', 'pyxterm2'):
+            try:
+                from .xterm_prewarm import schedule_xterm_prewarm
+                schedule_xterm_prewarm(self.config)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("Failed to schedule PyXterm prewarm after backend switch: %s", exc)
+
         # Update encoding row visibility when backend changes
         self._update_encoding_row_visibility()
         
@@ -4336,277 +5060,70 @@ class PreferencesWindow(Adw.Window):
     def on_color_scheme_changed(self, combo_row, param):
         """Handle terminal color scheme change"""
         selected = combo_row.get_selected()
-        scheme_names = [
-            "Default", "Black on White", "Solarized Dark", "Solarized Light",
-            "Monokai", "Dracula", "Nord",
-            "Gruvbox Dark", "One Dark", "Tomorrow Night", "Material Dark",
-            "Rosé Pine", "Rosé Pine Moon", "Rosé Pine Dawn",
-            "Catppuccin Latte", "Catppuccin Frappé", "Catppuccin Macchiato", "Catppuccin Mocha"
-        ]
-        selected_scheme = scheme_names[selected] if selected < len(scheme_names) else "Default"
-        
-        logger.info(f"Terminal color scheme changed to: {selected_scheme}")
-        
-        # Convert display name to config key
-        theme_mapping = self.get_theme_name_mapping()
-        config_key = theme_mapping.get(selected_scheme, "default")
-        
-        # Save to config using the consistent key
+        config_key = SCHEME_KEYS[selected] if selected < len(SCHEME_KEYS) else 'default'
+
+        logger.info(f"Terminal color scheme changed to: {config_key}")
+
         self.config.set_setting('terminal.theme', config_key)
-        
-        # Apply to all active terminals
         self.apply_color_scheme_to_terminals(config_key)
-        
+
         # Refresh the color preview
         if hasattr(self, 'color_preview_terminal'):
             self.color_preview_terminal.queue_draw()
     
     def draw_color_preview(self, drawing_area, cr, width, height):
-        """Draw a preview of the selected color scheme"""
-        # Get current color scheme
-        current_scheme_key = self.config.get_setting('terminal.theme', 'default')
-        
-        # Get color scheme colors
-        colors = self.get_color_scheme_colors(current_scheme_key)
-        
-        # Draw background
-        bg_color = colors.get('background', '#000000')
-        r, g, b, a = self.hex_to_rgba(bg_color)
-        cr.set_source_rgba(r, g, b, a)
+        """Draw a preview of the selected color scheme.
+
+        Content and metrics scale with the widget size so the preview stays
+        legible on HiDPI displays instead of using fixed pixel offsets.
+        """
+        colors = self.get_color_scheme_colors(
+            self.config.get_setting('terminal.theme', 'default')
+        )
+        fg = self.hex_to_rgba(colors.get('foreground', '#ffffff'))
+        blue = self.hex_to_rgba(colors.get('blue', '#0088ff'))
+        green = self.hex_to_rgba(colors.get('green', '#00ff00'))
+
+        # Background fills the whole area
+        cr.set_source_rgba(*self.hex_to_rgba(colors.get('background', '#000000')))
         cr.paint()
-        
-        # Draw terminal-like content
-        cr.set_font_size(10)
-        
-        # Draw prompt line
-        prompt_color = colors.get('foreground', '#ffffff')
-        r, g, b, a = self.hex_to_rgba(prompt_color)
-        cr.set_source_rgba(r, g, b, a)
-        cr.move_to(10, 25)
-        cr.show_text("user@host:~$ ")
-        
-        # Draw command
-        command_color = colors.get('foreground', '#ffffff')
-        r, g, b, a = self.hex_to_rgba(command_color)
-        cr.set_source_rgba(r, g, b, a)
-        cr.move_to(120, 25)
-        cr.show_text("ls -la")
-        
-        # Draw output lines
-        output_color = colors.get('foreground', '#ffffff')
-        r, g, b, a = self.hex_to_rgba(output_color)
-        cr.set_source_rgba(r, g, b, a)
-        
-        # Directory line
-        cr.move_to(10, 45)
-        cr.show_text("drwxr-xr-x  2 user user 4096 Jan 15 10:30 .")
-        
-        # File line with different color
-        file_color = colors.get('blue', '#0088ff')
-        r, g, b, a = self.hex_to_rgba(file_color)
-        cr.set_source_rgba(r, g, b, a)
-        cr.move_to(10, 65)
-        cr.show_text("-rw-r--r--  1 user user  1234 Jan 15 10:25 file.txt")
-        
-        # Executable file
-        exec_color = colors.get('green', '#00ff00')
-        r, g, b, a = self.hex_to_rgba(exec_color)
-        cr.set_source_rgba(r, g, b, a)
-        cr.move_to(10, 85)
-        cr.show_text("-rwxr-xr-x  1 user user 5678 Jan 15 10:20 script.sh")
-        
-        # Prompt line 2
-        prompt_color = colors.get('foreground', '#ffffff')
-        r, g, b, a = self.hex_to_rgba(prompt_color)
-        cr.set_source_rgba(r, g, b, a)
-        cr.move_to(10, 105)
-        cr.show_text("user@host:~$ ")
-        
+
+        # Scale font/line metrics to the widget so it renders crisply at any size
+        rows = [
+            (fg,    "user@host:~$ ls -la"),
+            (blue,  "drwxr-xr-x  user  documents/"),
+            (fg,    "-rw-r--r--  user  readme.txt"),
+            (green, "-rwxr-xr-x  user  deploy.sh"),
+            (fg,    "user@host:~$ "),
+        ]
+        margin = max(6.0, height * 0.08)
+        line_h = (height - 2 * margin) / len(rows)
+        cr.set_font_size(max(9.0, line_h * 0.62))
+        baseline = margin + line_h * 0.72
+        for color, text in rows:
+            cr.set_source_rgba(*color)
+            cr.move_to(margin, baseline)
+            cr.show_text(text)
+            baseline += line_h
+
     def get_color_scheme_colors(self, scheme_key):
         """Get colors for a specific color scheme"""
-        schemes = {
-            'default': {
-                'background': '#000000',
-                'foreground': '#ffffff',
-                'blue': '#0088ff',
-                'green': '#00ff00',
-                'red': '#ff0000',
-                'yellow': '#ffff00',
-                'magenta': '#ff00ff',
-                'cyan': '#00ffff'
-            },
-            'black_on_white': {
-                'background': '#ffffff',
-                'foreground': '#000000',
-                'blue': '#0000ff',
-                'green': '#00ff00',
-                'red': '#ff0000',
-                'yellow': '#ffff00',
-                'magenta': '#ff00ff',
-                'cyan': '#00ffff'
-            },
-            'solarized_dark': {
-                'background': '#002b36',
-                'foreground': '#839496',
-                'blue': '#268bd2',
-                'green': '#859900',
-                'red': '#dc322f',
-                'yellow': '#b58900',
-                'magenta': '#d33682',
-                'cyan': '#2aa198'
-            },
-            'solarized_light': {
-                'background': '#fdf6e3',
-                'foreground': '#657b83',
-                'blue': '#268bd2',
-                'green': '#859900',
-                'red': '#dc322f',
-                'yellow': '#b58900',
-                'magenta': '#d33682',
-                'cyan': '#2aa198'
-            },
-            'monokai': {
-                'background': '#272822',
-                'foreground': '#f8f8f2',
-                'blue': '#66d9ef',
-                'green': '#a6e22e',
-                'red': '#f92672',
-                'yellow': '#e6db74',
-                'magenta': '#fd5ff0',
-                'cyan': '#a1efe4'
-            },
-            'dracula': {
-                'background': '#282a36',
-                'foreground': '#f8f8f2',
-                'blue': '#6272a4',
-                'green': '#50fa7b',
-                'red': '#ff5555',
-                'yellow': '#f1fa8c',
-                'magenta': '#bd93f9',
-                'cyan': '#8be9fd'
-            },
-            'nord': {
-                'background': '#2e3440',
-                'foreground': '#eceff4',
-                'blue': '#5e81ac',
-                'green': '#a3be8c',
-                'red': '#bf616a',
-                'yellow': '#ebcb8b',
-                'magenta': '#b48ead',
-                'cyan': '#88c0d0'
-            },
-            'gruvbox_dark': {
-                'background': '#282828',
-                'foreground': '#ebdbb2',
-                'blue': '#83a598',
-                'green': '#b8bb26',
-                'red': '#fb4934',
-                'yellow': '#fabd2f',
-                'magenta': '#d3869b',
-                'cyan': '#8ec07c'
-            },
-            'one_dark': {
-                'background': '#282c34',
-                'foreground': '#abb2bf',
-                'blue': '#61afef',
-                'green': '#98c379',
-                'red': '#e06c75',
-                'yellow': '#e5c07b',
-                'magenta': '#c678dd',
-                'cyan': '#56b6c2'
-            },
-            'tomorrow_night': {
-                'background': '#1d1f21',
-                'foreground': '#c5c8c6',
-                'blue': '#81a2be',
-                'green': '#b5bd68',
-                'red': '#cc6666',
-                'yellow': '#f0c674',
-                'magenta': '#b294bb',
-                'cyan': '#8abeb7'
-            },
-            'material_dark': {
-                'background': '#263238',
-                'foreground': '#eeffff',
-                'blue': '#82aaff',
-                'green': '#c3e88d',
-                'red': '#f07178',
-                'yellow': '#ffcb6b',
-                'magenta': '#c792ea',
-                'cyan': '#89ddff'
-            },
-            'rose_pine': {
-                'background': '#191724',
-                'foreground': '#e0def4',
-                'blue': '#9ccfd8',
-                'green': '#31748f',
-                'red': '#eb6f92',
-                'yellow': '#f6c177',
-                'magenta': '#c4a7e7',
-                'cyan': '#ebbcba'
-            },
-            'rose_pine_moon': {
-                'background': '#232136',
-                'foreground': '#e0def4',
-                'blue': '#9ccfd8',
-                'green': '#3e8fb0',
-                'red': '#eb6f92',
-                'yellow': '#f6c177',
-                'magenta': '#c4a7e7',
-                'cyan': '#ea9a97'
-            },
-            'rose_pine_dawn': {
-                'background': '#faf4ed',
-                'foreground': '#464261',
-                'blue': '#56949f',
-                'green': '#286983',
-                'red': '#b4637a',
-                'yellow': '#ea9d34',
-                'magenta': '#907aa9',
-                'cyan': '#d7827e'
-            },
-            'catppuccin_latte': {
-                'background': '#eff1f5',
-                'foreground': '#4c4f69',
-                'blue': '#1e66f5',
-                'green': '#40a02b',
-                'red': '#d20f39',
-                'yellow': '#df8e1d',
-                'magenta': '#8839ef',
-                'cyan': '#179299'
-            },
-            'catppuccin_frappe': {
-                'background': '#303446',
-                'foreground': '#c6d0f5',
-                'blue': '#8caaee',
-                'green': '#a6d189',
-                'red': '#e78284',
-                'yellow': '#e5c890',
-                'magenta': '#ca9ee6',
-                'cyan': '#81c8be'
-            },
-            'catppuccin_macchiato': {
-                'background': '#24273a',
-                'foreground': '#cad3f5',
-                'blue': '#8aadf4',
-                'green': '#a6da95',
-                'red': '#ed8796',
-                'yellow': '#eed49f',
-                'magenta': '#c6a0f6',
-                'cyan': '#8bd5ca'
-            },
-            'catppuccin_mocha': {
-                'background': '#1e1e2e',
-                'foreground': '#cdd6f4',
-                'blue': '#89b4fa',
-                'green': '#a6e3a1',
-                'red': '#f38ba8',
-                'yellow': '#f9e2af',
-                'magenta': '#cba6f7',
-                'cyan': '#94e2d5'
-            }
+        # Derive preview colors from Config.terminal_themes (single source of
+        # truth). ANSI palette order: [0]black [1]red [2]green [3]yellow
+        # [4]blue [5]magenta [6]cyan ...
+        themes = getattr(self.config, 'terminal_themes', {}) or {}
+        theme = themes.get(scheme_key) or themes.get('default') or {}
+        palette = theme.get('palette') or []
+
+        def _p(index, fallback):
+            return palette[index] if index < len(palette) else fallback
+
+        return {
+            'background': theme.get('background', '#000000'),
+            'foreground': theme.get('foreground', '#ffffff'),
+            'green': _p(2, '#00ff00'),
+            'blue': _p(4, '#0088ff'),
         }
-        return schemes.get(scheme_key, schemes['default'])
     
     def hex_to_rgba(self, hex_color):
         """Convert hex color to RGBA values (0-1 range)"""
@@ -4730,6 +5247,16 @@ class PreferencesWindow(Adw.Window):
                 self.parent_window.update_sidebar_display()
         except Exception as exc:
             logger.error("Failed to update sidebar show connection icon preference: %s", exc)
+
+    def on_sidebar_show_group_icon_changed(self, switch, *args):
+        """Persist the preference for showing the group icon in sidebar."""
+        try:
+            active = bool(switch.get_active())
+            self.config.set_setting('ui.sidebar_show_group_icon', active)
+            if self.parent_window and hasattr(self.parent_window, 'update_sidebar_display'):
+                self.parent_window.update_sidebar_display()
+        except Exception as exc:
+            logger.error("Failed to update sidebar show group icon preference: %s", exc)
 
     def on_open_file_manager_externally_changed(self, switch, *args):
         """Persist whether the file manager should open in a separate window."""

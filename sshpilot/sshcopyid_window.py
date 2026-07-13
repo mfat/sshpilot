@@ -15,8 +15,7 @@ except Exception:
     Vte = None
 
 from .config import Config
-from .connection_manager import Connection, ConnectionManager
-from .key_manager import KeyManager, SSHKey
+from .key_manager import SSHKey
 from .platform_utils import get_ssh_dir
 from .terminal import TerminalWidget
 from .connection_display import (
@@ -428,7 +427,7 @@ class SshCopyIdWindow(Adw.Window):
             logger.info(f"SshCopyIdWindow: Window initialized for connection {getattr(connection, 'nickname', 'unknown')}")
         except Exception as e:
             logger.error(f"SshCopyIdWindow: Failed to initialize window: {e}")
-            logger.debug(f"SshCopyIdWindow: Exception details: {type(e).__name__}: {str(e)}")
+            logger.debug(f"SshCopyIdWindow: Exception details: {type(e).__name__}: {e!s}")
             raise
 
         # ---------- Outer layout ----------
@@ -695,7 +694,7 @@ class SshCopyIdWindow(Adw.Window):
             logger.info(f"SshCopyIdWindow: Dropdown populated with {len(names)} key item(s)")
         except Exception as e:
             logger.error(f"SshCopyIdWindow: Failed to load existing keys: {e}")
-            logger.debug(f"SshCopyIdWindow: Exception details: {type(e).__name__}: {str(e)}")
+            logger.debug(f"SshCopyIdWindow: Exception details: {type(e).__name__}: {e!s}")
             self._existing_keys_cache = []
             self._last_real_selection = 0
             self._rebuild_existing_dropdown([_("Error loading keys")], 0)
@@ -860,7 +859,7 @@ class SshCopyIdWindow(Adw.Window):
                 self._do_generate_and_copy()
         except Exception as e:
             logger.error(f"SshCopyIdWindow: Operation failed: {e}")
-            logger.debug(f"SshCopyIdWindow: Exception details: {type(e).__name__}: {str(e)}")
+            logger.debug(f"SshCopyIdWindow: Exception details: {type(e).__name__}: {e!s}")
             self._error("Operation failed", "Could not start the requested action.", str(e))
 
     # ---------- Mode: existing ----------
@@ -899,7 +898,7 @@ class SshCopyIdWindow(Adw.Window):
             self.close()
         except Exception as e:
             logger.error(f"SshCopyIdWindow: Copy existing failed: {e}")
-            logger.debug(f"SshCopyIdWindow: Exception details: {type(e).__name__}: {str(e)}")
+            logger.debug(f"SshCopyIdWindow: Exception details: {type(e).__name__}: {e!s}")
             self._error("Copy failed", "Could not copy the selected key to the server.", str(e))
 
     # ---------- Mode: generate ----------
@@ -990,7 +989,7 @@ class SshCopyIdWindow(Adw.Window):
 
         except Exception as e:
             logger.error(f"SshCopyIdWindow: Generate and copy failed: {e}")
-            logger.debug(f"SshCopyIdWindow: Exception details: {type(e).__name__}: {str(e)}")
+            logger.debug(f"SshCopyIdWindow: Exception details: {type(e).__name__}: {e!s}")
 
 
 class SshCopyIdRunner:
@@ -1477,7 +1476,7 @@ class SshCopyIdRunner:
                     _("SSH Key Copy Error"),
                     _("Failed to copy SSH key to server."),
                     (
-                        f"Terminal error: {str(e)}\n\nPlease check:\n"
+                        f"Terminal error: {e!s}\n\nPlease check:\n"
                         "• Network connectivity\n"
                         "• SSH server configuration\n"
                         "• User permissions"
@@ -1494,7 +1493,7 @@ class SshCopyIdRunner:
                 _("SSH Key Copy Error"),
                 _("Failed to create ssh-copy-id terminal window."),
                 (
-                    f"Error: {str(e)}\n\nThis could be due to:\n"
+                    f"Error: {e!s}\n\nThis could be due to:\n"
                     "• Missing VTE terminal widget\n"
                     "• Display/GTK issues\n"
                     "• System resource limitations"

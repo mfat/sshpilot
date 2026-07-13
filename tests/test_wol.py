@@ -51,7 +51,6 @@ def test_is_wol_available():
 
 def test_get_subnet_broadcast_uses_interface_mask():
     """get_subnet_broadcast should use the real interface netmask, not hardcode /24."""
-    import psutil
     snic = MagicMock()
     snic.family = socket.AF_INET
     snic.address = "10.0.0.5"
@@ -65,7 +64,6 @@ def test_get_subnet_broadcast_uses_interface_mask():
 
 def test_get_subnet_broadcast_slash24():
     """/24 network still works correctly."""
-    import psutil
     snic = MagicMock()
     snic.family = socket.AF_INET
     snic.address = "192.168.1.10"
@@ -78,7 +76,6 @@ def test_get_subnet_broadcast_slash24():
 
 def test_get_subnet_broadcast_no_match_returns_none():
     """Returns None when no local interface is on the same subnet as target."""
-    import psutil
     snic = MagicMock()
     snic.family = socket.AF_INET
     snic.address = "10.0.0.5"

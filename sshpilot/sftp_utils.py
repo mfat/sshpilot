@@ -217,16 +217,25 @@ def open_remote_in_file_manager(
         lookup_user = user
         if connection is not None:
             lookup_user = getattr(connection, "username", None) or user
-        
-        for lookup_host in lookup_hosts:
+
+        if connection is not None:
             try:
-                retrieved = connection_manager.get_password(lookup_host, lookup_user)
+                retrieved = connection_manager.get_connection_password(connection)
                 if retrieved:
                     logger.debug("External file manager: Found password, skipping SSH verification")
                     has_password = True
-                    break
             except Exception:
                 pass
+        if not has_password:
+            for lookup_host in lookup_hosts:
+                try:
+                    retrieved = connection_manager.get_password(lookup_host, lookup_user)
+                    if retrieved:
+                        logger.debug("External file manager: Found password, skipping SSH verification")
+                        has_password = True
+                        break
+                except Exception:
+                    pass
 
     # If no password found and password auth is enabled, show password dialog before verification
     if not has_password and connection_manager is not None:
@@ -400,34 +409,42 @@ def _mount_and_open_sftp(
                 lookup_hosts
             )
             
-            # Try each identifier until we find a password
-            for lookup_host in lookup_hosts:
+            # Try connection-scoped lookup (migrates legacy host aliases), then each identifier
+            if connection is not None:
                 try:
-                    retrieved = connection_manager.get_password(lookup_host, lookup_user)
+                    retrieved = connection_manager.get_connection_password(connection)
                     if retrieved:
-                        logger.debug(
-                            "External file manager: Password found for %s@%s using identifier '%s'",
-                            lookup_user,
-                            lookup_host,
-                            lookup_host
-                        )
                         password = retrieved
-                        break
-                    else:
+                except Exception:
+                    pass
+            if not password:
+                for lookup_host in lookup_hosts:
+                    try:
+                        retrieved = connection_manager.get_password(lookup_host, lookup_user)
+                        if retrieved:
+                            logger.debug(
+                                "External file manager: Password found for %s@%s using identifier '%s'",
+                                lookup_user,
+                                lookup_host,
+                                lookup_host,
+                            )
+                            password = retrieved
+                            break
+                        else:
+                            logger.debug(
+                                "External file manager: No password found for %s@%s using identifier '%s'",
+                                lookup_user,
+                                lookup_host,
+                                lookup_host,
+                            )
+                    except Exception as exc:
                         logger.debug(
-                            "External file manager: No password found for %s@%s using identifier '%s'",
+                            "Password lookup failed for %s@%s (identifier '%s'): %s",
                             lookup_user,
                             lookup_host,
-                            lookup_host
+                            lookup_host,
+                            exc,
                         )
-                except Exception as exc:
-                    logger.debug(
-                        "Password lookup failed for %s@%s (identifier '%s'): %s",
-                        lookup_user,
-                        lookup_host,
-                        lookup_host,
-                        exc
-                    )
 
         # If no password found and password auth is enabled, show password dialog before mounting
         if not password and connection_manager is not None:
@@ -528,9 +545,9 @@ def _mount_and_open_sftp(
                         if error_callback:
                             error_callback(error_msg)
             except Exception as e:
-                error_msg = f"Unexpected error during mount: {str(e)}"
+                error_msg = f"Unexpected error during mount: {e!s}"
                 logger.error(f"Mount error for {user}@{host}: {e}")
-                progress_dialog.update_progress(0.0, f"Error: {str(e)}")
+                progress_dialog.update_progress(0.0, f"Error: {e!s}")
                 progress_dialog.show_error(error_msg)
                 GLib.timeout_add(1500, lambda: GLib.idle_add(progress_dialog.close))
                 if error_callback:
@@ -552,7 +569,7 @@ def _mount_and_open_sftp(
         return True, None
 
     except Exception as e:
-        error_msg = f"Failed to start mount operation: {str(e)}"
+        error_msg = f"Failed to start mount operation: {e!s}"
         logger.error(f"Mount operation failed for {user}@{host}: {e}")
         GLib.timeout_add(1500, lambda: GLib.idle_add(progress_dialog.close))
 

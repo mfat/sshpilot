@@ -1,0 +1,30 @@
+sshpilot (5.4.6-0ubuntu3) resolute; urgency=medium
+
+  * PyXterm.js web backend is now self-contained (no third-party CDN):
+    - transport switched from Socket.IO to a native WebSocket
+      (python3-simple-websocket) served by Flask;
+    - xterm.js is served locally from the system libjs-xterm at runtime, with
+      a bundled fallback for non-Debian installs.
+  * debian/control: replace python3-flask-socketio with python3-simple-websocket
+    and depend on libjs-xterm.
+  * debian/rules: drop the bundled xterm.js assets from the binary package
+    (the system libjs-xterm copy is used instead).
+
+ -- Mehdi <mah.fat@gmail.com>  Thu, 09 Jul 2026 15:50:36 +0330
+
+sshpilot (5.4.6-0ubuntu2) resolute; urgency=medium
+
+  * debian/rules: skip the build-time test suite. It is a GUI/integration
+    suite that imports optional backends (vendor/pyxtermjs -> flask) and needs
+    a display, causing a clean-chroot FTBFS. Runtime deps unchanged.
+  * debian/control: add python3-flask and python3-flask-socketio (PyXterm.js
+    backend) to Depends; recommend ssh-askpass.
+  * debian/copyright: record vendor/pyxtermjs as Expat (MIT).
+
+ -- Mehdi <mah.fat@gmail.com>  Thu, 09 Jul 2026 14:14:48 +0330
+
+sshpilot (5.4.6-0ubuntu1) resolute; urgency=medium
+
+  * Initial Ubuntu packaging.
+
+ -- Mehdi <mah.fat@gmail.com>  Thu, 09 Jul 2026 12:45:47 +0330

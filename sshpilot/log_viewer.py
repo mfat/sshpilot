@@ -118,7 +118,7 @@ def _tail_file(path: str, n: int) -> tuple[List[str], int]:
     try:
         # Use a deque so we don't materialise the whole file. ~10 MB log =
         # ~100k lines; deque(maxlen=n) keeps memory bounded to n entries.
-        with open(path, 'r', encoding='utf-8', errors='replace') as fh:
+        with open(path, encoding='utf-8', errors='replace') as fh:
             dq: 'collections.deque[str]' = collections.deque(maxlen=n)
             total = 0
             for line in fh:
@@ -133,7 +133,7 @@ def _tail_file(path: str, n: int) -> tuple[List[str], int]:
 def _read_full_file(path: str) -> str:
     """Return the entire file as text, or ``""`` on error."""
     try:
-        with open(path, 'r', encoding='utf-8', errors='replace') as fh:
+        with open(path, encoding='utf-8', errors='replace') as fh:
             return fh.read()
     except Exception as exc:
         logger.warning("Could not read log file %s: %s", path, exc)
@@ -148,10 +148,12 @@ def _build_diagnostic_bundle(log_lines: List[str], total_lines: int,
     whole thing is wrapped to render as a single Markdown code block when
     pasted into GitHub / Discourse / etc.
     """
-    # Import here so this module stays cheap to import.
+    # Import here so this module stays cheap to import. verbose=True so the
+    # diagnostic bundle captures full storage/tool probing (libsecret & keyring
+    # accessibility, sshpass version), which the concise startup path skips.
     try:
         from .startup_info import StartupInfo
-        info = StartupInfo().info
+        info = StartupInfo(verbose=True).info
     except Exception:
         info = {}
 
@@ -302,10 +304,10 @@ def build_diagnostics_zip(dest_path: str) -> str:
             if path not in seen and os.path.isfile(path):
                 zf.write(path, arcname='logs/' + os.path.basename(path))
 
-        # System / runtime info.
+        # System / runtime info. verbose=True for full storage/tool probing.
         try:
             from .startup_info import StartupInfo
-            info = StartupInfo().info
+            info = StartupInfo(verbose=True).info
         except Exception as exc:  # pragma: no cover - defensive
             info = {"error": "could not collect system info: %s" % exc}
         zf.writestr('system-info.txt', json.dumps(info, indent=2, default=str))
@@ -322,7 +324,7 @@ def build_diagnostics_zip(dest_path: str) -> str:
         cfg_path = os.path.join(get_config_dir(), 'config.json')
         try:
             if os.path.isfile(cfg_path):
-                with open(cfg_path, 'r', encoding='utf-8') as fh:
+                with open(cfg_path, encoding='utf-8') as fh:
                     data = json.load(fh)
                 zf.writestr('config.json',
                             json.dumps(_redact_config(data), indent=2, default=str))
