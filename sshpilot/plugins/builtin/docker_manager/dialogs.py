@@ -20,7 +20,7 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Gtk, Adw  # noqa: E402
+from gi.repository import GLib, Gtk, Adw  # noqa: E402
 
 from . import widgets as w  # noqa: E402
 
@@ -129,18 +129,33 @@ class ContainerDetailsDialog(_DialogBase):
 
 
 class TextViewDialog(_DialogBase):
-    """A monospace, read-only text viewer (image history, compose file)."""
+    """A monospace, read-only text viewer (image history, compose file).
+
+    Text is mouse-selectable and copyable (Ctrl+C / context menu)."""
 
     def __init__(self, parent: Optional[Gtk.Window], title: str, text: str) -> None:
         super().__init__(parent, title, width=680, height=560)
         scroller = Gtk.ScrolledWindow(vexpand=True)
         view = Gtk.TextView()
         view.set_editable(False)
+        view.set_cursor_visible(True)
         view.set_monospace(True)
         view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+        view.set_top_margin(8)
+        view.set_bottom_margin(8)
+        view.set_left_margin(12)
+        view.set_right_margin(12)
         view.get_buffer().set_text(text or "(empty)")
         scroller.set_child(view)
         self._toolbar.set_content(scroller)
+        self._view = view
+        # Focus the view so Ctrl+A / Ctrl+C work immediately.
+        def _focus_view() -> bool:
+            view.grab_focus()
+            return False
+
+        GLib.idle_add(_focus_view)
+
 
 
 class _PairList(Gtk.Box):

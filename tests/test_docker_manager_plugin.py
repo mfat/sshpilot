@@ -1069,11 +1069,35 @@ def test_placeholder_error_is_opaque_and_truncates():
     assert ph.get_visible()
     assert ph._details_btn.get_visible()
     assert ph._full_text == long_err
-    assert ph._label.get_text().endswith("…")
-    assert ph._label.has_css_class("error")
+    assert ph._err_scroll.get_visible()
+    buf = ph._err_view.get_buffer()
+    start, end = buf.get_bounds()
+    shown = buf.get_text(start, end, False)
+    assert shown.endswith("…")
+    assert ph._err_view.get_editable() is False
+    assert ph._err_view.get_cursor_visible() is True
+    assert ph.get_can_target() is True
+
+    # Short errors stay selectable (can_target) even without "View full error".
+    page._set_placeholder_idle(ph, "permission denied", error=True)
+    assert ph._err_scroll.get_visible()
+    assert ph._details_btn.get_visible() is False
     assert ph.get_can_target() is True
 
     page._set_placeholder_idle(ph, "No containers")
     assert ph._details_btn.get_visible() is False
-    assert ph._label.has_css_class("dim-label")
+    assert ph._err_scroll.get_visible() is False
+    assert ph._label.get_visible()
     assert ph.get_can_target() is False
+
+
+def test_text_view_dialog_is_selectable():
+    _gtk_or_skip()
+    from sshpilot.plugins.builtin.docker_manager.dialogs import TextViewDialog
+
+    dlg = TextViewDialog(None, "Error details", "copy me\nline 2")
+    assert dlg._view.get_editable() is False
+    assert dlg._view.get_cursor_visible() is True
+    buf = dlg._view.get_buffer()
+    start, end = buf.get_bounds()
+    assert "copy me" in buf.get_text(start, end, False)

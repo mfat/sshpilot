@@ -220,7 +220,8 @@ class DockerConsolePage(
 
         Must paint an opaque background: as a Gtk.Overlay child it otherwise
         floats failure stderr (a multi-line “log”) over the window with no
-        backing surface. Content stays centered inside the fill."""
+        backing surface. Content stays centered inside the fill. Errors use a
+        read-only TextView so the log is mouse-selectable / copyable."""
         w.ensure_placeholder_css()
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         outer.add_css_class("docker-console-placeholder")
@@ -242,8 +243,27 @@ class DockerConsolePage(
         label.set_wrap(True)
         label.set_justify(Gtk.Justification.CENTER)
         label.set_max_width_chars(56)
-        label.set_selectable(True)
         label.add_css_class("dim-label")
+
+        # Error log: TextView (not Label) so drag-select + Ctrl+C / context copy work.
+        err_scroll = Gtk.ScrolledWindow()
+        err_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        err_scroll.set_min_content_height(120)
+        err_scroll.set_max_content_height(280)
+        err_scroll.set_propagate_natural_height(True)
+        err_scroll.set_size_request(420, -1)
+        err_view = Gtk.TextView()
+        err_view.set_editable(False)
+        err_view.set_cursor_visible(True)
+        err_view.set_monospace(True)
+        err_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+        err_view.set_top_margin(8)
+        err_view.set_bottom_margin(8)
+        err_view.set_left_margin(10)
+        err_view.set_right_margin(10)
+        err_view.add_css_class("error")
+        err_scroll.set_child(err_view)
+        err_scroll.set_visible(False)
 
         details = Gtk.Button(label="View full error")
         details.add_css_class("flat")
@@ -253,12 +273,15 @@ class DockerConsolePage(
 
         inner.append(mark)
         inner.append(label)
+        inner.append(err_scroll)
         inner.append(details)
         outer.append(inner)
-        outer._pulse = mark          # type: ignore[attr-defined]
-        outer._label = label         # type: ignore[attr-defined]
-        outer._details_btn = details  # type: ignore[attr-defined]
-        outer._full_text = ""        # type: ignore[attr-defined]
+        outer._pulse = mark            # type: ignore[attr-defined]
+        outer._label = label           # type: ignore[attr-defined]
+        outer._err_scroll = err_scroll  # type: ignore[attr-defined]
+        outer._err_view = err_view     # type: ignore[attr-defined]
+        outer._details_btn = details   # type: ignore[attr-defined]
+        outer._full_text = ""          # type: ignore[attr-defined]
         return outer
 
     def _show_placeholder_details(self, ph: Gtk.Widget) -> None:
@@ -272,9 +295,12 @@ class DockerConsolePage(
         ph.set_can_target(False)  # clicks fall through to the list underneath
         ph._pulse.set_visible(True)   # type: ignore[attr-defined]
         self._pulse_start(ph._pulse)  # type: ignore[attr-defined]
+        ph._label.set_visible(True)   # type: ignore[attr-defined]
         ph._label.set_text(text)      # type: ignore[attr-defined]
         ph._label.remove_css_class("error")  # type: ignore[attr-defined]
         ph._label.add_css_class("dim-label")  # type: ignore[attr-defined]
+        ph._err_scroll.set_visible(False)  # type: ignore[attr-defined]
+        ph._err_view.get_buffer().set_text("", 0)  # type: ignore[attr-defined]
         ph._details_btn.set_visible(False)  # type: ignore[attr-defined]
         ph._full_text = ""            # type: ignore[attr-defined]
 
@@ -285,21 +311,27 @@ class DockerConsolePage(
         ph._pulse.set_visible(False)    # type: ignore[attr-defined]
         full = text or ""
         display, truncated = w.truncate_message(full, w._PLACEHOLDER_MAX_CHARS)
-        ph._full_text = full if truncated else ""  # type: ignore[attr-defined]
-        ph._label.set_text(display)     # type: ignore[attr-defined]
+        ph._full_text = full if (error and truncated) else ""  # type: ignore[attr-defined]
         if error:
-            ph._label.remove_css_class("dim-label")  # type: ignore[attr-defined]
-            ph._label.add_css_class("error")         # type: ignore[attr-defined]
+            # Log goes in a TextView so it is mouse-selectable / copyable.
+            ph._label.set_visible(False)  # type: ignore[attr-defined]
+            ph._err_scroll.set_visible(True)  # type: ignore[attr-defined]
+            ph._err_view.get_buffer().set_text(display, -1)  # type: ignore[attr-defined]
+            ph._details_btn.set_visible(truncated)  # type: ignore[attr-defined]
+            ph.set_can_target(True)
         else:
-            ph._label.remove_css_class("error")      # type: ignore[attr-defined]
-            ph._label.add_css_class("dim-label")     # type: ignore[attr-defined]
-        # Allow the details button to receive clicks when shown.
-        show_details = bool(error and truncated)
-        ph._details_btn.set_visible(show_details)  # type: ignore[attr-defined]
-        ph.set_can_target(show_details)
+            ph._label.set_visible(True)  # type: ignore[attr-defined]
+            ph._label.set_text(display)  # type: ignore[attr-defined]
+            ph._label.remove_css_class("error")  # type: ignore[attr-defined]
+            ph._label.add_css_class("dim-label")  # type: ignore[attr-defined]
+            ph._err_scroll.set_visible(False)  # type: ignore[attr-defined]
+            ph._err_view.get_buffer().set_text("", 0)  # type: ignore[attr-defined]
+            ph._details_btn.set_visible(False)  # type: ignore[attr-defined]
+            ph.set_can_target(False)
 
     def _hide_placeholder(self, ph: Gtk.Widget) -> None:
         self._pulse_stop(ph._pulse)     # type: ignore[attr-defined]
+        ph._err_scroll.set_visible(False)  # type: ignore[attr-defined]
         ph._details_btn.set_visible(False)  # type: ignore[attr-defined]
         ph._full_text = ""              # type: ignore[attr-defined]
         ph.set_can_target(False)

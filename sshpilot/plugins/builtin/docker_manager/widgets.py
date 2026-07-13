@@ -155,9 +155,25 @@ def listbox_wrap(widget: Gtk.Widget) -> Gtk.Widget:
 
 def grid_message(text: str, *, error: bool = False) -> Gtk.Widget:
     display, _ = truncate_message(text, _PLACEHOLDER_MAX_CHARS)
+    if error:
+        # TextView so stats failures are mouse-selectable / copyable like list errors.
+        view = Gtk.TextView()
+        view.set_editable(False)
+        view.set_cursor_visible(True)
+        view.set_monospace(True)
+        view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+        view.set_top_margin(8)
+        view.set_bottom_margin(8)
+        view.set_left_margin(4)
+        view.set_right_margin(4)
+        view.add_css_class("error")
+        view.get_buffer().set_text(display, -1)
+        view.set_hexpand(True)
+        return view
     lbl = Gtk.Label(label=display, wrap=True, xalign=0)
     lbl.set_max_width_chars(72)
-    lbl.add_css_class("error" if error else "dim-label")
+    lbl.set_selectable(True)
+    lbl.add_css_class("dim-label")
     lbl.set_margin_top(12)
     lbl.set_margin_bottom(12)
     return lbl
