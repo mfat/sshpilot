@@ -55,3 +55,69 @@ Architecture**. The essentials:
   `askpass_utils.py` (keyring lookup → GTK prompt); **sshpass** feeds the
   password via a write-once FIFO (`ssh_password_exec.py`). Full detail in
   `AGENTS.md`.
+
+## Dialogs & Alerts (GTK4/libadwaita — read before adding any dialog)
+
+SSHPilot is a GTK4/libadwaita app. Every dialog, alert, confirmation, or
+notification must use **libadwaita** widgets, not raw GTK ones. Plain
+`Gtk.MessageDialog` / bare `Gtk.Dialog` is never acceptable — it looks out of
+place next to the rest of the Adwaita UI and breaks HIG compliance.
+
+### Don't
+
+- `Gtk.MessageDialog` — deprecated, unstyled, does not follow libadwaita
+  visual language.
+- `Gtk.Dialog` with manually packed buttons/labels for a "confirm or cancel"
+  or "show an error".
+- `Gtk.AlertDialog` (raw GTK4 native) for anything needing more than a single
+  native OS-style prompt — it can't be themed to match the app.
+- Rolling a custom `Gtk.Window` to fake a dialog.
+
+### Do
+
+- **Confirmations / yes-no / destructive → `Adw.AlertDialog`** (libadwaita
+  ≥ 1.5). Add 1–3 responses; destructive action (delete, overwrite,
+  disconnect-and-lose-data) → `Adw.ResponseAppearance.DESTRUCTIVE`, non-destructive
+  confirm → `SUGGESTED`. Always set `default_response` and `close_response` so
+  Esc/click-outside behave. Present with a parent widget, never orphaned.
+- **Errors → `Adw.AlertDialog` with a single "OK" response.** An error is just
+  a 1-button alert — don't invent a separate error-dialog pattern.
+- **Transient feedback (saved, copied, connected) → `Adw.Toast`** via the
+  window's existing `Adw.ToastOverlay` (check before adding a new one). If it
+  needs no decision, it's a toast, not a dialog.
+- **Forms / settings / multi-step → `Adw.Dialog`** (with `Adw.ToolbarView`
+  inside) or **`Adw.PreferencesDialog`** (`Adw.PreferencesPage` /
+  `Adw.PreferencesGroup`), presented via `dialog.present(parent)`.
+- **File/color pickers → `Gtk.FileDialog` / `Gtk.ColorDialog`.** These native
+  GTK4 APIs are correct and already match the platform.
+
+### Terminal/log widgets attached to dialogs
+
+Do **not** add a log/terminal widget to a dialog unless explicitly requested
+for that dialog — attaching one unprompted is a bug, same as reaching for
+`Gtk.MessageDialog`. When requested, it must be **hidden on open** and
+**revealed via a button/expander**, never shown inline automatically.
+
+- Static text, a few lines → `Gtk.Expander` (collapsed, never pre-expanded)
+  wrapping a height-capped `Gtk.ScrolledWindow`, set as `extra_child` on the
+  `Adw.AlertDialog`.
+- Live/interactive widget (VTE terminal, real-time log, anything needing
+  focus/scroll/selection) → `Adw.Dialog` (resizable, real content area), not
+  `Adw.AlertDialog`. Reveal via a header-bar toggle / "Show Terminal" button
+  that swaps in the widget — it must not be visible on open. If it also needs a
+  yes/no decision, put the decision as an action in the `Adw.Dialog` header
+  bar / `ToolbarView`, don't cram a live widget into `Adw.AlertDialog`.
+
+### Checklist
+
+1. Blocking + decision → `Adw.AlertDialog`. Just feedback → `Adw.Toast`.
+   Form/settings → `Adw.Dialog` / `Adw.PreferencesDialog`.
+2. Destructive response marked `DESTRUCTIVE`, confirm marked `SUGGESTED`.
+3. Parent set; `default_response` + `close_response` set.
+4. Log/terminal widget only if explicitly requested; hidden on open, revealed
+   by button. Static → `extra_child` expander; live → `Adw.Dialog`.
+5. No raw `Gtk.MessageDialog`, `Gtk.Dialog`, or hand-rolled `Gtk.Window`
+   anywhere in the diff.
+
+A plain `Gtk.MessageDialog` or hand-built `Gtk.Dialog` for any of the above is
+a bug — reject the diff.
