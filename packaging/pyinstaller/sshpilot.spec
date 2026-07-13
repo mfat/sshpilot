@@ -61,6 +61,8 @@ gtk_libs_patterns = [
 
 # Place GI dylibs at Contents/Frameworks/ (dest "."). Nested Frameworks/Frameworks
 # breaks typelib dlopen of bare sonames such as libgtksourceview-5.0.dylib.
+# The stock hook-gi.repository.GtkSource (pyinstaller#3893) also uses dest ".";
+# this Homebrew glob is belt-and-suspenders for libs GI hooks may miss.
 binaries = collect_homebrew_dylibs(hb_lib, gtk_libs_patterns)
 
 # GI typelibs
@@ -158,6 +160,18 @@ if gi_site_packages.exists():
 
 hiddenimports = collect_submodules("gi")
 hiddenimports += ["gi._gi_cairo", "gi.repository.cairo", "cairo"]
+# Force the stock PyInstaller GI hooks to run (hook-gi.repository.GtkSource
+# from pyinstaller#3893, etc.). GtkSource is imported behind try/except in app
+# code, so analysis may miss it without an explicit hiddenimport. The hook
+# collects the shared library at Frameworks root (dest ".") and on macOS
+# rewrites the typelib to @loader_path/… — but only for the configured version.
+hiddenimports += [
+    "gi.repository.Gtk",
+    "gi.repository.Gdk",
+    "gi.repository.GtkSource",
+    "gi.repository.Adw",
+    "gi.repository.Vte",
+]
 # Built-in plugins are imported dynamically (the loader scans the dir), so
 # PyInstaller can't see them by following imports — collect them explicitly,
 # and bundle their plugin.json manifests (read from disk at runtime).
@@ -190,6 +204,22 @@ for _kp_bin in ("lxml", "Cryptodome", "argon2_cffi_bindings"):
     except Exception:
         pass
 
+# Official GI hooks default to Gtk/GtkSource 3.x; sshPilot needs GTK4 + GtkSource 5
+# (see https://github.com/pyinstaller/pyinstaller/pull/3893 and hooks-config docs).
+gi_hooksconfig = {
+    "gi": {
+        "module-versions": {
+            "Gtk": "4.0",
+            "Gdk": "4.0",
+            "GtkSource": "5",
+        },
+        # Keep the bundle lean — full icon/theme trees are huge; we already ship
+        # Adwaita icons via datas above.
+        "icons": ["Adwaita"],
+        "themes": ["Adwaita"],
+    },
+}
+
 block_cipher = None
 
 a = Analysis(
@@ -199,6 +229,7 @@ a = Analysis(
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[SPECPATH],
+    hooksconfig=gi_hooksconfig,
     runtime_hooks=[os.path.join(SPECPATH, "hook-gtk_runtime.py")],
     noarchive=False,
 )

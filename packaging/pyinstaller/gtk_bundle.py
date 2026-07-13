@@ -4,6 +4,15 @@ GI typelibs dlopen bare sonames (e.g. ``libgtksourceview-5.0.dylib``) from
 ``Contents/Frameworks/``. Placing libraries under a nested
 ``Contents/Frameworks/Frameworks/`` directory leaves them invisible to that
 lookup and breaks features such as the SSH config editor.
+
+The stock PyInstaller hook ``hook-gi.repository.GtkSource``
+(https://github.com/pyinstaller/pyinstaller/pull/3893) already collects the
+shared library with dest ``"."`` (Frameworks root) and, on macOS, rewrites the
+typelib to ``@loader_path/…``. It defaults to GtkSource 3.0 — use
+``hooksconfig['gi']['module-versions']['GtkSource'] = '5'`` plus a
+``gi.repository.GtkSource`` hiddenimport so the hook actually runs for v5.
+These helpers remain as an explicit Homebrew fallback and for build-time
+verification.
 """
 
 from __future__ import annotations

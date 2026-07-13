@@ -24,6 +24,8 @@ from gtk_bundle import (  # noqa: E402
 def test_gi_dylib_dest_is_frameworks_root():
     # Nested "Frameworks" dest was the PyInstaller bug that broke the SSH
     # config editor ("Failed to load ... libgtksourceview-5.0.dylib").
+    # Matches stock hook-gi.repository.GtkSource (pyinstaller#3893), which
+    # also collects shared libs with dest ".".
     assert GI_DYLIB_BUNDLE_DEST == "."
 
 
