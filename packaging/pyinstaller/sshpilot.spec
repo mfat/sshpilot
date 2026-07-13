@@ -1,7 +1,7 @@
 # sshpilot.spec — build with: pyinstaller --clean sshpilot.spec
 import os, sys, glob, platform, sysconfig
 from pathlib import Path
-from PyInstaller.utils.hooks import collect_submodules, collect_data_files, collect_dynamic_libs
+from PyInstaller.utils.hooks import collect_submodules, collect_data_files, collect_dynamic_libs, copy_metadata
 
 # Resolve the current Python site-packages directory dynamically
 site_packages_dir = Path(sysconfig.get_path("platlib"))
@@ -148,6 +148,11 @@ keyring_package = site_packages_dir / "keyring"
 if keyring_package.exists():
     datas.append((str(keyring_package), "keyring"))
     print(f"Added keyring package: {keyring_package}")
+# Keyring metadata for entry-point backend discovery (hooks-contrib/keyring hook).
+try:
+    datas += copy_metadata("keyring")
+except Exception as exc:
+    print(f"WARNING: could not copy keyring metadata: {exc}")
 
 
 # Cairo Python bindings (required for Cairo Context)
@@ -182,9 +187,10 @@ datas += collect_data_files("sshpilot.plugins.builtin", includes=["**/plugin.jso
 hiddenimports += ["keyring"]
 # Add all keyring backends
 hiddenimports += ["keyring.backends", "keyring.backends.macOS", "keyring.backends.libsecret", "keyring.backends.SecretService"]
-# Ship certifi so the HTTPS update check can verify TLS certs inside the bundle
-# (PyInstaller's certifi hook collects cacert.pem once certifi is importable).
-hiddenimports += ["certifi"]
+# certifi / cryptography: listed so the (hooks-contrib) hooks fire — hook-certifi
+# collects cacert.pem for the HTTPS update check; hook-cryptography collects
+# backends + OpenSSL 3 modules. Both packages must be installed in the build env.
+hiddenimports += ["certifi", "cryptography"]
 
 # KeePass (.kdbx) secret backend: pykeepass + its (partly compiled) deps. The import is
 # lazy/optional, so PyInstaller's import-following may miss it — collect explicitly so the

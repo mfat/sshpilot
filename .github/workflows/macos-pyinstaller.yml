@@ -61,9 +61,9 @@ jobs:
           echo "=== DEBUG: Upgrading pip and wheel ==="
           python -m pip install --upgrade pip wheel
           echo "=== DEBUG: Installing Python packages ==="
-          python -m pip install cryptography keyring psutil certifi pykeepass PyInstaller
+          python -m pip install cryptography keyring psutil certifi pykeepass PyInstaller pyinstaller-hooks-contrib
           echo "=== DEBUG: Verifying Python package installations ==="
-          pip list | grep -E "(cryptography|keyring|psutil|certifi|PyInstaller)"
+          pip list | grep -E "(cryptography|keyring|psutil|certifi|PyInstaller|pyinstaller-hooks-contrib)"
           echo "=== DEBUG: Virtual environment setup completed ==="
 
       - name: Build application bundle with PyInstaller
