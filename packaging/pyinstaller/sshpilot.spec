@@ -1,7 +1,27 @@
 # sshpilot.spec — build with: pyinstaller --clean sshpilot.spec
 import os, sys, glob, platform, sysconfig
 from pathlib import Path
-from PyInstaller.utils.hooks import collect_submodules, collect_data_files, collect_dynamic_libs
+from PyInstaller.utils.hooks import (
+    collect_submodules,
+    collect_data_files,
+    collect_dynamic_libs,
+    copy_metadata,
+)
+
+# Upstream GI hooks default to Gtk/Gdk 3.0 and GtkSource 3.0. sshPilot is
+# GTK4 + GtkSourceView 5; without this, those hooks collect the wrong
+# typelibs (or no-op). Also limit icon themes to Adwaita to avoid pulling
+# every theme under share/icons.
+GI_HOOKSCONFIG = {
+    "gi": {
+        "module-versions": {
+            "Gtk": "4.0",
+            "Gdk": "4.0",
+            "GtkSource": "5",
+        },
+        "icons": ["Adwaita"],
+    },
+}
 
 # Resolve the current Python site-packages directory dynamically
 site_packages_dir = Path(sysconfig.get_path("platlib"))
@@ -142,11 +162,17 @@ if os.path.exists(gdkpixbuf_loaders):
     datas.append((gdkpixbuf_loaders, "Resources/lib/gdk-pixbuf-2.0/2.10.0"))
     print(f"Added GDK-Pixbuf loaders: {gdkpixbuf_loaders}")
 
-# Add keyring package files explicitly
+# Keyring package + metadata (entry-point backend discovery). The built-in
+# hook-keyring also does this once keyring is analyzed; keep an explicit copy
+# so macOS builds still find backends if analysis misses a plugin path.
 keyring_package = site_packages_dir / "keyring"
 if keyring_package.exists():
     datas.append((str(keyring_package), "keyring"))
     print(f"Added keyring package: {keyring_package}")
+try:
+    datas += copy_metadata("keyring")
+except Exception as exc:
+    print(f"WARNING: could not copy keyring metadata: {exc}")
 
 
 # Cairo Python bindings (required for Cairo Context)
@@ -159,23 +185,35 @@ if gi_site_packages.exists():
 
 hiddenimports = collect_submodules("gi")
 hiddenimports += ["gi._gi_cairo", "gi.repository.cairo", "cairo"]
+# Ensure GI repository hooks with module-versions (see GI_HOOKSCONFIG) run even
+# when the corresponding import is lazy/optional in app code.
+hiddenimports += [
+    "gi.repository.Gtk",
+    "gi.repository.Gdk",
+    "gi.repository.GdkPixbuf",
+    "gi.repository.GtkSource",
+    "gi.repository.Adw",
+]
 # Built-in plugins are imported dynamically (the loader scans the dir), so
 # PyInstaller can't see them by following imports — collect them explicitly,
 # and bundle their plugin.json manifests (read from disk at runtime).
 hiddenimports += collect_submodules("sshpilot.plugins.builtin")
 # Built-in manifests only — example plugins are dev references, never shipped.
 datas += collect_data_files("sshpilot.plugins.builtin", includes=["**/plugin.json"])
-# Add keyring for askpass functionality
+# Add keyring for askpass functionality (triggers built-in hook-keyring).
 hiddenimports += ["keyring"]
 # Add all keyring backends
 hiddenimports += ["keyring.backends", "keyring.backends.macOS", "keyring.backends.libsecret", "keyring.backends.SecretService"]
-# Ship certifi so the HTTPS update check can verify TLS certs inside the bundle
-# (PyInstaller's certifi hook collects cacert.pem once certifi is importable).
-hiddenimports += ["certifi"]
+# certifi / cryptography: listed so pyinstaller-hooks-contrib hooks fire
+# (hook-certifi collects cacert.pem; hook-cryptography collects backends +
+# OpenSSL 3 modules). Both packages must be installed in the build env.
+hiddenimports += ["certifi", "cryptography"]
 
 # KeePass (.kdbx) secret backend: pykeepass + its (partly compiled) deps. The import is
 # lazy/optional, so PyInstaller's import-following may miss it — collect explicitly so the
-# self-contained bundle can offer the backend. Wrapped so a missing dep never breaks the build.
+# self-contained bundle can offer the backend. Listing these also triggers
+# hooks-contrib hooks (lxml, Cryptodome, argon2). Wrapped so a missing dep never
+# breaks the build.
 for _kp_mod in ("pykeepass", "construct", "Cryptodome", "argon2", "argon2_cffi_bindings", "lxml"):
     try:
         hiddenimports += collect_submodules(_kp_mod)
@@ -200,6 +238,7 @@ a = Analysis(
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[SPECPATH],
+    hooksconfig=GI_HOOKSCONFIG,
     runtime_hooks=[os.path.join(SPECPATH, "hook-gtk_runtime.py")],
     noarchive=False,
 )

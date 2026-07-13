@@ -53,7 +53,7 @@ jobs:
           "$PYTHON_PATH" -m venv .venv-homebrew --system-site-packages
           source .venv-homebrew/bin/activate
           python -m pip install --upgrade pip wheel
-          python -m pip install cryptography keyring psutil certifi pykeepass PyInstaller
+          python -m pip install cryptography keyring psutil certifi pykeepass PyInstaller pyinstaller-hooks-contrib
 
       - name: Build application bundle with PyInstaller
         run: |

@@ -44,14 +44,18 @@ if [ ! -d ".venv-homebrew" ]; then
     "$PYTHON_PATH" -m venv .venv-homebrew
     echo "✅ Virtual environment created successfully"
 
-    # Activate and install PyInstaller
-    echo "📦 Installing PyInstaller..."
+    # Activate and install PyInstaller + hooks-contrib (certifi, cryptography,
+    # lxml, Cryptodome, argon2, …). hooks-contrib is a separate package.
+    echo "📦 Installing PyInstaller and pyinstaller-hooks-contrib..."
     source .venv-homebrew/bin/activate
-    pip install PyInstaller
+    pip install "PyInstaller" "pyinstaller-hooks-contrib"
     echo "✅ PyInstaller installed successfully"
 else
     echo "📦 Activating existing Homebrew virtual environment..."
     source .venv-homebrew/bin/activate
+    # Ensure hooks-contrib is present even on reused venvs (older builds only
+    # installed PyInstaller).
+    pip install -q "PyInstaller" "pyinstaller-hooks-contrib"
 fi
 
 echo "🔨 Running PyInstaller..."
