@@ -1,33 +1,28 @@
 """
 Icon utility functions for loading bundled icons with fallback to system icons.
-This ensures bundled icons are used when available, providing a consistent look
-across different distributions and desktop environments.
 
-Following GNOME documentation (https://developer.gnome.org/documentation/tutorials/themed-icons.html)
-and GTK4 IconTheme API (https://docs.gtk.org/gtk4/class.IconTheme.html), we:
-1. Add resource path to icon theme using set_resource_path() API
-2. Manually check resources first to ensure bundled icons take priority
-3. Fall back to icon theme system (which may still find system themes)
-
-This hybrid approach ensures bundled icons are used while maintaining compatibility
-with GTK's icon theme system for symbolic icon recoloring.
+Bundled icons are registered on Gtk.IconTheme via set_resource_path() in main.py.
+We resolve icons through Gio.ThemedIcon so GTK's icon-theme cache is used and
+symbolic icons are recolored correctly.  Alias entries in _ICON_RESOURCE_MAP
+(names that map to a different resource file) still load via Gio.FileIcon.
+Resolved Gio.Icon instances are cached per icon name for the process lifetime.
 """
 
 import logging
-from gi.repository import Gtk, Gio, GLib
+from typing import Dict, Optional
+
+from gi.repository import Gtk, Gio
 
 logger = logging.getLogger(__name__)
+
+# Process-wide cache: icon name -> Gio.Icon (ThemedIcon or FileIcon).
+_gicon_cache: Dict[str, Gio.Icon] = {}
 
 # Track if we've patched Gtk.Image
 _patched = False
 
-# Store original methods before patching (will be set by patch_gtk_image)
-_original_new_from_icon_name = None
-_original_set_from_icon_name = None
-
-# Map of icon names to their resource paths (kept for reference/documentation)
-# Note: We no longer use this for manual loading - the icon theme system handles it
-# This map documents which icons we have bundled and their locations
+# Map of icon names to bundled resource paths.  Direct name/file matches are
+# resolved via Gtk.IconTheme; alias entries fall back to Gio.FileIcon.
 _ICON_RESOURCE_MAP = {
     'folder-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/folder-symbolic.svg',
     'text-x-generic-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/text-x-generic-symbolic.svg',
@@ -77,6 +72,7 @@ _ICON_RESOURCE_MAP = {
     'dialog-error-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/dialog-error-symbolic.svg',
     'error-outline-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/error-outline-symbolic.svg',
     'info-outline-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/info-outline-symbolic.svg',
+    'warning-outline-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/warning-outline-symbolic.svg',
     'color-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/color-symbolic.svg',
     'brand-docker-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/brand-docker-symbolic.svg',
     'success-small-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/success-small-symbolic.svg',
@@ -154,142 +150,72 @@ _ICON_RESOURCE_MAP = {
     'x-package-repository': '/io/github/mfat/sshpilot/icons/scalable/mimetypes/x-package-repository.svg',
 }
 
-def new_image_from_icon_name(icon_name: str, size: int = None) -> Gtk.Image:
+
+def _is_direct_theme_lookup(icon_name: str, resource_path: str) -> bool:
+    """True when the bundled resource file name matches the themed icon name."""
+    return resource_path.endswith(f'/{icon_name}.svg')
+
+
+def get_gicon_for_icon_name(icon_name: str) -> Gio.Icon:
+    """Return a cached Gio.Icon for icon_name (ThemedIcon or alias FileIcon)."""
+    cached = _gicon_cache.get(icon_name)
+    if cached is not None:
+        return cached
+
+    resource_path = _ICON_RESOURCE_MAP.get(icon_name)
+    if resource_path and not _is_direct_theme_lookup(icon_name, resource_path):
+        file_obj = Gio.File.new_for_uri(f'resource://{resource_path}')
+        icon: Gio.Icon = Gio.FileIcon.new(file_obj)
+    else:
+        icon = Gio.ThemedIcon.new(icon_name)
+
+    _gicon_cache[icon_name] = icon
+    return icon
+
+
+def new_image_from_icon_name(icon_name: str, size: Optional[int] = None) -> Gtk.Image:
     """
     Create a Gtk.Image from an icon name, preferring bundled icons over system icons.
-    
-    We first check for bundled icons in resources and load them directly. This ensures
-    bundled icons are always used instead of system theme icons. For symbolic icons,
-    GTK will automatically recolor them based on the `-symbolic` suffix in the filename.
-    
+
     Args:
         icon_name: The name of the icon (e.g., 'folder-symbolic')
         size: Optional pixel size for the icon
-        
+
     Returns:
         A Gtk.Image widget with the icon loaded
     """
-    # Check for bundled icon first - this ensures our icons take priority
-    resource_path = _ICON_RESOURCE_MAP.get(icon_name)
-    if resource_path:
-        try:
-            # Verify resource exists
-            Gio.resources_lookup_data(resource_path, Gio.ResourceLookupFlags.NONE)
-            
-            # Load from resource using FileIcon
-            # Note: According to GNOME docs, icons loaded via FileIcon won't be automatically
-            # recolored, but GTK should still handle symbolic icons based on filename suffix
-            resource_uri = f"resource://{resource_path}"
-            file_obj = Gio.File.new_for_uri(resource_uri)
-            file_icon = Gio.FileIcon.new(file_obj)
-            image = Gtk.Image.new_from_gicon(file_icon)
-            
-            logger.debug(f"Loaded bundled icon from resource: {icon_name}")
-            
-            if size:
-                image.set_pixel_size(size)
-            return image
-        except (GLib.Error, Exception) as e:
-            logger.debug(f"Bundled icon not found for {icon_name}, using icon theme: {e}")
-            pass
-    
-    # Fall back to icon theme system (will check resource path, then system themes)
-    # This ensures symbolic icons are properly recolored when using system icons
-    if _original_new_from_icon_name is not None:
-        image = _original_new_from_icon_name(icon_name)
-    else:
-        image = Gtk.Image.new_from_icon_name(icon_name)
-    
+    image = Gtk.Image.new_from_gicon(get_gicon_for_icon_name(icon_name))
     if size:
         image.set_pixel_size(size)
-    
     return image
 
+
 def set_icon_from_name(image: Gtk.Image, icon_name: str) -> None:
-    """
-    Set an icon on a Gtk.Image widget, preferring bundled icons over system icons.
-    
-    We first check for bundled icons in resources and load them directly. This ensures
-    bundled icons are always used instead of system theme icons.
-    
-    Args:
-        image: The Gtk.Image widget to set the icon on
-        icon_name: The name of the icon (e.g., 'folder-symbolic')
-    """
-    # Check for bundled icon first - this ensures our icons take priority
-    resource_path = _ICON_RESOURCE_MAP.get(icon_name)
-    if resource_path:
-        try:
-            # Verify resource exists
-            Gio.resources_lookup_data(resource_path, Gio.ResourceLookupFlags.NONE)
-            
-            # Load from resource using FileIcon
-            resource_uri = f"resource://{resource_path}"
-            file_obj = Gio.File.new_for_uri(resource_uri)
-            file_icon = Gio.FileIcon.new(file_obj)
-            image.set_from_gicon(file_icon)
-            
-            logger.debug(f"Set bundled icon from resource: {icon_name}")
-            return
-        except (GLib.Error, Exception) as e:
-            logger.debug(f"Bundled icon not found for {icon_name}, using icon theme: {e}")
-            pass
-    
-    # Fall back to icon theme system
-    if _original_set_from_icon_name is not None:
-        _original_set_from_icon_name(image, icon_name)
-    else:
-        image.set_from_icon_name(icon_name)
+    """Set an icon on a Gtk.Image widget, preferring bundled icons over system icons."""
+    image.set_from_gicon(get_gicon_for_icon_name(icon_name))
 
 def patch_gtk_image():
-    """
-    Patch Gtk.Image methods to use our helper functions.
-    
-    Since we add the resource path to the icon theme in main.py, GTK will
-    automatically find our bundled icons. This patching ensures we use a
-    consistent API and can add logging if needed.
-    """
-    global _patched, _original_new_from_icon_name, _original_set_from_icon_name
+    """Patch Gtk.Image methods to use the cached icon resolver."""
+    global _patched
     if _patched:
         return
-    
-    # Store original methods BEFORE patching
-    _original_new_from_icon_name = Gtk.Image.new_from_icon_name
-    _original_set_from_icon_name = Gtk.Image.set_from_icon_name
-    
+
     @classmethod
     def new_from_icon_name_patched(cls, icon_name: str):
-        """Patched version that uses our helper"""
         return new_image_from_icon_name(icon_name)
-    
+
     def set_from_icon_name_patched(self, icon_name: str):
-        """Patched version that uses our helper"""
         set_icon_from_name(self, icon_name)
-    
-    # Patch the class methods
+
     Gtk.Image.new_from_icon_name = new_from_icon_name_patched
     Gtk.Image.set_from_icon_name = set_from_icon_name_patched
-    
+
     _patched = True
-    logger.debug("Patched Gtk.Image methods to use icon theme system")
+    logger.debug("Patched Gtk.Image methods to use cached icon resolver")
 
 def new_gicon_from_icon_name(icon_name: str) -> Gio.Icon:
-    """
-    Create a Gio.Icon from an icon name, using bundled icons when available.
-    
-    This is useful for buttons and other widgets that use GIcon instead of Gtk.Image.
-    Following GNOME documentation, we use ThemedIcon which will check our resource path
-    via the icon theme system, ensuring symbolic icons are properly handled.
-    
-    Args:
-        icon_name: The name of the icon (e.g., 'folder-symbolic')
-        
-    Returns:
-        A Gio.ThemedIcon (icon theme system will find bundled icons from resource path)
-    """
-    # Use ThemedIcon - the icon theme system will check our resource path first
-    # This ensures symbolic icons are properly handled by GTK
-    return Gio.ThemedIcon.new(icon_name)
+    """Create a Gio.Icon from an icon name (cached; same resolver as Gtk.Image helpers)."""
+    return get_gicon_for_icon_name(icon_name)
 
 def new_button_from_icon_name(icon_name: str) -> Gtk.Button:
     """

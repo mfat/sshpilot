@@ -8,11 +8,10 @@ Tests verify that:
 4. UTF-8/UTF-16 are not wrapped (native xterm.js support)
 """
 
-import os
 import sys
 import types
 from pathlib import Path
-from unittest.mock import Mock, MagicMock, patch, call
+from unittest.mock import Mock
 
 import pytest
 
@@ -173,7 +172,7 @@ _Gdk.Rectangle = Mock
 _Adw.Application = types.SimpleNamespace(get_default=lambda: None)
 
 # Now import the modules we want to test
-from sshpilot.terminal_backends import VTETerminalBackend, PyXtermTerminalBackend
+from sshpilot.terminal_backends import VTETerminalBackend, PyXtermTerminalBackend, PyXtermBridgeBackend
 
 
 class TestVTETerminalEncoding:
@@ -226,7 +225,6 @@ class TestPyXtermEncoding:
     def test_utf8_encoding_no_luit_wrapper(self, monkeypatch):
         """Test that UTF-8 encoding doesn't wrap command with luit"""
         # Test the encoding wrapping logic directly
-        import shutil
         
         # UTF-8 should not be wrapped (native xterm.js support)
         encoding = 'UTF-8'
@@ -453,7 +451,7 @@ class TestEncodingAffectsText:
         # UTF-8: 0xD1 0x8F (2 bytes)
         
         text_koi8r = 'я'.encode('KOI8-R')
-        text_utf8 = 'я'.encode('UTF-8')
+        text_utf8 = 'я'.encode()
         
         assert text_koi8r != text_utf8
         assert len(text_koi8r) == 1
@@ -475,41 +473,50 @@ class TestEncodingIntegration:
     def test_pyxterm_wrap_command_with_encoding_method(self, monkeypatch):
         """Test the actual _wrap_command_with_encoding method from backend"""
         import shutil
-        import importlib
-        
-        # Import the module to get access to the method
-        terminal_backends = importlib.import_module('sshpilot.terminal_backends')
-        
-        # Create a minimal backend instance to test the method
-        # We'll create a mock instance that has the method
-        class MockBackend:
-            def _wrap_command_with_encoding(self, argv, encoding):
-                """Copy of the actual method logic"""
-                # UTF-8 and UTF-16 are natively supported, no wrapper needed
-                if encoding.upper() in ('UTF-8', 'UTF-16', 'UTF-16LE', 'UTF-16BE'):
-                    return argv
-                
-                # For legacy encodings, wrap with luit if available
-                luit_path = shutil.which('luit')
-                if luit_path:
-                    wrapped = [luit_path, '-encoding', encoding, '--'] + list(argv)
-                    return wrapped
-                else:
-                    return argv
-        
-        backend = MockBackend()
-        
-        # Test UTF-8 (no wrapping)
-        monkeypatch.setattr(shutil, 'which', lambda cmd: None)
+
+        backend = PyXtermTerminalBackend(owner=Mock())
         command = ['bash', '-c', 'echo "test"']
+
+        monkeypatch.setattr(shutil, 'which', lambda cmd: None)
         wrapped = backend._wrap_command_with_encoding(command, 'UTF-8')
         assert wrapped == command
-        
-        # Test legacy encoding with luit
+
         monkeypatch.setattr(shutil, 'which', lambda cmd: '/usr/bin/luit' if cmd == 'luit' else None)
         wrapped = backend._wrap_command_with_encoding(command, 'ISO-8859-1')
         assert wrapped[0] == '/usr/bin/luit'
         assert wrapped[2] == 'ISO-8859-1'
+
+    def test_pyxterm_bridge_spawn_reads_encoding_config(self, monkeypatch):
+        """PyXtermBridgeBackend.spawn_async wraps argv using terminal.encoding."""
+        import shutil
+
+        owner = Mock()
+        owner.config = Mock()
+        owner.config.get_setting = Mock(return_value='KOI8-R')
+
+        backend = PyXtermBridgeBackend.__new__(PyXtermBridgeBackend)
+        backend.owner = owner
+        backend.available = True
+        backend._js_ready = False
+        backend._pending_spawn = None
+        backend._last_size = (24, 80)
+        backend._preready_output = []
+        backend.ensure_shell_loaded = lambda: None
+
+        captured = {}
+
+        def fake_do_spawn():
+            captured['argv'] = backend._pending_spawn['argv']
+
+        backend._do_spawn = fake_do_spawn
+        monkeypatch.setattr(shutil, 'which', lambda cmd: '/usr/bin/luit' if cmd == 'luit' else None)
+
+        backend.spawn_async(['ssh', 'host'], env=None, cwd='/tmp')
+
+        argv = captured['argv']
+        assert argv[:4] == ['/usr/bin/luit', '-encoding', 'KOI8-R', '--']
+        assert argv[4:] == ['ssh', 'host']
+        owner.config.get_setting.assert_called_with('terminal.encoding', 'UTF-8')
     
     def test_vte_encoding_validation(self):
         """Test that VTE validates encoding against supported list"""

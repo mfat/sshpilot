@@ -255,3 +255,75 @@ modules:
         url: https://files.pythonhosted.org/packages/a6/ab/d1a60da2f2c46a022ef15caaabe5bc468519c05dc855a0a40a83cb656c26/wakeonlan-3.3.0-py3-none-any.whl
         sha256: 969d4e1f30add1a79790c99350e91c46ed45588770416257a3f806ca0314b17a
 
+  # --- KeePass (.kdbx) credential adapter: pykeepass + its tree -----------------
+  # cffi & pycparser (argon2 build deps) are already vendored above. Dependency order:
+  # construct, lxml, pycryptodomex, argon2-cffi-bindings, argon2-cffi, pykeepass.
+  - name: python3-construct
+    buildsystem: simple
+    build-commands:
+      - pip3 install --verbose --exists-action=i --no-index --find-links="file://${PWD}" --prefix=${FLATPAK_DEST} "construct==2.10.70" --no-build-isolation --no-deps
+    sources:
+      - type: file
+        url: https://files.pythonhosted.org/packages/b2/fb/08b3f4bf05da99aba8ffea52a558758def16e8516bc75ca94ff73587e7d3/construct-2.10.70-py3-none-any.whl
+        sha256: c80be81ef595a1a821ec69dc16099550ed22197615f4320b57cc9ce2a672cb30
+
+  - name: python3-lxml
+    buildsystem: simple
+    build-commands:
+      - pip3 install --verbose --exists-action=i --no-index --find-links="file://${PWD}" --prefix=${FLATPAK_DEST} "lxml==6.1.1" --no-build-isolation --no-deps
+    sources:
+      - type: file
+        url: https://files.pythonhosted.org/packages/6b/55/a0c72851dfee5ecc689f949723a73dea457758912542cb955b108eaf0d8f/lxml-6.1.1-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
+        sha256: 762ff394d5bd56da0cf034a23dcce4e13923f15321a2adfa2ac00201dc6d3fca
+        only-arches: [x86_64]
+      - type: file
+        url: https://files.pythonhosted.org/packages/6e/ca/ab7bfe2bf4c972af5e7878262845ead3a24a929a9b04bc11c7c1ece6c82a/lxml-6.1.1-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.whl
+        sha256: eb7c9811bfaa8b1ed5ed319f5d370dfbcaa59d52ea64be2a5a85e18195930354
+        only-arches: [aarch64]
+
+  - name: python3-pycryptodomex
+    buildsystem: simple
+    build-commands:
+      - pip3 install --verbose --exists-action=i --no-index --find-links="file://${PWD}" --prefix=${FLATPAK_DEST} "pycryptodomex==3.23.0" --no-build-isolation --no-deps
+    sources:
+      - type: file
+        url: https://files.pythonhosted.org/packages/c8/a9/8862616a85cf450d2822dbd4fff1fcaba90877907a6ff5bc2672cafe42f8/pycryptodomex-3.23.0-cp37-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+        sha256: f489c4765093fb60e2edafdf223397bc716491b2b69fe74367b70d6999257a5c
+        only-arches: [x86_64]
+      - type: file
+        url: https://files.pythonhosted.org/packages/8c/fd/5a054543c8988d4ed7b612721d7e78a4b9bf36bc3c5ad45ef45c22d0060e/pycryptodomex-3.23.0-cp37-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl
+        sha256: 43c446e2ba8df8889e0e16f02211c25b4934898384c1ec1ec04d7889c0333587
+        only-arches: [aarch64]
+
+  - name: python3-argon2-cffi-bindings
+    buildsystem: simple
+    build-commands:
+      - pip3 install --verbose --exists-action=i --no-index --find-links="file://${PWD}" --prefix=${FLATPAK_DEST} "argon2-cffi-bindings==25.1.0" --no-build-isolation --no-deps
+    sources:
+      - type: file
+        url: https://files.pythonhosted.org/packages/09/52/94108adfdd6e2ddf58be64f959a0b9c7d4ef2fa71086c38356d22dc501ea/argon2_cffi_bindings-25.1.0-cp39-abi3-manylinux_2_26_x86_64.manylinux_2_28_x86_64.whl
+        sha256: d3e924cfc503018a714f94a49a149fdc0b644eaead5d1f089330399134fa028a
+        only-arches: [x86_64]
+      - type: file
+        url: https://files.pythonhosted.org/packages/c1/93/44365f3d75053e53893ec6d733e4a5e3147502663554b4d864587c7828a7/argon2_cffi_bindings-25.1.0-cp39-abi3-manylinux_2_26_aarch64.manylinux_2_28_aarch64.whl
+        sha256: 1e021e87faa76ae0d413b619fe2b65ab9a037f24c60a1e6cc43457ae20de6dc6
+        only-arches: [aarch64]
+
+  - name: python3-argon2-cffi
+    buildsystem: simple
+    build-commands:
+      - pip3 install --verbose --exists-action=i --no-index --find-links="file://${PWD}" --prefix=${FLATPAK_DEST} "argon2-cffi==25.1.0" --no-build-isolation --no-deps
+    sources:
+      - type: file
+        url: https://files.pythonhosted.org/packages/4f/d3/a8b22fa575b297cd6e3e3b0155c7e25db170edf1c74783d6a31a2490b8d9/argon2_cffi-25.1.0-py3-none-any.whl
+        sha256: fdc8b074db390fccb6eb4a3604ae7231f219aa669a2652e0f20e16ba513d5741
+
+  - name: python3-pykeepass
+    buildsystem: simple
+    build-commands:
+      - pip3 install --verbose --exists-action=i --no-index --find-links="file://${PWD}" --prefix=${FLATPAK_DEST} "pykeepass==4.1.1.post1" --no-build-isolation --no-deps
+    sources:
+      - type: file
+        url: https://files.pythonhosted.org/packages/ac/04/6cf0687780c68e7fb0525e7210ec5477987c0481904f600c2e5d81bbb7dd/pykeepass-4.1.1.post1-py3-none-any.whl
+        sha256: 4cfd54f376cb1f58dd8f11fbe7923282bc7dd97ffdf1bb622004a6e718bfe379
+

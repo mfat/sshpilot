@@ -354,6 +354,10 @@ def _get_stored_password(
         return None
     
     try:
+        if connection_manager and hasattr(connection_manager, 'get_connection_password'):
+            stored = connection_manager.get_connection_password(connection)
+            if stored:
+                return stored
         host = getattr(connection, 'hostname', '') or getattr(connection, 'host', '')
         username = getattr(connection, 'username', '')
         if host and username:

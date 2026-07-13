@@ -20,19 +20,10 @@ try:
 except Exception:
     GTK_AVAILABLE = False
 
-try:
-    import gi
-    gi.require_version('Secret', '1')
-    from gi.repository import Secret
-    LIBSECRET_AVAILABLE = True
-except Exception:
-    LIBSECRET_AVAILABLE = False
-
-try:
-    import keyring
-    KEYRING_AVAILABLE = True
-except Exception:
-    KEYRING_AVAILABLE = False
+# libsecret (gi Secret) and keyring are resolved lazily via secret_storage's
+# accessors inside _get_storage_info — importing them at module load would pull
+# keyring (~127 ms) onto the pre-window startup path via main's top-level
+# `from .startup_info import print_startup_info`.
 
 from . import __version__
 from .platform_utils import is_macos, is_flatpak, get_config_dir, get_ssh_dir, get_sshpass_path
@@ -52,11 +43,17 @@ class StartupInfo:
     CHECK_FAIL = "[FAIL]"
     CHECK_INFO = "[INFO]"
     
-    def __init__(self, isolated: bool = False):
+    def __init__(self, isolated: bool = False, verbose: bool = False, config=None):
         self.isolated = isolated
+        # The concise (non-verbose) summary only reads the SSH version and the
+        # storage backend label, so the extra tool/keyring probes are gathered
+        # only when they'll actually be printed — they otherwise cost subprocess
+        # spawns and Secret Service D-Bus connects for nothing.
+        self.verbose = verbose
+        self._config = config
         self.info = {}
         self._gather_info()
-    
+
     def _gather_info(self):
         """Gather all system information"""
         self.info = {
@@ -195,19 +192,23 @@ class StartupInfo:
         else:
             tools['ssh'] = {'available': False, 'path': None, 'version': None}
         
-        # sshpass — warm the cache and record availability
+        # sshpass — warm the cache and record availability. The version string
+        # is only shown in the verbose dump, so skip the `sshpass -V` spawn on
+        # the default path.
         sshpass_path = get_sshpass_path()
 
         if sshpass_path:
-            try:
-                import subprocess
-                result = subprocess.run([sshpass_path, '-V'], capture_output=True, text=True, timeout=2)
-                version_output = result.stdout.strip() if result.stdout else result.stderr.strip()
-                # Extract version (e.g., "1.09")
-                version = version_output.split()[1] if len(version_output.split()) > 1 else 'unknown'
-                tools['sshpass'] = {'available': True, 'path': sshpass_path, 'version': version, 'executable': True}
-            except Exception:
-                tools['sshpass'] = {'available': True, 'path': sshpass_path, 'version': 'unknown', 'executable': True}
+            version = 'unknown'
+            if self.verbose:
+                try:
+                    import subprocess
+                    result = subprocess.run([sshpass_path, '-V'], capture_output=True, text=True, timeout=2)
+                    version_output = result.stdout.strip() if result.stdout else result.stderr.strip()
+                    # Extract version (e.g., "1.09")
+                    version = version_output.split()[1] if len(version_output.split()) > 1 else 'unknown'
+                except Exception:
+                    version = 'unknown'
+            tools['sshpass'] = {'available': True, 'path': sshpass_path, 'version': version, 'executable': True}
         else:
             tools['sshpass'] = {'available': False, 'path': None, 'version': None, 'executable': False}
         
@@ -220,63 +221,97 @@ class StartupInfo:
     def _get_storage_info(self):
         """Get secure storage information"""
         storage = {}
-        
-        # libsecret
-        if LIBSECRET_AVAILABLE:
-            try:
-                # Try to connect to Secret Service
-                Secret.Service.get_sync(Secret.ServiceFlags.NONE)
-                storage['libsecret'] = {
-                    'available': True,
-                    'accessible': True,
-                    'backend': 'Secret Service (libsecret)'
-                }
-            except Exception as e:
-                storage['libsecret'] = {
-                    'available': True,
-                    'accessible': False,
-                    'error': str(e)
-                }
+        from .secret_storage import get_secret_manager, _get_secret, _get_keyring
+
+        # libsecret / keyring accessibility is only rendered in the verbose dump,
+        # and probing it means a synchronous Secret Service D-Bus connect + a
+        # keyring backend resolve. The concise summary reads only the
+        # effective-backend label below, so on the default path we skip the
+        # accessibility probe. (The label still resolves the modules via the
+        # manager, but this whole gather runs on idle — off the pre-window path —
+        # since the eager module-level import was removed.)
+        if not self.verbose:
+            storage['libsecret'] = {'available': None, 'accessible': False}
+            storage['keyring'] = {'available': None, 'accessible': False}
         else:
-            storage['libsecret'] = {'available': False, 'accessible': False}
-        
-        # Keyring
-        if KEYRING_AVAILABLE:
-            try:
-                backend = keyring.get_keyring()
-                backend_name = backend.__class__.__name__
-                # Check if it's a usable backend (not the fail backend)
-                if 'fail' in backend_name.lower() or 'null' in backend_name.lower():
+            Secret = _get_secret()
+            if Secret is not None:
+                try:
+                    # Try to connect to Secret Service
+                    Secret.Service.get_sync(Secret.ServiceFlags.NONE)
+                    storage['libsecret'] = {
+                        'available': True,
+                        'accessible': True,
+                        'backend': 'Secret Service (libsecret)'
+                    }
+                except Exception as e:
+                    storage['libsecret'] = {
+                        'available': True,
+                        'accessible': False,
+                        'error': str(e)
+                    }
+            else:
+                storage['libsecret'] = {'available': False, 'accessible': False}
+
+            keyring = _get_keyring()
+            if keyring is not None:
+                try:
+                    backend = keyring.get_keyring()
+                    backend_name = backend.__class__.__name__
+                    # Check if it's a usable backend (not the fail backend)
+                    if 'fail' in backend_name.lower() or 'null' in backend_name.lower():
+                        storage['keyring'] = {
+                            'available': True,
+                            'accessible': False,
+                            'backend': backend_name
+                        }
+                    else:
+                        storage['keyring'] = {
+                            'available': True,
+                            'accessible': True,
+                            'backend': backend_name
+                        }
+                except Exception as e:
                     storage['keyring'] = {
                         'available': True,
                         'accessible': False,
-                        'backend': backend_name
+                        'error': str(e)
                     }
-                else:
-                    storage['keyring'] = {
-                        'available': True,
-                        'accessible': True,
-                        'backend': backend_name
-                    }
-            except Exception as e:
-                storage['keyring'] = {
-                    'available': True,
-                    'accessible': False,
-                    'error': str(e)
-                }
-        else:
-            storage['keyring'] = {'available': False, 'accessible': False}
-        
-        # Determine effective backend
+            else:
+                storage['keyring'] = {'available': False, 'accessible': False}
+
+        # Determine effective backend via the pluggable secret manager (respects
+        # the configured selection, including 'pass').
         effective_backend = 'none'
-        if not is_macos() and storage.get('libsecret', {}).get('accessible'):
-            effective_backend = 'libsecret'
-        elif storage.get('keyring', {}).get('accessible'):
-            backend_name = storage.get('keyring', {}).get('backend', 'unknown')
-            effective_backend = f"keyring ({backend_name})"
-        
+        try:
+            manager = get_secret_manager()
+            try:
+                cfg = self._config
+                if cfg is None:
+                    from .config import Config
+                    cfg = Config()
+                manager.set_selected(cfg.get_setting('secrets.backend', 'auto'))
+            except Exception:
+                pass
+            effective_backend = manager.active_backend_label()
+            # cheap=True uses is_discoverable() where a backend provides one
+            # (Bitwarden), avoiding a blocking `bw --version` spawn on the idle path.
+            storage['available_backends'] = manager.available_backends(cheap=True)
+            try:
+                # Session-backed backends (Bitwarden/Vaultwarden): report whether
+                # the selected one still needs unlocking.
+                storage['session_locked'] = manager.selected_needs_unlock()
+            except Exception:
+                pass
+        except Exception:
+            if not is_macos() and storage.get('libsecret', {}).get('accessible'):
+                effective_backend = 'libsecret'
+            elif storage.get('keyring', {}).get('accessible'):
+                backend_name = storage.get('keyring', {}).get('backend', 'unknown')
+                effective_backend = f"keyring ({backend_name})"
+
         storage['effective_backend'] = effective_backend
-        
+
         return storage
     
     def _get_config_info(self):
@@ -475,7 +510,7 @@ class StartupInfo:
         logger.info("=" * 60)
 
 
-def print_startup_info(isolated: bool = False, verbose: bool = False):
+def print_startup_info(isolated: bool = False, verbose: bool = False, config=None):
     """
     Emit startup information.
 
@@ -485,8 +520,10 @@ def print_startup_info(isolated: bool = False, verbose: bool = False):
             (~40 lines) to stdout — useful for bug reports. When False, only
             log a single-line summary at INFO so default startup output stays
             concise. Re-run with ``--verbose`` to get the full diagnostic.
+        config: Existing Config instance to reuse for the backend lookup,
+            avoiding an extra config.json read.
     """
-    info = StartupInfo(isolated=isolated)
+    info = StartupInfo(isolated=isolated, verbose=verbose, config=config)
 
     if verbose:
         info.print_info()

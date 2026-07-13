@@ -127,6 +127,19 @@ def test_remove_connection_cleans_json(manager):
     assert all(c.nickname != 'lab-switch' for c in manager.connections)
 
 
+def test_remove_connection_can_defer_config_reload(manager):
+    conn = Connection(_telnet_data())
+    manager.update_connection(conn, _telnet_data())
+    reloads = []
+    manager.load_ssh_config = lambda: reloads.append(True)
+
+    assert manager.remove_connection(conn, reload_config=False) is True
+
+    assert reloads == []
+    assert manager.config.settings['connections.non_ssh'] == []
+    assert ('connection-removed', conn) in manager.emitted
+
+
 def test_ssh_connections_never_enter_json(manager):
     manager.load_ssh_config()
     manager._persist_non_ssh_connections()

@@ -1,17 +1,16 @@
 import os
 import asyncio
 import logging
-import math
+import threading
 from typing import Optional
 
-import cairo
 
 
-from gi.repository import Gio, GLib, Adw, Gdk, GdkPixbuf, Gtk
+from gi.repository import Gio, GLib, Adw, Gdk, Gtk
 from gettext import gettext as _
 
 from .terminal import TerminalWidget
-from .preferences import should_hide_external_terminal_options
+from .file_manager_integration import should_hide_external_terminal_options
 
 logger = logging.getLogger(__name__)
 
@@ -71,12 +70,77 @@ class TerminalManager:
                 logger.debug("Failed to iterate tab view while refreshing backends", exc_info=True)
 
     # Connecting/disconnecting hosts
+    def _maybe_unlock_secrets_then(self, retry, _allow_reprompt: bool = True) -> bool:
+        """If the selected secret backend is session-backed and locked, show the unlock
+        prompt and call ``retry`` when it finishes; return True. Otherwise return False so
+        the caller proceeds immediately.
+
+        When this connection only *rode* an already-open prompt (e.g. the startup unlock)
+        and that prompt resolves with the vault **still locked** (the user deferred it),
+        we don't silently start a background terminal — we re-show *our own* prompt once so
+        the user can unlock for this connection. After that one re-prompt we proceed
+        regardless (the user cancelling their own prompt falls back to SSH's own prompt)."""
+        try:
+            from .secret_storage import get_secret_manager
+            manager = get_secret_manager()
+
+            # rbw is passive (session_backed=False), so selected_needs_unlock() skips it —
+            # but a locked rbw-agent silently yields no secret on connect. Nudge through
+            # rbw's own pinentry (rbw_setup runs `rbw unlock` + sync), then retry regardless
+            # of the result (a cancel falls back to ssh's own prompt, like the bw path).
+            rbw = manager.selected_backend()
+            if (getattr(rbw, "name", "") == "rbw"
+                    and rbw.is_available() and not rbw.is_unlocked()):
+                from .rbw_setup import ensure_rbw_ready
+                ensure_rbw_ready(self.window, lambda _ready: retry())
+                return True
+
+            if not manager.selected_needs_unlock():
+                return False
+            from .secret_unlock_dialog import prompt_unlock
+
+            def _show_unlock():
+                def _on_done(_success):
+                    still_locked = False
+                    try:
+                        still_locked = get_secret_manager().selected_needs_unlock()
+                    except Exception:
+                        still_locked = False
+                    if (still_locked and _allow_reprompt and not owned[0]
+                            and self._maybe_unlock_secrets_then(retry, _allow_reprompt=False)):
+                        return  # rode a deferred prompt -> our own prompt now drives the retry
+                    retry()
+
+                owned = [True]
+                owned[0] = bool(prompt_unlock(self.window, on_done=_on_done))
+
+            # Locked. A vault that isn't signed in can't be unlocked, so decide off the
+            # main thread (``selected_needs_login`` spawns a slow ``bw`` process): when
+            # not signed in, skip the doomed "Unlock vault" dialog and just proceed with
+            # the connection (SSH prompts for auth itself); otherwise show the unlock prompt.
+            def _probe():
+                needs_login = manager.selected_needs_login()
+                GLib.idle_add(lambda: (_after_probe(needs_login), False)[1])
+
+            def _after_probe(needs_login):
+                if needs_login:
+                    retry()  # not signed in -> can't autofill; connect normally
+                    return
+                _show_unlock()
+
+            threading.Thread(target=_probe, daemon=True).start()
+            return True
+        except Exception as exc:
+            logger.error("Secret unlock prompt failed: %s", exc)
+            return False
+
     def connect_to_host(self, connection, force_new: bool = False,
                         remote_command: Optional[str] = None,
                         tab_title: Optional[str] = None,
                         force_tty: bool = False,
                         pty_prompt: Optional[str] = None,
-                        pty_response: Optional[str] = None):
+                        pty_response: Optional[str] = None,
+                        _secret_unlock_attempted: bool = False):
         window = self.window
         group_color = self._resolve_group_color(connection)
         if not force_new:
@@ -100,6 +164,21 @@ class TerminalManager:
                     window.active_terminals[connection] = t
                     window.tab_view.set_selected_page(page)
                     return
+
+        # A session-backed secret store (Bitwarden/Vaultwarden) must be unlocked
+        # before this connection's password/passphrase can be autofilled. Prompt
+        # once on the main thread, then re-enter to actually connect. We retry
+        # regardless of the unlock result (and skip a second prompt) so a cancel
+        # falls back to ssh's own prompt instead of looping.
+        if not _secret_unlock_attempted and self._maybe_unlock_secrets_then(
+            lambda: self.connect_to_host(
+                connection, force_new=force_new, remote_command=remote_command,
+                tab_title=tab_title, force_tty=force_tty,
+                pty_prompt=pty_prompt, pty_response=pty_response,
+                _secret_unlock_attempted=True,
+            )
+        ):
+            return
 
         # The user's "use external terminal" preference is only applied when
         # external terminal options are not hidden by policy or environment.
@@ -160,6 +239,11 @@ class TerminalManager:
                 pass
 
         def _set_terminal_colors():
+            # Shutdown race guard: this idle callback can fire after the window
+            # started closing. Drawing/connecting now queues rendering against a
+            # disposed GSK renderer and spawns SSH post-cleanup, so bail early.
+            if getattr(window, '_is_quitting', False):
+                return
 
             try:
                 if hasattr(window, 'get_application'):
@@ -295,12 +379,18 @@ class TerminalManager:
             except Exception as exc:
                 logger.error(f"Error initialising pane terminal: {exc}")
 
-        GLib.idle_add(_set_terminal_colors)
+        # Gate the ssh spawn behind the vault unlock (same as connect_to_host) so a pane
+        # connection doesn't start in the background while a session vault is locked. The
+        # widget is returned now (it shows "connecting" until the spawn runs after unlock).
+        def _start_pane_connect():
+            GLib.idle_add(_set_terminal_colors)
+        if not self._maybe_unlock_secrets_then(_start_pane_connect):
+            _start_pane_connect()
         return terminal
 
     def _on_pane_terminal_title_changed(self, terminal, title):
         """Title-changed handler for terminals embedded in split panes."""
-        pass  # Title updates are reflected in the tab title via SplitViewTab._update_tab_title
+        # Title updates are reflected in the tab title via SplitViewTab._update_tab_title
 
     def _resolve_group_color(self, connection):
         color_value, _ = self._resolve_group_color_and_name(connection)
@@ -594,12 +684,15 @@ class TerminalManager:
         except Exception as e:
             logger.error(f"Failed to add terminal tab: {e}")
 
-    def show_local_terminal(self):
+    def show_local_terminal(self, *, title="Local Terminal",
+                            command: Optional[str] = None,
+                            pty_prompt: Optional[str] = None,
+                            pty_response: Optional[str] = None) -> bool:
         logger.info("Show local terminal tab")
         try:
             class LocalConnection:
                 def __init__(self):
-                    self.nickname = "Local Terminal"
+                    self.nickname = title
                     self.hostname = "localhost"
                     self.host = self.hostname
                     self.username = os.getenv('USER', 'user')
@@ -607,8 +700,22 @@ class TerminalManager:
                     self.is_connected = True
             local_connection = LocalConnection()
             terminal_widget = TerminalWidget(local_connection, self.window.config, self.window.connection_manager)
+            if pty_prompt and pty_response is not None:
+                terminal_widget._pty_autofill = (pty_prompt, pty_response)
+            if command and str(command).strip():
+                command_text = str(command).strip()
+
+                def _run_command(*_args):
+                    data = (command_text + "\n").encode("utf-8")
+                    backend = getattr(terminal_widget, "backend", None)
+                    if backend is not None and hasattr(backend, "feed_child"):
+                        backend.feed_child(data)
+                    elif getattr(terminal_widget, "vte", None) is not None:
+                        terminal_widget.vte.feed_child(data)
+
+                terminal_widget.connect("connection-established", _run_command)
             terminal_widget.setup_local_shell()
-            self._add_terminal_tab(terminal_widget, "Local Terminal")
+            self._add_terminal_tab(terminal_widget, title)
 
             # Register terminal so theme/font updates affect existing local tabs
             window = self.window
@@ -643,6 +750,7 @@ class TerminalManager:
                 # Fallback for older versions
                 GLib.timeout_add(100, _focus_local_terminal)
             logger.info("Local terminal tab created successfully")
+            return True
         except Exception as e:
             logger.error(f"Failed to show local terminal: {e}")
             try:
@@ -656,6 +764,7 @@ class TerminalManager:
                 dialog.present()
             except Exception:
                 pass
+            return False
 
     # Terminal discovery (regular tabs + split-view panes)
     def _is_broadcastable_ssh_terminal(self, terminal) -> bool:
@@ -769,6 +878,17 @@ class TerminalManager:
         # the authoritative state in the reporting layer instead of writing the
         # boolean here.
         self.window._recompute_connection_state(terminal.connection)
+
+        # Stamp last-used time so the start page can order Recent connections.
+        try:
+            import time
+            nickname = getattr(terminal.connection, 'nickname', None)
+            if nickname:
+                meta = self.window.config.get_connection_meta(nickname)
+                meta['last_used'] = time.time()
+                self.window.config.set_connection_meta(nickname, meta)
+        except Exception:
+            logger.debug("Failed to record last-used time", exc_info=True)
         for row in self.window._rows_for_connection(terminal.connection):
             row.update_status()
             row.queue_draw()

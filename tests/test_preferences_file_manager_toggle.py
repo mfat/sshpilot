@@ -1,19 +1,21 @@
+# These capability helpers live in file_manager_integration (re-exported from
+# preferences), so patch their dependencies where the functions resolve them.
 def test_force_internal_toggle_hidden_on_macos(monkeypatch):
-    from sshpilot import preferences
+    from sshpilot import file_manager_integration as fmi
 
-    monkeypatch.setattr(preferences, "is_macos", lambda: True)
-    monkeypatch.setattr(preferences, "has_native_gvfs_support", lambda: True)
+    monkeypatch.setattr(fmi, "is_macos", lambda: True)
+    monkeypatch.setattr(fmi, "has_native_gvfs_support", lambda: True)
 
-    assert preferences.should_show_force_internal_file_manager_toggle() is False
+    assert fmi.should_show_force_internal_file_manager_toggle() is False
 
 
 def test_force_internal_toggle_requires_gvfs_support(monkeypatch):
-    from sshpilot import preferences
+    from sshpilot import file_manager_integration as fmi
 
-    monkeypatch.setattr(preferences, "is_macos", lambda: False)
-    monkeypatch.setattr(preferences, "has_native_gvfs_support", lambda: True)
+    monkeypatch.setattr(fmi, "is_macos", lambda: False)
+    monkeypatch.setattr(fmi, "has_native_gvfs_support", lambda: True)
 
-    assert preferences.should_show_force_internal_file_manager_toggle() is True
+    assert fmi.should_show_force_internal_file_manager_toggle() is True
 
-    monkeypatch.setattr(preferences, "has_native_gvfs_support", lambda: False)
-    assert preferences.should_show_force_internal_file_manager_toggle() is False
+    monkeypatch.setattr(fmi, "has_native_gvfs_support", lambda: False)
+    assert fmi.should_show_force_internal_file_manager_toggle() is False

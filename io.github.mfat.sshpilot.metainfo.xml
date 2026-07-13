@@ -60,6 +60,14 @@
 
 
 
+    <release version="5.5.0" date="2026-07-13">
+      <description>
+        <p>Backup settings and credentials to Bitwarden/Vaultwarden right from SSH Pilot and restore on other devices</p>
+        <p>More credential storage backends including Keepass, Bitwarden and rbw</p>
+        <p>Improvements to Pyxtermjs terminal backend</p>
+        <p>Various bug fixes and performance improvements</p>
+      </description>
+    </release>
     <release version="5.4.6" date="2026-06-27">
       <description>
         <p>Fixes SCP bug in Flatpak</p>

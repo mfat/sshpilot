@@ -173,6 +173,40 @@ class Config(GObject.Object):
                 'paste_on_right_click': False,
                 'encoding': 'UTF-8',
             },
+            'secrets': {
+                # Secret storage backend: 'auto' (platform default), 'libsecret',
+                # 'keyring', 'pass', 'bitwarden' (the bw CLI; covers self-hosted
+                # Vaultwarden too), 'agent' ('agent' = don't store secrets), or a
+                # registered custom backend. (Legacy 'vaultwarden' migrates to
+                # 'bitwarden'.)
+                'backend': 'auto',
+                # Session-backed backend (Bitwarden, incl. self-hosted Vaultwarden):
+                # minutes of idle before the cached unlock token is dropped and
+                # re-unlock is required. 0 = keep until the app exits.
+                'session_timeout': 0,
+                # Bitwarden CLI account/profile: a path to a `bw` data directory
+                # (BITWARDENCLI_APPDATA_DIR). Empty = the default account. Use a
+                # separate data dir per account (e.g. a self-hosted Vaultwarden).
+                'bitwarden': {
+                    'profile': '',
+                },
+                # KeePass (.kdbx) backend: path to the database file and an optional key
+                # file. The master password is typed per launch (kept in memory).
+                'keepassxc': {
+                    'database': '',
+                    'keyfile': '',
+                },
+            },
+            'identity': {
+                # Default SSH agent offered to connections. 'auto' = the OS/desktop
+                # ssh-agent (inherited via SSH_AUTH_SOCK). A fixed-socket agent
+                # (e.g. '1password', or 'custom') is written as a global `Host *`
+                # IdentityAgent directive to ~/.ssh/config. The per-connection key is
+                # set via IdentityFile, not here.
+                'provider': 'auto',
+                # Socket path for the 'custom' agent (written as IdentityAgent).
+                'agent_socket': '',
+            },
             'ui': {
                 'show_hostname': True,
                 'auto_focus_terminal': True,
@@ -181,7 +215,7 @@ class Config(GObject.Object):
                 'window_width': 1200,
                 'window_height': 800,
                 'sidebar_width': 250,
-                'group_color_display': 'fill',
+                'group_color_display': 'bar',
                 'group_row_display': 'nested',
                 'use_group_color_in_tab': False,
                 'use_group_color_in_terminal': False,
@@ -190,8 +224,9 @@ class Config(GObject.Object):
                 'sidebar_show_group_count': True,
                 'sidebar_show_connection_status': True,
                 'sidebar_show_port_forwarding': True,
-                'sidebar_show_connection_icon': True,
-                'sidebar_flat_rows': False,
+                'sidebar_show_connection_icon': False,
+                'sidebar_show_group_icon': False,
+                'sidebar_flat_rows': True,
                 # Sidebar behavior (Settings ▸ Sidebar ▸ Sidebar behavior)
                 'sidebar_hide_on_startup': False,
                 'sidebar_hide_on_terminal_open': False,  # incl. local terminals
@@ -1215,13 +1250,13 @@ class Config(GObject.Object):
             updated = True
         display_value = ui_cfg.get('group_color_display') if isinstance(ui_cfg, dict) else None
         if display_value is None:
-            ui_cfg['group_color_display'] = 'fill'
+            ui_cfg['group_color_display'] = 'bar'
             updated = True
         else:
             if not isinstance(display_value, str):
                 display_value = str(display_value)
             normalized = display_value.lower()
-            if normalized not in {'fill', 'badge'}:
+            if normalized not in {'fill', 'badge', 'bar'}:
                 normalized = 'fill'
             if ui_cfg.get('group_color_display') != normalized:
                 ui_cfg['group_color_display'] = normalized
