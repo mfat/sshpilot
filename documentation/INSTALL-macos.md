@@ -164,6 +164,15 @@ python -c "import keyring; print(f'Backend: {keyring.get_keyring().__class__.__n
 # Should output: Backend: Keyring
 ```
 
+SSHPilot stores secrets in the login keychain under the service name `sshPilot`.
+On first access macOS may ask for your login password — choose **Always Allow**.
+
+If the dialog returns on every launch (common with ad-hoc signed `.app` builds),
+open the connection once more after updating to a build that writes a trusted-app
+ACL; SSHPilot rewrites the keychain item after a successful read so later launches
+stay silent. Alternatively, in **Keychain Access**, find the `sshPilot` items →
+**Access Control** → allow SSHPilot (or “all applications”) and save.
+
 **Permission denied errors**
 ```bash
 chmod +x sshpilot-mac.sh

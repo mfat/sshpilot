@@ -283,6 +283,111 @@ def test_keyring_backend_describe(monkeypatch):
     assert ss.KeyringBackend().describe() == 'keyring:_Backend'
 
 
+def test_macos_keychain_store_uses_security_trusted_acl(monkeypatch, tmp_path):
+    """macOS KeyringBackend.store must use `security -T` so Always Allow sticks."""
+    ss._macos_acl_upgraded.clear()
+    monkeypatch.setattr(ss, 'is_macos', lambda: True)
+
+    fake_exe = tmp_path / 'SSHPilot'
+    fake_exe.write_text('#!/bin/sh\n')
+    fake_exe.chmod(0o755)
+    security_bin = tmp_path / 'security'
+    security_bin.write_text('#!/bin/sh\n')
+    security_bin.chmod(0o755)
+    monkeypatch.setattr(ss.sys, 'executable', str(fake_exe))
+    monkeypatch.setattr(ss.sys, 'frozen', True, raising=False)
+
+    calls = []
+
+    class _Result:
+        returncode = 0
+        stdout = ''
+        stderr = ''
+
+    def fake_run(argv, **kwargs):
+        calls.append(list(argv))
+        return _Result()
+
+    monkeypatch.setattr(ss.subprocess, 'run', fake_run)
+    monkeypatch.setattr(ss.shutil, 'which', lambda name: str(security_bin))
+
+    class FakeKeyring:
+        @staticmethod
+        def get_keyring():
+            return object()
+
+        @staticmethod
+        def set_password(*_a, **_k):
+            raise AssertionError('keyring.set_password must not be used on macOS success path')
+
+    monkeypatch.setattr(ss, 'keyring', FakeKeyring)
+
+    backend = ss.KeyringBackend()
+    spec = password_spec('host.example', 'alice')
+    assert backend.store(spec, 's3cret') is True
+    assert len(calls) == 1
+    cmd = calls[0]
+    assert cmd[0] == str(security_bin)
+    assert cmd[1] == 'add-generic-password'
+    assert '-U' in cmd
+    assert '-T' in cmd
+    assert str(fake_exe.resolve()) in cmd
+    assert cmd[cmd.index('-s') + 1] == 'sshPilot'
+    assert cmd[cmd.index('-a') + 1] == 'alice@host.example'
+    assert cmd[cmd.index('-w') + 1] == 's3cret'
+    assert (spec.keyring_service, spec.keyring_account) in ss._macos_acl_upgraded
+
+
+def test_macos_keychain_lookup_upgrades_acl_once(monkeypatch, tmp_path):
+    """After a successful read, rewrite the item with -T so the next launch is silent."""
+    ss._macos_acl_upgraded.clear()
+    monkeypatch.setattr(ss, 'is_macos', lambda: True)
+
+    fake_exe = tmp_path / 'python3'
+    fake_exe.write_text('x')
+    fake_exe.chmod(0o755)
+    security_bin = tmp_path / 'security'
+    security_bin.write_text('#!/bin/sh\n')
+    security_bin.chmod(0o755)
+    monkeypatch.setattr(ss.sys, 'executable', str(fake_exe))
+    monkeypatch.setattr(ss.sys, 'frozen', False, raising=False)
+
+    store_calls = []
+
+    class _Result:
+        returncode = 0
+        stdout = ''
+        stderr = ''
+
+    def fake_run(argv, **kwargs):
+        store_calls.append(list(argv))
+        return _Result()
+
+    monkeypatch.setattr(ss.subprocess, 'run', fake_run)
+    monkeypatch.setattr(ss.shutil, 'which', lambda name: str(security_bin))
+
+    class FakeKeyring:
+        @staticmethod
+        def get_keyring():
+            return object()
+
+        @staticmethod
+        def get_password(service, account):
+            return 'stored-secret'
+
+    monkeypatch.setattr(ss, 'keyring', FakeKeyring)
+
+    backend = ss.KeyringBackend()
+    spec = passphrase_spec('~/.ssh/id_ed25519')
+    assert backend.lookup(spec) == 'stored-secret'
+    assert len(store_calls) == 1
+    assert '-T' in store_calls[0]
+
+    # Second lookup must not rewrite again (same process).
+    assert backend.lookup(spec) == 'stored-secret'
+    assert len(store_calls) == 1
+
+
 def test_pass_path_sanitized_but_keyring_account_raw():
     spec = password_spec('ho/st', 'us/er')
     assert spec.pass_path == 'sshpilot/password/us_er@ho_st'   # no stray '/'

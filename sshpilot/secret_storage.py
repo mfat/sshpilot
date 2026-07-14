@@ -62,10 +62,11 @@ import logging
 import os
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from dataclasses import dataclass
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Set, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -596,6 +597,121 @@ class LibSecretBackend(SecretBackend):
         return out
 
 
+# --- macOS Keychain ACL helpers ---------------------------------------------
+# Python keyring's macOS backend (SecItemAdd) creates items without an explicit
+# trusted-application ACL. "Always Allow" then binds to the process code
+# signature. Ad-hoc signed SSHPilot.app bundles (and askpass re-execs of the
+# same binary) often fail to match that ACL on the next launch, so macOS
+# re-prompts every time.
+#
+# Storing via `/usr/bin/security … -T <app>` records a path-based ACL entry for
+# our executable(s). That survives relaunches of the same install. After a
+# successful interactive lookup we also rewrite existing items once so users
+# who already clicked Always Allow stop seeing the dialog.
+
+_macos_acl_upgraded: Set[Tuple[str, str]] = set()
+
+
+def macos_keychain_trusted_paths() -> List[str]:
+    """Executable paths that should read sshPilot keychain items without prompting.
+
+    Includes ``sys.executable`` (the .app binary when frozen, or Python otherwise)
+    plus the bundle MacOS binary when we can resolve it — askpass re-invokes the
+    same binary, so trusting it covers both the GUI and the helper.
+    """
+    paths: List[str] = []
+    seen: Set[str] = set()
+
+    def _add(path: Optional[str]) -> None:
+        if not path:
+            return
+        try:
+            resolved = os.path.realpath(path)
+        except Exception:
+            resolved = path
+        if not resolved or resolved in seen or not os.path.isfile(resolved):
+            return
+        seen.add(resolved)
+        paths.append(resolved)
+
+    _add(sys.executable)
+    # Frozen .app: also trust Contents/MacOS/<name> if executable differs (rare).
+    if getattr(sys, "frozen", False):
+        exe = sys.executable
+        # …/SSHPilot.app/Contents/MacOS/SSHPilot
+        macos_dir = os.path.dirname(exe)
+        if os.path.basename(macos_dir) == "MacOS":
+            _add(exe)
+            try:
+                for name in os.listdir(macos_dir):
+                    _add(os.path.join(macos_dir, name))
+            except Exception:
+                pass
+    return paths
+
+
+def _macos_store_generic_password(
+    service: str,
+    account: str,
+    secret: str,
+    label: str = "",
+) -> bool:
+    """Create/update a Keychain generic password with a trusted-app ACL.
+
+    Uses ``security add-generic-password -U -T <path>…`` so subsequent reads by
+    those paths do not show the login-keychain authorization dialog.
+    """
+    security_bin = shutil.which("security") or "/usr/bin/security"
+    if not os.path.isfile(security_bin):
+        return False
+
+    cmd: List[str] = [
+        security_bin,
+        "add-generic-password",
+        "-s", service,
+        "-a", account,
+        "-w", secret,
+        "-U",  # update in place when the item already exists
+    ]
+    if label:
+        cmd.extend(["-l", label])
+    trusted = macos_keychain_trusted_paths()
+    if not trusted:
+        # Fall back to allowing any app rather than leaving a signature-only ACL
+        # that re-prompts on every launch of an ad-hoc signed binary.
+        cmd.append("-A")
+    else:
+        for path in trusted:
+            cmd.extend(["-T", path])
+
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except Exception as exc:
+        logger.debug("macOS security store failed: %s", exc)
+        return False
+    if result.returncode != 0:
+        err = (result.stderr or result.stdout or "").strip()
+        logger.debug("macOS security store failed (%s): %s", result.returncode, err)
+        return False
+    _macos_acl_upgraded.add((service, account))
+    return True
+
+
+def _macos_upgrade_item_acl(service: str, account: str, secret: str, label: str = "") -> None:
+    """Rewrite a just-read item with a trusted-app ACL (once per process)."""
+    key = (service, account)
+    if key in _macos_acl_upgraded:
+        return
+    if _macos_store_generic_password(service, account, secret, label=label):
+        logger.debug("Upgraded macOS keychain ACL for %s / %s", service, account)
+
+
 class KeyringBackend(SecretBackend):
     name = "keyring"
 
@@ -623,6 +739,19 @@ class KeyringBackend(SecretBackend):
         keyring = _get_keyring()
         if keyring is None:
             return False
+        # macOS: prefer path-based Keychain ACL so "Always Allow" is not required
+        # on every launch of an ad-hoc signed app (see helpers above).
+        if is_macos():
+            if _macos_store_generic_password(
+                spec.keyring_service,
+                spec.keyring_account,
+                secret,
+                label=spec.label or "",
+            ):
+                return True
+            logger.debug(
+                "macOS security store unavailable; falling back to keyring API"
+            )
         try:
             keyring.set_password(spec.keyring_service, spec.keyring_account, secret)
             return True
@@ -635,10 +764,23 @@ class KeyringBackend(SecretBackend):
         if keyring is None:
             return None
         try:
-            return keyring.get_password(spec.keyring_service, spec.keyring_account)
+            value = keyring.get_password(spec.keyring_service, spec.keyring_account)
         except Exception as exc:
             logger.debug("keyring lookup failed: %s", exc)
             return None
+        # After the user authorizes once, rewrite the item with a trusted-app
+        # ACL so the next launch does not prompt again.
+        if value and is_macos():
+            try:
+                _macos_upgrade_item_acl(
+                    spec.keyring_service,
+                    spec.keyring_account,
+                    value,
+                    label=spec.label or "",
+                )
+            except Exception:
+                logger.debug("macOS keychain ACL upgrade failed", exc_info=True)
+        return value
 
     def delete(self, spec: SecretSpec) -> bool:
         keyring = _get_keyring()
@@ -646,6 +788,7 @@ class KeyringBackend(SecretBackend):
             return False
         try:
             keyring.delete_password(spec.keyring_service, spec.keyring_account)
+            _macos_acl_upgraded.discard((spec.keyring_service, spec.keyring_account))
             return True
         except Exception as exc:
             logger.debug("keyring delete failed: %s", exc)
