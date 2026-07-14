@@ -1352,8 +1352,13 @@ class ConnectionRow(Gtk.ListBoxRow):
         return _resolve_group_color_by_id(manager, group_id)
 
     def _apply_group_color_style(self):
-        mode = _get_color_display_mode(getattr(self, 'config', None))
-        rgba = self._resolve_group_color()
+        config = getattr(self, 'config', None)
+        mode = _get_color_display_mode(config)
+        try:
+            color_children = bool(config.get_setting('ui.group_color_child_rows', True))
+        except Exception:
+            color_children = True
+        rgba = self._resolve_group_color() if color_children else None
         if mode == 'bar':
             # Bar marks only group headers; member rows show a colour dot
             # before the title instead.
