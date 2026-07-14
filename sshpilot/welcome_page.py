@@ -177,10 +177,6 @@ class WelcomePage(Gtk.Overlay):
         scrolled.set_can_focus(False)
 
         connections = list(getattr(self.connection_manager, 'connections', []) or [])
-        try:
-            group_count = len(self.window.group_manager.get_all_groups())
-        except Exception:
-            group_count = 0
 
         inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         inner.set_halign(Gtk.Align.FILL)
@@ -193,19 +189,11 @@ class WelcomePage(Gtk.Overlay):
         hero_btn.set_child(icon_utils.new_image_from_icon_name('utilities-terminal-symbolic', 28))
         hero_btn.add_css_class('flat')
         hero_btn.set_halign(Gtk.Align.CENTER)
+        hero_btn.set_margin_bottom(28)
         hero_btn.set_can_focus(False)
         hero_btn.set_tooltip_text(self._tooltip(_('Open Local Terminal'), 'local-terminal'))
         hero_btn.connect('clicked', lambda *_a: self.window.terminal_manager.show_local_terminal())
         inner.append(hero_btn)
-
-        summary = Gtk.Label(
-            label=_('{n} connections across {m} groups').format(
-                n=len(connections), m=group_count)
-        )
-        summary.add_css_class('dim-label')
-        summary.set_margin_top(2)
-        summary.set_margin_bottom(28)
-        inner.append(summary)
 
         lists = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=24)
         lists.set_hexpand(True)
