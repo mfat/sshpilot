@@ -865,12 +865,16 @@ class BitwardenBackend(SecretBackend):
         return bw_cli_discoverable()
 
     # -- bw subprocess helper --------------------------------------------
-    def _bw_command(self, args: List[str], env: dict) -> List[str]:
+    def _bw_command(self, args: List[str], env: dict) -> Tuple[List[str], Tuple[int, ...]]:
         """Build the full ``bw`` argv, forwarding env into Flatpak host spawns.
 
         ``flatpak-spawn --host`` does not inherit the sandbox environment, so
-        secrets like ``BW_PASSWORD`` / ``BW_SESSION`` must be passed as
-        ``--env=KEY=VALUE`` or host ``bw`` never sees them.
+        secrets like ``BW_PASSWORD`` / ``BW_SESSION`` are forwarded via a
+        ``--env-fd`` memfd — never ``--env=KEY=VALUE``, which would put the
+        master password in the world-readable ``/proc/<pid>/cmdline``.
+
+        Returns ``(argv, pass_fds)``; the caller must spawn with ``pass_fds``
+        and close those fds afterwards.
         """
         argv = self._bw_argv(*args)
         try:
@@ -879,7 +883,7 @@ class BitwardenBackend(SecretBackend):
             try:
                 from platform_utils import inject_flatpak_host_env  # type: ignore
             except Exception:
-                return argv
+                return argv, ()
         return inject_flatpak_host_env(argv, env)
 
     def _run(self, args: List[str], *, token: Optional[str] = None,
@@ -901,12 +905,19 @@ class BitwardenBackend(SecretBackend):
             env.update(extra_env)
         if token:
             env["BW_SESSION"] = token
+        argv, pass_fds = self._bw_command(args, env)
+        # Only pass ``pass_fds`` when needed so non-Flatpak spawns are untouched.
+        spawn_kwargs = {"pass_fds": pass_fds} if pass_fds else {}
         started = time.monotonic()
-        result = subprocess.run(
-            self._bw_command(args, env),
-            input=input_bytes, capture_output=True, env=env, check=False,
-            timeout=self._TIMEOUT,
-        )
+        try:
+            result = subprocess.run(
+                argv,
+                input=input_bytes, capture_output=True, env=env, check=False,
+                timeout=self._TIMEOUT, **spawn_kwargs,
+            )
+        finally:
+            for fd in pass_fds:
+                os.close(fd)
         logger.debug("bw %s: %.2fs (rc=%s)",
                      " ".join(args[:2]), time.monotonic() - started, result.returncode)
         return result

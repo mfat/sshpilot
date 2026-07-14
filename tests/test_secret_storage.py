@@ -779,6 +779,28 @@ def test_bitwarden_is_available_reresolves_bw(monkeypatch):
     assert backend.is_available() is True
 
 
+def _consume_spawn_options(args):
+    """Pop leading flatpak-spawn options off ``args``; decode env forwarding.
+
+    Mirrors the host side: only vars forwarded via ``--env-fd`` (``env -0``
+    payload) or ``--env=`` reach the host process — the sandbox subprocess
+    ``env=`` never does. Returns ``(host_env, remaining_args)``.
+    """
+    host_env = {}
+    args = list(args)
+    while args and args[0].startswith('--'):
+        opt = args.pop(0)
+        if opt.startswith('--env-fd='):
+            data = os.pread(int(opt[len('--env-fd='):]), 65536, 0)
+            host_env.update(
+                item.split('=', 1) for item in data.decode().split('\0') if item
+            )
+        elif opt.startswith('--env='):
+            key, _, value = opt[6:].partition('=')
+            host_env[key] = value
+    return host_env, args
+
+
 def test_bitwarden_flatpak_uses_host_spawn(monkeypatch):
     from sshpilot import platform_utils
 
@@ -800,15 +822,16 @@ def test_bitwarden_flatpak_uses_host_spawn(monkeypatch):
     argv = calls[0]
     assert argv[0:2] == ['/usr/bin/flatpak-spawn', '--host']
     assert argv[-4:] == ['bw', '--nointeraction', 'login', '--check']
-    # Host spawn must place any ``--env=`` flags between ``--host`` and ``bw``.
+    # Host spawn forwards env only via ``--env-fd`` between ``--host`` and ``bw``.
     for flag in argv[2:-4]:
-        assert flag.startswith('--env=')
+        assert flag.startswith('--env-fd=')
 
 
-def test_bitwarden_flatpak_forwards_password_via_env_flag(monkeypatch):
+def test_bitwarden_flatpak_forwards_password_via_env_fd(monkeypatch):
     """Regression: Flatpak host ``bw`` never sees sandbox ``BW_PASSWORD`` unless
-    ``flatpak-spawn --host --env=BW_PASSWORD=…`` is used — otherwise unlock fails
-    with ``Master password is required.`` even when the typed password is correct.
+    it is forwarded through ``flatpak-spawn --host --env-fd=…`` — otherwise unlock
+    fails with ``Master password is required.`` even when the typed password is
+    correct. And the secret must travel via the fd, never in argv itself.
     """
     from sshpilot import platform_utils
 
@@ -819,13 +842,9 @@ def test_bitwarden_flatpak_forwards_password_via_env_flag(monkeypatch):
 
     def fake_run(argv, **kwargs):
         argv = list(argv)
-        captured.append(argv)
-        # Host process only receives vars passed via ``--env=`` (not subprocess env=).
-        host_env = {}
         args = argv[2:] if argv[:2] == ['/usr/bin/flatpak-spawn', '--host'] else []
-        while args and args[0].startswith('--env='):
-            key, _, value = args.pop(0)[6:].partition('=')
-            host_env[key] = value
+        host_env, args = _consume_spawn_options(args)
+        captured.append((argv, host_env))
         if not args or args[0] != 'bw':
             return _Result(1, b'', b'unexpected argv')
         cmd = [a for a in args[1:] if a != '--nointeraction']
@@ -846,15 +865,17 @@ def test_bitwarden_flatpak_forwards_password_via_env_flag(monkeypatch):
     backend = ss.BitwardenBackend()
     assert backend.unlock('correct-master') is True
 
-    unlock_argv = next(a for a in captured if 'unlock' in a)
-    assert '--env=BW_PASSWORD=correct-master' in unlock_argv
+    unlock_argv, unlock_env = next(t for t in captured if 'unlock' in t[0])
+    assert unlock_env.get('BW_PASSWORD') == 'correct-master'
+    # The secret must never appear on the command line (/proc/<pid>/cmdline).
+    assert all('correct-master' not in a for a in unlock_argv)
     host_i = unlock_argv.index('--host')
     bw_i = unlock_argv.index('bw')
-    env_i = unlock_argv.index('--env=BW_PASSWORD=correct-master')
-    assert host_i < env_i < bw_i
+    fd_i = next(i for i, a in enumerate(unlock_argv) if a.startswith('--env-fd='))
+    assert host_i < fd_i < bw_i
 
 
-def test_bitwarden_flatpak_login_forwards_password_via_env_flag(monkeypatch):
+def test_bitwarden_flatpak_login_forwards_password_via_env_fd(monkeypatch):
     from sshpilot import platform_utils
 
     captured = []
@@ -864,12 +885,9 @@ def test_bitwarden_flatpak_login_forwards_password_via_env_flag(monkeypatch):
 
     def fake_run(argv, **kwargs):
         argv = list(argv)
-        captured.append(argv)
-        host_env = {}
         args = argv[2:] if argv[:2] == ['/usr/bin/flatpak-spawn', '--host'] else []
-        while args and args[0].startswith('--env='):
-            key, _, value = args.pop(0)[6:].partition('=')
-            host_env[key] = value
+        host_env, args = _consume_spawn_options(args)
+        captured.append((argv, host_env))
         cmd = [a for a in args[1:] if a != '--nointeraction'] if args and args[0] == 'bw' else []
         if cmd[:1] == ['login'] and '--passwordenv' in cmd:
             name = cmd[cmd.index('--passwordenv') + 1]
@@ -883,8 +901,9 @@ def test_bitwarden_flatpak_login_forwards_password_via_env_flag(monkeypatch):
     backend = ss.BitwardenBackend()
     ok, detail, needs_2fa = backend.login_with_password('user@host', 'mp')
     assert ok is True and detail == '' and needs_2fa is False
-    login_argv = next(a for a in captured if 'login' in a)
-    assert '--env=BW_PASSWORD=mp' in login_argv
+    login_argv, login_env = next(t for t in captured if 'login' in t[0])
+    assert login_env.get('BW_PASSWORD') == 'mp'
+    assert all('mp' != a and 'BW_PASSWORD=mp' not in a for a in login_argv)
 
 
 def test_non_session_backend_needs_no_unlock(manager):
@@ -921,26 +940,22 @@ class FakeBw:
         args = list(argv)
         host_env = {}
         if len(args) >= 3 and os.path.basename(args[0]) == "flatpak-spawn" and args[1] == "--host":
-            args = args[2:]
-            # Skip flatpak-spawn host options (``--env=KEY=VALUE``, …) before the binary.
-            while args and args[0].startswith("--"):
-                opt = args.pop(0)
-                if opt.startswith("--env="):
-                    key, _, value = opt[6:].partition("=")
-                    host_env[key] = value
+            # Decode flatpak-spawn host options (``--env-fd``, ``--env=``, …).
+            host_env, args = _consume_spawn_options(args[2:])
             if args:
                 args = args[1:]  # drop host ``bw`` path/name
         elif args:
             args = args[1:]
         return [a for a in args if a != '--nointeraction'], host_env
 
-    def run(self, argv, input=None, capture_output=None, env=None, check=None, timeout=None):
+    def run(self, argv, input=None, capture_output=None, env=None, check=None,
+            timeout=None, pass_fds=()):
         cmd, host_env = self._bw_command(argv)
         merged = dict(env or {})
         merged.update(host_env)
         self.calls.append(cmd)
         self.envs.append(merged)
-        # Prefer host-forwarded secrets when present (Flatpak --env= path).
+        # Prefer host-forwarded secrets when present (Flatpak --env-fd path).
         env = merged
         if cmd[:1] == ['status']:
             return _Result(0, json.dumps({"status": self.status}).encode())

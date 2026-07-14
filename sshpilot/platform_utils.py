@@ -335,8 +335,8 @@ def resolve_host_binary(binary: str) -> Optional[List[str]]:
 
 # Env vars the Bitwarden CLI (and related host tools) must see when spawned via
 # ``flatpak-spawn --host``. That path does **not** forward the sandbox process
-# environment — without ``--env=KEY=VALUE``, host ``bw unlock --passwordenv
-# BW_PASSWORD`` always fails with "Master password is required."
+# environment — without forwarding, host ``bw unlock --passwordenv BW_PASSWORD``
+# always fails with "Master password is required."
 FLATPAK_HOST_BW_ENV_KEYS: Tuple[str, ...] = (
     "BW_PASSWORD",
     "BW_SESSION",
@@ -352,17 +352,25 @@ def inject_flatpak_host_env(
     env: Optional[dict],
     *,
     keys: Tuple[str, ...] = FLATPAK_HOST_BW_ENV_KEYS,
-) -> List[str]:
-    """Insert ``--env=KEY=VALUE`` into a ``flatpak-spawn --host …`` argv.
+) -> Tuple[List[str], Tuple[int, ...]]:
+    """Forward selected env vars into a ``flatpak-spawn --host …`` argv.
 
-    No-op when ``argv`` is not a host spawn (direct sandbox/native binary). Existing
-    ``--env=`` flags for a key are left alone. Empty values are skipped.
+    Returns ``(argv, pass_fds)``. When forwarding is needed, a ``--env-fd=N``
+    flag is inserted and ``pass_fds`` holds the memfd ``N`` carrying the
+    NUL-terminated ``KEY=VALUE`` assignments (``env -0`` format). ``--env-fd``
+    is used instead of ``--env=KEY=VALUE`` so secrets (master password, session
+    token) never appear in the world-readable ``/proc/<pid>/cmdline``.
+
+    The caller must spawn with ``pass_fds`` and close those fds afterwards.
+    No-op — ``(argv, ())`` — when ``argv`` is not a host spawn, no key has a
+    value, or a key already has an explicit ``--env=`` flag. Empty values are
+    skipped.
     """
     if not argv or not env or not keys:
-        return list(argv)
+        return list(argv), ()
     spawn = argv[0]
     if not (spawn.endswith("flatpak-spawn") and len(argv) >= 3 and argv[1] == "--host"):
-        return list(argv)
+        return list(argv), ()
 
     # Options after ``--host`` come before the host command. Insert after any that
     # are already present so we do not reorder caller-supplied flags.
@@ -374,17 +382,26 @@ def inject_flatpak_host_env(
             existing.add(opt[6:].split("=", 1)[0])
         insert_at += 1
 
-    extras: List[str] = []
+    payload = b""
     for key in keys:
         if key in existing:
             continue
         value = env.get(key)
         if value is None or value == "":
             continue
-        extras.append(f"--env={key}={value}")
-    if not extras:
-        return list(argv)
-    return list(argv[:insert_at]) + extras + list(argv[insert_at:])
+        payload += f"{key}={value}".encode() + b"\0"
+    if not payload:
+        return list(argv), ()
+
+    # Linux-only, but so is flatpak-spawn. flatpak-spawn reads the fd via
+    # /proc/self/fd/N, so a memfd needs no rewind.
+    fd = os.memfd_create("sshpilot-host-env")
+    os.write(fd, payload)
+    os.lseek(fd, 0, os.SEEK_SET)
+    return (
+        list(argv[:insert_at]) + [f"--env-fd={fd}"] + list(argv[insert_at:]),
+        (fd,),
+    )
 
 
 def get_config_dir() -> str:
