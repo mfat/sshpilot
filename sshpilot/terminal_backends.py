@@ -1575,6 +1575,14 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
         # it. Output produced before the page is ready is buffered and flushed on
         # the "ready" message, so the prompt appears the instant the terminal paints.
         self._do_spawn()
+        # Warm the autocomplete providers (remote history is an SSH round-trip)
+        # so suggestions exist by the first keystroke, not one line later.
+        try:
+            config = getattr(self.owner, "config", None)
+            if config is not None and config.get_setting("terminal.autocomplete", True):
+                self._get_autocompleter().prefetch()
+        except Exception:  # noqa: BLE001 — best-effort warmup
+            logger.debug("autocomplete prefetch failed", exc_info=True)
 
     def _do_spawn(self):
         pending, self._pending_spawn = self._pending_spawn, None

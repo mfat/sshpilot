@@ -265,6 +265,14 @@ class Autocompleter:
         self.limit = limit
         self._visible = False
 
+    def prefetch(self) -> None:
+        """Warm slow providers (remote history) so results exist before the
+        first keystroke — the fetch takes an SSH round-trip."""
+        for provider in self.providers:
+            ensure = getattr(provider, "_ensure_fetched", None)
+            if callable(ensure):
+                ensure()
+
     def _hide(self) -> Optional[dict]:
         if self._visible:
             self._visible = False

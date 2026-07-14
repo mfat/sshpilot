@@ -189,6 +189,14 @@ def test_remote_history_failed_fetch_is_quiet():
     assert p.suggestions("git", 10) == []
 
 
+def test_prefetch_warms_remote_provider():
+    remote = RemoteHistoryProvider("host4", lambda: "git status\n")
+    ac = Autocompleter([remote])
+    ac.prefetch()
+    _wait_for_cache("host4")
+    assert [s.text for s in ac.suggest("git")] == ["git status"]
+
+
 def test_fetch_remote_history_runs_prepared_command(monkeypatch):
     from types import SimpleNamespace
     import sshpilot.ssh_connection_builder as scb
