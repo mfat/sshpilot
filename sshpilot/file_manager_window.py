@@ -375,6 +375,8 @@ class FileManagerWindow(Adw.Window):
 
     def _start_connection(self) -> None:
         """Create the SFTP backend for the current host and connect."""
+        # A fresh attempt supersedes any load-error state on the remote pane.
+        self._right_pane._clear_load_error()
         connection = self._connection
         connection_manager = self._connection_manager
         username = self._username
