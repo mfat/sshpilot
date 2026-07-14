@@ -2550,8 +2550,8 @@ def _clear_drop_indicator(window):
 
 
 def _sidebar_allows_inplace_dnd(window) -> bool:
-    """True when the hosts hierarchy view is shown without an active search."""
-    if getattr(window, "_sidebar_view", "hosts") != "hosts":
+    """True when the full hierarchy is shown without an active search/tag filter."""
+    if getattr(window, "_tag_filter", None):
         return False
     search_entry = getattr(window, "search_entry", None)
     if search_entry is not None:

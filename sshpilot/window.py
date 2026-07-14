@@ -72,18 +72,11 @@ from .groups import GroupManager
 from .session_manager import SessionManager
 from .sidebar import (
     GroupRow,
-    TagGroupRow,
     ConnectionRow,
     build_sidebar,
     reset_connection_list_drag_session,
 )
-from .tag_groups import (
-    UNTAGGED_KEY,
-    compute_tag_groups,
-    compute_untagged,
-    make_tag_group_info,
-    make_untagged_group_info,
-)
+from .tag_groups import compute_tag_groups
 
 from .welcome_page import WelcomePage
 from .actions import WindowActions, register_window_actions
@@ -910,12 +903,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception:
             self._hide_hosts = False
 
-        # Sidebar view mode: 'hosts' (groups hierarchy) or 'tags'
-        try:
-            view = str(self.config.get_setting('ui.sidebar_view', 'hosts'))
-        except Exception:
-            view = 'hosts'
-        self._sidebar_view = view if view in ('hosts', 'tags') else 'hosts'
+        # Active tag filter (casefolded tag key), or None for all connections
+        self._tag_filter = None
 
         # Remember last chosen sort preset
         try:
@@ -2665,43 +2654,64 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             pass
         header.append(hide_button)
 
-        # Sidebar view toggle (hosts hierarchy <-> dedicated tags view).
-        # A ToggleButton so Adwaita renders the active state; the tag icon
-        # is constant.
-        view_button = Gtk.ToggleButton()
-        view_button.add_css_class('flat')
-        self._expand_sidebar_toolbar_button(view_button)
-        icon_utils.set_button_icon(view_button, 'tag-symbolic')
-        view_button.set_active(self._sidebar_view == 'tags')
+        # Tag filter dropdown: pick a tag to show only connections carrying it.
+        tag_button = Gtk.MenuButton()
+        tag_button.add_css_class('flat')
+        self._expand_sidebar_toolbar_button(tag_button)
+        tag_button.set_icon_name('tag-symbolic')
+        tag_button.set_tooltip_text(_('Filter by tag'))
 
-        def _update_view_tooltip(btn):
+        filter_action = Gio.SimpleAction.new_stateful(
+            'filter-tag', GLib.VariantType.new('s'), GLib.Variant('s', '')
+        )
+
+        def _on_filter_tag(action, param):
             try:
-                btn.set_tooltip_text(
-                    _('Hide tags') if btn.get_active() else _('Show tags')
-                )
-            except Exception:
-                pass
-
-        _update_view_tooltip(view_button)
-
-        def _on_toggle_view(btn, *args):
-            try:
-                self._sidebar_view = 'tags' if btn.get_active() else 'hosts'
-                try:
-                    self.config.set_setting('ui.sidebar_view', self._sidebar_view)
-                except Exception:
-                    pass
-                _update_view_tooltip(btn)
+                action.set_state(param)
+                self._tag_filter = param.get_string() or None
                 self.rebuild_connection_list()
             except Exception:
-                logger.error("Failed to switch sidebar view", exc_info=True)
+                logger.error("Failed to apply tag filter", exc_info=True)
 
-        view_button.connect('toggled', _on_toggle_view)
+        filter_action.connect('activate', _on_filter_tag)
+        self.add_action(filter_action)
+
+        def _build_tag_menu(btn):
+            # Rebuilt on every popup so new/renamed tags always show.
+            try:
+                menu = Gio.Menu()
+                all_item = Gio.MenuItem.new(_('All Connections'), None)
+                all_item.set_action_and_target_value(
+                    'win.filter-tag', GLib.Variant('s', '')
+                )
+                menu.append_item(all_item)
+
+                tag_map = {}
+                for conn in self.connection_manager.get_connections():
+                    try:
+                        tag_map[conn.nickname] = self.config.get_connection_tags(conn.nickname)
+                    except Exception:
+                        pass
+                tags_section = Gio.Menu()
+                for display_tag, nicknames in compute_tag_groups(tag_map):
+                    item = Gio.MenuItem.new(
+                        f'{display_tag} ({len(nicknames)})', None
+                    )
+                    item.set_action_and_target_value(
+                        'win.filter-tag', GLib.Variant('s', display_tag.casefold())
+                    )
+                    tags_section.append_item(item)
+                menu.append_section(None, tags_section)
+                btn.set_menu_model(menu)
+            except Exception:
+                logger.error("Failed to build tag filter menu", exc_info=True)
+
+        tag_button.set_create_popup_func(_build_tag_menu)
         try:
-            view_button.set_can_focus(False)
+            tag_button.set_can_focus(False)
         except Exception:
             pass
-        header.append(view_button)
+        header.append(tag_button)
 
         sort_button = self._build_sort_button()
         self._expand_sidebar_toolbar_button(sort_button)
@@ -4100,11 +4110,16 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         if hasattr(self, 'search_entry') and self.search_entry:
             search_text = self.search_entry.get_text().strip().lower()
 
-        if getattr(self, '_sidebar_view', 'hosts') == 'tags':
-            self._build_tags_view(
-                connections, connections_dict,
-                filter_text=search_text or None,
-            )
+        tag_filter = getattr(self, '_tag_filter', None)
+        if tag_filter:
+            matches = [
+                c for c in connections
+                if tag_filter in {str(t).casefold() for t in (getattr(c, 'tags', None) or [])}
+                and (not search_text or connection_matches(c, search_text))
+            ]
+            for conn in sorted(matches, key=lambda c: c.nickname.lower()):
+                self.add_connection_row(conn)
+            self._ungrouped_area_row = None
             # Restore scroll position
             if scroll_position is not None and hasattr(self, 'connection_scrolled') and self.connection_scrolled:
                 vadj = self.connection_scrolled.get_vadjustment()
@@ -4207,71 +4222,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             vadj = self.connection_scrolled.get_vadjustment()
             if vadj:
                 GLib.idle_add(lambda: vadj.set_value(scroll_position))
-    def _build_tags_view(self, connections, connections_dict, filter_text=None):
-        """Render the dedicated tags view: one section per tag, then Untagged.
-
-        With filter_text set (search), tag sections whose name matches are
-        shown in full (regardless of expansion), then remaining connections
-        matching the filter are listed flat — mirroring the hosts view's
-        search semantics.
-        """
-        try:
-            tag_map = {c.nickname: (getattr(c, 'tags', None) or []) for c in connections}
-            tag_groups = compute_tag_groups(tag_map)
-            if filter_text is not None:
-                tag_groups = [(t, n) for t, n in tag_groups if filter_text in t.lower()]
-            expanded_state = self.config.get_setting('ui.tag_groups_expanded', {}) or {}
-            displayed = set()
-
-            for display_tag, nicknames in tag_groups:
-                expanded = bool(expanded_state.get(display_tag.casefold(), True))
-                info = make_tag_group_info(display_tag, nicknames, expanded)
-                self._append_tag_section(
-                    info, connections_dict, expanded, filter_text, displayed
-                )
-
-            if filter_text is None:
-                untagged = compute_untagged(tag_map)
-                if untagged:
-                    expanded = bool(expanded_state.get(UNTAGGED_KEY, True))
-                    info = make_untagged_group_info(_('Untagged'), untagged, expanded)
-                    self._append_tag_section(
-                        info, connections_dict, expanded, None, displayed
-                    )
-            else:
-                matches = [
-                    c for c in connections
-                    if connection_matches(c, filter_text)
-                    and c.nickname not in displayed
-                ]
-                for conn in sorted(matches, key=lambda c: c.nickname.lower()):
-                    self.add_connection_row(conn)
-
-            self._ungrouped_area_row = None
-        except Exception:
-            logger.error("Failed to render tags view", exc_info=True)
-
-    def _append_tag_section(self, info, connections_dict, expanded,
-                            filter_text, displayed):
-        """Append one TagGroupRow plus its member rows to the list."""
-        tag_row = TagGroupRow(info, self.group_manager, connections_dict)
-        self.connection_list.append(tag_row)
-        # Member rows are always created; collapse hides them in place
-        # (no full rebuild on toggle, so no flicker).
-        member_rows = []
-        for nick in info.get('connections', []):
-            conn = connections_dict.get(nick)
-            if conn is None:
-                continue
-            row = self.add_connection_row(
-                conn, 1, display_group_id=None, in_tag_section=True,
-            )
-            if row is not None:
-                row.set_visible(expanded or filter_text is not None)
-                member_rows.append(row)
-            displayed.add(nick)
-        tag_row._member_rows = member_rows
-
     def _build_grouped_list(self, hierarchy, connections_dict, level):
         """Recursively build the grouped connection list.
 
@@ -7958,9 +7908,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 
 
 
-                # Update UI. Tag group rows are derived during rebuilds, so a
-                # tag change needs a full rebuild when tag groups are shown —
-                # update_display() alone leaves them stale.
+                # Update UI. The tag-filtered list is derived during rebuilds,
+                # so a tag change needs a full rebuild while a tag filter is
+                # active — update_display() alone leaves it stale.
                 tags_changed = False
                 try:
                     fresh_tags = self.config.get_connection_tags(old_connection.nickname)
@@ -7970,7 +7920,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 except Exception:
                     pass
                 rows = self._rows_for_connection(old_connection)
-                if tags_changed and getattr(self, '_sidebar_view', 'hosts') == 'tags':
+                if tags_changed and getattr(self, '_tag_filter', None):
                     self.rebuild_connection_list()
                 elif rows:
                     # Update the display for every row representing this connection
