@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:5.5.0}
+Version:        %{?version}%{!?version:5.5.1}
 Release:        1%{?dist}
 Summary:        Manage your servers with ease
 
@@ -87,6 +87,12 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/io.github.mfat.sshpil
 %{_datadir}/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg
 
 %changelog
+* Tue Jul 14 2026 mFat <newmfat@gmail.com> - 5.5.1
+- Docker Console UI improvements
+- File manager UI improvements
+- Reorganized main menu
+- Bug fixes
+
 * Mon Jul 13 2026 mFat <newmfat@gmail.com> - 5.5.0
 - Backup settings and credentials to Bitwarden/Vaultwarden right from SSH Pilot and restore on other devices
 - More credential storage backends including Keepass, Bitwarden and rbw
