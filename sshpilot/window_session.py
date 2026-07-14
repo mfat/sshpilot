@@ -5,11 +5,10 @@ WindowBroadcastMixin) to shrink the window.py god-object. MainWindow inherits
 this; methods keep their signatures and `self.` state access, so this is a pure
 code move with no behavior change.
 
-`TerminalWidget` is imported here the same way window.py imports it
-(``from .terminal import TerminalWidget``); both bind to the one
-``sshpilot.terminal`` module in the same import cycle, so the isinstance()
-checks below use the identical class object the rest of the app (and the
-session tests via ``window_module.TerminalWidget``) check against.
+`TerminalWidget` is imported at module level so the isinstance() checks
+below use the class object the session tests bind via
+``window_session.TerminalWidget`` (window.py only imports it under
+``TYPE_CHECKING``).
 """
 
 import logging

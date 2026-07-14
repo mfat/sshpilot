@@ -11,7 +11,6 @@ from sshpilot.credential_model import (
     TYPE_SUDO,
     TYPE_KEY,
     credential_to_spec,
-    credential_from_attributes,
 )
 from sshpilot.credential_adapters import SecretBackendAdapter, KdbxAdapter
 

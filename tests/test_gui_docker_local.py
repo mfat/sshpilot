@@ -33,7 +33,7 @@ def _local_ctx():
             get=lambda key, default=None: default,
             set=lambda key, value: None,
         ),
-        list_connections=lambda: [],
+        list_connections=list,
         open_command_terminal=lambda *args, **kwargs:
             pytest.fail("Local target must not open a remote SSH terminal"),
         open_local_command_terminal=lambda command, **kwargs:

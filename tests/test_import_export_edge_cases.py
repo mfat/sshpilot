@@ -5,9 +5,7 @@ deliberate design choices found during the hunt (auto-backup is config-only beca
 restore is non-destructive; legacy JSON never restores secrets; the vault gate lives in the UI).
 """
 import json
-import os
 
-import pytest
 
 import sshpilot.backup_manager as bm
 import sshpilot.credential_manager as cmod

@@ -13,7 +13,6 @@ from typing import List
 # SSH key-path canonicalization lives in secret_storage (the single source of truth, shared with
 # credential export). secret_storage is GTK-free and safe to import in the askpass subprocess.
 from .secret_storage import (
-    home_alias_for_path as _home_alias_for_path,
     normalize_key_path_for_storage as _normalize_key_path_for_storage,
     key_path_lookup_candidates as _get_key_path_lookup_candidates,
 )
@@ -95,7 +94,7 @@ def _extract_key_path(prompt: str) -> str:
     return ""
 
 
-def get_secret_schema() -> "Secret.Schema":
+def get_secret_schema():
     """Return the shared Secret.Schema for stored secrets.
 
     Delegates to :func:`sshpilot.secret_storage.get_schema` so a single schema
