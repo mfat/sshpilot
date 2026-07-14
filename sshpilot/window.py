@@ -3988,32 +3988,50 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     def create_menu(self):
         """Create application menu"""
         menu = Gio.Menu()
-        
-        # Add all menu items directly to the main menu
-        menu.append('New Connection', 'app.new-connection')
-        menu.append('Create Group', 'win.create-group')
-        menu.append('Local Terminal', 'app.local-terminal')
-        menu.append('Copy Key to Server', 'app.new-key')
-        menu.append('SSH Config Editor', 'app.edit-ssh-config')
-        menu.append('Known Hosts Editor', 'win.edit-known-hosts')
-        menu.append('Manage Local authorized_keys…', 'win.manage-local-authorized-keys')
-        menu.append('Broadcast Command', 'app.broadcast-command')
-        
-        # Sessions submenu
+
+        new_section = Gio.Menu()
+        new_section.append('New Connection', 'app.new-connection')
+        new_section.append('Create Group', 'win.create-group')
+        new_section.append('Local Terminal', 'app.local-terminal')
+        menu.append_section(None, new_section)
+
+        ssh_section = Gio.Menu()
+        ssh_section.append('Copy Key to Server', 'app.new-key')
+        ssh_section.append('SSH Config Editor', 'app.edit-ssh-config')
+        ssh_section.append('Known Hosts Editor', 'win.edit-known-hosts')
+        ssh_section.append('Manage Local authorized_keys…', 'win.manage-local-authorized-keys')
+        ssh_section.append('Broadcast Command', 'app.broadcast-command')
+        menu.append_section(None, ssh_section)
+
+        submenu_section = Gio.Menu()
+
         sessions_menu = Gio.Menu()
         sessions_menu.append('Save Session…', 'win.save-session')
         sessions_menu.append('Open Session…', 'win.open-session')
         sessions_menu.append('Manage Sessions…', 'win.manage-sessions')
-        menu.append_submenu('Sessions', sessions_menu)
+        submenu_section.append_submenu('Sessions', sessions_menu)
 
-        # Import/Export submenu
         import_export_menu = Gio.Menu()
         import_export_menu.append('Export Configuration', 'win.export-config')
         import_export_menu.append('Import Configuration', 'win.import-config')
-        menu.append_submenu('Import/Export', import_export_menu)
-        
-        menu.append('Settings', 'app.preferences')
+        submenu_section.append_submenu('Import/Export', import_export_menu)
 
+        # Plugin-contributed pages live in the Tools submenu. The section
+        # object is shared/mutable, so items the plugin host appends after
+        # this menu is built still appear.
+        plugins_section = getattr(self, '_plugins_menu_section', None)
+        if plugins_section is not None:
+            tools_menu = Gio.Menu()
+            tools_menu.append_section(None, plugins_section)
+            submenu_section.append_submenu('Tools', tools_menu)
+
+        menu.append_section(None, submenu_section)
+
+        settings_section = Gio.Menu()
+        settings_section.append('Settings', 'app.preferences')
+        menu.append_section(None, settings_section)
+
+        help_section = Gio.Menu()
         # Help submenu with platform-aware keyboard shortcuts overlay
         help_menu = Gio.Menu()
         help_menu.append('Keyboard Shortcuts', 'app.shortcuts')
@@ -4022,17 +4040,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         help_menu.append('View Logs…', 'win.view-logs')
         help_menu.append('Report a Problem…', 'win.report-problem')
         help_menu.append('Export Diagnostics…', 'win.export-diagnostics')
-        menu.append_submenu('Help', help_menu)
+        help_section.append_submenu('Help', help_menu)
+        help_section.append('About', 'app.about')
+        menu.append_section(None, help_section)
 
-        menu.append('About', 'app.about')
-        menu.append('Quit', 'app.quit')
-
-        # Plugin-contributed pages land here in their own section, shown as a
-        # plain separator (no header). The section object is shared/mutable, so
-        # items the plugin host appends after this menu is built still appear.
-        section = getattr(self, '_plugins_menu_section', None)
-        if section is not None:
-            menu.append_section(None, section)
+        quit_section = Gio.Menu()
+        quit_section.append('Quit', 'app.quit')
+        menu.append_section(None, quit_section)
 
         return menu
 
