@@ -44,14 +44,18 @@ if [ ! -d ".venv-homebrew" ]; then
     "$PYTHON_PATH" -m venv .venv-homebrew
     echo "✅ Virtual environment created successfully"
 
-    # Activate and install PyInstaller
-    echo "📦 Installing PyInstaller..."
+    # Activate and install PyInstaller + hooks-contrib (certifi, cryptography,
+    # lxml, Cryptodome, argon2, …). hooks-contrib is a separate package.
+    echo "📦 Installing PyInstaller and pyinstaller-hooks-contrib..."
     source .venv-homebrew/bin/activate
-    pip install PyInstaller
+    pip install "PyInstaller" "pyinstaller-hooks-contrib"
     echo "✅ PyInstaller installed successfully"
 else
     echo "📦 Activating existing Homebrew virtual environment..."
     source .venv-homebrew/bin/activate
+    # Ensure hooks-contrib is present even on reused venvs (older builds only
+    # installed PyInstaller).
+    pip install -q "PyInstaller" "pyinstaller-hooks-contrib"
 fi
 
 echo "🔨 Running PyInstaller..."
@@ -60,6 +64,31 @@ python -m PyInstaller --clean --noconfirm packaging/pyinstaller/sshpilot.spec
 # Check if build was successful
 if [ -d "dist/SSHPilot.app" ]; then
     echo "✅ Build successful! Bundle created at: dist/SSHPilot.app"
+
+    # GI typelibs dlopen bare sonames from Contents/Frameworks/ (not a nested
+    # Frameworks/Frameworks/). Fail the build if GtkSourceView is missing —
+    # otherwise the SSH config editor crashes with "must be an interface".
+    FRAMEWORKS_DIR="dist/SSHPilot.app/Contents/Frameworks"
+    echo "🔍 Verifying GtkSourceView dylib in Frameworks root..."
+    if ! ls "$FRAMEWORKS_DIR"/libgtksourceview-5*.dylib >/dev/null 2>&1; then
+        echo "❌ libgtksourceview-5*.dylib not found in $FRAMEWORKS_DIR"
+        echo "   Nested copies under Frameworks/Frameworks/ are not loaded by GI."
+        find dist/SSHPilot.app -name '*gtksourceview*' 2>/dev/null || true
+        exit 1
+    fi
+    # Typelib references libgtksourceview-5.0.dylib; ensure that ABI name exists
+    # even if PyInstaller only copied the versioned real file.
+    if [ ! -e "$FRAMEWORKS_DIR/libgtksourceview-5.0.dylib" ]; then
+        VERSIONED="$(ls "$FRAMEWORKS_DIR"/libgtksourceview-5.*.dylib 2>/dev/null | head -1 || true)"
+        if [ -n "$VERSIONED" ]; then
+            ln -sf "$(basename "$VERSIONED")" "$FRAMEWORKS_DIR/libgtksourceview-5.0.dylib"
+            echo "✅ Created ABI symlink libgtksourceview-5.0.dylib -> $(basename "$VERSIONED")"
+        else
+            echo "❌ Could not create libgtksourceview-5.0.dylib ABI name"
+            exit 1
+        fi
+    fi
+    echo "✅ GtkSourceView dylib present: $(ls "$FRAMEWORKS_DIR"/libgtksourceview-5*.dylib)"
 
     # Bundle sshpass into the correct location expected by hook-gtk_runtime.py
     # (Contents/Resources/bin/ — NOT Contents/MacOS/ which PyInstaller's binaries[] uses)
@@ -75,11 +104,25 @@ if [ -d "dist/SSHPilot.app" ]; then
         echo "⚠️  sshpass not found in PATH; bundle will require system sshpass"
     fi
 
-    # Ad-hoc sign the app bundle — prevents "damaged app" Gatekeeper error when downloaded
+    # Ad-hoc sign LAST — after sshpass + the GtkSourceView symlink — so the
+    # signature seals the final bundle. Signing earlier (e.g. in the spec) then
+    # modifying the bundle yields an inconsistent signature and the dreaded
+    # "app is damaged and can't be opened" error on downloaded copies.
+    #
+    # This is ad-hoc (--sign -): no Developer ID, so it can't be notarized and
+    # Gatekeeper still shows "unidentified developer" on first open (right-click
+    # ▸ Open, or `xattr -dr com.apple.quarantine SSHPilot.app`). A *valid*
+    # ad-hoc signature is what keeps users on that recoverable path instead of
+    # the "damaged" dead-end. --deep is fine for ad-hoc; it would need replacing
+    # with inside-out signing + entitlements only if real notarization is added.
     echo "🔐 Ad-hoc code signing app bundle..."
     codesign --sign - --force --deep --timestamp=none "dist/SSHPilot.app"
-    codesign --verify --verbose "dist/SSHPilot.app" 2>&1 || true
-    echo "✅ App bundle signed (ad-hoc)"
+    if codesign --verify --strict --verbose=2 "dist/SSHPilot.app"; then
+        echo "✅ App bundle signed (ad-hoc) and signature verified"
+    else
+        echo "❌ codesign --verify failed — downloaded builds will show 'app is damaged'"
+        exit 1
+    fi
 
     # Create DMG file using create-dmg
     echo "📦 Creating DMG file..."

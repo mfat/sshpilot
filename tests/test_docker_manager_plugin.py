@@ -727,15 +727,18 @@ def test_page_hardening_widgets_and_helpers():
     assert page._health_of("Up 2 hours (healthy)") == "healthy"
     assert page._health_of("Up (unhealthy)") == "unhealthy"
     assert page._health_of("Up 3 hours") is None
-    # Container search filters the cached list.
-    page._containers = [{"Names": "web", "Image": "nginx", "ID": "a1"},
-                        {"Names": "db", "Image": "postgres", "ID": "b2"}]
+    # Container search filters the cached list (non-matching rows stay hidden).
+    page._containers = [{"Names": "web", "Image": "nginx", "ID": "a1",
+                         "Status": "Up", "State": "running"},
+                        {"Names": "db", "Image": "postgres", "ID": "b2",
+                         "Status": "Up", "State": "running"}]
     page._container_query = "postgres"
     page._render_containers()
     n = 0
     ch = page._containers_list.get_first_child()
     while ch is not None:
-        n += 1
+        if ch.get_visible():
+            n += 1
         ch = ch.get_next_sibling()
     assert n == 1
 
@@ -1023,3 +1026,223 @@ def test_check_sudo():
         rc_wrong, "web", "docker", "bad") == (False, "wrong_password")
     assert DockerConsolePage._check_sudo(
         rc_denied, "web", "docker", "bad") == (False, "not_sudoers")
+
+
+# --- failure placeholder / toast truncation --------------------------------
+
+def test_truncate_message_keeps_short_text():
+    from sshpilot.plugins.builtin.docker_manager import widgets as w
+
+    display, truncated = w.truncate_message("permission denied", 480)
+    assert display == "permission denied"
+    assert truncated is False
+
+
+def test_truncate_message_clips_long_log():
+    from sshpilot.plugins.builtin.docker_manager import widgets as w
+
+    log = "\n".join(f"error line {i}: boom" for i in range(80))
+    display, truncated = w.truncate_message(log, 480)
+    assert truncated is True
+    assert display.endswith("…")
+    assert len(display) < len(log)
+
+
+def test_truncate_toast_collapses_newlines():
+    from sshpilot.plugins.builtin.docker_manager import widgets as w
+
+    toast = w.truncate_toast("failed:\n" + ("x" * 400))
+    assert "\n" not in toast
+    assert toast.endswith("…")
+
+
+def test_placeholder_error_shows_human_summary():
+    """Failures show a parsed human summary (plain selectable label, no framed
+    log box); the raw output expands inline via the "Show detailed log" toggle."""
+    _gtk_or_skip()
+    from sshpilot.plugins.builtin.docker_manager.page import DockerConsolePage
+
+    page = DockerConsolePage(_gtk_ctx(), initial_host="web")
+    ph = page._containers_placeholder
+    assert ph.has_css_class("docker-console-placeholder")
+    assert ph.get_halign().value_nick == "fill"
+    assert ph.get_valign().value_nick == "fill"
+
+    raw = ("debug1: OpenSSH_10.2p1 Ubuntu\n"
+           "debug1: Reading configuration data /home/u/.ssh/config\n"
+           "ash: docker: not found")
+    page._set_placeholder_idle(ph, raw, error=True)
+    assert ph.get_visible()
+    assert ph.get_title() == "Docker isn't installed on this host"
+    assert ph.has_css_class("docker-error")
+    assert ph._full_text == raw          # raw log behind the toggle
+    assert ph._details_btn.get_visible()
+    assert ph._details_btn.get_label() == "Show detailed log"
+    assert ph.get_can_target() is True
+
+    # Toggling expands the raw log inline (no separate window, no framed
+    # box — a plain selectable label like the status feed).
+    assert not ph._detail_frame.get_visible()
+    ph._details_btn.set_active(True)
+    assert ph._detail_frame.get_visible()
+    assert ph._details_btn.get_label() == "Hide detailed log"
+    assert "ash: docker: not found" in ph._detail_lbl.get_text()
+    assert ph._detail_lbl.get_selectable() is True
+
+    # Auto-refresh repainting the SAME failure is a no-op: the expanded log
+    # must stay open instead of collapsing every tick.
+    page._set_placeholder_idle(ph, raw, error=True)
+    assert ph._detail_frame.get_visible()
+    assert ph._details_btn.get_active() is True
+
+    # A message that IS already the summary needs no details toggle; the
+    # previous expansion is collapsed again.
+    page._set_placeholder_idle(ph, "Connection timed out", error=True)
+    assert ph._details_btn.get_visible() is False
+    assert ph._details_btn.get_active() is False
+    assert not ph._detail_frame.get_visible()
+    assert ph.get_can_target() is True
+
+    page._set_placeholder_idle(ph, "No containers")
+    assert ph._details_btn.get_visible() is False
+    assert not ph.has_css_class("docker-error")
+    assert ph.get_title() == "No containers"
+    assert ph.get_can_target() is False
+
+    # The crossfade revealer spans the overlay even when unrevealed — it must
+    # never intercept scroll/clicks meant for the list (scrollability bug).
+    page._hide_placeholder(ph)
+    assert ph._revealer.get_can_target() is False
+    page._set_placeholder_idle(ph, "boom", error=True)
+    assert ph._revealer.get_can_target() is True
+
+
+def test_text_view_dialog_is_selectable():
+    _gtk_or_skip()
+    from sshpilot.plugins.builtin.docker_manager.dialogs import TextViewDialog
+
+    dlg = TextViewDialog(None, "Error details", "copy me\nline 2")
+    assert dlg._view.get_editable() is False
+    assert dlg._view.get_cursor_visible() is True
+    buf = dlg._view.get_buffer()
+    start, end = buf.get_bounds()
+    assert "copy me" in buf.get_text(start, end, False)
+
+
+# --- loading status feed under the Docker mark ------------------------------
+
+def test_describe_docker_failure_parses_real_output():
+    from sshpilot.plugins.builtin.docker_manager import widgets as w
+
+    cases = [
+        ("Cannot connect to the Docker daemon at unix:///var/run/docker.sock. "
+         "Is the docker daemon running?", "daemon isn't running"),
+        ("bash: docker: command not found", "isn't installed"),
+        ("dial unix /var/run/docker.sock: connect: permission denied",
+         "sudo or the docker group"),
+        ("ssh: Could not resolve hostname web: Name or service not known",
+         "resolve the host name"),
+        ("connect to host web port 22: Connection refused", "refused"),
+        ("connect to host web port 22: Connection timed out", "timed out"),
+    ]
+    for raw, expected_fragment in cases:
+        assert expected_fragment in w.describe_docker_failure(raw)
+    # Unknown output falls back to its first line, never invented text.
+    assert w.describe_docker_failure("some odd error\nmore") == "some odd error"
+    assert w.describe_docker_failure("") == "Command failed"
+    # SSH -v chatter is never mistaken for the failure itself.
+    noisy = ("debug1: OpenSSH_10.2p1 Ubuntu\n"
+             "debug1: auto-mux: Trying existing master\n"
+             "ash: podman: not found")
+    assert w.describe_docker_failure(noisy) == "Podman isn't installed on this host"
+
+
+def test_status_feed_shows_under_mark_while_loading():
+    _gtk_or_skip()
+    from sshpilot.plugins.builtin.docker_manager.page import DockerConsolePage
+
+    page = DockerConsolePage(_gtk_ctx(), initial_host="web")
+    ph = page._containers_placeholder
+    lbl = ph._status_lbl
+    assert lbl.get_selectable() is True   # mouse-selectable
+    assert not lbl.get_visible()          # hidden until a load starts
+
+    page._status("Connecting to web…")
+    page._status("Docker found")
+    page._set_placeholder_loading(ph, "Loading containers…")
+    assert lbl.get_visible()
+    assert ph.get_can_target() is True    # selectable while loading
+    assert "Connecting to web…" in lbl.get_text()
+    assert "Docker found" in lbl.get_text()
+
+    # Feed is shared: every placeholder mirrors the same lines.
+    assert "Docker found" in page._images_placeholder._status_lbl.get_text()
+
+    # Capped to the last few stage messages.
+    for i in range(20):
+        page._status(f"stage {i}")
+    assert "stage 19" in lbl.get_text()
+    assert "Connecting to web…" not in lbl.get_text()
+
+    page._set_placeholder_idle(ph, "No containers")
+    assert not lbl.get_visible()
+
+    page._clear_status()
+    assert lbl.get_text() == ""
+
+
+def test_containers_sync_updates_in_place():
+    """Polling refresh should reuse list rows when state/actions are unchanged."""
+    _gtk_or_skip()
+    from sshpilot.plugins.builtin.docker_manager.page import DockerConsolePage
+
+    page = DockerConsolePage(_gtk_ctx(), initial_host="web")
+    page._containers = [
+        {"Names": "web", "Image": "nginx", "ID": "a1",
+         "Status": "Up 1 second", "State": "running"},
+    ]
+    page._sync_containers_list()
+    first = page._containers_list.get_first_child()
+    page._containers[0]["Status"] = "Up 2 minutes"
+    page._sync_containers_list()
+    assert page._containers_list.get_first_child() is first
+    box = first.get_child()
+    assert box._sub_lbl.get_text().startswith("nginx · Up 2 minutes")
+
+
+def test_loaded_flags_suppress_repulse():
+    """Auto-refresh of an already-loaded (even empty) view must not re-pulse —
+    otherwise the logo flaps every tick."""
+    _gtk_or_skip()
+    from sshpilot.plugins.builtin.docker_manager.page import DockerConsolePage
+
+    page = DockerConsolePage(_gtk_ctx(), initial_host="web")
+    assert page._containers_loaded is False
+    page._on_containers([], None, page._load_gen)  # empty-but-successful load
+    assert page._containers_loaded is True
+    page._on_stats([], None, page._load_gen)
+    assert page._stats_loaded is True
+
+
+def test_logs_dropdown_selection_loads_logs():
+    """Picking a container in the Logs dropdown loads its logs without the
+    Load button; poll-driven model refreshes neither re-trigger nor lose
+    the selection."""
+    _gtk_or_skip()
+    from sshpilot.plugins.builtin.docker_manager.page import DockerConsolePage
+
+    page = DockerConsolePage(_gtk_ctx(), initial_host="web")
+    page._containers = [{"Names": "web", "ID": "a1"}, {"Names": "db", "ID": "b2"}]
+    calls = []
+    page._reload_logs = lambda: calls.append(page._selected_container_id())
+
+    page._refresh_logs_targets()      # programmatic model swap — must not load
+    assert calls == []
+
+    page._logs_combo.set_selected(1)  # user picks "db"
+    assert calls == ["b2"]
+    assert page._logs_raw == ""
+
+    page._refresh_logs_targets()      # containers poll: keeps pick, no reload
+    assert calls == ["b2"]
+    assert page._logs_combo.get_selected() == 1

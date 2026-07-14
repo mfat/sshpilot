@@ -35,7 +35,7 @@ class ListingsTabMixin:
                           empty: str, build_row: Callable[[dict], Gtk.Widget]) -> None:
         w.clear_listbox(listbox)
         if err is not None:
-            self._set_placeholder_idle(ph, w.error_text(err))
+            self._set_placeholder_idle(ph, w.error_text(err), error=True)
             return
         if not rows:
             self._set_placeholder_idle(ph, empty)

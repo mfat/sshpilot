@@ -37,7 +37,7 @@ _MIN_VALID_MARGIN = 0
 
 # Drop indicator (between-rows reorder bar) drawing parameters.
 _DROP_BAR_HEIGHT = 10        # widget height reserved when shown
-_DROP_BAR_THICKNESS = 4      # thickness of the pill bar
+_DROP_BAR_THICKNESS = 2      # thickness of the pill bar
 _DROP_BAR_INSET_LEFT = 6     # left inset (kept small so the bar spans nearly full width)
 _DROP_BAR_INSET_RIGHT = 8    # right inset
 _DROP_BAR_CAP_RADIUS = 4     # radius of the leading round cap (caret node)
@@ -67,18 +67,12 @@ def _install_sidebar_color_css():
 
         /* Accent-bar group colour: a straight vertical bar on the leading edge.
            The transparent border is reserved on every bar-mode row so coloured
-           and uncoloured rows stay aligned; the per-row provider only overrides
-           border-left-color. Only rows with an actual colour (``.color-bar-colored``)
-           pin their *leading* (left) corners square — a rounded corner with a
-           single coloured border renders broken in GTK, and that colour lives on
-           the left border. The trailing (right) corners follow the theme, so a
-           selected row keeps its rounded highlight while the colour bar stays
-           sharp. Uncoloured bar rows round both sides with the theme. */
+           and uncoloured rows stay aligned. The bar itself is painted by the
+           per-row provider as a background-image strip, vertically inset and
+           centered, so it keeps square ends while the row's rounded corners
+           stay intact (a coloured border-left would either curve with the
+           corner or force it square). */
         .color-bar { border-left: 3px solid transparent; }
-        .color-bar-colored {
-            border-top-left-radius: 0;
-            border-bottom-left-radius: 0;
-        }
 
         /* Virtual tag group rows use the osd style; the default row hover
            replaces the background with a near-transparent overlay, leaving
@@ -91,21 +85,6 @@ def _install_sidebar_color_css():
             display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
         )
 
-        # Keep the coloured accent bar's leading (left) edge square in every
-        # state. The theme rounds selected/focused rows at APPLICATION priority;
-        # in GTK's cascade provider priority beats specificity, so a USER-priority
-        # rule wins regardless of the theme's :selected:focus-within specificity.
-        # Only coloured rows pin their left corners (so the selected row's right
-        # corners still round, and uncoloured rows round both sides); the bar
-        # width/style is held on every bar row so the reserve stays consistent.
-        square = Gtk.CssProvider()
-        square.load_from_data(
-            b".color-bar { border-left-width: 3px; border-left-style: solid; }"
-            b".color-bar-colored { border-top-left-radius: 0; border-bottom-left-radius: 0; }"
-        )
-        Gtk.StyleContext.add_provider_for_display(
-            display, square, Gtk.STYLE_PROVIDER_PRIORITY_USER
-        )
         _COLOR_CSS_INSTALLED = True
     except Exception:
         logger.debug("Failed to install sidebar color CSS", exc_info=True)
@@ -198,7 +177,7 @@ def _get_color_display_mode(config) -> str:
     except Exception:
         return 'fill'
 
-    if mode not in {'fill', 'badge', 'bar'}:
+    if mode not in {'fill', 'badge', 'bar', 'dot'}:
         return 'fill'
     return mode
 
@@ -311,11 +290,12 @@ def _clear_tint(row: Gtk.Widget):
 
 
 def _set_bar_card_color(row: Gtk.Widget, rgba: Gdk.RGBA):
-    """Colour the row's leading accent bar (the ``.color-bar`` border-left).
+    """Colour the row's leading accent bar.
 
-    Only the colour is per-row; the bar width and ``border-radius:0`` are static
-    in the shared CSS. The provider is scoped to this widget's style context,
-    same as the ``.tinted`` fill.
+    Painted as a no-repeat background strip (not a coloured border) so the
+    bar keeps straight, square ends while the row's rounded corners stay
+    intact. Vertically inset to 90% so it clears the corner curves. The
+    provider is scoped to this widget's style context, same as ``.tinted``.
     """
     try:
         color = rgba.to_string()
@@ -324,8 +304,11 @@ def _set_bar_card_color(row: Gtk.Widget, rgba: Gdk.RGBA):
     try:
         provider = Gtk.CssProvider()
         css_data = f"""
-        .color-bar {{
-            border-left-color: {color};
+        .color-bar-colored {{
+            background-image: linear-gradient({color}, {color});
+            background-size: 3px 95%;
+            background-position: left center;
+            background-repeat: no-repeat;
         }}
         """
         provider.load_from_data(css_data.encode('utf-8'))
@@ -357,16 +340,57 @@ def _clear_bar(row: Gtk.Widget):
         row._bar_provider = None  # type: ignore[attr-defined]
 
 
+def _create_color_dot(icon_name: str = "dot-symbolic") -> Gtk.Image:
+    """Colour dot shown before a row title ('dot' mode; 'bar'-mode member rows)."""
+    from sshpilot import icon_utils
+    dot = icon_utils.new_image_from_icon_name(icon_name)
+    dot.add_css_class("sidebar-color-dot")
+    dot.set_pixel_size(16)
+    dot.set_valign(Gtk.Align.CENTER)
+    dot.set_visible(False)
+    return dot
+
+
+def _update_color_dot(row: Gtk.Widget, rgba: Optional[Gdk.RGBA]):
+    """Colour and show the row's ``color_dot``, or hide it when no colour."""
+    if not rgba:
+        row.color_dot.set_visible(False)
+        return
+    css_data = f"""
+    image.sidebar-color-dot {{
+      color: {rgba.to_string()};
+    }}
+    """
+    old = getattr(row, '_color_dot_provider', None)
+    if old:
+        try:
+            row.color_dot.get_style_context().remove_provider(old)
+        except Exception:
+            pass
+    row._color_dot_provider = Gtk.CssProvider()
+    row._color_dot_provider.load_from_data(css_data.encode('utf-8'))
+    row.color_dot.get_style_context().add_provider(
+        row._color_dot_provider, Gtk.STYLE_PROVIDER_PRIORITY_USER
+    )
+    row.color_dot.set_visible(True)
+
+
 def _apply_row_color(row: Gtk.Widget, mode: str, rgba: Optional[Gdk.RGBA]):
     """Apply the selected group-color treatment to a sidebar row.
 
-    Modes: ``fill`` (tinted card), ``badge`` (color dot), ``bar`` (leading
-    accent bar). The three are mutually exclusive, so we always clear the other
-    two first. ``row`` must expose ``color_badge`` and ``_update_color_badge``.
+    Modes: ``fill`` (tinted card), ``badge`` (tag icon), ``bar`` (leading
+    accent bar), ``dot`` (dot before the title). Mutually exclusive, so we
+    always clear the others first. ``row`` must expose ``color_badge``,
+    ``_update_color_badge`` and ``color_dot``.
     """
     _clear_tint(row)
     _clear_bar(row)
     row.color_badge.set_visible(False)
+    row.color_dot.set_visible(False)
+
+    if mode == 'dot':
+        _update_color_dot(row, rgba)
+        return
 
     if mode == 'bar':
         # Reserve the (transparent) bar on every row so coloured and uncoloured
@@ -524,6 +548,9 @@ class GroupRow(Gtk.ListBoxRow):
         icon.set_visible(show_group_icon)
         content.append(icon)
         self.icon = icon
+
+        self.color_dot = _create_color_dot("big-dot-symbolic")
+        content.append(self.color_dot)
 
         info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         info_box.set_hexpand(True)
@@ -1032,6 +1059,7 @@ class ConnectionRow(Gtk.ListBoxRow):
         self._file_manager_callback = file_manager_callback
         self._tint_provider = None
         self._color_badge_provider = None
+        self._color_dot_provider = None
         self._indent_level = 0
         self._group_display_mode = None
         self._row_margin_base = None
@@ -1060,6 +1088,9 @@ class ConnectionRow(Gtk.ListBoxRow):
         show_connection_icon = self.config.get_setting('ui.sidebar_show_connection_icon', True)
         self.connection_icon.set_visible(show_connection_icon)
         content.append(self.connection_icon)
+
+        self.color_dot = _create_color_dot()
+        content.append(self.color_dot)
 
         info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         info_box.set_hexpand(True)
@@ -1342,8 +1373,19 @@ class ConnectionRow(Gtk.ListBoxRow):
         return _resolve_group_color_by_id(manager, group_id)
 
     def _apply_group_color_style(self):
-        mode = _get_color_display_mode(getattr(self, 'config', None))
-        rgba = self._resolve_group_color()
+        config = getattr(self, 'config', None)
+        mode = _get_color_display_mode(config)
+        try:
+            color_children = bool(config.get_setting('ui.group_color_child_rows', False))
+        except Exception:
+            color_children = True
+        rgba = self._resolve_group_color() if color_children else None
+        if mode == 'bar':
+            # Bar marks only group headers; member rows show a colour dot
+            # before the title instead.
+            _apply_row_color(self, mode, None)
+            _update_color_dot(self, rgba)
+            return
         _apply_row_color(self, mode, rgba)
 
     def _update_color_badge(self, rgba: Gdk.RGBA):
@@ -1947,9 +1989,10 @@ def _show_drop_indicator(window, row, position):
         # Between-rows reorder: open a real gap with the placeholder row (the
         # list parts around it — no overlap), instead of painting a line inside
         # the target row. Clear any lingering group 'into' highlight first.
+        # Also when it IS the target row: a lingering "on_group" highlight on
+        # the same row must drop before the gap appears.
         if window._drop_indicator_row and hasattr(window._drop_indicator_row, 'hide_drop_indicators'):
-            if window._drop_indicator_row is not row:
-                window._drop_indicator_row.hide_drop_indicators()
+            window._drop_indicator_row.hide_drop_indicators()
         _position_drop_placeholder(window, row, position)
     except Exception as e:
         logger.error(f"Error showing drop indicator: {e}")
@@ -2265,6 +2308,8 @@ def _show_group_end_drop(window):
             and window._drop_indicator_row is last
             and window._drop_indicator_position == "below"):
         return
+    if window._drop_indicator_row and hasattr(window._drop_indicator_row, 'hide_drop_indicators'):
+        window._drop_indicator_row.hide_drop_indicators()
     if placeholder.get_parent() is not None:
         window.connection_list.remove(placeholder)
     window.connection_list.insert(placeholder, _group_section_end_index(window))

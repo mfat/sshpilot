@@ -724,7 +724,7 @@ class PreferencesWindow(Adw.Window):
             group_appearance_group = Adw.PreferencesGroup(title="Group Appearance")
 
             # Sidebar group color display mode
-            self._group_color_display_values = ['fill', 'badge', 'bar']
+            self._group_color_display_values = ['fill', 'badge', 'bar', 'dot']
             self.group_color_display_row = Adw.ComboRow()
             self.group_color_display_row.set_title("Sidebar Group Colors")
             self.group_color_display_row.set_subtitle(
@@ -735,6 +735,7 @@ class PreferencesWindow(Adw.Window):
             color_display_options.append("Colored Rows")
             color_display_options.append("Color Badges")
             color_display_options.append("Accent Bars")
+            color_display_options.append("Color Dots")
             self.group_color_display_row.set_model(color_display_options)
 
             current_mode = 'fill'
@@ -760,6 +761,24 @@ class PreferencesWindow(Adw.Window):
             )
 
             group_appearance_group.add(self.group_color_display_row)
+
+            # Toggle for extending group colors to member connection rows
+            self.child_rows_color_row = Adw.SwitchRow()
+            self.child_rows_color_row.set_title("Use Group Color for Child Rows")
+            self.child_rows_color_row.set_subtitle(
+                "Apply the group's color to its connection rows as well"
+            )
+            try:
+                child_rows_pref = bool(
+                    self.config.get_setting('ui.group_color_child_rows', False)
+                )
+            except Exception:
+                child_rows_pref = False
+            self.child_rows_color_row.set_active(child_rows_pref)
+            self.child_rows_color_row.connect(
+                'notify::active', self.on_group_color_child_rows_toggled
+            )
+            group_appearance_group.add(self.child_rows_color_row)
 
             # Toggle for coloring tabs using group colors
             self.tab_group_color_row = Adw.SwitchRow()
@@ -3176,6 +3195,34 @@ class PreferencesWindow(Adw.Window):
         if not getattr(self, '_config_signal_id', None):
             self._trigger_sidebar_refresh()
 
+    def on_group_color_child_rows_toggled(self, switch_row, _param):
+        if getattr(self, '_child_rows_color_sync', False):
+            return
+
+        new_value = bool(switch_row.get_active())
+
+        try:
+            current_value = bool(
+                self.config.get_setting('ui.group_color_child_rows', False)
+            )
+        except Exception:
+            current_value = False
+
+        if new_value == current_value:
+            return
+
+        try:
+            self.config.set_setting('ui.group_color_child_rows', new_value)
+        except Exception as exc:
+            logger.error(
+                "Failed to update child row group color preference: %s", exc,
+            )
+            self._sync_group_color_child_rows(current_value)
+            return
+
+        if not getattr(self, '_config_signal_id', None):
+            self._trigger_sidebar_refresh()
+
     def on_use_group_color_in_tab_toggled(self, switch_row, _param):
         if getattr(self, '_tab_color_sync', False):
             return
@@ -4202,7 +4249,7 @@ class PreferencesWindow(Adw.Window):
         except Exception:
             normalized = 'fill'
 
-        if normalized not in getattr(self, '_group_color_display_values', ['fill', 'badge', 'bar']):
+        if normalized not in getattr(self, '_group_color_display_values', ['fill', 'badge', 'bar', 'dot']):
             normalized = 'fill'
 
         target_index = self._group_color_display_values.index(normalized)
@@ -4250,6 +4297,9 @@ class PreferencesWindow(Adw.Window):
         elif key == 'ui.group_row_display':
             self._sync_group_display_toggle_group(value)
             self._trigger_sidebar_refresh()
+        elif key == 'ui.group_color_child_rows':
+            self._sync_group_color_child_rows(value)
+            self._trigger_sidebar_refresh()
         elif key == 'ui.use_group_color_in_tab':
             self._sync_use_group_color_in_tab(value)
             self._trigger_terminal_style_refresh()
@@ -4263,6 +4313,20 @@ class PreferencesWindow(Adw.Window):
             notify_user = not self._user_initiated_encoding_change
             self._user_initiated_encoding_change = False  # Reset flag
             GLib.idle_add(self._sync_encoding_row_selection, value or '', notify_user)
+
+    def _sync_group_color_child_rows(self, value):
+        if not hasattr(self, 'child_rows_color_row') or self.child_rows_color_row is None:
+            return
+
+        target_state = bool(value)
+        if self.child_rows_color_row.get_active() == target_state:
+            return
+
+        self._child_rows_color_sync = True
+        try:
+            self.child_rows_color_row.set_active(target_state)
+        finally:
+            self._child_rows_color_sync = False
 
     def _sync_use_group_color_in_tab(self, value):
         if not hasattr(self, 'tab_group_color_row') or self.tab_group_color_row is None:

@@ -3988,32 +3988,55 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     def create_menu(self):
         """Create application menu"""
         menu = Gio.Menu()
-        
-        # Add all menu items directly to the main menu
-        menu.append('New Connection', 'app.new-connection')
-        menu.append('Create Group', 'win.create-group')
-        menu.append('Local Terminal', 'app.local-terminal')
-        menu.append('Copy Key to Server', 'app.new-key')
-        menu.append('SSH Config Editor', 'app.edit-ssh-config')
-        menu.append('Known Hosts Editor', 'win.edit-known-hosts')
-        menu.append('Manage Local authorized_keys…', 'win.manage-local-authorized-keys')
-        menu.append('Broadcast Command', 'app.broadcast-command')
-        
-        # Sessions submenu
+
+        new_section = Gio.Menu()
+        new_section.append('New Connection', 'app.new-connection')
+        new_section.append('Create Group', 'win.create-group')
+        new_section.append('Local Terminal', 'app.local-terminal')
+        menu.append_section(None, new_section)
+
+        server_section = Gio.Menu()
+        server_section.append('Copy Key to Server', 'app.new-key')
+        server_section.append('Broadcast Command', 'app.broadcast-command')
+        if not should_hide_file_manager_options():
+            server_section.append('Manage Files', 'win.open-file-manager')
+        menu.append_section(None, server_section)
+
+        ssh_section = Gio.Menu()
+        ssh_section.append('SSH Config Editor', 'app.edit-ssh-config')
+        ssh_section.append('Known Hosts Editor', 'win.edit-known-hosts')
+        ssh_section.append('Manage Local authorized_keys…', 'win.manage-local-authorized-keys')
+        menu.append_section(None, ssh_section)
+
+        submenu_section = Gio.Menu()
+
         sessions_menu = Gio.Menu()
         sessions_menu.append('Save Session…', 'win.save-session')
         sessions_menu.append('Open Session…', 'win.open-session')
         sessions_menu.append('Manage Sessions…', 'win.manage-sessions')
-        menu.append_submenu('Sessions', sessions_menu)
+        submenu_section.append_submenu('Sessions', sessions_menu)
 
-        # Import/Export submenu
         import_export_menu = Gio.Menu()
         import_export_menu.append('Export Configuration', 'win.export-config')
         import_export_menu.append('Import Configuration', 'win.import-config')
-        menu.append_submenu('Import/Export', import_export_menu)
-        
-        menu.append('Settings', 'app.preferences')
+        submenu_section.append_submenu('Import/Export', import_export_menu)
 
+        # Plugin-contributed pages live in the Tools submenu. The section
+        # object is shared/mutable, so items the plugin host appends after
+        # this menu is built still appear.
+        plugins_section = getattr(self, '_plugins_menu_section', None)
+        if plugins_section is not None:
+            tools_menu = Gio.Menu()
+            tools_menu.append_section(None, plugins_section)
+            submenu_section.append_submenu('Tools', tools_menu)
+
+        menu.append_section(None, submenu_section)
+
+        settings_section = Gio.Menu()
+        settings_section.append('Settings', 'app.preferences')
+        menu.append_section(None, settings_section)
+
+        help_section = Gio.Menu()
         # Help submenu with platform-aware keyboard shortcuts overlay
         help_menu = Gio.Menu()
         help_menu.append('Keyboard Shortcuts', 'app.shortcuts')
@@ -4022,17 +4045,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         help_menu.append('View Logs…', 'win.view-logs')
         help_menu.append('Report a Problem…', 'win.report-problem')
         help_menu.append('Export Diagnostics…', 'win.export-diagnostics')
-        menu.append_submenu('Help', help_menu)
+        help_section.append_submenu('Help', help_menu)
+        help_section.append('About', 'app.about')
+        menu.append_section(None, help_section)
 
-        menu.append('About', 'app.about')
-        menu.append('Quit', 'app.quit')
-
-        # Plugin-contributed pages land here in their own section, shown as a
-        # plain separator (no header). The section object is shared/mutable, so
-        # items the plugin host appends after this menu is built still appear.
-        section = getattr(self, '_plugins_menu_section', None)
-        if section is not None:
-            menu.append_section(None, section)
+        quit_section = Gio.Menu()
+        quit_section.append('Quit', 'app.quit')
+        menu.append_section(None, quit_section)
 
         return menu
 
@@ -4911,99 +4930,18 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             logger.error(f"Failed to open SSH config editor: {e}")
 
     def show_connection_selection_for_ssh_copy(self):
-        """Show a dialog to select a connection for SSH key copy"""
-        logger.info("Showing connection selection dialog for SSH key copy")
-        
-        # Get all connections
-        connections = self.connection_manager.get_connections()
-        if not connections:
+        """Open the ssh-copy-id dialog with no server preselected; its
+        embedded server picker handles the choice."""
+        if not self.connection_manager.get_connections():
             # No connections available, show new connection dialog instead
             logger.info("No connections available, showing new connection dialog")
             self.show_connection_dialog()
             return
-        
-        # Create a simple selection dialog
-        dialog = Adw.MessageDialog(
-            transient_for=self,
-            modal=True,
-            heading=_("Select Server for SSH Key Copy"),
-            body=_("Choose a server to copy your SSH key to:")
-        )
-        
-        # Create a scrollable list box with connections
-        list_box = Gtk.ListBox()
-        list_box.set_selection_mode(Gtk.SelectionMode.SINGLE)
-        list_box.set_show_separators(True)
-        
-        for connection in connections:
-            row = Gtk.ListBoxRow()
-            box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-            box.set_margin_start(12)
-            box.set_margin_end(12)
-            box.set_margin_top(8)
-            box.set_margin_bottom(8)
-            
-            # Connection info
-            info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-            name_label = Gtk.Label(label=connection.nickname)
-            name_label.set_halign(Gtk.Align.START)
-            name_label.set_css_classes(['title-4'])
-            
-            host_label_text = _format_connection_host_display(connection, include_port=True)
-            if not host_label_text:
-                alias_display = _get_connection_alias(connection)
-                host_label_text = alias_display or ''
-            host_label = Gtk.Label(label=host_label_text)
-            host_label.set_halign(Gtk.Align.START)
-            host_label.set_css_classes(['dim-label'])
-            
-            info_box.append(name_label)
-            info_box.append(host_label)
-            box.append(info_box)
-            
-            row.set_child(box)
-            row.connection = connection
-            list_box.append(row)
-        
-        # Wrap list box in a scrollable window with size constraints
-        scrolled = Gtk.ScrolledWindow()
-        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scrolled.set_child(list_box)
-        scrolled.set_min_content_height(200)
-        scrolled.set_max_content_height(400)
-        scrolled.set_vexpand(True)
-        scrolled.set_hexpand(True)
-        
-        # Add the scrollable list to the dialog
-        dialog.set_extra_child(scrolled)
-        
-        # Add response buttons
-        dialog.add_response('cancel', _('Cancel'))
-        dialog.add_response('new', _('New Connection'))
-        dialog.add_response('select', _('Select'))
-        dialog.set_response_appearance('new', Adw.ResponseAppearance.SUGGESTED)
-        dialog.set_response_appearance('select', Adw.ResponseAppearance.DEFAULT)
-        
-        def on_response(dialog, response):
-            if response == 'new':
-                # Show new connection dialog
-                self.show_connection_dialog()
-            elif response == 'select':
-                # Get selected connection and proceed with SSH key copy
-                selected_row = list_box.get_selected_row()
-                if selected_row and hasattr(selected_row, 'connection'):
-                    connection = selected_row.connection
-                    logger.info(f"Selected connection for SSH key copy: {connection.nickname}")
-                    try:
-                        from .sshcopyid_window import SshCopyIdWindow
-                        win = SshCopyIdWindow(self, connection, self.key_manager, self.connection_manager)
-                        win.present()
-                    except Exception as e:
-                        logger.error(f"Failed to show SSH key copy dialog: {e}")
-            dialog.destroy()
-        
-        dialog.connect('response', on_response)
-        dialog.present()
+        try:
+            from .sshcopyid_window import SshCopyIdWindow
+            SshCopyIdWindow(self, None, self.key_manager, self.connection_manager)
+        except Exception as e:
+            logger.error(f"Failed to show SSH key copy dialog: {e}")
 
     # --- Helpers (use your existing ones if already present) ---------------------
 
@@ -6592,24 +6530,34 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     def on_create_group_action(self, action, param=None):
         """Handle create group action"""
         try:
-            # Create dialog for group name input
-            dialog = Gtk.Dialog(
-                title=_("Create New Group"),
-                transient_for=self,
-                modal=True,
-                destroy_with_parent=True
-            )
-            
-            dialog.set_default_size(400, 150)
-            dialog.set_resizable(False)
-            
-            content_area = dialog.get_content_area()
+            # Form dialog (name + color): Adw.Dialog with actions in the header bar
+            dialog = Adw.Dialog()
+            dialog.set_title(_("Create New Group"))
+            dialog.set_content_width(400)
+
+            header = Adw.HeaderBar()
+            header.set_show_start_title_buttons(False)
+            header.set_show_end_title_buttons(False)
+
+            cancel_button = Gtk.Button(label=_('Cancel'))
+            header.pack_start(cancel_button)
+
+            create_button = Gtk.Button(label=_('Create'))
+            create_button.add_css_class('suggested-action')
+            header.pack_end(create_button)
+
+            content_area = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
             content_area.set_margin_start(20)
             content_area.set_margin_end(20)
             content_area.set_margin_top(20)
             content_area.set_margin_bottom(20)
             content_area.set_spacing(12)
-            
+
+            toolbar_view = Adw.ToolbarView()
+            toolbar_view.add_top_bar(header)
+            toolbar_view.set_content(content_area)
+            dialog.set_child(toolbar_view)
+
             # Add label
             label = Gtk.Label(label=_("Enter a name for the new group:"))
             label.set_wrap(True)
@@ -6665,38 +6613,31 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
             color_row.append(color_controls)
             content_area.append(color_row)
-            
-            # Add buttons
-            dialog.add_button(_('Cancel'), Gtk.ResponseType.CANCEL)
-            create_button = dialog.add_button(_('Create'), Gtk.ResponseType.OK)
-            create_button.get_style_context().add_class('suggested-action')
-            
-            dialog.set_default_response(Gtk.ResponseType.OK)
-            
-            def on_response(dialog, response):
-                if response == Gtk.ResponseType.OK:
-                    group_name = entry.get_text().strip()
-                    if group_name:
-                        selected_color = None
-                        rgba_value = color_button.get_rgba()
-                        if color_selected and rgba_value.alpha > 0:
-                            selected_color = rgba_value.to_string()
-                        self.group_manager.create_group(group_name, color=selected_color)
-                        self.rebuild_connection_list()
-                    else:
-                        # Show error for empty name
-                        error_dialog = Adw.MessageDialog(
-                            transient_for=self,
-                            modal=True,
-                            heading=_("Error"),
-                            body=_("Please enter a group name.")
-                        )
-                        error_dialog.add_response('ok', _('OK'))
-                        error_dialog.present()
-                dialog.destroy()
-            
-            dialog.connect('response', on_response)
-            dialog.present()
+
+            def on_create(_button):
+                group_name = entry.get_text().strip()
+                if not group_name:
+                    error_dialog = Adw.MessageDialog(
+                        transient_for=self,
+                        modal=True,
+                        heading=_("Error"),
+                        body=_("Please enter a group name.")
+                    )
+                    error_dialog.add_response('ok', _('OK'))
+                    error_dialog.present()
+                    return
+                selected_color = None
+                rgba_value = color_button.get_rgba()
+                if color_selected and rgba_value.alpha > 0:
+                    selected_color = rgba_value.to_string()
+                self.group_manager.create_group(group_name, color=selected_color)
+                self.rebuild_connection_list()
+                dialog.close()
+
+            cancel_button.connect('clicked', lambda _b: dialog.close())
+            create_button.connect('clicked', on_create)
+            dialog.set_default_widget(create_button)
+            dialog.present(self)
             
             def focus_entry():
                 entry.grab_focus()
@@ -6730,24 +6671,34 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 logger.debug(f"Group info not found for ID: {group_id}")
                 return
             
-            # Create dialog for group name editing
-            dialog = Gtk.Dialog(
-                title=_("Edit Group"),
-                transient_for=self,
-                modal=True,
-                destroy_with_parent=True
-            )
-            
-            dialog.set_default_size(400, 150)
-            dialog.set_resizable(False)
-            
-            content_area = dialog.get_content_area()
+            # Form dialog (name + color): Adw.Dialog with actions in the header bar
+            dialog = Adw.Dialog()
+            dialog.set_title(_("Edit Group"))
+            dialog.set_content_width(400)
+
+            header = Adw.HeaderBar()
+            header.set_show_start_title_buttons(False)
+            header.set_show_end_title_buttons(False)
+
+            cancel_button = Gtk.Button(label=_('Cancel'))
+            header.pack_start(cancel_button)
+
+            save_button = Gtk.Button(label=_('Save'))
+            save_button.add_css_class('suggested-action')
+            header.pack_end(save_button)
+
+            content_area = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
             content_area.set_margin_start(20)
             content_area.set_margin_end(20)
             content_area.set_margin_top(20)
             content_area.set_margin_bottom(20)
             content_area.set_spacing(12)
-            
+
+            toolbar_view = Adw.ToolbarView()
+            toolbar_view.add_top_bar(header)
+            toolbar_view.set_content(content_area)
+            dialog.set_child(toolbar_view)
+
             # Add label
             label = Gtk.Label(label=_("Enter a new name for the group:"))
             label.set_wrap(True)
@@ -6819,39 +6770,32 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
             color_row.append(color_controls)
             content_area.append(color_row)
-            
-            # Add buttons
-            dialog.add_button(_('Cancel'), Gtk.ResponseType.CANCEL)
-            save_button = dialog.add_button(_('Save'), Gtk.ResponseType.OK)
-            save_button.get_style_context().add_class('suggested-action')
-            
-            dialog.set_default_response(Gtk.ResponseType.OK)
-            
-            def on_response(dialog, response):
-                if response == Gtk.ResponseType.OK:
-                    new_name = entry.get_text().strip()
-                    if new_name:
-                        group_info['name'] = new_name
-                        rgba_value = color_button.get_rgba()
-                        selected_color = None
-                        if color_selected and rgba_value.alpha > 0:
-                            selected_color = rgba_value.to_string()
-                        self.group_manager.set_group_color(group_id, selected_color)
-                        self.rebuild_connection_list()
-                    else:
-                        # Show error for empty name
-                        error_dialog = Adw.MessageDialog(
-                            transient_for=self,
-                            modal=True,
-                            heading=_("Error"),
-                            body=_("Please enter a group name.")
-                        )
-                        error_dialog.add_response('ok', _('OK'))
-                        error_dialog.present()
-                dialog.destroy()
-            
-            dialog.connect('response', on_response)
-            dialog.present()
+
+            def on_save(_button):
+                new_name = entry.get_text().strip()
+                if not new_name:
+                    error_dialog = Adw.MessageDialog(
+                        transient_for=self,
+                        modal=True,
+                        heading=_("Error"),
+                        body=_("Please enter a group name.")
+                    )
+                    error_dialog.add_response('ok', _('OK'))
+                    error_dialog.present()
+                    return
+                group_info['name'] = new_name
+                rgba_value = color_button.get_rgba()
+                selected_color = None
+                if color_selected and rgba_value.alpha > 0:
+                    selected_color = rgba_value.to_string()
+                self.group_manager.set_group_color(group_id, selected_color)
+                self.rebuild_connection_list()
+                dialog.close()
+
+            cancel_button.connect('clicked', lambda _b: dialog.close())
+            save_button.connect('clicked', on_save)
+            dialog.set_default_widget(save_button)
+            dialog.present(self)
             
             def focus_entry():
                 entry.grab_focus()
@@ -6873,21 +6817,33 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             old_name = str(tag_row.group_info.get('name', ''))
             old_key = str(tag_row.group_info.get('tag_key', '')) or old_name.casefold()
 
-            dialog = Gtk.Dialog(
-                title=_("Rename Tag"),
-                transient_for=self,
-                modal=True,
-                destroy_with_parent=True
-            )
-            dialog.set_default_size(400, 120)
-            dialog.set_resizable(False)
+            # Form dialog: Adw.Dialog with actions in the header bar
+            dialog = Adw.Dialog()
+            dialog.set_title(_("Rename Tag"))
+            dialog.set_content_width(400)
 
-            content_area = dialog.get_content_area()
+            header = Adw.HeaderBar()
+            header.set_show_start_title_buttons(False)
+            header.set_show_end_title_buttons(False)
+
+            cancel_button = Gtk.Button(label=_('Cancel'))
+            header.pack_start(cancel_button)
+
+            save_button = Gtk.Button(label=_('Save'))
+            save_button.add_css_class('suggested-action')
+            header.pack_end(save_button)
+
+            content_area = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
             content_area.set_margin_start(20)
             content_area.set_margin_end(20)
             content_area.set_margin_top(20)
             content_area.set_margin_bottom(20)
             content_area.set_spacing(12)
+
+            toolbar_view = Adw.ToolbarView()
+            toolbar_view.add_top_bar(header)
+            toolbar_view.set_content(content_area)
+            dialog.set_child(toolbar_view)
 
             label = Gtk.Label(label=_("Enter a new name for the tag:"))
             label.set_wrap(True)
@@ -6900,11 +6856,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             entry.set_hexpand(True)
             content_area.append(entry)
 
-            dialog.add_button(_('Cancel'), Gtk.ResponseType.CANCEL)
-            save_button = dialog.add_button(_('Save'), Gtk.ResponseType.OK)
-            save_button.get_style_context().add_class('suggested-action')
-            dialog.set_default_response(Gtk.ResponseType.OK)
-
             def _show_error(body):
                 error_dialog = Adw.MessageDialog(
                     transient_for=self,
@@ -6915,31 +6866,34 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 error_dialog.add_response('ok', _('OK'))
                 error_dialog.present()
 
-            def on_response(dialog, response):
-                if response == Gtk.ResponseType.OK:
-                    new_name = entry.get_text().strip()
-                    if not new_name:
-                        _show_error(_("Please enter a tag name."))
-                    elif ',' in new_name:
-                        # Tags are entered comma-separated in the connection
-                        # dialog, so a comma in a tag name could not round-trip.
-                        _show_error(_("Tag names cannot contain commas."))
-                    elif new_name != old_name:
-                        from .tag_groups import migrate_expanded_state
-                        self.config.rename_tag(old_name, new_name)
-                        try:
-                            state = self.config.get_setting('ui.tag_groups_expanded', {}) or {}
-                            self.config.set_setting(
-                                'ui.tag_groups_expanded',
-                                migrate_expanded_state(state, old_key, new_name.casefold()),
-                            )
-                        except Exception:
-                            logger.debug("Failed to migrate tag expansion state", exc_info=True)
-                        self.rebuild_connection_list()
-                dialog.destroy()
+            def on_save(_button):
+                new_name = entry.get_text().strip()
+                if not new_name:
+                    _show_error(_("Please enter a tag name."))
+                    return
+                if ',' in new_name:
+                    # Tags are entered comma-separated in the connection
+                    # dialog, so a comma in a tag name could not round-trip.
+                    _show_error(_("Tag names cannot contain commas."))
+                    return
+                if new_name != old_name:
+                    from .tag_groups import migrate_expanded_state
+                    self.config.rename_tag(old_name, new_name)
+                    try:
+                        state = self.config.get_setting('ui.tag_groups_expanded', {}) or {}
+                        self.config.set_setting(
+                            'ui.tag_groups_expanded',
+                            migrate_expanded_state(state, old_key, new_name.casefold()),
+                        )
+                    except Exception:
+                        logger.debug("Failed to migrate tag expansion state", exc_info=True)
+                    self.rebuild_connection_list()
+                dialog.close()
 
-            dialog.connect('response', on_response)
-            dialog.present()
+            cancel_button.connect('clicked', lambda _b: dialog.close())
+            save_button.connect('clicked', on_save)
+            dialog.set_default_widget(save_button)
+            dialog.present(self)
 
             def focus_entry():
                 entry.grab_focus()

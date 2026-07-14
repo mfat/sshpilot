@@ -10,9 +10,9 @@ logs, exec shell) opens a corresponding local or remote terminal tab.
 from __future__ import annotations
 
 import logging
-import math
 import os
 import threading
+from collections import deque
 from typing import Any, Callable, List, Optional
 
 import gi
@@ -38,6 +38,8 @@ logger = logging.getLogger(__name__)
 _DEFAULT_REFRESH_SECONDS = 10
 _MIN_REFRESH_SECONDS = 2
 _LOCAL_TARGET = "__local__"
+# Status feed under the pulsing Docker mark: keep the last N stage messages.
+_STATUS_MAX_LINES = 6
 
 
 class _LocalDockerTarget:
@@ -81,7 +83,11 @@ class DockerConsolePage(
         # calls when a host is slow.
         self._containers_busy = False
         self._stats_busy = False
-        self._stats_has_data = False
+        # "Loaded once for this host" flags: the pulsing logo (and the activity
+        # revealer keyed on it) only shows on the first load after a host
+        # switch — auto-refresh of an already-loaded view updates silently.
+        self._containers_loaded = False
+        self._stats_loaded = False
         # Bumped on every host switch; async loads carry the gen they started
         # with and a stale (previous-host) result is dropped on arrival.
         self._load_gen = 0
@@ -113,6 +119,11 @@ class DockerConsolePage(
         self._syncing_sudo = False
         # Pulsing Docker-mark loading indicators (stopped on unmap).
         self._pulse_widgets: List[Gtk.Image] = []
+        # Human-readable stage messages shown under the pulsing mark while a
+        # host loads ("Connecting…", "Docker found", …). One shared feed,
+        # mirrored into a status label inside every loading placeholder.
+        self._status_lines: deque = deque(maxlen=_STATUS_MAX_LINES)
+        self._status_labels: List[Gtk.Label] = []
         # Open destructive confirm (AlertDialog/MessageDialog); dismissed on host
         # change so a prune/remove can't run against the newly selected host.
         self._active_confirm_dialog: Optional[Any] = None
@@ -180,8 +191,6 @@ class DockerConsolePage(
             img.set_from_paintable(Gdk.Texture.new_for_pixbuf(pixbuf))
         except Exception:
             img.set_from_icon_name("docker-mark-ocean-blue")  # fallback
-        img._pulse_id = None      # type: ignore[attr-defined]
-        img._pulse_phase = 0.0    # type: ignore[attr-defined]
         self._pulse_widgets.append(img)
         return img
 
@@ -192,62 +201,213 @@ class DockerConsolePage(
         return bool(getattr(self.get_root(), "_is_quitting", False))
 
     def _pulse_start(self, img: Gtk.Image) -> None:
-        if getattr(img, "_pulse_id", None):
-            return
-
-        def _tick() -> bool:
-            if self._is_shutting_down():
-                img._pulse_id = None  # type: ignore[attr-defined]
-                return False
-            img._pulse_phase += 0.18  # type: ignore[attr-defined]
-            img.set_opacity(0.3 + 0.7 * (0.5 + 0.5 * math.sin(img._pulse_phase)))
-            return True
-
-        img._pulse_phase = 0.0    # type: ignore[attr-defined]
-        img.set_opacity(1.0)
-        img._pulse_id = GLib.timeout_add(60, _tick)  # type: ignore[attr-defined]
+        """Pulse the mark's opacity with an Adw.TimedAnimation — frame-clock
+        driven and it honours the global "reduce animations" setting (skipped
+        animations jump to the *to* value, hence 1.0 there: a static full-
+        opacity logo)."""
+        if getattr(img, "_pulse_anim", None) is None:
+            anim = Adw.TimedAnimation.new(
+                img, 0.35, 1.0, 900,
+                Adw.PropertyAnimationTarget.new(img, "opacity"))
+            anim.set_easing(Adw.Easing.EASE_IN_OUT_SINE)
+            anim.set_alternate(True)
+            anim.set_repeat_count(0)  # endless
+            img._pulse_anim = anim    # type: ignore[attr-defined]
+            anim.play()
 
     def _pulse_stop(self, img: Gtk.Image) -> None:
-        pid = getattr(img, "_pulse_id", None)
-        if pid:
-            GLib.source_remove(pid)
-            img._pulse_id = None  # type: ignore[attr-defined]
+        anim = getattr(img, "_pulse_anim", None)
+        if anim is not None:
+            anim.pause()
+            img._pulse_anim = None  # type: ignore[attr-defined]
         img.set_opacity(1.0)
 
+    # --- status feed under the pulsing mark ------------------------------
+    def _status(self, message: str) -> None:
+        """Append a human-readable stage message to the loading status feed
+        (safe from worker threads). Messages reflect real pipeline stages and
+        parsed command output — never cosmetic filler."""
+        try:
+            self.ctx.run_on_ui_thread(self._append_status, message)
+        except Exception:
+            logger.debug("status update failed: %s", message)
+
+    def _append_status(self, message: str) -> None:
+        self._status_lines.append(message)
+        self._refresh_status_labels()
+
+    def _clear_status(self) -> None:
+        self._status_lines.clear()
+        self._refresh_status_labels()
+
+    def _refresh_status_labels(self) -> None:
+        text = "\n".join(self._status_lines)
+        for lbl in self._status_labels:
+            lbl.set_text(text)
+
     # --- in-content loading placeholders --------------------------------
-    def _make_loading_placeholder(self, text: str = "Loading…") -> Gtk.Widget:
-        """A centered pulsing Docker mark + label, used as a Gtk.ListBox
-        placeholder so it shows (only) while a list is empty — i.e. on first
-        load. Built in the loading state so the logo is visible immediately."""
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
-        box.set_valign(Gtk.Align.CENTER)
-        box.set_halign(Gtk.Align.CENTER)
-        box.set_margin_top(24)
-        box.set_margin_bottom(24)
-        mark = self._make_docker_mark(56)
-        label = Gtk.Label(label=text)
-        label.add_css_class("dim-label")
-        box.append(mark)
-        box.append(label)
-        box._pulse = mark    # type: ignore[attr-defined]
-        box._label = label   # type: ignore[attr-defined]
-        return box
+    def _mark_paintable(self) -> Optional[Gdk.Texture]:
+        """The Docker mark rasterised as a texture (Adw.StatusPage paintable)."""
+        if not hasattr(self, "_mark_texture_cache"):
+            try:
+                pixbuf = GdkPixbuf.Pixbuf.new_from_resource_at_scale(
+                    _MARK_RESOURCE, 256, 256, True)
+                self._mark_texture_cache = Gdk.Texture.new_for_pixbuf(pixbuf)
+            except Exception:
+                self._mark_texture_cache = None
+        return self._mark_texture_cache
 
-    def _set_placeholder_loading(self, ph: Gtk.Widget, text: str = "Loading…") -> None:
-        ph.set_visible(True)
-        ph._pulse.set_visible(True)   # type: ignore[attr-defined]
-        self._pulse_start(ph._pulse)  # type: ignore[attr-defined]
-        ph._label.set_text(text)      # type: ignore[attr-defined]
+    def _make_loading_placeholder(self, text: str = "Loading…") -> Adw.StatusPage:
+        """Full-bleed opaque placeholder over a list/grid: an Adw.StatusPage.
 
-    def _set_placeholder_idle(self, ph: Gtk.Widget, text: str) -> None:
-        ph.set_visible(True)
-        self._pulse_stop(ph._pulse)     # type: ignore[attr-defined]
-        ph._pulse.set_visible(False)    # type: ignore[attr-defined]
-        ph._label.set_text(text)        # type: ignore[attr-defined]
+        Must paint an opaque background: as a Gtk.Overlay child it otherwise
+        floats its text over the window with no backing surface. Loading shows
+        a spinner (Adw.SpinnerPaintable) with the live status feed; failures
+        show the Docker mark, a human-readable summary as the title, and the
+        raw output inline behind a "Show detailed log" toggle."""
+        w.ensure_placeholder_css()
+        sp = Adw.StatusPage()
+        sp.add_css_class("docker-console-placeholder")
+        sp.set_title(text)
+        if self._mark_paintable() is not None:
+            sp.set_paintable(self._mark_paintable())
+        else:
+            sp.set_icon_name("docker-mark-ocean-blue")
 
-    def _hide_placeholder(self, ph: Gtk.Widget) -> None:
-        self._pulse_stop(ph._pulse)     # type: ignore[attr-defined]
-        ph.set_visible(False)
+        # Live stage messages ("Connecting…", "Docker found", …) under the
+        # title — a plain selectable label: no frame, no background.
+        status = Gtk.Label()
+        status.set_wrap(True)
+        status.set_selectable(True)
+        status.set_justify(Gtk.Justification.CENTER)
+        status.set_halign(Gtk.Align.FILL)
+        status.add_css_class("dim-label")
+        status.set_visible(False)
+        status.set_text("\n".join(self._status_lines))
+        self._status_labels.append(status)
+
+        # Raw log, inline below the human summary — hidden until the user
+        # toggles "Show detailed log". Left-aligned text inside a Gtk.Frame so
+        # it reads naturally without stretching to the window edge (the
+        # StatusPage clamp caps the width; long output scrolls with the page).
+        detail_lbl = Gtk.Label()
+        detail_lbl.set_wrap(True)
+        detail_lbl.set_selectable(True)
+        detail_lbl.set_xalign(0)
+        detail_lbl.add_css_class("dim-label")
+        detail_lbl.add_css_class("monospace")
+        detail_lbl.set_margin_top(10)
+        detail_lbl.set_margin_bottom(10)
+        detail_lbl.set_margin_start(12)
+        detail_lbl.set_margin_end(12)
+        detail_frame = Gtk.Frame()
+        detail_frame.set_child(detail_lbl)
+        detail_frame.set_visible(False)
+
+        details = Gtk.ToggleButton(label="Show detailed log")
+        details.add_css_class("flat")
+        details.set_halign(Gtk.Align.CENTER)
+        details.set_visible(False)
+
+        def _on_details_toggled(btn: Gtk.ToggleButton) -> None:
+            show = btn.get_active()
+            detail_frame.set_visible(show)
+            btn.set_label("Hide detailed log" if show else "Show detailed log")
+
+        details.connect("toggled", _on_details_toggled)
+
+        child = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        child.append(status)
+        child.append(details)
+        child.append(detail_frame)
+        sp.set_child(child)
+
+        # Loading spinner (libadwaita ≥ 1.6); older versions keep the static mark.
+        sp._spinner = (Adw.SpinnerPaintable.new(sp)  # type: ignore[attr-defined]
+                       if hasattr(Adw, "SpinnerPaintable") else None)
+        sp._status_lbl = status        # type: ignore[attr-defined]
+        sp._details_btn = details      # type: ignore[attr-defined]
+        sp._detail_lbl = detail_lbl    # type: ignore[attr-defined]
+        sp._detail_frame = detail_frame  # type: ignore[attr-defined]
+        sp._full_text = ""             # type: ignore[attr-defined]
+        sp._idle_key = None            # type: ignore[attr-defined]
+        return sp
+
+    @staticmethod
+    def _set_placeholder_targetable(ph: Adw.StatusPage, on: bool) -> None:
+        """Toggle whether the placeholder (and its revealer wrapper, which
+        spans the overlay even when unrevealed) receives pointer events."""
+        ph.set_can_target(on)
+        rev = getattr(ph, "_revealer", None)
+        if rev is not None:
+            rev.set_can_target(on)
+
+    @staticmethod
+    def _reveal_placeholder(ph: Adw.StatusPage, shown: bool) -> None:
+        """Fade the placeholder in/out via its crossfade revealer (smooth
+        transition to the loaded list) — falls back to plain visibility."""
+        rev = getattr(ph, "_revealer", None)
+        if rev is not None:
+            rev.set_reveal_child(shown)
+        else:
+            ph.set_visible(shown)
+
+    def _set_placeholder_loading(self, ph: Adw.StatusPage, text: str = "Loading…") -> None:
+        self._reveal_placeholder(ph, True)
+        # Targetable so the status feed is mouse-selectable; the opaque fill
+        # hides the (empty or stale) list underneath anyway.
+        self._set_placeholder_targetable(ph, True)
+        ph._idle_key = None            # type: ignore[attr-defined]
+        ph.set_title(text)
+        ph.remove_css_class("docker-error")
+        spinner = getattr(ph, "_spinner", None)
+        if spinner is not None:
+            ph.set_paintable(spinner)
+        ph._status_lbl.set_visible(True)  # type: ignore[attr-defined]
+        self._reset_placeholder_details(ph)
+
+    def _reset_placeholder_details(self, ph: Adw.StatusPage, raw: str = "") -> None:
+        """(Re)arm the inline detailed log: collapsed, button shown iff there
+        is raw output beyond the human summary."""
+        ph._full_text = raw             # type: ignore[attr-defined]
+        ph._detail_lbl.set_text(        # type: ignore[attr-defined]
+            w.truncate_message(raw, 4000)[0])
+        ph._details_btn.set_active(False)   # type: ignore[attr-defined]
+        ph._details_btn.set_visible(bool(raw))  # type: ignore[attr-defined]
+
+    def _set_placeholder_idle(self, ph: Adw.StatusPage, text: str, *,
+                              error: bool = False) -> None:
+        full = (text or "").strip()
+        # Auto-refresh repaints with the same outcome must be no-ops —
+        # otherwise every tick collapses the expanded log / drops selection.
+        key = (full, error)
+        if ph.get_visible() and ph._idle_key == key:  # type: ignore[attr-defined]
+            return
+        ph._idle_key = key              # type: ignore[attr-defined]
+        self._reveal_placeholder(ph, True)
+        ph._status_lbl.set_visible(False)  # type: ignore[attr-defined]
+        if self._mark_paintable() is not None:
+            ph.set_paintable(self._mark_paintable())
+        if error:
+            # Human-readable summary parsed from the real output; the raw
+            # log expands inline below it via "Show detailed log".
+            ph.set_title(w.describe_docker_failure(full))
+            ph.add_css_class("docker-error")
+            self._reset_placeholder_details(
+                ph, full if full != ph.get_title() else "")
+            self._set_placeholder_targetable(ph, True)  # detailed log is mouse-selectable
+        else:
+            ph.set_title(w.truncate_message(full, w._PLACEHOLDER_MAX_CHARS)[0])
+            ph.remove_css_class("docker-error")
+            self._reset_placeholder_details(ph)
+            self._set_placeholder_targetable(ph, False)
+
+    def _hide_placeholder(self, ph: Adw.StatusPage) -> None:
+        ph._idle_key = None             # type: ignore[attr-defined]
+        ph._status_lbl.set_visible(False)  # type: ignore[attr-defined]
+        self._reset_placeholder_details(ph)
+        self._set_placeholder_targetable(ph, False)
+        self._reveal_placeholder(ph, False)
 
     def _current_nickname(self) -> Optional[str]:
         return self._selected_nick
@@ -359,7 +519,7 @@ class DockerConsolePage(
 
     def _toast(self, message: str) -> None:
         try:
-            self.ctx.ui.notify(message)
+            self.ctx.ui.notify(w.truncate_toast(message))
         except Exception:
             logger.debug("notify failed: %s", message)
 
@@ -643,6 +803,8 @@ class DockerConsolePage(
         for placeholder in (
             self._containers_placeholder,
             self._images_placeholder,
+            self._volumes_placeholder,
+            self._networks_placeholder,
             self._compose_placeholder,
         ):
             self._set_placeholder_idle(
@@ -652,11 +814,11 @@ class DockerConsolePage(
         self._toast("SSH password required to open Docker Console.")
 
     def _manual_refresh(self) -> None:
-        nick = self._current_nickname()
-        if nick and nick in self._ssh_auth_blocked:
-            self._on_host_changed()
-            return
-        self._refresh_visible()
+        # The Refresh button always re-runs the full host load (probe →
+        # pulsing placeholder → status feed → fresh lists). A silent
+        # _refresh_visible() would be invisible after a failure: the loaded
+        # flags suppress the pulse and an unchanged error looks like a no-op.
+        self._on_host_changed()
 
     def _on_host_changed(self, *_a) -> None:
         nick = self._current_nickname()
@@ -679,7 +841,14 @@ class DockerConsolePage(
         self._load_gen += 1
         self._containers_busy = False
         self._stats_busy = False
-        self._stats_has_data = False
+        self._containers_loaded = False
+        self._stats_loaded = False
+
+        # Fresh status feed for this host; the first real stage is the SSH
+        # connection the probe's first command will open.
+        self._clear_status()
+        if not self._is_local(nick):
+            self._status(f"Connecting to {nick}…")
 
         # Drop the previous host's rows and show a spinner immediately (clearing
         # makes each list's placeholder visible) for the whole probe + load.
@@ -709,9 +878,20 @@ class DockerConsolePage(
         # read ``_sudo_passwords`` while another callback may be writing it.
         session_pw = self._sudo_passwords.get(nick)
 
+        # Each stage reports a status line under the pulsing mark — real
+        # pipeline steps and parsed command output, not cosmetic filler.
         def probe():
-            runtime = (mode if mode in ("docker", "podman")
-                       else DockerClient(rc, nick).detect_runtime() or "docker")
+            if mode in ("docker", "podman"):
+                runtime = mode
+                self._status(f"Using {runtime} (set for this host)")
+            else:
+                self._status("Detecting container runtime…")
+                detected = DockerClient(rc, nick).detect_runtime()
+                if detected:
+                    self._status(f"{detected.capitalize()} found")
+                else:
+                    self._status("Neither Docker nor Podman found on this host")
+                runtime = detected or "docker"
             # The user explicitly asked for sudo: don't second-guess it on a plain
             # `ps` — the only open question is whether sudo needs a password.
             if want_sudo:
@@ -719,17 +899,24 @@ class DockerConsolePage(
                     rc, nick, runtime, session_pw=session_pw))
             # sudo not requested: try plain, and fall back to sudo only on a
             # docker-socket *permission* error (user not in the 'docker' group).
+            self._status(f"Checking {runtime} access…")
             plain = DockerClient(rc, nick, runtime, use_sudo=False).ping()
             if getattr(plain, "exit_code", 0) == 0:
+                self._status(f"{runtime.capitalize()} is reachable")
                 return runtime, False, None, None
             text = (getattr(plain, "stderr", "") or "") + (getattr(plain, "stdout", "") or "")
             if DockerClient.is_permission_error(text):
+                self._status("Permission denied — the user may not be in the docker group")
                 return (runtime, *self._resolve_sudo(
                     rc, nick, runtime, session_pw=session_pw))
+            self._status(w.describe_docker_failure(text))
             return runtime, False, None, None  # other error — refresh surfaces it
 
         def done(result, _err: Optional[Exception]) -> None:
             if not result:
+                if _err is not None:
+                    # The probe itself failed (e.g. SSH could not connect).
+                    self._status(w.describe_docker_failure(str(_err)))
                 self._refresh_visible()
                 return
             runtime, use_sudo, status, pw = result
@@ -761,20 +948,25 @@ class DockerConsolePage(
         """Decide how sudo authenticates on this host (runs on a worker thread):
         ``(use_sudo, status, password)`` — passwordless, a verified cached/stored
         password, ``needs_password`` (prompt the user), or ``not_sudoers``."""
+        self._status("Checking sudo access…")
         sudo = DockerClient(rc, nick, runtime, use_sudo=True).ping()  # sudo -n
         if getattr(sudo, "exit_code", 1) == 0:
+            self._status("Sudo works without a password")
             return True, None, None  # passwordless sudo
         sudo_text = ((getattr(sudo, "stderr", "") or "")
                      + (getattr(sudo, "stdout", "") or ""))
         if DockerClient.is_sudo_denied_error(sudo_text):
+            self._status("This user isn't allowed to use sudo on this host")
             return True, "not_sudoers", None
         # sudo needs a password — try a session snapshot, then keyring.
         keyring_pw = "" if session_pw else self._lookup_stored_sudo(nick)
         pw = session_pw or keyring_pw
         if pw and self._verify_sudo(rc, nick, runtime, pw):
+            self._status("Sudo password accepted")
             return True, "password", pw
         if keyring_pw and pw == keyring_pw:
             self._clear_stored_sudo(nick)
+        self._status("Sudo needs a password")
         return True, "needs_password", None
 
     @staticmethod

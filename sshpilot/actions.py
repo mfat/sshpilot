@@ -1636,6 +1636,12 @@ def register_window_actions(window):
         window.manage_files_action.connect('activate', window.on_manage_files_action)
         window.add_action(window.manage_files_action)
 
+        # Main-menu variant: uses the selected connection, or opens the file
+        # manager with a host picker in the remote pane when none is selected.
+        window.open_file_manager_action = Gio.SimpleAction.new('open-file-manager', None)
+        window.open_file_manager_action.connect('activate', window.open_file_manager_from_menu)
+        window.add_action(window.open_file_manager_action)
+
     if hasattr(window, 'on_duplicate_connection_action'):
         window.duplicate_connection_action = Gio.SimpleAction.new('duplicate-connection', None)
         window.duplicate_connection_action.connect('activate', window.on_duplicate_connection_action)

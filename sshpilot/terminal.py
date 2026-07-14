@@ -2451,7 +2451,10 @@ class TerminalWidget(Gtk.Box):
                 if uri:
                     self.vte.set_cursor(Gdk.Cursor.new_from_name("pointer", None))
                 elif event:
-                    self.vte.set_cursor(None)
+                    # set_cursor(None) would inherit the parent's default arrow;
+                    # restore VTE's own I-beam explicitly so terminal text shows
+                    # the text cursor like other terminals.
+                    self.vte.set_cursor(Gdk.Cursor.new_from_name("text", None))
             except Exception:
                 pass
         except Exception as e:

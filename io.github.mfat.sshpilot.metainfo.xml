@@ -60,6 +60,14 @@
 
 
 
+    <release version="5.5.1" date="2026-07-14">
+      <description>
+        <p>Docker Console UI improvements</p>
+        <p>File manager UI improvements</p>
+        <p>Reorganized main menu</p>
+        <p>Bug fixes</p>
+      </description>
+    </release>
     <release version="5.5.0" date="2026-07-13">
       <description>
         <p>Backup settings and credentials to Bitwarden/Vaultwarden right from SSH Pilot and restore on other devices</p>

@@ -1,13 +1,17 @@
 # sshpilot.spec — build with: pyinstaller --clean sshpilot.spec
 import os, sys, glob, platform, sysconfig
 from pathlib import Path
-from PyInstaller.utils.hooks import collect_submodules, collect_data_files, collect_dynamic_libs
+from PyInstaller.utils.hooks import collect_submodules, collect_data_files, collect_dynamic_libs, copy_metadata
 
 # Resolve the current Python site-packages directory dynamically
 site_packages_dir = Path(sysconfig.get_path("platlib"))
 
 # This spec lives in packaging/pyinstaller/; anchor paths to the repo root.
 ROOT = os.path.abspath(os.path.join(SPECPATH, os.pardir, os.pardir))
+
+# Local helpers for GI dylib placement (must live next to this spec).
+sys.path.insert(0, SPECPATH)
+from gtk_bundle import collect_homebrew_dylibs  # noqa: E402
 
 app_name = "SSHPilot"
 entry_py = os.path.join(ROOT, "run.py")
@@ -55,14 +59,11 @@ gtk_libs_patterns = [
     "libicu*.dylib",
 ]
 
-binaries = []
-for pat in gtk_libs_patterns:
-    for src in glob.glob(os.path.join(hb_lib, pat)):
-        # Special handling for VTE and Adwaita libraries to avoid nested Frameworks structure
-        if "vte" in pat.lower() or "adwaita" in pat.lower():
-            binaries.append((src, "."))  # Place directly in Frameworks root
-        else:
-            binaries.append((src, "Frameworks"))
+# Place GI dylibs at Contents/Frameworks/ (dest "."). Nested Frameworks/Frameworks
+# breaks typelib dlopen of bare sonames such as libgtksourceview-5.0.dylib.
+# The stock hook-gi.repository.GtkSource (pyinstaller#3893) also uses dest ".";
+# this Homebrew glob is belt-and-suspenders for libs GI hooks may miss.
+binaries = collect_homebrew_dylibs(hb_lib, gtk_libs_patterns)
 
 # GI typelibs
 datas = []
@@ -147,6 +148,11 @@ keyring_package = site_packages_dir / "keyring"
 if keyring_package.exists():
     datas.append((str(keyring_package), "keyring"))
     print(f"Added keyring package: {keyring_package}")
+# Keyring metadata for entry-point backend discovery (hooks-contrib/keyring hook).
+try:
+    datas += copy_metadata("keyring")
+except Exception as exc:
+    print(f"WARNING: could not copy keyring metadata: {exc}")
 
 
 # Cairo Python bindings (required for Cairo Context)
@@ -159,6 +165,18 @@ if gi_site_packages.exists():
 
 hiddenimports = collect_submodules("gi")
 hiddenimports += ["gi._gi_cairo", "gi.repository.cairo", "cairo"]
+# Force the stock PyInstaller GI hooks to run (hook-gi.repository.GtkSource
+# from pyinstaller#3893, etc.). GtkSource is imported behind try/except in app
+# code, so analysis may miss it without an explicit hiddenimport. The hook
+# collects the shared library at Frameworks root (dest ".") and on macOS
+# rewrites the typelib to @loader_path/… — but only for the configured version.
+hiddenimports += [
+    "gi.repository.Gtk",
+    "gi.repository.Gdk",
+    "gi.repository.GtkSource",
+    "gi.repository.Adw",
+    "gi.repository.Vte",
+]
 # Built-in plugins are imported dynamically (the loader scans the dir), so
 # PyInstaller can't see them by following imports — collect them explicitly,
 # and bundle their plugin.json manifests (read from disk at runtime).
@@ -169,9 +187,10 @@ datas += collect_data_files("sshpilot.plugins.builtin", includes=["**/plugin.jso
 hiddenimports += ["keyring"]
 # Add all keyring backends
 hiddenimports += ["keyring.backends", "keyring.backends.macOS", "keyring.backends.libsecret", "keyring.backends.SecretService"]
-# Ship certifi so the HTTPS update check can verify TLS certs inside the bundle
-# (PyInstaller's certifi hook collects cacert.pem once certifi is importable).
-hiddenimports += ["certifi"]
+# certifi / cryptography: listed so the (hooks-contrib) hooks fire — hook-certifi
+# collects cacert.pem for the HTTPS update check; hook-cryptography collects
+# backends + OpenSSL 3 modules. Both packages must be installed in the build env.
+hiddenimports += ["certifi", "cryptography"]
 
 # KeePass (.kdbx) secret backend: pykeepass + its (partly compiled) deps. The import is
 # lazy/optional, so PyInstaller's import-following may miss it — collect explicitly so the
@@ -191,6 +210,22 @@ for _kp_bin in ("lxml", "Cryptodome", "argon2_cffi_bindings"):
     except Exception:
         pass
 
+# Official GI hooks default to Gtk/GtkSource 3.x; sshPilot needs GTK4 + GtkSource 5
+# (see https://github.com/pyinstaller/pyinstaller/pull/3893 and hooks-config docs).
+gi_hooksconfig = {
+    "gi": {
+        "module-versions": {
+            "Gtk": "4.0",
+            "Gdk": "4.0",
+            "GtkSource": "5",
+        },
+        # Keep the bundle lean — full icon/theme trees are huge; we already ship
+        # Adwaita icons via datas above.
+        "icons": ["Adwaita"],
+        "themes": ["Adwaita"],
+    },
+}
+
 block_cipher = None
 
 a = Analysis(
@@ -200,6 +235,7 @@ a = Analysis(
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[SPECPATH],
+    hooksconfig=gi_hooksconfig,
     runtime_hooks=[os.path.join(SPECPATH, "hook-gtk_runtime.py")],
     noarchive=False,
 )
@@ -237,17 +273,7 @@ app = BUNDLE(
     },
 )
 
-# Ad-hoc codesign so macOS can match the bundle's identity across launches,
-# preventing repeated keychain authorization prompts.
-if sys.platform == "darwin":
-    import subprocess as _sp
-    _app_path = os.path.join("dist", f"{app_name}.app")
-    if os.path.exists(_app_path):
-        _r = _sp.run(
-            ["codesign", "--force", "--deep", "--sign", "-", _app_path],
-            capture_output=True, text=True,
-        )
-        if _r.returncode == 0:
-            print(f"Ad-hoc code signed: {_app_path}")
-        else:
-            print(f"Warning: codesign failed (non-fatal): {_r.stderr.strip()}")
+# NOTE: no codesign here. The bundle is still modified after this point
+# (pyinstaller.sh adds sshpass and the GtkSourceView ABI symlink), so signing
+# now would be invalidated by those changes and produce the "app is damaged"
+# Gatekeeper error. Ad-hoc signing happens once, last, in pyinstaller.sh.

@@ -384,7 +384,8 @@ def _ssh_key_from_public_path(path: str) -> SSHKey:
 class SshCopyIdWindow(Adw.Window):
     """
     Full Adwaita-styled window for installing a public key on a server.
-    - Shows selected server nickname
+    - Server row with searchable inventory picker (``connection`` may be
+      ``None``; OK stays disabled until a server is chosen)
     - Two modes:
         1) Use existing key (DropDown)
         2) Generate new key (embedded key-generator form)
@@ -474,6 +475,42 @@ class SshCopyIdWindow(Adw.Window):
                 )
         except Exception as e:
             logger.error(f"SshCopyIdWindow: Failed to create outer layout: {e}")
+            raise
+
+        # ---------- Server picker ----------
+        try:
+            server_group = Adw.PreferencesGroup(title="")
+            self._server_row = Adw.ActionRow(title=_("Server"))
+            self._server_row.set_activatable(True)
+            self._server_label = Gtk.Label()
+            self._server_label.add_css_class('dim-label')
+            self._server_label.set_valign(Gtk.Align.CENTER)
+            self._server_row.add_suffix(self._server_label)
+            pick_btn = Gtk.Button()
+            pick_btn.set_icon_name('pan-down-symbolic')
+            pick_btn.set_tooltip_text(_("Pick from inventory"))
+            pick_btn.add_css_class('flat')
+            pick_btn.set_valign(Gtk.Align.CENTER)
+            self._server_row.add_suffix(pick_btn)
+            server_group.add(self._server_row)
+            content.append(server_group)
+
+            def _open_server_picker(*_a):
+                from .host_picker import show_host_picker
+                popover = show_host_picker(
+                    self, self._server_row, self._set_server,
+                    connections=self._cm.get_connections(),
+                )
+                # Anchored to the row: stretch to its full width.
+                if popover is not None:
+                    width = self._server_row.get_width()
+                    if width > 0:
+                        popover.set_size_request(width, -1)
+
+            pick_btn.connect('clicked', _open_server_picker)
+            self._server_row.connect('activated', lambda _r: _open_server_picker())
+        except Exception as e:
+            logger.error(f"SshCopyIdWindow: Failed to create server picker: {e}")
             raise
 
         # ---------- Options group ----------
@@ -647,10 +684,28 @@ class SshCopyIdWindow(Adw.Window):
             logger.error(f"SshCopyIdWindow: Failed to pack UI elements: {e}")
             raise
 
+        self._set_server(connection)
+
         logger.info("SshCopyIdWindow: Window construction completed, presenting")
         self.present()
 
     # ---------- Helpers ----------
+
+    def _set_server(self, conn):
+        """Update the target connection and the server row/OK sensitivity."""
+        self._conn = conn
+        if conn is None:
+            self._server_label.set_label('')
+            self._server_label.set_visible(False)
+            self._server_row.set_subtitle(_("Choose a server…"))
+        else:
+            nick = getattr(conn, 'nickname', '') or _get_connection_alias(conn) or ''
+            host = _get_connection_host(conn) or _get_connection_alias(conn) or ''
+            user = getattr(conn, 'username', '')
+            self._server_label.set_label(nick)
+            self._server_label.set_visible(bool(nick))
+            self._server_row.set_subtitle(f"{user}@{host}" if user and host else host)
+        self.btn_ok.set_sensitive(conn is not None)
 
     def _on_mode_toggled(self, *_):
         # Reveal generator only when "Generate new key" is selected

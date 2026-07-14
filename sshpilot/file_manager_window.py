@@ -32,13 +32,16 @@ from gettext import gettext as _
 
 from gi.repository import Adw, Gio, GLib, GObject, Gdk, Gtk
 
-# Try to import GtkSourceView for syntax highlighting
+# Try to import GtkSourceView for syntax highlighting.
+# Probe a type so a missing shared library (incomplete bundle) disables GtkSource
+# instead of failing later with a cryptic GI error.
 try:
     import gi
     gi.require_version('GtkSource', '5')
     from gi.repository import GtkSource
+    _gtksource_probe = GtkSource.View  # noqa: F841 — force shared-library load
     _HAS_GTKSOURCE = True
-except (ImportError, ValueError, AttributeError):
+except Exception:  # noqa: BLE001 — ImportError/ValueError/GError/TypeError
     _HAS_GTKSOURCE = False
     GtkSource = None
 
@@ -90,6 +93,7 @@ class FileManagerWindow(Adw.Window):
         _file_manager_windows_registry.add(self)
         self._host = host
         self._username = username
+        self._port = port or 22
         self._nickname = nickname
         self._connection = connection
         self._connection_manager = connection_manager
@@ -282,7 +286,12 @@ class FileManagerWindow(Adw.Window):
         self._left_pane.set_partner_pane(self._right_pane)
         self._right_pane.set_partner_pane(self._left_pane)
         panes.set_start_child(self._left_pane)
-        panes.set_end_child(self._right_pane)
+        # Overlay so a host-picker placeholder can cover the remote pane when
+        # the window is opened without a server.
+        self._right_overlay = Gtk.Overlay()
+        self._right_overlay.set_child(self._right_pane)
+        panes.set_end_child(self._right_overlay)
+        self._install_remote_host_button()
 
         # Seed each pane with the persisted default zoom level. Each pane
         # tracks its own level from here on (zooming one does not affect the
@@ -352,6 +361,27 @@ class FileManagerWindow(Adw.Window):
         if is_flatpak():
             GLib.idle_add(self._restore_flatpak_folder)
 
+        # Connect close-request and destroy handlers to clean up resources
+        self.connect("close-request", self._on_close_request)
+        self.connect("destroy", self._on_destroy)
+
+        # No host yet → cover the remote pane with a host picker instead of
+        # connecting; picking a server starts the connection.
+        self._manager = None
+        if self._host:
+            self._start_connection()
+        else:
+            self._show_host_picker_placeholder()
+
+    def _start_connection(self) -> None:
+        """Create the SFTP backend for the current host and connect."""
+        # A fresh attempt supersedes any load-error state on the remote pane.
+        self._right_pane._clear_load_error()
+        connection = self._connection
+        connection_manager = self._connection_manager
+        username = self._username
+        host = self._host
+
         # Initialize SFTP manager and connect signals
         initial_password = None
         if connection is not None:
@@ -363,24 +393,24 @@ class FileManagerWindow(Adw.Window):
             lookup_user = username
             if connection is not None:
                 lookup_user = getattr(connection, "username", None) or username
-            
+
             # Try multiple host identifiers to match storage logic
             lookup_hosts = []
             if connection is not None:
                 hostname = getattr(connection, "hostname", None)
                 host_attr = getattr(connection, "host", None)
                 nickname_attr = getattr(connection, "nickname", None)
-                
+
                 if hostname:
                     lookup_hosts.append(hostname)
                 if host_attr and host_attr not in lookup_hosts:
                     lookup_hosts.append(host_attr)
                 if nickname_attr and nickname_attr not in lookup_hosts:
                     lookup_hosts.append(nickname_attr)
-            
+
             if not lookup_hosts:
                 lookup_hosts = [host]
-            
+
             if connection is not None:
                 try:
                     retrieved = connection_manager.get_connection_password(connection)
@@ -413,13 +443,13 @@ class FileManagerWindow(Adw.Window):
         self._manager = create_file_manager_backend(
             host,
             username,
-            port,
+            self._port,
             password=initial_password,
             connection=connection,
             connection_manager=connection_manager,
             ssh_config=self._ssh_config,
         )
-        
+
         # Connect signals with error handling
         try:
             self._manager.connect("connected", self._on_connected)
@@ -431,29 +461,25 @@ class FileManagerWindow(Adw.Window):
             self._manager.connect("directory-counts", self._on_directory_counts)
         except Exception as exc:
             logger.exception("Error connecting signals: %s", exc)
-        
-        # Connect close-request and destroy handlers to clean up resources
-        self.connect("close-request", self._on_close_request)
-        self.connect("destroy", self._on_destroy)
-        
+
         # Show initial progress before connecting
         try:
             self._show_progress(0.1, "Connecting…")
         except Exception as exc:
             logger.exception("Error showing progress: %s", exc)
-        
-        # Show loading toast in remote pane (infinite timeout until manually dismissed)
+
+        # Spinner + status in the remote pane while the connection is set up
         try:
-            self._right_pane.show_toast("Loading remote directory...", timeout=0)
+            target = (str(self._nickname).strip() if self._nickname else '') or host
+            self._right_pane.show_connecting(f"Connecting to {target}…")
         except (AttributeError, RuntimeError, GLib.GError):
-            # Overlay might be destroyed or invalid, ignore
             pass
-        
+
         # If no password found and password auth is enabled, show dialog before connecting
         # Check for both None and empty string
         has_password = initial_password and initial_password.strip()
         logger.debug(f"Built-in file manager: Password check - initial_password={'***' if initial_password else 'None'}, has_password={bool(has_password)}, password_auth_enabled={self._is_password_auth_enabled(connection) if connection else False}")
-        
+
         if not has_password and connection_manager is not None:
             if self._is_password_auth_enabled(connection):
                 logger.debug("Built-in file manager: No password found, password auth enabled, showing password dialog before connection")
@@ -469,13 +495,163 @@ class FileManagerWindow(Adw.Window):
                     return
             else:
                 logger.debug("Built-in file manager: No password found, but password auth not enabled, proceeding with key-based auth")
-        
+
         # Start connection after everything is set up
         try:
             self._manager.connect_to_server()
         except Exception as exc:
             logger.exception("Error connecting to server: %s", exc)
-    
+
+    # -- remote host-picker button (same pattern as the Docker Console) --
+
+    def _install_remote_host_button(self) -> None:
+        """Replace the right pane's static "Remote" title with a host-picker
+        button: icon + current host + caret, opening the shared picker."""
+        toolbar = getattr(self._right_pane, 'toolbar', None)
+        label = getattr(toolbar, '_pane_label', None)
+        parent = label.get_parent() if label is not None else None
+        if parent is None:
+            return
+        btn = Gtk.Button()
+        btn.add_css_class('flat')
+        btn.set_tooltip_text(_("Choose remote host"))
+        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        icon = Gtk.Image.new_from_icon_name('computer-symbolic')
+        icon.set_pixel_size(16)
+        box.append(icon)
+        self._remote_host_label = Gtk.Label()
+        self._remote_host_label.set_css_classes(['title'])
+        box.append(self._remote_host_label)
+        caret = Gtk.Image.new_from_icon_name('pan-down-symbolic')
+        caret.set_pixel_size(12)
+        box.append(caret)
+        btn.set_child(box)
+        btn.connect('clicked', self._on_remote_host_button_clicked)
+        label.set_visible(False)
+        parent.insert_child_after(btn, label)
+        self._remote_host_button = btn
+        self._update_remote_host_button()
+
+    def _update_remote_host_button(self) -> None:
+        text = ((str(self._nickname).strip() if self._nickname else '')
+                or self._host or _("Select host"))
+        self._remote_host_label.set_text(text)
+
+    def _on_remote_host_button_clicked(self, btn) -> None:
+        from .host_picker import show_host_picker
+        cm = self._connection_manager
+        connections = cm.get_connections() if cm else []
+        if not connections:
+            self._right_pane.show_toast(_("No connections available"))
+            return
+        show_host_picker(None, btn, self._switch_remote_host,
+                         connections=connections)
+
+    def _teardown_backend(self) -> None:
+        """Close the current SFTP backend and reset auth/error state."""
+        manager = self._manager
+        self._manager = None
+        if manager is not None:
+            try:
+                manager.close()
+            except Exception:
+                logger.debug("Error closing previous SFTP backend", exc_info=True)
+        self._connection_error_reported = False
+        self._password_dialog_shown = False
+        self._password_retry_count = 0
+
+    def _reconnect(self) -> None:
+        """Retry the connection to the current host from scratch."""
+        self._teardown_backend()
+        if self._host:
+            self._start_connection()
+
+    def _switch_remote_host(self, connection) -> None:
+        """Point the remote pane at another host: tear down the current
+        backend and reconnect via the shared pick handler."""
+        if connection is self._connection and self._manager is not None:
+            return
+        self._teardown_backend()
+        # Land in the new host's home, not the old host's last path, and
+        # drop the old host's navigation history.
+        self._pending_paths[self._right_pane] = "~"
+        self._right_pane._history.clear()
+        self._on_placeholder_host_picked(connection)
+
+    # -- no-server host picker (same picker as empty split-view panes) ---
+
+    def _show_host_picker_placeholder(self) -> None:
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
+        box.set_halign(Gtk.Align.CENTER)
+        box.set_valign(Gtk.Align.CENTER)
+
+        icon = Gtk.Image.new_from_icon_name("folder-remote-symbolic")
+        icon.set_pixel_size(48)
+        icon.add_css_class("dim-label")
+        box.append(icon)
+
+        lbl = Gtk.Label(label=_("No server selected"))
+        lbl.add_css_class("dim-label")
+        lbl.add_css_class("title-3")
+        box.append(lbl)
+
+        btn = Gtk.Button(label=_("Select host"))
+        btn.add_css_class("suggested-action")
+        btn.add_css_class("pill")
+        btn.set_halign(Gtk.Align.CENTER)
+
+        def _on_clicked(_b):
+            from .host_picker import show_host_picker
+            cm = self._connection_manager
+            show_host_picker(
+                None, btn, self._on_placeholder_host_picked,
+                connections=cm.get_connections() if cm else [],
+            )
+
+        btn.connect("clicked", _on_clicked)
+        box.append(btn)
+
+        self._host_picker_placeholder = box
+        self._right_overlay.add_overlay(box)
+
+    def _on_placeholder_host_picked(self, connection) -> None:
+        from .connection_display import get_connection_host, get_connection_alias
+        host = get_connection_host(connection) or get_connection_alias(connection) or ''
+        if not host:
+            self._right_pane.show_toast(_("Connection has no host"), timeout=5000)
+            return
+        self._host = host
+        self._username = getattr(connection, 'username', '') or ''
+        try:
+            self._port = int(getattr(connection, 'port', 22) or 22)
+        except (TypeError, ValueError):
+            self._port = 22
+        self._nickname = getattr(connection, 'nickname', None)
+        self._connection = connection
+
+        placeholder = getattr(self, '_host_picker_placeholder', None)
+        if placeholder is not None:
+            self._right_overlay.remove_overlay(placeholder)
+            self._host_picker_placeholder = None
+
+        title_parts = []
+        if self._nickname and str(self._nickname).strip():
+            title_parts.append(str(self._nickname).strip())
+        base_identity = f"{self._username}@{host}"
+        if not title_parts or title_parts[0] != base_identity:
+            title_parts.append(base_identity)
+        self._header_bar.set_title_widget(Gtk.Label(label=" ".join(title_parts)))
+        self._update_remote_host_button()
+
+        callback = getattr(self, '_host_picked_callback', None)
+        if callback is not None:
+            try:
+                callback(connection)
+            except Exception:
+                logger.debug("host-picked callback failed", exc_info=True)
+
+        self._start_connection()
+
     def detach_for_embedding(self, parent: Optional[Gtk.Widget] = None) -> Gtk.Widget:
         """Detach the window content for embedding in another container."""
 
@@ -583,6 +759,10 @@ class FileManagerWindow(Adw.Window):
             "Built-in file manager: Connection successful, reset password dialog state"
         )
         self._show_progress(0.4, "Connected")
+        try:
+            self._right_pane.set_connecting_status("Connected — loading files…")
+        except Exception:
+            pass
         for pane, pending in self._pending_paths.items():
             if pending:
                 self._manager.listdir(pending)
@@ -604,6 +784,26 @@ class FileManagerWindow(Adw.Window):
                 except (AttributeError, RuntimeError, GLib.GError):
                     pass
         
+        # A pane with a pending path means this error came from a directory
+        # load — show the in-pane error state with Retry instead of a toast.
+        target = next(
+            (p for p, pending in self._pending_paths.items() if pending is not None),
+            None,
+        )
+        if target is not None:
+            failed_path = self._pending_paths[target]
+            self._pending_paths[target] = None
+            try:
+                target.dismiss_toasts()
+            except (AttributeError, RuntimeError, GLib.GError):
+                pass
+            target.show_load_error(failed_path, message)
+            return
+
+        from .file_manager.pane import present_error_alert, toast_overflows
+        if toast_overflows(message):
+            present_error_alert(self._toast_overlay, message)
+            return
         try:
             toast = Adw.Toast.new(message)
             toast.set_priority(Adw.ToastPriority.HIGH)
@@ -629,13 +829,26 @@ class FileManagerWindow(Adw.Window):
         def show_error():
             try:
                 self._clear_progress_toast()
-                
+
                 if getattr(self, '_connection_error_reported', False):
                     return
-                
-                # Try to show toast on right pane (remote pane) which is more reliable
+
+                # Show the in-pane error state (with Retry) on the remote pane
+                # so the failure can't be mistaken for an empty directory, and
+                # drop the persistent "Loading remote directory..." toast.
                 if hasattr(self, '_right_pane') and self._right_pane:
-                    self._right_pane.show_toast(message or "Connection failed", timeout=5000)
+                    timeout_id = self._loading_toast_timeouts.get(self._right_pane)
+                    if timeout_id is not None:
+                        GLib.source_remove(timeout_id)
+                        self._loading_toast_timeouts[self._right_pane] = None
+                    try:
+                        self._right_pane.dismiss_toasts()
+                    except (AttributeError, RuntimeError, GLib.GError):
+                        pass
+                    self._right_pane.show_load_error(
+                        self._pending_paths.get(self._right_pane),
+                        message or "Connection failed",
+                    )
                 elif hasattr(self, '_toast_overlay') and self._toast_overlay:
                     toast = Adw.Toast.new(message or "Connection failed")
                     toast.set_priority(Adw.ToastPriority.HIGH)
@@ -644,7 +857,7 @@ class FileManagerWindow(Adw.Window):
                 # Overlay might be destroyed or invalid, ignore
                 logger.debug(f"Error showing connection error toast: {exc}")
             return False  # Don't repeat
-        
+
         GLib.idle_add(show_error)
 
     def _cleanup_manager(self) -> None:
@@ -1012,9 +1225,17 @@ class FileManagerWindow(Adw.Window):
                 # Clear refresh flag on error
                 self._refreshing_panes.discard(pane)
         else:
-            # Remote pane: use SFTP manager
+            # Remote pane: use SFTP manager. Absent (picker mode) or
+            # disconnected (failed connect) → remember the path and, when a
+            # host is known, reconnect; the path is listed on 'connected'.
+            manager = self._manager
+            if manager is None or getattr(manager, '_client', None) is None:
+                self._pending_paths[pane] = path
+                if manager is not None and self._host:
+                    self._reconnect()
+                return
             self._pending_paths[pane] = path
-            
+
             # Cancel any existing loading toast timeout for this pane
             timeout_id = self._loading_toast_timeouts.get(pane)
             if timeout_id is not None:
@@ -2089,6 +2310,8 @@ class FileManagerWindow(Adw.Window):
         if pane._is_remote:
             # For remote pane, use SFTP
             self._pending_paths[pane] = path
+            if self._manager is None:
+                return
             try:
                 logger.debug(f"_force_refresh_pane: calling manager.listdir for {path}")
                 self._manager.listdir(path)

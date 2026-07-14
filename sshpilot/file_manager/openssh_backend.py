@@ -702,7 +702,14 @@ class OpenSSHSFTPManager(GObject.GObject):
         return "\n".join(self._stderr_lines).strip()
 
     def _classify_handshake_failure(self, text: str, exc: Exception) -> Exception:
-        text = (text or "").strip()
+        # With verbose logging on, ssh -v fills stderr with "debugN:" chatter;
+        # the actual error is in the non-debug lines (e.g. "ssh: connect to
+        # host … Connection timed out").
+        error_lines = [
+            line.strip() for line in (text or "").splitlines()
+            if line.strip() and not line.lstrip().startswith("debug")
+        ]
+        text = "\n".join(error_lines)
         lowered = text.lower()
         auth_failure_markers = (
             "permission denied",

@@ -35,6 +35,36 @@ from .common import FileEntry
 
 logger = logging.getLogger(__name__)
 
+_TOAST_TEXT_LIMIT = 60
+
+
+def toast_overflows(text: str) -> bool:
+    """True when *text* is too long or multi-line to read in a toast."""
+    text = text or ""
+    return len(text) > _TOAST_TEXT_LIMIT or "\n" in text
+
+
+def present_error_alert(anchor: Gtk.Widget, text: str) -> None:
+    """Show *text* in an alert dialog on *anchor*'s root window."""
+    try:
+        if hasattr(Adw, "AlertDialog"):
+            dialog = Adw.AlertDialog(heading="Error", body=text)
+            dialog.add_response("ok", "OK")
+            dialog.set_default_response("ok")
+            dialog.set_close_response("ok")
+            dialog.present(anchor)
+        else:
+            dialog = Adw.MessageDialog(
+                transient_for=anchor.get_root(), modal=True,
+                heading="Error", body=text,
+            )
+            dialog.add_response("ok", "OK")
+            dialog.set_default_response("ok")
+            dialog.set_close_response("ok")
+            dialog.present()
+    except Exception:
+        logger.error("Failed to present error alert: %s", text)
+
 
 if TYPE_CHECKING:
     from ..file_manager_window import FileManagerWindow
@@ -153,6 +183,50 @@ class FilePane(Gtk.Box):
 
         self._stack.add_named(list_scrolled, "list")
         self._stack.add_named(grid_scrolled, "grid")
+
+        # Error state shown when a directory fails to load, so it can't be
+        # mistaken for an empty directory.
+        error_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        error_box.set_halign(Gtk.Align.CENTER)
+        error_box.set_valign(Gtk.Align.CENTER)
+        from sshpilot import icon_utils
+        error_icon = icon_utils.new_image_from_icon_name("warning-outline-symbolic")
+        error_icon.set_pixel_size(48)
+        error_icon.add_css_class("error")
+        error_box.append(error_icon)
+        self._load_error_label = Gtk.Label()
+        self._load_error_label.add_css_class("error")
+        self._load_error_label.set_wrap(True)
+        self._load_error_label.set_max_width_chars(48)
+        self._load_error_label.set_justify(Gtk.Justification.CENTER)
+        error_box.append(self._load_error_label)
+        retry_btn = Gtk.Button(label="Retry")
+        retry_btn.add_css_class("pill")
+        retry_btn.set_halign(Gtk.Align.CENTER)
+        retry_btn.connect("clicked", self._on_retry_load_clicked)
+        error_box.append(retry_btn)
+        self._stack.add_named(error_box, "load-error")
+        self._load_error_path: Optional[str] = None
+        self._pre_error_view: Optional[str] = None
+
+        # Connecting state: spinner + live status while the SFTP backend
+        # establishes the connection (mirrors the Docker Console placeholder).
+        conn_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        conn_box.set_halign(Gtk.Align.CENTER)
+        conn_box.set_valign(Gtk.Align.CENTER)
+        self._connecting_spinner = Gtk.Spinner()
+        self._connecting_spinner.set_size_request(32, 32)
+        self._connecting_spinner.set_halign(Gtk.Align.CENTER)
+        self._connecting_spinner.connect(
+            "map", lambda sp: sp.start()
+        )
+        conn_box.append(self._connecting_spinner)
+        self._connecting_label = Gtk.Label()
+        self._connecting_label.add_css_class("dim-label")
+        self._connecting_label.set_wrap(True)
+        self._connecting_label.set_justify(Gtk.Justification.CENTER)
+        conn_box.append(self._connecting_label)
+        self._stack.add_named(conn_box, "connecting")
 
 
         overlay = Adw.ToastOverlay()
@@ -1935,7 +2009,44 @@ class FilePane(Gtk.Box):
 
     # -- public API -----------------------------------------------------
 
+    def show_load_error(self, path: str, message: str) -> None:
+        """Swap the file view for an error message + Retry pill after a
+        failed directory load."""
+        self._load_error_path = path
+        self._load_error_label.set_text(message or "Failed to load directory")
+        current = self._stack.get_visible_child_name()
+        if current not in ("load-error", "connecting"):
+            self._pre_error_view = current
+        self._connecting_spinner.stop()
+        self._stack.set_visible_child_name("load-error")
+
+    def show_connecting(self, message: str) -> None:
+        """Show a spinner + status message while connecting."""
+        self._connecting_label.set_text(message or "Connecting…")
+        current = self._stack.get_visible_child_name()
+        if current not in ("load-error", "connecting"):
+            self._pre_error_view = current
+        self._connecting_spinner.start()
+        self._stack.set_visible_child_name("connecting")
+
+    def set_connecting_status(self, message: str) -> None:
+        """Update the status line of the connecting view (if showing)."""
+        if self._stack.get_visible_child_name() == "connecting":
+            self._connecting_label.set_text(message)
+
+    def _clear_load_error(self) -> None:
+        if self._stack.get_visible_child_name() in ("load-error", "connecting"):
+            self._connecting_spinner.stop()
+            self._stack.set_visible_child_name(self._pre_error_view or "list")
+        self._load_error_path = None
+
+    def _on_retry_load_clicked(self, _btn) -> None:
+        path = self._load_error_path or self._current_path
+        if path:
+            self.emit("path-changed", path)
+
     def show_entries(self, path: str, entries: Iterable[FileEntry]) -> None:
+        self._clear_load_error()
         entries_list = list(entries)
         pane_type = "remote" if self._is_remote else "local"
         logger.debug(f"FilePane.show_entries: {pane_type} pane updating with {len(entries_list)} entries for path {path}")
@@ -2516,7 +2627,12 @@ class FilePane(Gtk.Box):
         return None
 
     def show_toast(self, text: str, timeout: int = -1) -> None:
-        """Show a toast message safely."""
+        """Show a toast; messages too long for a toast escalate to an alert."""
+        if toast_overflows(text):
+            # ponytail: long toasts are always errors today; revisit if a
+            # long informational toast ever appears.
+            present_error_alert(self, text)
+            return
         try:
             # Dismiss any existing toast first
             if self._current_toast:

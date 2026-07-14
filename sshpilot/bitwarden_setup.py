@@ -686,9 +686,9 @@ def _prompt_server_url(window, on_chosen: Callable[[str], None]):
         body=_(
             "Choose which Bitwarden server to use before signing in. "
             "Self-hosted Vaultwarden URLs are supported.\n\n"
-            "For self-hosted servers with self-signed TLS certificates, set "
-            "NODE_EXTRA_CA_CERTS to your CA bundle in the environment before "
-            "signing in."
+            "CAs from the system trust store are trusted automatically. For a "
+            "CA outside it, set NODE_EXTRA_CA_CERTS to your bundle in the "
+            "environment before signing in."
         ),
     )
     model = Gtk.StringList()

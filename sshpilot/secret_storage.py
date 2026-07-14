@@ -57,6 +57,7 @@ from __future__ import annotations
 
 import base64
 import json
+import functools
 import logging
 import os
 import shutil
@@ -67,6 +68,33 @@ from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
+
+
+@functools.lru_cache(maxsize=1)
+def _system_ca_bundle() -> Optional[str]:
+    """Path to the OS CA-certificates bundle, or None if not found.
+
+    The ``bw`` CLI is a Node app that verifies TLS against Node's own bundled
+    Mozilla roots, ignoring the system trust store — so a Vaultwarden cert
+    issued by a CA the user installed via ``update-ca-certificates`` is
+    rejected as "self-signed certificate in certificate chain". Pointing
+    ``NODE_EXTRA_CA_CERTS`` at the system bundle makes Node trust it too.
+    """
+    import ssl
+
+    cafile = ssl.get_default_verify_paths().cafile
+    if cafile and os.path.isfile(cafile):
+        return cafile
+    # OpenSSL default (get_default_verify_paths) sometimes reports only a dir;
+    # fall back to the well-known distro bundle locations.
+    for path in (
+        "/etc/ssl/certs/ca-certificates.crt",       # Debian/Ubuntu, Alpine
+        "/etc/pki/tls/certs/ca-bundle.crt",         # Fedora/RHEL
+        "/etc/ssl/ca-bundle.pem",                   # openSUSE
+    ):
+        if os.path.isfile(path):
+            return path
+    return None
 
 # Optional dependencies (libsecret / keyring / pykeepass) are resolved lazily so
 # they never load on the startup import chain — pykeepass in particular pulls in
@@ -846,6 +874,12 @@ class BitwardenBackend(SecretBackend):
         if not prefix:
             raise RuntimeError("bw is not available")
         env = os.environ.copy()
+        # Let bw (Node) trust CAs from the OS trust store, not just Node's
+        # bundled Mozilla roots. The user's explicit setting always wins.
+        if "NODE_EXTRA_CA_CERTS" not in env:
+            bundle = _system_ca_bundle()
+            if bundle:
+                env["NODE_EXTRA_CA_CERTS"] = bundle
         if extra_env:
             env.update(extra_env)
         if token:
