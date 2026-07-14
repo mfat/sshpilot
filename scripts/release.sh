@@ -15,6 +15,11 @@ DEFAULT_MAIN_BRANCH="main"
 INIT_FILE="sshpilot/__init__.py"
 RPM_SPEC_FILE="packaging/fedora/rpm.spec"
 METAINFO_FILE="io.github.mfat.sshpilot.metainfo.xml"
+DEB_CHANGELOG="debian/changelog"
+# Series named in the committed changelog entry. Informational only: the
+# Launchpad recipe re-targets each build to its actual series, but the
+# version ({VERSION}-0ubuntu1) is what the recipe's {debupstream} reads.
+DEB_SERIES="resolute"
 
 echo "sshPilot release helper"
 echo
@@ -26,6 +31,12 @@ fi
 
 if ! git rev-parse --git-dir >/dev/null 2>&1; then
   echo "ERROR: This is not a git repository." >&2
+  exit 1
+fi
+
+if ! command -v dch >/dev/null 2>&1; then
+  echo "ERROR: dch is required to update debian/changelog (the Launchpad PPA" >&2
+  echo "recipe reads its version from it). Install with: sudo apt install devscripts" >&2
   exit 1
 fi
 
@@ -231,11 +242,20 @@ text = re.sub(r"(<releases>\s*\n)", r"\1" + new_release, text, count=1, flags=re
 Path(path).write_text(text, encoding="utf-8")
 PY
 
+echo "Updating $DEB_CHANGELOG..."
+export DEBFULLNAME="Mehdi" DEBEMAIL="mah.fat@gmail.com"
+dch -c "$DEB_CHANGELOG" -v "${VERSION}-0ubuntu1" -D "$DEB_SERIES" \
+  --force-distribution "Release v${VERSION}."
+while IFS= read -r line; do
+  line="$(sed 's/^[[:space:]]*[-*]*[[:space:]]*//' <<<"$line")"
+  [[ -n "$line" ]] && dch -c "$DEB_CHANGELOG" -a "$line"
+done <<<"$CHANGELOG"
+
 if ! grep -qE "from \. import __version__\s+as\s+APP_VERSION" sshpilot/window.py; then
   echo "WARNING: About dialog may not reflect __version__ automatically. Please verify in sshpilot/window.py." >&2
 fi
 
-git add "$INIT_FILE" "$METAINFO_FILE"
+git add "$INIT_FILE" "$METAINFO_FILE" "$DEB_CHANGELOG"
 if [[ -f "$RPM_SPEC_FILE" ]]; then
   git add "$RPM_SPEC_FILE"
 fi
