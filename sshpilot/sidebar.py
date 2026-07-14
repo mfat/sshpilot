@@ -37,7 +37,7 @@ _MIN_VALID_MARGIN = 0
 
 # Drop indicator (between-rows reorder bar) drawing parameters.
 _DROP_BAR_HEIGHT = 10        # widget height reserved when shown
-_DROP_BAR_THICKNESS = 4      # thickness of the pill bar
+_DROP_BAR_THICKNESS = 2      # thickness of the pill bar
 _DROP_BAR_INSET_LEFT = 6     # left inset (kept small so the bar spans nearly full width)
 _DROP_BAR_INSET_RIGHT = 8    # right inset
 _DROP_BAR_CAP_RADIUS = 4     # radius of the leading round cap (caret node)
@@ -1947,9 +1947,10 @@ def _show_drop_indicator(window, row, position):
         # Between-rows reorder: open a real gap with the placeholder row (the
         # list parts around it — no overlap), instead of painting a line inside
         # the target row. Clear any lingering group 'into' highlight first.
+        # Also when it IS the target row: a lingering "on_group" highlight on
+        # the same row must drop before the gap appears.
         if window._drop_indicator_row and hasattr(window._drop_indicator_row, 'hide_drop_indicators'):
-            if window._drop_indicator_row is not row:
-                window._drop_indicator_row.hide_drop_indicators()
+            window._drop_indicator_row.hide_drop_indicators()
         _position_drop_placeholder(window, row, position)
     except Exception as e:
         logger.error(f"Error showing drop indicator: {e}")
@@ -2265,6 +2266,8 @@ def _show_group_end_drop(window):
             and window._drop_indicator_row is last
             and window._drop_indicator_position == "below"):
         return
+    if window._drop_indicator_row and hasattr(window._drop_indicator_row, 'hide_drop_indicators'):
+        window._drop_indicator_row.hide_drop_indicators()
     if placeholder.get_parent() is not None:
         window.connection_list.remove(placeholder)
     window.connection_list.insert(placeholder, _group_section_end_index(window))
