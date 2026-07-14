@@ -700,6 +700,10 @@ class FileManagerWindow(Adw.Window):
                 except (AttributeError, RuntimeError, GLib.GError):
                     pass
         
+        from .file_manager.pane import present_error_alert, toast_overflows
+        if toast_overflows(message):
+            present_error_alert(self._toast_overlay, message)
+            return
         try:
             toast = Adw.Toast.new(message)
             toast.set_priority(Adw.ToastPriority.HIGH)

@@ -35,6 +35,36 @@ from .common import FileEntry
 
 logger = logging.getLogger(__name__)
 
+_TOAST_TEXT_LIMIT = 60
+
+
+def toast_overflows(text: str) -> bool:
+    """True when *text* is too long or multi-line to read in a toast."""
+    text = text or ""
+    return len(text) > _TOAST_TEXT_LIMIT or "\n" in text
+
+
+def present_error_alert(anchor: Gtk.Widget, text: str) -> None:
+    """Show *text* in an alert dialog on *anchor*'s root window."""
+    try:
+        if hasattr(Adw, "AlertDialog"):
+            dialog = Adw.AlertDialog(heading="Error", body=text)
+            dialog.add_response("ok", "OK")
+            dialog.set_default_response("ok")
+            dialog.set_close_response("ok")
+            dialog.present(anchor)
+        else:
+            dialog = Adw.MessageDialog(
+                transient_for=anchor.get_root(), modal=True,
+                heading="Error", body=text,
+            )
+            dialog.add_response("ok", "OK")
+            dialog.set_default_response("ok")
+            dialog.set_close_response("ok")
+            dialog.present()
+    except Exception:
+        logger.error("Failed to present error alert: %s", text)
+
 
 if TYPE_CHECKING:
     from ..file_manager_window import FileManagerWindow
@@ -2516,7 +2546,12 @@ class FilePane(Gtk.Box):
         return None
 
     def show_toast(self, text: str, timeout: int = -1) -> None:
-        """Show a toast message safely."""
+        """Show a toast; messages too long for a toast escalate to an alert."""
+        if toast_overflows(text):
+            # ponytail: long toasts are always errors today; revisit if a
+            # long informational toast ever appears.
+            present_error_alert(self, text)
+            return
         try:
             # Dismiss any existing toast first
             if self._current_toast:
