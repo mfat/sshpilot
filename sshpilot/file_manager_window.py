@@ -545,11 +545,8 @@ class FileManagerWindow(Adw.Window):
         show_host_picker(None, btn, self._switch_remote_host,
                          connections=connections)
 
-    def _switch_remote_host(self, connection) -> None:
-        """Point the remote pane at another host: tear down the current
-        backend and reconnect via the shared pick handler."""
-        if connection is self._connection and self._manager is not None:
-            return
+    def _teardown_backend(self) -> None:
+        """Close the current SFTP backend and reset auth/error state."""
         manager = self._manager
         self._manager = None
         if manager is not None:
@@ -560,6 +557,19 @@ class FileManagerWindow(Adw.Window):
         self._connection_error_reported = False
         self._password_dialog_shown = False
         self._password_retry_count = 0
+
+    def _reconnect(self) -> None:
+        """Retry the connection to the current host from scratch."""
+        self._teardown_backend()
+        if self._host:
+            self._start_connection()
+
+    def _switch_remote_host(self, connection) -> None:
+        """Point the remote pane at another host: tear down the current
+        backend and reconnect via the shared pick handler."""
+        if connection is self._connection and self._manager is not None:
+            return
+        self._teardown_backend()
         # Land in the new host's home, not the old host's last path, and
         # drop the old host's navigation history.
         self._pending_paths[self._right_pane] = "~"
@@ -768,6 +778,22 @@ class FileManagerWindow(Adw.Window):
                 except (AttributeError, RuntimeError, GLib.GError):
                     pass
         
+        # A pane with a pending path means this error came from a directory
+        # load — show the in-pane error state with Retry instead of a toast.
+        target = next(
+            (p for p, pending in self._pending_paths.items() if pending is not None),
+            None,
+        )
+        if target is not None:
+            failed_path = self._pending_paths[target]
+            self._pending_paths[target] = None
+            try:
+                target.dismiss_toasts()
+            except (AttributeError, RuntimeError, GLib.GError):
+                pass
+            target.show_load_error(failed_path, message)
+            return
+
         from .file_manager.pane import present_error_alert, toast_overflows
         if toast_overflows(message):
             present_error_alert(self._toast_overlay, message)
@@ -797,13 +823,26 @@ class FileManagerWindow(Adw.Window):
         def show_error():
             try:
                 self._clear_progress_toast()
-                
+
                 if getattr(self, '_connection_error_reported', False):
                     return
-                
-                # Try to show toast on right pane (remote pane) which is more reliable
+
+                # Show the in-pane error state (with Retry) on the remote pane
+                # so the failure can't be mistaken for an empty directory, and
+                # drop the persistent "Loading remote directory..." toast.
                 if hasattr(self, '_right_pane') and self._right_pane:
-                    self._right_pane.show_toast(message or "Connection failed", timeout=5000)
+                    timeout_id = self._loading_toast_timeouts.get(self._right_pane)
+                    if timeout_id is not None:
+                        GLib.source_remove(timeout_id)
+                        self._loading_toast_timeouts[self._right_pane] = None
+                    try:
+                        self._right_pane.dismiss_toasts()
+                    except (AttributeError, RuntimeError, GLib.GError):
+                        pass
+                    self._right_pane.show_load_error(
+                        self._pending_paths.get(self._right_pane),
+                        message or "Connection failed",
+                    )
                 elif hasattr(self, '_toast_overlay') and self._toast_overlay:
                     toast = Adw.Toast.new(message or "Connection failed")
                     toast.set_priority(Adw.ToastPriority.HIGH)
@@ -812,7 +851,7 @@ class FileManagerWindow(Adw.Window):
                 # Overlay might be destroyed or invalid, ignore
                 logger.debug(f"Error showing connection error toast: {exc}")
             return False  # Don't repeat
-        
+
         GLib.idle_add(show_error)
 
     def _cleanup_manager(self) -> None:
@@ -1180,10 +1219,14 @@ class FileManagerWindow(Adw.Window):
                 # Clear refresh flag on error
                 self._refreshing_panes.discard(pane)
         else:
-            # Remote pane: use SFTP manager (may be absent until a host is
-            # picked from the placeholder)
-            if self._manager is None:
+            # Remote pane: use SFTP manager. Absent (picker mode) or
+            # disconnected (failed connect) → remember the path and, when a
+            # host is known, reconnect; the path is listed on 'connected'.
+            manager = self._manager
+            if manager is None or getattr(manager, '_client', None) is None:
                 self._pending_paths[pane] = path
+                if manager is not None and self._host:
+                    self._reconnect()
                 return
             self._pending_paths[pane] = path
 
