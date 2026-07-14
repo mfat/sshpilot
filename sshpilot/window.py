@@ -6668,24 +6668,34 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 logger.debug(f"Group info not found for ID: {group_id}")
                 return
             
-            # Create dialog for group name editing
-            dialog = Gtk.Dialog(
-                title=_("Edit Group"),
-                transient_for=self,
-                modal=True,
-                destroy_with_parent=True
-            )
-            
-            dialog.set_default_size(400, 150)
-            dialog.set_resizable(False)
-            
-            content_area = dialog.get_content_area()
+            # Form dialog (name + color): Adw.Dialog with actions in the header bar
+            dialog = Adw.Dialog()
+            dialog.set_title(_("Edit Group"))
+            dialog.set_content_width(400)
+
+            header = Adw.HeaderBar()
+            header.set_show_start_title_buttons(False)
+            header.set_show_end_title_buttons(False)
+
+            cancel_button = Gtk.Button(label=_('Cancel'))
+            header.pack_start(cancel_button)
+
+            save_button = Gtk.Button(label=_('Save'))
+            save_button.add_css_class('suggested-action')
+            header.pack_end(save_button)
+
+            content_area = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
             content_area.set_margin_start(20)
             content_area.set_margin_end(20)
             content_area.set_margin_top(20)
             content_area.set_margin_bottom(20)
             content_area.set_spacing(12)
-            
+
+            toolbar_view = Adw.ToolbarView()
+            toolbar_view.add_top_bar(header)
+            toolbar_view.set_content(content_area)
+            dialog.set_child(toolbar_view)
+
             # Add label
             label = Gtk.Label(label=_("Enter a new name for the group:"))
             label.set_wrap(True)
@@ -6757,39 +6767,32 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
             color_row.append(color_controls)
             content_area.append(color_row)
-            
-            # Add buttons
-            dialog.add_button(_('Cancel'), Gtk.ResponseType.CANCEL)
-            save_button = dialog.add_button(_('Save'), Gtk.ResponseType.OK)
-            save_button.get_style_context().add_class('suggested-action')
-            
-            dialog.set_default_response(Gtk.ResponseType.OK)
-            
-            def on_response(dialog, response):
-                if response == Gtk.ResponseType.OK:
-                    new_name = entry.get_text().strip()
-                    if new_name:
-                        group_info['name'] = new_name
-                        rgba_value = color_button.get_rgba()
-                        selected_color = None
-                        if color_selected and rgba_value.alpha > 0:
-                            selected_color = rgba_value.to_string()
-                        self.group_manager.set_group_color(group_id, selected_color)
-                        self.rebuild_connection_list()
-                    else:
-                        # Show error for empty name
-                        error_dialog = Adw.MessageDialog(
-                            transient_for=self,
-                            modal=True,
-                            heading=_("Error"),
-                            body=_("Please enter a group name.")
-                        )
-                        error_dialog.add_response('ok', _('OK'))
-                        error_dialog.present()
-                dialog.destroy()
-            
-            dialog.connect('response', on_response)
-            dialog.present()
+
+            def on_save(_button):
+                new_name = entry.get_text().strip()
+                if not new_name:
+                    error_dialog = Adw.MessageDialog(
+                        transient_for=self,
+                        modal=True,
+                        heading=_("Error"),
+                        body=_("Please enter a group name.")
+                    )
+                    error_dialog.add_response('ok', _('OK'))
+                    error_dialog.present()
+                    return
+                group_info['name'] = new_name
+                rgba_value = color_button.get_rgba()
+                selected_color = None
+                if color_selected and rgba_value.alpha > 0:
+                    selected_color = rgba_value.to_string()
+                self.group_manager.set_group_color(group_id, selected_color)
+                self.rebuild_connection_list()
+                dialog.close()
+
+            cancel_button.connect('clicked', lambda _b: dialog.close())
+            save_button.connect('clicked', on_save)
+            dialog.set_default_widget(save_button)
+            dialog.present(self)
             
             def focus_entry():
                 entry.grab_focus()
