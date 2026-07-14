@@ -16,7 +16,8 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 from sshpilot.plugins import registry as registry_mod
 from sshpilot.plugins.loader import load_plugins
 from sshpilot.plugins.builtin.docker_manager import Plugin
-from sshpilot.plugins.builtin.docker_manager.client import DockerClient, DockerError
+from sshpilot.plugins.builtin.docker_manager.client import (
+    DockerClient, DockerError, parse_published_ports)
 
 
 class FakeConfig:
@@ -1246,3 +1247,22 @@ def test_logs_dropdown_selection_loads_logs():
     page._refresh_logs_targets()      # containers poll: keeps pick, no reload
     assert calls == ["b2"]
     assert page._logs_combo.get_selected() == 1
+
+
+# --- published-port discovery (web UIs) --------------------------------------
+
+def test_parse_published_ports():
+    # IPv4/IPv6 duplicates collapse to one entry.
+    assert parse_published_ports(
+        "0.0.0.0:8080->80/tcp, :::8080->80/tcp") == [(8080, 80, "http")]
+    # Conventional TLS ports get an https scheme.
+    assert parse_published_ports("0.0.0.0:443->8443/tcp") == [(443, 8443, "https")]
+    # UDP and unpublished (exposed-only) entries are skipped.
+    assert parse_published_ports("0.0.0.0:53->53/udp, 80/tcp") == []
+    # Podman-style entry without a host address still counts; sorted by host port.
+    assert parse_published_ports("9000->9000/tcp, 0.0.0.0:3000->3000/tcp") == [
+        (3000, 3000, "http"), (9000, 9000, "http")]
+    # Garbage and empty input are tolerated.
+    assert parse_published_ports("") == []
+    assert parse_published_ports(None) == []
+    assert parse_published_ports("not ports at all") == []

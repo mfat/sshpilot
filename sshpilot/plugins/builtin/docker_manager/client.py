@@ -17,13 +17,35 @@ import json
 import logging
 import re
 import shlex
-from typing import Any, Callable, List, Optional, Union
+from typing import Any, Callable, List, Optional, Tuple, Union
 
 logger = logging.getLogger(__name__)
 
 # run_command(nickname, command, *, timeout=...) -> object with
 # .exit_code / .stdout / .stderr (the app's CommandResult).
 RunCommand = Callable[..., Any]
+
+# One published-port entry in a `docker ps` Ports string, e.g.
+# "0.0.0.0:8080->80/tcp" / ":::8080->80/tcp" / "8080->80/tcp". The greedy
+# optional prefix swallows any host address, IPv6 included.
+_PUBLISHED_PORT_RE = re.compile(r"(?:.*:)?(\d+)->(\d+)/tcp\s*$")
+
+
+def parse_published_ports(ports: str) -> List[Tuple[int, int, str]]:
+    """``[(host_port, container_port, scheme)]`` from a ``docker ps`` Ports
+    string such as ``0.0.0.0:8080->80/tcp, :::8080->80/tcp``. TCP only,
+    published entries only, IPv4/IPv6 duplicates collapsed, sorted by host
+    port; scheme is ``https`` for the conventional TLS ports (443/8443),
+    else ``http``. Tolerant of empty/odd input — returns ``[]``."""
+    found: dict = {}
+    for entry in str(ports or "").split(","):
+        m = _PUBLISHED_PORT_RE.match(entry.strip())
+        if not m:
+            continue
+        host_port, container_port = int(m.group(1)), int(m.group(2))
+        scheme = "https" if {host_port, container_port} & {443, 8443} else "http"
+        found.setdefault((host_port, container_port), scheme)
+    return sorted((hp, cp, s) for (hp, cp), s in found.items())
 
 
 class DockerError(Exception):

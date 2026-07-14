@@ -10,6 +10,7 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Gtk, Adw, Pango  # noqa: E402
 
+from .client import parse_published_ports  # noqa: E402
 from .dialogs import ContainerDetailsDialog, CreateContainerDialog  # noqa: E402
 from . import widgets as w  # noqa: E402
 
@@ -103,10 +104,14 @@ class ContainersTabMixin:
     def _container_state_key(c: dict) -> str:
         state = w.field(c, "State", "Status").lower()
         if "paused" in state:
-            return "paused"
-        if "up" in state or "running" in state:
-            return "running"
-        return "stopped"
+            state = "paused"
+        elif "up" in state or "running" in state:
+            state = "running"
+        else:
+            state = "stopped"
+        # Ports participate so a gained/lost published port rebuilds the row
+        # (the web-UI menu is only built in _fill_container_row).
+        return f"{state}|{w.field(c, 'Ports')}"
 
     def _render_containers(self) -> None:
         """Full rebuild — used by tests; polling uses ``_sync_containers_list``."""
@@ -251,6 +256,10 @@ class ContainersTabMixin:
         row._title_lbl = title
         row._sub_lbl = sub
 
+        published = parse_published_ports(ports)
+        if published and (running or paused):
+            self._add_web_menu(row, name, published)
+
         if running or paused:
             w.add_row_action(row, "media-playback-stop-symbolic", "Stop",
                              lambda: self._lifecycle("stop", cid, name))
@@ -387,6 +396,65 @@ class ContainersTabMixin:
             on_confirm=do,
             force_label="Force (-f) — remove even if running",
         )
+
+    # --- discovered web UIs (published TCP ports) ----------------------
+    def _add_web_menu(self, row: Gtk.Box, name: str,
+                      ports: List[tuple]) -> None:
+        btn = Gtk.MenuButton()
+        btn.set_icon_name("web-browser-symbolic")
+        btn.set_tooltip_text("Open web UI")
+        btn.add_css_class("flat")
+        btn.set_valign(Gtk.Align.CENTER)
+        pop = Gtk.Popover()
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        for host_port, container_port, scheme in ports:
+            line = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            lbl = Gtk.Label(label=f"{host_port} → {container_port}",
+                            xalign=0, hexpand=True)
+            line.append(lbl)
+            for icon, tip, in_tab in (
+                    ("tab-new-symbolic", "Open in tab", True),
+                    ("adw-external-link-symbolic", "Open in browser", False)):
+                b = Gtk.Button.new_from_icon_name(icon)
+                b.add_css_class("flat")
+                b.set_tooltip_text(tip)
+                b.connect(
+                    "clicked",
+                    lambda _b, hp=host_port, s=scheme, t=in_tab: (
+                        pop.popdown(), self._open_service(name, hp, s, t)))
+                line.append(b)
+            box.append(line)
+        pop.set_child(box)
+        btn.set_popover(pop)
+        row.append(btn)
+
+    def _open_service(self, name: str, host_port: int, scheme: str,
+                      in_tab: bool) -> None:
+        nick = self._current_nickname()
+        if not nick:
+            return
+        if self._is_local(nick):  # local docker host — no tunnel needed
+            self._present_service(name, f"{scheme}://localhost:{host_port}",
+                                  in_tab)
+            return
+
+        def done(lp: Any, err: Optional[Exception]) -> None:
+            if err is not None:
+                self._toast(f"Port forward failed: {err}")
+            else:
+                self._present_service(name, f"{scheme}://localhost:{lp}",
+                                      in_tab)
+
+        self._run_async(
+            lambda: self.ctx.ensure_local_forward(nick, host_port), done)
+
+    def _present_service(self, name: str, url: str, in_tab: bool) -> None:
+        if in_tab and callable(getattr(self.ctx.ui, "open_web_tab", None)):
+            if self.ctx.ui.open_web_tab(url, title=name):
+                return
+        from ....web_tab import open_url_in_browser  # noqa: PLC0415
+        if not open_url_in_browser(url):
+            self._toast("Could not open browser")
 
     def _open_shell(self, cid: str, name: str) -> None:
         client = self._client()
