@@ -50,6 +50,7 @@ _ICON_RESOURCE_MAP = {
     'list-add-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/list-add-symbolic.svg',
     'user-trash-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/user-trash-symbolic.svg',
     'document-edit-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/document-edit-symbolic.svg',
+    'dot-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/dot-symbolic.svg',
     'edit-copy-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/edit-copy-symbolic.svg',
     'edit-undo-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/edit-undo-symbolic.svg',
     'edit-redo-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/edit-redo-symbolic.svg',

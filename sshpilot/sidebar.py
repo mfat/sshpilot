@@ -1032,6 +1032,7 @@ class ConnectionRow(Gtk.ListBoxRow):
         self._file_manager_callback = file_manager_callback
         self._tint_provider = None
         self._color_badge_provider = None
+        self._color_dot_provider = None
         self._indent_level = 0
         self._group_display_mode = None
         self._row_margin_base = None
@@ -1060,6 +1061,15 @@ class ConnectionRow(Gtk.ListBoxRow):
         show_connection_icon = self.config.get_setting('ui.sidebar_show_connection_icon', True)
         self.connection_icon.set_visible(show_connection_icon)
         content.append(self.connection_icon)
+
+        # Group-colour dot shown before the title in 'bar' mode (where the
+        # bar itself marks only group headers).
+        self.color_dot = icon_utils.new_image_from_icon_name("dot-symbolic")
+        self.color_dot.add_css_class("sidebar-color-dot")
+        self.color_dot.set_pixel_size(16)
+        self.color_dot.set_valign(Gtk.Align.CENTER)
+        self.color_dot.set_visible(False)
+        content.append(self.color_dot)
 
         info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         info_box.set_hexpand(True)
@@ -1344,7 +1354,35 @@ class ConnectionRow(Gtk.ListBoxRow):
     def _apply_group_color_style(self):
         mode = _get_color_display_mode(getattr(self, 'config', None))
         rgba = self._resolve_group_color()
+        if mode == 'bar':
+            # Bar marks only group headers; member rows show a colour dot
+            # before the title instead.
+            _apply_row_color(self, mode, None)
+            self._update_color_dot(rgba)
+            return
+        self.color_dot.set_visible(False)
         _apply_row_color(self, mode, rgba)
+
+    def _update_color_dot(self, rgba: Optional[Gdk.RGBA]):
+        if not rgba:
+            self.color_dot.set_visible(False)
+            return
+        css_data = f"""
+        image.sidebar-color-dot {{
+          color: {rgba.to_string()};
+        }}
+        """
+        if self._color_dot_provider:
+            try:
+                self.color_dot.get_style_context().remove_provider(self._color_dot_provider)
+            except Exception:
+                pass
+        self._color_dot_provider = Gtk.CssProvider()
+        self._color_dot_provider.load_from_data(css_data.encode('utf-8'))
+        self.color_dot.get_style_context().add_provider(
+            self._color_dot_provider, Gtk.STYLE_PROVIDER_PRIORITY_USER
+        )
+        self.color_dot.set_visible(True)
 
     def _update_color_badge(self, rgba: Gdk.RGBA):
         r = int(rgba.red * 255)
