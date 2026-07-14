@@ -779,6 +779,28 @@ def test_bitwarden_is_available_reresolves_bw(monkeypatch):
     assert backend.is_available() is True
 
 
+def _consume_spawn_options(args):
+    """Pop leading flatpak-spawn options off ``args``; decode env forwarding.
+
+    Mirrors the host side: only vars forwarded via ``--env-fd`` (``env -0``
+    payload) or ``--env=`` reach the host process — the sandbox subprocess
+    ``env=`` never does. Returns ``(host_env, remaining_args)``.
+    """
+    host_env = {}
+    args = list(args)
+    while args and args[0].startswith('--'):
+        opt = args.pop(0)
+        if opt.startswith('--env-fd='):
+            data = os.pread(int(opt[len('--env-fd='):]), 65536, 0)
+            host_env.update(
+                item.split('=', 1) for item in data.decode().split('\0') if item
+            )
+        elif opt.startswith('--env='):
+            key, _, value = opt[6:].partition('=')
+            host_env[key] = value
+    return host_env, args
+
+
 def test_bitwarden_flatpak_uses_host_spawn(monkeypatch):
     from sshpilot import platform_utils
 
@@ -796,7 +818,92 @@ def test_bitwarden_flatpak_uses_host_spawn(monkeypatch):
     backend = ss.BitwardenBackend()
     assert backend.is_available() is True
     assert backend.needs_login() is False
-    assert calls == [['/usr/bin/flatpak-spawn', '--host', 'bw', '--nointeraction', 'login', '--check']]
+    assert len(calls) == 1
+    argv = calls[0]
+    assert argv[0:2] == ['/usr/bin/flatpak-spawn', '--host']
+    assert argv[-4:] == ['bw', '--nointeraction', 'login', '--check']
+    # Host spawn forwards env only via ``--env-fd`` between ``--host`` and ``bw``.
+    for flag in argv[2:-4]:
+        assert flag.startswith('--env-fd=')
+
+
+def test_bitwarden_flatpak_forwards_password_via_env_fd(monkeypatch):
+    """Regression: Flatpak host ``bw`` never sees sandbox ``BW_PASSWORD`` unless
+    it is forwarded through ``flatpak-spawn --host --env-fd=…`` — otherwise unlock
+    fails with ``Master password is required.`` even when the typed password is
+    correct. And the secret must travel via the fd, never in argv itself.
+    """
+    from sshpilot import platform_utils
+
+    captured = []
+
+    def fake_resolve():
+        return ['/usr/bin/flatpak-spawn', '--host', 'bw']
+
+    def fake_run(argv, **kwargs):
+        argv = list(argv)
+        args = argv[2:] if argv[:2] == ['/usr/bin/flatpak-spawn', '--host'] else []
+        host_env, args = _consume_spawn_options(args)
+        captured.append((argv, host_env))
+        if not args or args[0] != 'bw':
+            return _Result(1, b'', b'unexpected argv')
+        cmd = [a for a in args[1:] if a != '--nointeraction']
+        if cmd[:1] == ['unlock']:
+            if '--passwordenv' in cmd:
+                name = cmd[cmd.index('--passwordenv') + 1]
+                if not host_env.get(name):
+                    return _Result(1, b'', b'Master password is required.')
+            return _Result(0, b'SESSION\n')
+        if cmd[:2] == ['list', 'items']:
+            return _Result(0, b'[]')
+        if cmd[:1] == ['sync']:
+            return _Result(0, b'')
+        return _Result(1, b'', b'unexpected: %s' % cmd)
+
+    monkeypatch.setattr(platform_utils, 'resolve_bw_cli_unverified', fake_resolve)
+    monkeypatch.setattr(ss.subprocess, 'run', fake_run)
+    backend = ss.BitwardenBackend()
+    assert backend.unlock('correct-master') is True
+
+    unlock_argv, unlock_env = next(t for t in captured if 'unlock' in t[0])
+    assert unlock_env.get('BW_PASSWORD') == 'correct-master'
+    # The secret must never appear on the command line (/proc/<pid>/cmdline).
+    assert all('correct-master' not in a for a in unlock_argv)
+    host_i = unlock_argv.index('--host')
+    bw_i = unlock_argv.index('bw')
+    fd_i = next(i for i, a in enumerate(unlock_argv) if a.startswith('--env-fd='))
+    assert host_i < fd_i < bw_i
+
+
+def test_bitwarden_flatpak_login_forwards_password_via_env_fd(monkeypatch):
+    from sshpilot import platform_utils
+
+    captured = []
+
+    def fake_resolve():
+        return ['/usr/bin/flatpak-spawn', '--host', 'bw']
+
+    def fake_run(argv, **kwargs):
+        argv = list(argv)
+        args = argv[2:] if argv[:2] == ['/usr/bin/flatpak-spawn', '--host'] else []
+        host_env, args = _consume_spawn_options(args)
+        captured.append((argv, host_env))
+        cmd = [a for a in args[1:] if a != '--nointeraction'] if args and args[0] == 'bw' else []
+        if cmd[:1] == ['login'] and '--passwordenv' in cmd:
+            name = cmd[cmd.index('--passwordenv') + 1]
+            if not host_env.get(name):
+                return _Result(1, b'', b'Master password is required.')
+            return _Result(0, json.dumps({"success": True, "data": "LOGIN_SESSION"}).encode())
+        return _Result(1, b'', b'unexpected')
+
+    monkeypatch.setattr(platform_utils, 'resolve_bw_cli_unverified', fake_resolve)
+    monkeypatch.setattr(ss.subprocess, 'run', fake_run)
+    backend = ss.BitwardenBackend()
+    ok, detail, needs_2fa = backend.login_with_password('user@host', 'mp')
+    assert ok is True and detail == '' and needs_2fa is False
+    login_argv, login_env = next(t for t in captured if 'login' in t[0])
+    assert login_env.get('BW_PASSWORD') == 'mp'
+    assert all('mp' != a and 'BW_PASSWORD=mp' not in a for a in login_argv)
 
 
 def test_non_session_backend_needs_no_unlock(manager):
@@ -831,16 +938,25 @@ class FakeBw:
     @staticmethod
     def _bw_command(argv):
         args = list(argv)
+        host_env = {}
         if len(args) >= 3 and os.path.basename(args[0]) == "flatpak-spawn" and args[1] == "--host":
-            args = args[3:]
+            # Decode flatpak-spawn host options (``--env-fd``, ``--env=``, …).
+            host_env, args = _consume_spawn_options(args[2:])
+            if args:
+                args = args[1:]  # drop host ``bw`` path/name
         elif args:
             args = args[1:]
-        return [a for a in args if a != '--nointeraction']
+        return [a for a in args if a != '--nointeraction'], host_env
 
-    def run(self, argv, input=None, capture_output=None, env=None, check=None, timeout=None):
-        cmd = self._bw_command(argv)
+    def run(self, argv, input=None, capture_output=None, env=None, check=None,
+            timeout=None, pass_fds=()):
+        cmd, host_env = self._bw_command(argv)
+        merged = dict(env or {})
+        merged.update(host_env)
         self.calls.append(cmd)
-        self.envs.append(dict(env or {}))
+        self.envs.append(merged)
+        # Prefer host-forwarded secrets when present (Flatpak --env-fd path).
+        env = merged
         if cmd[:1] == ['status']:
             return _Result(0, json.dumps({"status": self.status}).encode())
         if cmd[:2] == ['login', '--check']:
@@ -848,6 +964,13 @@ class FakeBw:
                 return _Result(1, b'', b'You are not logged in.')
             return _Result(0, b'You are logged in!\n')
         if cmd[:1] == ['unlock']:
+            # Mirror real ``bw unlock --passwordenv``: empty/missing password →
+            # "Master password is required." (the Flatpak env-forwarding bug).
+            if '--passwordenv' in cmd:
+                idx = cmd.index('--passwordenv')
+                env_name = cmd[idx + 1] if idx + 1 < len(cmd) else 'BW_PASSWORD'
+                if not (env or {}).get(env_name):
+                    return _Result(1, b'', b'Master password is required.')
             if self.status == "unauthenticated" or not self.unlock_ok:
                 return _Result(1, b'', b'unlock failed')
             self.status = "unlocked"
@@ -875,6 +998,10 @@ class FakeBw:
                     b'{"success":false,"message":"Login failed."}',
                 )
             if email:
+                if '--passwordenv' in cmd:
+                    env_name = cmd[cmd.index('--passwordenv') + 1]
+                    if not (env or {}).get(env_name):
+                        return _Result(1, b'', b'Master password is required.')
                 if '--raw' in cmd:
                     self.status = "unlocked"
                     if '--response' in cmd:
