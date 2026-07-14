@@ -52,9 +52,10 @@ class ContainersTabMixin:
         if client is None or self._containers_busy:
             return
         self._containers_busy = True
-        # Only show the loading logo on the first load (empty list); auto-refresh
-        # of an already-populated list updates silently (no flashing).
-        if not self._containers:
+        # Only show the loading logo on the first load after a host switch;
+        # auto-refresh of an already-loaded view (even an empty or errored one)
+        # updates silently (no flashing).
+        if not self._containers_loaded:
             self._set_placeholder_loading(self._containers_placeholder, "Loading containers…")
         show_all = self._show_all_check.get_active()
         gen = self._load_gen
@@ -66,20 +67,21 @@ class ContainersTabMixin:
         if gen != self._load_gen:
             return  # stale result for a previous host — drop it
         self._containers_busy = False
-        w.clear_listbox(self._containers_list)
+        self._containers_loaded = True
         if err is not None:
+            w.clear_listbox(self._containers_list)
             self._containers = []
             self._set_placeholder_idle(self._containers_placeholder, w.error_text(err),
                                        error=True)
             self._refresh_logs_targets()
             return
         self._containers = rows or []
-        self._render_containers()
+        self._sync_containers_list()
         self._refresh_logs_targets()
 
     def _on_container_search(self, entry: Gtk.SearchEntry) -> None:
         self._container_query = entry.get_text().strip().lower()
-        self._render_containers()
+        self._apply_container_filter()
 
     def _container_matches(self, c: dict) -> bool:
         if not self._container_query:
@@ -89,26 +91,131 @@ class ContainersTabMixin:
             w.field(c, "ID", "Id", "ContainerID"))).lower()
         return self._container_query in hay
 
+    @staticmethod
+    def _container_cid(c: dict) -> str:
+        return w.field(c, "ID", "Id", "ContainerID")
+
+    @staticmethod
+    def _container_state_key(c: dict) -> str:
+        state = w.field(c, "State", "Status").lower()
+        if "paused" in state:
+            return "paused"
+        if "up" in state or "running" in state:
+            return "running"
+        return "stopped"
+
     def _render_containers(self) -> None:
-        """(Re)build the visible rows from the cached list + the search filter."""
+        """Full rebuild — used by tests; polling uses ``_sync_containers_list``."""
         w.clear_listbox(self._containers_list)
         if not self._containers:
             self._set_placeholder_idle(self._containers_placeholder, "No containers")
             return
-        visible = [c for c in self._containers if self._container_matches(c)]
-        if not visible:
-            self._set_placeholder_idle(self._containers_placeholder, "No matching containers")
-            return
-        self._hide_placeholder(self._containers_placeholder)
-        for c in visible:
+        for c in self._containers:
             self._containers_list.append(self._container_row(c))
+        self._apply_container_filter()
+
+    def _sync_containers_list(self) -> None:
+        """Merge polled container data into the list without a full clear."""
+        if not self._containers:
+            w.clear_listbox(self._containers_list)
+            self._set_placeholder_idle(self._containers_placeholder, "No containers")
+            return
+
+        existing: dict[str, Gtk.ListBoxRow] = {}
+        child = self._containers_list.get_first_child()
+        while child is not None:
+            box = child.get_child()
+            cid = getattr(box, "_docker_cid", None)
+            if cid:
+                existing[cid] = child
+            child = child.get_next_sibling()
+
+        desired = [self._container_cid(c) for c in self._containers]
+        desired_set = set(desired)
+        for cid, lb_row in list(existing.items()):
+            if cid not in desired_set:
+                self._containers_list.remove(lb_row)
+                existing.pop(cid, None)
+
+        for index, c in enumerate(self._containers):
+            cid = self._container_cid(c)
+            lb_row = existing.get(cid)
+            if lb_row is not None:
+                box = lb_row.get_child()
+                if not self._update_container_row_box(box, c):
+                    new_row = self._container_row(c)
+                    self._containers_list.remove(lb_row)
+                    self._containers_list.insert(new_row, index)
+                elif lb_row.get_index() != index:
+                    # GTK4 ListBox has no reorder API — re-insert the same row.
+                    self._containers_list.remove(lb_row)
+                    self._containers_list.insert(lb_row, index)
+            else:
+                self._containers_list.insert(self._container_row(c), index)
+
+        self._apply_container_filter()
+
+    def _apply_container_filter(self) -> None:
+        if not self._containers:
+            return
+        visible = 0
+        child = self._containers_list.get_first_child()
+        while child is not None:
+            box = child.get_child()
+            cid = getattr(box, "_docker_cid", None)
+            data = next((c for c in self._containers if self._container_cid(c) == cid), None)
+            show = data is not None and self._container_matches(data)
+            child.set_visible(show)
+            if show:
+                visible += 1
+            child = child.get_next_sibling()
+        if visible == 0:
+            self._set_placeholder_idle(
+                self._containers_placeholder,
+                "No matching containers" if self._container_query else "No containers",
+            )
+        else:
+            self._hide_placeholder(self._containers_placeholder)
 
     @staticmethod
     def _health_of(status: str) -> Optional[str]:
         return w.health_of(status)
 
-    def _container_row(self, c: dict) -> Gtk.Widget:
-        cid = w.field(c, "ID", "Id", "ContainerID")
+    @staticmethod
+    def _set_status_dot(dot: Gtk.Image, *, running: bool, paused: bool) -> None:
+        dot.set_from_icon_name(
+            "media-record-symbolic" if running else "media-playback-stop-symbolic"
+        )
+        for cls in ("success", "warning", "dim-label"):
+            dot.remove_css_class(cls)
+        dot.add_css_class("success" if running else ("warning" if paused else "dim-label"))
+
+    def _set_health_badge(self, row: Gtk.Box, status: str) -> None:
+        health = w.health_of(status)
+        badge = getattr(row, "_health_badge", None)
+        if not health:
+            if badge is not None:
+                row.remove(badge)
+                row._health_badge = None
+            return
+        hicon, hcls, htip = {
+            "healthy": ("emblem-ok-symbolic", "success", "Healthy"),
+            "unhealthy": ("dialog-warning-symbolic", "error", "Unhealthy"),
+            "starting": ("content-loading-symbolic", "warning", "Health check starting"),
+        }[health]
+        if badge is None:
+            badge = Gtk.Image.new_from_icon_name(hicon)
+            row.insert_child_after(badge, row._status_dot)
+            row._health_badge = badge
+        else:
+            badge.set_from_icon_name(hicon)
+            for cls in ("success", "error", "warning"):
+                badge.remove_css_class(cls)
+        badge.add_css_class(hcls)
+        badge.set_tooltip_text(htip)
+
+    def _fill_container_row(self, row: Gtk.Box, c: dict) -> None:
+        cid = self._container_cid(c)
         name = w.field(c, "Names", "Name", default=cid[:12])
         image = w.field(c, "Image")
         status = w.field(c, "Status", "State")
@@ -117,32 +224,14 @@ class ContainersTabMixin:
         running = "up" in state or "running" in state
         paused = "paused" in state
 
-        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-        row.set_margin_top(6)
-        row.set_margin_bottom(6)
-        row.set_margin_start(8)
-        row.set_margin_end(8)
+        row._docker_cid = cid
+        row._state_key = self._container_state_key(c)
 
-        dot = Gtk.Image.new_from_icon_name(
-            "media-record-symbolic" if running else "media-playback-stop-symbolic"
-        )
-        dot.add_css_class("success" if running else ("warning" if paused else "dim-label"))
+        dot = Gtk.Image()
+        self._set_status_dot(dot, running=running, paused=paused)
         row.append(dot)
-
-        # Health badge from the ps Status string (no extra round-trip): docker
-        # appends "(healthy)" / "(unhealthy)" / "(health: starting)" for containers
-        # that define a HEALTHCHECK.
-        health = w.health_of(status)
-        if health:
-            hicon, hcls, htip = {
-                "healthy": ("emblem-ok-symbolic", "success", "Healthy"),
-                "unhealthy": ("dialog-warning-symbolic", "error", "Unhealthy"),
-                "starting": ("content-loading-symbolic", "warning", "Health check starting"),
-            }[health]
-            hb = Gtk.Image.new_from_icon_name(hicon)
-            hb.add_css_class(hcls)
-            hb.set_tooltip_text(htip)
-            row.append(hb)
+        row._status_dot = dot
+        self._set_health_badge(row, status)
 
         info = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True)
         title = Gtk.Label(label=name, xalign=0)
@@ -155,6 +244,8 @@ class ContainersTabMixin:
         sub.set_ellipsize(Pango.EllipsizeMode.END)
         info.append(sub)
         row.append(info)
+        row._title_lbl = title
+        row._sub_lbl = sub
 
         if running or paused:
             w.add_row_action(row, "media-playback-stop-symbolic", "Stop",
@@ -182,6 +273,34 @@ class ContainersTabMixin:
                          lambda: self._show_details(cid, name), refreshes=False)
         w.add_row_action(row, "user-trash-symbolic", "Remove",
                          lambda: self._remove_container(cid, name))
+
+    def _update_container_row_box(self, row: Gtk.Box, c: dict) -> bool:
+        """Update labels/icons in place. Return False when action buttons must change."""
+        if getattr(row, "_state_key", None) != self._container_state_key(c):
+            return False
+        cid = self._container_cid(c)
+        name = w.field(c, "Names", "Name", default=cid[:12])
+        image = w.field(c, "Image")
+        status = w.field(c, "Status", "State")
+        ports = w.field(c, "Ports")
+        state = w.field(c, "State", "Status").lower()
+        running = "up" in state or "running" in state
+        paused = "paused" in state
+
+        row._docker_cid = cid
+        self._set_status_dot(row._status_dot, running=running, paused=paused)
+        self._set_health_badge(row, status)
+        row._title_lbl.set_label(name)
+        row._sub_lbl.set_text(" · ".join(p for p in (image, status, ports) if p))
+        return True
+
+    def _container_row(self, c: dict) -> Gtk.Widget:
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        row.set_margin_top(6)
+        row.set_margin_bottom(6)
+        row.set_margin_start(8)
+        row.set_margin_end(8)
+        self._fill_container_row(row, c)
         return w.listbox_wrap(row)
 
     def _show_details(self, cid: str, name: str) -> None:

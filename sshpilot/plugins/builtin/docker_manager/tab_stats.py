@@ -63,8 +63,9 @@ class StatsTabMixin:
         if client is None or self._stats_busy:
             return
         self._stats_busy = True
-        # Only show the loading logo on the first load; auto-refresh is silent.
-        if not self._stats_has_data:
+        # Only show the loading logo on the first load after a host switch;
+        # auto-refresh (even of an empty or errored view) is silent.
+        if not self._stats_loaded:
             self._stats_pulse.set_visible(True)
             self._pulse_start(self._stats_pulse)
         gen = self._load_gen
@@ -85,19 +86,17 @@ class StatsTabMixin:
         if gen != self._load_gen:
             return  # stale result for a previous host — drop it
         self._stats_busy = False
+        self._stats_loaded = True
         self._pulse_stop(self._stats_pulse)
         self._stats_pulse.set_visible(False)
         w.clear_grid(self._stats_grid)
         span = len(self._STATS_COLUMNS)
         if err is not None:
-            self._stats_has_data = False
             self._stats_grid.attach(w.grid_message(w.error_text(err), error=True), 0, 0, span, 1)
             return
         if not rows:
-            self._stats_has_data = False
             self._stats_grid.attach(w.grid_message("No running containers"), 0, 0, span, 1)
             return
-        self._stats_has_data = True
         # Header row.
         for col, (title, _keys) in enumerate(self._STATS_COLUMNS):
             head = Gtk.Label(label=title, xalign=0, hexpand=True)

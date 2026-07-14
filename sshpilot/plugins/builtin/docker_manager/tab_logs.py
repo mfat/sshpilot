@@ -121,8 +121,11 @@ class LogsTabMixin:
             return
         tail = int(self._tail_spin.get_value())
         ts = self._ts_switch.get_active()
-        self._logs_pulse.set_visible(True)
-        self._pulse_start(self._logs_pulse)
+        # Pulse only when there's nothing on screen yet; auto-refresh of an
+        # already-shown snapshot updates silently (no flashing).
+        if not self._logs_raw:
+            self._logs_pulse.set_visible(True)
+            self._pulse_start(self._logs_pulse)
         self._run_async(
             lambda: client.logs_snapshot(cid, tail=tail, timestamps=ts),
             self._on_logs,

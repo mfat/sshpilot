@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Callable, Optional, Tuple
 
 import gi
@@ -22,6 +23,16 @@ _HAS_ALERT_DIALOG = hasattr(Adw, "AlertDialog")
 _PLACEHOLDER_CSS = """
 .docker-console-placeholder {
   background-color: @window_bg_color;
+}
+/* No bold anywhere in the placeholder — the StatusPage title is bold by
+   default. */
+statuspage.docker-console-placeholder label.title {
+  font-weight: normal;
+}
+/* Failure state: colour only the summary (title), not the whole page —
+   the generic Adwaita .error class would tint the detail log too. */
+statuspage.docker-console-placeholder.docker-error label.title {
+  color: @error_color;
 }
 """
 _PLACEHOLDER_CSS_LOADED = False
@@ -103,6 +114,52 @@ def truncate_message(text: str, max_chars: int) -> Tuple[str, bool]:
     return cut + "\n\n…", True
 
 
+# SSH chatter that must never surface as an "error summary" (verbose mode
+# prints debugN:/mux lines on stderr ahead of the real failure).
+_SSH_NOISE_PREFIXES = (
+    "debug1:", "debug2:", "debug3:",
+    "warning: permanently added",
+    "authenticated to ",
+    "transferred:",
+    "shared connection to",
+)
+
+
+def strip_ssh_noise(text: str) -> str:
+    """Drop SSH debug/mux chatter lines, keeping the real output."""
+    lines = [ln for ln in (text or "").splitlines()
+             if ln.strip()
+             and not ln.strip().lower().startswith(_SSH_NOISE_PREFIXES)]
+    return "\n".join(lines)
+
+
+def describe_docker_failure(text: str) -> str:
+    """One human-readable line for a failed docker/SSH command, parsed from
+    the real stderr/stdout (falls back to the output's first meaningful line)."""
+    text = strip_ssh_noise(text)
+    low = text.lower()
+    if ("cannot connect to the docker daemon" in low
+            or "is the docker daemon running" in low):
+        return "Docker daemon isn't running on this host"
+    runtime_missing = re.search(r"\b(docker|podman)\b[^\n]*not found", low)
+    if (runtime_missing or "command not found" in low
+            or "executable file not found" in low):
+        name = runtime_missing.group(1).capitalize() if runtime_missing else "Docker"
+        return f"{name} isn't installed on this host"
+    if "permission denied" in low and ("docker.sock" in low or "dial unix" in low):
+        return "Permission denied talking to Docker — needs sudo or the docker group"
+    if "could not resolve hostname" in low:
+        return "Could not resolve the host name"
+    if "connection refused" in low:
+        return "Connection refused by the host"
+    if "timed out" in low:
+        return "Connection timed out"
+    if "permission denied" in low:
+        return "Permission denied"
+    first = text.strip().splitlines()
+    return first[0].strip() if first else "Command failed"
+
+
 def truncate_toast(message: str, max_chars: int = _TOAST_MAX_CHARS) -> str:
     display, truncated = truncate_message(message, max_chars)
     if truncated:
@@ -115,8 +172,8 @@ def wrap_with_overlay(content: Gtk.Widget, placeholder: Gtk.Widget) -> Gtk.Overl
     """Overlay *placeholder* on *content* (ListBox placeholder workaround).
 
     The placeholder fills the overlay so its opaque background covers the list
-    area; clicks pass through while ``can_target`` is False (loading over an
-    existing list)."""
+    area; ``can_target`` starts False (clicks fall through) and is raised by
+    the loading/error states, whose text is mouse-selectable."""
     ensure_placeholder_css()
     overlay = Gtk.Overlay()
     overlay.set_vexpand(True)
@@ -154,26 +211,15 @@ def listbox_wrap(widget: Gtk.Widget) -> Gtk.Widget:
 
 
 def grid_message(text: str, *, error: bool = False) -> Gtk.Widget:
-    display, _ = truncate_message(text, _PLACEHOLDER_MAX_CHARS)
+    # Errors show the parsed human-readable summary (a plain selectable label,
+    # no framed log box); the raw output is what the caller toasts/logs.
     if error:
-        # TextView so stats failures are mouse-selectable / copyable like list errors.
-        view = Gtk.TextView()
-        view.set_editable(False)
-        view.set_cursor_visible(True)
-        view.set_monospace(True)
-        view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
-        view.set_top_margin(8)
-        view.set_bottom_margin(8)
-        view.set_left_margin(4)
-        view.set_right_margin(4)
-        view.add_css_class("error")
-        view.get_buffer().set_text(display, -1)
-        view.set_hexpand(True)
-        return view
+        text = describe_docker_failure(text)
+    display, _ = truncate_message(text, _PLACEHOLDER_MAX_CHARS)
     lbl = Gtk.Label(label=display, wrap=True, xalign=0)
     lbl.set_max_width_chars(72)
     lbl.set_selectable(True)
-    lbl.add_css_class("dim-label")
+    lbl.add_css_class("error" if error else "dim-label")
     lbl.set_margin_top(12)
     lbl.set_margin_bottom(12)
     return lbl
