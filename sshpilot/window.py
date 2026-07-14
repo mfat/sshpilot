@@ -3999,7 +3999,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         server_section.append('Copy Key to Server', 'app.new-key')
         server_section.append('Broadcast Command', 'app.broadcast-command')
         if not should_hide_file_manager_options():
-            server_section.append('Open File Manager', 'win.open-file-manager')
+            server_section.append('Manage Files', 'win.open-file-manager')
         menu.append_section(None, server_section)
 
         ssh_section = Gio.Menu()
