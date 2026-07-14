@@ -438,14 +438,6 @@ class WelcomePage(Gtk.Overlay):
         icon_utils.set_icon_from_name(chevron, 'pan-up-symbolic' if reveal else 'pan-down-symbolic')
         button.set_tooltip_text(_('Show fewer actions') if reveal else _('Show more actions'))
 
-    def _pick_host(self, anchor, on_selected):
-        """Show the host picker, or prompt to create a connection if none exist."""
-        if not list(getattr(self.connection_manager, 'connections', [])):
-            self._prompt_create_connection()
-            return
-        from .host_picker import show_host_picker
-        show_host_picker(self.window, anchor, on_selected, toast=self._show_toast)
-
     def _prompt_create_connection(self):
         """No hosts yet — offer to create one."""
         dialog = Adw.MessageDialog(
@@ -501,12 +493,13 @@ class WelcomePage(Gtk.Overlay):
         dialog.present()
 
     def _open_file_manager(self, anchor):
-        """Pick a host, then open the SFTP file manager for it."""
-        self._pick_host(anchor, self._open_file_manager_for)
-
-    def _open_file_manager_for(self, connection):
+        """Same behavior as the Manage Files menu item: selected connection,
+        or the file manager with a host picker in the remote pane."""
+        if not list(getattr(self.connection_manager, 'connections', [])):
+            self._prompt_create_connection()
+            return
         try:
-            self.window._open_manage_files_for_connection(connection)
+            self.window.open_file_manager_from_menu()
         except Exception:
             logger.error("Failed to open file manager", exc_info=True)
 
