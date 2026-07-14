@@ -126,6 +126,9 @@ def show_host_picker(window, anchor, on_selected, *, toast=None,
     scrolled.set_child(list_box)
     outer.append(scrolled)
     popover.set_child(outer)
+    # set_parent() alone leaves the popover attached to the anchor forever,
+    # which warns at finalization; detach once closed.
+    popover.connect('closed', lambda p: GLib.idle_add(p.unparent))
 
     def _popup():
         popover.popup()
