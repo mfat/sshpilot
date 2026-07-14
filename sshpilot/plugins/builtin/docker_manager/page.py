@@ -287,17 +287,22 @@ class DockerConsolePage(
         self._status_labels.append(status)
 
         # Raw log, inline below the human summary — hidden until the user
-        # toggles "Show detailed log". Rendered exactly like the status feed:
-        # a plain selectable label, no box, no scroller (long output scrolls
-        # with the whole status page).
+        # toggles "Show detailed log". Left-aligned text inside a Gtk.Frame so
+        # it reads naturally without stretching to the window edge (the
+        # StatusPage clamp caps the width; long output scrolls with the page).
         detail_lbl = Gtk.Label()
         detail_lbl.set_wrap(True)
         detail_lbl.set_selectable(True)
-        detail_lbl.set_justify(Gtk.Justification.CENTER)
-        detail_lbl.set_halign(Gtk.Align.FILL)
+        detail_lbl.set_xalign(0)
         detail_lbl.add_css_class("dim-label")
         detail_lbl.add_css_class("monospace")
-        detail_lbl.set_visible(False)
+        detail_lbl.set_margin_top(10)
+        detail_lbl.set_margin_bottom(10)
+        detail_lbl.set_margin_start(12)
+        detail_lbl.set_margin_end(12)
+        detail_frame = Gtk.Frame()
+        detail_frame.set_child(detail_lbl)
+        detail_frame.set_visible(False)
 
         details = Gtk.ToggleButton(label="Show detailed log")
         details.add_css_class("flat")
@@ -306,7 +311,7 @@ class DockerConsolePage(
 
         def _on_details_toggled(btn: Gtk.ToggleButton) -> None:
             show = btn.get_active()
-            detail_lbl.set_visible(show)
+            detail_frame.set_visible(show)
             btn.set_label("Hide detailed log" if show else "Show detailed log")
 
         details.connect("toggled", _on_details_toggled)
@@ -314,7 +319,7 @@ class DockerConsolePage(
         child = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
         child.append(status)
         child.append(details)
-        child.append(detail_lbl)
+        child.append(detail_frame)
         sp.set_child(child)
 
         # Loading spinner (libadwaita ≥ 1.6); older versions keep the static mark.
@@ -323,6 +328,7 @@ class DockerConsolePage(
         sp._status_lbl = status        # type: ignore[attr-defined]
         sp._details_btn = details      # type: ignore[attr-defined]
         sp._detail_lbl = detail_lbl    # type: ignore[attr-defined]
+        sp._detail_frame = detail_frame  # type: ignore[attr-defined]
         sp._full_text = ""             # type: ignore[attr-defined]
         sp._idle_key = None            # type: ignore[attr-defined]
         return sp

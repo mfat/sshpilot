@@ -1082,9 +1082,9 @@ def test_placeholder_error_shows_human_summary():
 
     # Toggling expands the raw log inline (no separate window, no framed
     # box — a plain selectable label like the status feed).
-    assert not ph._detail_lbl.get_visible()
+    assert not ph._detail_frame.get_visible()
     ph._details_btn.set_active(True)
-    assert ph._detail_lbl.get_visible()
+    assert ph._detail_frame.get_visible()
     assert ph._details_btn.get_label() == "Hide detailed log"
     assert "ash: docker: not found" in ph._detail_lbl.get_text()
     assert ph._detail_lbl.get_selectable() is True
@@ -1092,7 +1092,7 @@ def test_placeholder_error_shows_human_summary():
     # Auto-refresh repainting the SAME failure is a no-op: the expanded log
     # must stay open instead of collapsing every tick.
     page._set_placeholder_idle(ph, raw, error=True)
-    assert ph._detail_lbl.get_visible()
+    assert ph._detail_frame.get_visible()
     assert ph._details_btn.get_active() is True
 
     # A message that IS already the summary needs no details toggle; the
@@ -1100,7 +1100,7 @@ def test_placeholder_error_shows_human_summary():
     page._set_placeholder_idle(ph, "Connection timed out", error=True)
     assert ph._details_btn.get_visible() is False
     assert ph._details_btn.get_active() is False
-    assert not ph._detail_lbl.get_visible()
+    assert not ph._detail_frame.get_visible()
     assert ph.get_can_target() is True
 
     page._set_placeholder_idle(ph, "No containers")
