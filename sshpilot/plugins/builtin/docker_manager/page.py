@@ -334,6 +334,15 @@ class DockerConsolePage(
         return sp
 
     @staticmethod
+    def _set_placeholder_targetable(ph: Adw.StatusPage, on: bool) -> None:
+        """Toggle whether the placeholder (and its revealer wrapper, which
+        spans the overlay even when unrevealed) receives pointer events."""
+        ph.set_can_target(on)
+        rev = getattr(ph, "_revealer", None)
+        if rev is not None:
+            rev.set_can_target(on)
+
+    @staticmethod
     def _reveal_placeholder(ph: Adw.StatusPage, shown: bool) -> None:
         """Fade the placeholder in/out via its crossfade revealer (smooth
         transition to the loaded list) — falls back to plain visibility."""
@@ -347,7 +356,7 @@ class DockerConsolePage(
         self._reveal_placeholder(ph, True)
         # Targetable so the status feed is mouse-selectable; the opaque fill
         # hides the (empty or stale) list underneath anyway.
-        ph.set_can_target(True)
+        self._set_placeholder_targetable(ph, True)
         ph._idle_key = None            # type: ignore[attr-defined]
         ph.set_title(text)
         ph.remove_css_class("docker-error")
@@ -386,18 +395,18 @@ class DockerConsolePage(
             ph.add_css_class("docker-error")
             self._reset_placeholder_details(
                 ph, full if full != ph.get_title() else "")
-            ph.set_can_target(True)  # detailed log is mouse-selectable
+            self._set_placeholder_targetable(ph, True)  # detailed log is mouse-selectable
         else:
             ph.set_title(w.truncate_message(full, w._PLACEHOLDER_MAX_CHARS)[0])
             ph.remove_css_class("docker-error")
             self._reset_placeholder_details(ph)
-            ph.set_can_target(False)
+            self._set_placeholder_targetable(ph, False)
 
     def _hide_placeholder(self, ph: Adw.StatusPage) -> None:
         ph._idle_key = None             # type: ignore[attr-defined]
         ph._status_lbl.set_visible(False)  # type: ignore[attr-defined]
         self._reset_placeholder_details(ph)
-        ph.set_can_target(False)
+        self._set_placeholder_targetable(ph, False)
         self._reveal_placeholder(ph, False)
 
     def _current_nickname(self) -> Optional[str]:

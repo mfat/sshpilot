@@ -1109,6 +1109,13 @@ def test_placeholder_error_shows_human_summary():
     assert ph.get_title() == "No containers"
     assert ph.get_can_target() is False
 
+    # The crossfade revealer spans the overlay even when unrevealed — it must
+    # never intercept scroll/clicks meant for the list (scrollability bug).
+    page._hide_placeholder(ph)
+    assert ph._revealer.get_can_target() is False
+    page._set_placeholder_idle(ph, "boom", error=True)
+    assert ph._revealer.get_can_target() is True
+
 
 def test_text_view_dialog_is_selectable():
     _gtk_or_skip()

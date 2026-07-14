@@ -189,6 +189,9 @@ def wrap_with_overlay(content: Gtk.Widget, placeholder: Gtk.Widget) -> Gtk.Overl
     revealer.set_transition_type(Gtk.RevealerTransitionType.CROSSFADE)
     revealer.set_transition_duration(250)
     revealer.set_reveal_child(True)
+    # The revealer spans the whole overlay even when unrevealed — it must not
+    # swallow clicks/scrolling meant for the list underneath.
+    revealer.set_can_target(False)
     revealer.set_child(placeholder)
     placeholder._revealer = revealer  # type: ignore[attr-defined]
     overlay.add_overlay(revealer)
