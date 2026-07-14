@@ -36,6 +36,13 @@ def test_theme_and_font_seeded():
     assert "15" in html
 
 
+def test_autocomplete_popup_present():
+    html = build_shell_html()
+    assert 'id="ac"' in html
+    assert "window.sshpilotAC" in html
+    assert "sshpilotAC.visible()" in html  # key handler consults the popup
+
+
 def test_asset_dir_exists():
     # Either the system libjs-xterm or the bundled copy must resolve to real files.
     import os

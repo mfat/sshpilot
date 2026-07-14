@@ -1361,6 +1361,7 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
         self._shell_entry = None
         self._shell_attached = False
         self._shell_loaded = False
+        self._autocompleter = None          # lazy (see _feed_autocomplete)
         super().__init__(owner)
         # WebKit2 (GTK3) lacks the UCM script-message bridge this backend needs.
         if getattr(self, "WebKit", None) is None:
@@ -1473,6 +1474,7 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
         elif kind == "input":
             if self._bridge is not None:
                 self._bridge.write(payload.get("data", ""))
+            self._feed_autocomplete(payload.get("data", ""))
         elif kind == "resize":
             self._last_size = (payload.get("rows", 24), payload.get("cols", 80))
             if self._bridge is not None:
@@ -1486,6 +1488,58 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
                     owner.handle_backend_title(payload.get("title", ""))
                 except Exception:  # noqa: BLE001
                     logger.debug("handle_backend_title raised", exc_info=True)
+
+    # ---- autocomplete (Termius-style popup, engine in autocomplete.py) -------
+
+    def _get_autocompleter(self):
+        if self._autocompleter is None:
+            from .autocomplete import (
+                Autocompleter, CommandBlockProvider, RemoteHistoryProvider,
+                SessionProvider, ShellHistoryProvider, fetch_remote_history,
+            )
+            root = store = None
+            try:
+                root = self.owner.get_root()
+                ensure = getattr(root, "_ensure_command_block_store", None)
+                store = ensure() if callable(ensure) else getattr(root, "command_block_store", None)
+            except Exception:  # noqa: BLE001
+                pass
+            session = SessionProvider()
+            # Provider order = source rank: session > remote > history > snippets.
+            providers = [session, ShellHistoryProvider(), CommandBlockProvider(store)]
+            conn = getattr(self.owner, "connection", None)
+            try:
+                is_ssh = conn is not None and not self.owner._is_local_terminal()
+            except Exception:  # noqa: BLE001
+                is_ssh = False
+            if is_ssh:
+                key = str(getattr(conn, "nickname", "") or getattr(conn, "hostname", "")
+                          or getattr(conn, "host", ""))
+                if key:
+                    cm = getattr(root, "connection_manager", None)
+                    config = getattr(self.owner, "config", None)
+                    providers.insert(1, RemoteHistoryProvider(
+                        key, lambda: fetch_remote_history(conn, cm, config)))
+            self._autocompleter = Autocompleter(providers, session=session)
+        return self._autocompleter
+
+    def _feed_autocomplete(self, data: str) -> None:
+        """Feed a keystroke to the popup engine; must never break the input path."""
+        try:
+            if not self._js_ready:
+                return
+            config = getattr(self.owner, "config", None)
+            if config is None or not config.get_setting("terminal.autocomplete", True):
+                return
+            payload = self._get_autocompleter().feed(
+                data, output_tail=self._recent_output[-200:])
+            if payload is not None:
+                import json
+                self._run_javascript(
+                    "window.sshpilotAC && window.sshpilotAC.update(%s);"
+                    % json.dumps(payload))
+        except Exception:  # noqa: BLE001
+            logger.debug("autocomplete feed failed", exc_info=True)
 
     # ---- spawn: in-process PTY, reusing the shared argv/env ------------------
 

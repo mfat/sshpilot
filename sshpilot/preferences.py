@@ -604,6 +604,17 @@ class PreferencesWindow(Adw.Window):
             self.pass_through_switch.connect('notify::active', self.on_pass_through_mode_toggled)
             keyboard_group.add(self.pass_through_switch)
 
+            self.autocomplete_switch = Adw.SwitchRow()
+            self.autocomplete_switch.set_title("Command autocomplete")
+            self.autocomplete_switch.set_subtitle(
+                "Suggest commands from history and snippets as you type (embedded terminal)"
+            )
+            self.autocomplete_switch.set_active(
+                bool(self.config.get_setting('terminal.autocomplete', True))
+            )
+            self.autocomplete_switch.connect('notify::active', self.on_autocomplete_toggled)
+            keyboard_group.add(self.autocomplete_switch)
+
             terminal_page.add(keyboard_group)
 
             # Mouse behavior group
@@ -3028,6 +3039,13 @@ class PreferencesWindow(Adw.Window):
             os.environ['SSHPILOT_SECRET_SESSION_TIMEOUT'] = str(max(0, minutes) * 60)
         except Exception as exc:
             logger.error("Failed to update secret session timeout: %s", exc)
+
+    def on_autocomplete_toggled(self, switch, _pspec):
+        """Persist the terminal command-autocomplete preference."""
+        try:
+            self.config.set_setting('terminal.autocomplete', bool(switch.get_active()))
+        except Exception as exc:
+            logger.error("Failed to update autocomplete mode: %s", exc)
 
     def on_copy_on_select_toggled(self, switch, _pspec):
         """Persist the terminal copy-on-selection preference."""
