@@ -615,6 +615,18 @@ class PreferencesWindow(Adw.Window):
             self.autocomplete_switch.connect('notify::active', self.on_autocomplete_toggled)
             keyboard_group.add(self.autocomplete_switch)
 
+            self.autocomplete_remote_switch = Adw.SwitchRow()
+            self.autocomplete_remote_switch.set_title("Suggest from remote history")
+            self.autocomplete_remote_switch.set_subtitle(
+                "Also fetch the remote host's shell history over SSH (applies to new tabs)"
+            )
+            self.autocomplete_remote_switch.set_active(
+                bool(self.config.get_setting('terminal.autocomplete_remote', False))
+            )
+            self.autocomplete_remote_switch.connect(
+                'notify::active', self.on_autocomplete_remote_toggled)
+            keyboard_group.add(self.autocomplete_remote_switch)
+
             terminal_page.add(keyboard_group)
 
             # Mouse behavior group
@@ -3046,6 +3058,13 @@ class PreferencesWindow(Adw.Window):
             self.config.set_setting('terminal.autocomplete', bool(switch.get_active()))
         except Exception as exc:
             logger.error("Failed to update autocomplete mode: %s", exc)
+
+    def on_autocomplete_remote_toggled(self, switch, _pspec):
+        """Persist the remote-history autocomplete opt-in."""
+        try:
+            self.config.set_setting('terminal.autocomplete_remote', bool(switch.get_active()))
+        except Exception as exc:
+            logger.error("Failed to update remote autocomplete mode: %s", exc)
 
     def on_copy_on_select_toggled(self, switch, _pspec):
         """Persist the terminal copy-on-selection preference."""

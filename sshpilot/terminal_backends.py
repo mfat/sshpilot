@@ -1512,7 +1512,14 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
                 is_ssh = conn is not None and not self.owner._is_local_terminal()
             except Exception:  # noqa: BLE001
                 is_ssh = False
-            if is_ssh:
+            # Remote history is opt-in: it opens a second SSH connection to the host.
+            remote_on = False
+            try:
+                remote_on = bool(self.owner.config.get_setting(
+                    'terminal.autocomplete_remote', False))
+            except Exception:  # noqa: BLE001
+                pass
+            if is_ssh and remote_on:
                 key = str(getattr(conn, "nickname", "") or getattr(conn, "hostname", "")
                           or getattr(conn, "host", ""))
                 if key:
