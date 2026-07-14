@@ -1222,3 +1222,27 @@ def test_loaded_flags_suppress_repulse():
     assert page._containers_loaded is True
     page._on_stats([], None, page._load_gen)
     assert page._stats_loaded is True
+
+
+def test_logs_dropdown_selection_loads_logs():
+    """Picking a container in the Logs dropdown loads its logs without the
+    Load button; poll-driven model refreshes neither re-trigger nor lose
+    the selection."""
+    _gtk_or_skip()
+    from sshpilot.plugins.builtin.docker_manager.page import DockerConsolePage
+
+    page = DockerConsolePage(_gtk_ctx(), initial_host="web")
+    page._containers = [{"Names": "web", "ID": "a1"}, {"Names": "db", "ID": "b2"}]
+    calls = []
+    page._reload_logs = lambda: calls.append(page._selected_container_id())
+
+    page._refresh_logs_targets()      # programmatic model swap — must not load
+    assert calls == []
+
+    page._logs_combo.set_selected(1)  # user picks "db"
+    assert calls == ["b2"]
+    assert page._logs_raw == ""
+
+    page._refresh_logs_targets()      # containers poll: keeps pick, no reload
+    assert calls == ["b2"]
+    assert page._logs_combo.get_selected() == 1

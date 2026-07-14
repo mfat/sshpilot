@@ -22,6 +22,11 @@ class LogsTabMixin:
         toolbar.append(Gtk.Label(label="Container:"))
         self._logs_combo = Gtk.DropDown.new_from_strings(["(refresh containers)"])
         self._logs_combo.set_hexpand(True)
+        # Picking a container loads its logs right away (no Load click).
+        # The guard suppresses the programmatic model swaps done by
+        # _refresh_logs_targets on every containers poll.
+        self._syncing_logs_combo = False
+        self._logs_combo.connect("notify::selected", self._on_logs_target_changed)
         toolbar.append(self._logs_combo)
 
         toolbar.append(Gtk.Label(label="Tail:"))
@@ -99,8 +104,28 @@ class LogsTabMixin:
 
     def _refresh_logs_targets(self) -> None:
         names = [w.field(c, "Names", "Name", "ID", "Id") for c in self._containers]
-        model = Gtk.StringList.new(names or ["(no containers)"])
-        self._logs_combo.set_model(model)
+        # Remember the current pick so the poll-driven model swap keeps it.
+        current = None
+        old_model = self._logs_combo.get_model()
+        idx = self._logs_combo.get_selected()
+        if old_model is not None and 0 <= idx < old_model.get_n_items():
+            current = old_model.get_string(idx)
+        self._syncing_logs_combo = True
+        try:
+            self._logs_combo.set_model(Gtk.StringList.new(names or ["(no containers)"]))
+            if current in names:
+                self._logs_combo.set_selected(names.index(current))
+        finally:
+            self._syncing_logs_combo = False
+
+    def _on_logs_target_changed(self, *_a) -> None:
+        """User picked a container in the dropdown — load its logs directly."""
+        if self._syncing_logs_combo:
+            return
+        if not self._selected_container_id():
+            return
+        self._logs_raw = ""  # fresh snapshot: show the loading mark, drop stale text
+        self._reload_logs()
 
     def _selected_container_id(self) -> Optional[str]:
         idx = self._logs_combo.get_selected()
