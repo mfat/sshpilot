@@ -340,10 +340,10 @@ def _clear_bar(row: Gtk.Widget):
         row._bar_provider = None  # type: ignore[attr-defined]
 
 
-def _create_color_dot() -> Gtk.Image:
+def _create_color_dot(icon_name: str = "dot-symbolic") -> Gtk.Image:
     """Colour dot shown before a row title ('dot' mode; 'bar'-mode member rows)."""
     from sshpilot import icon_utils
-    dot = icon_utils.new_image_from_icon_name("dot-symbolic")
+    dot = icon_utils.new_image_from_icon_name(icon_name)
     dot.add_css_class("sidebar-color-dot")
     dot.set_pixel_size(16)
     dot.set_valign(Gtk.Align.CENTER)
@@ -549,7 +549,7 @@ class GroupRow(Gtk.ListBoxRow):
         content.append(icon)
         self.icon = icon
 
-        self.color_dot = _create_color_dot()
+        self.color_dot = _create_color_dot("big-dot-symbolic")
         content.append(self.color_dot)
 
         info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)

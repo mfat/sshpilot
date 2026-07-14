@@ -20,6 +20,7 @@
     <file alias="dialog-warning-symbolic.svg">icons/scalable/actions/dialog-warning-symbolic.svg</file>
     <file alias="document-edit-symbolic.svg">icons/scalable/actions/document-edit-symbolic.svg</file>
     <file alias="dot-symbolic.svg">icons/scalable/actions/dot-symbolic.svg</file>
+    <file alias="big-dot-symbolic.svg">icons/scalable/actions/big-dot-symbolic.svg</file>
     <file alias="error-outline-symbolic.svg">icons/scalable/actions/error-outline-symbolic.svg</file>
     <file alias="info-outline-symbolic.svg">icons/scalable/actions/info-outline-symbolic.svg</file>
     <file alias="color-symbolic.svg">icons/scalable/actions/color-symbolic.svg</file>

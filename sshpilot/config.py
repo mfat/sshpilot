@@ -1219,7 +1219,7 @@ class Config(GObject.Object):
             if not isinstance(display_value, str):
                 display_value = str(display_value)
             normalized = display_value.lower()
-            if normalized not in {'fill', 'badge', 'bar'}:
+            if normalized not in {'fill', 'badge', 'bar', 'dot'}:
                 normalized = 'fill'
             if ui_cfg.get('group_color_display') != normalized:
                 ui_cfg['group_color_display'] = normalized
