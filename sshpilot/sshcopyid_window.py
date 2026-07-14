@@ -497,10 +497,15 @@ class SshCopyIdWindow(Adw.Window):
 
             def _open_server_picker(*_a):
                 from .host_picker import show_host_picker
-                show_host_picker(
-                    self, pick_btn, self._set_server,
+                popover = show_host_picker(
+                    self, self._server_row, self._set_server,
                     connections=self._cm.get_connections(),
                 )
+                # Anchored to the row: stretch to its full width.
+                if popover is not None:
+                    width = self._server_row.get_width()
+                    if width > 0:
+                        popover.set_size_request(width, -1)
 
             pick_btn.connect('clicked', _open_server_picker)
             self._server_row.connect('activated', lambda _r: _open_server_picker())
