@@ -291,6 +291,7 @@ class FileManagerWindow(Adw.Window):
         self._right_overlay = Gtk.Overlay()
         self._right_overlay.set_child(self._right_pane)
         panes.set_end_child(self._right_overlay)
+        self._install_remote_host_button()
 
         # Seed each pane with the persisted default zoom level. Each pane
         # tracks its own level from here on (zooming one does not affect the
@@ -499,6 +500,72 @@ class FileManagerWindow(Adw.Window):
         except Exception as exc:
             logger.exception("Error connecting to server: %s", exc)
 
+    # -- remote host-picker button (same pattern as the Docker Console) --
+
+    def _install_remote_host_button(self) -> None:
+        """Replace the right pane's static "Remote" title with a host-picker
+        button: icon + current host + caret, opening the shared picker."""
+        toolbar = getattr(self._right_pane, 'toolbar', None)
+        label = getattr(toolbar, '_pane_label', None)
+        parent = label.get_parent() if label is not None else None
+        if parent is None:
+            return
+        btn = Gtk.Button()
+        btn.add_css_class('flat')
+        btn.set_tooltip_text(_("Choose remote host"))
+        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        icon = Gtk.Image.new_from_icon_name('computer-symbolic')
+        icon.set_pixel_size(16)
+        box.append(icon)
+        self._remote_host_label = Gtk.Label()
+        self._remote_host_label.set_css_classes(['title'])
+        box.append(self._remote_host_label)
+        caret = Gtk.Image.new_from_icon_name('pan-down-symbolic')
+        caret.set_pixel_size(12)
+        box.append(caret)
+        btn.set_child(box)
+        btn.connect('clicked', self._on_remote_host_button_clicked)
+        label.set_visible(False)
+        parent.insert_child_after(btn, label)
+        self._remote_host_button = btn
+        self._update_remote_host_button()
+
+    def _update_remote_host_button(self) -> None:
+        text = ((str(self._nickname).strip() if self._nickname else '')
+                or self._host or _("Select host"))
+        self._remote_host_label.set_text(text)
+
+    def _on_remote_host_button_clicked(self, btn) -> None:
+        from .host_picker import show_host_picker
+        cm = self._connection_manager
+        connections = cm.get_connections() if cm else []
+        if not connections:
+            self._right_pane.show_toast(_("No connections available"))
+            return
+        show_host_picker(None, btn, self._switch_remote_host,
+                         connections=connections)
+
+    def _switch_remote_host(self, connection) -> None:
+        """Point the remote pane at another host: tear down the current
+        backend and reconnect via the shared pick handler."""
+        if connection is self._connection and self._manager is not None:
+            return
+        manager = self._manager
+        self._manager = None
+        if manager is not None:
+            try:
+                manager.close()
+            except Exception:
+                logger.debug("Error closing previous SFTP backend", exc_info=True)
+        self._connection_error_reported = False
+        self._password_dialog_shown = False
+        self._password_retry_count = 0
+        # Land in the new host's home, not the old host's last path, and
+        # drop the old host's navigation history.
+        self._pending_paths[self._right_pane] = "~"
+        self._right_pane._history.clear()
+        self._on_placeholder_host_picked(connection)
+
     # -- no-server host picker (same picker as empty split-view panes) ---
 
     def _show_host_picker_placeholder(self) -> None:
@@ -562,6 +629,7 @@ class FileManagerWindow(Adw.Window):
         if not title_parts or title_parts[0] != base_identity:
             title_parts.append(base_identity)
         self._header_bar.set_title_widget(Gtk.Label(label=" ".join(title_parts)))
+        self._update_remote_host_button()
 
         callback = getattr(self, '_host_picked_callback', None)
         if callback is not None:
