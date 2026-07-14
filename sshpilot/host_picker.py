@@ -126,5 +126,10 @@ def show_host_picker(window, anchor, on_selected, *, toast=None,
     scrolled.set_child(list_box)
     outer.append(scrolled)
     popover.set_child(outer)
-    GLib.idle_add(popover.popup)
+
+    def _popup():
+        popover.popup()
+        search_entry.grab_focus()
+
+    GLib.idle_add(_popup)
     return popover

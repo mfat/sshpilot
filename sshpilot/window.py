@@ -4925,99 +4925,18 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             logger.error(f"Failed to open SSH config editor: {e}")
 
     def show_connection_selection_for_ssh_copy(self):
-        """Show a dialog to select a connection for SSH key copy"""
-        logger.info("Showing connection selection dialog for SSH key copy")
-        
-        # Get all connections
-        connections = self.connection_manager.get_connections()
-        if not connections:
+        """Open the ssh-copy-id dialog with no server preselected; its
+        embedded server picker handles the choice."""
+        if not self.connection_manager.get_connections():
             # No connections available, show new connection dialog instead
             logger.info("No connections available, showing new connection dialog")
             self.show_connection_dialog()
             return
-        
-        # Create a simple selection dialog
-        dialog = Adw.MessageDialog(
-            transient_for=self,
-            modal=True,
-            heading=_("Select Server for SSH Key Copy"),
-            body=_("Choose a server to copy your SSH key to:")
-        )
-        
-        # Create a scrollable list box with connections
-        list_box = Gtk.ListBox()
-        list_box.set_selection_mode(Gtk.SelectionMode.SINGLE)
-        list_box.set_show_separators(True)
-        
-        for connection in connections:
-            row = Gtk.ListBoxRow()
-            box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-            box.set_margin_start(12)
-            box.set_margin_end(12)
-            box.set_margin_top(8)
-            box.set_margin_bottom(8)
-            
-            # Connection info
-            info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-            name_label = Gtk.Label(label=connection.nickname)
-            name_label.set_halign(Gtk.Align.START)
-            name_label.set_css_classes(['title-4'])
-            
-            host_label_text = _format_connection_host_display(connection, include_port=True)
-            if not host_label_text:
-                alias_display = _get_connection_alias(connection)
-                host_label_text = alias_display or ''
-            host_label = Gtk.Label(label=host_label_text)
-            host_label.set_halign(Gtk.Align.START)
-            host_label.set_css_classes(['dim-label'])
-            
-            info_box.append(name_label)
-            info_box.append(host_label)
-            box.append(info_box)
-            
-            row.set_child(box)
-            row.connection = connection
-            list_box.append(row)
-        
-        # Wrap list box in a scrollable window with size constraints
-        scrolled = Gtk.ScrolledWindow()
-        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scrolled.set_child(list_box)
-        scrolled.set_min_content_height(200)
-        scrolled.set_max_content_height(400)
-        scrolled.set_vexpand(True)
-        scrolled.set_hexpand(True)
-        
-        # Add the scrollable list to the dialog
-        dialog.set_extra_child(scrolled)
-        
-        # Add response buttons
-        dialog.add_response('cancel', _('Cancel'))
-        dialog.add_response('new', _('New Connection'))
-        dialog.add_response('select', _('Select'))
-        dialog.set_response_appearance('new', Adw.ResponseAppearance.SUGGESTED)
-        dialog.set_response_appearance('select', Adw.ResponseAppearance.DEFAULT)
-        
-        def on_response(dialog, response):
-            if response == 'new':
-                # Show new connection dialog
-                self.show_connection_dialog()
-            elif response == 'select':
-                # Get selected connection and proceed with SSH key copy
-                selected_row = list_box.get_selected_row()
-                if selected_row and hasattr(selected_row, 'connection'):
-                    connection = selected_row.connection
-                    logger.info(f"Selected connection for SSH key copy: {connection.nickname}")
-                    try:
-                        from .sshcopyid_window import SshCopyIdWindow
-                        win = SshCopyIdWindow(self, connection, self.key_manager, self.connection_manager)
-                        win.present()
-                    except Exception as e:
-                        logger.error(f"Failed to show SSH key copy dialog: {e}")
-            dialog.destroy()
-        
-        dialog.connect('response', on_response)
-        dialog.present()
+        try:
+            from .sshcopyid_window import SshCopyIdWindow
+            SshCopyIdWindow(self, None, self.key_manager, self.connection_manager)
+        except Exception as e:
+            logger.error(f"Failed to show SSH key copy dialog: {e}")
 
     # --- Helpers (use your existing ones if already present) ---------------------
 
