@@ -38,7 +38,7 @@ def asset_dir() -> str:
 
 
 def _read(rel: str) -> str:
-    with open(os.path.join(asset_dir(), rel), "r", encoding="utf-8") as f:
+    with open(os.path.join(asset_dir(), rel), encoding="utf-8") as f:
         return f.read()
 
 

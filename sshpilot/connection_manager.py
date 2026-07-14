@@ -10,11 +10,9 @@ import tempfile
 import asyncio
 import enum
 import logging
-import configparser
 import getpass
 import subprocess
 import shlex
-import signal
 import re
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple, Union, Set
@@ -24,8 +22,6 @@ from .platform_utils import get_config_dir, get_ssh_dir
 from .key_utils import _is_private_key
 from .ssh_connection_builder import build_ssh_connection, ConnectionContext
 
-import socket
-import time
 from gi.repository import GObject, GLib
 from .askpass_utils import (
     clear_passphrase,
@@ -37,7 +33,7 @@ from .askpass_utils import (
 if os.name == 'posix':
     import gi
     gi.require_version('Gtk', '4.0')
-    from gi.repository import Gtk, GLib
+    from gi.repository import GLib
     
     # Set up the asyncio event loop
     if not hasattr(GLib, 'MainLoop'):
@@ -1072,7 +1068,7 @@ class ConnectionManager(GObject.Object):
         try:
             existing = ""
             if os.path.exists(path):
-                with open(path, "r", encoding="utf-8") as f:
+                with open(path, encoding="utf-8") as f:
                     existing = f.read()
             stripped, _removed = self._strip_managed_block(existing)
             if socket:
@@ -1359,7 +1355,7 @@ class ConnectionManager(GObject.Object):
                 current_hosts: List[str] = []
                 current_config: Dict[str, Any] = {}
                 try:
-                    with open(cfg_file, 'r') as f:
+                    with open(cfg_file) as f:
                         lines = f.readlines()
                 except Exception as e:
                     logger.warning(f"Skipping unreadable config {cfg_file}: {e}")
@@ -1435,7 +1431,7 @@ class ConnectionManager(GObject.Object):
         except Exception as e:
             logger.error(f"Failed to load SSH config: {e}", exc_info=True)
 
-    def parse_host_config(self, config: Dict[str, Any], source: str = None) -> Optional[Dict[str, Any]]:
+    def parse_host_config(self, config: Dict[str, Any], source: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Parse host configuration from SSH config"""
         try:
             def _unwrap(val: Any) -> Any:
@@ -2256,7 +2252,7 @@ class ConnectionManager(GObject.Object):
             if not target_path or not os.path.exists(target_path):
                 return None
 
-            with open(target_path, 'r') as f:
+            with open(target_path) as f:
                 lines = f.readlines()
 
             i = 0
@@ -2298,7 +2294,7 @@ class ConnectionManager(GObject.Object):
             target_path = self._ensure_config_parent_dir(target_path)
 
             try:
-                with open(target_path, 'r') as f:
+                with open(target_path) as f:
                     lines = f.readlines()
             except FileNotFoundError:
                 lines = []
@@ -2358,7 +2354,7 @@ class ConnectionManager(GObject.Object):
             logger.error(f"Failed to split host block for '{original_host}': {e}")
             return False
 
-    def update_ssh_config_file(self, connection: Connection, new_data: Dict[str, Any], original_nickname: str = None):
+    def update_ssh_config_file(self, connection: Connection, new_data: Dict[str, Any], original_nickname: Optional[str] = None):
         """Update SSH config file with new connection data"""
         try:
             target_path = new_data.get('source') or getattr(connection, 'source', None) or self.ssh_config_path
@@ -2372,9 +2368,9 @@ class ConnectionManager(GObject.Object):
                 return
 
             try:
-                with open(target_path, 'r') as f:
+                with open(target_path) as f:
                     lines = f.readlines()
-            except IOError as e:
+            except OSError as e:
                 logger.error(f"Failed to read SSH config: {e}")
                 raise
             
@@ -2451,7 +2447,7 @@ class ConnectionManager(GObject.Object):
                     len(new_data.get('forwarding_rules', []) or []),
                     target_path,
                 )
-            except IOError as e:
+            except OSError as e:
                 logger.error(f"Failed to write SSH config: {e}")
                 raise
         except Exception as e:
@@ -2468,9 +2464,9 @@ class ConnectionManager(GObject.Object):
             if not os.path.exists(target_path):
                 return False
             try:
-                with open(target_path, 'r') as f:
+                with open(target_path) as f:
                     lines = f.readlines()
-            except IOError as e:
+            except OSError as e:
                 logger.error(f"Failed to read SSH config for delete: {e}")
                 return False
 
@@ -2535,7 +2531,7 @@ class ConnectionManager(GObject.Object):
                 try:
                     self._safe_write_config(target_path, ''.join(updated_lines))
                     logger.info(f"SSH config updated: {'removed' if host_nickname else 'modified'} entry for '{host_nickname}'")
-                except IOError as e:
+                except OSError as e:
                     logger.error(f"Failed to write SSH config after delete: {e}")
                     return False
             return modified

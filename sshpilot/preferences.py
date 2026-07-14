@@ -9,16 +9,13 @@ import hashlib
 import zipfile
 import tempfile
 import threading
-import importlib
-import importlib.util
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from gettext import gettext as _
 
-from .platform_utils import get_config_dir, is_flatpak, is_macos
+from .platform_utils import get_config_dir, is_macos
 from .file_manager_integration import (
     has_internal_file_manager,
-    has_native_gvfs_support,
 )
 from .shortcut_editor import ShortcutsPreferencesPage
 from .monospace_font_dialog import MonospaceFontDialog

@@ -240,7 +240,6 @@ class ScpWindowController:
         saved_passphrase: Optional[str] = None
         combined_auth = False
         connection_manager = getattr(self.window, 'connection_manager', None)
-        lookup_host = hostname_value or host_value
         if connection_manager:
             try:
                 saved_password = connection_manager.get_connection_password(connection)

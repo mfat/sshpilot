@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
-from pathlib import Path
 from typing import Any, Callable, Mapping, Optional, Protocol, Sequence
-import shlex
 
 import gi
 
@@ -14,7 +12,6 @@ gi.require_version("Gtk", "4.0")
 
 from gi.repository import GObject, Gtk
 
-from .platform_utils import is_flatpak, get_data_dir
 
 logger = logging.getLogger(__name__)
 

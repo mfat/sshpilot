@@ -64,8 +64,10 @@ def create_window():
     class DummyWindow:
         # Any action handler the registration connects to resolves to a no-op,
         # so the test doesn't have to enumerate every on_*_action (they grow).
+        # open_file_manager_from_menu is the main-menu file-manager entry point
+        # (not an on_* handler name).
         def __getattr__(self, name):
-            if name.startswith("on_"):
+            if name.startswith("on_") or name == "open_file_manager_from_menu":
                 return lambda *a, **k: None
             raise AttributeError(name)
 
