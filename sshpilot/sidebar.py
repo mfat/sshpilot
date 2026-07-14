@@ -177,7 +177,7 @@ def _get_color_display_mode(config) -> str:
     except Exception:
         return 'fill'
 
-    if mode not in {'fill', 'badge', 'bar'}:
+    if mode not in {'fill', 'badge', 'bar', 'dot'}:
         return 'fill'
     return mode
 
@@ -340,16 +340,57 @@ def _clear_bar(row: Gtk.Widget):
         row._bar_provider = None  # type: ignore[attr-defined]
 
 
+def _create_color_dot() -> Gtk.Image:
+    """Colour dot shown before a row title ('dot' mode; 'bar'-mode member rows)."""
+    from sshpilot import icon_utils
+    dot = icon_utils.new_image_from_icon_name("dot-symbolic")
+    dot.add_css_class("sidebar-color-dot")
+    dot.set_pixel_size(16)
+    dot.set_valign(Gtk.Align.CENTER)
+    dot.set_visible(False)
+    return dot
+
+
+def _update_color_dot(row: Gtk.Widget, rgba: Optional[Gdk.RGBA]):
+    """Colour and show the row's ``color_dot``, or hide it when no colour."""
+    if not rgba:
+        row.color_dot.set_visible(False)
+        return
+    css_data = f"""
+    image.sidebar-color-dot {{
+      color: {rgba.to_string()};
+    }}
+    """
+    old = getattr(row, '_color_dot_provider', None)
+    if old:
+        try:
+            row.color_dot.get_style_context().remove_provider(old)
+        except Exception:
+            pass
+    row._color_dot_provider = Gtk.CssProvider()
+    row._color_dot_provider.load_from_data(css_data.encode('utf-8'))
+    row.color_dot.get_style_context().add_provider(
+        row._color_dot_provider, Gtk.STYLE_PROVIDER_PRIORITY_USER
+    )
+    row.color_dot.set_visible(True)
+
+
 def _apply_row_color(row: Gtk.Widget, mode: str, rgba: Optional[Gdk.RGBA]):
     """Apply the selected group-color treatment to a sidebar row.
 
-    Modes: ``fill`` (tinted card), ``badge`` (color dot), ``bar`` (leading
-    accent bar). The three are mutually exclusive, so we always clear the other
-    two first. ``row`` must expose ``color_badge`` and ``_update_color_badge``.
+    Modes: ``fill`` (tinted card), ``badge`` (tag icon), ``bar`` (leading
+    accent bar), ``dot`` (dot before the title). Mutually exclusive, so we
+    always clear the others first. ``row`` must expose ``color_badge``,
+    ``_update_color_badge`` and ``color_dot``.
     """
     _clear_tint(row)
     _clear_bar(row)
     row.color_badge.set_visible(False)
+    row.color_dot.set_visible(False)
+
+    if mode == 'dot':
+        _update_color_dot(row, rgba)
+        return
 
     if mode == 'bar':
         # Reserve the (transparent) bar on every row so coloured and uncoloured
@@ -507,6 +548,9 @@ class GroupRow(Gtk.ListBoxRow):
         icon.set_visible(show_group_icon)
         content.append(icon)
         self.icon = icon
+
+        self.color_dot = _create_color_dot()
+        content.append(self.color_dot)
 
         info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         info_box.set_hexpand(True)
@@ -1045,13 +1089,7 @@ class ConnectionRow(Gtk.ListBoxRow):
         self.connection_icon.set_visible(show_connection_icon)
         content.append(self.connection_icon)
 
-        # Group-colour dot shown before the title in 'bar' mode (where the
-        # bar itself marks only group headers).
-        self.color_dot = icon_utils.new_image_from_icon_name("dot-symbolic")
-        self.color_dot.add_css_class("sidebar-color-dot")
-        self.color_dot.set_pixel_size(16)
-        self.color_dot.set_valign(Gtk.Align.CENTER)
-        self.color_dot.set_visible(False)
+        self.color_dot = _create_color_dot()
         content.append(self.color_dot)
 
         info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
@@ -1346,31 +1384,9 @@ class ConnectionRow(Gtk.ListBoxRow):
             # Bar marks only group headers; member rows show a colour dot
             # before the title instead.
             _apply_row_color(self, mode, None)
-            self._update_color_dot(rgba)
+            _update_color_dot(self, rgba)
             return
-        self.color_dot.set_visible(False)
         _apply_row_color(self, mode, rgba)
-
-    def _update_color_dot(self, rgba: Optional[Gdk.RGBA]):
-        if not rgba:
-            self.color_dot.set_visible(False)
-            return
-        css_data = f"""
-        image.sidebar-color-dot {{
-          color: {rgba.to_string()};
-        }}
-        """
-        if self._color_dot_provider:
-            try:
-                self.color_dot.get_style_context().remove_provider(self._color_dot_provider)
-            except Exception:
-                pass
-        self._color_dot_provider = Gtk.CssProvider()
-        self._color_dot_provider.load_from_data(css_data.encode('utf-8'))
-        self.color_dot.get_style_context().add_provider(
-            self._color_dot_provider, Gtk.STYLE_PROVIDER_PRIORITY_USER
-        )
-        self.color_dot.set_visible(True)
 
     def _update_color_badge(self, rgba: Gdk.RGBA):
         r = int(rgba.red * 255)

@@ -724,7 +724,7 @@ class PreferencesWindow(Adw.Window):
             group_appearance_group = Adw.PreferencesGroup(title="Group Appearance")
 
             # Sidebar group color display mode
-            self._group_color_display_values = ['fill', 'badge', 'bar']
+            self._group_color_display_values = ['fill', 'badge', 'bar', 'dot']
             self.group_color_display_row = Adw.ComboRow()
             self.group_color_display_row.set_title("Sidebar Group Colors")
             self.group_color_display_row.set_subtitle(
@@ -735,6 +735,7 @@ class PreferencesWindow(Adw.Window):
             color_display_options.append("Colored Rows")
             color_display_options.append("Color Badges")
             color_display_options.append("Accent Bars")
+            color_display_options.append("Color Dots")
             self.group_color_display_row.set_model(color_display_options)
 
             current_mode = 'fill'
@@ -4248,7 +4249,7 @@ class PreferencesWindow(Adw.Window):
         except Exception:
             normalized = 'fill'
 
-        if normalized not in getattr(self, '_group_color_display_values', ['fill', 'badge', 'bar']):
+        if normalized not in getattr(self, '_group_color_display_values', ['fill', 'badge', 'bar', 'dot']):
             normalized = 'fill'
 
         target_index = self._group_color_display_values.index(normalized)
