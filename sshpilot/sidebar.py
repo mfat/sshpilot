@@ -67,18 +67,12 @@ def _install_sidebar_color_css():
 
         /* Accent-bar group colour: a straight vertical bar on the leading edge.
            The transparent border is reserved on every bar-mode row so coloured
-           and uncoloured rows stay aligned; the per-row provider only overrides
-           border-left-color. Only rows with an actual colour (``.color-bar-colored``)
-           pin their *leading* (left) corners square — a rounded corner with a
-           single coloured border renders broken in GTK, and that colour lives on
-           the left border. The trailing (right) corners follow the theme, so a
-           selected row keeps its rounded highlight while the colour bar stays
-           sharp. Uncoloured bar rows round both sides with the theme. */
+           and uncoloured rows stay aligned. The bar itself is painted by the
+           per-row provider as a background-image strip, vertically inset and
+           centered, so it keeps square ends while the row's rounded corners
+           stay intact (a coloured border-left would either curve with the
+           corner or force it square). */
         .color-bar { border-left: 3px solid transparent; }
-        .color-bar-colored {
-            border-top-left-radius: 0;
-            border-bottom-left-radius: 0;
-        }
 
         /* Virtual tag group rows use the osd style; the default row hover
            replaces the background with a near-transparent overlay, leaving
@@ -91,21 +85,6 @@ def _install_sidebar_color_css():
             display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
         )
 
-        # Keep the coloured accent bar's leading (left) edge square in every
-        # state. The theme rounds selected/focused rows at APPLICATION priority;
-        # in GTK's cascade provider priority beats specificity, so a USER-priority
-        # rule wins regardless of the theme's :selected:focus-within specificity.
-        # Only coloured rows pin their left corners (so the selected row's right
-        # corners still round, and uncoloured rows round both sides); the bar
-        # width/style is held on every bar row so the reserve stays consistent.
-        square = Gtk.CssProvider()
-        square.load_from_data(
-            b".color-bar { border-left-width: 3px; border-left-style: solid; }"
-            b".color-bar-colored { border-top-left-radius: 0; border-bottom-left-radius: 0; }"
-        )
-        Gtk.StyleContext.add_provider_for_display(
-            display, square, Gtk.STYLE_PROVIDER_PRIORITY_USER
-        )
         _COLOR_CSS_INSTALLED = True
     except Exception:
         logger.debug("Failed to install sidebar color CSS", exc_info=True)
@@ -311,11 +290,12 @@ def _clear_tint(row: Gtk.Widget):
 
 
 def _set_bar_card_color(row: Gtk.Widget, rgba: Gdk.RGBA):
-    """Colour the row's leading accent bar (the ``.color-bar`` border-left).
+    """Colour the row's leading accent bar.
 
-    Only the colour is per-row; the bar width and ``border-radius:0`` are static
-    in the shared CSS. The provider is scoped to this widget's style context,
-    same as the ``.tinted`` fill.
+    Painted as a no-repeat background strip (not a coloured border) so the
+    bar keeps straight, square ends while the row's rounded corners stay
+    intact. Vertically inset to 90% so it clears the corner curves. The
+    provider is scoped to this widget's style context, same as ``.tinted``.
     """
     try:
         color = rgba.to_string()
@@ -324,8 +304,11 @@ def _set_bar_card_color(row: Gtk.Widget, rgba: Gdk.RGBA):
     try:
         provider = Gtk.CssProvider()
         css_data = f"""
-        .color-bar {{
-            border-left-color: {color};
+        .color-bar-colored {{
+            background-image: linear-gradient({color}, {color});
+            background-size: 3px 95%;
+            background-position: left center;
+            background-repeat: no-repeat;
         }}
         """
         provider.load_from_data(css_data.encode('utf-8'))
