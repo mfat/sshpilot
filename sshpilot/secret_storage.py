@@ -865,6 +865,23 @@ class BitwardenBackend(SecretBackend):
         return bw_cli_discoverable()
 
     # -- bw subprocess helper --------------------------------------------
+    def _bw_command(self, args: List[str], env: dict) -> List[str]:
+        """Build the full ``bw`` argv, forwarding env into Flatpak host spawns.
+
+        ``flatpak-spawn --host`` does not inherit the sandbox environment, so
+        secrets like ``BW_PASSWORD`` / ``BW_SESSION`` must be passed as
+        ``--env=KEY=VALUE`` or host ``bw`` never sees them.
+        """
+        argv = self._bw_argv(*args)
+        try:
+            from .platform_utils import inject_flatpak_host_env
+        except Exception:  # pragma: no cover - loose-module fallback
+            try:
+                from platform_utils import inject_flatpak_host_env  # type: ignore
+            except Exception:
+                return argv
+        return inject_flatpak_host_env(argv, env)
+
     def _run(self, args: List[str], *, token: Optional[str] = None,
              input_bytes: Optional[bytes] = None, extra_env: Optional[dict] = None):
         """Run ``bw <args>`` non-interactively, returning the CompletedProcess.
@@ -886,7 +903,7 @@ class BitwardenBackend(SecretBackend):
             env["BW_SESSION"] = token
         started = time.monotonic()
         result = subprocess.run(
-            self._bw_argv(*args),
+            self._bw_command(args, env),
             input=input_bytes, capture_output=True, env=env, check=False,
             timeout=self._TIMEOUT,
         )
@@ -1147,16 +1164,14 @@ class BitwardenBackend(SecretBackend):
                 # ever burned a ~1-2s spawn. Vaultwarden's server is configured by the user
                 # via the CLI (`bw config server <url>` then `bw login`); the app's URL
                 # setting just gates availability and labels the backend.
-                env = os.environ.copy()
-                env["BW_PASSWORD"] = secret or ""
                 self._report(progress, "unlocking")
-                started = time.monotonic()
-                result = subprocess.run(
-                    self._bw_argv("unlock", "--passwordenv", "BW_PASSWORD", "--raw"),
-                    capture_output=True, env=env, check=False, timeout=self._TIMEOUT,
+                # Use _run so Flatpak host spawns get ``--env=BW_PASSWORD=…`` —
+                # ``flatpak-spawn --host`` does not forward sandbox env, and host
+                # ``bw`` then fails with "Master password is required."
+                result = self._run(
+                    ["unlock", "--passwordenv", "BW_PASSWORD", "--raw"],
+                    extra_env={"BW_PASSWORD": secret or ""},
                 )
-                logger.debug("bw unlock: %.2fs (rc=%s)",
-                             time.monotonic() - started, result.returncode)
                 if result.returncode != 0:
                     logger.error("bw unlock failed: %s",
                                  result.stderr.decode("utf-8", "replace").strip())

@@ -333,6 +333,60 @@ def resolve_host_binary(binary: str) -> Optional[List[str]]:
     return None
 
 
+# Env vars the Bitwarden CLI (and related host tools) must see when spawned via
+# ``flatpak-spawn --host``. That path does **not** forward the sandbox process
+# environment — without ``--env=KEY=VALUE``, host ``bw unlock --passwordenv
+# BW_PASSWORD`` always fails with "Master password is required."
+FLATPAK_HOST_BW_ENV_KEYS: Tuple[str, ...] = (
+    "BW_PASSWORD",
+    "BW_SESSION",
+    "BW_CLIENTID",
+    "BW_CLIENTSECRET",
+    "BITWARDENCLI_APPDATA_DIR",
+    "NODE_EXTRA_CA_CERTS",
+)
+
+
+def inject_flatpak_host_env(
+    argv: List[str],
+    env: Optional[dict],
+    *,
+    keys: Tuple[str, ...] = FLATPAK_HOST_BW_ENV_KEYS,
+) -> List[str]:
+    """Insert ``--env=KEY=VALUE`` into a ``flatpak-spawn --host …`` argv.
+
+    No-op when ``argv`` is not a host spawn (direct sandbox/native binary). Existing
+    ``--env=`` flags for a key are left alone. Empty values are skipped.
+    """
+    if not argv or not env or not keys:
+        return list(argv)
+    spawn = argv[0]
+    if not (spawn.endswith("flatpak-spawn") and len(argv) >= 3 and argv[1] == "--host"):
+        return list(argv)
+
+    # Options after ``--host`` come before the host command. Insert after any that
+    # are already present so we do not reorder caller-supplied flags.
+    insert_at = 2
+    existing: set[str] = set()
+    while insert_at < len(argv) and argv[insert_at].startswith("--"):
+        opt = argv[insert_at]
+        if opt.startswith("--env="):
+            existing.add(opt[6:].split("=", 1)[0])
+        insert_at += 1
+
+    extras: List[str] = []
+    for key in keys:
+        if key in existing:
+            continue
+        value = env.get(key)
+        if value is None or value == "":
+            continue
+        extras.append(f"--env={key}={value}")
+    if not extras:
+        return list(argv)
+    return list(argv[:insert_at]) + extras + list(argv[insert_at:])
+
+
 def get_config_dir() -> str:
     """Return the per-user configuration directory for sshPilot."""
     return os.path.join(GLib.get_user_config_dir(), APP_NAME)

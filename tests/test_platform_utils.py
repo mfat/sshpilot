@@ -53,6 +53,39 @@ def test_resolve_host_binary_flatpak_host_fallback(monkeypatch):
     assert platform_utils.resolve_host_binary("bw") == ["/usr/bin/flatpak-spawn", "--host", "bw"]
 
 
+def test_inject_flatpak_host_env_inserts_after_host():
+    argv = ["/usr/bin/flatpak-spawn", "--host", "bw", "--nointeraction", "unlock"]
+    out = platform_utils.inject_flatpak_host_env(
+        argv, {"BW_PASSWORD": "secret", "BW_SESSION": "tok", "IGNORED": "x"},
+    )
+    assert out[0:2] == ["/usr/bin/flatpak-spawn", "--host"]
+    assert "--env=BW_PASSWORD=secret" in out
+    assert "--env=BW_SESSION=tok" in out
+    assert all(not a.startswith("--env=IGNORED=") for a in out)
+    assert out.index("--host") < out.index("--env=BW_PASSWORD=secret") < out.index("bw")
+
+
+def test_inject_flatpak_host_env_noop_for_direct_binary():
+    argv = ["/usr/bin/bw", "--nointeraction", "unlock"]
+    out = platform_utils.inject_flatpak_host_env(argv, {"BW_PASSWORD": "secret"})
+    assert out == argv
+
+
+def test_inject_flatpak_host_env_skips_empty_and_existing():
+    argv = [
+        "/usr/bin/flatpak-spawn", "--host",
+        "--env=BW_PASSWORD=already",
+        "bw", "unlock",
+    ]
+    out = platform_utils.inject_flatpak_host_env(
+        argv, {"BW_PASSWORD": "new", "BW_SESSION": "", "BITWARDENCLI_APPDATA_DIR": "/data"},
+    )
+    assert out.count("--env=BW_PASSWORD=already") == 1
+    assert "--env=BW_PASSWORD=new" not in out
+    assert "--env=BW_SESSION=" not in out
+    assert "--env=BITWARDENCLI_APPDATA_DIR=/data" in out
+
+
 def test_get_config_dir(monkeypatch, tmp_path):
     monkeypatch.setattr(
         platform_utils.GLib,
