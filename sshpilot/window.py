@@ -3995,12 +3995,17 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         new_section.append('Local Terminal', 'app.local-terminal')
         menu.append_section(None, new_section)
 
+        server_section = Gio.Menu()
+        server_section.append('Copy Key to Server', 'app.new-key')
+        server_section.append('Broadcast Command', 'app.broadcast-command')
+        if not should_hide_file_manager_options():
+            server_section.append('Open File Manager', 'win.open-file-manager')
+        menu.append_section(None, server_section)
+
         ssh_section = Gio.Menu()
-        ssh_section.append('Copy Key to Server', 'app.new-key')
         ssh_section.append('SSH Config Editor', 'app.edit-ssh-config')
         ssh_section.append('Known Hosts Editor', 'win.edit-known-hosts')
         ssh_section.append('Manage Local authorized_keys…', 'win.manage-local-authorized-keys')
-        ssh_section.append('Broadcast Command', 'app.broadcast-command')
         menu.append_section(None, ssh_section)
 
         submenu_section = Gio.Menu()

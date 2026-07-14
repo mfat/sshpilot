@@ -30,6 +30,7 @@ from .file_manager_integration import (
     create_internal_file_manager_tab,
     has_internal_file_manager,
     has_native_gvfs_support,
+    should_hide_file_manager_options,
 )
 
 logger = logging.getLogger(__name__)
@@ -50,6 +51,71 @@ class WindowFileManagerMixin:
                 self._open_manage_files_for_connection(connection)
             except Exception as e:
                 logger.error(f"Error opening file manager: {e}")
+
+    def open_file_manager_from_menu(self, action=None, param=None):
+        """Main-menu entry: open files for the selected connection, or — with
+        no selection — open the file manager with a host picker in the remote
+        pane (fallback: a picker popover, then the normal open flow)."""
+        if should_hide_file_manager_options():
+            return
+        try:
+            row = self.connection_list.get_selected_row()
+            connection = getattr(row, 'connection', None) if row else None
+        except Exception:
+            connection = None
+        if connection is not None:
+            self._open_manage_files_for_connection(connection)
+            return
+
+        try:
+            open_externally = bool(self.config.get_setting('file_manager.open_externally', False))
+            force_internal = bool(self.config.get_setting('file_manager.force_internal', False))
+        except Exception:
+            open_externally = force_internal = False
+        use_internal = (not open_externally
+                        and (force_internal or should_use_in_app_file_manager())
+                        and has_internal_file_manager())
+        if use_internal:
+            self._open_file_manager_with_picker()
+        else:
+            from .host_picker import show_host_picker
+            show_host_picker(self, self.menu_button,
+                             self._open_manage_files_for_connection)
+
+    def _open_file_manager_with_picker(self):
+        """Open the embedded file manager with no server; the remote pane
+        shows the shared host picker until one is chosen."""
+        ssh_config = None
+        try:
+            ssh_config = self.config.get_ssh_config()
+        except Exception:
+            ssh_config = None
+        try:
+            widget, controller = create_internal_file_manager_tab(
+                user='',
+                host='',
+                port=None,
+                nickname='',
+                parent_window=self,
+                connection=None,
+                connection_manager=self.connection_manager,
+                ssh_config=ssh_config,
+            )
+        except Exception as exc:
+            logger.error("File manager with host picker failed: %s", exc, exc_info=True)
+            self._show_manage_files_error(_('Remote Host'), str(exc))
+            return
+        page = self._register_file_manager_tab(widget, controller, None, None)
+        if page is not None:
+            page.set_title(_('Files'))
+
+            def _on_host_picked(connection):
+                name = (getattr(connection, 'nickname', None)
+                        or _get_connection_host(connection)
+                        or _('Remote Host'))
+                page.set_title(_('{name} Files').format(name=name))
+
+            controller._host_picked_callback = _on_host_picked
 
     def _open_manage_files_for_connection(self, connection):
         """Open files for the supplied connection.
@@ -809,3 +875,4 @@ class WindowFileManagerMixin:
 
         self.show_tab_view()
         self.tab_view.set_selected_page(page)
+        return page
