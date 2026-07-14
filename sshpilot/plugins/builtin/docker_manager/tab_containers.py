@@ -19,15 +19,19 @@ class ContainersTabMixin:
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
 
         toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        self._show_all_check = Gtk.CheckButton(label="Show stopped")
-        self._show_all_check.set_active(True)
-        self._show_all_check.connect("toggled", lambda _c: self._refresh_containers())
-        toolbar.append(self._show_all_check)
         self._container_search = Gtk.SearchEntry()
         self._container_search.set_placeholder_text("Filter by name / image / id…")
         self._container_search.set_hexpand(True)
         self._container_search.connect("search-changed", self._on_container_search)
         toolbar.append(self._container_search)
+        # Label + switch pair, same pattern as the Logs tab's Timestamps switch.
+        toolbar.append(Gtk.Label(label="Show stopped"))
+        self._show_all_check = Gtk.Switch()
+        self._show_all_check.set_active(True)
+        self._show_all_check.set_valign(Gtk.Align.CENTER)
+        self._show_all_check.connect("notify::active",
+                                     lambda *_a: self._refresh_containers())
+        toolbar.append(self._show_all_check)
         create = Gtk.Button()
         create.set_child(Adw.ButtonContent(icon_name="list-add-symbolic",
                                            label="New Container"))
