@@ -468,11 +468,11 @@ class FileManagerWindow(Adw.Window):
         except Exception as exc:
             logger.exception("Error showing progress: %s", exc)
 
-        # Show loading toast in remote pane (infinite timeout until manually dismissed)
+        # Spinner + status in the remote pane while the connection is set up
         try:
-            self._right_pane.show_toast("Loading remote directory...", timeout=0)
+            target = (str(self._nickname).strip() if self._nickname else '') or host
+            self._right_pane.show_connecting(f"Connecting to {target}…")
         except (AttributeError, RuntimeError, GLib.GError):
-            # Overlay might be destroyed or invalid, ignore
             pass
 
         # If no password found and password auth is enabled, show dialog before connecting
@@ -759,6 +759,10 @@ class FileManagerWindow(Adw.Window):
             "Built-in file manager: Connection successful, reset password dialog state"
         )
         self._show_progress(0.4, "Connected")
+        try:
+            self._right_pane.set_connecting_status("Connected — loading files…")
+        except Exception:
+            pass
         for pane, pending in self._pending_paths.items():
             if pending:
                 self._manager.listdir(pending)

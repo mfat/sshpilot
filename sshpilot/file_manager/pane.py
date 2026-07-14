@@ -209,6 +209,25 @@ class FilePane(Gtk.Box):
         self._load_error_path: Optional[str] = None
         self._pre_error_view: Optional[str] = None
 
+        # Connecting state: spinner + live status while the SFTP backend
+        # establishes the connection (mirrors the Docker Console placeholder).
+        conn_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        conn_box.set_halign(Gtk.Align.CENTER)
+        conn_box.set_valign(Gtk.Align.CENTER)
+        self._connecting_spinner = Gtk.Spinner()
+        self._connecting_spinner.set_size_request(32, 32)
+        self._connecting_spinner.set_halign(Gtk.Align.CENTER)
+        self._connecting_spinner.connect(
+            "map", lambda sp: sp.start()
+        )
+        conn_box.append(self._connecting_spinner)
+        self._connecting_label = Gtk.Label()
+        self._connecting_label.add_css_class("dim-label")
+        self._connecting_label.set_wrap(True)
+        self._connecting_label.set_justify(Gtk.Justification.CENTER)
+        conn_box.append(self._connecting_label)
+        self._stack.add_named(conn_box, "connecting")
+
 
         overlay = Adw.ToastOverlay()
         self._overlay = overlay
@@ -1996,12 +2015,28 @@ class FilePane(Gtk.Box):
         self._load_error_path = path
         self._load_error_label.set_text(message or "Failed to load directory")
         current = self._stack.get_visible_child_name()
-        if current != "load-error":
+        if current not in ("load-error", "connecting"):
             self._pre_error_view = current
+        self._connecting_spinner.stop()
         self._stack.set_visible_child_name("load-error")
 
+    def show_connecting(self, message: str) -> None:
+        """Show a spinner + status message while connecting."""
+        self._connecting_label.set_text(message or "Connecting…")
+        current = self._stack.get_visible_child_name()
+        if current not in ("load-error", "connecting"):
+            self._pre_error_view = current
+        self._connecting_spinner.start()
+        self._stack.set_visible_child_name("connecting")
+
+    def set_connecting_status(self, message: str) -> None:
+        """Update the status line of the connecting view (if showing)."""
+        if self._stack.get_visible_child_name() == "connecting":
+            self._connecting_label.set_text(message)
+
     def _clear_load_error(self) -> None:
-        if self._stack.get_visible_child_name() == "load-error":
+        if self._stack.get_visible_child_name() in ("load-error", "connecting"):
+            self._connecting_spinner.stop()
             self._stack.set_visible_child_name(self._pre_error_view or "list")
         self._load_error_path = None
 
