@@ -1376,7 +1376,7 @@ class ConnectionRow(Gtk.ListBoxRow):
         config = getattr(self, 'config', None)
         mode = _get_color_display_mode(config)
         try:
-            color_children = bool(config.get_setting('ui.group_color_child_rows', True))
+            color_children = bool(config.get_setting('ui.group_color_child_rows', False))
         except Exception:
             color_children = True
         rgba = self._resolve_group_color() if color_children else None

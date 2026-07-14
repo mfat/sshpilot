@@ -179,7 +179,8 @@ class Config(GObject.Object):
                 'window_width': 1200,
                 'window_height': 800,
                 'sidebar_width': 250,
-                'group_color_display': 'bar',
+                'group_color_display': 'dot',
+                'group_color_child_rows': False,
                 'group_row_display': 'nested',
                 'use_group_color_in_tab': False,
                 'use_group_color_in_terminal': False,
@@ -1213,7 +1214,7 @@ class Config(GObject.Object):
             updated = True
         display_value = ui_cfg.get('group_color_display') if isinstance(ui_cfg, dict) else None
         if display_value is None:
-            ui_cfg['group_color_display'] = 'bar'
+            ui_cfg['group_color_display'] = 'dot'
             updated = True
         else:
             if not isinstance(display_value, str):
