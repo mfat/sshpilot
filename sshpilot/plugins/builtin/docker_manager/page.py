@@ -333,8 +333,18 @@ class DockerConsolePage(
         sp._idle_key = None            # type: ignore[attr-defined]
         return sp
 
+    @staticmethod
+    def _reveal_placeholder(ph: Adw.StatusPage, shown: bool) -> None:
+        """Fade the placeholder in/out via its crossfade revealer (smooth
+        transition to the loaded list) — falls back to plain visibility."""
+        rev = getattr(ph, "_revealer", None)
+        if rev is not None:
+            rev.set_reveal_child(shown)
+        else:
+            ph.set_visible(shown)
+
     def _set_placeholder_loading(self, ph: Adw.StatusPage, text: str = "Loading…") -> None:
-        ph.set_visible(True)
+        self._reveal_placeholder(ph, True)
         # Targetable so the status feed is mouse-selectable; the opaque fill
         # hides the (empty or stale) list underneath anyway.
         ph.set_can_target(True)
@@ -365,7 +375,7 @@ class DockerConsolePage(
         if ph.get_visible() and ph._idle_key == key:  # type: ignore[attr-defined]
             return
         ph._idle_key = key              # type: ignore[attr-defined]
-        ph.set_visible(True)
+        self._reveal_placeholder(ph, True)
         ph._status_lbl.set_visible(False)  # type: ignore[attr-defined]
         if self._mark_paintable() is not None:
             ph.set_paintable(self._mark_paintable())
@@ -388,7 +398,7 @@ class DockerConsolePage(
         ph._status_lbl.set_visible(False)  # type: ignore[attr-defined]
         self._reset_placeholder_details(ph)
         ph.set_can_target(False)
-        ph.set_visible(False)
+        self._reveal_placeholder(ph, False)
 
     def _current_nickname(self) -> Optional[str]:
         return self._selected_nick

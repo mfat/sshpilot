@@ -173,7 +173,9 @@ def wrap_with_overlay(content: Gtk.Widget, placeholder: Gtk.Widget) -> Gtk.Overl
 
     The placeholder fills the overlay so its opaque background covers the list
     area; ``can_target`` starts False (clicks fall through) and is raised by
-    the loading/error states, whose text is mouse-selectable."""
+    the loading/error states, whose text is mouse-selectable. It sits inside a
+    crossfade Gtk.Revealer so hiding it fades the freshly loaded list in
+    instead of swapping abruptly."""
     ensure_placeholder_css()
     overlay = Gtk.Overlay()
     overlay.set_vexpand(True)
@@ -183,7 +185,13 @@ def wrap_with_overlay(content: Gtk.Widget, placeholder: Gtk.Widget) -> Gtk.Overl
     placeholder.set_hexpand(True)
     placeholder.set_vexpand(True)
     placeholder.set_can_target(False)
-    overlay.add_overlay(placeholder)
+    revealer = Gtk.Revealer()
+    revealer.set_transition_type(Gtk.RevealerTransitionType.CROSSFADE)
+    revealer.set_transition_duration(250)
+    revealer.set_reveal_child(True)
+    revealer.set_child(placeholder)
+    placeholder._revealer = revealer  # type: ignore[attr-defined]
+    overlay.add_overlay(revealer)
     return overlay
 
 
