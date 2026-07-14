@@ -6530,24 +6530,34 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     def on_create_group_action(self, action, param=None):
         """Handle create group action"""
         try:
-            # Create dialog for group name input
-            dialog = Gtk.Dialog(
-                title=_("Create New Group"),
-                transient_for=self,
-                modal=True,
-                destroy_with_parent=True
-            )
-            
-            dialog.set_default_size(400, 150)
-            dialog.set_resizable(False)
-            
-            content_area = dialog.get_content_area()
+            # Form dialog (name + color): Adw.Dialog with actions in the header bar
+            dialog = Adw.Dialog()
+            dialog.set_title(_("Create New Group"))
+            dialog.set_content_width(400)
+
+            header = Adw.HeaderBar()
+            header.set_show_start_title_buttons(False)
+            header.set_show_end_title_buttons(False)
+
+            cancel_button = Gtk.Button(label=_('Cancel'))
+            header.pack_start(cancel_button)
+
+            create_button = Gtk.Button(label=_('Create'))
+            create_button.add_css_class('suggested-action')
+            header.pack_end(create_button)
+
+            content_area = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
             content_area.set_margin_start(20)
             content_area.set_margin_end(20)
             content_area.set_margin_top(20)
             content_area.set_margin_bottom(20)
             content_area.set_spacing(12)
-            
+
+            toolbar_view = Adw.ToolbarView()
+            toolbar_view.add_top_bar(header)
+            toolbar_view.set_content(content_area)
+            dialog.set_child(toolbar_view)
+
             # Add label
             label = Gtk.Label(label=_("Enter a name for the new group:"))
             label.set_wrap(True)
@@ -6603,38 +6613,31 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
             color_row.append(color_controls)
             content_area.append(color_row)
-            
-            # Add buttons
-            dialog.add_button(_('Cancel'), Gtk.ResponseType.CANCEL)
-            create_button = dialog.add_button(_('Create'), Gtk.ResponseType.OK)
-            create_button.get_style_context().add_class('suggested-action')
-            
-            dialog.set_default_response(Gtk.ResponseType.OK)
-            
-            def on_response(dialog, response):
-                if response == Gtk.ResponseType.OK:
-                    group_name = entry.get_text().strip()
-                    if group_name:
-                        selected_color = None
-                        rgba_value = color_button.get_rgba()
-                        if color_selected and rgba_value.alpha > 0:
-                            selected_color = rgba_value.to_string()
-                        self.group_manager.create_group(group_name, color=selected_color)
-                        self.rebuild_connection_list()
-                    else:
-                        # Show error for empty name
-                        error_dialog = Adw.MessageDialog(
-                            transient_for=self,
-                            modal=True,
-                            heading=_("Error"),
-                            body=_("Please enter a group name.")
-                        )
-                        error_dialog.add_response('ok', _('OK'))
-                        error_dialog.present()
-                dialog.destroy()
-            
-            dialog.connect('response', on_response)
-            dialog.present()
+
+            def on_create(_button):
+                group_name = entry.get_text().strip()
+                if not group_name:
+                    error_dialog = Adw.MessageDialog(
+                        transient_for=self,
+                        modal=True,
+                        heading=_("Error"),
+                        body=_("Please enter a group name.")
+                    )
+                    error_dialog.add_response('ok', _('OK'))
+                    error_dialog.present()
+                    return
+                selected_color = None
+                rgba_value = color_button.get_rgba()
+                if color_selected and rgba_value.alpha > 0:
+                    selected_color = rgba_value.to_string()
+                self.group_manager.create_group(group_name, color=selected_color)
+                self.rebuild_connection_list()
+                dialog.close()
+
+            cancel_button.connect('clicked', lambda _b: dialog.close())
+            create_button.connect('clicked', on_create)
+            dialog.set_default_widget(create_button)
+            dialog.present(self)
             
             def focus_entry():
                 entry.grab_focus()
@@ -6814,21 +6817,33 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             old_name = str(tag_row.group_info.get('name', ''))
             old_key = str(tag_row.group_info.get('tag_key', '')) or old_name.casefold()
 
-            dialog = Gtk.Dialog(
-                title=_("Rename Tag"),
-                transient_for=self,
-                modal=True,
-                destroy_with_parent=True
-            )
-            dialog.set_default_size(400, 120)
-            dialog.set_resizable(False)
+            # Form dialog: Adw.Dialog with actions in the header bar
+            dialog = Adw.Dialog()
+            dialog.set_title(_("Rename Tag"))
+            dialog.set_content_width(400)
 
-            content_area = dialog.get_content_area()
+            header = Adw.HeaderBar()
+            header.set_show_start_title_buttons(False)
+            header.set_show_end_title_buttons(False)
+
+            cancel_button = Gtk.Button(label=_('Cancel'))
+            header.pack_start(cancel_button)
+
+            save_button = Gtk.Button(label=_('Save'))
+            save_button.add_css_class('suggested-action')
+            header.pack_end(save_button)
+
+            content_area = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
             content_area.set_margin_start(20)
             content_area.set_margin_end(20)
             content_area.set_margin_top(20)
             content_area.set_margin_bottom(20)
             content_area.set_spacing(12)
+
+            toolbar_view = Adw.ToolbarView()
+            toolbar_view.add_top_bar(header)
+            toolbar_view.set_content(content_area)
+            dialog.set_child(toolbar_view)
 
             label = Gtk.Label(label=_("Enter a new name for the tag:"))
             label.set_wrap(True)
@@ -6841,11 +6856,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             entry.set_hexpand(True)
             content_area.append(entry)
 
-            dialog.add_button(_('Cancel'), Gtk.ResponseType.CANCEL)
-            save_button = dialog.add_button(_('Save'), Gtk.ResponseType.OK)
-            save_button.get_style_context().add_class('suggested-action')
-            dialog.set_default_response(Gtk.ResponseType.OK)
-
             def _show_error(body):
                 error_dialog = Adw.MessageDialog(
                     transient_for=self,
@@ -6856,31 +6866,34 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 error_dialog.add_response('ok', _('OK'))
                 error_dialog.present()
 
-            def on_response(dialog, response):
-                if response == Gtk.ResponseType.OK:
-                    new_name = entry.get_text().strip()
-                    if not new_name:
-                        _show_error(_("Please enter a tag name."))
-                    elif ',' in new_name:
-                        # Tags are entered comma-separated in the connection
-                        # dialog, so a comma in a tag name could not round-trip.
-                        _show_error(_("Tag names cannot contain commas."))
-                    elif new_name != old_name:
-                        from .tag_groups import migrate_expanded_state
-                        self.config.rename_tag(old_name, new_name)
-                        try:
-                            state = self.config.get_setting('ui.tag_groups_expanded', {}) or {}
-                            self.config.set_setting(
-                                'ui.tag_groups_expanded',
-                                migrate_expanded_state(state, old_key, new_name.casefold()),
-                            )
-                        except Exception:
-                            logger.debug("Failed to migrate tag expansion state", exc_info=True)
-                        self.rebuild_connection_list()
-                dialog.destroy()
+            def on_save(_button):
+                new_name = entry.get_text().strip()
+                if not new_name:
+                    _show_error(_("Please enter a tag name."))
+                    return
+                if ',' in new_name:
+                    # Tags are entered comma-separated in the connection
+                    # dialog, so a comma in a tag name could not round-trip.
+                    _show_error(_("Tag names cannot contain commas."))
+                    return
+                if new_name != old_name:
+                    from .tag_groups import migrate_expanded_state
+                    self.config.rename_tag(old_name, new_name)
+                    try:
+                        state = self.config.get_setting('ui.tag_groups_expanded', {}) or {}
+                        self.config.set_setting(
+                            'ui.tag_groups_expanded',
+                            migrate_expanded_state(state, old_key, new_name.casefold()),
+                        )
+                    except Exception:
+                        logger.debug("Failed to migrate tag expansion state", exc_info=True)
+                    self.rebuild_connection_list()
+                dialog.close()
 
-            dialog.connect('response', on_response)
-            dialog.present()
+            cancel_button.connect('clicked', lambda _b: dialog.close())
+            save_button.connect('clicked', on_save)
+            dialog.set_default_widget(save_button)
+            dialog.present(self)
 
             def focus_entry():
                 entry.grab_focus()
