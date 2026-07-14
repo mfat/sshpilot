@@ -1,3 +1,13 @@
+sshpilot (5.5.1-0ubuntu1) resolute; urgency=medium
+
+  * New upstream release 5.5.1 (also covers 5.5.0).
+  * Docker Console UI improvements
+  * File manager UI improvements
+  * Reorganized main menu
+  * Bug fixes
+
+ -- Mehdi <mah.fat@gmail.com>  Wed, 15 Jul 2026 01:45:18 +0330
+
 sshpilot (5.4.6-0ubuntu3) resolute; urgency=medium
 
   * PyXterm.js web backend is now self-contained (no third-party CDN):
