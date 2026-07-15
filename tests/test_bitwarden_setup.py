@@ -247,3 +247,44 @@ def test_format_bitwarden_login_error_auth_challenge():
         "Your authentication request appears to be coming from a bot.",
     )
     assert "client secret" in msg.lower() or "auth-challenge" in msg.lower()
+
+
+def test_modal_parent_prefers_visible_initiator(monkeypatch):
+    """Setup dialogs must stack on Preferences, not MainWindow."""
+    from gi.repository import Gtk
+
+    # Bypass the dummy GI metaclass so isinstance(..., Gtk.Window) works.
+    prefs = Gtk.Window.__new__(Gtk.Window)
+    prefs.get_visible = lambda: True
+
+    presented = []
+    monkeypatch.setattr(
+        "sshpilot.window.present_for_modal_dialog",
+        lambda w: presented.append(w),
+    )
+    monkeypatch.setattr(
+        "sshpilot.window.resolve_app_modal_parent",
+        lambda _w: object(),
+    )
+    assert bs._modal_parent(prefs) is prefs
+    assert presented == [prefs]
+
+
+def test_modal_parent_falls_back_when_initiator_hidden(monkeypatch):
+    from gi.repository import Gtk
+
+    prefs = Gtk.Window.__new__(Gtk.Window)
+    prefs.get_visible = lambda: False
+    main = object()
+    presented = []
+
+    monkeypatch.setattr(
+        "sshpilot.window.present_for_modal_dialog",
+        lambda w: presented.append(w),
+    )
+    monkeypatch.setattr(
+        "sshpilot.window.resolve_app_modal_parent",
+        lambda _w: main,
+    )
+    assert bs._modal_parent(prefs) is main
+    assert presented == [main]

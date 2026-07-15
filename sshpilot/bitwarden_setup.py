@@ -323,7 +323,7 @@ def progress_dialog(parent, heading, message, *, on_cancel=None):
     win = Adw.Window()
     win.set_modal(True)
     if parent is not None:
-        win.set_transient_for(parent)
+        win.set_transient_for(_modal_parent(parent))
     win.set_title(heading)
     win.set_resizable(False)
     win.set_default_size(420, 170)
@@ -386,7 +386,10 @@ def _message_dialog(
     parent=None,
 ):
     dlg = Adw.MessageDialog(
-        transient_for=parent or window, modal=modal, heading=heading, body=body,
+        transient_for=_modal_parent(parent or window),
+        modal=modal,
+        heading=heading,
+        body=body,
     )
     for rid, label in responses:
         dlg.add_response(rid, label)
@@ -680,8 +683,9 @@ def _format_bitwarden_login_error(detail: str) -> str:
 
 def _prompt_server_url(window, on_chosen: Callable[[str], None]):
     """Bitwarden server selection before sign-in (US / EU / self-hosted)."""
+    parent = _modal_parent(window)
     dlg = Adw.MessageDialog(
-        transient_for=window, modal=True,
+        transient_for=parent, modal=True,
         heading=_("Bitwarden server"),
         body=_(
             "Choose which Bitwarden server to use before signing in. "
@@ -751,8 +755,25 @@ def _prompt_server_url(window, on_chosen: Callable[[str], None]):
 
 
 def _modal_parent(window):
+    """Return the window that should own Bitwarden setup modals.
+
+    Prefer the initiating window (e.g. Preferences) when it is visible so
+    dialogs stack above it. ``resolve_app_modal_parent`` always picks
+    MainWindow, which leaves setup alerts behind Settings on Wayland.
+    Fall back to the app modal parent only when the initiator is missing or
+    not visible (e.g. Preferences was hidden to reveal a terminal tab).
+    """
     try:
         from .window import present_for_modal_dialog, resolve_app_modal_parent
+
+        if isinstance(window, Gtk.Window):
+            try:
+                visible = window.get_visible()
+            except Exception:
+                visible = True
+            if visible:
+                present_for_modal_dialog(window)
+                return window
         parent = resolve_app_modal_parent(window)
         present_for_modal_dialog(parent)
         return parent
@@ -1185,7 +1206,7 @@ def _prompt_gui_login(window, bw, on_done: Callable[[bool], None]):
             return
         # ``bw config server`` spawns a Node process — run it off the GTK main thread.
         _set_status, close = progress_dialog(
-            _modal_parent(window), _("Bitwarden"), _("Configuring server…"),
+            window, _("Bitwarden"), _("Configuring server…"),
         )
 
         def worker():
@@ -1215,19 +1236,11 @@ def _unlock_then_ready(window, bw, on_ready: Callable[[bool], None]):
         return
     from .secret_unlock_dialog import prompt_unlock
 
-    # Parent the unlock prompt to the window that initiated it (e.g. the Preferences
-    # window) so it stacks above that window instead of behind it. Only fall back to
-    # the main window when no usable window was passed.
-    parent = (
-        window
-        if isinstance(window, Gtk.Window) and window.get_visible()
-        else (_resolve_main_window(window) or window)
+    # Same stacking rules as the rest of Bitwarden setup: prefer the initiating
+    # window (Preferences) so the unlock prompt is not buried behind Settings.
+    prompt_unlock(
+        _modal_parent(window), backend=bw, on_done=lambda ok: on_ready(bool(ok)),
     )
-    try:
-        parent.present()
-    except Exception:
-        pass
-    prompt_unlock(parent, backend=bw, on_done=lambda ok: on_ready(bool(ok)))
 
 
 def _show_ready_dialog(window, on_done: Callable[[bool], None]):
