@@ -1,3 +1,10 @@
+sshpilot (5.5.2-0ubuntu1) resolute; urgency=medium
+
+  * Release v5.5.2.
+  * Bug fixes
+
+ -- Mehdi <mah.fat@gmail.com>  Wed, 15 Jul 2026 13:30:23 +0330
+
 sshpilot (5.5.1-0ubuntu1) resolute; urgency=medium
 
   * New upstream release 5.5.1 (also covers 5.5.0).

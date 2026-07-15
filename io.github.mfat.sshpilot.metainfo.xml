@@ -60,6 +60,11 @@
 
 
 
+    <release version="5.5.2" date="2026-07-15">
+      <description>
+        <p>Bug fixes</p>
+      </description>
+    </release>
     <release version="5.5.1" date="2026-07-14">
       <description>
         <p>Docker Console UI improvements</p>
