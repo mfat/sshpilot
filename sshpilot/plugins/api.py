@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import abc
 import enum
+import threading
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -53,7 +54,11 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 #      paralleling ctx.secrets. See sshpilot.identity / IDENTITY_PROVIDERS.md.
 # 1.11: ctx.run_local_command / ctx.open_local_command_terminal — captured and
 #      streamed/interactive commands on the local machine (Flatpak-host aware).
-API_VERSION: Tuple[int, int] = (1, 11)
+# 1.12: ctx.ensure_local_forward(nickname, remote_port) — local port forwarded
+#      to the host over the single SSH/auth path (ControlMaster -O forward,
+#      background ssh -N fallback); ctx.ui.open_web_tab(url, title=) — show a
+#      URL in an embedded WebKit tab (system-browser fallback).
+API_VERSION: Tuple[int, int] = (1, 12)
 
 # Stable event names and event payload types live in host.py; re-exported here
 # so plugins import everything from sshpilot.plugins.api. (host.py imports
@@ -245,6 +250,15 @@ class _UiFacade:
         if callable(register):
             register(action_id, label, icon_name, callback, plugin_id=self._plugin_id)
 
+    def open_web_tab(self, url: str, *, title: Optional[str] = None) -> bool:
+        """Show ``url`` in an embedded WebKit tab (API >= 1.12), falling back
+        to the system default browser when WebKit is unavailable. Returns True
+        when something opened. Valid after ``app_started``."""
+        opener = getattr(self._ui, "open_web_tab", None)
+        if callable(opener):
+            return bool(opener(url, title or url))
+        return False
+
 
 class _SecretStore:
     """Per-plugin keyring access (``ctx.secrets``), auto-scoped by plugin id."""
@@ -435,6 +449,34 @@ class _HttpFacade:
             return HttpResponse(status=exc.code,
                                 text=raw.decode("utf-8", "replace"),
                                 headers={k: v for k, v in (exc.headers or {}).items()})
+
+
+# --- plugin-requested local port forwards (ctx.ensure_local_forward) ------
+# Keyed by (nickname, remote_port). ``proc`` is None for forwards added onto
+# the shared ControlMaster with ``ssh -O forward`` (they die with the master);
+# fallback forwards own a background ``ssh -N`` process, killed at app exit.
+# ponytail: forwards live until app quit / master exit; add `ssh -O cancel`
+# per-tab teardown if port hoarding ever matters.
+@dataclass
+class _Forward:
+    local_port: int
+    proc: Optional[Any] = None  # subprocess.Popen for the ssh -N fallback
+
+
+_FORWARDS: Dict[Tuple[str, int], _Forward] = {}
+_FORWARDS_LOCK = threading.Lock()
+_FORWARDS_ATEXIT = False
+
+
+def _kill_forward_procs() -> None:
+    with _FORWARDS_LOCK:
+        procs = [f.proc for f in _FORWARDS.values() if f.proc is not None]
+        _FORWARDS.clear()
+    for proc in procs:
+        try:
+            proc.terminate()
+        except Exception:
+            pass
 
 
 class PluginContext:
@@ -754,6 +796,103 @@ class PluginContext:
                            text=True, timeout=10, check=False)
         except Exception:  # noqa: BLE001 — best-effort teardown; ControlPersist
             pass               # expiry is the fallback, so failures are harmless
+
+    def ensure_local_forward(self, nickname: str, remote_port: int, *,
+                             timeout: float = 15) -> int:
+        """Return a local TCP port forwarded to ``localhost:remote_port`` on the
+        connection's host (API >= 1.12), establishing it if needed over the
+        app's single SSH/auth path. Prefers adding the forward onto the shared
+        ControlMaster (``ssh -O forward``); otherwise spawns a background
+        ``ssh -N``. Forwards are reused per (nickname, remote_port) and live
+        until app quit (or with the master). **Blocking** — call from a worker
+        thread. Raises ``RuntimeError`` on failure."""
+        import atexit
+        import os
+        import subprocess
+        import time
+        from ..ssh_connection_builder import (
+            ConnectionContext, build_ssh_connection)
+        from ..port_utils import find_available_port, is_port_available
+        from .. import ssh_multiplex
+
+        global _FORWARDS_ATEXIT
+        key = (nickname, int(remote_port))
+        with _FORWARDS_LOCK:
+            if not _FORWARDS_ATEXIT:
+                atexit.register(_kill_forward_procs)
+                _FORWARDS_ATEXIT = True
+            fwd = _FORWARDS.get(key)
+            if fwd is not None:
+                alive = (fwd.proc.poll() is None if fwd.proc is not None
+                         else not is_port_available(fwd.local_port))
+                if alive:
+                    return fwd.local_port
+                _FORWARDS.pop(key, None)
+
+        conn = self.connection_manager.find_connection_by_nickname(nickname)
+        if conn is None:
+            raise RuntimeError(f"No connection named {nickname!r}")
+        lp = find_available_port(
+            remote_port if remote_port >= 1024 else 8000 + remote_port)
+        if not lp:
+            raise RuntimeError("No free local port")
+        forward = f"{lp}:localhost:{int(remote_port)}"
+
+        def _build(extra_args: List[str]):
+            ctx = ConnectionContext(
+                connection=conn, connection_manager=self.connection_manager,
+                config=self.config, command_type='ssh', native_mode=True,
+                extra_args=extra_args)
+            return build_ssh_connection(ctx)
+
+        # Preferred: add the forward onto the shared ControlMaster. Failure is
+        # normal (mux off, master not created yet) — fall through, don't error.
+        if ssh_multiplex.is_active(nickname):
+            try:
+                prepared = _build(
+                    ["-O", "forward", "-o",
+                     f"ControlPath={ssh_multiplex.control_path()}",
+                     "-L", forward])
+                env = {**os.environ, **(prepared.env or {})}
+                result = subprocess.run(
+                    list(prepared.command), env=env, capture_output=True,
+                    text=True, timeout=10, check=False)
+                if result.returncode == 0:
+                    with _FORWARDS_LOCK:
+                        _FORWARDS[key] = _Forward(lp)
+                    return lp
+            except Exception:
+                pass
+
+        # Fallback: a dedicated background ssh -N via the same builder/auth.
+        cleanup = None
+        try:
+            prepared = _build(
+                ["-N", "-o", "ExitOnForwardFailure=yes", "-L", forward])
+            argv = list(prepared.command)
+            env = {**os.environ, **(prepared.env or {})}
+            if prepared.use_sshpass and prepared.password:
+                from ..ssh_password_exec import wrap_argv_with_sshpass
+                argv, cleanup = wrap_argv_with_sshpass(
+                    argv, prepared.password, env=env)
+            proc = subprocess.Popen(
+                argv, env=env, stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline and proc.poll() is None:
+                if not is_port_available(lp):
+                    with _FORWARDS_LOCK:
+                        _FORWARDS[key] = _Forward(lp, proc)
+                    return lp
+                time.sleep(0.2)
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+            raise RuntimeError(f"Could not establish port forward to {nickname}")
+        finally:
+            if cleanup is not None:
+                cleanup()
 
     def get_effective_ssh_config(self, nickname: str) -> Dict[str, Any]:
         """Return the resolved per-host SSH options for a connection, as

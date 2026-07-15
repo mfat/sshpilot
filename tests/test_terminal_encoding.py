@@ -516,7 +516,8 @@ class TestEncodingIntegration:
         argv = captured['argv']
         assert argv[:4] == ['/usr/bin/luit', '-encoding', 'KOI8-R', '--']
         assert argv[4:] == ['ssh', 'host']
-        owner.config.get_setting.assert_called_with('terminal.encoding', 'UTF-8')
+        # any_call: spawn_async also queries terminal.autocomplete afterwards
+        owner.config.get_setting.assert_any_call('terminal.encoding', 'UTF-8')
     
     def test_vte_encoding_validation(self):
         """Test that VTE validates encoding against supported list"""

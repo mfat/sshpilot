@@ -53,6 +53,57 @@ def test_resolve_host_binary_flatpak_host_fallback(monkeypatch):
     assert platform_utils.resolve_host_binary("bw") == ["/usr/bin/flatpak-spawn", "--host", "bw"]
 
 
+def _read_env_fd(argv):
+    """Decode the ``env -0`` payload behind an ``--env-fd=N`` flag, if any."""
+    flag = next((a for a in argv if a.startswith("--env-fd=")), None)
+    if flag is None:
+        return None
+    data = os.pread(int(flag[len("--env-fd="):]), 65536, 0)
+    return dict(item.split("=", 1) for item in data.decode().split("\0") if item)
+
+
+def test_inject_flatpak_host_env_inserts_env_fd_after_host():
+    argv = ["/usr/bin/flatpak-spawn", "--host", "bw", "--nointeraction", "unlock"]
+    out, fds = platform_utils.inject_flatpak_host_env(
+        argv, {"BW_PASSWORD": "secret", "BW_SESSION": "tok", "IGNORED": "x"},
+    )
+    try:
+        assert out[0:2] == ["/usr/bin/flatpak-spawn", "--host"]
+        assert len(fds) == 1
+        flag = f"--env-fd={fds[0]}"
+        assert out.index("--host") < out.index(flag) < out.index("bw")
+        assert _read_env_fd(out) == {"BW_PASSWORD": "secret", "BW_SESSION": "tok"}
+        # The whole point of --env-fd: no secret may appear in the argv itself.
+        assert all("secret" not in a and "tok" not in a for a in out)
+    finally:
+        for fd in fds:
+            os.close(fd)
+
+
+def test_inject_flatpak_host_env_noop_for_direct_binary():
+    argv = ["/usr/bin/bw", "--nointeraction", "unlock"]
+    out, fds = platform_utils.inject_flatpak_host_env(argv, {"BW_PASSWORD": "secret"})
+    assert out == argv
+    assert fds == ()
+
+
+def test_inject_flatpak_host_env_skips_empty_and_existing():
+    argv = [
+        "/usr/bin/flatpak-spawn", "--host",
+        "--env=BW_PASSWORD=already",
+        "bw", "unlock",
+    ]
+    out, fds = platform_utils.inject_flatpak_host_env(
+        argv, {"BW_PASSWORD": "new", "BW_SESSION": "", "BITWARDENCLI_APPDATA_DIR": "/data"},
+    )
+    try:
+        assert out.count("--env=BW_PASSWORD=already") == 1
+        assert _read_env_fd(out) == {"BITWARDENCLI_APPDATA_DIR": "/data"}
+    finally:
+        for fd in fds:
+            os.close(fd)
+
+
 def test_get_config_dir(monkeypatch, tmp_path):
     monkeypatch.setattr(
         platform_utils.GLib,

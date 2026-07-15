@@ -38,7 +38,7 @@ def asset_dir() -> str:
 
 
 def _read(rel: str) -> str:
-    with open(os.path.join(asset_dir(), rel), "r", encoding="utf-8") as f:
+    with open(os.path.join(asset_dir(), rel), encoding="utf-8") as f:
         return f.read()
 
 
@@ -92,11 +92,18 @@ def _build_shell_html_impl(
   html, body {{ margin:0; padding:0; height:100%; background:{json.dumps(background)[1:-1]}; }}
   #terminal {{ width:100%; height:100vh; }}
   .xterm-viewport, .xterm-screen {{ height:100% !important; }}
+  /* Autocomplete popup (window.sshpilotAC); colors come from term.options.theme at show time. */
+  #ac {{ position:absolute; display:none; z-index:10; max-height:16em; overflow:hidden;
+        border:1px solid rgba(127,127,127,.4); border-radius:6px;
+        box-shadow:0 2px 8px rgba(0,0,0,.4); white-space:pre; }}
+  .ac-row {{ padding:1px 8px; cursor:pointer; overflow:hidden; text-overflow:ellipsis; max-width:60ch; }}
+  .ac-sel {{ background:rgba(127,127,127,.35); }}
 </style>
 <script>{core}</script>
 {addons}
 </head><body>
 <div id="terminal"></div>
+<div id="ac"></div>
 <script>
   const term = new Terminal({opts_json});
   const fit = new FitAddon.FitAddon();
@@ -135,8 +142,80 @@ def _build_shell_html_impl(
     term.focus();
   }});
 
+  // Autocomplete popup. Python drives it via sshpilotAC.update(payload) —
+  // empty items hides it and clears Esc suppression (line reset).
+  window.sshpilotAC = (function () {{
+    const el = document.getElementById("ac");
+    let items = [], sel = 0, suppressed = false;
+
+    function hide() {{ el.style.display = "none"; items = []; }}
+    function visible() {{ return el.style.display === "block"; }}
+
+    function accept(i, run) {{
+      const it = items[i];
+      if (it) send({{ type: "input", data: it.suffix + (run ? "\\r" : "") }});
+      hide();
+      term.focus();
+    }}
+
+    function render() {{
+      el.innerHTML = "";
+      items.forEach(function (it, i) {{
+        const row = document.createElement("div");
+        row.className = "ac-row" + (i === sel ? " ac-sel" : "");
+        row.textContent = it.text;
+        row.addEventListener("mousedown", function (ev) {{ ev.preventDefault(); accept(i, false); }});
+        el.appendChild(row);
+      }});
+    }}
+
+    function position() {{
+      const screen = document.querySelector(".xterm-screen");
+      if (!screen) return;
+      const r = screen.getBoundingClientRect();
+      const cw = r.width / term.cols, ch = r.height / term.rows;
+      const buf = term.buffer.active;
+      el.style.display = "block";
+      let x = r.left + buf.cursorX * cw, y = r.top + (buf.cursorY + 1) * ch;
+      if (y + el.offsetHeight > window.innerHeight) y = r.top + buf.cursorY * ch - el.offsetHeight;
+      x = Math.max(0, Math.min(x, window.innerWidth - el.offsetWidth));
+      el.style.left = x + "px";
+      el.style.top = Math.max(0, y) + "px";
+    }}
+
+    function update(p) {{
+      if (!p || !p.items || !p.items.length) {{ hide(); suppressed = false; return; }}
+      if (suppressed || term.buffer.active.type === "alternate") return;
+      const t = term.options.theme || {{}};
+      el.style.background = t.background || "#1e1e1e";
+      el.style.color = t.foreground || "#ffffff";
+      el.style.fontFamily = term.options.fontFamily || "monospace";
+      el.style.fontSize = (term.options.fontSize || 14) + "px";
+      items = p.items; sel = 0;
+      render();
+      position();
+    }}
+
+    // keydown while visible; returns false when the key was consumed.
+    function key(e) {{
+      if (e.key === "ArrowDown") {{ sel = (sel + 1) % items.length; render(); return false; }}
+      if (e.key === "ArrowUp") {{ sel = (sel - 1 + items.length) % items.length; render(); return false; }}
+      if (e.key === "Tab" || e.key === "ArrowRight") {{ accept(sel, false); return false; }}
+      if (e.key === "Enter") {{ accept(sel, true); return false; }}
+      if (e.key === "Escape") {{ suppressed = true; hide(); return false; }}
+      return true;
+    }}
+
+    term.onScroll(hide);
+    window.addEventListener("resize", hide);
+    return {{ update: update, hide: hide, visible: visible, key: key }};
+  }})();
+
   // Copy/paste keyboard shortcuts (parity with the old shell).
   term.attachCustomKeyEventHandler(function (e) {{
+    if (e.type === "keydown" && window.sshpilotAC.visible()
+        && !e.ctrlKey && !e.altKey && !e.metaKey
+        && !window.sshpilotAC.key(e)) return false;
     if (e.type !== "keydown" || !(e.ctrlKey && e.shiftKey)) return true;
     const k = e.key.toLowerCase();
     if (k === "v") {{ navigator.clipboard.readText().then(t => term.paste(t)); return false; }}

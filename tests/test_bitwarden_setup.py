@@ -1,7 +1,6 @@
 """Tests for sshpilot/bitwarden_setup.py (GTK-free helpers)."""
 
 import io
-import subprocess
 import zipfile
 
 import pytest

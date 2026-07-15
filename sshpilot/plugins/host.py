@@ -363,6 +363,33 @@ class UiHost:
             logger.exception("Failed to open plugin page %r", full_id)
             self._show_toast(f"Failed to open {reg.title}", 3)
 
+    def open_web_tab(self, url: str, title: str) -> bool:
+        """Show ``url`` in an embedded WebKit tab, or in the system default
+        browser when WebKit (or the window) is unavailable. Returns False only
+        when nothing could be opened. Backs ``ctx.ui.open_web_tab``."""
+        from ..web_tab import WebTab, open_url_in_browser, webkit_available
+
+        window = self._window
+        if window is None or not webkit_available():
+            return open_url_in_browser(url)
+        try:
+            widget = WebTab(url)
+            if hasattr(window, "show_tab_view"):
+                window.show_tab_view()
+            page = window.tab_view.append(widget)
+            page.set_title(title)
+            try:
+                from sshpilot import icon_utils
+                page.set_icon(
+                    icon_utils.new_gicon_from_icon_name("web-browser-symbolic"))
+            except Exception:
+                pass
+            window.tab_view.set_selected_page(page)
+            return True
+        except Exception:
+            logger.exception("Failed to open web tab for %s", url)
+            return open_url_in_browser(url)
+
 
 class PluginHost:
     """Owns the event bus and UI host, bridges internal signals to events,

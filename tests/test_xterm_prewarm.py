@@ -1,5 +1,4 @@
 """Unit tests for PyXterm shell pool dispatch (no WebKit required)."""
-from types import SimpleNamespace
 
 from sshpilot.xterm_prewarm import XtermShellPool, _ShellEntry
 

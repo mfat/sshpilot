@@ -90,7 +90,7 @@ class FileKeyProvider(IdentityProvider):
             if os.path.isfile(pub_path):
                 from ..authorized_keys_parser import compute_fingerprint
 
-                with open(pub_path, "r", encoding="utf-8") as handle:
+                with open(pub_path, encoding="utf-8") as handle:
                     parts = handle.read().split()
                 if len(parts) >= 2:
                     return compute_fingerprint(parts[0], parts[1]) or None

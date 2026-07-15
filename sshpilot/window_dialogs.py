@@ -15,6 +15,7 @@ import logging
 import os
 import threading
 from datetime import datetime
+from typing import Optional
 
 from gi.repository import Adw, Gio, GLib, Gtk
 from gettext import gettext as _
@@ -1247,7 +1248,7 @@ class WindowConfigDialogsMixin:
             logger.error(f"Failed to read backup: {e}")
             self._simple_dialog(_("Import Failed"), str(e))
 
-    def _prompt_spbk_passphrase(self, import_path: str, error: str = None, on_cleanup=None):
+    def _prompt_spbk_passphrase(self, import_path: str, error: Optional[str] = None, on_cleanup=None):
         """Prompt for the backup passphrase; retry on a wrong passphrase.
 
         ``on_cleanup`` fires on success, on a fatal error, and on cancel — but NOT between

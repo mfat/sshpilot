@@ -1,0 +1,2 @@
+# git-build-recipe format 0.4 deb-version {debupstream}+git{revtime}-0ubuntu1
+lp:~mfat/sshpilot/+git/sshpilot main

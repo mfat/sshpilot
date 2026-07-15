@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:5.5.1}
+Version:        %{?version}%{!?version:5.5.2}
 Release:        1%{?dist}
 Summary:        Manage your servers with ease
 
@@ -87,6 +87,9 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/io.github.mfat.sshpil
 %{_datadir}/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg
 
 %changelog
+* Wed Jul 15 2026 mFat <newmfat@gmail.com> - 5.5.2
+- Bug fixes
+
 * Tue Jul 14 2026 mFat <newmfat@gmail.com> - 5.5.1
 - Docker Console UI improvements
 - File manager UI improvements
