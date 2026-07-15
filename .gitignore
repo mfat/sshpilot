@@ -25,9 +25,8 @@ io.github.mfat.sshpilot.yaml
 python3-deps.yml
 sshpilot-launcher.sh
 
-# Debian build
+# Debian build artifacts (debian/ packaging itself is tracked for the PPA)
 build-deb-local.sh
-/debian
 
 # Test output
 *.log

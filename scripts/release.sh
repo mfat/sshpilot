@@ -255,9 +255,11 @@ if ! grep -qE "from \. import __version__\s+as\s+APP_VERSION" sshpilot/window.py
   echo "WARNING: About dialog may not reflect __version__ automatically. Please verify in sshpilot/window.py." >&2
 fi
 
-git add "$INIT_FILE" "$METAINFO_FILE" "$DEB_CHANGELOG"
+# -f: debian/ may still be ignored in older local checkouts; force-add is safe
+# for already-tracked packaging files and avoids set -e aborting on Git ≥2.25.
+git add -f "$INIT_FILE" "$METAINFO_FILE" "$DEB_CHANGELOG"
 if [[ -f "$RPM_SPEC_FILE" ]]; then
-  git add "$RPM_SPEC_FILE"
+  git add -f "$RPM_SPEC_FILE"
 fi
 git commit -m "Bump version to $VERSION"
 
