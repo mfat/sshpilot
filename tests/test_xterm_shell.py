@@ -27,9 +27,8 @@ def test_bridge_wiring_present():
     assert "window.webkit.messageHandlers.sshpilotPty.postMessage" in html
     assert '"type": "input"' in html or "type: \"input\"" in html or "type:\"input\"" in html
     assert 'send({ type: "ready"' in html or 'type: "ready"' in html
-    # Ready after two rAFs so fit() sees committed layout before the flush.
+    # Ready is synchronous after fit; one rAF refines size/focus (not double-rAF).
     assert "requestAnimationFrame" in html
-    assert html.count("requestAnimationFrame") >= 2
     # Bulk preready flush helper (base64 → term.write once).
     assert "window.termWriteB64" in html
     # WebLinks must bridge to Python — default window.open() is blocked in WebKitGTK.

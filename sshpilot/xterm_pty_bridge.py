@@ -102,6 +102,9 @@ class XtermPtyBridge:
         self._pty.set_size(max(1, rows), max(1, cols))
 
         def _on_spawn_finished(pty, result, *_):
+            if self._closed or self._pty is None:
+                # Tab/bench tore down while spawn_async was in flight.
+                return
             try:
                 res = Vte.Pty.spawn_finish(pty, result)
                 pid = res[1] if isinstance(res, (tuple, list)) else res
@@ -109,6 +112,8 @@ class XtermPtyBridge:
                 logger.debug("PTY spawn failed: %s", exc, exc_info=True)
                 if on_spawned:
                     on_spawned(None, exc)
+                return
+            if self._closed or self._pty is None:
                 return
             self._child_pid = pid
             self._start_watches()

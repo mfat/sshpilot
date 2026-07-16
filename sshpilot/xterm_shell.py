@@ -166,15 +166,14 @@ def _build_shell_html_impl(
   function debounce(fn, ms) {{ let t; return function () {{ clearTimeout(t); t = setTimeout(fn, ms); }}; }}
   window.onresize = debounce(fitToScreen, 50);
 
-  // Two rAFs: the first only guarantees layout was *requested*; the second
-  // that it was *committed*, so fit() yields correct cols/rows before Python
-  // flushes the preready PTY buffer (wrong size → rewrap flicker).
+  // Signal ready synchronously after the first fit so Python can flush the
+  // preready PTY buffer without waiting two animation frames (measured ~30ms
+  // cold-reload regression). Refine size + focus on the next frame.
+  fit.fit();
+  send({{ type: "ready", rows: term.rows, cols: term.cols }});
   requestAnimationFrame(() => {{
-    requestAnimationFrame(() => {{
-      fit.fit();
-      send({{ type: "ready", rows: term.rows, cols: term.cols }});
-      term.focus();
-    }});
+    fitToScreen();
+    term.focus();
   }});
 
   // Autocomplete popup. Python drives it via sshpilotAC.update(payload) —
