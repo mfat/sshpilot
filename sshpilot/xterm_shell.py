@@ -121,10 +121,15 @@ def _build_shell_html_impl(
   window.ptySend = function (o) {{ send(o); return true; }};
 
   // Default WebLinksAddon uses window.open(), which WebKitGTK blocks without a
-  // create-web-view handler. Bridge to Python and open in the system browser.
-  term.loadAddon(new WebLinksAddon.WebLinksAddon((event, uri) => {{
-    send({{ type: "open-url", url: uri }});
-  }}));
+  // create-web-view handler. Bridge click + hover to Python so Open/Copy Link
+  // in the GTK context menu match VTE (which tracks _hovered_hyperlink_uri).
+  term.loadAddon(new WebLinksAddon.WebLinksAddon(
+    (event, uri) => {{ send({{ type: "open-url", url: uri }}); }},
+    {{
+      hover: (event, uri) => {{ send({{ type: "link-hover", url: uri }}); }},
+      leave: () => {{ send({{ type: "link-leave" }}); }}
+    }}
+  ));
 
   term.open(document.getElementById("terminal"));
   term.onData(d => send({{ type: "input", data: d }}));

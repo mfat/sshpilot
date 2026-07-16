@@ -1470,6 +1470,19 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
 
     # ---- JS -> Python messages ----------------------------------------------
 
+    def _set_owner_hovered_link(self, url: Optional[str]) -> None:
+        """Mirror WebLinks hover into TerminalWidget for Open/Copy Link menu items."""
+        owner = self.owner
+        if owner is None:
+            return
+        text = (url or "").strip() or None
+        if text is not None and not text.startswith(("http://", "https://")):
+            text = None
+        try:
+            owner._hovered_hyperlink_uri = text
+        except Exception:  # noqa: BLE001
+            logger.debug("Failed to set hovered hyperlink on owner", exc_info=True)
+
     def _on_pty_message(self, ucm, js_value):
         import json
         try:
@@ -1540,6 +1553,11 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
                     logger.warning("Failed to open PyXterm URL: %s", url, exc_info=True)
             else:
                 logger.debug("Ignoring non-http(s) PyXterm URL: %s", url)
+        elif kind == "link-hover":
+            # WebLinksAddon hover — feed TerminalWidget context menu (Open/Copy Link).
+            self._set_owner_hovered_link(payload.get("url"))
+        elif kind == "link-leave":
+            self._set_owner_hovered_link(None)
         elif kind == "paste":
             # Ctrl+Shift+V inside the WebView — use GTK clipboard (other apps).
             self.paste_clipboard()

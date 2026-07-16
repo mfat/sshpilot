@@ -39,3 +39,21 @@ def test_open_url_ignores_non_http():
     # Must not raise or attempt to open file:/javascript: schemes.
     b._on_pty_message(None, _msg({"type": "open-url", "url": "file:///etc/passwd"}))
     b._on_pty_message(None, _msg({"type": "open-url", "url": "javascript:alert(1)"}))
+
+
+def test_link_hover_sets_owner_uri():
+    b = _backend()
+    owner = SimpleNamespace()
+    b.owner = owner
+    b._on_pty_message(None, _msg({"type": "link-hover", "url": "https://example.com/x"}))
+    assert owner._hovered_hyperlink_uri == "https://example.com/x"
+    b._on_pty_message(None, _msg({"type": "link-leave"}))
+    assert owner._hovered_hyperlink_uri is None
+
+
+def test_link_hover_ignores_non_http():
+    b = _backend()
+    owner = SimpleNamespace(_hovered_hyperlink_uri="https://keep.me")
+    b.owner = owner
+    b._on_pty_message(None, _msg({"type": "link-hover", "url": "javascript:alert(1)"}))
+    assert owner._hovered_hyperlink_uri is None

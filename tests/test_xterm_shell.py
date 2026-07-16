@@ -29,6 +29,9 @@ def test_bridge_wiring_present():
     assert 'send({ type: "ready"' in html or 'type: "ready"' in html
     # WebLinks must bridge to Python — default window.open() is blocked in WebKitGTK.
     assert 'type: "open-url"' in html or "type: \"open-url\"" in html
+    # Hover/leave feed TerminalWidget._hovered_hyperlink_uri for Open/Copy Link.
+    assert 'type: "link-hover"' in html
+    assert 'type: "link-leave"' in html
 
 
 def test_theme_and_font_seeded():
