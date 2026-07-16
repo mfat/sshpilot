@@ -120,16 +120,27 @@ def _build_shell_html_impl(
   // Programmatic input path (feed_child/broadcast can also go straight to the PTY).
   window.ptySend = function (o) {{ send(o); return true; }};
 
-  // Default WebLinksAddon uses window.open(), which WebKitGTK blocks without a
-  // create-web-view handler. Bridge click + hover to Python so Open/Copy Link
-  // in the GTK context menu match VTE (which tracks _hovered_hyperlink_uri).
-  term.loadAddon(new WebLinksAddon.WebLinksAddon(
-    (event, uri) => {{ send({{ type: "open-url", url: uri }}); }},
-    {{
-      hover: (event, uri) => {{ send({{ type: "link-hover", url: uri }}); }},
-      leave: () => {{ send({{ type: "link-leave" }}); }}
-    }}
-  ));
+  // Link handling per https://xtermjs.org/docs/guides/link-handling/ —
+  // one shared handler for pattern URLs (web-links) and OSC 8
+  // (term.options.linkHandler). Default window.open() is blocked in WebKitGTK,
+  // so activate bridges to Python. Hover/leave feed GTK Open/Copy Link.
+  // Ctrl+click (Cmd+click on macOS) required to open — same as typical terminals.
+  function isMacPlatform() {{
+    return typeof navigator !== "undefined" && /Mac/i.test(navigator.platform || "");
+  }}
+  function activateLink(event, uri) {{
+    if (!(isMacPlatform() ? event.metaKey : event.ctrlKey)) return;
+    send({{ type: "open-url", url: uri }});
+  }}
+  const linkHandler = {{
+    activate: (event, text, range) => {{ activateLink(event, text); }},
+    hover: (event, text, range) => {{ send({{ type: "link-hover", url: text }}); }},
+    leave: (event, text, range) => {{ send({{ type: "link-leave" }}); }},
+    // Keep false: only http(s) reach the handler; Python also rejects other schemes.
+    allowNonHttpProtocols: false
+  }};
+  term.loadAddon(new WebLinksAddon.WebLinksAddon(activateLink, linkHandler));
+  term.options.linkHandler = linkHandler;
 
   term.open(document.getElementById("terminal"));
   term.onData(d => send({{ type: "input", data: d }}));

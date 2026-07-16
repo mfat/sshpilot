@@ -34,6 +34,19 @@ def test_bridge_wiring_present():
     assert 'type: "link-leave"' in html
 
 
+def test_link_handler_matches_xterm_docs_pattern():
+    """Shared ILinkHandler for WebLinks + OSC 8 (xtermjs.org link-handling guide)."""
+    html = build_shell_html()
+    assert "const linkHandler" in html
+    assert "term.options.linkHandler = linkHandler" in html
+    assert "new WebLinksAddon.WebLinksAddon(activateLink, linkHandler)" in html
+    assert "allowNonHttpProtocols: false" in html
+    # Modifier required to open (Ctrl / Cmd).
+    assert "event.metaKey" in html
+    assert "event.ctrlKey" in html
+    assert "function activateLink" in html
+
+
 def test_theme_and_font_seeded():
     html = build_shell_html(theme={"background": "#112233"}, font_family="Fira", font_size=15)
     assert "#112233" in html
