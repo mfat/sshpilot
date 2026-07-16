@@ -158,15 +158,24 @@ def _build_shell_html_impl(
   }}
   // Programmatic input path (feed_child/broadcast can also go straight to the PTY).
   window.ptySend = function (o) {{ send(o); return true; }};
+  // Sticky scroll (webssh-style): only pin to bottom after write if the user was
+  // already there — don't yank the viewport during a flood while reading history.
+  function _isAtBottom() {{
+    const buf = term.buffer && term.buffer.active;
+    if (!buf) return true;
+    return buf.viewportY >= buf.baseY;
+  }}
   // Flow control: optional write callback → write-ack so Python can pause the PTY
   // when xterm.js falls behind (https://xtermjs.org/docs/guides/flowcontrol/).
   function _termWrite(text, ack) {{
     if (!window.term) return;
-    if (ack) {{
-      term.write(text, function () {{ send({{ type: "write-ack" }}); }});
-    }} else {{
-      term.write(text);
-    }}
+    const stick = _isAtBottom();
+    term.write(text, function () {{
+      if (stick) {{
+        try {{ term.scrollToBottom(); }} catch (e) {{}}
+      }}
+      if (ack) send({{ type: "write-ack" }});
+    }});
   }}
   window.termWrite = _termWrite;
   // One-shot bulk flush from Python (preready buffer) — base64 avoids N JSON

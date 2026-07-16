@@ -1317,12 +1317,16 @@ class PyXtermTerminalBackend:
             "}})();"
         )
 
-    def _search_options_dict(self) -> dict:
-        return {
+    def _search_options_dict(self, *, forward: bool = True) -> dict:
+        opts = {
             "caseSensitive": bool(self._current_search_case_sensitive),
             "regex": bool(self._current_search_is_regex),
             "decorations": dict(self._SEARCH_DECORATIONS),
         }
+        # incremental only affects findNext (SearchAddon typings).
+        if forward:
+            opts["incremental"] = True
+        return opts
 
     def _run_search_js(self, *, forward: bool) -> bool:
         """Invoke SearchAddon and report found via ``search-result`` message."""
@@ -1331,7 +1335,7 @@ class PyXtermTerminalBackend:
         import json
         payload = {
             "term": self._current_search_term,
-            "opts": self._search_options_dict(),
+            "opts": self._search_options_dict(forward=forward),
             "forward": bool(forward),
         }
         script = (

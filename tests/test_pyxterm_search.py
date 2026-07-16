@@ -55,6 +55,18 @@ def test_search_find_previous_sets_forward_false():
     assert payload["forward"] is False
     assert payload["opts"]["regex"] is True
     assert payload["opts"]["caseSensitive"] is True
+    assert "incremental" not in payload["opts"]
+
+
+def test_search_find_next_sets_incremental():
+    b = _make_backend()
+    b.search_set_query("x")
+    b.search_find_next()
+    start = b._scripts[0].index("(") + 1
+    end = b._scripts[0].rindex(")")
+    payload = json.loads(b._scripts[0][start:end])
+    assert payload["forward"] is True
+    assert payload["opts"]["incremental"] is True
 
 
 def test_clear_query_clears_decorations():

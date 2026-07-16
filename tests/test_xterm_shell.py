@@ -40,6 +40,9 @@ def test_bridge_wiring_present():
     assert 'type: "search-results"' in html
     # Decorations need proposed API (SearchAddon match highlights).
     assert '"allowProposedApi": true' in html
+    # Sticky scroll: only scrollToBottom when already at bottom.
+    assert "_isAtBottom" in html
+    assert "scrollToBottom" in html
     # WebLinks must bridge to Python — default window.open() is blocked in WebKitGTK.
     assert 'type: "open-url"' in html or "type: \"open-url\"" in html
     # Hover/leave feed TerminalWidget._hovered_hyperlink_uri for Open/Copy Link.
