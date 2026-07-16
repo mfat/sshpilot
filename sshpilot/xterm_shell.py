@@ -216,15 +216,21 @@ def _build_shell_html_impl(
     return {{ update: update, hide: hide, visible: visible, key: key }};
   }})();
 
-  // Copy/paste keyboard shortcuts (parity with the old shell).
+  // Copy/paste keyboard shortcuts. Bridge to Python so GTK owns the system
+  // clipboard — navigator.clipboard cannot reliably read text copied in other
+  // apps under WebKitGTK.
   term.attachCustomKeyEventHandler(function (e) {{
     if (e.type === "keydown" && window.sshpilotAC.visible()
         && !e.ctrlKey && !e.altKey && !e.metaKey
         && !window.sshpilotAC.key(e)) return false;
     if (e.type !== "keydown" || !(e.ctrlKey && e.shiftKey)) return true;
     const k = e.key.toLowerCase();
-    if (k === "v") {{ navigator.clipboard.readText().then(t => term.paste(t)); return false; }}
-    if (k === "c" || k === "x") {{ navigator.clipboard.writeText(term.getSelection()); term.focus(); return false; }}
+    if (k === "v") {{ send({{ type: "paste" }}); return false; }}
+    if (k === "c" || k === "x") {{
+      send({{ type: "copy", text: term.getSelection() }});
+      term.focus();
+      return false;
+    }}
     return true;
   }});
 </script></body></html>"""

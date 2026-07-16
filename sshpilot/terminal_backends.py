@@ -953,23 +953,59 @@ class PyXtermTerminalBackend:
             except Exception:
                 logger.debug("Failed to show pyxterm widget", exc_info=True)
 
+    def _get_system_clipboard(self):
+        """Return the GDK clipboard for this WebView (system clipboard)."""
+        display = None
+        if self._webview is not None:
+            try:
+                display = self._webview.get_display()
+            except Exception:  # noqa: BLE001
+                display = None
+        if display is None:
+            display = Gdk.Display.get_default()
+        if display is None:
+            return None
+        return display.get_clipboard()
+
+    def _set_system_clipboard_text(self, text: str) -> None:
+        if not text:
+            return
+        clipboard = self._get_system_clipboard()
+        if clipboard is None:
+            return
+        clipboard.set(text)
+
+    def _paste_text(self, text: str) -> None:
+        """Inject clipboard text into xterm.js (fires onData → PTY bridge)."""
+        if not text or not self.available:
+            return
+        import json
+
+        # json.dumps produces a JS string literal safe for evaluate_javascript.
+        script = (
+            "if (typeof window.term !== 'undefined') { window.term.paste(%s); }"
+            % json.dumps(text)
+        )
+        self._run_javascript(script)
+
     def copy_clipboard(self) -> None:
-        """Copy selected text from xterm.js to clipboard"""
+        """Copy selected text from xterm.js to the system clipboard.
+
+        Selection is read in JS and posted to Python so we can write the GTK
+        clipboard. ``navigator.clipboard`` is unreliable for cross-app use in
+        WebKitGTK (and paste from other apps fails for the same reason).
+        """
         if not self.available:
             return
         try:
-            # Wrapped in an IIFE returning a boolean: the clipboard call is
-            # async and its Promise must NOT be the script's completion value,
-            # or WebKit's evaluate_javascript_finish raises "Unsupported result
-            # type". The copy still happens when the Promise resolves.
+            # IIFE returns a boolean so evaluate_javascript_finish does not see
+            # a Promise/"undefined" completion value as an unsupported type.
             script = """
             (function() {
                 if (typeof window.term !== 'undefined' && window.term.hasSelection()) {
                     var selection = window.term.getSelection();
-                    if (selection) {
-                        navigator.clipboard.writeText(selection).catch(function(err) {
-                            console.error('Failed to copy text:', err);
-                        });
+                    if (selection && typeof window.ptySend === 'function') {
+                        window.ptySend({type: "copy", text: selection});
                     }
                 }
                 return true;
@@ -980,30 +1016,32 @@ class PyXtermTerminalBackend:
             logger.debug(f"Failed to copy from PyXterm backend: {e}", exc_info=True)
 
     def paste_clipboard(self) -> None:
-        """Paste clipboard content into xterm.js terminal"""
+        """Paste system clipboard content into xterm.js.
+
+        Reads via GTK (not ``navigator.clipboard.readText``), which is what
+        other apps write to. WebKit's Clipboard API often cannot see that
+        content, so Ctrl+Shift+V / context-menu paste would no-op.
+        """
         if not self.available:
             return
         try:
-            # Wrapped in an IIFE returning a boolean so the async readText()
-            # Promise is not the script's completion value (WebKit's
-            # evaluate_javascript_finish rejects Promises with "Unsupported
-            # result type"). The paste runs when the Promise resolves:
-            # term.paste() fires onData -> window.ptySend -> the PTY WebSocket.
-            script = """
-            (function() {
-                if (typeof navigator !== 'undefined' && navigator.clipboard) {
-                    navigator.clipboard.readText().then(function(text) {
-                        if (typeof window.term !== 'undefined') {
-                            window.term.paste(text);
-                        }
-                    }).catch(function(err) {
-                        console.error('Failed to paste text:', err);
-                    });
-                }
-                return true;
-            })();
-            """
-            self._run_javascript(script)
+            clipboard = self._get_system_clipboard()
+            if clipboard is None:
+                return
+
+            def on_text(_clipboard, result):
+                try:
+                    text = clipboard.read_text_finish(result)
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug(
+                        "Failed to read system clipboard for PyXterm paste: %s",
+                        exc,
+                    )
+                    return
+                if text:
+                    self._paste_text(text)
+
+            clipboard.read_text_async(None, on_text)
         except Exception as e:
             logger.debug(f"Failed to paste to PyXterm backend: {e}", exc_info=True)
 
@@ -1422,9 +1460,9 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
         try:
             from .xterm_shell import build_shell_html
             html = build_shell_html()
-            # Base URI must be a localhost origin: it makes the document a secure
-            # context so navigator.clipboard (copy/paste) is available. "about:blank"
-            # is NOT secure and leaves navigator.clipboard undefined.
+            # Base URI must be a localhost origin (secure context). "about:blank"
+            # is not. Copy/paste goes through GTK nowadays; keep localhost for
+            # any remaining Web APIs that require a secure context.
             self._webview.load_html(html, "http://localhost/")
             logger.debug("Loaded embedded xterm shell via load_html")
         except Exception as e:  # noqa: BLE001
@@ -1502,6 +1540,15 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
                     logger.warning("Failed to open PyXterm URL: %s", url, exc_info=True)
             else:
                 logger.debug("Ignoring non-http(s) PyXterm URL: %s", url)
+        elif kind == "paste":
+            # Ctrl+Shift+V inside the WebView — use GTK clipboard (other apps).
+            self.paste_clipboard()
+        elif kind == "copy":
+            # Selection posted from JS (shortcut or copy_clipboard).
+            try:
+                self._set_system_clipboard_text(payload.get("text") or "")
+            except Exception:  # noqa: BLE001
+                logger.debug("Failed to set system clipboard from PyXterm", exc_info=True)
 
     # ---- autocomplete (Termius-style popup, engine in autocomplete.py) -------
 
