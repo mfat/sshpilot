@@ -1,3 +1,11 @@
+sshpilot (5.5.3-0ubuntu1) resolute; urgency=medium
+
+  * Release v5.5.3.
+  * Improvements for Xterm.js terminal backend
+  * Bug fixes
+
+ -- Mehdi <mah.fat@gmail.com>  Fri, 17 Jul 2026 02:37:50 +0330
+
 sshpilot (5.5.2-0ubuntu1) resolute; urgency=medium
 
   * Release v5.5.2.
