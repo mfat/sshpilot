@@ -211,28 +211,32 @@ class Runner:
         if self._trial and self._trial.t_flush_ms is None:
             self._trial.t_flush_ms = (time.perf_counter() - self._t0) * 1000.0
             self._trial.prompt_chars = len(text)
-        # Prefer production bulk helper when present; fall back to term.write.
+        # Match production helpers (termWrite / termWriteB64 + optional ack).
+        # Prompt-sized writes use ack=false (fast path); bulk preready uses ack.
+        ack_js = "true" if bulk else "false"
+        mark = (
+            "try { window.webkit.messageHandlers.sshpilotPty.postMessage("
+            "JSON.stringify({type:'first-paint'})); } catch (e) {}"
+        )
         if bulk:
             import base64
             b64 = base64.b64encode(text.encode("utf-8", "replace")).decode("ascii")
             script = (
                 "(() => {"
-                "  const mark = () => {"
-                "    try { window.webkit.messageHandlers.sshpilotPty.postMessage("
-                "      JSON.stringify({type:'first-paint'})); } catch (e) {}"
-                "  };"
-                "  if (window.termWriteB64) { window.termWriteB64(%s); mark(); }"
-                "  else if (window.term) { window.term.write(%s); mark(); }"
+                "  if (window.termWriteB64) { window.termWriteB64(%s, %s); }"
+                "  else if (window.term) { window.term.write(%s); }"
+                "  %s"
                 "})();"
-                % (json.dumps(b64), json.dumps(text))
+                % (json.dumps(b64), ack_js, json.dumps(text), mark)
             )
         else:
             script = (
                 "(() => {"
-                "  if (window.term) window.term.write(%s);"
-                "  try { window.webkit.messageHandlers.sshpilotPty.postMessage("
-                "    JSON.stringify({type:'first-paint'})); } catch (e) {}"
-                "})();" % json.dumps(text)
+                "  if (window.termWrite) { window.termWrite(%s, %s); }"
+                "  else if (window.term) { window.term.write(%s); }"
+                "  %s"
+                "})();"
+                % (json.dumps(text), ack_js, json.dumps(text), mark)
             )
         try:
             self._webview.evaluate_javascript(

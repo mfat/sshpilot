@@ -111,10 +111,39 @@ def _build_shell_html_impl(
   const term = new Terminal({opts_json});
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
-  const searchAddon = new SearchAddon.SearchAddon();
+  const searchAddon = new SearchAddon.SearchAddon({{ highlightLimit: 1000 }});
   term.loadAddon(searchAddon);
   term.searchAddon = searchAddon;
   window.term = term; window.fit = fit;
+  // SearchAddon → Python (found/not-found + decoration result counts).
+  // https://github.com/xtermjs/xterm.js/blob/master/addons/addon-search/typings/addon-search.d.ts
+  if (searchAddon.onDidChangeResults) {{
+    searchAddon.onDidChangeResults(e => {{
+      send({{
+        type: "search-results",
+        resultIndex: e.resultIndex,
+        resultCount: e.resultCount
+      }});
+    }});
+  }}
+  window.sshpilotSearch = function (payload) {{
+    if (!window.term || !window.term.searchAddon || !payload || !payload.term) {{
+      send({{ type: "search-result", found: false, resultIndex: -1, resultCount: 0 }});
+      return false;
+    }}
+    const opts = payload.opts || {{}};
+    const found = payload.forward
+      ? window.term.searchAddon.findNext(payload.term, opts)
+      : window.term.searchAddon.findPrevious(payload.term, opts);
+    send({{
+      type: "search-result",
+      found: !!found,
+      forward: !!payload.forward,
+      resultIndex: -1,
+      resultCount: 0
+    }});
+    return !!found;
+  }};
 
   function send(o) {{
     try {{ window.webkit.messageHandlers.sshpilotPty.postMessage(JSON.stringify(o)); }}

@@ -98,11 +98,23 @@ class BaseTerminalBackend(Protocol):
     def search_set_regex(self, regex: Optional[Any]) -> None:
         """Configure the search regex for the backend, if supported."""
 
+    def search_set_query(
+        self,
+        term: Optional[str],
+        *,
+        case_sensitive: bool = False,
+        regex: bool = False,
+    ) -> None:
+        """Set the user-facing search term and options (preferred over search_set_regex)."""
+
     def search_find_next(self) -> bool:
         """Search forward using the configured regex."""
 
     def search_find_previous(self) -> bool:
         """Search backwards using the configured regex."""
+
+    def clear_search_decorations(self) -> None:
+        """Clear search match decorations without necessarily clearing the query."""
 
     def get_child_pid(self) -> Optional[int]:
         """Return the PID of the running child process if available."""
@@ -532,11 +544,33 @@ class VTETerminalBackend:
         else:
             self.vte.search_set_regex(regex, 0)
 
+    def search_set_query(
+        self,
+        term: Optional[str],
+        *,
+        case_sensitive: bool = False,
+        regex: bool = False,
+    ) -> None:
+        import re as _re
+        if not term:
+            self.vte.search_set_regex(None, 0)
+            return
+        pattern = term if regex else _re.escape(term)
+        if not case_sensitive and not pattern.startswith("(?i)"):
+            pattern = "(?i)" + pattern
+        self.vte.search_set_regex(Vte.Regex.new_for_search(pattern, -1, 0), 0)
+        if hasattr(self.vte, "search_set_wrap_around"):
+            self.vte.search_set_wrap_around(True)
+
     def search_find_next(self) -> bool:
         return self.vte.search_find_next()
 
     def search_find_previous(self) -> bool:
         return self.vte.search_find_previous()
+
+    def clear_search_decorations(self) -> None:
+        # VTE highlight colors are restored by TerminalWidget on overlay hide.
+        return None
 
     def get_child_pid(self) -> Optional[int]:
         try:
@@ -1220,144 +1254,99 @@ class PyXtermTerminalBackend:
         # pyxterm.js does not currently expose scrollback; return None for compatibility
         return None
 
+    # Match VTE's amber search highlight for multi-match decorations.
+    # matchOverviewRuler / activeMatchColorOverviewRuler are required by ISearchDecorationOptions.
+    _SEARCH_DECORATIONS = {
+        "matchBackground": "#F4D03F",
+        "matchBorder": "#D4AC0D",
+        "matchOverviewRuler": "#F4D03F",
+        "activeMatchBackground": "#E67E22",
+        "activeMatchBorder": "#D35400",
+        "activeMatchColorOverviewRuler": "#E67E22",
+    }
+
     def search_set_regex(self, regex: Optional[Any]) -> None:
-        """Set the search pattern for xterm.js search addon.
-        
-        According to xterm.js search addon API:
-        - findNext(term: string, searchOptions?: ISearchOptions): boolean
-        - ISearchOptions includes: regex, caseSensitive, wholeWord, incremental, decorations
-        """
+        """Legacy entry point — prefer :meth:`search_set_query`."""
+        if regex is None:
+            self.search_set_query(None)
+        elif isinstance(regex, dict):
+            self.search_set_query(
+                regex.get("term"),
+                case_sensitive=bool(regex.get("case_sensitive", False)),
+                regex=bool(regex.get("regex", False)),
+            )
+        elif isinstance(regex, str):
+            # Best-effort legacy string (may be VTE-shaped with (?i)/escapes).
+            term = regex
+            case_sensitive = True
+            if term.startswith("(?i)"):
+                term = term[4:]
+                case_sensitive = False
+            self.search_set_query(term, case_sensitive=case_sensitive, regex=False)
+
+    def search_set_query(
+        self,
+        term: Optional[str],
+        *,
+        case_sensitive: bool = False,
+        regex: bool = False,
+    ) -> None:
+        """Store search term/options only — do not search (avoids double findNext)."""
         if not self.available or not self._webview:
             return
-        
-        # Extract search term and options from regex or use it directly if it's a string
-        search_term = None
-        is_regex = False
-        case_sensitive = True  # Default to case-sensitive
-        
-        if regex is None:
-            search_term = None
-        elif isinstance(regex, str):
-            # For PyXterm, we receive the pattern as a string
-            # Check if it has (?i) prefix (case-insensitive flag from VTE)
-            search_term = regex
-            if search_term.startswith("(?i)"):
-                search_term = search_term[4:]
-                case_sensitive = False
-            
-            # Detect if this is a regex pattern
-            # terminal.py does: pattern = text if regex else re.escape(text)
-            # So if regex=True, pattern has unescaped special chars
-            # If regex=False, pattern has all special chars escaped
-            # Heuristic: if pattern has unescaped regex special chars, it's likely a regex
-            import re as re_module
-            # Check for unescaped regex special characters
-            # Pattern: not preceded by backslash, followed by regex special char
-            unescaped_regex_chars = re_module.search(r'(?<!\\)[*+?|()[\]{}^$]', search_term)
-            # Also check for common regex patterns like ^ at start or $ at end
-            has_regex_anchors = search_term.startswith('^') or search_term.endswith('$')
-            
-            if unescaped_regex_chars or has_regex_anchors:
-                # Likely a regex - verify it compiles
-                try:
-                    re_module.compile(search_term)
-                    is_regex = True
-                except re_module.error:
-                    # Invalid regex, treat as literal
-                    is_regex = False
-            else:
-                # No unescaped special chars, likely a literal (escaped) pattern
-                is_regex = False
-        else:
-            # For VTE regex object, we can't extract the pattern easily
-            # This shouldn't happen for PyXterm, but handle it gracefully
+        if not term:
+            self._current_search_term = None
+            self._current_search_is_regex = False
+            self._current_search_case_sensitive = False
+            self.clear_search_decorations()
             return
-        
-        self._current_search_term = search_term
-        self._current_search_is_regex = is_regex
-        self._current_search_case_sensitive = case_sensitive
-        
-        # Ensure search addon is accessible
-        self._ensure_search_addon_accessible()
-        
-        # Set the search term according to xterm.js search addon API
-        if search_term is not None:
-            # Escape the search term for JavaScript string
-            escaped_term = search_term.replace('\\', '\\\\').replace("'", "\\'").replace('"', '\\"').replace('\n', '\\n').replace('\r', '\\r')
-            # Build search options according to ISearchOptions interface
-            options_json = f"caseSensitive: {str(case_sensitive).lower()}, regex: {str(is_regex).lower()}"
-            search_js = f"""
-            (function() {{
-                if (typeof window.term !== 'undefined' && window.term.searchAddon) {{
-                    window.term.searchAddon.findNext('{escaped_term}', {{{options_json}}});
-                }}
-            }})();
-            """
-            self._run_javascript(search_js)
-        else:
-            # Clear search using clearDecorations() according to API
-            clear_js = """
-            (function() {
-                if (typeof window.term !== 'undefined' && window.term.searchAddon) {
-                    window.term.searchAddon.clearDecorations();
-                }
-            })();
-            """
-            self._run_javascript(clear_js)
-
-    def _ensure_search_addon_accessible(self) -> None:
-        """Ensure the search addon is accessible via window.term.searchAddon."""
-        if self._search_addon_loaded or not self.available:
-            return
-        # The search addon is now stored in the template, so it should be accessible
-        # Mark as loaded (we'll check availability in the search methods)
+        self._current_search_term = term
+        self._current_search_is_regex = bool(regex)
+        self._current_search_case_sensitive = bool(case_sensitive)
         self._search_addon_loaded = True
 
-    def search_find_next(self) -> bool:
-        """Find next occurrence of the search term.
-        
-        According to xterm.js search addon API:
-        - findNext(term: string, searchOptions?: ISearchOptions): boolean
-        """
+    def clear_search_decorations(self) -> None:
+        if not self.available or not self._webview:
+            return
+        self._run_javascript(
+            "(function(){"
+            "if(window.term&&window.term.searchAddon){"
+            "window.term.searchAddon.clearDecorations();"
+            "if(window.term.searchAddon.clearActiveDecoration)"
+            "window.term.searchAddon.clearActiveDecoration();"
+            "}})();"
+        )
+
+    def _search_options_dict(self) -> dict:
+        return {
+            "caseSensitive": bool(self._current_search_case_sensitive),
+            "regex": bool(self._current_search_is_regex),
+            "decorations": dict(self._SEARCH_DECORATIONS),
+        }
+
+    def _run_search_js(self, *, forward: bool) -> bool:
+        """Invoke SearchAddon and report found via ``search-result`` message."""
         if not self.available or not self._current_search_term:
             return False
-        
-        self._ensure_search_addon_accessible()
-        
-        escaped_term = self._current_search_term.replace('\\', '\\\\').replace("'", "\\'").replace('"', '\\"').replace('\n', '\\n').replace('\r', '\\r')
-        options_json = f"caseSensitive: {str(self._current_search_case_sensitive).lower()}, regex: {str(self._current_search_is_regex).lower()}"
-        search_js = f"""
-        (function() {{
-            if (typeof window.term !== 'undefined' && window.term.searchAddon) {{
-                window.term.searchAddon.findNext('{escaped_term}', {{{options_json}}});
-            }}
-        }})();
-        """
-        self._run_javascript(search_js)
-        return True  # API returns boolean, but we can't get return value from async JS
+        import json
+        payload = {
+            "term": self._current_search_term,
+            "opts": self._search_options_dict(),
+            "forward": bool(forward),
+        }
+        script = (
+            "window.sshpilotSearch && window.sshpilotSearch(%s);"
+            % json.dumps(payload)
+        )
+        self._run_javascript(script)
+        # Real found/not-found arrives asynchronously as search-result.
+        return True
+
+    def search_find_next(self) -> bool:
+        return self._run_search_js(forward=True)
 
     def search_find_previous(self) -> bool:
-        """Find previous occurrence of the search term.
-        
-        According to xterm.js search addon API:
-        - findPrevious(term: string, searchOptions?: ISearchOptions): boolean
-        """
-        if not self.available or not self._current_search_term:
-            return False
-        
-        self._ensure_search_addon_accessible()
-        
-        escaped_term = self._current_search_term.replace('\\', '\\\\').replace("'", "\\'").replace('"', '\\"').replace('\n', '\\n').replace('\r', '\\r')
-        options_json = f"caseSensitive: {str(self._current_search_case_sensitive).lower()}, regex: {str(self._current_search_is_regex).lower()}"
-        search_js = f"""
-        (function() {{
-            if (typeof window.term !== 'undefined' && window.term.searchAddon) {{
-                window.term.searchAddon.findPrevious('{escaped_term}', {{{options_json}}});
-            }}
-        }})();
-        """
-        self._run_javascript(search_js)
-        return True  # API returns boolean, but we can't get return value from async JS
+        return self._run_search_js(forward=False)
 
     def get_child_pid(self) -> Optional[int]:
         return self._child_pid
@@ -1549,6 +1538,27 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
                 self._do_spawn()
         elif kind == "write-ack":
             self._on_write_ack()
+        elif kind == "search-result":
+            owner = self.owner
+            if owner is not None and hasattr(owner, "handle_search_result"):
+                try:
+                    owner.handle_search_result(
+                        bool(payload.get("found")),
+                        result_index=int(payload.get("resultIndex", -1)),
+                        result_count=int(payload.get("resultCount", 0)),
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.debug("handle_search_result raised", exc_info=True)
+        elif kind == "search-results":
+            owner = self.owner
+            if owner is not None and hasattr(owner, "handle_search_results"):
+                try:
+                    owner.handle_search_results(
+                        int(payload.get("resultIndex", -1)),
+                        int(payload.get("resultCount", 0)),
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.debug("handle_search_results raised", exc_info=True)
         elif kind == "input":
             if self._bridge is not None:
                 self._bridge.write(payload.get("data", ""))
