@@ -8,7 +8,8 @@ Command Blocks snippets), and produces the JSON payload the in-page popup
 There is no shell integration (no OSC 133): the tracker is a heuristic that
 *invalidates* on anything it cannot model (escape sequences, Tab completion,
 unknown control chars) and re-validates only on Enter / Ctrl+C / Ctrl+U — so
-the popup fails quiet, never with a wrong completion.
+the popup fails quiet, never with a wrong completion. Ctrl+L (clear-screen)
+is ignored: the shell redraws the same edit line.
 
 Kept GTK-free so it is unit-testable headlessly (``tests/test_autocomplete.py``).
 """
@@ -212,7 +213,8 @@ class LineTracker:
 
     ``valid`` drops on anything unmodeled (arrows/escape sequences, Tab
     completion, unknown control chars) and returns only on Enter/Ctrl+C/Ctrl+U —
-    the events that provably reset the shell's edit line.
+    the events that provably reset the shell's edit line. Ctrl+L is a no-op
+    (clear-screen keeps the current edit buffer).
     """
 
     def __init__(self) -> None:
@@ -233,6 +235,8 @@ class LineTracker:
             elif ch in "\x03\x15":  # Ctrl+C / Ctrl+U discard the line
                 self.line = ""
                 self.valid = True
+            elif ch == "\x0c":  # Ctrl+L clear-screen: edit line unchanged
+                pass
             elif ch == "\x17":  # Ctrl+W: delete trailing word
                 stripped = self.line.rstrip(" ")
                 cut = stripped.rfind(" ")
