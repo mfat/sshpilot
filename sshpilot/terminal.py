@@ -430,6 +430,12 @@ class TerminalWidget(Gtk.Box):
 
         search_controls.append(self.search_entry)
 
+        self.search_count_label = Gtk.Label(label="")
+        self.search_count_label.add_css_class("dim-label")
+        self.search_count_label.set_width_chars(7)
+        self.search_count_label.set_xalign(1)
+        search_controls.append(self.search_count_label)
+
         self.search_prev_button = Gtk.Button()
         icon_utils.set_button_icon(self.search_prev_button, 'go-up-symbolic')
         self.search_prev_button.set_tooltip_text(_("Find previous match"))
@@ -2079,9 +2085,16 @@ class TerminalWidget(Gtk.Box):
                             pass
                     
                     # Create new provider with very specific selector to avoid affecting other widgets
-                    # Only target TerminalWidget instances with terminal-bg class
+                    # Target TerminalWidget + scrolled child + VTE or PyXterm WebView.
                     provider = Gtk.CssProvider()
-                    css = f"terminalwidget.terminal-bg, terminalwidget.terminal-bg > scrolledwindow.terminal-bg, terminalwidget.terminal-bg > scrolledwindow.terminal-bg > vte-terminal.terminal-bg {{ background-color: rgba({int(rgba.red*255)}, {int(rgba.green*255)}, {int(rgba.blue*255)}, {rgba.alpha}); }}"
+                    css = (
+                        f"terminalwidget.terminal-bg, "
+                        f"terminalwidget.terminal-bg > scrolledwindow.terminal-bg, "
+                        f"terminalwidget.terminal-bg > scrolledwindow.terminal-bg > vte-terminal.terminal-bg, "
+                        f"terminalwidget.terminal-bg > scrolledwindow.terminal-bg > *.terminal-bg "
+                        f"{{ background-color: rgba({int(rgba.red*255)}, {int(rgba.green*255)}, "
+                        f"{int(rgba.blue*255)}, {rgba.alpha}); }}"
+                    )
                     provider.load_from_data(css.encode('utf-8'))
                     Gtk.StyleContext.add_provider_for_display(
                         display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
@@ -2096,6 +2109,9 @@ class TerminalWidget(Gtk.Box):
                     self.scrolled_window.add_css_class('terminal-bg')
                 if hasattr(self.vte, 'add_css_class'):
                     self.vte.add_css_class('terminal-bg')
+                backend_widget = getattr(getattr(self, 'backend', None), 'widget', None)
+                if backend_widget is not None and hasattr(backend_widget, 'add_css_class'):
+                    backend_widget.add_css_class('terminal-bg')
             except Exception as e:
                 logger.debug(f"Failed to set container background: {e}")
             
@@ -2404,37 +2420,70 @@ class TerminalWidget(Gtk.Box):
         the grab_focus is not needed here.
         """
 
+    def _vte_uri_at(self, x: float, y: float) -> Optional[str]:
+        """Return the URI at widget coordinates, or None.
+
+        Prefer OSC 8 hyperlinks over regex matches (same precedence as GNOME
+        Terminal). Uses the coordinate APIs from
+        https://api.pygobject.gnome.org/Vte-3.91/class-Terminal.html —
+        ``check_hyperlink_at`` / ``check_match_at`` (since 0.70), with
+        ``match_check`` as a fallback for older VTE.
+        """
+        if self.vte is None:
+            return None
+
+        # OSC 8 explicit hyperlinks
+        if hasattr(self.vte, 'check_hyperlink_at'):
+            try:
+                uri = self.vte.check_hyperlink_at(x, y)
+                if uri:
+                    return uri
+            except Exception:
+                pass
+
+        # Plain-text regex matches registered via match_add_regex
+        if hasattr(self.vte, 'check_match_at'):
+            try:
+                result = self.vte.check_match_at(x, y)
+                if result:
+                    candidate = result[0] if isinstance(result, (tuple, list)) else result
+                    if candidate:
+                        return candidate
+            except Exception as e:
+                logger.debug(f"check_match_at error: {e}")
+        elif hasattr(self.vte, 'match_check'):
+            try:
+                char_width = self.vte.get_char_width()
+                char_height = self.vte.get_char_height()
+                if char_width > 0 and char_height > 0:
+                    result = self.vte.match_check(int(x / char_width), int(y / char_height))
+                    if result:
+                        candidate = result[0] if isinstance(result, (tuple, list)) else result
+                        if candidate:
+                            return candidate
+            except Exception as e:
+                logger.debug(f"match_check error: {e}")
+        return None
+
+    @staticmethod
+    def _click_has_link_modifier(state) -> bool:
+        """True when the click should activate a link (GNOME Terminal: Ctrl+click).
+
+        GNOME Terminal's ``terminal_screen_capture_click_pressed_cb`` only opens
+        when ``state & GDK_CONTROL_MASK``. On macOS use Cmd (Meta) instead —
+        Ctrl+click is commonly mapped to right-click there.
+        """
+        if is_macos():
+            return bool(state & Gdk.ModifierType.META_MASK)
+        return bool(state & Gdk.ModifierType.CONTROL_MASK)
+
     def _on_vte_motion(self, controller, x, y):
         """Detect URL under the mouse cursor (both OSC 8 links and plain-text regexes)."""
         if self.vte is None:
             return
         try:
-            uri = None
-
-            # OSC 8 hyperlinks – needs a GdkEvent; skip if unavailable
+            uri = self._vte_uri_at(x, y)
             event = controller.get_current_event()
-            if event and hasattr(self.vte, 'hyperlink_check_event'):
-                try:
-                    uri = self.vte.hyperlink_check_event(event)
-                except Exception:
-                    pass
-
-            # Plain-text regex matches – use cell coordinates so we don't
-            # depend on get_current_event() being reliable
-            if not uri:
-                try:
-                    char_width = self.vte.get_char_width()
-                    char_height = self.vte.get_char_height()
-                    if char_width > 0 and char_height > 0:
-                        col = int(x / char_width)
-                        row = int(y / char_height)
-                        result = self.vte.match_check(col, row)
-                        if result:
-                            candidate = result[0] if isinstance(result, (tuple, list)) else result
-                            if candidate:
-                                uri = candidate
-                except Exception as e:
-                    logger.debug(f"match_check error: {e}")
 
             # Only update when we have a definitive answer; never clear via a
             # missing event (the cursor may still be on the same link)
@@ -3360,49 +3409,36 @@ class TerminalWidget(Gtk.Box):
                 self._register_menu_controller(self.terminal_widget, gesture)
                 logger.debug("Added context menu gesture to terminal widget")
 
-            # CAPTURE-phase left-click gesture for Ctrl+click URL opening.
-            # Must use CAPTURE so it runs before VTE's text-selection handler; we only
-            # claim the event when Ctrl is held AND a URL is under the cursor.
+            # CAPTURE-phase left-click gesture for Ctrl+click URL opening
+            # (GNOME Terminal: terminal_screen_capture_click_pressed_cb requires
+            # GDK_CONTROL_MASK). Must use CAPTURE so it runs before VTE's
+            # text-selection handler; we only claim when the modifier is held
+            # AND a URL is under the cursor.
             if self.vte is not None:
                 url_gesture = Gtk.GestureClick()
                 url_gesture.set_button(Gdk.BUTTON_PRIMARY)
                 url_gesture.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
                 def _on_url_click(gest, n_press, x, y):
                     try:
-                        uri = None
+                        if n_press != 1:
+                            return
+                        # Plain click must reach VTE for cursor placement /
+                        # selection — only Ctrl+click (Cmd+click on macOS)
+                        # activates links, matching GNOME Terminal.
+                        try:
+                            state = gest.get_current_event_state()
+                        except Exception:
+                            return
+                        if not self._click_has_link_modifier(state):
+                            return
 
-                        # Primary: match_check_event mirrors the code sample pattern
-                        ev = gest.get_current_event()
-                        if ev and self.vte is not None:
-                            try:
-                                result = self.vte.match_check_event(ev)
-                                if result:
-                                    candidate = result[0] if isinstance(result, (tuple, list)) else result
-                                    if candidate:
-                                        uri = candidate
-                            except Exception:
-                                pass
-
-                        # Fallback: cell-coordinate lookup
-                        if not uri and self.vte is not None:
-                            try:
-                                cw = self.vte.get_char_width()
-                                ch = self.vte.get_char_height()
-                                if cw > 0 and ch > 0:
-                                    result = self.vte.match_check(int(x / cw), int(y / ch))
-                                    if result:
-                                        candidate = result[0] if isinstance(result, (tuple, list)) else result
-                                        if candidate:
-                                            uri = candidate
-                            except Exception:
-                                pass
-
+                        uri = self._vte_uri_at(x, y)
                         if not uri:
                             return  # no URL here – let VTE handle the click normally
 
                         gest.set_state(Gtk.EventSequenceState.CLAIMED)
                         Gio.AppInfo.launch_default_for_uri(uri, None)
-                        logger.debug(f"Opened URL via click: {uri}")
+                        logger.debug(f"Opened URL via Ctrl/Cmd+click: {uri}")
                     except Exception as e:
                         logger.warning(f"URL click failed: {e}")
                 url_gesture.connect('pressed', _on_url_click)
@@ -4668,9 +4704,14 @@ class TerminalWidget(Gtk.Box):
             if hasattr(self, 'search_revealer') and self.search_revealer:
                 self.search_revealer.set_reveal_child(False)
             self._set_search_error_state(False)
-            if hasattr(self, 'vte') and self.vte:
-                if self.backend:
-                    self.backend.grab_focus()
+            self._update_search_count_label(-1, 0)
+            if self.backend and hasattr(self.backend, "clear_search_decorations"):
+                try:
+                    self.backend.clear_search_decorations()
+                except Exception:
+                    pass
+            if self.backend:
+                self.backend.grab_focus()
             # Restore theme selection color now that search is closed
             self._apply_cursor_and_selection_colors()
         except Exception as exc:
@@ -4706,15 +4747,72 @@ class TerminalWidget(Gtk.Box):
         self._search_has_match = False
         self._set_search_navigation_sensitive(False)
         self._set_search_error_state(False)
+        self._update_search_count_label(-1, 0)
         try:
             if self.backend:
-                self.backend.search_set_regex(None)
+                if hasattr(self.backend, "search_set_query"):
+                    self.backend.search_set_query(None)
+                else:
+                    self.backend.search_set_regex(None)
         except Exception:
             pass
 
+    def _update_search_count_label(self, result_index: int, result_count: int) -> None:
+        label = getattr(self, "search_count_label", None)
+        if label is None:
+            return
+        try:
+            if result_count <= 0:
+                label.set_text("")
+            elif result_index < 0:
+                # SearchAddon: resultIndex == -1 when highlight threshold exceeded.
+                label.set_text(f"{result_count}+")
+            else:
+                label.set_text(f"{result_index + 1}/{result_count}")
+        except Exception:
+            pass
+
+    def handle_search_result(
+        self,
+        found: bool,
+        *,
+        result_index: int = -1,
+        result_count: int = 0,
+    ) -> None:
+        """PyXterm async findNext/findPrevious result (script-message)."""
+        text = ""
+        if getattr(self, "search_entry", None):
+            text = self.search_entry.get_text() or ""
+        if result_count > 0:
+            self._search_has_match = True
+        else:
+            self._search_has_match = bool(found)
+        if text:
+            self._set_search_error_state(not self._search_has_match)
+        else:
+            self._set_search_error_state(False)
+        if result_count > 0 or result_index >= 0:
+            self._update_search_count_label(result_index, result_count)
+
+    def handle_search_results(self, result_index: int, result_count: int) -> None:
+        """PyXterm SearchAddon.onDidChangeResults (decorations enabled)."""
+        text = ""
+        if getattr(self, "search_entry", None):
+            text = self.search_entry.get_text() or ""
+        self._search_has_match = result_count > 0
+        if text:
+            self._set_search_error_state(result_count <= 0)
+        self._update_search_count_label(result_index, result_count)
+
+    def _is_pyxterm_backend(self) -> bool:
+        backend = self.backend
+        if backend is None:
+            return False
+        return type(backend).__name__ in ("PyXtermTerminalBackend", "PyXtermBridgeBackend")
+
     def _update_search_pattern(self, text: str, *, case_sensitive: bool = False, regex: bool = False,
                                 move_forward: bool = True, update_entry: bool = False) -> bool:
-        """Apply or update the search pattern on the VTE widget."""
+        """Apply or update the search pattern on the active terminal backend."""
         if not text:
             self._clear_search_pattern()
             return False
@@ -4728,22 +4826,21 @@ class TerminalWidget(Gtk.Box):
         try:
             if pattern_changed:
                 self._search_has_match = False
-                pattern = text if regex else re.escape(text)
-                # Use inline case-insensitive flag to avoid Vte.RegexFlags dependency
-                if not case_sensitive and not pattern.startswith("(?i)"):
-                    pattern = "(?i)" + pattern
-
-                # Use backend abstraction for search
+                self._update_search_count_label(-1, 0)
                 if self.backend:
-                    # For VTE backend, create Vte.Regex
-                    if hasattr(self.backend, 'vte') and self.backend.vte:
+                    if hasattr(self.backend, "search_set_query"):
+                        # Pass the raw user term; backends apply escape/flags themselves.
+                        self.backend.search_set_query(
+                            text, case_sensitive=case_sensitive, regex=regex
+                        )
+                    elif hasattr(self.backend, "vte") and self.backend.vte:
+                        pattern = text if regex else re.escape(text)
+                        if not case_sensitive and not pattern.startswith("(?i)"):
+                            pattern = "(?i)" + pattern
                         search_regex = Vte.Regex.new_for_search(pattern, -1, 0)
                         self.backend.search_set_regex(search_regex)
-                        if hasattr(self.backend.vte, 'search_set_wrap_around'):
+                        if hasattr(self.backend.vte, "search_set_wrap_around"):
                             self.backend.vte.search_set_wrap_around(True)
-                    else:
-                        # For PyXterm backend, pass the pattern as string
-                        self.backend.search_set_regex(pattern)
 
                 self._last_search_text = text
                 self._last_search_case_sensitive = case_sensitive
@@ -4775,6 +4872,10 @@ class TerminalWidget(Gtk.Box):
         except Exception as exc:
             logger.error(f"Search navigation failed: {exc}")
             found = False
+
+        # PyXterm reports found/not-found asynchronously via handle_search_result.
+        if self._is_pyxterm_backend():
+            return True
 
         if found:
             self._search_has_match = True

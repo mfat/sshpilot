@@ -27,6 +27,40 @@ def test_bridge_wiring_present():
     assert "window.webkit.messageHandlers.sshpilotPty.postMessage" in html
     assert '"type": "input"' in html or "type: \"input\"" in html or "type:\"input\"" in html
     assert 'send({ type: "ready"' in html or 'type: "ready"' in html
+    # Ready is synchronous after fit; one rAF refines size/focus (not double-rAF).
+    assert "requestAnimationFrame" in html
+    # Bulk preready flush helper (base64 → term.write once).
+    assert "window.termWriteB64" in html
+    # Flow control write + ack (xterm.js flowcontrol guide).
+    assert "window.termWrite" in html
+    assert 'type: "write-ack"' in html
+    # SearchAddon helper + result events.
+    assert "window.sshpilotSearch" in html
+    assert 'type: "search-result"' in html
+    assert 'type: "search-results"' in html
+    # Decorations need proposed API (SearchAddon match highlights).
+    assert '"allowProposedApi": true' in html
+    # Sticky scroll: only scrollToBottom when already at bottom.
+    assert "_isAtBottom" in html
+    assert "scrollToBottom" in html
+    # WebLinks must bridge to Python — default window.open() is blocked in WebKitGTK.
+    assert 'type: "open-url"' in html or "type: \"open-url\"" in html
+    # Hover/leave feed TerminalWidget._hovered_hyperlink_uri for Open/Copy Link.
+    assert 'type: "link-hover"' in html
+    assert 'type: "link-leave"' in html
+
+
+def test_link_handler_matches_xterm_docs_pattern():
+    """Shared ILinkHandler for WebLinks + OSC 8 (xtermjs.org link-handling guide)."""
+    html = build_shell_html()
+    assert "const linkHandler" in html
+    assert "term.options.linkHandler = linkHandler" in html
+    assert "new WebLinksAddon.WebLinksAddon(activateLink, linkHandler)" in html
+    assert "allowNonHttpProtocols: false" in html
+    # Modifier required to open (Ctrl / Cmd).
+    assert "event.metaKey" in html
+    assert "event.ctrlKey" in html
+    assert "function activateLink" in html
 
 
 def test_theme_and_font_seeded():
@@ -41,6 +75,21 @@ def test_autocomplete_popup_present():
     assert 'id="ac"' in html
     assert "window.sshpilotAC" in html
     assert "sshpilotAC.visible()" in html  # key handler consults the popup
+    assert "e.preventDefault()" in html
+    assert "sshpilotAC.key(e)" in html
+    # Suggestion-only: no auto-highlight; Tab passes through; Enter needs selection.
+    assert "sel = -1" in html
+    assert 'e.key === "Tab" || e.key === "ArrowRight") return true' in html
+    assert "hasSelection()" in html
+    # Bottom-of-terminal: flip above the real cursor box (helper textarea).
+    assert "placeAbove" in html
+    assert "xterm-helper-textarea" in html
+    assert "cursorTop - gap - h" in html
+    # Bold + distinct panel (lifted bg, accent border, solid selection).
+    assert "font-weight:700" in html or "font-weight: 700" in html
+    assert "--ac-accent" in html
+    assert "--ac-sel-fg" in html
+    assert "liftHex" in html
 
 
 def test_asset_dir_exists():

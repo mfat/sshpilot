@@ -38,6 +38,19 @@ def test_tracker_ctrl_c_and_ctrl_u_reset():
         assert t.line == "" and t.valid
 
 
+def test_tracker_ctrl_l_preserves_line():
+    """Ctrl+L clears the screen but readline keeps the edit buffer."""
+    t = LineTracker()
+    t.feed("gi")
+    t.feed("\x0c")
+    assert t.line == "gi" and t.valid
+    # Fresh prompt + Ctrl+L must not leave the tracker invalid.
+    t2 = LineTracker()
+    t2.feed("\x0c")
+    t2.feed("ls")
+    assert t2.line == "ls" and t2.valid
+
+
 def test_tracker_enter_commits_and_resets():
     t = LineTracker()
     assert t.feed("git status\r") == "git status"

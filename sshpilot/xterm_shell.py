@@ -75,7 +75,14 @@ def _build_shell_html_impl(
     css = _read(_CSS)
     addons = "\n".join(f"<script>{_read(a)}</script>" for a in _ADDONS)
 
-    opts = {"cursorBlink": True, "scrollback": 1000, "macOptionIsMeta": True}
+    opts = {
+        "cursorBlink": True,
+        "scrollback": 1000,
+        "macOptionIsMeta": True,
+        # Required for SearchAddon decorations / overview ruler (proposed API).
+        # https://xtermjs.org/docs/api/terminal/interfaces/iterminaloptions/
+        "allowProposedApi": True,
+    }
     if theme:
         opts["theme"] = theme
     if font_family:
@@ -89,15 +96,24 @@ def _build_shell_html_impl(
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"/><title>sshPilot Terminal</title>
 <style>{css}
-  html, body {{ margin:0; padding:0; height:100%; background:{json.dumps(background)[1:-1]}; }}
-  #terminal {{ width:100%; height:100vh; }}
-  .xterm-viewport, .xterm-screen {{ height:100% !important; }}
-  /* Autocomplete popup (window.sshpilotAC); colors come from term.options.theme at show time. */
+  /* height:100% (not 100vh): WebView viewport and vh can disagree, leaving a
+     gap. Page background must match term theme — fit() only paints whole rows. */
+  html, body {{ margin:0; padding:0; width:100%; height:100%; overflow:hidden;
+               background:{json.dumps(background)[1:-1]}; }}
+  #terminal {{ width:100%; height:100%; background:inherit; }}
+  .xterm, .xterm-viewport, .xterm-screen {{ height:100% !important; }}
+  /* Autocomplete popup (window.sshpilotAC); panel/accent colors set at show time. */
   #ac {{ position:absolute; display:none; z-index:10; max-height:16em; overflow:hidden;
-        border:1px solid rgba(127,127,127,.4); border-radius:6px;
-        box-shadow:0 2px 8px rgba(0,0,0,.4); white-space:pre; }}
-  .ac-row {{ padding:1px 8px; cursor:pointer; overflow:hidden; text-overflow:ellipsis; max-width:60ch; }}
-  .ac-sel {{ background:rgba(127,127,127,.35); }}
+        border:2px solid var(--ac-accent, #58a6ff); border-radius:8px;
+        box-shadow:0 6px 20px rgba(0,0,0,.55), 0 0 0 1px rgba(255,255,255,.08) inset;
+        white-space:pre; font-weight:700; letter-spacing:.01em; }}
+  .ac-row {{ padding:3px 10px; cursor:pointer; overflow:hidden; text-overflow:ellipsis;
+            max-width:60ch; font-weight:700; }}
+  .ac-row:hover {{ background:var(--ac-hover, rgba(88,166,255,.22)); }}
+  .ac-sel, .ac-sel:hover {{
+    background:var(--ac-sel, #1f6feb) !important;
+    color:var(--ac-sel-fg, #ffffff) !important;
+  }}
 </style>
 <script>{core}</script>
 {addons}
@@ -108,11 +124,39 @@ def _build_shell_html_impl(
   const term = new Terminal({opts_json});
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
-  term.loadAddon(new WebLinksAddon.WebLinksAddon());
-  const searchAddon = new SearchAddon.SearchAddon();
+  const searchAddon = new SearchAddon.SearchAddon({{ highlightLimit: 1000 }});
   term.loadAddon(searchAddon);
   term.searchAddon = searchAddon;
   window.term = term; window.fit = fit;
+  // SearchAddon → Python (found/not-found + decoration result counts).
+  // https://github.com/xtermjs/xterm.js/blob/master/addons/addon-search/typings/addon-search.d.ts
+  if (searchAddon.onDidChangeResults) {{
+    searchAddon.onDidChangeResults(e => {{
+      send({{
+        type: "search-results",
+        resultIndex: e.resultIndex,
+        resultCount: e.resultCount
+      }});
+    }});
+  }}
+  window.sshpilotSearch = function (payload) {{
+    if (!window.term || !window.term.searchAddon || !payload || !payload.term) {{
+      send({{ type: "search-result", found: false, resultIndex: -1, resultCount: 0 }});
+      return false;
+    }}
+    const opts = payload.opts || {{}};
+    const found = payload.forward
+      ? window.term.searchAddon.findNext(payload.term, opts)
+      : window.term.searchAddon.findPrevious(payload.term, opts);
+    send({{
+      type: "search-result",
+      found: !!found,
+      forward: !!payload.forward,
+      resultIndex: -1,
+      resultCount: 0
+    }});
+    return !!found;
+  }};
 
   function send(o) {{
     try {{ window.webkit.messageHandlers.sshpilotPty.postMessage(JSON.stringify(o)); }}
@@ -120,6 +164,57 @@ def _build_shell_html_impl(
   }}
   // Programmatic input path (feed_child/broadcast can also go straight to the PTY).
   window.ptySend = function (o) {{ send(o); return true; }};
+  // Sticky scroll (webssh-style): only pin to bottom after write if the user was
+  // already there — don't yank the viewport during a flood while reading history.
+  function _isAtBottom() {{
+    const buf = term.buffer && term.buffer.active;
+    if (!buf) return true;
+    return buf.viewportY >= buf.baseY;
+  }}
+  // Flow control: optional write callback → write-ack so Python can pause the PTY
+  // when xterm.js falls behind (https://xtermjs.org/docs/guides/flowcontrol/).
+  function _termWrite(text, ack) {{
+    if (!window.term) return;
+    const stick = _isAtBottom();
+    term.write(text, function () {{
+      if (stick) {{
+        try {{ term.scrollToBottom(); }} catch (e) {{}}
+      }}
+      if (ack) send({{ type: "write-ack" }});
+    }});
+  }}
+  window.termWrite = _termWrite;
+  // One-shot bulk flush from Python (preready buffer) — base64 avoids N JSON
+  // escapes and a single term.write paints the whole backlog.
+  window.termWriteB64 = function (b64, ack) {{
+    if (!window.term) return;
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    _termWrite(new TextDecoder().decode(bytes), !!ack);
+  }};
+
+  // Link handling per https://xtermjs.org/docs/guides/link-handling/ —
+  // one shared handler for pattern URLs (web-links) and OSC 8
+  // (term.options.linkHandler). Default window.open() is blocked in WebKitGTK,
+  // so activate bridges to Python. Hover/leave feed GTK Open/Copy Link.
+  // Ctrl+click (Cmd+click on macOS) required to open — same as typical terminals.
+  function isMacPlatform() {{
+    return typeof navigator !== "undefined" && /Mac/i.test(navigator.platform || "");
+  }}
+  function activateLink(event, uri) {{
+    if (!(isMacPlatform() ? event.metaKey : event.ctrlKey)) return;
+    send({{ type: "open-url", url: uri }});
+  }}
+  const linkHandler = {{
+    activate: (event, text, range) => {{ activateLink(event, text); }},
+    hover: (event, text, range) => {{ send({{ type: "link-hover", url: text }}); }},
+    leave: (event, text, range) => {{ send({{ type: "link-leave" }}); }},
+    // Keep false: only http(s) reach the handler; Python also rejects other schemes.
+    allowNonHttpProtocols: false
+  }};
+  term.loadAddon(new WebLinksAddon.WebLinksAddon(activateLink, linkHandler));
+  term.options.linkHandler = linkHandler;
 
   term.open(document.getElementById("terminal"));
   term.onData(d => send({{ type: "input", data: d }}));
@@ -133,8 +228,9 @@ def _build_shell_html_impl(
   function debounce(fn, ms) {{ let t; return function () {{ clearTimeout(t); t = setTimeout(fn, ms); }}; }}
   window.onresize = debounce(fitToScreen, 50);
 
-  // Size and signal readiness synchronously so Python can flush buffered PTY
-  // output immediately. Defer focus/extra layout to the next frame.
+  // Signal ready synchronously after the first fit so Python can flush the
+  // preready PTY buffer without waiting two animation frames (measured ~30ms
+  // cold-reload regression). Refine size + focus on the next frame.
   fit.fit();
   send({{ type: "ready", rows: term.rows, cols: term.cols }});
   requestAnimationFrame(() => {{
@@ -142,14 +238,16 @@ def _build_shell_html_impl(
     term.focus();
   }});
 
-  // Autocomplete popup. Python drives it via sshpilotAC.update(payload) —
-  // empty items hides it and clears Esc suppression (line reset).
+  // Autocomplete popup. Suggestion-only: no row highlighted until ↑/↓;
+  // Tab always goes to the shell; Enter accepts only a highlighted row;
+  // click always applies. Python drives via sshpilotAC.update(payload).
   window.sshpilotAC = (function () {{
     const el = document.getElementById("ac");
-    let items = [], sel = 0, suppressed = false;
+    let items = [], sel = -1, suppressed = false;
 
-    function hide() {{ el.style.display = "none"; items = []; }}
+    function hide() {{ el.style.display = "none"; items = []; sel = -1; }}
     function visible() {{ return el.style.display === "block"; }}
+    function hasSelection() {{ return sel >= 0 && sel < items.length; }}
 
     function accept(i, run) {{
       const it = items[i];
@@ -170,38 +268,122 @@ def _build_shell_html_impl(
     }}
 
     function position() {{
-      const screen = document.querySelector(".xterm-screen");
+      // Anchor to the helper textarea (true cursor box). Averaged cell math
+      // is a few px off on the last row and the popup then overlaps the prompt.
+      const screen = document.querySelector(".xterm-screen") || document.getElementById("terminal");
       if (!screen) return;
       const r = screen.getBoundingClientRect();
-      const cw = r.width / term.cols, ch = r.height / term.rows;
+      const ch = r.height / Math.max(1, term.rows);
+      const cw = r.width / Math.max(1, term.cols);
       const buf = term.buffer.active;
+      const gap = 4;
+      let cursorTop = r.top + buf.cursorY * ch;
+      let cursorBottom = cursorTop + ch;
+      let cursorLeft = r.left + buf.cursorX * cw;
+      const ta = document.querySelector(".xterm-helper-textarea");
+      if (ta) {{
+        const tr = ta.getBoundingClientRect();
+        if (tr.height > 0) {{
+          cursorTop = tr.top;
+          cursorBottom = tr.bottom;
+          cursorLeft = tr.left;
+        }}
+      }}
+      const spaceBelow = Math.max(0, r.bottom - cursorBottom - gap);
+      const spaceAbove = Math.max(0, cursorTop - r.top - gap);
       el.style.display = "block";
-      let x = r.left + buf.cursorX * cw, y = r.top + (buf.cursorY + 1) * ch;
-      if (y + el.offsetHeight > window.innerHeight) y = r.top + buf.cursorY * ch - el.offsetHeight;
-      x = Math.max(0, Math.min(x, window.innerWidth - el.offsetWidth));
+      el.style.maxHeight = "";
+      const naturalH = el.offsetHeight || (ch * 4);
+      // Prefer above whenever there isn't a full natural popup below the cursor
+      // (last row / near-bottom). Never clamp downward onto the prompt line.
+      const placeAbove = spaceBelow < naturalH && spaceAbove >= ch;
+      const avail = Math.max(ch, placeAbove ? spaceAbove : spaceBelow);
+      el.style.maxHeight = avail + "px";
+      el.style.overflowY = "auto";
+      const h = el.offsetHeight;
+      let y;
+      if (placeAbove) {{
+        y = cursorTop - gap - h;
+        if (y < r.top) y = r.top;
+      }} else {{
+        y = cursorBottom + gap;
+        if (y + h > r.bottom) y = Math.max(r.top, r.bottom - h);
+      }}
+      let x = cursorLeft;
+      x = Math.max(r.left, Math.min(x, r.right - el.offsetWidth));
       el.style.left = x + "px";
-      el.style.top = Math.max(0, y) + "px";
+      el.style.top = y + "px";
+    }}
+
+    function parseHex(c) {{
+      if (!c || typeof c !== "string") return null;
+      let h = c.trim();
+      if (h[0] === "#") h = h.slice(1);
+      if (h.length === 3) h = h[0]+h[0]+h[1]+h[1]+h[2]+h[2];
+      if (h.length !== 6 || /[^0-9a-fA-F]/.test(h)) return null;
+      return [parseInt(h.slice(0,2),16), parseInt(h.slice(2,4),16), parseInt(h.slice(4,6),16)];
+    }}
+    function liftHex(hex, delta) {{
+      const rgb = parseHex(hex);
+      if (!rgb) return hex;
+      return "#" + rgb.map(function (v) {{
+        return Math.max(0, Math.min(255, v + delta)).toString(16).padStart(2, "0");
+      }}).join("");
+    }}
+    function luma(hex) {{
+      const rgb = parseHex(hex);
+      return rgb ? (0.2126*rgb[0] + 0.7152*rgb[1] + 0.0722*rgb[2]) : 128;
     }}
 
     function update(p) {{
       if (!p || !p.items || !p.items.length) {{ hide(); suppressed = false; return; }}
       if (suppressed || term.buffer.active.type === "alternate") return;
       const t = term.options.theme || {{}};
-      el.style.background = t.background || "#1e1e1e";
-      el.style.color = t.foreground || "#ffffff";
+      const bg = t.background || "#1e1e1e";
+      const fg = t.foreground || "#ffffff";
+      // Prefer bright ANSI blue / cursor — never the soft selection tint.
+      const accent = t.brightBlue || t.blue || t.cursor || "#1f6feb";
+      // Solid highlight fill (not translucent) so ↑/↓ selection is unmistakable.
+      const selBg = parseHex(accent) ? accent : "#1f6feb";
+      const selFg = luma(selBg) < 160 ? "#ffffff" : "#0d1117";
+      // Lift the panel off the terminal bg so it reads as a distinct chrome layer.
+      const panelBg = liftHex(bg, luma(bg) < 140 ? 36 : -36);
+      el.style.background = panelBg;
+      el.style.color = fg;
       el.style.fontFamily = term.options.fontFamily || "monospace";
       el.style.fontSize = (term.options.fontSize || 14) + "px";
-      items = p.items; sel = 0;
+      el.style.fontWeight = "700";
+      el.style.setProperty("--ac-accent", accent);
+      el.style.setProperty("--ac-sel", selBg);
+      el.style.setProperty("--ac-sel-fg", selFg);
+      el.style.setProperty("--ac-hover", "color-mix(in srgb, " + accent + " 28%, transparent)");
+      items = p.items;
+      sel = -1;  // no auto-highlight — user must ↑/↓ or click
       render();
       position();
     }}
 
     // keydown while visible; returns false when the key was consumed.
     function key(e) {{
-      if (e.key === "ArrowDown") {{ sel = (sel + 1) % items.length; render(); return false; }}
-      if (e.key === "ArrowUp") {{ sel = (sel - 1 + items.length) % items.length; render(); return false; }}
-      if (e.key === "Tab" || e.key === "ArrowRight") {{ accept(sel, false); return false; }}
-      if (e.key === "Enter") {{ accept(sel, true); return false; }}
+      if (!items.length) return true;
+      if (e.key === "ArrowDown") {{
+        sel = hasSelection() ? (sel + 1) % items.length : 0;
+        render();
+        return false;
+      }}
+      if (e.key === "ArrowUp") {{
+        sel = hasSelection() ? (sel - 1 + items.length) % items.length : items.length - 1;
+        render();
+        return false;
+      }}
+      // Tab / → always reach the shell (never auto-complete from the popup).
+      if (e.key === "Tab" || e.key === "ArrowRight") return true;
+      // Enter accepts only after the user has highlighted a row.
+      if (e.key === "Enter") {{
+        if (!hasSelection()) return true;
+        accept(sel, true);
+        return false;
+      }}
       if (e.key === "Escape") {{ suppressed = true; hide(); return false; }}
       return true;
     }}
@@ -211,15 +393,27 @@ def _build_shell_html_impl(
     return {{ update: update, hide: hide, visible: visible, key: key }};
   }})();
 
-  // Copy/paste keyboard shortcuts (parity with the old shell).
+  // Copy/paste keyboard shortcuts. Bridge to Python so GTK owns the system
+  // clipboard — navigator.clipboard cannot reliably read text copied in other
+  // apps under WebKitGTK.
   term.attachCustomKeyEventHandler(function (e) {{
+    // Returning false only stops xterm from handling the key — Tab still
+    // triggers the browser's focus navigation unless preventDefault() runs.
     if (e.type === "keydown" && window.sshpilotAC.visible()
         && !e.ctrlKey && !e.altKey && !e.metaKey
-        && !window.sshpilotAC.key(e)) return false;
+        && !window.sshpilotAC.key(e)) {{
+      e.preventDefault();
+      return false;
+    }}
     if (e.type !== "keydown" || !(e.ctrlKey && e.shiftKey)) return true;
     const k = e.key.toLowerCase();
-    if (k === "v") {{ navigator.clipboard.readText().then(t => term.paste(t)); return false; }}
-    if (k === "c" || k === "x") {{ navigator.clipboard.writeText(term.getSelection()); term.focus(); return false; }}
+    if (k === "v") {{ e.preventDefault(); send({{ type: "paste" }}); return false; }}
+    if (k === "c" || k === "x") {{
+      e.preventDefault();
+      send({{ type: "copy", text: term.getSelection() }});
+      term.focus();
+      return false;
+    }}
     return true;
   }});
 </script></body></html>"""

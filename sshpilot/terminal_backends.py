@@ -98,11 +98,23 @@ class BaseTerminalBackend(Protocol):
     def search_set_regex(self, regex: Optional[Any]) -> None:
         """Configure the search regex for the backend, if supported."""
 
+    def search_set_query(
+        self,
+        term: Optional[str],
+        *,
+        case_sensitive: bool = False,
+        regex: bool = False,
+    ) -> None:
+        """Set the user-facing search term and options (preferred over search_set_regex)."""
+
     def search_find_next(self) -> bool:
         """Search forward using the configured regex."""
 
     def search_find_previous(self) -> bool:
         """Search backwards using the configured regex."""
+
+    def clear_search_decorations(self) -> None:
+        """Clear search match decorations without necessarily clearing the query."""
 
     def get_child_pid(self) -> Optional[int]:
         """Return the PID of the running child process if available."""
@@ -532,11 +544,33 @@ class VTETerminalBackend:
         else:
             self.vte.search_set_regex(regex, 0)
 
+    def search_set_query(
+        self,
+        term: Optional[str],
+        *,
+        case_sensitive: bool = False,
+        regex: bool = False,
+    ) -> None:
+        import re as _re
+        if not term:
+            self.vte.search_set_regex(None, 0)
+            return
+        pattern = term if regex else _re.escape(term)
+        if not case_sensitive and not pattern.startswith("(?i)"):
+            pattern = "(?i)" + pattern
+        self.vte.search_set_regex(Vte.Regex.new_for_search(pattern, -1, 0), 0)
+        if hasattr(self.vte, "search_set_wrap_around"):
+            self.vte.search_set_wrap_around(True)
+
     def search_find_next(self) -> bool:
         return self.vte.search_find_next()
 
     def search_find_previous(self) -> bool:
         return self.vte.search_find_previous()
+
+    def clear_search_decorations(self) -> None:
+        # VTE highlight colors are restored by TerminalWidget on overlay hide.
+        return None
 
     def get_child_pid(self) -> Optional[int]:
         try:
@@ -747,15 +781,23 @@ class PyXtermTerminalBackend:
             palette = profile.get("palette", [])
             palette_js = json.dumps(palette) if palette else "[]"
             
+            # fit.fit() sizes the terminal to whole character cells; any leftover
+            # strip at the bottom shows the page background. Keep html/body in
+            # sync with the theme so that gap matches (VTE paints the full widget).
+            bg = profile.get("background", "#000000")
+            fg = profile.get("foreground", "#FFFFFF")
+            cursor = profile.get("cursor_color", fg)
+            sel_bg = profile.get("highlight_background", "#4A90E2")
+            sel_fg = profile.get("highlight_foreground", fg)
             theme_js = f"""
             (function() {{
                 if (typeof window.term !== 'undefined') {{
                     var theme = {{
-                        background: '{profile.get("background", "#000000")}',
-                        foreground: '{profile.get("foreground", "#FFFFFF")}',
-                        cursor: '{profile.get("cursor_color", profile.get("foreground", "#FFFFFF"))}',
-                        selectionBackground: '{profile.get("highlight_background", "#4A90E2")}',
-                        selectionForeground: '{profile.get("highlight_foreground", profile.get("foreground", "#FFFFFF"))}'
+                        background: {json.dumps(bg)},
+                        foreground: {json.dumps(fg)},
+                        cursor: {json.dumps(cursor)},
+                        selectionBackground: {json.dumps(sel_bg)},
+                        selectionForeground: {json.dumps(sel_fg)}
                     }};
                     // Apply palette colors if available
                     var palette = {palette_js};
@@ -778,6 +820,11 @@ class PyXtermTerminalBackend:
                         theme.brightWhite = palette[15];
                     }}
                     window.term.options.theme = theme;
+                    var pageBg = theme.background || '#000000';
+                    document.documentElement.style.background = pageBg;
+                    document.body.style.background = pageBg;
+                    var terminalEl = document.getElementById('terminal');
+                    if (terminalEl) terminalEl.style.background = pageBg;
                 }}
             }})();
             """
@@ -953,23 +1000,59 @@ class PyXtermTerminalBackend:
             except Exception:
                 logger.debug("Failed to show pyxterm widget", exc_info=True)
 
+    def _get_system_clipboard(self):
+        """Return the GDK clipboard for this WebView (system clipboard)."""
+        display = None
+        if self._webview is not None:
+            try:
+                display = self._webview.get_display()
+            except Exception:  # noqa: BLE001
+                display = None
+        if display is None:
+            display = Gdk.Display.get_default()
+        if display is None:
+            return None
+        return display.get_clipboard()
+
+    def _set_system_clipboard_text(self, text: str) -> None:
+        if not text:
+            return
+        clipboard = self._get_system_clipboard()
+        if clipboard is None:
+            return
+        clipboard.set(text)
+
+    def _paste_text(self, text: str) -> None:
+        """Inject clipboard text into xterm.js (fires onData → PTY bridge)."""
+        if not text or not self.available:
+            return
+        import json
+
+        # json.dumps produces a JS string literal safe for evaluate_javascript.
+        script = (
+            "if (typeof window.term !== 'undefined') { window.term.paste(%s); }"
+            % json.dumps(text)
+        )
+        self._run_javascript(script)
+
     def copy_clipboard(self) -> None:
-        """Copy selected text from xterm.js to clipboard"""
+        """Copy selected text from xterm.js to the system clipboard.
+
+        Selection is read in JS and posted to Python so we can write the GTK
+        clipboard. ``navigator.clipboard`` is unreliable for cross-app use in
+        WebKitGTK (and paste from other apps fails for the same reason).
+        """
         if not self.available:
             return
         try:
-            # Wrapped in an IIFE returning a boolean: the clipboard call is
-            # async and its Promise must NOT be the script's completion value,
-            # or WebKit's evaluate_javascript_finish raises "Unsupported result
-            # type". The copy still happens when the Promise resolves.
+            # IIFE returns a boolean so evaluate_javascript_finish does not see
+            # a Promise/"undefined" completion value as an unsupported type.
             script = """
             (function() {
                 if (typeof window.term !== 'undefined' && window.term.hasSelection()) {
                     var selection = window.term.getSelection();
-                    if (selection) {
-                        navigator.clipboard.writeText(selection).catch(function(err) {
-                            console.error('Failed to copy text:', err);
-                        });
+                    if (selection && typeof window.ptySend === 'function') {
+                        window.ptySend({type: "copy", text: selection});
                     }
                 }
                 return true;
@@ -980,30 +1063,32 @@ class PyXtermTerminalBackend:
             logger.debug(f"Failed to copy from PyXterm backend: {e}", exc_info=True)
 
     def paste_clipboard(self) -> None:
-        """Paste clipboard content into xterm.js terminal"""
+        """Paste system clipboard content into xterm.js.
+
+        Reads via GTK (not ``navigator.clipboard.readText``), which is what
+        other apps write to. WebKit's Clipboard API often cannot see that
+        content, so Ctrl+Shift+V / context-menu paste would no-op.
+        """
         if not self.available:
             return
         try:
-            # Wrapped in an IIFE returning a boolean so the async readText()
-            # Promise is not the script's completion value (WebKit's
-            # evaluate_javascript_finish rejects Promises with "Unsupported
-            # result type"). The paste runs when the Promise resolves:
-            # term.paste() fires onData -> window.ptySend -> the PTY WebSocket.
-            script = """
-            (function() {
-                if (typeof navigator !== 'undefined' && navigator.clipboard) {
-                    navigator.clipboard.readText().then(function(text) {
-                        if (typeof window.term !== 'undefined') {
-                            window.term.paste(text);
-                        }
-                    }).catch(function(err) {
-                        console.error('Failed to paste text:', err);
-                    });
-                }
-                return true;
-            })();
-            """
-            self._run_javascript(script)
+            clipboard = self._get_system_clipboard()
+            if clipboard is None:
+                return
+
+            def on_text(_clipboard, result):
+                try:
+                    text = clipboard.read_text_finish(result)
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug(
+                        "Failed to read system clipboard for PyXterm paste: %s",
+                        exc,
+                    )
+                    return
+                if text:
+                    self._paste_text(text)
+
+            clipboard.read_text_async(None, on_text)
         except Exception as e:
             logger.debug(f"Failed to paste to PyXterm backend: {e}", exc_info=True)
 
@@ -1169,144 +1254,103 @@ class PyXtermTerminalBackend:
         # pyxterm.js does not currently expose scrollback; return None for compatibility
         return None
 
+    # Match VTE's amber search highlight for multi-match decorations.
+    # matchOverviewRuler / activeMatchColorOverviewRuler are required by ISearchDecorationOptions.
+    _SEARCH_DECORATIONS = {
+        "matchBackground": "#F4D03F",
+        "matchBorder": "#D4AC0D",
+        "matchOverviewRuler": "#F4D03F",
+        "activeMatchBackground": "#E67E22",
+        "activeMatchBorder": "#D35400",
+        "activeMatchColorOverviewRuler": "#E67E22",
+    }
+
     def search_set_regex(self, regex: Optional[Any]) -> None:
-        """Set the search pattern for xterm.js search addon.
-        
-        According to xterm.js search addon API:
-        - findNext(term: string, searchOptions?: ISearchOptions): boolean
-        - ISearchOptions includes: regex, caseSensitive, wholeWord, incremental, decorations
-        """
+        """Legacy entry point — prefer :meth:`search_set_query`."""
+        if regex is None:
+            self.search_set_query(None)
+        elif isinstance(regex, dict):
+            self.search_set_query(
+                regex.get("term"),
+                case_sensitive=bool(regex.get("case_sensitive", False)),
+                regex=bool(regex.get("regex", False)),
+            )
+        elif isinstance(regex, str):
+            # Best-effort legacy string (may be VTE-shaped with (?i)/escapes).
+            term = regex
+            case_sensitive = True
+            if term.startswith("(?i)"):
+                term = term[4:]
+                case_sensitive = False
+            self.search_set_query(term, case_sensitive=case_sensitive, regex=False)
+
+    def search_set_query(
+        self,
+        term: Optional[str],
+        *,
+        case_sensitive: bool = False,
+        regex: bool = False,
+    ) -> None:
+        """Store search term/options only — do not search (avoids double findNext)."""
         if not self.available or not self._webview:
             return
-        
-        # Extract search term and options from regex or use it directly if it's a string
-        search_term = None
-        is_regex = False
-        case_sensitive = True  # Default to case-sensitive
-        
-        if regex is None:
-            search_term = None
-        elif isinstance(regex, str):
-            # For PyXterm, we receive the pattern as a string
-            # Check if it has (?i) prefix (case-insensitive flag from VTE)
-            search_term = regex
-            if search_term.startswith("(?i)"):
-                search_term = search_term[4:]
-                case_sensitive = False
-            
-            # Detect if this is a regex pattern
-            # terminal.py does: pattern = text if regex else re.escape(text)
-            # So if regex=True, pattern has unescaped special chars
-            # If regex=False, pattern has all special chars escaped
-            # Heuristic: if pattern has unescaped regex special chars, it's likely a regex
-            import re as re_module
-            # Check for unescaped regex special characters
-            # Pattern: not preceded by backslash, followed by regex special char
-            unescaped_regex_chars = re_module.search(r'(?<!\\)[*+?|()[\]{}^$]', search_term)
-            # Also check for common regex patterns like ^ at start or $ at end
-            has_regex_anchors = search_term.startswith('^') or search_term.endswith('$')
-            
-            if unescaped_regex_chars or has_regex_anchors:
-                # Likely a regex - verify it compiles
-                try:
-                    re_module.compile(search_term)
-                    is_regex = True
-                except re_module.error:
-                    # Invalid regex, treat as literal
-                    is_regex = False
-            else:
-                # No unescaped special chars, likely a literal (escaped) pattern
-                is_regex = False
-        else:
-            # For VTE regex object, we can't extract the pattern easily
-            # This shouldn't happen for PyXterm, but handle it gracefully
+        if not term:
+            self._current_search_term = None
+            self._current_search_is_regex = False
+            self._current_search_case_sensitive = False
+            self.clear_search_decorations()
             return
-        
-        self._current_search_term = search_term
-        self._current_search_is_regex = is_regex
-        self._current_search_case_sensitive = case_sensitive
-        
-        # Ensure search addon is accessible
-        self._ensure_search_addon_accessible()
-        
-        # Set the search term according to xterm.js search addon API
-        if search_term is not None:
-            # Escape the search term for JavaScript string
-            escaped_term = search_term.replace('\\', '\\\\').replace("'", "\\'").replace('"', '\\"').replace('\n', '\\n').replace('\r', '\\r')
-            # Build search options according to ISearchOptions interface
-            options_json = f"caseSensitive: {str(case_sensitive).lower()}, regex: {str(is_regex).lower()}"
-            search_js = f"""
-            (function() {{
-                if (typeof window.term !== 'undefined' && window.term.searchAddon) {{
-                    window.term.searchAddon.findNext('{escaped_term}', {{{options_json}}});
-                }}
-            }})();
-            """
-            self._run_javascript(search_js)
-        else:
-            # Clear search using clearDecorations() according to API
-            clear_js = """
-            (function() {
-                if (typeof window.term !== 'undefined' && window.term.searchAddon) {
-                    window.term.searchAddon.clearDecorations();
-                }
-            })();
-            """
-            self._run_javascript(clear_js)
-
-    def _ensure_search_addon_accessible(self) -> None:
-        """Ensure the search addon is accessible via window.term.searchAddon."""
-        if self._search_addon_loaded or not self.available:
-            return
-        # The search addon is now stored in the template, so it should be accessible
-        # Mark as loaded (we'll check availability in the search methods)
+        self._current_search_term = term
+        self._current_search_is_regex = bool(regex)
+        self._current_search_case_sensitive = bool(case_sensitive)
         self._search_addon_loaded = True
 
-    def search_find_next(self) -> bool:
-        """Find next occurrence of the search term.
-        
-        According to xterm.js search addon API:
-        - findNext(term: string, searchOptions?: ISearchOptions): boolean
-        """
+    def clear_search_decorations(self) -> None:
+        if not self.available or not self._webview:
+            return
+        self._run_javascript(
+            "(function(){"
+            "if(window.term&&window.term.searchAddon){"
+            "window.term.searchAddon.clearDecorations();"
+            "if(window.term.searchAddon.clearActiveDecoration)"
+            "window.term.searchAddon.clearActiveDecoration();"
+            "}})();"
+        )
+
+    def _search_options_dict(self, *, forward: bool = True) -> dict:
+        opts = {
+            "caseSensitive": bool(self._current_search_case_sensitive),
+            "regex": bool(self._current_search_is_regex),
+            "decorations": dict(self._SEARCH_DECORATIONS),
+        }
+        # incremental only affects findNext (SearchAddon typings).
+        if forward:
+            opts["incremental"] = True
+        return opts
+
+    def _run_search_js(self, *, forward: bool) -> bool:
+        """Invoke SearchAddon and report found via ``search-result`` message."""
         if not self.available or not self._current_search_term:
             return False
-        
-        self._ensure_search_addon_accessible()
-        
-        escaped_term = self._current_search_term.replace('\\', '\\\\').replace("'", "\\'").replace('"', '\\"').replace('\n', '\\n').replace('\r', '\\r')
-        options_json = f"caseSensitive: {str(self._current_search_case_sensitive).lower()}, regex: {str(self._current_search_is_regex).lower()}"
-        search_js = f"""
-        (function() {{
-            if (typeof window.term !== 'undefined' && window.term.searchAddon) {{
-                window.term.searchAddon.findNext('{escaped_term}', {{{options_json}}});
-            }}
-        }})();
-        """
-        self._run_javascript(search_js)
-        return True  # API returns boolean, but we can't get return value from async JS
+        import json
+        payload = {
+            "term": self._current_search_term,
+            "opts": self._search_options_dict(forward=forward),
+            "forward": bool(forward),
+        }
+        script = (
+            "window.sshpilotSearch && window.sshpilotSearch(%s);"
+            % json.dumps(payload)
+        )
+        self._run_javascript(script)
+        # Real found/not-found arrives asynchronously as search-result.
+        return True
+
+    def search_find_next(self) -> bool:
+        return self._run_search_js(forward=True)
 
     def search_find_previous(self) -> bool:
-        """Find previous occurrence of the search term.
-        
-        According to xterm.js search addon API:
-        - findPrevious(term: string, searchOptions?: ISearchOptions): boolean
-        """
-        if not self.available or not self._current_search_term:
-            return False
-        
-        self._ensure_search_addon_accessible()
-        
-        escaped_term = self._current_search_term.replace('\\', '\\\\').replace("'", "\\'").replace('"', '\\"').replace('\n', '\\n').replace('\r', '\\r')
-        options_json = f"caseSensitive: {str(self._current_search_case_sensitive).lower()}, regex: {str(self._current_search_is_regex).lower()}"
-        search_js = f"""
-        (function() {{
-            if (typeof window.term !== 'undefined' && window.term.searchAddon) {{
-                window.term.searchAddon.findPrevious('{escaped_term}', {{{options_json}}});
-            }}
-        }})();
-        """
-        self._run_javascript(search_js)
-        return True  # API returns boolean, but we can't get return value from async JS
+        return self._run_search_js(forward=False)
 
     def get_child_pid(self) -> Optional[int]:
         return self._child_pid
@@ -1344,6 +1388,12 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
     """
 
     _PREREADY_MAX_BYTES = 256_000
+    # xterm.js flow control (pending-callback watermark):
+    # https://xtermjs.org/docs/guides/flowcontrol/
+    _FC_CALLBACK_BYTE_LIMIT = 100_000
+    _FC_HIGH = 5
+    _FC_LOW = 2
+    _FC_SAFETY_MS = 2000
 
     def __init__(self, owner: "TerminalWidget") -> None:
         self._ucm = None
@@ -1362,6 +1412,10 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
         self._shell_attached = False
         self._shell_loaded = False
         self._autocompleter = None          # lazy (see _feed_autocomplete)
+        self._fc_written = 0
+        self._fc_pending = 0
+        self._fc_paused = False
+        self._fc_safety_id = None
         super().__init__(owner)
         # WebKit2 (GTK3) lacks the UCM script-message bridge this backend needs.
         if getattr(self, "WebKit", None) is None:
@@ -1380,8 +1434,9 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
         if pooled is not None:
             self._shell_entry = pooled
             self._ucm = pooled.ucm
-            self._js_ready = True
-            self._shell_loaded = True
+            # Ready pool entries are hot; warming adoptions may still be loading.
+            self._js_ready = bool(pooled.js_ready)
+            self._shell_loaded = bool(pooled.loaded)
             return pooled.webview
 
         entry = XtermShellPool.create_for_owner(self, WebKit)
@@ -1422,15 +1477,28 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
         try:
             from .xterm_shell import build_shell_html
             html = build_shell_html()
-            # Base URI must be a localhost origin: it makes the document a secure
-            # context so navigator.clipboard (copy/paste) is available. "about:blank"
-            # is NOT secure and leaves navigator.clipboard undefined.
+            # Base URI must be a localhost origin (secure context). "about:blank"
+            # is not. Copy/paste goes through GTK nowadays; keep localhost for
+            # any remaining Web APIs that require a secure context.
             self._webview.load_html(html, "http://localhost/")
             logger.debug("Loaded embedded xterm shell via load_html")
         except Exception as e:  # noqa: BLE001
             logger.error("Failed to load embedded xterm shell: %s", e, exc_info=True)
 
     # ---- JS -> Python messages ----------------------------------------------
+
+    def _set_owner_hovered_link(self, url: Optional[str]) -> None:
+        """Mirror WebLinks hover into TerminalWidget for Open/Copy Link menu items."""
+        owner = self.owner
+        if owner is None:
+            return
+        text = (url or "").strip() or None
+        if text is not None and not text.startswith(("http://", "https://")):
+            text = None
+        try:
+            owner._hovered_hyperlink_uri = text
+        except Exception:  # noqa: BLE001
+            logger.debug("Failed to set hovered hyperlink on owner", exc_info=True)
 
     def _on_pty_message(self, ucm, js_value):
         import json
@@ -1449,6 +1517,13 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
         if kind == "ready":
             self._js_ready = True
             self._last_size = (payload.get("rows", 24), payload.get("cols", 80))
+            # Flush buffered shell output BEFORE theme/font JS so the prompt is
+            # not queued behind those evaluate_javascript calls (first paint).
+            # One base64 evaluate_javascript — never replay chunk-by-chunk.
+            if self._preready_output:
+                buffered, self._preready_output = "".join(self._preready_output), []
+                self._preready_bytes = 0
+                self._write_to_term(buffered, bulk=True)
             # Re-apply configured theme/font now that window.term exists.
             try:
                 self.apply_theme()
@@ -1463,14 +1538,31 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
             # spawned at a default size in parallel with the page load).
             if self._bridge is not None:
                 self._bridge.resize(*self._last_size)
-            # Flush any output the shell produced before the page painted (e.g. the
-            # prompt) so it appears immediately rather than after a blank gap.
-            if self._preready_output:
-                buffered, self._preready_output = "".join(self._preready_output), []
-                self._preready_bytes = 0
-                self._write_to_term(buffered)
             if self._pending_spawn is not None:  # fallback (spawn normally happens early)
                 self._do_spawn()
+        elif kind == "write-ack":
+            self._on_write_ack()
+        elif kind == "search-result":
+            owner = self.owner
+            if owner is not None and hasattr(owner, "handle_search_result"):
+                try:
+                    owner.handle_search_result(
+                        bool(payload.get("found")),
+                        result_index=int(payload.get("resultIndex", -1)),
+                        result_count=int(payload.get("resultCount", 0)),
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.debug("handle_search_result raised", exc_info=True)
+        elif kind == "search-results":
+            owner = self.owner
+            if owner is not None and hasattr(owner, "handle_search_results"):
+                try:
+                    owner.handle_search_results(
+                        int(payload.get("resultIndex", -1)),
+                        int(payload.get("resultCount", 0)),
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.debug("handle_search_results raised", exc_info=True)
         elif kind == "input":
             if self._bridge is not None:
                 self._bridge.write(payload.get("data", ""))
@@ -1488,6 +1580,34 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
                     owner.handle_backend_title(payload.get("title", ""))
                 except Exception:  # noqa: BLE001
                     logger.debug("handle_backend_title raised", exc_info=True)
+        elif kind == "open-url":
+            # WebLinksAddon click — open in the system browser (VTE parity).
+            url = (payload.get("url") or "").strip()
+            if url.startswith(("http://", "https://")):
+                try:
+                    from .web_tab import open_url_in_browser
+                    if open_url_in_browser(url):
+                        logger.debug("Opened PyXterm URL: %s", url)
+                    else:
+                        logger.warning("Failed to open PyXterm URL: %s", url)
+                except Exception:  # noqa: BLE001
+                    logger.warning("Failed to open PyXterm URL: %s", url, exc_info=True)
+            else:
+                logger.debug("Ignoring non-http(s) PyXterm URL: %s", url)
+        elif kind == "link-hover":
+            # WebLinksAddon hover — feed TerminalWidget context menu (Open/Copy Link).
+            self._set_owner_hovered_link(payload.get("url"))
+        elif kind == "link-leave":
+            self._set_owner_hovered_link(None)
+        elif kind == "paste":
+            # Ctrl+Shift+V inside the WebView — use GTK clipboard (other apps).
+            self.paste_clipboard()
+        elif kind == "copy":
+            # Selection posted from JS (shortcut or copy_clipboard).
+            try:
+                self._set_system_clipboard_text(payload.get("text") or "")
+            except Exception:  # noqa: BLE001
+                logger.debug("Failed to set system clipboard from PyXterm", exc_info=True)
 
     # ---- autocomplete (Termius-style popup, engine in autocomplete.py) -------
 
@@ -1596,10 +1716,11 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
         if not pending:
             return
         from .xterm_pty_bridge import XtermPtyBridge
+        self._reset_flow_control()
         self._bridge = XtermPtyBridge(
             on_output=self._on_pty_output,
             on_exit=self._on_bridge_exit,
-            flush_ms=12,
+            flush_ms=16,
         )
         rows, cols = self._last_size
 
@@ -1619,9 +1740,96 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
             rows=rows, cols=cols, on_spawned=on_spawned,
         )
 
-    def _write_to_term(self, text: str):
+    def _reset_flow_control(self) -> None:
+        self._fc_written = 0
+        self._fc_pending = 0
+        self._cancel_fc_safety()
+        if self._fc_paused and self._bridge is not None:
+            try:
+                self._bridge.resume()
+            except Exception:  # noqa: BLE001
+                pass
+        self._fc_paused = False
+
+    def _cancel_fc_safety(self) -> None:
+        if self._fc_safety_id is None:
+            return
+        try:
+            from gi.repository import GLib
+            GLib.source_remove(self._fc_safety_id)
+        except Exception:  # noqa: BLE001
+            pass
+        self._fc_safety_id = None
+
+    def _pause_pty_flow(self) -> None:
+        if self._fc_paused or self._bridge is None:
+            return
+        self._fc_paused = True
+        try:
+            self._bridge.pause()
+        except Exception:  # noqa: BLE001
+            logger.debug("PTY flow-control pause failed", exc_info=True)
+            self._fc_paused = False
+            return
+        if self._fc_safety_id is None:
+            try:
+                from gi.repository import GLib
+                self._fc_safety_id = GLib.timeout_add(
+                    self._FC_SAFETY_MS, self._fc_safety_resume
+                )
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _resume_pty_flow(self) -> None:
+        if not self._fc_paused:
+            return
+        self._fc_paused = False
+        self._cancel_fc_safety()
+        if self._bridge is not None:
+            try:
+                self._bridge.resume()
+            except Exception:  # noqa: BLE001
+                logger.debug("PTY flow-control resume failed", exc_info=True)
+
+    def _fc_safety_resume(self) -> bool:
+        """Unstick the PTY if write-ack messages are lost."""
+        self._fc_safety_id = None
+        if self._fc_paused:
+            logger.debug("PyXterm flow-control safety resume (missing write-ack)")
+            self._fc_pending = 0
+            self._fc_written = 0
+            self._resume_pty_flow()
+        return False
+
+    def _on_write_ack(self) -> None:
+        self._fc_pending = max(self._fc_pending - 1, 0)
+        if self._fc_pending < self._FC_LOW:
+            self._resume_pty_flow()
+
+    def _write_to_term(self, text: str, *, bulk: bool = False):
         import json
-        self._run_javascript("window.term && window.term.write(%s);" % json.dumps(text))
+        # Pending-callback watermark (xterm.js flowcontrol guide). Fast path
+        # skips the write callback until ~100KB has been queued.
+        self._fc_written += len(text)
+        want_ack = bool(bulk) or self._fc_written >= self._FC_CALLBACK_BYTE_LIMIT
+        if want_ack:
+            self._fc_written = 0
+            self._fc_pending += 1
+        ack_js = "true" if want_ack else "false"
+        if bulk:
+            import base64
+            b64 = base64.b64encode(text.encode("utf-8", "replace")).decode("ascii")
+            self._run_javascript(
+                "window.termWriteB64 && window.termWriteB64(%s, %s);"
+                % (json.dumps(b64), ack_js)
+            )
+        else:
+            self._run_javascript(
+                "window.termWrite && window.termWrite(%s, %s);"
+                % (json.dumps(text), ack_js)
+            )
+        if want_ack and self._fc_pending > self._FC_HIGH:
+            self._pause_pty_flow()
 
     def _on_pty_output(self, chunk: str):
         # Keep a rolling tail so get_content() works (PTY auto-fill / failure
@@ -1702,6 +1910,7 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
     def destroy(self) -> None:
         # Ordered, synchronous teardown (see shutdown-segfault history): close the
         # bridge (removes fd/flush/child sources + PTY) before dropping the WebView.
+        self._reset_flow_control()
         try:
             if self._bridge is not None:
                 self._bridge.close()

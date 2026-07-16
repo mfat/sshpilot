@@ -8,14 +8,18 @@ back through a plain callback. The backend turns those callbacks into
 be unit-tested headlessly (see ``tests/test_xterm_pty_bridge.py``).
 
 Design notes:
-- Output is read on the GLib main loop from the PTY master fd, decoded with an
+- Output is read on the GLib main loop from a *non-blocking* PTY master fd.
+  Each readable event drains the fd in a loop (until ``BlockingIOError``) so a
+  burst becomes one buffer fill, not one ``os.read`` per wake. Decoded with an
   *incremental* UTF-8 decoder (so a multibyte char split across two reads is not
   corrupted — the old Flask server used ``decode(errors="ignore")`` which mangled
-  them), and **coalesced**: chunks are buffered and flushed on a short timer so a
-  burst (``cat bigfile``/``yes``) becomes a few large ``on_output`` calls instead of
-  thousands of tiny ones.
+  them), and **coalesced**: the first drain flushes immediately (shell prompt),
+  later bursts flush on a short timer (~one frame) so ``cat``/build logs become
+  a few large ``on_output`` calls instead of flooding WebKit.
 - Input (``write``) and resize go straight to the PTY (``os.write`` /
   ``Vte.Pty.set_size``); there is no round-trip through JavaScript.
+- ``pause``/``resume`` stop and restart the fd watch so the kernel PTY buffer
+  applies backpressure when xterm.js falls behind (see xterm.js flowcontrol guide).
 - Child exit is reported via ``GLib.child_watch_add`` on the real child pid.
 """
 from __future__ import annotations
@@ -57,7 +61,7 @@ class XtermPtyBridge:
         self,
         on_output: Callable[[str], None],
         on_exit: Optional[Callable[[int], None]] = None,
-        flush_ms: int = 12,
+        flush_ms: int = 16,
         read_size: int = 65536,
     ) -> None:
         self._on_output = on_output
@@ -69,11 +73,15 @@ class XtermPtyBridge:
         self._child_pid: Optional[int] = None
         self._decoder = codecs.getincrementaldecoder("utf-8")("replace")
         self._buf: list[str] = []
+        # First drain bypasses the coalesce timer so the shell prompt is not
+        # delayed by flush_ms; subsequent bursts still coalesce.
+        self._flushed_once = False
 
         self._fd_source: Optional[int] = None
         self._flush_source: Optional[int] = None
         self._child_source: Optional[int] = None
         self._closed = False
+        self._paused = False
 
     # ---- lifecycle -----------------------------------------------------------
 
@@ -97,6 +105,9 @@ class XtermPtyBridge:
         self._pty.set_size(max(1, rows), max(1, cols))
 
         def _on_spawn_finished(pty, result, *_):
+            if self._closed or self._pty is None:
+                # Tab/bench tore down while spawn_async was in flight.
+                return
             try:
                 res = Vte.Pty.spawn_finish(pty, result)
                 pid = res[1] if isinstance(res, (tuple, list)) else res
@@ -104,6 +115,8 @@ class XtermPtyBridge:
                 logger.debug("PTY spawn failed: %s", exc, exc_info=True)
                 if on_spawned:
                     on_spawned(None, exc)
+                return
+            if self._closed or self._pty is None:
                 return
             self._child_pid = pid
             self._start_watches()
@@ -123,7 +136,12 @@ class XtermPtyBridge:
         )
 
     def _start_watches(self) -> None:
+        self._paused = False
         fd = self._pty.get_fd()
+        try:
+            os.set_blocking(fd, False)
+        except OSError as exc:
+            logger.debug("Failed to set PTY non-blocking: %s", exc)
         self._fd_source = _fd_add(
             fd,
             GLib.IOCondition.IN | GLib.IOCondition.HUP | GLib.IOCondition.ERR,
@@ -134,6 +152,38 @@ class XtermPtyBridge:
             self._child_source = GLib.child_watch_add(
                 GLib.PRIORITY_DEFAULT, self._child_pid, self._on_child_exit
             )
+
+    def pause(self) -> None:
+        """Stop reading the PTY master (kernel buffer backpressures the child)."""
+        if self._closed or self._paused:
+            return
+        self._paused = True
+        if self._fd_source is not None:
+            try:
+                GLib.source_remove(self._fd_source)
+            except Exception:  # noqa: BLE001
+                pass
+            self._fd_source = None
+        # Deliver anything already coalesced so pause does not strand UI output.
+        self._flush()
+
+    def resume(self) -> None:
+        """Resume reading after :meth:`pause`."""
+        if self._closed or not self._paused:
+            return
+        self._paused = False
+        if self._pty is None or self._fd_source is not None:
+            return
+        fd = self._pty.get_fd()
+        self._fd_source = _fd_add(
+            fd,
+            GLib.IOCondition.IN | GLib.IOCondition.HUP | GLib.IOCondition.ERR,
+            self._on_readable,
+        )
+
+    @property
+    def paused(self) -> bool:
+        return self._paused
 
     # ---- I/O -----------------------------------------------------------------
 
@@ -162,17 +212,35 @@ class XtermPtyBridge:
             self._fd_source = None          # this source is being removed
             self._stop_flush_source()       # child is gone; stop the pump
             return GLib.SOURCE_REMOVE
+        got_any = False
         try:
-            data = os.read(fd, self._read_size)
-        except OSError:
+            # Drain everything currently available so one wake → one buffer fill
+            # (prompt+MOTD, or a cat burst), not one os.read per GLib event.
+            while True:
+                data = os.read(fd, self._read_size)
+                if not data:
+                    if not got_any:
+                        self._flush()
+                        self._fd_source = None
+                        self._stop_flush_source()
+                        return GLib.SOURCE_REMOVE
+                    break
+                got_any = True
+                self._buf.append(self._decoder.decode(data))
+        except BlockingIOError:
+            pass
+        except OSError as exc:
+            logger.debug("PTY read failed: %s", exc)
+            self._flush()
             self._fd_source = None
             self._stop_flush_source()
             return GLib.SOURCE_REMOVE
-        if not data:
-            self._fd_source = None
-            self._stop_flush_source()
+        if got_any and not self._flushed_once:
+            # Immediate first paint (prompt); keep the timer for later bursts.
+            self._flush()
+        # pause() may have removed this source from inside on_output → write path.
+        if self._paused:
             return GLib.SOURCE_REMOVE
-        self._buf.append(self._decoder.decode(data))
         return GLib.SOURCE_CONTINUE
 
     def _stop_flush_source(self):
@@ -190,6 +258,7 @@ class XtermPtyBridge:
         if self._buf:
             chunk = "".join(self._buf)
             self._buf.clear()
+            self._flushed_once = True
             try:
                 self._on_output(chunk)
             except Exception:  # noqa: BLE001 - never let a sink error kill the loop
@@ -225,6 +294,7 @@ class XtermPtyBridge:
         if self._closed:
             return
         self._closed = True
+        self._paused = False
         for attr in ("_fd_source", "_flush_source", "_child_source"):
             src = getattr(self, attr)
             if src is not None:
