@@ -71,6 +71,20 @@ class XtermShellPool:
             cls._reset_entry(entry)
             cls.ensure_warming()
             return entry
+        # Prefer an in-progress warmer over starting a second cold load_html.
+        # The tab inherits the already-loading WebView; ready still arrives via
+        # _dispatch_message once xterm.js finishes (js_ready may still be False).
+        while cls._warming:
+            entry = cls._warming.pop(0)
+            if entry.webview is None or entry.ucm is None:
+                cls._discard_entry(entry)
+                continue
+            cls._cancel_warm_timeout(entry)
+            entry.owner = owner
+            if entry.js_ready:
+                cls._reset_entry(entry)
+            cls.ensure_warming()
+            return entry
         return None
 
     @classmethod

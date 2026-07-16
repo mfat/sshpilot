@@ -1431,8 +1431,9 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
         if pooled is not None:
             self._shell_entry = pooled
             self._ucm = pooled.ucm
-            self._js_ready = True
-            self._shell_loaded = True
+            # Ready pool entries are hot; warming adoptions may still be loading.
+            self._js_ready = bool(pooled.js_ready)
+            self._shell_loaded = bool(pooled.loaded)
             return pooled.webview
 
         entry = XtermShellPool.create_for_owner(self, WebKit)
@@ -1513,6 +1514,13 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
         if kind == "ready":
             self._js_ready = True
             self._last_size = (payload.get("rows", 24), payload.get("cols", 80))
+            # Flush buffered shell output BEFORE theme/font JS so the prompt is
+            # not queued behind those evaluate_javascript calls (first paint).
+            # One base64 evaluate_javascript — never replay chunk-by-chunk.
+            if self._preready_output:
+                buffered, self._preready_output = "".join(self._preready_output), []
+                self._preready_bytes = 0
+                self._write_to_term(buffered, bulk=True)
             # Re-apply configured theme/font now that window.term exists.
             try:
                 self.apply_theme()
@@ -1527,12 +1535,6 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
             # spawned at a default size in parallel with the page load).
             if self._bridge is not None:
                 self._bridge.resize(*self._last_size)
-            # Flush any output the shell produced before the page painted (e.g. the
-            # prompt) so it appears immediately rather than after a blank gap.
-            if self._preready_output:
-                buffered, self._preready_output = "".join(self._preready_output), []
-                self._preready_bytes = 0
-                self._write_to_term(buffered)
             if self._pending_spawn is not None:  # fallback (spawn normally happens early)
                 self._do_spawn()
         elif kind == "input":
@@ -1691,7 +1693,7 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
         self._bridge = XtermPtyBridge(
             on_output=self._on_pty_output,
             on_exit=self._on_bridge_exit,
-            flush_ms=12,
+            flush_ms=16,
         )
         rows, cols = self._last_size
 
@@ -1711,9 +1713,19 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
             rows=rows, cols=cols, on_spawned=on_spawned,
         )
 
-    def _write_to_term(self, text: str):
+    def _write_to_term(self, text: str, *, bulk: bool = False):
         import json
-        self._run_javascript("window.term && window.term.write(%s);" % json.dumps(text))
+        if bulk:
+            # Entire preready backlog in one JS call (atob + TextDecoder).
+            import base64
+            b64 = base64.b64encode(text.encode("utf-8", "replace")).decode("ascii")
+            self._run_javascript(
+                "window.termWriteB64 && window.termWriteB64(%s);" % json.dumps(b64)
+            )
+        else:
+            self._run_javascript(
+                "window.term && window.term.write(%s);" % json.dumps(text)
+            )
 
     def _on_pty_output(self, chunk: str):
         # Keep a rolling tail so get_content() works (PTY auto-fill / failure

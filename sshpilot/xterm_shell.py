@@ -122,6 +122,15 @@ def _build_shell_html_impl(
   }}
   // Programmatic input path (feed_child/broadcast can also go straight to the PTY).
   window.ptySend = function (o) {{ send(o); return true; }};
+  // One-shot bulk flush from Python (preready buffer) — base64 avoids N JSON
+  // escapes and a single term.write paints the whole backlog.
+  window.termWriteB64 = function (b64) {{
+    if (!window.term) return;
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    term.write(new TextDecoder().decode(bytes));
+  }};
 
   // Link handling per https://xtermjs.org/docs/guides/link-handling/ —
   // one shared handler for pattern URLs (web-links) and OSC 8
@@ -157,13 +166,15 @@ def _build_shell_html_impl(
   function debounce(fn, ms) {{ let t; return function () {{ clearTimeout(t); t = setTimeout(fn, ms); }}; }}
   window.onresize = debounce(fitToScreen, 50);
 
-  // Size and signal readiness synchronously so Python can flush buffered PTY
-  // output immediately. Defer focus/extra layout to the next frame.
-  fit.fit();
-  send({{ type: "ready", rows: term.rows, cols: term.cols }});
+  // Two rAFs: the first only guarantees layout was *requested*; the second
+  // that it was *committed*, so fit() yields correct cols/rows before Python
+  // flushes the preready PTY buffer (wrong size → rewrap flicker).
   requestAnimationFrame(() => {{
-    fitToScreen();
-    term.focus();
+    requestAnimationFrame(() => {{
+      fit.fit();
+      send({{ type: "ready", rows: term.rows, cols: term.cols }});
+      term.focus();
+    }});
   }});
 
   // Autocomplete popup. Python drives it via sshpilotAC.update(payload) —
