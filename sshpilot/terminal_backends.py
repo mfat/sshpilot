@@ -1488,6 +1488,20 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
                     owner.handle_backend_title(payload.get("title", ""))
                 except Exception:  # noqa: BLE001
                     logger.debug("handle_backend_title raised", exc_info=True)
+        elif kind == "open-url":
+            # WebLinksAddon click — open in the system browser (VTE parity).
+            url = (payload.get("url") or "").strip()
+            if url.startswith(("http://", "https://")):
+                try:
+                    from .web_tab import open_url_in_browser
+                    if open_url_in_browser(url):
+                        logger.debug("Opened PyXterm URL: %s", url)
+                    else:
+                        logger.warning("Failed to open PyXterm URL: %s", url)
+                except Exception:  # noqa: BLE001
+                    logger.warning("Failed to open PyXterm URL: %s", url, exc_info=True)
+            else:
+                logger.debug("Ignoring non-http(s) PyXterm URL: %s", url)
 
     # ---- autocomplete (Termius-style popup, engine in autocomplete.py) -------
 

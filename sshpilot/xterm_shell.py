@@ -108,7 +108,6 @@ def _build_shell_html_impl(
   const term = new Terminal({opts_json});
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
-  term.loadAddon(new WebLinksAddon.WebLinksAddon());
   const searchAddon = new SearchAddon.SearchAddon();
   term.loadAddon(searchAddon);
   term.searchAddon = searchAddon;
@@ -120,6 +119,12 @@ def _build_shell_html_impl(
   }}
   // Programmatic input path (feed_child/broadcast can also go straight to the PTY).
   window.ptySend = function (o) {{ send(o); return true; }};
+
+  // Default WebLinksAddon uses window.open(), which WebKitGTK blocks without a
+  // create-web-view handler. Bridge to Python and open in the system browser.
+  term.loadAddon(new WebLinksAddon.WebLinksAddon((event, uri) => {{
+    send({{ type: "open-url", url: uri }});
+  }}));
 
   term.open(document.getElementById("terminal"));
   term.onData(d => send({{ type: "input", data: d }}));

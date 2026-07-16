@@ -27,6 +27,8 @@ def test_bridge_wiring_present():
     assert "window.webkit.messageHandlers.sshpilotPty.postMessage" in html
     assert '"type": "input"' in html or "type: \"input\"" in html or "type:\"input\"" in html
     assert 'send({ type: "ready"' in html or 'type: "ready"' in html
+    # WebLinks must bridge to Python — default window.open() is blocked in WebKitGTK.
+    assert 'type: "open-url"' in html or "type: \"open-url\"" in html
 
 
 def test_theme_and_font_seeded():
