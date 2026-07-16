@@ -232,14 +232,16 @@ def _build_shell_html_impl(
     term.focus();
   }});
 
-  // Autocomplete popup. Python drives it via sshpilotAC.update(payload) —
-  // empty items hides it and clears Esc suppression (line reset).
+  // Autocomplete popup. Suggestion-only: no row highlighted until ↑/↓;
+  // Tab always goes to the shell; Enter accepts only a highlighted row;
+  // click always applies. Python drives via sshpilotAC.update(payload).
   window.sshpilotAC = (function () {{
     const el = document.getElementById("ac");
-    let items = [], sel = 0, suppressed = false;
+    let items = [], sel = -1, suppressed = false;
 
-    function hide() {{ el.style.display = "none"; items = []; }}
+    function hide() {{ el.style.display = "none"; items = []; sel = -1; }}
     function visible() {{ return el.style.display === "block"; }}
+    function hasSelection() {{ return sel >= 0 && sel < items.length; }}
 
     function accept(i, run) {{
       const it = items[i];
@@ -281,17 +283,33 @@ def _build_shell_html_impl(
       el.style.color = t.foreground || "#ffffff";
       el.style.fontFamily = term.options.fontFamily || "monospace";
       el.style.fontSize = (term.options.fontSize || 14) + "px";
-      items = p.items; sel = 0;
+      items = p.items;
+      sel = -1;  // no auto-highlight — user must ↑/↓ or click
       render();
       position();
     }}
 
     // keydown while visible; returns false when the key was consumed.
     function key(e) {{
-      if (e.key === "ArrowDown") {{ sel = (sel + 1) % items.length; render(); return false; }}
-      if (e.key === "ArrowUp") {{ sel = (sel - 1 + items.length) % items.length; render(); return false; }}
-      if (e.key === "Tab" || e.key === "ArrowRight") {{ accept(sel, false); return false; }}
-      if (e.key === "Enter") {{ accept(sel, true); return false; }}
+      if (!items.length) return true;
+      if (e.key === "ArrowDown") {{
+        sel = hasSelection() ? (sel + 1) % items.length : 0;
+        render();
+        return false;
+      }}
+      if (e.key === "ArrowUp") {{
+        sel = hasSelection() ? (sel - 1 + items.length) % items.length : items.length - 1;
+        render();
+        return false;
+      }}
+      // Tab / → always reach the shell (never auto-complete from the popup).
+      if (e.key === "Tab" || e.key === "ArrowRight") return true;
+      // Enter accepts only after the user has highlighted a row.
+      if (e.key === "Enter") {{
+        if (!hasSelection()) return true;
+        accept(sel, true);
+        return false;
+      }}
       if (e.key === "Escape") {{ suppressed = true; hide(); return false; }}
       return true;
     }}

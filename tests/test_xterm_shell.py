@@ -75,9 +75,12 @@ def test_autocomplete_popup_present():
     assert 'id="ac"' in html
     assert "window.sshpilotAC" in html
     assert "sshpilotAC.visible()" in html  # key handler consults the popup
-    # Tab accept must preventDefault or the browser steals focus from xterm.
     assert "e.preventDefault()" in html
     assert "sshpilotAC.key(e)" in html
+    # Suggestion-only: no auto-highlight; Tab passes through; Enter needs selection.
+    assert "sel = -1" in html
+    assert 'e.key === "Tab" || e.key === "ArrowRight") return true' in html
+    assert "hasSelection()" in html
 
 
 def test_asset_dir_exists():
