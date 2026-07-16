@@ -60,15 +60,24 @@ def test_write_to_term_bulk_uses_base64_helper():
     scripts = []
     b = object.__new__(PyXtermBridgeBackend)
     b._run_javascript = scripts.append
+    b._fc_written = 0
+    b._fc_pending = 0
+    b._fc_paused = False
+    b._fc_safety_id = None
+    b._bridge = None
+    b._FC_CALLBACK_BYTE_LIMIT = PyXtermBridgeBackend._FC_CALLBACK_BYTE_LIMIT
+    b._FC_HIGH = PyXtermBridgeBackend._FC_HIGH
+    b._FC_LOW = PyXtermBridgeBackend._FC_LOW
 
     b._write_to_term("hi café", bulk=True)
 
     assert len(scripts) == 1
     assert "termWriteB64" in scripts[0]
-    # Payload round-trips through base64.
+    # Bulk always requests a write-ack (second arg true).
+    assert ", true)" in scripts[0]
     import json
     import re
-    m = re.search(r'termWriteB64\((.*)\)', scripts[0])
+    m = re.search(r'termWriteB64\((.*), true\)', scripts[0])
     assert m
     b64 = json.loads(m.group(1))
     assert base64.b64decode(b64).decode("utf-8") == "hi café"

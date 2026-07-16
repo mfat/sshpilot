@@ -31,6 +31,9 @@ def test_bridge_wiring_present():
     assert "requestAnimationFrame" in html
     # Bulk preready flush helper (base64 → term.write once).
     assert "window.termWriteB64" in html
+    # Flow control write + ack (xterm.js flowcontrol guide).
+    assert "window.termWrite" in html
+    assert 'type: "write-ack"' in html
     # WebLinks must bridge to Python — default window.open() is blocked in WebKitGTK.
     assert 'type: "open-url"' in html or "type: \"open-url\"" in html
     # Hover/leave feed TerminalWidget._hovered_hyperlink_uri for Open/Copy Link.

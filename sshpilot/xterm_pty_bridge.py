@@ -18,6 +18,8 @@ Design notes:
   a few large ``on_output`` calls instead of flooding WebKit.
 - Input (``write``) and resize go straight to the PTY (``os.write`` /
   ``Vte.Pty.set_size``); there is no round-trip through JavaScript.
+- ``pause``/``resume`` stop and restart the fd watch so the kernel PTY buffer
+  applies backpressure when xterm.js falls behind (see xterm.js flowcontrol guide).
 - Child exit is reported via ``GLib.child_watch_add`` on the real child pid.
 """
 from __future__ import annotations
@@ -79,6 +81,7 @@ class XtermPtyBridge:
         self._flush_source: Optional[int] = None
         self._child_source: Optional[int] = None
         self._closed = False
+        self._paused = False
 
     # ---- lifecycle -----------------------------------------------------------
 
@@ -133,6 +136,7 @@ class XtermPtyBridge:
         )
 
     def _start_watches(self) -> None:
+        self._paused = False
         fd = self._pty.get_fd()
         try:
             os.set_blocking(fd, False)
@@ -148,6 +152,38 @@ class XtermPtyBridge:
             self._child_source = GLib.child_watch_add(
                 GLib.PRIORITY_DEFAULT, self._child_pid, self._on_child_exit
             )
+
+    def pause(self) -> None:
+        """Stop reading the PTY master (kernel buffer backpressures the child)."""
+        if self._closed or self._paused:
+            return
+        self._paused = True
+        if self._fd_source is not None:
+            try:
+                GLib.source_remove(self._fd_source)
+            except Exception:  # noqa: BLE001
+                pass
+            self._fd_source = None
+        # Deliver anything already coalesced so pause does not strand UI output.
+        self._flush()
+
+    def resume(self) -> None:
+        """Resume reading after :meth:`pause`."""
+        if self._closed or not self._paused:
+            return
+        self._paused = False
+        if self._pty is None or self._fd_source is not None:
+            return
+        fd = self._pty.get_fd()
+        self._fd_source = _fd_add(
+            fd,
+            GLib.IOCondition.IN | GLib.IOCondition.HUP | GLib.IOCondition.ERR,
+            self._on_readable,
+        )
+
+    @property
+    def paused(self) -> bool:
+        return self._paused
 
     # ---- I/O -----------------------------------------------------------------
 
@@ -202,6 +238,9 @@ class XtermPtyBridge:
         if got_any and not self._flushed_once:
             # Immediate first paint (prompt); keep the timer for later bursts.
             self._flush()
+        # pause() may have removed this source from inside on_output → write path.
+        if self._paused:
+            return GLib.SOURCE_REMOVE
         return GLib.SOURCE_CONTINUE
 
     def _stop_flush_source(self):
@@ -255,6 +294,7 @@ class XtermPtyBridge:
         if self._closed:
             return
         self._closed = True
+        self._paused = False
         for attr in ("_fd_source", "_flush_source", "_child_source"):
             src = getattr(self, attr)
             if src is not None:

@@ -1395,6 +1395,12 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
     """
 
     _PREREADY_MAX_BYTES = 256_000
+    # xterm.js flow control (pending-callback watermark):
+    # https://xtermjs.org/docs/guides/flowcontrol/
+    _FC_CALLBACK_BYTE_LIMIT = 100_000
+    _FC_HIGH = 5
+    _FC_LOW = 2
+    _FC_SAFETY_MS = 2000
 
     def __init__(self, owner: "TerminalWidget") -> None:
         self._ucm = None
@@ -1413,6 +1419,10 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
         self._shell_attached = False
         self._shell_loaded = False
         self._autocompleter = None          # lazy (see _feed_autocomplete)
+        self._fc_written = 0
+        self._fc_pending = 0
+        self._fc_paused = False
+        self._fc_safety_id = None
         super().__init__(owner)
         # WebKit2 (GTK3) lacks the UCM script-message bridge this backend needs.
         if getattr(self, "WebKit", None) is None:
@@ -1537,6 +1547,8 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
                 self._bridge.resize(*self._last_size)
             if self._pending_spawn is not None:  # fallback (spawn normally happens early)
                 self._do_spawn()
+        elif kind == "write-ack":
+            self._on_write_ack()
         elif kind == "input":
             if self._bridge is not None:
                 self._bridge.write(payload.get("data", ""))
@@ -1690,6 +1702,7 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
         if not pending:
             return
         from .xterm_pty_bridge import XtermPtyBridge
+        self._reset_flow_control()
         self._bridge = XtermPtyBridge(
             on_output=self._on_pty_output,
             on_exit=self._on_bridge_exit,
@@ -1713,19 +1726,96 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
             rows=rows, cols=cols, on_spawned=on_spawned,
         )
 
+    def _reset_flow_control(self) -> None:
+        self._fc_written = 0
+        self._fc_pending = 0
+        self._cancel_fc_safety()
+        if self._fc_paused and self._bridge is not None:
+            try:
+                self._bridge.resume()
+            except Exception:  # noqa: BLE001
+                pass
+        self._fc_paused = False
+
+    def _cancel_fc_safety(self) -> None:
+        if self._fc_safety_id is None:
+            return
+        try:
+            from gi.repository import GLib
+            GLib.source_remove(self._fc_safety_id)
+        except Exception:  # noqa: BLE001
+            pass
+        self._fc_safety_id = None
+
+    def _pause_pty_flow(self) -> None:
+        if self._fc_paused or self._bridge is None:
+            return
+        self._fc_paused = True
+        try:
+            self._bridge.pause()
+        except Exception:  # noqa: BLE001
+            logger.debug("PTY flow-control pause failed", exc_info=True)
+            self._fc_paused = False
+            return
+        if self._fc_safety_id is None:
+            try:
+                from gi.repository import GLib
+                self._fc_safety_id = GLib.timeout_add(
+                    self._FC_SAFETY_MS, self._fc_safety_resume
+                )
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _resume_pty_flow(self) -> None:
+        if not self._fc_paused:
+            return
+        self._fc_paused = False
+        self._cancel_fc_safety()
+        if self._bridge is not None:
+            try:
+                self._bridge.resume()
+            except Exception:  # noqa: BLE001
+                logger.debug("PTY flow-control resume failed", exc_info=True)
+
+    def _fc_safety_resume(self) -> bool:
+        """Unstick the PTY if write-ack messages are lost."""
+        self._fc_safety_id = None
+        if self._fc_paused:
+            logger.debug("PyXterm flow-control safety resume (missing write-ack)")
+            self._fc_pending = 0
+            self._fc_written = 0
+            self._resume_pty_flow()
+        return False
+
+    def _on_write_ack(self) -> None:
+        self._fc_pending = max(self._fc_pending - 1, 0)
+        if self._fc_pending < self._FC_LOW:
+            self._resume_pty_flow()
+
     def _write_to_term(self, text: str, *, bulk: bool = False):
         import json
+        # Pending-callback watermark (xterm.js flowcontrol guide). Fast path
+        # skips the write callback until ~100KB has been queued.
+        self._fc_written += len(text)
+        want_ack = bool(bulk) or self._fc_written >= self._FC_CALLBACK_BYTE_LIMIT
+        if want_ack:
+            self._fc_written = 0
+            self._fc_pending += 1
+        ack_js = "true" if want_ack else "false"
         if bulk:
-            # Entire preready backlog in one JS call (atob + TextDecoder).
             import base64
             b64 = base64.b64encode(text.encode("utf-8", "replace")).decode("ascii")
             self._run_javascript(
-                "window.termWriteB64 && window.termWriteB64(%s);" % json.dumps(b64)
+                "window.termWriteB64 && window.termWriteB64(%s, %s);"
+                % (json.dumps(b64), ack_js)
             )
         else:
             self._run_javascript(
-                "window.term && window.term.write(%s);" % json.dumps(text)
+                "window.termWrite && window.termWrite(%s, %s);"
+                % (json.dumps(text), ack_js)
             )
+        if want_ack and self._fc_pending > self._FC_HIGH:
+            self._pause_pty_flow()
 
     def _on_pty_output(self, chunk: str):
         # Keep a rolling tail so get_content() works (PTY auto-fill / failure
@@ -1806,6 +1896,7 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
     def destroy(self) -> None:
         # Ordered, synchronous teardown (see shutdown-segfault history): close the
         # bridge (removes fd/flush/child sources + PTY) before dropping the WebView.
+        self._reset_flow_control()
         try:
             if self._bridge is not None:
                 self._bridge.close()
