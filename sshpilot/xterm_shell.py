@@ -75,7 +75,14 @@ def _build_shell_html_impl(
     css = _read(_CSS)
     addons = "\n".join(f"<script>{_read(a)}</script>" for a in _ADDONS)
 
-    opts = {"cursorBlink": True, "scrollback": 1000, "macOptionIsMeta": True}
+    opts = {
+        "cursorBlink": True,
+        "scrollback": 1000,
+        "macOptionIsMeta": True,
+        # Required for SearchAddon decorations / overview ruler (proposed API).
+        # https://xtermjs.org/docs/api/terminal/interfaces/iterminaloptions/
+        "allowProposedApi": True,
+    }
     if theme:
         opts["theme"] = theme
     if font_family:
