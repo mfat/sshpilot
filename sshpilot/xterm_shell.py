@@ -102,12 +102,18 @@ def _build_shell_html_impl(
                background:{json.dumps(background)[1:-1]}; }}
   #terminal {{ width:100%; height:100%; background:inherit; }}
   .xterm, .xterm-viewport, .xterm-screen {{ height:100% !important; }}
-  /* Autocomplete popup (window.sshpilotAC); colors come from term.options.theme at show time. */
+  /* Autocomplete popup (window.sshpilotAC); panel/accent colors set at show time. */
   #ac {{ position:absolute; display:none; z-index:10; max-height:16em; overflow:hidden;
-        border:1px solid rgba(127,127,127,.4); border-radius:6px;
-        box-shadow:0 2px 8px rgba(0,0,0,.4); white-space:pre; }}
-  .ac-row {{ padding:1px 8px; cursor:pointer; overflow:hidden; text-overflow:ellipsis; max-width:60ch; }}
-  .ac-sel {{ background:rgba(127,127,127,.35); }}
+        border:2px solid var(--ac-accent, #58a6ff); border-radius:8px;
+        box-shadow:0 6px 20px rgba(0,0,0,.55), 0 0 0 1px rgba(255,255,255,.08) inset;
+        white-space:pre; font-weight:700; letter-spacing:.01em; }}
+  .ac-row {{ padding:3px 10px; cursor:pointer; overflow:hidden; text-overflow:ellipsis;
+            max-width:60ch; font-weight:700; }}
+  .ac-row:hover {{ background:var(--ac-hover, rgba(88,166,255,.22)); }}
+  .ac-sel, .ac-sel:hover {{
+    background:var(--ac-sel, #1f6feb) !important;
+    color:var(--ac-sel-fg, #ffffff) !important;
+  }}
 </style>
 <script>{core}</script>
 {addons}
@@ -309,14 +315,48 @@ def _build_shell_html_impl(
       el.style.top = y + "px";
     }}
 
+    function parseHex(c) {{
+      if (!c || typeof c !== "string") return null;
+      let h = c.trim();
+      if (h[0] === "#") h = h.slice(1);
+      if (h.length === 3) h = h[0]+h[0]+h[1]+h[1]+h[2]+h[2];
+      if (h.length !== 6 || /[^0-9a-fA-F]/.test(h)) return null;
+      return [parseInt(h.slice(0,2),16), parseInt(h.slice(2,4),16), parseInt(h.slice(4,6),16)];
+    }}
+    function liftHex(hex, delta) {{
+      const rgb = parseHex(hex);
+      if (!rgb) return hex;
+      return "#" + rgb.map(function (v) {{
+        return Math.max(0, Math.min(255, v + delta)).toString(16).padStart(2, "0");
+      }}).join("");
+    }}
+    function luma(hex) {{
+      const rgb = parseHex(hex);
+      return rgb ? (0.2126*rgb[0] + 0.7152*rgb[1] + 0.0722*rgb[2]) : 128;
+    }}
+
     function update(p) {{
       if (!p || !p.items || !p.items.length) {{ hide(); suppressed = false; return; }}
       if (suppressed || term.buffer.active.type === "alternate") return;
       const t = term.options.theme || {{}};
-      el.style.background = t.background || "#1e1e1e";
-      el.style.color = t.foreground || "#ffffff";
+      const bg = t.background || "#1e1e1e";
+      const fg = t.foreground || "#ffffff";
+      // Prefer bright ANSI blue / cursor — never the soft selection tint.
+      const accent = t.brightBlue || t.blue || t.cursor || "#1f6feb";
+      // Solid highlight fill (not translucent) so ↑/↓ selection is unmistakable.
+      const selBg = parseHex(accent) ? accent : "#1f6feb";
+      const selFg = luma(selBg) < 160 ? "#ffffff" : "#0d1117";
+      // Lift the panel off the terminal bg so it reads as a distinct chrome layer.
+      const panelBg = liftHex(bg, luma(bg) < 140 ? 36 : -36);
+      el.style.background = panelBg;
+      el.style.color = fg;
       el.style.fontFamily = term.options.fontFamily || "monospace";
       el.style.fontSize = (term.options.fontSize || 14) + "px";
+      el.style.fontWeight = "700";
+      el.style.setProperty("--ac-accent", accent);
+      el.style.setProperty("--ac-sel", selBg);
+      el.style.setProperty("--ac-sel-fg", selFg);
+      el.style.setProperty("--ac-hover", "color-mix(in srgb, " + accent + " 28%, transparent)");
       items = p.items;
       sel = -1;  // no auto-highlight — user must ↑/↓ or click
       render();

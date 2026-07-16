@@ -85,6 +85,11 @@ def test_autocomplete_popup_present():
     assert "placeAbove" in html
     assert "xterm-helper-textarea" in html
     assert "cursorTop - gap - h" in html
+    # Bold + distinct panel (lifted bg, accent border, solid selection).
+    assert "font-weight:700" in html or "font-weight: 700" in html
+    assert "--ac-accent" in html
+    assert "--ac-sel-fg" in html
+    assert "liftHex" in html
 
 
 def test_asset_dir_exists():
