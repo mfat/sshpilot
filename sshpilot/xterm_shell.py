@@ -89,9 +89,12 @@ def _build_shell_html_impl(
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"/><title>sshPilot Terminal</title>
 <style>{css}
-  html, body {{ margin:0; padding:0; height:100%; background:{json.dumps(background)[1:-1]}; }}
-  #terminal {{ width:100%; height:100vh; }}
-  .xterm-viewport, .xterm-screen {{ height:100% !important; }}
+  /* height:100% (not 100vh): WebView viewport and vh can disagree, leaving a
+     gap. Page background must match term theme — fit() only paints whole rows. */
+  html, body {{ margin:0; padding:0; width:100%; height:100%; overflow:hidden;
+               background:{json.dumps(background)[1:-1]}; }}
+  #terminal {{ width:100%; height:100%; background:inherit; }}
+  .xterm, .xterm-viewport, .xterm-screen {{ height:100% !important; }}
   /* Autocomplete popup (window.sshpilotAC); colors come from term.options.theme at show time. */
   #ac {{ position:absolute; display:none; z-index:10; max-height:16em; overflow:hidden;
         border:1px solid rgba(127,127,127,.4); border-radius:6px;

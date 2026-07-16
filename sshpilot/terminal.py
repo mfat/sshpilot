@@ -2079,9 +2079,16 @@ class TerminalWidget(Gtk.Box):
                             pass
                     
                     # Create new provider with very specific selector to avoid affecting other widgets
-                    # Only target TerminalWidget instances with terminal-bg class
+                    # Target TerminalWidget + scrolled child + VTE or PyXterm WebView.
                     provider = Gtk.CssProvider()
-                    css = f"terminalwidget.terminal-bg, terminalwidget.terminal-bg > scrolledwindow.terminal-bg, terminalwidget.terminal-bg > scrolledwindow.terminal-bg > vte-terminal.terminal-bg {{ background-color: rgba({int(rgba.red*255)}, {int(rgba.green*255)}, {int(rgba.blue*255)}, {rgba.alpha}); }}"
+                    css = (
+                        f"terminalwidget.terminal-bg, "
+                        f"terminalwidget.terminal-bg > scrolledwindow.terminal-bg, "
+                        f"terminalwidget.terminal-bg > scrolledwindow.terminal-bg > vte-terminal.terminal-bg, "
+                        f"terminalwidget.terminal-bg > scrolledwindow.terminal-bg > *.terminal-bg "
+                        f"{{ background-color: rgba({int(rgba.red*255)}, {int(rgba.green*255)}, "
+                        f"{int(rgba.blue*255)}, {rgba.alpha}); }}"
+                    )
                     provider.load_from_data(css.encode('utf-8'))
                     Gtk.StyleContext.add_provider_for_display(
                         display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
@@ -2096,6 +2103,9 @@ class TerminalWidget(Gtk.Box):
                     self.scrolled_window.add_css_class('terminal-bg')
                 if hasattr(self.vte, 'add_css_class'):
                     self.vte.add_css_class('terminal-bg')
+                backend_widget = getattr(getattr(self, 'backend', None), 'widget', None)
+                if backend_widget is not None and hasattr(backend_widget, 'add_css_class'):
+                    backend_widget.add_css_class('terminal-bg')
             except Exception as e:
                 logger.debug(f"Failed to set container background: {e}")
             

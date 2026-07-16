@@ -747,15 +747,23 @@ class PyXtermTerminalBackend:
             palette = profile.get("palette", [])
             palette_js = json.dumps(palette) if palette else "[]"
             
+            # fit.fit() sizes the terminal to whole character cells; any leftover
+            # strip at the bottom shows the page background. Keep html/body in
+            # sync with the theme so that gap matches (VTE paints the full widget).
+            bg = profile.get("background", "#000000")
+            fg = profile.get("foreground", "#FFFFFF")
+            cursor = profile.get("cursor_color", fg)
+            sel_bg = profile.get("highlight_background", "#4A90E2")
+            sel_fg = profile.get("highlight_foreground", fg)
             theme_js = f"""
             (function() {{
                 if (typeof window.term !== 'undefined') {{
                     var theme = {{
-                        background: '{profile.get("background", "#000000")}',
-                        foreground: '{profile.get("foreground", "#FFFFFF")}',
-                        cursor: '{profile.get("cursor_color", profile.get("foreground", "#FFFFFF"))}',
-                        selectionBackground: '{profile.get("highlight_background", "#4A90E2")}',
-                        selectionForeground: '{profile.get("highlight_foreground", profile.get("foreground", "#FFFFFF"))}'
+                        background: {json.dumps(bg)},
+                        foreground: {json.dumps(fg)},
+                        cursor: {json.dumps(cursor)},
+                        selectionBackground: {json.dumps(sel_bg)},
+                        selectionForeground: {json.dumps(sel_fg)}
                     }};
                     // Apply palette colors if available
                     var palette = {palette_js};
@@ -778,6 +786,11 @@ class PyXtermTerminalBackend:
                         theme.brightWhite = palette[15];
                     }}
                     window.term.options.theme = theme;
+                    var pageBg = theme.background || '#000000';
+                    document.documentElement.style.background = pageBg;
+                    document.body.style.background = pageBg;
+                    var terminalEl = document.getElementById('terminal');
+                    if (terminalEl) terminalEl.style.background = pageBg;
                 }}
             }})();
             """
