@@ -81,9 +81,10 @@ def test_autocomplete_popup_present():
     assert "sel = -1" in html
     assert 'e.key === "Tab" || e.key === "ArrowRight") return true' in html
     assert "hasSelection()" in html
-    # Bottom-of-terminal: flip above the cursor using screen bounds, not window.
+    # Bottom-of-terminal: flip above the real cursor box (helper textarea).
     assert "placeAbove" in html
-    assert "spaceBelow" in html
+    assert "xterm-helper-textarea" in html
+    assert "cursorTop - gap - h" in html
 
 
 def test_asset_dir_exists():

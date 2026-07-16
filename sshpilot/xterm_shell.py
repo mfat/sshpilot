@@ -262,29 +262,48 @@ def _build_shell_html_impl(
     }}
 
     function position() {{
-      // Place relative to the terminal screen (not window.innerHeight) so a
-      // prompt on the last row flips the popup *above* the cursor and never
-      // covers the line being typed.
-      const screen = document.querySelector(".xterm-screen");
+      // Anchor to the helper textarea (true cursor box). Averaged cell math
+      // is a few px off on the last row and the popup then overlaps the prompt.
+      const screen = document.querySelector(".xterm-screen") || document.getElementById("terminal");
       if (!screen) return;
       const r = screen.getBoundingClientRect();
-      const cw = r.width / term.cols, ch = r.height / term.rows;
+      const ch = r.height / Math.max(1, term.rows);
+      const cw = r.width / Math.max(1, term.cols);
       const buf = term.buffer.active;
-      const cursorTop = r.top + buf.cursorY * ch;
-      const below = cursorTop + ch;
-      const spaceBelow = Math.max(0, r.bottom - below);
-      const spaceAbove = Math.max(0, cursorTop - r.top);
+      const gap = 4;
+      let cursorTop = r.top + buf.cursorY * ch;
+      let cursorBottom = cursorTop + ch;
+      let cursorLeft = r.left + buf.cursorX * cw;
+      const ta = document.querySelector(".xterm-helper-textarea");
+      if (ta) {{
+        const tr = ta.getBoundingClientRect();
+        if (tr.height > 0) {{
+          cursorTop = tr.top;
+          cursorBottom = tr.bottom;
+          cursorLeft = tr.left;
+        }}
+      }}
+      const spaceBelow = Math.max(0, r.bottom - cursorBottom - gap);
+      const spaceAbove = Math.max(0, cursorTop - r.top - gap);
       el.style.display = "block";
-      el.style.maxHeight = "";  // measure natural height first
+      el.style.maxHeight = "";
       const naturalH = el.offsetHeight || (ch * 4);
-      const placeAbove = spaceBelow < naturalH && spaceAbove > spaceBelow;
-      const avail = placeAbove ? spaceAbove : spaceBelow;
-      el.style.maxHeight = Math.max(ch, avail) + "px";
+      // Prefer above whenever there isn't a full natural popup below the cursor
+      // (last row / near-bottom). Never clamp downward onto the prompt line.
+      const placeAbove = spaceBelow < naturalH && spaceAbove >= ch;
+      const avail = Math.max(ch, placeAbove ? spaceAbove : spaceBelow);
+      el.style.maxHeight = avail + "px";
       el.style.overflowY = "auto";
       const h = el.offsetHeight;
-      let y = placeAbove ? (cursorTop - h) : below;
-      y = Math.max(r.top, Math.min(y, r.bottom - h));
-      let x = r.left + buf.cursorX * cw;
+      let y;
+      if (placeAbove) {{
+        y = cursorTop - gap - h;
+        if (y < r.top) y = r.top;
+      }} else {{
+        y = cursorBottom + gap;
+        if (y + h > r.bottom) y = Math.max(r.top, r.bottom - h);
+      }}
+      let x = cursorLeft;
       x = Math.max(r.left, Math.min(x, r.right - el.offsetWidth));
       el.style.left = x + "px";
       el.style.top = y + "px";
