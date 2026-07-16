@@ -236,13 +236,19 @@ def _build_shell_html_impl(
   // clipboard — navigator.clipboard cannot reliably read text copied in other
   // apps under WebKitGTK.
   term.attachCustomKeyEventHandler(function (e) {{
+    // Returning false only stops xterm from handling the key — Tab still
+    // triggers the browser's focus navigation unless preventDefault() runs.
     if (e.type === "keydown" && window.sshpilotAC.visible()
         && !e.ctrlKey && !e.altKey && !e.metaKey
-        && !window.sshpilotAC.key(e)) return false;
+        && !window.sshpilotAC.key(e)) {{
+      e.preventDefault();
+      return false;
+    }}
     if (e.type !== "keydown" || !(e.ctrlKey && e.shiftKey)) return true;
     const k = e.key.toLowerCase();
-    if (k === "v") {{ send({{ type: "paste" }}); return false; }}
+    if (k === "v") {{ e.preventDefault(); send({{ type: "paste" }}); return false; }}
     if (k === "c" || k === "x") {{
+      e.preventDefault();
       send({{ type: "copy", text: term.getSelection() }});
       term.focus();
       return false;

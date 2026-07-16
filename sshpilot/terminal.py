@@ -2404,37 +2404,70 @@ class TerminalWidget(Gtk.Box):
         the grab_focus is not needed here.
         """
 
+    def _vte_uri_at(self, x: float, y: float) -> Optional[str]:
+        """Return the URI at widget coordinates, or None.
+
+        Prefer OSC 8 hyperlinks over regex matches (same precedence as GNOME
+        Terminal). Uses the coordinate APIs from
+        https://api.pygobject.gnome.org/Vte-3.91/class-Terminal.html —
+        ``check_hyperlink_at`` / ``check_match_at`` (since 0.70), with
+        ``match_check`` as a fallback for older VTE.
+        """
+        if self.vte is None:
+            return None
+
+        # OSC 8 explicit hyperlinks
+        if hasattr(self.vte, 'check_hyperlink_at'):
+            try:
+                uri = self.vte.check_hyperlink_at(x, y)
+                if uri:
+                    return uri
+            except Exception:
+                pass
+
+        # Plain-text regex matches registered via match_add_regex
+        if hasattr(self.vte, 'check_match_at'):
+            try:
+                result = self.vte.check_match_at(x, y)
+                if result:
+                    candidate = result[0] if isinstance(result, (tuple, list)) else result
+                    if candidate:
+                        return candidate
+            except Exception as e:
+                logger.debug(f"check_match_at error: {e}")
+        elif hasattr(self.vte, 'match_check'):
+            try:
+                char_width = self.vte.get_char_width()
+                char_height = self.vte.get_char_height()
+                if char_width > 0 and char_height > 0:
+                    result = self.vte.match_check(int(x / char_width), int(y / char_height))
+                    if result:
+                        candidate = result[0] if isinstance(result, (tuple, list)) else result
+                        if candidate:
+                            return candidate
+            except Exception as e:
+                logger.debug(f"match_check error: {e}")
+        return None
+
+    @staticmethod
+    def _click_has_link_modifier(state) -> bool:
+        """True when the click should activate a link (GNOME Terminal: Ctrl+click).
+
+        GNOME Terminal's ``terminal_screen_capture_click_pressed_cb`` only opens
+        when ``state & GDK_CONTROL_MASK``. On macOS use Cmd (Meta) instead —
+        Ctrl+click is commonly mapped to right-click there.
+        """
+        if is_macos():
+            return bool(state & Gdk.ModifierType.META_MASK)
+        return bool(state & Gdk.ModifierType.CONTROL_MASK)
+
     def _on_vte_motion(self, controller, x, y):
         """Detect URL under the mouse cursor (both OSC 8 links and plain-text regexes)."""
         if self.vte is None:
             return
         try:
-            uri = None
-
-            # OSC 8 hyperlinks – needs a GdkEvent; skip if unavailable
+            uri = self._vte_uri_at(x, y)
             event = controller.get_current_event()
-            if event and hasattr(self.vte, 'hyperlink_check_event'):
-                try:
-                    uri = self.vte.hyperlink_check_event(event)
-                except Exception:
-                    pass
-
-            # Plain-text regex matches – use cell coordinates so we don't
-            # depend on get_current_event() being reliable
-            if not uri:
-                try:
-                    char_width = self.vte.get_char_width()
-                    char_height = self.vte.get_char_height()
-                    if char_width > 0 and char_height > 0:
-                        col = int(x / char_width)
-                        row = int(y / char_height)
-                        result = self.vte.match_check(col, row)
-                        if result:
-                            candidate = result[0] if isinstance(result, (tuple, list)) else result
-                            if candidate:
-                                uri = candidate
-                except Exception as e:
-                    logger.debug(f"match_check error: {e}")
 
             # Only update when we have a definitive answer; never clear via a
             # missing event (the cursor may still be on the same link)
@@ -3360,49 +3393,36 @@ class TerminalWidget(Gtk.Box):
                 self._register_menu_controller(self.terminal_widget, gesture)
                 logger.debug("Added context menu gesture to terminal widget")
 
-            # CAPTURE-phase left-click gesture for Ctrl+click URL opening.
-            # Must use CAPTURE so it runs before VTE's text-selection handler; we only
-            # claim the event when Ctrl is held AND a URL is under the cursor.
+            # CAPTURE-phase left-click gesture for Ctrl+click URL opening
+            # (GNOME Terminal: terminal_screen_capture_click_pressed_cb requires
+            # GDK_CONTROL_MASK). Must use CAPTURE so it runs before VTE's
+            # text-selection handler; we only claim when the modifier is held
+            # AND a URL is under the cursor.
             if self.vte is not None:
                 url_gesture = Gtk.GestureClick()
                 url_gesture.set_button(Gdk.BUTTON_PRIMARY)
                 url_gesture.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
                 def _on_url_click(gest, n_press, x, y):
                     try:
-                        uri = None
+                        if n_press != 1:
+                            return
+                        # Plain click must reach VTE for cursor placement /
+                        # selection — only Ctrl+click (Cmd+click on macOS)
+                        # activates links, matching GNOME Terminal.
+                        try:
+                            state = gest.get_current_event_state()
+                        except Exception:
+                            return
+                        if not self._click_has_link_modifier(state):
+                            return
 
-                        # Primary: match_check_event mirrors the code sample pattern
-                        ev = gest.get_current_event()
-                        if ev and self.vte is not None:
-                            try:
-                                result = self.vte.match_check_event(ev)
-                                if result:
-                                    candidate = result[0] if isinstance(result, (tuple, list)) else result
-                                    if candidate:
-                                        uri = candidate
-                            except Exception:
-                                pass
-
-                        # Fallback: cell-coordinate lookup
-                        if not uri and self.vte is not None:
-                            try:
-                                cw = self.vte.get_char_width()
-                                ch = self.vte.get_char_height()
-                                if cw > 0 and ch > 0:
-                                    result = self.vte.match_check(int(x / cw), int(y / ch))
-                                    if result:
-                                        candidate = result[0] if isinstance(result, (tuple, list)) else result
-                                        if candidate:
-                                            uri = candidate
-                            except Exception:
-                                pass
-
+                        uri = self._vte_uri_at(x, y)
                         if not uri:
                             return  # no URL here – let VTE handle the click normally
 
                         gest.set_state(Gtk.EventSequenceState.CLAIMED)
                         Gio.AppInfo.launch_default_for_uri(uri, None)
-                        logger.debug(f"Opened URL via click: {uri}")
+                        logger.debug(f"Opened URL via Ctrl/Cmd+click: {uri}")
                     except Exception as e:
                         logger.warning(f"URL click failed: {e}")
                 url_gesture.connect('pressed', _on_url_click)
