@@ -262,17 +262,32 @@ def _build_shell_html_impl(
     }}
 
     function position() {{
+      // Place relative to the terminal screen (not window.innerHeight) so a
+      // prompt on the last row flips the popup *above* the cursor and never
+      // covers the line being typed.
       const screen = document.querySelector(".xterm-screen");
       if (!screen) return;
       const r = screen.getBoundingClientRect();
       const cw = r.width / term.cols, ch = r.height / term.rows;
       const buf = term.buffer.active;
+      const cursorTop = r.top + buf.cursorY * ch;
+      const below = cursorTop + ch;
+      const spaceBelow = Math.max(0, r.bottom - below);
+      const spaceAbove = Math.max(0, cursorTop - r.top);
       el.style.display = "block";
-      let x = r.left + buf.cursorX * cw, y = r.top + (buf.cursorY + 1) * ch;
-      if (y + el.offsetHeight > window.innerHeight) y = r.top + buf.cursorY * ch - el.offsetHeight;
-      x = Math.max(0, Math.min(x, window.innerWidth - el.offsetWidth));
+      el.style.maxHeight = "";  // measure natural height first
+      const naturalH = el.offsetHeight || (ch * 4);
+      const placeAbove = spaceBelow < naturalH && spaceAbove > spaceBelow;
+      const avail = placeAbove ? spaceAbove : spaceBelow;
+      el.style.maxHeight = Math.max(ch, avail) + "px";
+      el.style.overflowY = "auto";
+      const h = el.offsetHeight;
+      let y = placeAbove ? (cursorTop - h) : below;
+      y = Math.max(r.top, Math.min(y, r.bottom - h));
+      let x = r.left + buf.cursorX * cw;
+      x = Math.max(r.left, Math.min(x, r.right - el.offsetWidth));
       el.style.left = x + "px";
-      el.style.top = Math.max(0, y) + "px";
+      el.style.top = y + "px";
     }}
 
     function update(p) {{
