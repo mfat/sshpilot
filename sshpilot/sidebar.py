@@ -341,7 +341,7 @@ def _clear_bar(row: Gtk.Widget):
 
 
 def _create_color_dot(icon_name: str = "dot-symbolic") -> Gtk.Image:
-    """Colour dot shown before a row title ('dot' mode; 'bar'-mode member rows)."""
+    """Colour dot shown before the row icon ('dot' mode; 'bar'-mode member rows)."""
     from sshpilot import icon_utils
     dot = icon_utils.new_image_from_icon_name(icon_name)
     dot.add_css_class("sidebar-color-dot")
@@ -379,7 +379,7 @@ def _apply_row_color(row: Gtk.Widget, mode: str, rgba: Optional[Gdk.RGBA]):
     """Apply the selected group-color treatment to a sidebar row.
 
     Modes: ``fill`` (tinted card), ``badge`` (tag icon), ``bar`` (leading
-    accent bar), ``dot`` (dot before the title). Mutually exclusive, so we
+    accent bar), ``dot`` (dot before the row icon). Mutually exclusive, so we
     always clear the others first. ``row`` must expose ``color_badge``,
     ``_update_color_badge`` and ``color_dot``.
     """
@@ -540,6 +540,9 @@ class GroupRow(Gtk.ListBoxRow):
         self._group_display_mode = None
 
         from sshpilot import icon_utils
+        self.color_dot = _create_color_dot("big-dot-symbolic")
+        content.append(self.color_dot)
+
         icon = icon_utils.new_image_from_icon_name("folder-symbolic")
         icon.set_icon_size(Gtk.IconSize.NORMAL)
         icon.set_valign(Gtk.Align.CENTER)  # Center vertically relative to text
@@ -548,9 +551,6 @@ class GroupRow(Gtk.ListBoxRow):
         icon.set_visible(show_group_icon)
         content.append(icon)
         self.icon = icon
-
-        self.color_dot = _create_color_dot("big-dot-symbolic")
-        content.append(self.color_dot)
 
         info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         info_box.set_hexpand(True)
@@ -1081,6 +1081,9 @@ class ConnectionRow(Gtk.ListBoxRow):
         content.set_margin_bottom(6)
 
         from sshpilot import icon_utils
+        self.color_dot = _create_color_dot()
+        content.append(self.color_dot)
+
         self.connection_icon = icon_utils.new_image_from_icon_name("computer-symbolic")
         self.connection_icon.set_icon_size(Gtk.IconSize.NORMAL)
         self.connection_icon.set_valign(Gtk.Align.CENTER)  # Center vertically relative to text
@@ -1088,9 +1091,6 @@ class ConnectionRow(Gtk.ListBoxRow):
         show_connection_icon = self.config.get_setting('ui.sidebar_show_connection_icon', True)
         self.connection_icon.set_visible(show_connection_icon)
         content.append(self.connection_icon)
-
-        self.color_dot = _create_color_dot()
-        content.append(self.color_dot)
 
         info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         info_box.set_hexpand(True)
