@@ -37,31 +37,41 @@ _get_connection_host = get_connection_host
 _get_connection_alias = get_connection_alias
 
 
-def find_tab_page_at(tab_bar, x, y):
-    """Return the Adw.TabPage under (*x*, *y*) on *tab_bar*, or None.
+def classify_tab_bar_hit(tab_bar, x, y):
+    """Classify a click on *tab_bar* at (*x*, *y*).
 
-    Adw.TabBar has no public hit-test API, so this walks ``pick()`` ancestors
-    looking for a private AdwTab (css_name ``tab``) and reads its ``page``
-    property. Clicks on empty bar space, start/end action widgets, or the tab
-    close button return None so double-click rename does not fire there.
+    Adw.TabBar has no public hit-test API, so this walks ``pick()`` ancestors.
+    Returns one of:
+      ``('tab', page)`` — click on a private AdwTab (css_name ``tab``)
+      ``('close',)``    — tab close button
+      ``('action',)``   — start/end action chrome
+      ``('empty',)``    — empty bar / tabbox / separator space
     """
     try:
         widget = tab_bar.pick(x, y, Gtk.PickFlags.DEFAULT)
     except Exception:
-        return None
+        return ('empty',)
     while widget is not None and widget is not tab_bar:
         try:
             if widget.has_css_class('tab-close-button'):
-                return None
+                return ('close',)
+            if widget.has_css_class('start-action') or widget.has_css_class('end-action'):
+                return ('action',)
         except Exception:
             pass
         try:
             if widget.get_css_name() == 'tab':
-                return widget.get_property('page')
+                return ('tab', widget.get_property('page'))
         except Exception:
             pass
         widget = widget.get_parent()
-    return None
+    return ('empty',)
+
+
+def find_tab_page_at(tab_bar, x, y):
+    """Return the Adw.TabPage under (*x*, *y*) on *tab_bar*, or None."""
+    kind, *rest = classify_tab_bar_hit(tab_bar, x, y)
+    return rest[0] if kind == 'tab' else None
 
 
 class WindowTabsMixin:
@@ -112,9 +122,17 @@ class WindowTabsMixin:
     def _on_tab_bar_pressed(self, gesture, n_press, x, y):
         if n_press != 2:
             return
-        page = find_tab_page_at(self.tab_bar, x, y)
-        if page and not self._is_start_tab_page(page):
-            self._show_tab_rename_popover(page, x, y)
+        kind, *rest = classify_tab_bar_hit(self.tab_bar, x, y)
+        if kind == 'tab':
+            page = rest[0]
+            if page and not self._is_start_tab_page(page):
+                self._show_tab_rename_popover(page, x, y)
+            return
+        if kind == 'empty':
+            try:
+                self.terminal_manager.show_local_terminal()
+            except Exception as exc:
+                logger.error("Tab-bar new local terminal failed: %s", exc)
 
     def _show_tab_rename_popover(self, page, x, y):
         entry = Gtk.Entry()
