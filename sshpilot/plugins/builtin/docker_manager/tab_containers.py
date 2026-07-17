@@ -27,7 +27,7 @@ class ContainersTabMixin:
         self._container_search.set_hexpand(True)
         self._container_search.connect("search-changed", self._on_container_search)
         toolbar.append(self._container_search)
-        # Label + switch pair, same pattern as the Logs tab's Timestamps switch.
+        # Label + switch pair, same pattern as the Logs dialog timestamps switch.
         toolbar.append(Gtk.Label(label="Show stopped"))
         self._show_all_check = Gtk.Switch()
         self._show_all_check.set_active(
@@ -327,15 +327,20 @@ class ContainersTabMixin:
                              lambda: self._lifecycle("kill", cid, name))
             w.add_row_action(row, "utilities-terminal-symbolic", "Open shell",
                              lambda: self._open_shell(cid, name), refreshes=False)
-            w.add_row_action(row, "view-paged-symbolic", "Follow logs",
-                             lambda: self._follow_logs(cid, name), refreshes=False)
+            w.add_row_action(row, "view-paged-symbolic", "Logs",
+                             lambda: self._open_container_logs(cid, name, follow=True),
+                             refreshes=False)
         else:
             w.add_row_action(row, "media-playback-start-symbolic", "Start",
                              lambda: self._lifecycle("start", cid, name))
             w.add_row_action(row, "view-paged-symbolic", "Logs",
-                             lambda: self._follow_logs(cid, name), refreshes=False)
+                             lambda: self._open_container_logs(cid, name),
+                             refreshes=False)
         w.add_row_action(row, "dialog-information-symbolic", "Details",
                          lambda: self._show_details(cid, name), refreshes=False)
+        w.add_row_action(row, "preferences-system-symbolic", "Env",
+                         lambda: self._show_details(cid, name, page="env"),
+                         refreshes=False)
         w.add_row_action(row, "user-trash-symbolic", "Remove",
                          lambda: self._remove_container(cid, name))
 

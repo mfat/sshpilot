@@ -798,7 +798,7 @@ def test_page_builds_all_tabs():
     while child is not None:
         names.append(page._stack.get_page(child).get_name())
         child = child.get_next_sibling()
-    assert names == ["containers", "logs", "stats", "images",
+    assert names == ["containers", "stats", "images",
                      "volumes", "networks", "compose"]
 
 
@@ -1376,32 +1376,8 @@ def test_loaded_flags_suppress_repulse():
     assert page._stats_loaded is True
 
 
-def test_logs_dropdown_selection_loads_logs():
-    """Picking a container in the Logs dropdown loads its logs without the
-    Load button; poll-driven model refreshes neither re-trigger nor lose
-    the selection."""
-    _gtk_or_skip()
-    from sshpilot.plugins.builtin.docker_manager.page import DockerConsolePage
-
-    page = DockerConsolePage(_gtk_ctx(), initial_host="web")
-    page._containers = [{"Names": "web", "ID": "a1"}, {"Names": "db", "ID": "b2"}]
-    calls = []
-    page._reload_logs = lambda: calls.append(page._selected_container_id())
-
-    page._refresh_logs_targets()      # programmatic model swap — must not load
-    assert calls == []
-
-    page._logs_combo.set_selected(1)  # user picks "db"
-    assert calls == ["b2"]
-    assert page._logs_raw == ""
-
-    page._refresh_logs_targets()      # containers poll: keeps pick, no reload
-    assert calls == ["b2"]
-    assert page._logs_combo.get_selected() == 1
-
-
-def test_shared_selection_drives_bar_and_logs_combo():
-    """Containers list selection updates the selection bar and Logs combo."""
+def test_shared_selection_updates_selected_cid():
+    """Containers list selection updates shared ``_selected_cid``."""
     _gtk_or_skip()
     from sshpilot.plugins.builtin.docker_manager.page import DockerConsolePage
 
@@ -1410,11 +1386,25 @@ def test_shared_selection_drives_bar_and_logs_combo():
         {"Names": "web", "ID": "a1", "Image": "nginx", "Status": "Up", "State": "running"},
         {"Names": "db", "ID": "b2", "Image": "postgres", "Status": "Up", "State": "running"},
     ]
-    page._refresh_logs_targets()
     page._set_selected_container("b2", "db", source="containers")
     assert page._selected_cid == "b2"
-    assert "db" in page._sel_label.get_label()
-    assert page._logs_combo.get_selected() == 1
+    assert page._selected_name == "db"
+
+
+def test_logs_dialog_opens_for_container():
+    """Logs is a row action dialog, not a stack tab."""
+    _gtk_or_skip()
+    from sshpilot.plugins.builtin.docker_manager.page import DockerConsolePage
+
+    page = DockerConsolePage(_gtk_ctx(), initial_host="web")
+    page._containers = [{"Names": "web", "ID": "a1"}]
+    calls = []
+    page._reload_logs = lambda: calls.append(page._selected_cid)
+    page._open_container_logs("a1", "web")
+    assert page._logs_window is not None
+    assert page._logs_window.get_visible()
+    assert page._selected_cid == "a1"
+    assert calls == ["a1"]
 
 
 def test_on_docker_event_line_triggers_refresh():

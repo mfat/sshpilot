@@ -1,4 +1,8 @@
-"""Docker Console tab: Logs — snapshot / in-pane follow, search, ring buffer."""
+"""Docker Console: container logs dialog (opened from each container row).
+
+Snapshot / in-pane follow, match navigation, ring buffer. Not a top-level tab —
+use the Logs button on a container row.
+"""
 
 from __future__ import annotations
 
@@ -8,7 +12,8 @@ from typing import Any, List, Optional
 import gi
 
 gi.require_version("Gtk", "4.0")
-from gi.repository import GLib, Gio, Gtk, Gdk, Pango  # noqa: E402
+gi.require_version("Adw", "1")
+from gi.repository import GLib, Gio, Gtk, Gdk, Pango, Adw  # noqa: E402
 
 from . import widgets as w  # noqa: E402
 
@@ -17,18 +22,47 @@ _DEFAULT_MAX_LOG_LINES = 2000
 
 
 class LogsTabMixin:
-    """Logs tab: snapshot or Follow stream, match navigation, ring buffer."""
+    """Container logs dialog: snapshot or Follow stream, match navigation."""
+
+    def _ensure_logs_window(self) -> None:
+        """Build the logs dialog once (content reused for every container)."""
+        if getattr(self, "_logs_window", None) is not None:
+            return
+        win = Adw.Window()
+        win.set_title("Container logs")
+        win.set_default_size(780, 560)
+        win.set_modal(True)
+        parent = self._window()
+        if parent is not None:
+            win.set_transient_for(parent)
+        win.connect("close-request", self._on_logs_window_close)
+
+        toolbar = Adw.ToolbarView()
+        header = Adw.HeaderBar()
+        self._logs_title = Gtk.Label(label="Logs")
+        self._logs_title.add_css_class("heading")
+        header.set_title_widget(self._logs_title)
+        close = Gtk.Button(icon_name="window-close-symbolic")
+        close.set_tooltip_text("Close")
+        close.connect("clicked", lambda _b: self._close_logs_window())
+        header.pack_end(close)
+        toolbar.add_top_bar(header)
+        toolbar.set_content(self._build_logs_section())
+        win.set_content(toolbar)
+        self._logs_window = win
 
     def _build_logs_section(self) -> Gtk.Widget:
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        box.set_margin_top(8)
+        box.set_margin_bottom(8)
+        box.set_margin_start(12)
+        box.set_margin_end(12)
 
         toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        toolbar.append(Gtk.Label(label="Container:"))
-        self._logs_combo = Gtk.DropDown.new_from_strings(["(refresh containers)"])
-        self._logs_combo.set_hexpand(True)
-        self._syncing_logs_combo = False
-        self._logs_combo.connect("notify::selected", self._on_logs_target_changed)
-        toolbar.append(self._logs_combo)
+        self._logs_target_label = Gtk.Label(label="", xalign=0)
+        self._logs_target_label.set_hexpand(True)
+        self._logs_target_label.add_css_class("dim-label")
+        toolbar.append(self._logs_target_label)
 
         toolbar.append(Gtk.Label(label="Tail:"))
         self._tail_spin = Gtk.SpinButton.new_with_range(10, 5000, 50)
@@ -133,7 +167,6 @@ class LogsTabMixin:
         overlay.add_overlay(self._logs_pulse)
         box.append(overlay)
 
-        # Ring buffer + follow stream state (also reset on host change).
         self._logs_lines: deque = deque(maxlen=self._max_log_lines_setting())
         self._logs_raw = ""
         self._logs_stream = None
@@ -144,6 +177,49 @@ class LogsTabMixin:
         self._logs_flush_source: Optional[int] = None
         self._syncing_logs_follow = False
         return box
+
+    def _open_container_logs(self, cid: str, name: str, *, follow: bool = False) -> None:
+        """Open the logs dialog for ``cid`` (from a container row button)."""
+        self._ensure_logs_window()
+        self._set_selected_container(cid, name, source="logs")
+        self._update_logs_target_label()
+        self._logs_lines.clear()
+        self._logs_raw = ""
+        self._logs_buffer.set_text("", 0)
+        self._logs_window.set_title(f"Logs — {name}")
+        self._logs_title.set_label(f"Logs — {name}")
+        parent = self._window()
+        if parent is not None:
+            self._logs_window.set_transient_for(parent)
+        self._logs_window.present()
+        if follow:
+            if not self._logs_follow.get_active():
+                self._logs_follow.set_active(True)
+            else:
+                self._start_logs_follow()
+        else:
+            self._stop_logs_follow()
+            self._reload_logs()
+
+    def _close_logs_window(self) -> None:
+        self._stop_logs_follow()
+        if getattr(self, "_logs_window", None) is not None:
+            self._logs_window.hide()
+
+    def _on_logs_window_close(self, *_a) -> bool:
+        self._stop_logs_follow()
+        if getattr(self, "_logs_window", None) is not None:
+            self._logs_window.hide()
+        return True  # don't destroy — reuse next time
+
+    def _update_logs_target_label(self) -> None:
+        if not hasattr(self, "_logs_target_label"):
+            return
+        name = self._selected_container_name()
+        cid = self._selected_container_id() or ""
+        short = cid[:12] if cid else ""
+        self._logs_target_label.set_label(
+            f"{name}" + (f"  ({short})" if short else ""))
 
     def _log_tail_setting(self) -> int:
         try:
@@ -213,9 +289,8 @@ class LogsTabMixin:
             return
         self._stop_logs_follow_keep_toggle()
         self._resize_logs_ring()
-        if not self._logs_lines:
-            # Seed from a snapshot so Follow starts with recent history.
-            self._reload_logs()
+        # ``logs -f --tail N`` already seeds recent history — do not call
+        # ``_reload_logs`` here (it redirects back into Follow and recurses).
         gen = self._logs_stream_gen
         cmd = client.logs_follow_stream_command(
             cid, tail=int(self._tail_spin.get_value()),
@@ -259,92 +334,24 @@ class LogsTabMixin:
         return False
 
     def _refresh_logs_targets(self) -> None:
-        names = [w.field(c, "Names", "Name", "ID", "Id") for c in self._containers]
-        current = None
-        # Prefer shared selection over the previous combo pick.
-        if getattr(self, "_selected_cid", None):
-            for c in self._containers:
-                if self._container_cid(c) == self._selected_cid:
-                    current = w.field(c, "Names", "Name", "ID", "Id")
-                    break
-        if current is None:
-            old_model = self._logs_combo.get_model()
-            idx = self._logs_combo.get_selected()
-            if old_model is not None and 0 <= idx < old_model.get_n_items():
-                current = old_model.get_string(idx)
-        self._syncing_logs_combo = True
-        try:
-            self._logs_combo.set_model(Gtk.StringList.new(names or ["(no containers)"]))
-            if current in names:
-                self._logs_combo.set_selected(names.index(current))
-        finally:
-            self._syncing_logs_combo = False
-
-    def _sync_logs_combo_to_selection(self) -> None:
-        """Mirror ``_selected_cid`` into the Logs dropdown (no reload)."""
-        if not hasattr(self, "_logs_combo"):
-            return
-        cid = getattr(self, "_selected_cid", None)
-        if not cid or not self._containers:
-            return
-        names = [w.field(c, "Names", "Name", "ID", "Id") for c in self._containers]
-        name = None
-        for c in self._containers:
-            if self._container_cid(c) == cid:
-                name = w.field(c, "Names", "Name", "ID", "Id")
-                break
-        if name is None or name not in names:
-            return
-        self._syncing_logs_combo = True
-        try:
-            self._logs_combo.set_selected(names.index(name))
-        finally:
-            self._syncing_logs_combo = False
-
-    def _on_logs_target_changed(self, *_a) -> None:
-        if self._syncing_logs_combo:
-            return
-        # Read from the combo model directly — ``_selected_container_id`` prefers
-        # the shared selection and would ignore a user pick until we sync it.
-        idx = self._logs_combo.get_selected()
-        if not (0 <= idx < len(self._containers)):
-            return
-        cid = w.field(self._containers[idx], "ID", "Id", "ContainerID")
-        name = w.field(self._containers[idx], "Names", "Name", default="container")
-        if not cid:
-            return
-        if cid != getattr(self, "_selected_cid", None):
-            self._set_selected_container(cid, name, source="logs")
-        self._logs_lines.clear()
-        self._logs_raw = ""
-        if self._logs_follow.get_active():
-            self._start_logs_follow()
-        else:
-            self._reload_logs()
+        """Keep the dialog title in sync when the container list refreshes."""
+        self._update_logs_target_label()
 
     def _selected_container_id(self) -> Optional[str]:
-        if getattr(self, "_selected_cid", None):
-            return self._selected_cid
-        idx = self._logs_combo.get_selected()
-        if 0 <= idx < len(self._containers):
-            return w.field(self._containers[idx], "ID", "Id", "ContainerID")
-        return None
+        return getattr(self, "_selected_cid", None)
 
     def _selected_container_name(self) -> str:
-        if getattr(self, "_selected_name", None):
-            return self._selected_name
-        idx = self._logs_combo.get_selected()
-        if 0 <= idx < len(self._containers):
-            return w.field(self._containers[idx], "Names", "Name", default="container")
-        return "container"
+        return getattr(self, "_selected_name", None) or "container"
 
     def _reload_logs(self) -> None:
+        """One-shot snapshot. If Follow is on, restart the stream instead."""
         client = self._client()
         cid = self._selected_container_id()
         if client is None or not cid:
             return
         if self._logs_follow.get_active():
-            # Follow owns the buffer; a manual Load restarts the stream.
+            # Restart follow (stream includes --tail); never call this from
+            # ``_start_logs_follow`` or the two recurse forever.
             self._start_logs_follow()
             return
         tail = int(self._tail_spin.get_value())
@@ -416,7 +423,6 @@ class LogsTabMixin:
             self._logs_match_label.set_text("")
             self._logs_match_index = -1
             return
-        # Manual scan so we get offsets for navigation.
         hay = shown if self._logs_case.get_active() else shown.lower()
         needle_cmp = needle if self._logs_case.get_active() else needle.lower()
         pos = 0
@@ -435,7 +441,7 @@ class LogsTabMixin:
             self._logs_match_index = -1
             return
         if self._logs_match_index < 0 or self._logs_match_index >= n:
-            self._logs_match_index = n - 1  # jump to last (newest) match
+            self._logs_match_index = n - 1
         self._highlight_current_match()
 
     def _highlight_current_match(self) -> None:
@@ -519,12 +525,3 @@ class LogsTabMixin:
         cid = self._selected_container_id()
         if cid:
             self._follow_logs(cid, self._selected_container_name())
-
-    def _begin_follow_for_selection(self) -> None:
-        """Selection-bar shortcut: switch to Logs and start in-pane Follow."""
-        self._stack.set_visible_child_name("logs")
-        self._sync_logs_combo_to_selection()
-        if not self._logs_follow.get_active():
-            self._logs_follow.set_active(True)
-        else:
-            self._start_logs_follow()
