@@ -2,10 +2,19 @@ from sshpilot.connection_manager import Connection
 from sshpilot.search_utils import connection_matches
 
 
-def make_connection(nickname, host):
-    data = {"nickname": nickname, "host": host, "username": "user"}
-    conn = Connection(data)
-    return conn
+def make_connection(nickname, hostname, host=None):
+    """Build a connection the way real SSH config does.
+
+    ``host`` is the SSH ``Host`` alias (defaults to nickname). ``hostname`` is
+    the ``HostName`` / IP the user expects to find via sidebar search.
+    """
+    data = {
+        "nickname": nickname,
+        "host": host if host is not None else nickname,
+        "hostname": hostname,
+        "username": "user",
+    }
+    return Connection(data)
 
 
 def test_matches_nickname():
@@ -14,14 +23,30 @@ def test_matches_nickname():
     assert not connection_matches(conn, "other")
 
 
-def test_matches_host():
+def test_matches_hostname_ip():
     conn = make_connection("server2", "10.0.0.5")
     assert connection_matches(conn, "10.0.0.5")
     assert connection_matches(conn, "10.0")
+    assert not connection_matches(conn, "10.0.0.6")
+
+
+def test_matches_hostname_when_alias_differs():
+    # Nickname/alias is not the IP — searching the IP must still work.
+    conn = make_connection("prod-web", "203.0.113.10", host="prod-web")
+    assert connection_matches(conn, "203.0.113.10")
+    assert connection_matches(conn, "203.0.113")
+    assert connection_matches(conn, "prod")
+
+
+def test_matches_fqdn_hostname():
+    conn = make_connection("db1", "db1.example.com")
+    assert connection_matches(conn, "db1.example.com")
+    assert connection_matches(conn, "example.com")
+    assert not connection_matches(conn, "example.org")
 
 
 def test_does_not_match_aliases_or_hname():
-    conn = make_connection("alias", "host")
+    conn = make_connection("alias", "host.example")
     setattr(conn, "hname", "myalias")
     setattr(conn, "aliases", ["alias1", "alias2"])
     assert not connection_matches(conn, "myalias")
@@ -49,7 +74,7 @@ def test_missing_or_none_tags_do_not_crash():
 def test_multiple_keywords_all_must_match():
     conn = make_connection("web-server", "10.0.0.8")
     setattr(conn, "tags", ["production", "frontend"])
-    # Each keyword matches a different field (nickname, tag, host).
+    # Each keyword matches a different field (nickname, tag, hostname).
     assert connection_matches(conn, "web prod")
     assert connection_matches(conn, "server 10.0 frontend")
     # One keyword absent -> no match.
