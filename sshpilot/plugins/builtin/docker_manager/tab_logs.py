@@ -42,10 +42,8 @@ class LogsTabMixin:
         self._logs_title = Gtk.Label(label="Logs")
         self._logs_title.add_css_class("heading")
         header.set_title_widget(self._logs_title)
-        close = Gtk.Button(icon_name="window-close-symbolic")
-        close.set_tooltip_text("Close")
-        close.connect("clicked", lambda _b: self._close_logs_window())
-        header.pack_end(close)
+        # Rely on the header bar's native window close; a packed Close button
+        # would duplicate it.
         toolbar.add_top_bar(header)
         toolbar.set_content(self._build_logs_section())
         win.set_content(toolbar)
