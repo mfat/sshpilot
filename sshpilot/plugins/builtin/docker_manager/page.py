@@ -569,7 +569,11 @@ class DockerConsolePage(
             self._selected_nick = self._connections[0].nickname
 
         self._host_btn = Gtk.Button()
-        self._host_btn.add_css_class("flat")
+        # Suggested (accent) style so the host picker reads as the primary
+        # control — same treatment as empty-state "Select host" elsewhere.
+        # Must not be flat: flat hides the suggested-action background.
+        self._host_btn.set_has_frame(True)
+        self._host_btn.add_css_class("suggested-action")
         self._host_btn.set_tooltip_text("Choose Docker host")
         host_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         host_icon = Gtk.Image.new_from_icon_name("computer-symbolic")

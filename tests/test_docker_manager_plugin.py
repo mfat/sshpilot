@@ -811,6 +811,10 @@ def test_page_hardening_widgets_and_helpers():
     assert page._pause_btn.get_active() is False
     page._pause_btn.set_active(True)
     assert page._paused is True
+    # Host picker uses Adwaita suggested-action (not flat) so it reads as the
+    # primary control next to the runtime dropdown.
+    assert page._host_btn.has_css_class("suggested-action")
+    assert not page._host_btn.has_css_class("flat")
     # Default refresh interval is the safer 10s (not the old 3s).
     assert page._refresh_interval() == 10
     # Runtime override dropdown present, defaults to Auto.
