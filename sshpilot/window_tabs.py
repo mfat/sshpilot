@@ -401,7 +401,11 @@ class WindowTabsMixin:
                 enabled.add('tabmenu-open-system-terminal')
             return enabled
 
-        return set()
+        # Plugin pages (Docker Console, …), WebTab, and other non-terminal
+        # content: still allow rename / close / close-others / close-right.
+        # Returning empty used to hide the entire menu (items use
+        # hidden-when=action-disabled).
+        return common
 
     # ── tab context menu action handlers ───────────────────────────────────────
 

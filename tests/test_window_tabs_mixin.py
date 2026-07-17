@@ -87,3 +87,24 @@ def test_tabs_mixin_in_mro():
     wm = _window_module()
     mro_names = [c.__name__ for c in wm.MainWindow.__mro__]
     assert "WindowTabsMixin" in mro_names
+
+
+def test_enabled_tab_actions_for_plugin_like_page():
+    """Non-terminal tabs (Docker Console, WebTab, …) get rename/close actions.
+
+    Returning an empty set used to hide the whole context menu because items
+    use ``hidden-when=action-disabled``.
+    """
+    from sshpilot.window_tabs import WindowTabsMixin
+
+    class Stub(WindowTabsMixin):
+        def _file_manager_embed_for_child(self, _child):
+            return None
+
+    enabled = Stub()._enabled_tab_actions(object())
+    assert enabled == {
+        "tabmenu-rename",
+        "tabmenu-close",
+        "tabmenu-close-others",
+        "tabmenu-close-right",
+    }
