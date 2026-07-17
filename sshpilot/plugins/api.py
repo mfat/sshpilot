@@ -724,20 +724,43 @@ class PluginContext:
                     argv, prepared.password, env=env)
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug("run_command(%r) argv: %s", nickname, argv)
-            result = subprocess.run(
-                argv, env=env, capture_output=True, text=True,
-                timeout=timeout, check=False, input=input)
+            # Capture via temp files — NOT pipes (capture_output=True).
+            # ControlPersist backgrounds a master that inherits our stderr pipe;
+            # with verbose SSH (-v) that master keeps writing/holding the pipe so
+            # subprocess.run never sees EOF and hangs until timeout (~30s). File
+            # redirection does not block on the master's lifetime.
+            # Also: don't inherit the app's stdin unless the caller fed input
+            # (e.g. sudo -S password).
+            import tempfile
+            with tempfile.TemporaryDirectory(prefix="sshpilot-cmd-") as td:
+                out_path = os.path.join(td, "stdout")
+                err_path = os.path.join(td, "stderr")
+                with open(out_path, "w", encoding="utf-8") as out_f, \
+                        open(err_path, "w", encoding="utf-8") as err_f:
+                    run_kwargs: dict = dict(
+                        env=env, stdout=out_f, stderr=err_f,
+                        timeout=timeout, check=False, text=True,
+                    )
+                    if input is not None:
+                        run_kwargs["input"] = input
+                    else:
+                        run_kwargs["stdin"] = subprocess.DEVNULL
+                    completed = subprocess.run(argv, **run_kwargs)
+                with open(out_path, "r", encoding="utf-8", errors="replace") as out_f:
+                    stdout = out_f.read()
+                with open(err_path, "r", encoding="utf-8", errors="replace") as err_f:
+                    stderr = err_f.read()
             logger.debug(
                 "run_command(%r) exit=%s stdout=%dB stderr=%dB",
-                nickname, result.returncode,
-                len(result.stdout or ""), len(result.stderr or ""),
+                nickname, completed.returncode,
+                len(stdout or ""), len(stderr or ""),
             )
-            if result.returncode != 0 and (result.stderr or result.stdout):
+            if completed.returncode != 0 and (stderr or stdout):
                 logger.debug(
                     "run_command(%r) failure output: %.800s",
-                    nickname, (result.stderr or result.stdout or "").strip(),
+                    nickname, (stderr or stdout or "").strip(),
                 )
-            return CommandResult(result.returncode, result.stdout, result.stderr)
+            return CommandResult(completed.returncode, stdout, stderr)
         except subprocess.TimeoutExpired:
             logger.debug("run_command(%r) timed out after %ss: %s",
                          nickname, timeout, command)

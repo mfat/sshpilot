@@ -106,6 +106,11 @@ class DockerConsolePage(
         # access probe (keyring autofill) or the GUI prompt; fed to ``sudo -S``
         # on captured commands and auto-typed into the PTY for interactive ones.
         self._sudo_passwords: dict[str, str] = {}
+        # True while the host runtime/sudo probe is in flight (or a sudo-password
+        # dialog is open). Auto-refresh must not list containers until this
+        # clears — otherwise sudo-on hosts race with ``sudo -n`` before the
+        # session password is resolved and the first load fails until Refresh.
+        self._probe_pending = False
         # Hosts whose SSH login-password prompt was cancelled.  Captured Docker
         # commands have no TTY, so polling must stay stopped until the user
         # explicitly retries instead of failing invisibly in the background.
@@ -835,19 +840,22 @@ class DockerConsolePage(
         self._syncing_runtime = True
         self._runtime_drop.set_selected(self._runtime_mode_index(nick))
         self._syncing_runtime = False
+        # Invalidate any in-flight probe/list for the previous host before the
+        # SSH prompt (which can block) so a late ``done`` cannot clear the new
+        # host's probe gate or paint stale rows.
+        self._load_gen += 1
+        self._probe_pending = False
+        self._containers_busy = False
+        self._stats_busy = False
+        self._containers_loaded = False
+        self._stats_loaded = False
         if not self._ensure_ssh_password(nick):
             self._show_ssh_auth_required()
             return
         # Move the warm SSH master to the newly selected host.
         self._acquire_multiplex(nick)
 
-        # New host: invalidate any in-flight loads for the previous host (their
-        # late results are dropped) and let the new host load immediately.
-        self._load_gen += 1
-        self._containers_busy = False
-        self._stats_busy = False
-        self._containers_loaded = False
-        self._stats_loaded = False
+        load_gen = self._load_gen
 
         # Fresh status feed for this host; the first real stage is the SSH
         # connection the probe's first command will open.
@@ -918,34 +926,41 @@ class DockerConsolePage(
             return runtime, False, None, None  # other error — refresh surfaces it
 
         def done(result, _err: Optional[Exception]) -> None:
+            if load_gen != self._load_gen:
+                return  # superseded by a newer host load
             if not result:
                 if _err is not None:
                     # The probe itself failed (e.g. SSH could not connect).
                     self._status(w.describe_docker_failure(str(_err)))
-                self._refresh_visible()
+                self._finish_probe_and_refresh()
                 return
             runtime, use_sudo, status, pw = result
             self.ctx.settings.set(f"runtime:{nick}", runtime)
             if status == "not_sudoers":
                 self._disable_sudo(nick)
                 self._toast("Your user isn't allowed to run Docker with sudo on this host.")
-                self._refresh_visible()
+                self._finish_probe_and_refresh()
                 return
             # A password is required and we don't have a working one — keep sudo
             # on and ask the user (handles both the explicit opt-in and the
-            # permission-denied auto-enable).
+            # permission-denied auto-enable). Stay probe-pending until the
+            # dialog finishes so auto-refresh cannot race with ``sudo -n``.
             if status == "needs_password":
                 self.ctx.settings.set(f"sudo:{nick}", True)
                 self._set_sudo_check(True)
-                self._prompt_for_sudo_password(nick, runtime)
+                self._prompt_for_sudo_password(nick, runtime, load_gen=load_gen)
                 return
             if use_sudo:
                 self.ctx.settings.set(f"sudo:{nick}", True)
                 self._set_sudo_check(True)
                 if status == "password" and pw is not None:
                     self._sudo_passwords[nick] = pw
-            self._refresh_visible()
+            self._finish_probe_and_refresh()
 
+        # Block auto-refresh until the probe (and any sudo-password prompt) has
+        # finished — the map-time timer would otherwise list with ``sudo -n``
+        # before a required password is resolved.
+        self._probe_pending = True
         self._run_async(probe, done)
 
     def _resolve_sudo(self, rc: Any, nick: str, runtime: str, *,
@@ -1015,7 +1030,8 @@ class DockerConsolePage(
         except Exception:
             pass
 
-    def _prompt_for_sudo_password(self, nick: str, runtime: str) -> None:
+    def _prompt_for_sudo_password(self, nick: str, runtime: str,
+                                  *, load_gen: Optional[int] = None) -> None:
         """Ask for the host's sudo password (GUI), verify it, then enable sudo.
         Runs on the UI thread; verification is offloaded to a worker."""
         host, user = self._host_user_for(nick)
@@ -1034,11 +1050,13 @@ class DockerConsolePage(
             store_label="Save sudo password",
             on_store=on_store,
         )
+        if load_gen is not None and load_gen != self._load_gen:
+            return  # host changed while the dialog was open
         if not password:
             # Cancelled — back off sudo so a host that works without it (or just
             # shows the real permission error) isn't stuck looping on `sudo -n`.
             self._disable_sudo(nick)
-            self._refresh_visible()
+            self._finish_probe_and_refresh()
             return
 
         rc = self._run_command_for(nick)
@@ -1048,6 +1066,8 @@ class DockerConsolePage(
             return "ok" if ok else kind
 
         def after(result: Optional[str], _err: Optional[Exception]) -> None:
+            if load_gen is not None and load_gen != self._load_gen:
+                return
             if result == "ok":
                 self._sudo_passwords[nick] = password
                 self.ctx.settings.set(f"sudo:{nick}", True)
@@ -1062,9 +1082,14 @@ class DockerConsolePage(
                 self._clear_stored_sudo(nick)
                 self._disable_sudo(nick)
                 self._toast("Sudo password incorrect.")
-            self._refresh_visible()
+            self._finish_probe_and_refresh()
 
         self._run_async(verify, after)
+
+    def _finish_probe_and_refresh(self) -> None:
+        """Clear the probe gate and load the visible tab (password now resolved)."""
+        self._probe_pending = False
+        self._refresh_visible()
 
     def _disable_sudo(self, nick: str) -> None:
         """Turn sudo off for a host and drop its cached password (used when the
@@ -1105,6 +1130,8 @@ class DockerConsolePage(
             return False
         if self._paused:
             return True  # keep the timer; just skip this round
+        if self._probe_pending:
+            return True  # probe / sudo prompt still resolving auth
         if self._current_nickname() in self._ssh_auth_blocked:
             return True
         # Only auto-refresh the live views; images is manual. Logs auto-refresh
@@ -1120,6 +1147,8 @@ class DockerConsolePage(
         return True  # keep ticking
 
     def _refresh_visible(self) -> None:
+        if self._probe_pending:
+            return
         name = self._stack.get_visible_child_name()
         if name == "containers":
             self._refresh_containers()

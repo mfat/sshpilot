@@ -65,7 +65,15 @@ def test_run_command_builds_native_context_and_maps_output(monkeypatch):
     def _fake_run(argv, env=None, **kwargs):
         captured["argv"] = argv
         captured["env_has_askpass"] = env.get("SSH_ASKPASS") == "/x"
-        return types.SimpleNamespace(returncode=0, stdout="hi\n", stderr="")
+        captured["stdin"] = kwargs.get("stdin")
+        captured["input"] = kwargs.get("input")
+        # run_command captures via temp files (not pipes) so ControlPersist
+        # cannot hang on an inherited stderr pipe under verbose SSH.
+        stdout = kwargs.get("stdout")
+        if stdout is not None:
+            stdout.write("hi\n")
+            stdout.flush()
+        return types.SimpleNamespace(returncode=0, stdout=None, stderr=None)
 
     monkeypatch.setattr("sshpilot.ssh_connection_builder.build_ssh_connection",
                         _fake_build)
@@ -80,6 +88,34 @@ def test_run_command_builds_native_context_and_maps_output(monkeypatch):
     assert captured["command_type"] == "ssh"
     assert captured["argv"] == ["ssh", "host", "echo hi"]
     assert captured["env_has_askpass"] is True
+    assert captured["stdin"] is subprocess.DEVNULL
+    assert captured["input"] is None
+
+
+def test_run_command_feeds_input_when_provided(monkeypatch):
+    seen = {}
+
+    monkeypatch.setattr(
+        "sshpilot.ssh_connection_builder.build_ssh_connection",
+        lambda ctx: types.SimpleNamespace(
+            command=["ssh", "host", "sudo -S id"], env={},
+            use_sshpass=False, password=None))
+
+    def _fake_run(argv, env=None, **kwargs):
+        seen["input"] = kwargs.get("input")
+        seen["stdin"] = kwargs.get("stdin")
+        stdout = kwargs.get("stdout")
+        if stdout is not None:
+            stdout.write("")
+            stdout.flush()
+        return types.SimpleNamespace(returncode=0, stdout=None, stderr=None)
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+
+    _ctx(_Manager([_Conn("web")])).run_command(
+        "web", "sudo -S id", input="secret\n")
+    assert seen.get("input") == "secret\n"
+    assert seen.get("stdin") is None
 
 
 def test_run_command_wraps_sshpass_for_password_auth(monkeypatch):

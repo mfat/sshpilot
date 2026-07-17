@@ -217,8 +217,10 @@ class DockerClient:
         """Return ``'docker'`` or ``'podman'`` (whichever the host has), else None."""
         # Call the injected runner directly (not ``_run``): detection must not
         # feed a sudo password on stdin, and it is not a ``<runtime> …`` command.
+        # Use ``sh -c`` (not ``sh -lc``): a login shell sources profiles that
+        # often hang on non-interactive SSH and burn the full command timeout.
         cmd = (
-            "sh -lc 'command -v docker >/dev/null 2>&1 && echo docker || "
+            "sh -c 'command -v docker >/dev/null 2>&1 && echo docker || "
             "(command -v podman >/dev/null 2>&1 && echo podman)'"
         )
         res = self._invoke(cmd, timeout=self.timeout)

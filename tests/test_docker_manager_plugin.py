@@ -573,6 +573,16 @@ def test_detect_runtime_logs_result(caplog):
                for r in caplog.records)
 
 
+def test_detect_runtime_uses_non_login_shell():
+    """Login shells (``sh -lc``) source profiles that hang on non-interactive SSH
+    and burn the full 30s timeout before the container list can load."""
+    client, calls = _recording_client(lambda c: FakeResult(stdout="docker\n"))
+    assert client.detect_runtime() == "docker"
+    assert len(calls) == 1
+    assert calls[0].startswith("sh -c ")
+    assert "sh -lc" not in calls[0]
+
+
 # --- DockerClient: runtime detection ---------------------------------------
 
 @pytest.mark.parametrize("stdout,expected", [
@@ -978,7 +988,38 @@ def test_resolve_sudo_prompts_when_password_required():
     assert page._resolve_sudo(rc, "web", "docker") == (True, "needs_password", None)
     # A cached password that verifies via `sudo -S` is reported back for caching.
     page._sudo_passwords["web"] = "secret"
-    assert page._resolve_sudo(rc, "web", "docker") == (True, "password", "secret")
+    assert page._resolve_sudo(
+        rc, "web", "docker", session_pw="secret") == (True, "password", "secret")
+
+
+def test_probe_pending_blocks_auto_refresh_until_sudo_ready(monkeypatch):
+    """Map-time timer must not list containers with ``sudo -n`` before the
+    host probe has resolved a required sudo password (first-load race)."""
+    _gtk_or_skip()
+    from sshpilot.plugins.builtin.docker_manager.page import DockerConsolePage
+
+    settings = {"sudo:web": True}
+    page = DockerConsolePage(_sudo_ctx(settings), initial_host="web")
+    refreshes = []
+    monkeypatch.setattr(
+        page, "_refresh_containers", lambda: refreshes.append("containers"))
+
+    # Probe in flight (as after map → _on_host_changed): ticks must no-op.
+    page._probe_pending = True
+    assert page._tick() is True
+    page._refresh_visible()
+    assert refreshes == []
+
+    # After the probe caches the password and clears the gate, listing runs
+    # with ``sudo -S`` (via _client reading _sudo_passwords).
+    page._sudo_passwords["web"] = "secret"
+    page._finish_probe_and_refresh()
+    assert page._probe_pending is False
+    assert refreshes == ["containers"]
+    client = page._client()
+    assert client is not None
+    assert client.use_sudo is True
+    assert client.sudo_password == "secret"
 
 
 def test_resolve_sudo_passwordless():
