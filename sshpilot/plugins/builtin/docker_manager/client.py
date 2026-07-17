@@ -132,7 +132,36 @@ class DockerClient:
         kwargs: dict = {"timeout": timeout if timeout is not None else self.timeout}
         if self._password_mode:
             kwargs["input"] = f"{self.sudo_password}\n"
-        return self._run_command(self.nickname, command, **kwargs)
+        return self._invoke(command, **kwargs)
+
+    def _invoke(self, command: str, **kwargs: Any) -> Any:
+        """Run *command* via the injected callable and log at DEBUG (visible
+        with ``--verbose``). Never logs stdin (may contain a sudo password)."""
+        mode = self.runtime + ("+sudo" if self.use_sudo else "")
+        logger.debug("docker[%s/%s] run: %s", self.nickname, mode, command)
+        try:
+            res = self._run_command(self.nickname, command, **kwargs)
+        except Exception:
+            logger.debug("docker[%s/%s] raised for: %s",
+                         self.nickname, mode, command, exc_info=True)
+            raise
+        self._log_result(res)
+        return res
+
+    def _log_result(self, res: Any) -> None:
+        exit_code = getattr(res, "exit_code", None)
+        stdout = getattr(res, "stdout", "") or ""
+        stderr = getattr(res, "stderr", "") or ""
+        logger.debug(
+            "docker[%s] exit=%s stdout=%dB stderr=%dB",
+            self.nickname, exit_code, len(stdout), len(stderr),
+        )
+        if exit_code not in (0, None):
+            detail = (stderr or stdout).strip()
+            if detail:
+                # Cap so a huge docker/SSH dump does not flood the log.
+                logger.debug("docker[%s] failure output: %.800s",
+                             self.nickname, detail)
 
     # -- low level ----------------------------------------------------
     def _exec(self, args: str, *, timeout: Optional[float] = None) -> Any:
@@ -143,7 +172,10 @@ class DockerClient:
         res = self._exec(args, timeout=timeout)
         if getattr(res, "exit_code", 1) != 0:
             raise DockerError((res.stderr or res.stdout or "command failed").strip())
-        return self._parse_ndjson(res.stdout)
+        rows = self._parse_ndjson(res.stdout)
+        logger.debug("docker[%s] parsed %d JSON row(s) from %s",
+                     self.nickname, len(rows), args.split()[0] if args else "?")
+        return rows
 
     @staticmethod
     def _parse_ndjson(text: str) -> List[dict]:
@@ -183,17 +215,24 @@ class DockerClient:
     # -- runtime detection -------------------------------------------
     def detect_runtime(self) -> Optional[str]:
         """Return ``'docker'`` or ``'podman'`` (whichever the host has), else None."""
-        res = self._run_command(
-            self.nickname,
-            "sh -lc 'command -v docker >/dev/null 2>&1 && echo docker || "
-            "(command -v podman >/dev/null 2>&1 && echo podman)'",
-            timeout=self.timeout,
+        # Call the injected runner directly (not ``_run``): detection must not
+        # feed a sudo password on stdin, and it is not a ``<runtime> …`` command.
+        # Use ``sh -c`` (not ``sh -lc``): a login shell sources profiles that
+        # often hang on non-interactive SSH and burn the full command timeout.
+        cmd = (
+            "sh -c 'command -v docker >/dev/null 2>&1 && echo docker || "
+            "(command -v podman >/dev/null 2>&1 && echo podman)'"
         )
+        res = self._invoke(cmd, timeout=self.timeout)
         out = (getattr(res, "stdout", "") or "").strip().lower()
         if out.endswith("podman"):
+            logger.debug("docker[%s] detected runtime: podman", self.nickname)
             return "podman"
         if out.endswith("docker"):
+            logger.debug("docker[%s] detected runtime: docker", self.nickname)
             return "docker"
+        logger.debug("docker[%s] detected runtime: none (stdout=%r)",
+                     self.nickname, out)
         return None
 
     # -- queries ------------------------------------------------------
@@ -203,6 +242,12 @@ class DockerClient:
 
     def stats(self) -> List[dict]:
         return self._exec_json("stats --no-stream --format '{{json .}}'")
+
+    def stats_one(self, container_id: str) -> dict:
+        """One-shot stats for a single container (empty dict on failure/empty)."""
+        rows = self._exec_json(
+            f"stats --no-stream --format '{{{{json .}}}}' {shlex.quote(container_id)}")
+        return rows[0] if rows else {}
 
     def images(self) -> List[dict]:
         return self._exec_json("images --format '{{json .}}'")
@@ -275,6 +320,18 @@ class DockerClient:
         parts.append(shlex.quote(container_id))
         return " ".join(parts)
 
+    def logs_follow_stream_command(self, container_id: str, *, tail: int = 100,
+                                   timestamps: bool = False) -> str:
+        """Same as :meth:`logs_follow_command` but with the captured runtime
+        (``sudo -S`` / ``sudo -n``) so a non-PTY stream can feed a password."""
+        parts = [self._captured_runtime(), "logs", "-f"]
+        if timestamps:
+            parts.append("-t")
+        if tail:
+            parts += ["--tail", str(int(tail))]
+        parts.append(shlex.quote(container_id))
+        return " ".join(parts)
+
     def exec_shell_command(self, container_id: str, *, user: Optional[str] = None,
                            workdir: Optional[str] = None) -> str:
         """`exec -it` into the container, preferring bash with an sh fallback.
@@ -295,6 +352,16 @@ class DockerClient:
 
     def stats_stream_command(self) -> str:
         return f"{self._interactive_runtime()} stats"
+
+    def events_command(self) -> str:
+        """Stream container lifecycle events as NDJSON (for in-page updates).
+
+        Uses the captured runtime so a non-PTY stream can feed ``sudo -S``.
+        """
+        return (
+            f"{self._captured_runtime()} events "
+            "--filter type=container --format '{{json .}}'"
+        )
 
     # -- details / inspect -------------------------------------------
     def inspect(self, container_id: str) -> dict:

@@ -1,10 +1,12 @@
 """GTK UI for the Docker Console plugin.
 
-A single page with a host picker and seven sections — Containers, Logs, Stats,
+A single page with a host picker and six sections — Containers, Stats,
 Images, Volumes, Networks, Compose — driven by :class:`DockerClient` over
-the local or remote command API. Every Docker call runs on a worker thread and
-marshals back with ``ctx.run_on_ui_thread``; streamed/interactive output (live
-logs, exec shell) opens a corresponding local or remote terminal tab.
+the local or remote command API. Container logs open from each row as a
+dialog (Follow / search / ring buffer). Every Docker call runs on a worker
+thread and marshals back with ``ctx.run_on_ui_thread``; streamed/interactive
+output (live logs, exec shell) opens a corresponding local or remote
+terminal tab when requested.
 """
 
 from __future__ import annotations
@@ -78,6 +80,11 @@ class DockerConsolePage(
         self._containers: List[dict] = []
         self._cached_images: List[dict] = []  # last images() result (for create dialog)
         self._logs_raw: str = ""              # last snapshot, for search/errors-only
+        self._selected_cid: Optional[str] = None
+        self._selected_name: Optional[str] = None
+        self._selection_gen = 0
+        self._events_stream = None
+        self._events_gen = 0
         self._refresh_source: Optional[int] = None
         # In-flight guards so auto-refresh can't pile up overlapping SSH
         # calls when a host is slow.
@@ -106,6 +113,11 @@ class DockerConsolePage(
         # access probe (keyring autofill) or the GUI prompt; fed to ``sudo -S``
         # on captured commands and auto-typed into the PTY for interactive ones.
         self._sudo_passwords: dict[str, str] = {}
+        # True while the host runtime/sudo probe is in flight (or a sudo-password
+        # dialog is open). Auto-refresh must not list containers until this
+        # clears — otherwise sudo-on hosts race with ``sudo -n`` before the
+        # session password is resolved and the first load fails until Refresh.
+        self._probe_pending = False
         # Hosts whose SSH login-password prompt was cancelled.  Captured Docker
         # commands have no TTY, so polling must stay stopped until the user
         # explicitly retries instead of failing invisibly in the background.
@@ -144,12 +156,13 @@ class DockerConsolePage(
         self.append(self._stack)
 
         self._stack.add_titled(self._build_containers_section(), "containers", "Containers")
-        self._stack.add_titled(self._build_logs_section(), "logs", "Logs")
         self._stack.add_titled(self._build_stats_section(), "stats", "Stats")
         self._stack.add_titled(self._build_images_section(), "images", "Images")
         self._stack.add_titled(self._build_volumes_section(), "volumes", "Volumes")
         self._stack.add_titled(self._build_networks_section(), "networks", "Networks")
         self._stack.add_titled(self._build_compose_section(), "compose", "Compose")
+        # Container logs live in a dialog opened from each row (not a top tab).
+        self._ensure_logs_window()
         # Lazy-load the newly shown tab (e.g. Images doesn't load until viewed).
         self._stack.connect("notify::visible-child", self._on_tab_switched)
 
@@ -226,7 +239,10 @@ class DockerConsolePage(
     def _status(self, message: str) -> None:
         """Append a human-readable stage message to the loading status feed
         (safe from worker threads). Messages reflect real pipeline stages and
-        parsed command output — never cosmetic filler."""
+        parsed command output — never cosmetic filler. Also logged at DEBUG so
+        ``--verbose`` captures the same pipeline in sshpilot.log."""
+        nick = self._current_nickname() or "?"
+        logger.debug("docker-console[%s]: %s", nick, message)
         try:
             self.ctx.run_on_ui_thread(self._append_status, message)
         except Exception:
@@ -517,6 +533,18 @@ class DockerConsolePage(
                 pty_prompt=DockerClient.SUDO_PROMPT, pty_response=pw)
         return self.ctx.open_command_terminal(nick, cmd, title=title)
 
+    def _start_command_stream(
+            self, nick: str, cmd: str, *,
+            on_line: Callable[[str], None],
+            on_done: Optional[Callable[[int], None]] = None,
+            input: Optional[str] = None):
+        """Start a local or remote line stream over the plugin streaming APIs."""
+        if self._is_local(nick):
+            return self.ctx.run_local_command_stream(
+                cmd, on_line=on_line, on_done=on_done, input=input)
+        return self.ctx.run_command_stream(
+            nick, cmd, on_line=on_line, on_done=on_done, input=input)
+
     def _toast(self, message: str) -> None:
         try:
             self.ctx.ui.notify(w.truncate_toast(message))
@@ -541,7 +569,11 @@ class DockerConsolePage(
             self._selected_nick = self._connections[0].nickname
 
         self._host_btn = Gtk.Button()
-        self._host_btn.add_css_class("flat")
+        # Suggested (accent) style so the host picker reads as the primary
+        # control — same treatment as empty-state "Select host" elsewhere.
+        # Must not be flat: flat hides the suggested-action background.
+        self._host_btn.set_has_frame(True)
+        self._host_btn.add_css_class("suggested-action")
         self._host_btn.set_tooltip_text("Choose Docker host")
         host_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         host_icon = Gtk.Image.new_from_icon_name("computer-symbolic")
@@ -599,6 +631,89 @@ class DockerConsolePage(
         refresh.connect("clicked", lambda _b: self._manual_refresh())
         bar.append(refresh)
         return bar
+
+    def _set_selected_container(
+            self, cid: Optional[str], name: Optional[str], *,
+            source: str = "") -> None:
+        """Shared selection used by Containers list and the logs dialog."""
+        prev = self._selected_cid
+        self._selected_cid = cid or None
+        self._selected_name = name if cid else None
+        if prev != self._selected_cid:
+            self._selection_gen += 1
+            # Restart in-pane follow when the target changes while the logs
+            # dialog is open (except when the dialog itself owns the change).
+            if source != "logs":
+                logs_open = getattr(self, "_logs_window", None) is not None \
+                    and self._logs_window.get_visible()
+                if logs_open and getattr(self, "_logs_follow", None) is not None \
+                        and self._logs_follow.get_active() and self._selected_cid:
+                    self._update_logs_target_label()
+                    self._start_logs_follow()
+                elif getattr(self, "_logs_follow", None) is not None \
+                        and self._logs_follow.get_active() and not self._selected_cid:
+                    self._stop_logs_follow()
+                elif self._selected_cid:
+                    self._update_logs_target_label()
+
+    def _stop_events_stream(self) -> None:
+        self._events_gen += 1
+        handle = self._events_stream
+        self._events_stream = None
+        if handle is not None:
+            try:
+                handle.stop()
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _start_events_stream(self) -> None:
+        """Watch ``docker events`` to patch the container list without full polls."""
+        self._stop_events_stream()
+        client = self._client()
+        nick = self._current_nickname()
+        if client is None or not nick or not self.get_mapped():
+            return
+        gen = self._events_gen
+        cmd = client.events_command()
+        stdin = None
+        if client._password_mode:  # noqa: SLF001
+            stdin = f"{client.sudo_password}\n"
+
+        def on_line(line: str) -> None:
+            if gen != self._events_gen:
+                return
+            self._on_docker_event_line(line)
+
+        def on_done(_code: int) -> None:
+            if gen != self._events_gen:
+                return
+            self._events_stream = None
+
+        self._events_stream = self._start_command_stream(
+            nick, cmd, on_line=on_line, on_done=on_done, input=stdin)
+
+    def _on_docker_event_line(self, line: str) -> None:
+        import json as _json
+        text = (line or "").strip()
+        if not text:
+            return
+        try:
+            event = _json.loads(text)
+        except _json.JSONDecodeError:
+            return
+        if event.get("Type") not in (None, "container"):
+            return
+        status = (event.get("status") or event.get("Action") or "").lower()
+        attrs = (event.get("Actor") or {}).get("Attributes") or {}
+        name = attrs.get("name") or ""
+        if not name and isinstance(event.get("Actor"), dict):
+            name = event["Actor"].get("ID") or ""
+        if not name:
+            return
+        if status in ("create", "destroy", "die", "kill", "oom", "rename",
+                      "start", "stop", "pause", "unpause", "restart"):
+            if not self._containers_busy:
+                self._refresh_containers()
 
     def _on_pause_toggled(self, btn: Gtk.ToggleButton) -> None:
         self._paused = btn.get_active()
@@ -737,7 +852,21 @@ class DockerConsolePage(
             on_reuse_ssh_changed=self._set_multiplex_enabled,
             refresh_interval=self._refresh_interval(),
             on_refresh_interval_changed=self._on_refresh_interval_changed,
+            log_tail=self._log_tail_setting(),
+            on_log_tail_changed=self._on_log_tail_changed,
+            max_log_lines=self._max_log_lines_setting(),
+            on_max_log_lines_changed=self._on_max_log_lines_changed,
         ).present()
+
+    def _on_log_tail_changed(self, value: int) -> None:
+        self.ctx.settings.set("log_tail", int(value))
+        if hasattr(self, "_tail_spin"):
+            self._tail_spin.set_value(int(value))
+
+    def _on_max_log_lines_changed(self, value: int) -> None:
+        self.ctx.settings.set("max_log_lines", int(value))
+        if hasattr(self, "_resize_logs_ring"):
+            self._resize_logs_ring()
 
     def _list_hosts(self) -> List[Any]:
         try:
@@ -824,25 +953,37 @@ class DockerConsolePage(
         nick = self._current_nickname()
         if not nick:
             return
+        logger.debug("docker-console: loading host %r (local=%s)",
+                     nick, self._is_local(nick))
         self._dismiss_active_confirm()
         self.ctx.settings.set("last_host", nick)
+        self._close_logs_window()
+        self._stop_logs_follow()
+        self._stop_events_stream()
+        self._set_selected_container(None, None, source="host")
+        if hasattr(self, "_logs_lines"):
+            self._logs_lines.clear()
+            self._logs_raw = ""
         self._set_sudo_check(self._use_sudo_for(nick))
         self._syncing_runtime = True
         self._runtime_drop.set_selected(self._runtime_mode_index(nick))
         self._syncing_runtime = False
+        # Invalidate any in-flight probe/list for the previous host before the
+        # SSH prompt (which can block) so a late ``done`` cannot clear the new
+        # host's probe gate or paint stale rows.
+        self._load_gen += 1
+        self._probe_pending = False
+        self._containers_busy = False
+        self._stats_busy = False
+        self._containers_loaded = False
+        self._stats_loaded = False
         if not self._ensure_ssh_password(nick):
             self._show_ssh_auth_required()
             return
         # Move the warm SSH master to the newly selected host.
         self._acquire_multiplex(nick)
 
-        # New host: invalidate any in-flight loads for the previous host (their
-        # late results are dropped) and let the new host load immediately.
-        self._load_gen += 1
-        self._containers_busy = False
-        self._stats_busy = False
-        self._containers_loaded = False
-        self._stats_loaded = False
+        load_gen = self._load_gen
 
         # Fresh status feed for this host; the first real stage is the SSH
         # connection the probe's first command will open.
@@ -913,34 +1054,41 @@ class DockerConsolePage(
             return runtime, False, None, None  # other error — refresh surfaces it
 
         def done(result, _err: Optional[Exception]) -> None:
+            if load_gen != self._load_gen:
+                return  # superseded by a newer host load
             if not result:
                 if _err is not None:
                     # The probe itself failed (e.g. SSH could not connect).
                     self._status(w.describe_docker_failure(str(_err)))
-                self._refresh_visible()
+                self._finish_probe_and_refresh()
                 return
             runtime, use_sudo, status, pw = result
             self.ctx.settings.set(f"runtime:{nick}", runtime)
             if status == "not_sudoers":
                 self._disable_sudo(nick)
                 self._toast("Your user isn't allowed to run Docker with sudo on this host.")
-                self._refresh_visible()
+                self._finish_probe_and_refresh()
                 return
             # A password is required and we don't have a working one — keep sudo
             # on and ask the user (handles both the explicit opt-in and the
-            # permission-denied auto-enable).
+            # permission-denied auto-enable). Stay probe-pending until the
+            # dialog finishes so auto-refresh cannot race with ``sudo -n``.
             if status == "needs_password":
                 self.ctx.settings.set(f"sudo:{nick}", True)
                 self._set_sudo_check(True)
-                self._prompt_for_sudo_password(nick, runtime)
+                self._prompt_for_sudo_password(nick, runtime, load_gen=load_gen)
                 return
             if use_sudo:
                 self.ctx.settings.set(f"sudo:{nick}", True)
                 self._set_sudo_check(True)
                 if status == "password" and pw is not None:
                     self._sudo_passwords[nick] = pw
-            self._refresh_visible()
+            self._finish_probe_and_refresh()
 
+        # Block auto-refresh until the probe (and any sudo-password prompt) has
+        # finished — the map-time timer would otherwise list with ``sudo -n``
+        # before a required password is resolved.
+        self._probe_pending = True
         self._run_async(probe, done)
 
     def _resolve_sudo(self, rc: Any, nick: str, runtime: str, *,
@@ -1010,7 +1158,8 @@ class DockerConsolePage(
         except Exception:
             pass
 
-    def _prompt_for_sudo_password(self, nick: str, runtime: str) -> None:
+    def _prompt_for_sudo_password(self, nick: str, runtime: str,
+                                  *, load_gen: Optional[int] = None) -> None:
         """Ask for the host's sudo password (GUI), verify it, then enable sudo.
         Runs on the UI thread; verification is offloaded to a worker."""
         host, user = self._host_user_for(nick)
@@ -1029,11 +1178,13 @@ class DockerConsolePage(
             store_label="Save sudo password",
             on_store=on_store,
         )
+        if load_gen is not None and load_gen != self._load_gen:
+            return  # host changed while the dialog was open
         if not password:
             # Cancelled — back off sudo so a host that works without it (or just
             # shows the real permission error) isn't stuck looping on `sudo -n`.
             self._disable_sudo(nick)
-            self._refresh_visible()
+            self._finish_probe_and_refresh()
             return
 
         rc = self._run_command_for(nick)
@@ -1043,6 +1194,8 @@ class DockerConsolePage(
             return "ok" if ok else kind
 
         def after(result: Optional[str], _err: Optional[Exception]) -> None:
+            if load_gen is not None and load_gen != self._load_gen:
+                return
             if result == "ok":
                 self._sudo_passwords[nick] = password
                 self.ctx.settings.set(f"sudo:{nick}", True)
@@ -1057,9 +1210,15 @@ class DockerConsolePage(
                 self._clear_stored_sudo(nick)
                 self._disable_sudo(nick)
                 self._toast("Sudo password incorrect.")
-            self._refresh_visible()
+            self._finish_probe_and_refresh()
 
         self._run_async(verify, after)
+
+    def _finish_probe_and_refresh(self) -> None:
+        """Clear the probe gate and load the visible tab (password now resolved)."""
+        self._probe_pending = False
+        self._refresh_visible()
+        self._start_events_stream()
 
     def _disable_sudo(self, nick: str) -> None:
         """Turn sudo off for a host and drop its cached password (used when the
@@ -1086,6 +1245,9 @@ class DockerConsolePage(
 
     def _on_unmap(self, *_a) -> None:
         self._dismiss_active_confirm()
+        self._close_logs_window()
+        self._stop_logs_follow()
+        self._stop_events_stream()
         if self._refresh_source is not None:
             GLib.source_remove(self._refresh_source)
             self._refresh_source = None
@@ -1100,21 +1262,22 @@ class DockerConsolePage(
             return False
         if self._paused:
             return True  # keep the timer; just skip this round
+        if self._probe_pending:
+            return True  # probe / sudo prompt still resolving auth
         if self._current_nickname() in self._ssh_auth_blocked:
             return True
-        # Only auto-refresh the live views; images is manual. Logs auto-refresh
-        # only when its toggle is on.
+        # Only auto-refresh the live views; images is manual. In-pane Follow
+        # owns the Logs buffer when active (no snapshot poll).
         name = self._stack.get_visible_child_name()
         if name == "containers":
             self._refresh_containers()
         elif name == "stats":
             self._refresh_stats()
-        elif name == "logs" and getattr(self, "_logs_autorefresh", None) \
-                and self._logs_autorefresh.get_active():
-            self._reload_logs()
         return True  # keep ticking
 
     def _refresh_visible(self) -> None:
+        if self._probe_pending:
+            return
         name = self._stack.get_visible_child_name()
         if name == "containers":
             self._refresh_containers()
@@ -1126,8 +1289,6 @@ class DockerConsolePage(
             self._refresh_volumes()
         elif name == "networks":
             self._refresh_networks()
-        elif name == "logs":
-            self._reload_logs()
         elif name == "compose":
             self._refresh_compose()
 

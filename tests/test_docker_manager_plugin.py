@@ -43,7 +43,7 @@ def _recording_client(responder, *, runtime="docker"):
     FakeResult that ``responder(command)`` yields (or empty success)."""
     calls = []
 
-    def run_command(nickname, command, *, timeout=None):
+    def run_command(nickname, command, *, timeout=None, **_kwargs):
         calls.append(command)
         result = responder(command) if responder else None
         return result if result is not None else FakeResult()
@@ -270,6 +270,8 @@ def test_exec_shell_command_prefers_bash_with_sh_fallback():
         "docker exec -it c1 sh -c "
         "'command -v bash >/dev/null 2>&1 && exec bash || exec sh'"
     )
+    with_opts = client.exec_shell_command("c1", user="root", workdir="/app")
+    assert "-u root" in with_opts and "-w /app" in with_opts
 
 
 def test_runtime_podman_is_used_in_commands():
@@ -277,6 +279,36 @@ def test_runtime_podman_is_used_in_commands():
     client.stats()
     assert calls[-1] == "podman stats --no-stream --format '{{json .}}'"
     assert client.stats_stream_command() == "podman stats"
+
+
+def test_stats_one_quotes_container_id():
+    client, calls = _recording_client(lambda c: FakeResult(
+        stdout='{"Name":"web","CPUPerc":"1.2%","MemUsage":"10MiB / 1GiB"}\n'))
+    row = client.stats_one("weird;id")
+    assert calls[-1] == "docker stats --no-stream --format '{{json .}}' 'weird;id'"
+    assert row["Name"] == "web" and row["CPUPerc"] == "1.2%"
+
+
+def test_events_command_string():
+    client, _ = _recording_client(None)
+    assert client.events_command() == (
+        "docker events --filter type=container --format '{{json .}}'"
+    )
+    sudo_client, _ = _recording_client(None)
+    sudo_client.use_sudo = True
+    assert sudo_client.events_command() == (
+        "sudo -n docker events --filter type=container --format '{{json .}}'"
+    )
+
+
+def test_logs_follow_stream_command_uses_captured_runtime():
+    client, _ = _recording_client(None)
+    assert client.logs_follow_stream_command("c1", tail=50) == \
+        "docker logs -f --tail 50 c1"
+    client.use_sudo = True
+    client.sudo_password = "x"
+    assert client.logs_follow_stream_command("c1", tail=10).startswith(
+        "sudo -S -p '' docker logs -f")
 
 
 # --- DockerClient: details / images / compose / create ----------------------
@@ -540,6 +572,49 @@ def test_parse_ndjson_logs_skipped_lines(caplog):
                for r in caplog.records)
 
 
+def test_client_logs_commands_and_results(caplog):
+    """``--verbose`` should surface each docker CLI call and its exit status."""
+    import logging
+
+    def responder(command):
+        if "ps" in command:
+            return FakeResult(exit_code=1, stderr="permission denied")
+        return FakeResult(stdout='{"ID":"abc"}\n')
+
+    client, _ = _recording_client(responder)
+    with caplog.at_level(logging.DEBUG,
+                         logger="sshpilot.plugins.builtin.docker_manager.client"):
+        client.images()
+        client.ping()
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("run: docker images" in m for m in messages)
+    assert any("exit=0" in m for m in messages)
+    assert any("parsed 1 JSON" in m for m in messages)
+    assert any("run: docker ps -q" in m for m in messages)
+    assert any("exit=1" in m for m in messages)
+    assert any("permission denied" in m for m in messages)
+
+
+def test_detect_runtime_logs_result(caplog):
+    import logging
+    client, _ = _recording_client(lambda c: FakeResult(stdout="podman\n"))
+    with caplog.at_level(logging.DEBUG,
+                         logger="sshpilot.plugins.builtin.docker_manager.client"):
+        assert client.detect_runtime() == "podman"
+    assert any("detected runtime: podman" in r.getMessage()
+               for r in caplog.records)
+
+
+def test_detect_runtime_uses_non_login_shell():
+    """Login shells (``sh -lc``) source profiles that hang on non-interactive SSH
+    and burn the full 30s timeout before the container list can load."""
+    client, calls = _recording_client(lambda c: FakeResult(stdout="docker\n"))
+    assert client.detect_runtime() == "docker"
+    assert len(calls) == 1
+    assert calls[0].startswith("sh -c ")
+    assert "sh -lc" not in calls[0]
+
+
 # --- DockerClient: runtime detection ---------------------------------------
 
 @pytest.mark.parametrize("stdout,expected", [
@@ -689,12 +764,28 @@ def _gtk_ctx():
 
     return types.SimpleNamespace(
         run_command=lambda *a, **k: FakeResult(),
+        run_local_command=lambda *a, **k: FakeResult(),
+        run_command_stream=lambda *a, **k: _fake_stream_handle(),
+        run_local_command_stream=lambda *a, **k: _fake_stream_handle(),
         run_on_ui_thread=lambda fn, *a: fn(*a),
         settings=types.SimpleNamespace(get=lambda k, d=None: d, set=lambda k, v: None),
         list_connections=lambda: [Conn("web"), Conn("db")],
         open_command_terminal=lambda *a, **k: True,
+        open_local_command_terminal=lambda *a, **k: True,
         ui=types.SimpleNamespace(notify=lambda *a, **k: None),
     )
+
+
+def _fake_stream_handle():
+    class _H:
+        def stop(self):
+            pass
+
+        @property
+        def running(self):
+            return False
+
+    return _H()
 
 
 def test_page_builds_all_tabs():
@@ -707,7 +798,7 @@ def test_page_builds_all_tabs():
     while child is not None:
         names.append(page._stack.get_page(child).get_name())
         child = child.get_next_sibling()
-    assert names == ["containers", "logs", "stats", "images",
+    assert names == ["containers", "stats", "images",
                      "volumes", "networks", "compose"]
 
 
@@ -720,6 +811,10 @@ def test_page_hardening_widgets_and_helpers():
     assert page._pause_btn.get_active() is False
     page._pause_btn.set_active(True)
     assert page._paused is True
+    # Host picker uses Adwaita suggested-action (not flat) so it reads as the
+    # primary control next to the runtime dropdown.
+    assert page._host_btn.has_css_class("suggested-action")
+    assert not page._host_btn.has_css_class("flat")
     # Default refresh interval is the safer 10s (not the old 3s).
     assert page._refresh_interval() == 10
     # Runtime override dropdown present, defaults to Auto.
@@ -870,10 +965,11 @@ def test_details_dialog_renders_inspect_data():
         "NetworkSettings": {"Networks": {"bridge": {}}},
         "Mounts": [{"Source": "/data", "Destination": "/var/www"}],
     }
-    groups = ContainerDetailsDialog._build_groups(data)
+    groups = ContainerDetailsDialog._build_overview_groups(data)
     titles = [g.get_title() for g in groups]
     assert titles == ["General", "State", "Ports", "Networks",
-                      "Mounts / volumes", "Environment", "Labels"]
+                      "Mounts / volumes", "Labels"]
+    assert ContainerDetailsDialog._env_pairs(data) == [("TZ", "UTC")]
 
 
 def test_settings_dialog_reuse_ssh_switch():
@@ -945,7 +1041,38 @@ def test_resolve_sudo_prompts_when_password_required():
     assert page._resolve_sudo(rc, "web", "docker") == (True, "needs_password", None)
     # A cached password that verifies via `sudo -S` is reported back for caching.
     page._sudo_passwords["web"] = "secret"
-    assert page._resolve_sudo(rc, "web", "docker") == (True, "password", "secret")
+    assert page._resolve_sudo(
+        rc, "web", "docker", session_pw="secret") == (True, "password", "secret")
+
+
+def test_probe_pending_blocks_auto_refresh_until_sudo_ready(monkeypatch):
+    """Map-time timer must not list containers with ``sudo -n`` before the
+    host probe has resolved a required sudo password (first-load race)."""
+    _gtk_or_skip()
+    from sshpilot.plugins.builtin.docker_manager.page import DockerConsolePage
+
+    settings = {"sudo:web": True}
+    page = DockerConsolePage(_sudo_ctx(settings), initial_host="web")
+    refreshes = []
+    monkeypatch.setattr(
+        page, "_refresh_containers", lambda: refreshes.append("containers"))
+
+    # Probe in flight (as after map → _on_host_changed): ticks must no-op.
+    page._probe_pending = True
+    assert page._tick() is True
+    page._refresh_visible()
+    assert refreshes == []
+
+    # After the probe caches the password and clears the gate, listing runs
+    # with ``sudo -S`` (via _client reading _sudo_passwords).
+    page._sudo_passwords["web"] = "secret"
+    page._finish_probe_and_refresh()
+    assert page._probe_pending is False
+    assert refreshes == ["containers"]
+    client = page._client()
+    assert client is not None
+    assert client.use_sudo is True
+    assert client.sudo_password == "secret"
 
 
 def test_resolve_sudo_passwordless():
@@ -1027,6 +1154,34 @@ def test_check_sudo():
         rc_wrong, "web", "docker", "bad") == (False, "wrong_password")
     assert DockerConsolePage._check_sudo(
         rc_denied, "web", "docker", "bad") == (False, "not_sudoers")
+
+
+# --- ANSI stripping (Logs tab TextView cannot render escapes) --------------
+
+def test_strip_ansi_removes_color_codes():
+    from sshpilot.plugins.builtin.docker_manager import widgets as w
+
+    raw = (
+        "\x1b[36mwebpack_version=\x1b[0m5.105.0\n"
+        "\x1b[90m2026/07/17 02:13PM\x1b[0m \x1b[32mINF\x1b[0m "
+        "\x1b[1mgithub.com/portainer/portainer/api/http/server.go:371\x1b[0m"
+        "\x1b[36m >\x1b[0m starting HTTPS server | "
+        "\x1b[36mbind_address=\x1b[0m:9443"
+    )
+    clean = w.strip_ansi(raw)
+    assert "\x1b" not in clean
+    assert "webpack_version=5.105.0" in clean
+    assert "starting HTTPS server" in clean
+    assert "bind_address=:9443" in clean
+    assert "INF" in clean
+
+
+def test_strip_ansi_empty_and_plain():
+    from sshpilot.plugins.builtin.docker_manager import widgets as w
+
+    assert w.strip_ansi("") == ""
+    assert w.strip_ansi(None) == ""  # type: ignore[arg-type]
+    assert w.strip_ansi("plain log line") == "plain log line"
 
 
 # --- failure placeholder / toast truncation --------------------------------
@@ -1225,28 +1380,50 @@ def test_loaded_flags_suppress_repulse():
     assert page._stats_loaded is True
 
 
-def test_logs_dropdown_selection_loads_logs():
-    """Picking a container in the Logs dropdown loads its logs without the
-    Load button; poll-driven model refreshes neither re-trigger nor lose
-    the selection."""
+def test_shared_selection_updates_selected_cid():
+    """Containers list selection updates shared ``_selected_cid``."""
     _gtk_or_skip()
     from sshpilot.plugins.builtin.docker_manager.page import DockerConsolePage
 
     page = DockerConsolePage(_gtk_ctx(), initial_host="web")
-    page._containers = [{"Names": "web", "ID": "a1"}, {"Names": "db", "ID": "b2"}]
+    page._containers = [
+        {"Names": "web", "ID": "a1", "Image": "nginx", "Status": "Up", "State": "running"},
+        {"Names": "db", "ID": "b2", "Image": "postgres", "Status": "Up", "State": "running"},
+    ]
+    page._set_selected_container("b2", "db", source="containers")
+    assert page._selected_cid == "b2"
+    assert page._selected_name == "db"
+
+
+def test_logs_dialog_opens_for_container():
+    """Logs is a row action dialog, not a stack tab."""
+    _gtk_or_skip()
+    from sshpilot.plugins.builtin.docker_manager.page import DockerConsolePage
+
+    page = DockerConsolePage(_gtk_ctx(), initial_host="web")
+    page._containers = [{"Names": "web", "ID": "a1"}]
     calls = []
-    page._reload_logs = lambda: calls.append(page._selected_container_id())
+    page._reload_logs = lambda: calls.append(page._selected_cid)
+    page._open_container_logs("a1", "web")
+    assert page._logs_window is not None
+    assert page._logs_window.get_visible()
+    assert page._selected_cid == "a1"
+    assert calls == ["a1"]
 
-    page._refresh_logs_targets()      # programmatic model swap — must not load
-    assert calls == []
 
-    page._logs_combo.set_selected(1)  # user picks "db"
-    assert calls == ["b2"]
-    assert page._logs_raw == ""
+def test_on_docker_event_line_triggers_refresh():
+    _gtk_or_skip()
+    from sshpilot.plugins.builtin.docker_manager.page import DockerConsolePage
 
-    page._refresh_logs_targets()      # containers poll: keeps pick, no reload
-    assert calls == ["b2"]
-    assert page._logs_combo.get_selected() == 1
+    page = DockerConsolePage(_gtk_ctx(), initial_host="web")
+    calls = []
+    page._refresh_containers = lambda: calls.append("refresh")
+    page._containers_busy = False
+    page._on_docker_event_line(
+        '{"Type":"container","status":"start","Actor":{"Attributes":{"name":"web"}}}')
+    assert calls == ["refresh"]
+    page._on_docker_event_line('{"Type":"image","status":"pull"}')
+    assert calls == ["refresh"]  # image events ignored
 
 
 # --- published-port discovery (web UIs) --------------------------------------

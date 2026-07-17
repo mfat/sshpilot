@@ -498,7 +498,10 @@ class SplitPane(Gtk.Box):
     def _on_inner_tab_bar_pressed(self, gesture, n_press, x, y) -> None:
         if n_press != 2:
             return
-        page = self._inner_tab_view.get_selected_page()
+        # Import locally: window_tabs imports SplitViewTab from this module
+        # inside methods, so a top-level import here would be circular.
+        from .window_tabs import find_tab_page_at
+        page = find_tab_page_at(self._inner_tab_bar, x, y)
         if page is not None:
             self._show_inner_tab_rename_popover(page, x, y)
 

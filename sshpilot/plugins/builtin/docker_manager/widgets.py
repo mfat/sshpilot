@@ -133,6 +133,25 @@ def strip_ssh_noise(text: str) -> str:
     return "\n".join(lines)
 
 
+# ECMA-48 / VT100 control sequences that container apps often emit (colors,
+# bold, OSC titles). Gtk.TextView cannot interpret them, so the Logs tab
+# strips them before display / filter / copy / save.
+_ANSI_ESCAPE_RE = re.compile(
+    r"\x1B(?:"
+    r"\[[0-?]*[ -/]*[@-~]"           # CSI  (e.g. ESC[36m, ESC[0m)
+    r"|\][^\x07\x1B]*(?:\x07|\x1B\\)"  # OSC (ESC]…BEL or ESC]…ESC\)
+    r"|[@-Z\\-_]"                    # 2-byte Fe (ESC c, ESC M, …)
+    r")"
+)
+
+
+def strip_ansi(text: str) -> str:
+    """Remove ANSI/VT escape sequences from *text* (plain readable remainder)."""
+    if not text:
+        return ""
+    return _ANSI_ESCAPE_RE.sub("", text)
+
+
 def describe_docker_failure(text: str) -> str:
     """One human-readable line for a failed docker/SSH command, parsed from
     the real stderr/stdout (falls back to the output's first meaningful line)."""

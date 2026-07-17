@@ -60,6 +60,11 @@
 
 
 
+    <release version="5.5.4" date="2026-07-17">
+      <description>
+        <p>Bug fixes</p>
+      </description>
+    </release>
     <release version="5.5.3" date="2026-07-17">
       <description>
         <p>Improvements for Xterm.js terminal backend</p>

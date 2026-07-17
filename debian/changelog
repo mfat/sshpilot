@@ -1,3 +1,10 @@
+sshpilot (5.5.4-0ubuntu1) resolute; urgency=medium
+
+  * Release v5.5.4.
+  * Bug fixes
+
+ -- Mehdi <mah.fat@gmail.com>  Fri, 17 Jul 2026 19:17:46 +0000
+
 sshpilot (5.5.3-0ubuntu1) resolute; urgency=medium
 
   * Release v5.5.3.

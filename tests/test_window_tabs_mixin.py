@@ -87,3 +87,171 @@ def test_tabs_mixin_in_mro():
     wm = _window_module()
     mro_names = [c.__name__ for c in wm.MainWindow.__mro__]
     assert "WindowTabsMixin" in mro_names
+
+
+def test_enabled_tab_actions_for_plugin_like_page():
+    """Non-terminal tabs (Docker Console, WebTab, …) get rename/close actions.
+
+    Returning an empty set used to hide the whole context menu because items
+    use ``hidden-when=action-disabled``.
+    """
+    from sshpilot.window_tabs import WindowTabsMixin
+
+    class Stub(WindowTabsMixin):
+        def _file_manager_embed_for_child(self, _child):
+            return None
+
+    enabled = Stub()._enabled_tab_actions(object())
+    assert enabled == {
+        "tabmenu-rename",
+        "tabmenu-close",
+        "tabmenu-close-others",
+        "tabmenu-close-right",
+    }
+
+
+class _FakeWidget:
+    """Minimal stand-in for Gtk.Widget used by classify_tab_bar_hit."""
+
+    def __init__(self, css_name='', css_classes=(), parent=None, page=None):
+        self._css_name = css_name
+        self._css_classes = set(css_classes)
+        self._parent = parent
+        self._page = page
+
+    def get_css_name(self):
+        return self._css_name
+
+    def has_css_class(self, name):
+        return name in self._css_classes
+
+    def get_parent(self):
+        return self._parent
+
+    def get_property(self, name):
+        if name == 'page':
+            return self._page
+        raise AttributeError(name)
+
+
+def test_find_tab_page_at_returns_page_when_click_on_tab():
+    from sshpilot.window_tabs import find_tab_page_at
+
+    page = object()
+    tab_bar = types.SimpleNamespace()
+    tab = _FakeWidget(css_name='tab', page=page)
+    label = _FakeWidget(css_name='label', parent=tab)
+    tab_bar.pick = lambda x, y, flags: label
+
+    assert find_tab_page_at(tab_bar, 10, 5) is page
+
+
+def test_find_tab_page_at_ignores_empty_bar_space():
+    from sshpilot.window_tabs import find_tab_page_at
+
+    tab_bar = types.SimpleNamespace()
+    empty = _FakeWidget(css_name='tabbox', parent=tab_bar)
+    tab_bar.pick = lambda x, y, flags: empty
+
+    assert find_tab_page_at(tab_bar, 200, 5) is None
+
+
+def test_find_tab_page_at_ignores_close_button():
+    from sshpilot.window_tabs import find_tab_page_at
+
+    page = object()
+    tab_bar = types.SimpleNamespace()
+    tab = _FakeWidget(css_name='tab', page=page, parent=tab_bar)
+    close_btn = _FakeWidget(
+        css_name='button', css_classes=('tab-close-button',), parent=tab
+    )
+    icon = _FakeWidget(css_name='image', parent=close_btn)
+    tab_bar.pick = lambda x, y, flags: icon
+
+    assert find_tab_page_at(tab_bar, 40, 5) is None
+
+
+def test_find_tab_page_at_ignores_end_action_widget():
+    from sshpilot.window_tabs import find_tab_page_at
+
+    tab_bar = types.SimpleNamespace()
+    end_action = _FakeWidget(
+        css_name='widget', css_classes=('end-action',), parent=tab_bar
+    )
+    button = _FakeWidget(css_name='button', parent=end_action)
+    tab_bar.pick = lambda x, y, flags: button
+
+    assert find_tab_page_at(tab_bar, 500, 5) is None
+
+
+def test_classify_tab_bar_hit_distinguishes_empty_close_and_action():
+    from sshpilot.window_tabs import classify_tab_bar_hit
+
+    page = object()
+    tab_bar = types.SimpleNamespace()
+
+    tab = _FakeWidget(css_name='tab', page=page, parent=tab_bar)
+    tab_bar.pick = lambda x, y, flags: tab
+    assert classify_tab_bar_hit(tab_bar, 1, 1) == ('tab', page)
+
+    empty = _FakeWidget(css_name='tabbox', parent=tab_bar)
+    tab_bar.pick = lambda x, y, flags: empty
+    assert classify_tab_bar_hit(tab_bar, 1, 1) == ('empty',)
+
+    close_btn = _FakeWidget(
+        css_name='button', css_classes=('tab-close-button',), parent=tab
+    )
+    tab_bar.pick = lambda x, y, flags: close_btn
+    assert classify_tab_bar_hit(tab_bar, 1, 1) == ('close',)
+
+    end_action = _FakeWidget(
+        css_name='widget', css_classes=('end-action',), parent=tab_bar
+    )
+    tab_bar.pick = lambda x, y, flags: end_action
+    assert classify_tab_bar_hit(tab_bar, 1, 1) == ('action',)
+
+
+def test_tab_bar_double_click_empty_opens_local_terminal():
+    from sshpilot.window_tabs import WindowTabsMixin
+
+    calls = []
+
+    class Stub(WindowTabsMixin):
+        def __init__(self):
+            self.tab_bar = types.SimpleNamespace()
+            empty = _FakeWidget(css_name='tabbox', parent=self.tab_bar)
+            self.tab_bar.pick = lambda x, y, flags: empty
+            self.terminal_manager = types.SimpleNamespace(
+                show_local_terminal=lambda: calls.append('local')
+            )
+
+    Stub()._on_tab_bar_pressed(None, 2, 100, 5)
+    assert calls == ['local']
+
+
+def test_tab_bar_double_click_close_button_does_not_open_local():
+    from sshpilot.window_tabs import WindowTabsMixin
+
+    calls = []
+
+    class Stub(WindowTabsMixin):
+        def __init__(self):
+            self.tab_bar = types.SimpleNamespace()
+            page = object()
+            tab = _FakeWidget(css_name='tab', page=page, parent=self.tab_bar)
+            close_btn = _FakeWidget(
+                css_name='button', css_classes=('tab-close-button',), parent=tab
+            )
+            self.tab_bar.pick = lambda x, y, flags: close_btn
+            self.terminal_manager = types.SimpleNamespace(
+                show_local_terminal=lambda: calls.append('local')
+            )
+
+        def _is_start_tab_page(self, _page):
+            return False
+
+        def _show_tab_rename_popover(self, page, x, y):
+            calls.append('rename')
+
+    Stub()._on_tab_bar_pressed(None, 2, 40, 5)
+    assert calls == []

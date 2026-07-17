@@ -37,6 +37,43 @@ _get_connection_host = get_connection_host
 _get_connection_alias = get_connection_alias
 
 
+def classify_tab_bar_hit(tab_bar, x, y):
+    """Classify a click on *tab_bar* at (*x*, *y*).
+
+    Adw.TabBar has no public hit-test API, so this walks ``pick()`` ancestors.
+    Returns one of:
+      ``('tab', page)`` — click on a private AdwTab (css_name ``tab``)
+      ``('close',)``    — tab close button
+      ``('action',)``   — start/end action chrome
+      ``('empty',)``    — empty bar / tabbox / separator space
+    """
+    try:
+        widget = tab_bar.pick(x, y, Gtk.PickFlags.DEFAULT)
+    except Exception:
+        return ('empty',)
+    while widget is not None and widget is not tab_bar:
+        try:
+            if widget.has_css_class('tab-close-button'):
+                return ('close',)
+            if widget.has_css_class('start-action') or widget.has_css_class('end-action'):
+                return ('action',)
+        except Exception:
+            pass
+        try:
+            if widget.get_css_name() == 'tab':
+                return ('tab', widget.get_property('page'))
+        except Exception:
+            pass
+        widget = widget.get_parent()
+    return ('empty',)
+
+
+def find_tab_page_at(tab_bar, x, y):
+    """Return the Adw.TabPage under (*x*, *y*) on *tab_bar*, or None."""
+    kind, *rest = classify_tab_bar_hit(tab_bar, x, y)
+    return rest[0] if kind == 'tab' else None
+
+
 class WindowTabsMixin:
     """Tab/pane lifecycle, context menus, teardown, and drag-to-split."""
 
@@ -85,9 +122,17 @@ class WindowTabsMixin:
     def _on_tab_bar_pressed(self, gesture, n_press, x, y):
         if n_press != 2:
             return
-        page = self.tab_view.get_selected_page()
-        if page and not self._is_start_tab_page(page):
-            self._show_tab_rename_popover(page, x, y)
+        kind, *rest = classify_tab_bar_hit(self.tab_bar, x, y)
+        if kind == 'tab':
+            page = rest[0]
+            if page and not self._is_start_tab_page(page):
+                self._show_tab_rename_popover(page, x, y)
+            return
+        if kind == 'empty':
+            try:
+                self.terminal_manager.show_local_terminal()
+            except Exception as exc:
+                logger.error("Tab-bar new local terminal failed: %s", exc)
 
     def _show_tab_rename_popover(self, page, x, y):
         entry = Gtk.Entry()
@@ -401,7 +446,11 @@ class WindowTabsMixin:
                 enabled.add('tabmenu-open-system-terminal')
             return enabled
 
-        return set()
+        # Plugin pages (Docker Console, …), WebTab, and other non-terminal
+        # content: still allow rename / close / close-others / close-right.
+        # Returning empty used to hide the entire menu (items use
+        # hidden-when=action-disabled).
+        return common
 
     # ── tab context menu action handlers ───────────────────────────────────────
 
