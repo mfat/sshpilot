@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:5.5.3}
+Version:        %{?version}%{!?version:5.5.4}
 Release:        1%{?dist}
 Summary:        Manage your servers with ease
 
@@ -87,6 +87,9 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/io.github.mfat.sshpil
 %{_datadir}/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg
 
 %changelog
+* Fri Jul 17 2026 mFat <newmfat@gmail.com> - 5.5.4
+- Bug fixes
+
 * Fri Jul 17 2026 mFat <newmfat@gmail.com> - 5.5.3
 - Improvements for Xterm.js terminal backend
 - Bug fixes
