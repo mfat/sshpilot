@@ -43,7 +43,7 @@ def _recording_client(responder, *, runtime="docker"):
     FakeResult that ``responder(command)`` yields (or empty success)."""
     calls = []
 
-    def run_command(nickname, command, *, timeout=None):
+    def run_command(nickname, command, *, timeout=None, **_kwargs):
         calls.append(command)
         result = responder(command) if responder else None
         return result if result is not None else FakeResult()
@@ -537,6 +537,39 @@ def test_parse_ndjson_logs_skipped_lines(caplog):
                          logger="sshpilot.plugins.builtin.docker_manager.client"):
         assert client.ps() == [{"ID": "1"}]
     assert any("failed to parse" in r.message or "unparseable" in r.message
+               for r in caplog.records)
+
+
+def test_client_logs_commands_and_results(caplog):
+    """``--verbose`` should surface each docker CLI call and its exit status."""
+    import logging
+
+    def responder(command):
+        if "ps" in command:
+            return FakeResult(exit_code=1, stderr="permission denied")
+        return FakeResult(stdout='{"ID":"abc"}\n')
+
+    client, _ = _recording_client(responder)
+    with caplog.at_level(logging.DEBUG,
+                         logger="sshpilot.plugins.builtin.docker_manager.client"):
+        client.images()
+        client.ping()
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("run: docker images" in m for m in messages)
+    assert any("exit=0" in m for m in messages)
+    assert any("parsed 1 JSON" in m for m in messages)
+    assert any("run: docker ps -q" in m for m in messages)
+    assert any("exit=1" in m for m in messages)
+    assert any("permission denied" in m for m in messages)
+
+
+def test_detect_runtime_logs_result(caplog):
+    import logging
+    client, _ = _recording_client(lambda c: FakeResult(stdout="podman\n"))
+    with caplog.at_level(logging.DEBUG,
+                         logger="sshpilot.plugins.builtin.docker_manager.client"):
+        assert client.detect_runtime() == "podman"
+    assert any("detected runtime: podman" in r.getMessage()
                for r in caplog.records)
 
 

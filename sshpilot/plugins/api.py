@@ -17,9 +17,12 @@ from __future__ import annotations
 
 import abc
 import enum
+import logging
 import threading
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 # (major, minor). Bump minor for additive changes, major for breaking ones.
 # 1.1: PluginContext.delete_secret; get_secret/set_secret wired to the keyring.
@@ -693,14 +696,19 @@ class PluginContext:
         from .. import ssh_multiplex
         conn = self.connection_manager.find_connection_by_nickname(nickname)
         if conn is None:
+            logger.debug("run_command(%r): no such connection", nickname)
             return CommandResult(-1, "", f"No connection named {nickname!r}")
+        mux = ssh_multiplex.is_active(nickname)
+        logger.debug(
+            "run_command(%r) mux=%s timeout=%s stdin=%s: %s",
+            nickname, mux, timeout, "yes" if input else "no", command,
+        )
         cleanup = None
         try:
             # When a surface has acquired multiplexing for this host, reuse its
             # ControlMaster socket: the first call opens the master, the rest ride
             # it (no re-auth). Transparent — callers don't opt in per-call.
-            extra_args = (ssh_multiplex.controlmaster_args()
-                          if ssh_multiplex.is_active(nickname) else None)
+            extra_args = (ssh_multiplex.controlmaster_args() if mux else None)
             ctx = ConnectionContext(
                 connection=conn, connection_manager=self.connection_manager,
                 config=self.config, command_type='ssh',
@@ -714,13 +722,29 @@ class PluginContext:
                 from ..ssh_password_exec import wrap_argv_with_sshpass
                 argv, cleanup = wrap_argv_with_sshpass(
                     argv, prepared.password, env=env)
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug("run_command(%r) argv: %s", nickname, argv)
             result = subprocess.run(
                 argv, env=env, capture_output=True, text=True,
                 timeout=timeout, check=False, input=input)
+            logger.debug(
+                "run_command(%r) exit=%s stdout=%dB stderr=%dB",
+                nickname, result.returncode,
+                len(result.stdout or ""), len(result.stderr or ""),
+            )
+            if result.returncode != 0 and (result.stderr or result.stdout):
+                logger.debug(
+                    "run_command(%r) failure output: %.800s",
+                    nickname, (result.stderr or result.stdout or "").strip(),
+                )
             return CommandResult(result.returncode, result.stdout, result.stderr)
         except subprocess.TimeoutExpired:
+            logger.debug("run_command(%r) timed out after %ss: %s",
+                         nickname, timeout, command)
             return CommandResult(-1, "", "Command timed out")
         except Exception as exc:  # noqa: BLE001 — surface as a failed result
+            logger.debug("run_command(%r) failed: %s", nickname, exc,
+                         exc_info=True)
             return CommandResult(-1, "", str(exc))
         finally:
             if cleanup is not None:
@@ -740,6 +764,7 @@ class PluginContext:
         from ..platform_utils import is_flatpak
 
         if not command or not str(command).strip():
+            logger.debug("run_local_command: empty command")
             return CommandResult(-1, "", "Command is empty")
         shell = shutil.which("sh") or "/bin/sh"
         argv = [shell, "-lc", str(command)]
@@ -749,14 +774,31 @@ class PluginContext:
                 return CommandResult(
                     -1, "", "flatpak-spawn is unavailable; cannot run host command")
             argv = [spawn, "--host", "sh", "-lc", str(command)]
+        logger.debug(
+            "run_local_command timeout=%s stdin=%s: %s",
+            timeout, "yes" if input else "no", command,
+        )
         try:
             result = subprocess.run(
                 argv, env=os.environ.copy(), capture_output=True, text=True,
                 timeout=timeout, check=False, input=input)
+            logger.debug(
+                "run_local_command exit=%s stdout=%dB stderr=%dB",
+                result.returncode,
+                len(result.stdout or ""), len(result.stderr or ""),
+            )
+            if result.returncode != 0 and (result.stderr or result.stdout):
+                logger.debug(
+                    "run_local_command failure output: %.800s",
+                    (result.stderr or result.stdout or "").strip(),
+                )
             return CommandResult(result.returncode, result.stdout, result.stderr)
         except subprocess.TimeoutExpired:
+            logger.debug("run_local_command timed out after %ss: %s",
+                         timeout, command)
             return CommandResult(-1, "", "Command timed out")
         except Exception as exc:  # noqa: BLE001 — surface as a failed result
+            logger.debug("run_local_command failed: %s", exc, exc_info=True)
             return CommandResult(-1, "", str(exc))
 
     def acquire_multiplex(self, nickname: str) -> None:

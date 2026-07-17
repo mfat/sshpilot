@@ -226,7 +226,10 @@ class DockerConsolePage(
     def _status(self, message: str) -> None:
         """Append a human-readable stage message to the loading status feed
         (safe from worker threads). Messages reflect real pipeline stages and
-        parsed command output — never cosmetic filler."""
+        parsed command output — never cosmetic filler. Also logged at DEBUG so
+        ``--verbose`` captures the same pipeline in sshpilot.log."""
+        nick = self._current_nickname() or "?"
+        logger.debug("docker-console[%s]: %s", nick, message)
         try:
             self.ctx.run_on_ui_thread(self._append_status, message)
         except Exception:
@@ -824,6 +827,8 @@ class DockerConsolePage(
         nick = self._current_nickname()
         if not nick:
             return
+        logger.debug("docker-console: loading host %r (local=%s)",
+                     nick, self._is_local(nick))
         self._dismiss_active_confirm()
         self.ctx.settings.set("last_host", nick)
         self._set_sudo_check(self._use_sudo_for(nick))
