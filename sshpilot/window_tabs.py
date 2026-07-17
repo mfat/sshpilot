@@ -37,6 +37,33 @@ _get_connection_host = get_connection_host
 _get_connection_alias = get_connection_alias
 
 
+def find_tab_page_at(tab_bar, x, y):
+    """Return the Adw.TabPage under (*x*, *y*) on *tab_bar*, or None.
+
+    Adw.TabBar has no public hit-test API, so this walks ``pick()`` ancestors
+    looking for a private AdwTab (css_name ``tab``) and reads its ``page``
+    property. Clicks on empty bar space, start/end action widgets, or the tab
+    close button return None so double-click rename does not fire there.
+    """
+    try:
+        widget = tab_bar.pick(x, y, Gtk.PickFlags.DEFAULT)
+    except Exception:
+        return None
+    while widget is not None and widget is not tab_bar:
+        try:
+            if widget.has_css_class('tab-close-button'):
+                return None
+        except Exception:
+            pass
+        try:
+            if widget.get_css_name() == 'tab':
+                return widget.get_property('page')
+        except Exception:
+            pass
+        widget = widget.get_parent()
+    return None
+
+
 class WindowTabsMixin:
     """Tab/pane lifecycle, context menus, teardown, and drag-to-split."""
 
@@ -85,7 +112,7 @@ class WindowTabsMixin:
     def _on_tab_bar_pressed(self, gesture, n_press, x, y):
         if n_press != 2:
             return
-        page = self.tab_view.get_selected_page()
+        page = find_tab_page_at(self.tab_bar, x, y)
         if page and not self._is_start_tab_page(page):
             self._show_tab_rename_popover(page, x, y)
 

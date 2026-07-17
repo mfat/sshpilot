@@ -108,3 +108,77 @@ def test_enabled_tab_actions_for_plugin_like_page():
         "tabmenu-close-others",
         "tabmenu-close-right",
     }
+
+
+class _FakeWidget:
+    """Minimal stand-in for Gtk.Widget used by find_tab_page_at."""
+
+    def __init__(self, css_name='', css_classes=(), parent=None, page=None):
+        self._css_name = css_name
+        self._css_classes = set(css_classes)
+        self._parent = parent
+        self._page = page
+
+    def get_css_name(self):
+        return self._css_name
+
+    def has_css_class(self, name):
+        return name in self._css_classes
+
+    def get_parent(self):
+        return self._parent
+
+    def get_property(self, name):
+        if name == 'page':
+            return self._page
+        raise AttributeError(name)
+
+
+def test_find_tab_page_at_returns_page_when_click_on_tab():
+    from sshpilot.window_tabs import find_tab_page_at
+
+    page = object()
+    tab_bar = types.SimpleNamespace()
+    tab = _FakeWidget(css_name='tab', page=page)
+    label = _FakeWidget(css_name='label', parent=tab)
+    tab_bar.pick = lambda x, y, flags: label
+
+    assert find_tab_page_at(tab_bar, 10, 5) is page
+
+
+def test_find_tab_page_at_ignores_empty_bar_space():
+    from sshpilot.window_tabs import find_tab_page_at
+
+    tab_bar = types.SimpleNamespace()
+    empty = _FakeWidget(css_name='tabbox', parent=tab_bar)
+    tab_bar.pick = lambda x, y, flags: empty
+
+    assert find_tab_page_at(tab_bar, 200, 5) is None
+
+
+def test_find_tab_page_at_ignores_close_button():
+    from sshpilot.window_tabs import find_tab_page_at
+
+    page = object()
+    tab_bar = types.SimpleNamespace()
+    tab = _FakeWidget(css_name='tab', page=page, parent=tab_bar)
+    close_btn = _FakeWidget(
+        css_name='button', css_classes=('tab-close-button',), parent=tab
+    )
+    icon = _FakeWidget(css_name='image', parent=close_btn)
+    tab_bar.pick = lambda x, y, flags: icon
+
+    assert find_tab_page_at(tab_bar, 40, 5) is None
+
+
+def test_find_tab_page_at_ignores_end_action_widget():
+    from sshpilot.window_tabs import find_tab_page_at
+
+    tab_bar = types.SimpleNamespace()
+    end_action = _FakeWidget(
+        css_name='widget', css_classes=('end-action',), parent=tab_bar
+    )
+    button = _FakeWidget(css_name='button', parent=end_action)
+    tab_bar.pick = lambda x, y, flags: button
+
+    assert find_tab_page_at(tab_bar, 500, 5) is None
