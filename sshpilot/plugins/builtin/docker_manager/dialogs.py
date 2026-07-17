@@ -1,13 +1,14 @@
 """GTK dialogs for the Docker Console plugin.
 
-Kept separate from page.py to avoid bloating it. Three dialogs:
+Kept separate from page.py to avoid bloating it. Dialogs:
 
-* ``ContainerDetailsDialog`` — read-only inspect view (env, mounts, networks,
-  ports, labels, image, created, restart policy).
+* ``ContainerDetailsDialog`` — Overview / Environment / Raw inspect view with
+  copy actions.
 * ``TextViewDialog`` — a monospace read-only text viewer (image history,
   compose file).
 * ``CreateContainerDialog`` — a form to create + run a container.
-* ``DockerConsoleSettingsDialog`` — plugin settings (SSH connection reuse).
+* ``DockerConsoleSettingsDialog`` — plugin settings (SSH reuse, polling, logs).
+* ``prompt_shell_options`` — optional user/workdir before ``docker exec``.
 * ``prompt_text`` — a tiny one-line input dialog (e.g. the image to pull).
 """
 
@@ -20,7 +21,7 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import GLib, Gtk, Adw  # noqa: E402
+from gi.repository import GLib, Gtk, Adw, Gdk  # noqa: E402
 
 from . import widgets as w  # noqa: E402
 
@@ -70,20 +71,105 @@ class _DialogBase(Adw.Window):
 
 
 class ContainerDetailsDialog(_DialogBase):
-    """Read-only inspect view for a container."""
+    """Read-only inspect view for a container (Overview / Environment / Raw)."""
 
-    def __init__(self, parent: Optional[Gtk.Window], name: str, data: dict) -> None:
-        super().__init__(parent, f"{name} — details")
-        scroller = Gtk.ScrolledWindow(vexpand=True)
-        body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18,
-                       margin_top=16, margin_bottom=16, margin_start=16, margin_end=16)
-        scroller.set_child(body)
-        self._toolbar.set_content(scroller)
-        for group in self._build_groups(data):
-            body.append(group)
+    def __init__(self, parent: Optional[Gtk.Window], name: str, data: dict,
+                 *, initial_page: str = "overview") -> None:
+        super().__init__(parent, f"{name} — details", width=640, height=700)
+        self._data = data
+        self._name = name
+
+        copy_env = Gtk.Button(label="Copy env")
+        copy_env.set_tooltip_text("Copy environment variables")
+        copy_env.connect("clicked", lambda _b: self._copy_env())
+        self._header.pack_end(copy_env)
+        copy_json = Gtk.Button(label="Copy JSON")
+        copy_json.set_tooltip_text("Copy full inspect JSON")
+        copy_json.connect("clicked", lambda _b: self._copy_json())
+        self._header.pack_end(copy_json)
+
+        notebook = Gtk.Notebook()
+        notebook.set_vexpand(True)
+
+        overview = Gtk.ScrolledWindow(vexpand=True)
+        overview_body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18,
+                                margin_top=16, margin_bottom=16,
+                                margin_start=16, margin_end=16)
+        overview.set_child(overview_body)
+        for group in self._build_overview_groups(data):
+            overview_body.append(group)
+        notebook.append_page(overview, Gtk.Label(label="Overview"))
+
+        env_scroller = Gtk.ScrolledWindow(vexpand=True)
+        env_body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8,
+                           margin_top=16, margin_bottom=16,
+                           margin_start=16, margin_end=16)
+        env_scroller.set_child(env_body)
+        env_group = Adw.PreferencesGroup(title="Environment")
+        env_rows = self._env_pairs(data)
+        if not env_rows:
+            empty = Adw.ActionRow(title="—")
+            empty.add_css_class("dim-label")
+            env_group.add(empty)
+        else:
+            for key, value in env_rows:
+                row = Adw.ActionRow(title=key, subtitle=value or "—")
+                if hasattr(row, "set_subtitle_selectable"):
+                    row.set_subtitle_selectable(True)
+                env_group.add(row)
+        env_body.append(env_group)
+        notebook.append_page(env_scroller, Gtk.Label(label="Environment"))
+
+        raw_scroller = Gtk.ScrolledWindow(vexpand=True)
+        raw_view = Gtk.TextView()
+        raw_view.set_editable(False)
+        raw_view.set_monospace(True)
+        raw_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+        raw_view.set_top_margin(8)
+        raw_view.set_bottom_margin(8)
+        raw_view.set_left_margin(12)
+        raw_view.set_right_margin(12)
+        import json as _json
+        try:
+            raw_text = _json.dumps(data, indent=2, default=str)
+        except Exception:  # noqa: BLE001
+            raw_text = str(data)
+        raw_view.get_buffer().set_text(raw_text)
+        raw_scroller.set_child(raw_view)
+        notebook.append_page(raw_scroller, Gtk.Label(label="Raw"))
+
+        page = {"overview": 0, "env": 1, "environment": 1, "raw": 2}.get(
+            (initial_page or "overview").lower(), 0)
+        notebook.set_current_page(page)
+        self._toolbar.set_content(notebook)
+
+    def _copy_env(self) -> None:
+        lines = [f"{k}={v}" for k, v in self._env_pairs(self._data)]
+        text = "\n".join(lines)
+        display = Gdk.Display.get_default()
+        if display is not None and text:
+            display.get_clipboard().set(text)
+
+    def _copy_json(self) -> None:
+        import json as _json
+        try:
+            text = _json.dumps(self._data, indent=2, default=str)
+        except Exception:  # noqa: BLE001
+            text = str(self._data)
+        display = Gdk.Display.get_default()
+        if display is not None and text:
+            display.get_clipboard().set(text)
 
     @staticmethod
-    def _build_groups(d: dict) -> List[Adw.PreferencesGroup]:
+    def _env_pairs(d: dict) -> List[Tuple[str, str]]:
+        rows = []
+        for entry in (_dig(d, "Config", "Env", default=[]) or []):
+            k, _, v = str(entry).partition("=")
+            rows.append((k, v))
+        return rows
+
+    @staticmethod
+    def _build_overview_groups(d: dict) -> List[Adw.PreferencesGroup]:
         name = (_dig(d, "Name", default="") or "").lstrip("/")
         rp = _dig(d, "HostConfig", "RestartPolicy", "Name", default="") or "no"
         general = _info_group("General", [
@@ -101,7 +187,6 @@ class ContainerDetailsDialog(_DialogBase):
             ("Exit code", str(state.get("ExitCode", ""))),
         ])
 
-        # Ports: HostConfig.PortBindings {"80/tcp": [{"HostIp","HostPort"}]}
         port_rows: List[Tuple[str, str]] = []
         for cport, binds in (_dig(d, "HostConfig", "PortBindings", default={}) or {}).items():
             hosts = ", ".join(
@@ -116,16 +201,10 @@ class ContainerDetailsDialog(_DialogBase):
                       for m in (_dig(d, "Mounts", default=[]) or [])]
         mounts = _info_group("Mounts / volumes", mount_rows)
 
-        env_rows = []
-        for entry in (_dig(d, "Config", "Env", default=[]) or []):
-            k, _, v = str(entry).partition("=")
-            env_rows.append((k, v))
-        envs = _info_group("Environment", env_rows)
-
         labels = _dig(d, "Config", "Labels", default={}) or {}
         labels_group = _info_group("Labels", sorted(labels.items()))
 
-        return [general, state_group, ports, networks, mounts, envs, labels_group]
+        return [general, state_group, ports, networks, mounts, labels_group]
 
 
 class TextViewDialog(_DialogBase):
@@ -354,8 +433,13 @@ class DockerConsoleSettingsDialog(_DialogBase):
                  reuse_ssh: bool,
                  on_reuse_ssh_changed: Callable[[bool], None],
                  refresh_interval: int = 10,
-                 on_refresh_interval_changed: Optional[Callable[[int], None]] = None) -> None:
-        super().__init__(parent, "Docker Console Settings", width=420, height=300)
+                 on_refresh_interval_changed: Optional[Callable[[int], None]] = None,
+                 log_tail: int = 200,
+                 on_log_tail_changed: Optional[Callable[[int], None]] = None,
+                 max_log_lines: int = 2000,
+                 on_max_log_lines_changed: Optional[Callable[[int], None]] = None,
+                 ) -> None:
+        super().__init__(parent, "Docker Console Settings", width=420, height=420)
         close = Gtk.Button(icon_name="window-close-symbolic")
         close.set_tooltip_text("Close")
         close.connect("clicked", lambda _b: self.close())
@@ -387,13 +471,67 @@ class DockerConsoleSettingsDialog(_DialogBase):
         polling = Adw.PreferencesGroup(title="Polling")
         polling.add(self._interval_row)
 
+        logs = Adw.PreferencesGroup(title="Logs")
+        self._tail_row = Adw.SpinRow.new_with_range(10, 5000, 50)
+        self._tail_row.set_title("Default log tail")
+        self._tail_row.set_subtitle("Lines fetched when loading or starting Follow")
+        self._tail_row.set_value(int(log_tail))
+        if on_log_tail_changed is not None:
+            self._tail_row.connect(
+                "notify::value",
+                lambda row, _pspec: on_log_tail_changed(int(row.get_value())),
+            )
+        logs.add(self._tail_row)
+        self._max_lines_row = Adw.SpinRow.new_with_range(100, 20000, 100)
+        self._max_lines_row.set_title("Max buffered lines")
+        self._max_lines_row.set_subtitle(
+            "Oldest lines are dropped when the ring buffer is full")
+        self._max_lines_row.set_value(int(max_log_lines))
+        if on_max_log_lines_changed is not None:
+            self._max_lines_row.connect(
+                "notify::value",
+                lambda row, _pspec: on_max_log_lines_changed(int(row.get_value())),
+            )
+        logs.add(self._max_lines_row)
+
         scroller = Gtk.ScrolledWindow(vexpand=True)
         body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18,
                        margin_top=16, margin_bottom=16, margin_start=16, margin_end=16)
         body.append(group)
         body.append(polling)
+        body.append(logs)
         scroller.set_child(body)
         self._toolbar.set_content(scroller)
+
+
+def prompt_shell_options(
+        parent: Optional[Gtk.Window],
+        container_name: str,
+        on_open: Callable[[Optional[str], Optional[str]], None]) -> None:
+    """Optional user/workdir before ``docker exec`` into a container."""
+    dialog = w.build_alert(
+        f"Shell: {container_name}",
+        "Optional user and working directory for the container shell.",
+    )
+    box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+    user = Gtk.Entry(placeholder_text="User (optional, e.g. root or 1000:1000)")
+    workdir = Gtk.Entry(placeholder_text="Working directory (optional)")
+    box.append(user)
+    box.append(workdir)
+    dialog.set_extra_child(box)
+    dialog.add_response("cancel", "Cancel")
+    dialog.add_response("ok", "Open")
+    dialog.set_response_appearance("ok", Adw.ResponseAppearance.SUGGESTED)
+    dialog.set_default_response("ok")
+    dialog.set_close_response("cancel")
+
+    def _resp(_d, response):
+        if response == "ok":
+            on_open(user.get_text().strip() or None,
+                    workdir.get_text().strip() or None)
+
+    dialog.connect("response", _resp)
+    w.present_alert(dialog, parent)
 
 
 def prompt_text(parent: Optional[Gtk.Window], heading: str, body: str,

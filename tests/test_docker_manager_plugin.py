@@ -270,6 +270,8 @@ def test_exec_shell_command_prefers_bash_with_sh_fallback():
         "docker exec -it c1 sh -c "
         "'command -v bash >/dev/null 2>&1 && exec bash || exec sh'"
     )
+    with_opts = client.exec_shell_command("c1", user="root", workdir="/app")
+    assert "-u root" in with_opts and "-w /app" in with_opts
 
 
 def test_runtime_podman_is_used_in_commands():
@@ -277,6 +279,36 @@ def test_runtime_podman_is_used_in_commands():
     client.stats()
     assert calls[-1] == "podman stats --no-stream --format '{{json .}}'"
     assert client.stats_stream_command() == "podman stats"
+
+
+def test_stats_one_quotes_container_id():
+    client, calls = _recording_client(lambda c: FakeResult(
+        stdout='{"Name":"web","CPUPerc":"1.2%","MemUsage":"10MiB / 1GiB"}\n'))
+    row = client.stats_one("weird;id")
+    assert calls[-1] == "docker stats --no-stream --format '{{json .}}' 'weird;id'"
+    assert row["Name"] == "web" and row["CPUPerc"] == "1.2%"
+
+
+def test_events_command_string():
+    client, _ = _recording_client(None)
+    assert client.events_command() == (
+        "docker events --filter type=container --format '{{json .}}'"
+    )
+    sudo_client, _ = _recording_client(None)
+    sudo_client.use_sudo = True
+    assert sudo_client.events_command() == (
+        "sudo -n docker events --filter type=container --format '{{json .}}'"
+    )
+
+
+def test_logs_follow_stream_command_uses_captured_runtime():
+    client, _ = _recording_client(None)
+    assert client.logs_follow_stream_command("c1", tail=50) == \
+        "docker logs -f --tail 50 c1"
+    client.use_sudo = True
+    client.sudo_password = "x"
+    assert client.logs_follow_stream_command("c1", tail=10).startswith(
+        "sudo -S -p '' docker logs -f")
 
 
 # --- DockerClient: details / images / compose / create ----------------------
@@ -732,12 +764,28 @@ def _gtk_ctx():
 
     return types.SimpleNamespace(
         run_command=lambda *a, **k: FakeResult(),
+        run_local_command=lambda *a, **k: FakeResult(),
+        run_command_stream=lambda *a, **k: _fake_stream_handle(),
+        run_local_command_stream=lambda *a, **k: _fake_stream_handle(),
         run_on_ui_thread=lambda fn, *a: fn(*a),
         settings=types.SimpleNamespace(get=lambda k, d=None: d, set=lambda k, v: None),
         list_connections=lambda: [Conn("web"), Conn("db")],
         open_command_terminal=lambda *a, **k: True,
+        open_local_command_terminal=lambda *a, **k: True,
         ui=types.SimpleNamespace(notify=lambda *a, **k: None),
     )
+
+
+def _fake_stream_handle():
+    class _H:
+        def stop(self):
+            pass
+
+        @property
+        def running(self):
+            return False
+
+    return _H()
 
 
 def test_page_builds_all_tabs():
@@ -913,10 +961,11 @@ def test_details_dialog_renders_inspect_data():
         "NetworkSettings": {"Networks": {"bridge": {}}},
         "Mounts": [{"Source": "/data", "Destination": "/var/www"}],
     }
-    groups = ContainerDetailsDialog._build_groups(data)
+    groups = ContainerDetailsDialog._build_overview_groups(data)
     titles = [g.get_title() for g in groups]
     assert titles == ["General", "State", "Ports", "Networks",
-                      "Mounts / volumes", "Environment", "Labels"]
+                      "Mounts / volumes", "Labels"]
+    assert ContainerDetailsDialog._env_pairs(data) == [("TZ", "UTC")]
 
 
 def test_settings_dialog_reuse_ssh_switch():
@@ -1349,6 +1398,38 @@ def test_logs_dropdown_selection_loads_logs():
     page._refresh_logs_targets()      # containers poll: keeps pick, no reload
     assert calls == ["b2"]
     assert page._logs_combo.get_selected() == 1
+
+
+def test_shared_selection_drives_bar_and_logs_combo():
+    """Containers list selection updates the selection bar and Logs combo."""
+    _gtk_or_skip()
+    from sshpilot.plugins.builtin.docker_manager.page import DockerConsolePage
+
+    page = DockerConsolePage(_gtk_ctx(), initial_host="web")
+    page._containers = [
+        {"Names": "web", "ID": "a1", "Image": "nginx", "Status": "Up", "State": "running"},
+        {"Names": "db", "ID": "b2", "Image": "postgres", "Status": "Up", "State": "running"},
+    ]
+    page._refresh_logs_targets()
+    page._set_selected_container("b2", "db", source="containers")
+    assert page._selected_cid == "b2"
+    assert "db" in page._sel_label.get_label()
+    assert page._logs_combo.get_selected() == 1
+
+
+def test_on_docker_event_line_triggers_refresh():
+    _gtk_or_skip()
+    from sshpilot.plugins.builtin.docker_manager.page import DockerConsolePage
+
+    page = DockerConsolePage(_gtk_ctx(), initial_host="web")
+    calls = []
+    page._refresh_containers = lambda: calls.append("refresh")
+    page._containers_busy = False
+    page._on_docker_event_line(
+        '{"Type":"container","status":"start","Actor":{"Attributes":{"name":"web"}}}')
+    assert calls == ["refresh"]
+    page._on_docker_event_line('{"Type":"image","status":"pull"}')
+    assert calls == ["refresh"]  # image events ignored
 
 
 # --- published-port discovery (web UIs) --------------------------------------

@@ -78,6 +78,13 @@ class DockerConsolePage(
         self._containers: List[dict] = []
         self._cached_images: List[dict] = []  # last images() result (for create dialog)
         self._logs_raw: str = ""              # last snapshot, for search/errors-only
+        self._selected_cid: Optional[str] = None
+        self._selected_name: Optional[str] = None
+        self._selected_stats: dict = {"cpu": "—", "mem": "—"}
+        self._selection_gen = 0
+        self._events_stream = None
+        self._events_gen = 0
+        self._stats_chip_source: Optional[int] = None
         self._refresh_source: Optional[int] = None
         # In-flight guards so auto-refresh can't pile up overlapping SSH
         # calls when a host is slow.
@@ -140,6 +147,7 @@ class DockerConsolePage(
         self.set_margin_end(12)
 
         self.append(self._build_host_bar())
+        self.append(self._build_selection_bar())
 
         self._stack = Gtk.Stack()
         self._stack.set_vexpand(True)
@@ -525,6 +533,18 @@ class DockerConsolePage(
                 pty_prompt=DockerClient.SUDO_PROMPT, pty_response=pw)
         return self.ctx.open_command_terminal(nick, cmd, title=title)
 
+    def _start_command_stream(
+            self, nick: str, cmd: str, *,
+            on_line: Callable[[str], None],
+            on_done: Optional[Callable[[int], None]] = None,
+            input: Optional[str] = None):
+        """Start a local or remote line stream over the plugin streaming APIs."""
+        if self._is_local(nick):
+            return self.ctx.run_local_command_stream(
+                cmd, on_line=on_line, on_done=on_done, input=input)
+        return self.ctx.run_command_stream(
+            nick, cmd, on_line=on_line, on_done=on_done, input=input)
+
     def _toast(self, message: str) -> None:
         try:
             self.ctx.ui.notify(w.truncate_toast(message))
@@ -607,6 +627,205 @@ class DockerConsolePage(
         refresh.connect("clicked", lambda _b: self._manual_refresh())
         bar.append(refresh)
         return bar
+
+    def _build_selection_bar(self) -> Gtk.Widget:
+        """Master–detail bar: current container + CPU/RAM chips + quick actions."""
+        bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        bar.add_css_class("toolbar")
+
+        self._sel_label = Gtk.Label(label="No container selected", xalign=0)
+        self._sel_label.set_hexpand(True)
+        try:
+            from gi.repository import Pango  # noqa: PLC0415
+            self._sel_label.set_ellipsize(Pango.EllipsizeMode.END)
+        except Exception:  # noqa: BLE001
+            pass
+        bar.append(self._sel_label)
+
+        self._sel_cpu = Gtk.Label(label="CPU —")
+        self._sel_cpu.add_css_class("dim-label")
+        self._sel_cpu.add_css_class("caption")
+        bar.append(self._sel_cpu)
+        self._sel_mem = Gtk.Label(label="RAM —")
+        self._sel_mem.add_css_class("dim-label")
+        self._sel_mem.add_css_class("caption")
+        bar.append(self._sel_mem)
+
+        shell = Gtk.Button(icon_name="utilities-terminal-symbolic")
+        shell.set_tooltip_text("Open shell in selected container")
+        shell.connect("clicked", lambda _b: self._selection_bar_shell())
+        bar.append(shell)
+        details = Gtk.Button(icon_name="dialog-information-symbolic")
+        details.set_tooltip_text("Container details")
+        details.connect("clicked", lambda _b: self._selection_bar_details("overview"))
+        bar.append(details)
+        env = Gtk.Button(label="Env")
+        env.set_tooltip_text("Environment variables")
+        env.connect("clicked", lambda _b: self._selection_bar_details("env"))
+        bar.append(env)
+        follow = Gtk.Button(icon_name="view-paged-symbolic")
+        follow.set_tooltip_text("Follow logs for selected container")
+        follow.connect("clicked", lambda _b: self._selection_bar_follow())
+        bar.append(follow)
+        self._selection_bar = bar
+        self._update_selection_bar()
+        return bar
+
+    def _set_selected_container(
+            self, cid: Optional[str], name: Optional[str], *,
+            source: str = "") -> None:
+        """Shared selection used by Containers list, Logs combo, and the bar."""
+        prev = self._selected_cid
+        self._selected_cid = cid or None
+        self._selected_name = name if cid else None
+        if prev != self._selected_cid:
+            self._selection_gen += 1
+            self._selected_stats = {"cpu": "—", "mem": "—"}
+            # Restart in-pane follow when the target changes (except when the
+            # Logs tab already owns the transition — it restarts itself).
+            if source != "logs":
+                if getattr(self, "_logs_follow", None) is not None \
+                        and self._logs_follow.get_active() and self._selected_cid:
+                    self._sync_logs_combo_to_selection()
+                    self._start_logs_follow()
+                elif getattr(self, "_logs_follow", None) is not None \
+                        and self._logs_follow.get_active() and not self._selected_cid:
+                    self._stop_logs_follow()
+                elif self._selected_cid:
+                    self._sync_logs_combo_to_selection()
+            self._kick_selection_stats()
+        self._update_selection_bar()
+
+    def _update_selection_bar(self) -> None:
+        if not hasattr(self, "_sel_label"):
+            return
+        if self._selected_cid:
+            self._sel_label.set_label(f"Selected: {self._selected_name}")
+        else:
+            self._sel_label.set_label("No container selected")
+        self._sel_cpu.set_label(f"CPU {self._selected_stats.get('cpu', '—')}")
+        self._sel_mem.set_label(f"RAM {self._selected_stats.get('mem', '—')}")
+
+    def _selection_bar_shell(self) -> None:
+        if not self._selected_cid:
+            self._toast("Select a container first")
+            return
+        self._open_shell(self._selected_cid, self._selected_name or "container")
+
+    def _selection_bar_details(self, page: str = "overview") -> None:
+        if not self._selected_cid:
+            self._toast("Select a container first")
+            return
+        self._show_details(
+            self._selected_cid, self._selected_name or "container", page=page)
+
+    def _selection_bar_follow(self) -> None:
+        if not self._selected_cid:
+            self._toast("Select a container first")
+            return
+        self._begin_follow_for_selection()
+
+    def _kick_selection_stats(self) -> None:
+        """Fetch CPU/RAM for the selection once, then keep a light poll alive."""
+        if self._stats_chip_source is not None:
+            GLib.source_remove(self._stats_chip_source)
+            self._stats_chip_source = None
+        if not self._selected_cid or not self.get_mapped():
+            self._update_selection_bar()
+            return
+        self._poll_selection_stats()
+        self._stats_chip_source = GLib.timeout_add_seconds(
+            2, self._poll_selection_stats_tick)
+
+    def _poll_selection_stats_tick(self) -> bool:
+        if self._is_shutting_down() or not self.get_mapped() or not self._selected_cid:
+            self._stats_chip_source = None
+            return False
+        if self._paused or self._probe_pending:
+            return True
+        self._poll_selection_stats()
+        return True
+
+    def _poll_selection_stats(self) -> None:
+        client = self._client()
+        cid = self._selected_cid
+        gen = self._selection_gen
+        if client is None or not cid:
+            return
+
+        def done(row: Any, err: Optional[Exception]) -> None:
+            if gen != self._selection_gen or cid != self._selected_cid:
+                return
+            if err is not None or not row:
+                return
+            cpu = w.field(row, "CPUPerc", "CPU", default="—") or "—"
+            mem = w.field(row, "MemUsage", "MemUsageLimit", default="—") or "—"
+            # Prefer the usage side of "10MiB / 1GiB".
+            if " / " in mem:
+                mem = mem.split(" / ", 1)[0].strip()
+            self._selected_stats = {"cpu": cpu, "mem": mem}
+            self._update_selection_bar()
+
+        self._run_async(lambda: client.stats_one(cid), done)
+
+    def _stop_events_stream(self) -> None:
+        self._events_gen += 1
+        handle = self._events_stream
+        self._events_stream = None
+        if handle is not None:
+            try:
+                handle.stop()
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _start_events_stream(self) -> None:
+        """Watch ``docker events`` to patch the container list without full polls."""
+        self._stop_events_stream()
+        client = self._client()
+        nick = self._current_nickname()
+        if client is None or not nick or not self.get_mapped():
+            return
+        gen = self._events_gen
+        cmd = client.events_command()
+        stdin = None
+        if client._password_mode:  # noqa: SLF001
+            stdin = f"{client.sudo_password}\n"
+
+        def on_line(line: str) -> None:
+            if gen != self._events_gen:
+                return
+            self._on_docker_event_line(line)
+
+        def on_done(_code: int) -> None:
+            if gen != self._events_gen:
+                return
+            self._events_stream = None
+
+        self._events_stream = self._start_command_stream(
+            nick, cmd, on_line=on_line, on_done=on_done, input=stdin)
+
+    def _on_docker_event_line(self, line: str) -> None:
+        import json as _json
+        text = (line or "").strip()
+        if not text:
+            return
+        try:
+            event = _json.loads(text)
+        except _json.JSONDecodeError:
+            return
+        if event.get("Type") not in (None, "container"):
+            return
+        status = (event.get("status") or event.get("Action") or "").lower()
+        attrs = (event.get("Actor") or {}).get("Attributes") or {}
+        name = attrs.get("name") or ""
+        if not name and isinstance(event.get("Actor"), dict):
+            name = event["Actor"].get("ID") or ""
+        if not name:
+            return
+        if status in ("create", "destroy", "die", "kill", "oom", "rename",
+                      "start", "stop", "pause", "unpause", "restart"):
+            if not self._containers_busy:
+                self._refresh_containers()
 
     def _on_pause_toggled(self, btn: Gtk.ToggleButton) -> None:
         self._paused = btn.get_active()
@@ -745,7 +964,21 @@ class DockerConsolePage(
             on_reuse_ssh_changed=self._set_multiplex_enabled,
             refresh_interval=self._refresh_interval(),
             on_refresh_interval_changed=self._on_refresh_interval_changed,
+            log_tail=self._log_tail_setting(),
+            on_log_tail_changed=self._on_log_tail_changed,
+            max_log_lines=self._max_log_lines_setting(),
+            on_max_log_lines_changed=self._on_max_log_lines_changed,
         ).present()
+
+    def _on_log_tail_changed(self, value: int) -> None:
+        self.ctx.settings.set("log_tail", int(value))
+        if hasattr(self, "_tail_spin"):
+            self._tail_spin.set_value(int(value))
+
+    def _on_max_log_lines_changed(self, value: int) -> None:
+        self.ctx.settings.set("max_log_lines", int(value))
+        if hasattr(self, "_resize_logs_ring"):
+            self._resize_logs_ring()
 
     def _list_hosts(self) -> List[Any]:
         try:
@@ -836,6 +1069,12 @@ class DockerConsolePage(
                      nick, self._is_local(nick))
         self._dismiss_active_confirm()
         self.ctx.settings.set("last_host", nick)
+        self._stop_logs_follow()
+        self._stop_events_stream()
+        self._set_selected_container(None, None, source="host")
+        if hasattr(self, "_logs_lines"):
+            self._logs_lines.clear()
+            self._logs_raw = ""
         self._set_sudo_check(self._use_sudo_for(nick))
         self._syncing_runtime = True
         self._runtime_drop.set_selected(self._runtime_mode_index(nick))
@@ -1090,6 +1329,8 @@ class DockerConsolePage(
         """Clear the probe gate and load the visible tab (password now resolved)."""
         self._probe_pending = False
         self._refresh_visible()
+        self._start_events_stream()
+        self._kick_selection_stats()
 
     def _disable_sudo(self, nick: str) -> None:
         """Turn sudo off for a host and drop its cached password (used when the
@@ -1116,6 +1357,11 @@ class DockerConsolePage(
 
     def _on_unmap(self, *_a) -> None:
         self._dismiss_active_confirm()
+        self._stop_logs_follow()
+        self._stop_events_stream()
+        if self._stats_chip_source is not None:
+            GLib.source_remove(self._stats_chip_source)
+            self._stats_chip_source = None
         if self._refresh_source is not None:
             GLib.source_remove(self._refresh_source)
             self._refresh_source = None
@@ -1134,16 +1380,13 @@ class DockerConsolePage(
             return True  # probe / sudo prompt still resolving auth
         if self._current_nickname() in self._ssh_auth_blocked:
             return True
-        # Only auto-refresh the live views; images is manual. Logs auto-refresh
-        # only when its toggle is on.
+        # Only auto-refresh the live views; images is manual. In-pane Follow
+        # owns the Logs buffer when active (no snapshot poll).
         name = self._stack.get_visible_child_name()
         if name == "containers":
             self._refresh_containers()
         elif name == "stats":
             self._refresh_stats()
-        elif name == "logs" and getattr(self, "_logs_autorefresh", None) \
-                and self._logs_autorefresh.get_active():
-            self._reload_logs()
         return True  # keep ticking
 
     def _refresh_visible(self) -> None:
@@ -1161,6 +1404,9 @@ class DockerConsolePage(
         elif name == "networks":
             self._refresh_networks()
         elif name == "logs":
+            if getattr(self, "_logs_follow", None) is not None \
+                    and self._logs_follow.get_active():
+                return
             self._reload_logs()
         elif name == "compose":
             self._refresh_compose()

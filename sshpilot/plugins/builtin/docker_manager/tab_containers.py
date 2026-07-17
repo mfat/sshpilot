@@ -11,7 +11,9 @@ gi.require_version("Adw", "1")
 from gi.repository import Gtk, Adw, Pango  # noqa: E402
 
 from .client import parse_published_ports  # noqa: E402
-from .dialogs import ContainerDetailsDialog, CreateContainerDialog  # noqa: E402
+from .dialogs import (
+    ContainerDetailsDialog, CreateContainerDialog, prompt_shell_options,
+)  # noqa: E402
 from . import widgets as w  # noqa: E402
 
 
@@ -28,10 +30,10 @@ class ContainersTabMixin:
         # Label + switch pair, same pattern as the Logs tab's Timestamps switch.
         toolbar.append(Gtk.Label(label="Show stopped"))
         self._show_all_check = Gtk.Switch()
-        self._show_all_check.set_active(True)
+        self._show_all_check.set_active(
+            bool(self.ctx.settings.get("show_all_containers", True)))
         self._show_all_check.set_valign(Gtk.Align.CENTER)
-        self._show_all_check.connect("notify::active",
-                                     lambda *_a: self._refresh_containers())
+        self._show_all_check.connect("notify::active", self._on_show_all_toggled)
         toolbar.append(self._show_all_check)
         create = Gtk.Button()
         create.set_child(Adw.ButtonContent(icon_name="list-add-symbolic",
@@ -46,7 +48,8 @@ class ContainersTabMixin:
         scroller.set_vexpand(True)
         self._containers_list = Gtk.ListBox()
         self._containers_list.add_css_class("boxed-list")
-        self._containers_list.set_selection_mode(Gtk.SelectionMode.NONE)
+        self._containers_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        self._containers_list.connect("row-selected", self._on_container_row_selected)
         scroller.set_child(self._containers_list)
         self._containers_placeholder = self._make_loading_placeholder("Loading containers…")
         box.append(w.wrap_with_overlay(scroller, self._containers_placeholder))
@@ -67,6 +70,26 @@ class ContainersTabMixin:
         self._run_async(lambda: client.ps(all=show_all),
                         lambda r, e, g=gen: self._on_containers(r, e, g))
 
+    def _on_show_all_toggled(self, *_a) -> None:
+        self.ctx.settings.set(
+            "show_all_containers", bool(self._show_all_check.get_active()))
+        self._refresh_containers()
+
+    def _on_container_row_selected(self, _lb: Gtk.ListBox,
+                                   row: Optional[Gtk.ListBoxRow]) -> None:
+        if row is None:
+            return
+        box = row.get_child()
+        cid = getattr(box, "_docker_cid", None)
+        if not cid:
+            return
+        name = None
+        for c in self._containers:
+            if self._container_cid(c) == cid:
+                name = w.field(c, "Names", "Name", default=cid[:12])
+                break
+        self._set_selected_container(cid, name or cid[:12], source="containers")
+
     def _on_containers(self, rows: Optional[List[dict]], err: Optional[Exception],
                        gen: int = 0) -> None:
         if gen != self._load_gen:
@@ -83,6 +106,35 @@ class ContainersTabMixin:
         self._containers = rows or []
         self._sync_containers_list()
         self._refresh_logs_targets()
+        self._restore_container_selection()
+
+    def _restore_container_selection(self) -> None:
+        """Re-select the shared selection after a list sync, if still present."""
+        cid = getattr(self, "_selected_cid", None)
+        if not cid:
+            if self._containers:
+                first = self._containers[0]
+                self._set_selected_container(
+                    self._container_cid(first),
+                    w.field(first, "Names", "Name", default="container"),
+                    source="auto")
+            return
+        child = self._containers_list.get_first_child()
+        while child is not None:
+            box = child.get_child()
+            if getattr(box, "_docker_cid", None) == cid:
+                self._containers_list.select_row(child)
+                return
+            child = child.get_next_sibling()
+        # Selected container vanished — clear or pick first.
+        if self._containers:
+            first = self._containers[0]
+            self._set_selected_container(
+                self._container_cid(first),
+                w.field(first, "Names", "Name", default="container"),
+                source="auto")
+        else:
+            self._set_selected_container(None, None, source="auto")
 
     def _on_container_search(self, entry: Gtk.SearchEntry) -> None:
         self._container_query = entry.get_text().strip().lower()
@@ -316,23 +368,25 @@ class ContainersTabMixin:
         self._fill_container_row(row, c)
         return w.listbox_wrap(row)
 
-    def _show_details(self, cid: str, name: str) -> None:
+    def _show_details(self, cid: str, name: str, *, page: str = "overview") -> None:
         client = self._client()
         if client is None:
             return
         self._run_async(
             lambda: client.inspect(cid),
-            lambda data, err: self._on_details(name, data, err),
+            lambda data, err: self._on_details(name, data, err, page=page),
         )
 
-    def _on_details(self, name: str, data: Optional[dict], err: Optional[Exception]) -> None:
+    def _on_details(self, name: str, data: Optional[dict], err: Optional[Exception],
+                    *, page: str = "overview") -> None:
         if err is not None:
             self._toast(f"Inspect {name} failed: {err}")
             return
         if not data:
             self._toast(f"No details for {name}")
             return
-        ContainerDetailsDialog(self._window(), name, data).present()
+        ContainerDetailsDialog(
+            self._window(), name, data, initial_page=page).present()
 
     # --- container creation -------------------------------------------
     def _create_container(self) -> None:
@@ -461,11 +515,17 @@ class ContainersTabMixin:
         nick = self._current_nickname()
         if client is None or not nick:
             return
-        ok = self._open_command_terminal(
-            nick, client.exec_shell_command(cid), title=f"sh: {name}"
-        )
-        if not ok:
-            self._toast("Could not open shell")
+
+        def do_open(user: Optional[str], workdir: Optional[str]) -> None:
+            ok = self._open_command_terminal(
+                nick,
+                client.exec_shell_command(cid, user=user, workdir=workdir),
+                title=f"sh: {name}",
+            )
+            if not ok:
+                self._toast("Could not open shell")
+
+        prompt_shell_options(self._window(), name, do_open)
 
     def _follow_logs(self, cid: str, name: str) -> None:
         client = self._client()

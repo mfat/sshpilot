@@ -243,6 +243,12 @@ class DockerClient:
     def stats(self) -> List[dict]:
         return self._exec_json("stats --no-stream --format '{{json .}}'")
 
+    def stats_one(self, container_id: str) -> dict:
+        """One-shot stats for a single container (empty dict on failure/empty)."""
+        rows = self._exec_json(
+            f"stats --no-stream --format '{{{{json .}}}}' {shlex.quote(container_id)}")
+        return rows[0] if rows else {}
+
     def images(self) -> List[dict]:
         return self._exec_json("images --format '{{json .}}'")
 
@@ -314,6 +320,18 @@ class DockerClient:
         parts.append(shlex.quote(container_id))
         return " ".join(parts)
 
+    def logs_follow_stream_command(self, container_id: str, *, tail: int = 100,
+                                   timestamps: bool = False) -> str:
+        """Same as :meth:`logs_follow_command` but with the captured runtime
+        (``sudo -S`` / ``sudo -n``) so a non-PTY stream can feed a password."""
+        parts = [self._captured_runtime(), "logs", "-f"]
+        if timestamps:
+            parts.append("-t")
+        if tail:
+            parts += ["--tail", str(int(tail))]
+        parts.append(shlex.quote(container_id))
+        return " ".join(parts)
+
     def exec_shell_command(self, container_id: str, *, user: Optional[str] = None,
                            workdir: Optional[str] = None) -> str:
         """`exec -it` into the container, preferring bash with an sh fallback.
@@ -334,6 +352,16 @@ class DockerClient:
 
     def stats_stream_command(self) -> str:
         return f"{self._interactive_runtime()} stats"
+
+    def events_command(self) -> str:
+        """Stream container lifecycle events as NDJSON (for in-page updates).
+
+        Uses the captured runtime so a non-PTY stream can feed ``sudo -S``.
+        """
+        return (
+            f"{self._captured_runtime()} events "
+            "--filter type=container --format '{{json .}}'"
+        )
 
     # -- details / inspect -------------------------------------------
     def inspect(self, container_id: str) -> dict:

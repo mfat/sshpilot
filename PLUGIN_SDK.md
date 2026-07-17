@@ -31,7 +31,9 @@ change without notice.
 | Open a terminal for a connection | `ctx.open_connection(nickname)` |
 | Generate an SSH key | `ctx.generate_key(name, ...)` |
 | Run a one-shot remote command (native SSH/auth path) | `ctx.run_command(nickname, command)` *(1.5)* |
+| Stream a remote command line-by-line (native SSH/auth path) | `ctx.run_command_stream(nickname, command, on_line=…)` *(1.13)* |
 | Run a one-shot local command (Flatpak-host aware) | `ctx.run_local_command(command)` *(1.11)* |
+| Stream a local command line-by-line | `ctx.run_local_command_stream(command, on_line=…)` *(1.13)* |
 | Read resolved SSH config (`ssh -G`) | `ctx.get_effective_ssh_config(nickname)` *(1.5)* |
 | List/delete keys, deploy a key to a host | `ctx.list_keys()` / `ctx.delete_key(path)` / `ctx.copy_key_to_host(nickname, pub)` *(1.5)* |
 | Inspect/drive open terminals | `ctx.list_sessions()` / `ctx.read_terminal(id)` / `ctx.send_terminal(id, text)` *(1.5)* |
@@ -152,6 +154,7 @@ Passed to `activate`. One context per plugin; `ctx.plugin_id` is your manifest i
 
 ### Remote commands, config & keys *(API ≥ 1.5)*
 - `run_command(nickname: str, command: str, *, timeout=30, input=None) -> CommandResult` — run a one-shot command on a saved host and capture `exit_code`/`stdout`/`stderr`. Reuses the app's SSH/auth path (`~/.ssh/config`, ProxyJump, stored password via sshpass / passphrase via askpass). **Blocking** — call from a worker thread. `exit_code == -1` means it couldn't be launched. Optional `input` is written to the remote command's stdin (e.g. a password for `sudo -S`); the SSH transport itself is non-interactive (no PTY).
+- `run_command_stream(nickname: str, command: str, *, on_line, on_done=None, input=None) -> StreamHandle` *(API ≥ 1.13)* — start a long-lived remote command over the same native SSH/auth path and deliver stdout/stderr **lines** to `on_line` (marshalled onto the UI thread). No timeout — call `handle.stop()` when finished (page unmap, selection change, …). `on_done(exit_code)` runs when the process exits. Use this for in-page streaming such as `docker logs -f` or `docker events` when you need lines in a widget rather than a VTE tab.
 - `get_effective_ssh_config(nickname: str) -> dict` — resolved `ssh -G` options for the host (keys lowercased; multi-value options are lists).
 - `list_keys() -> list[dict]` — `{"private_path", "public_path"}` for keys the app manages. *(after `app_started`)*
 - `delete_key(private_path: str) -> bool` — delete a key pair; refuses paths outside the app's key dir. *(after `app_started`)*
@@ -160,10 +163,12 @@ Passed to `activate`. One context per plugin; `ctx.plugin_id` is your manifest i
 
 ### Local commands *(API ≥ 1.11)*
 - `run_local_command(command: str, *, timeout=30, input=None) -> CommandResult` — run a local shell command and capture its output. **Blocking** — call from a worker thread. In Flatpak the command runs on the host via `flatpak-spawn --host`.
+- `run_local_command_stream(command: str, *, on_line, on_done=None, input=None) -> StreamHandle` *(API ≥ 1.13)* — long-lived local stream (Flatpak-host aware); same `on_line` / `on_done` / `stop()` semantics as `run_command_stream`.
 - `open_local_command_terminal(command: str, *, title=None, pty_prompt=None, pty_response=None) -> bool` — open a local terminal and run a streamed/interactive command. It uses the same host-aware local terminal as the rest of sshPilot. *(after `app_started`)*
 
 Use these only for genuinely local work. Remote commands must use `run_command` /
-`open_command_terminal` so they retain sshPilot's unified SSH and authentication path.
+`run_command_stream` / `open_command_terminal` so they retain sshPilot's unified
+SSH and authentication path.
 
 ### Connection multiplexing — faster polling *(API ≥ 1.9)*
 If your plugin polls a host (repeated `run_command` calls — a dashboard, a stats
@@ -396,7 +401,7 @@ must be made on the UI thread.
 
 ## 9. Versioning
 
-- `API_VERSION = (major, minor)`, currently `(1, 11)`. Your manifest declares the
+- `API_VERSION = (major, minor)`, currently `(1, 13)`. Your manifest declares the
   **major** you target; the loader skips plugins whose major doesn't match.
 - Minor bumps are additive (new methods/events); your plugin keeps working. Note
   the loader checks only the **major**, so a plugin using a newer minor's API on
@@ -413,7 +418,10 @@ must be made on the UI thread.
   `1.8` `ui.register_page(add_menu_item=…, on_activate=…)`; `1.9`
   `acquire_multiplex`/`release_multiplex` (ControlMaster connection reuse for
   polling plugins — `run_command` reuses the warm master transparently); `1.10`
-  `identities`; `1.11` `run_local_command`/`open_local_command_terminal`.
+  `identities`; `1.11` `run_local_command`/`open_local_command_terminal`;
+  `1.12` `ensure_local_forward` / `ui.open_web_tab`; `1.13`
+  `run_command_stream` / `run_local_command_stream` (line-oriented streams +
+  `StreamHandle.stop()`).
 
 ---
 

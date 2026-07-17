@@ -10,8 +10,15 @@ import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from sshpilot.plugins.api import API_VERSION, CommandResult, PluginContext
+from sshpilot.plugins.api import (
+    API_VERSION, CommandResult, PluginContext, StreamHandle,
+)
 from sshpilot.plugins.registry import ProtocolRegistry
+
+
+def test_api_version_is_at_least_1_13():
+    # 1.13 added line-oriented command streaming APIs.
+    assert API_VERSION >= (1, 13)
 
 
 def test_api_version_is_at_least_1_11():
@@ -223,6 +230,133 @@ def test_open_local_command_terminal_delegates_to_host():
         "docker logs -f web",
         {"title": "Logs", "pty_prompt": "Password:", "pty_response": "secret"},
     )]
+
+
+# --- streaming commands (API >= 1.13) --------------------------------------
+
+def test_run_command_stream_unknown_connection_calls_on_done():
+    done = []
+    handle = _ctx().run_command_stream(
+        "nope", "echo hi", on_line=lambda _l: None, on_done=done.append)
+    assert isinstance(handle, StreamHandle)
+    assert not handle.running
+    assert done == [-1]
+
+
+def test_run_command_stream_delivers_lines_and_stop(monkeypatch):
+    lines = []
+    done = []
+
+    class _Prepared:
+        command = ["ssh", "host", "docker logs -f c"]
+        env = {}
+        use_sshpass = False
+        password = None
+
+    monkeypatch.setattr(
+        "sshpilot.ssh_connection_builder.build_ssh_connection",
+        lambda ctx: _Prepared())
+
+    class _FakeStdout:
+        def __init__(self):
+            self._lines = iter(["one\n", "two\n"])
+            self.closed = False
+
+        def __iter__(self):
+            return self
+
+        def __next__(self):
+            return next(self._lines)
+
+        def close(self):
+            self.closed = True
+
+    class _FakeProc:
+        def __init__(self, *a, **k):
+            self.stdout = _FakeStdout()
+            self.stdin = None
+            self._code = None
+
+        def poll(self):
+            return self._code
+
+        def terminate(self):
+            self._code = -15
+
+        def kill(self):
+            self._code = -9
+
+        def wait(self, timeout=None):
+            if self._code is None:
+                self._code = 0
+            return self._code
+
+    monkeypatch.setattr(subprocess, "Popen", _FakeProc)
+
+    handle = _ctx(_Manager([_Conn("web")])).run_command_stream(
+        "web", "docker logs -f c",
+        on_line=lines.append, on_done=done.append,
+    )
+    # Reader is a daemon thread — wait briefly for lines.
+    import time
+    for _ in range(50):
+        if len(lines) >= 2 and done:
+            break
+        time.sleep(0.02)
+    assert lines == ["one", "two"]
+    assert done and done[0] == 0
+    handle.stop()
+    assert not handle.running
+
+
+def test_run_local_command_stream_uses_local_shell(monkeypatch):
+    seen = {}
+    lines = []
+    done = []
+
+    monkeypatch.setattr("sshpilot.platform_utils.is_flatpak", lambda: False)
+
+    class _FakeStdout:
+        def __iter__(self):
+            yield "local-line\n"
+
+        def close(self):
+            pass
+
+    class _FakeProc:
+        def __init__(self, argv, **kwargs):
+            seen["argv"] = argv
+            seen["stdin"] = kwargs.get("stdin")
+            self.stdout = _FakeStdout()
+            self.stdin = None
+            self._code = None
+
+        def poll(self):
+            return self._code
+
+        def terminate(self):
+            self._code = -15
+
+        def kill(self):
+            self._code = -9
+
+        def wait(self, timeout=None):
+            self._code = 0
+            return 0
+
+    monkeypatch.setattr(subprocess, "Popen", _FakeProc)
+
+    handle = _ctx().run_local_command_stream(
+        "printf 'local-line\\n'", on_line=lines.append, on_done=done.append)
+    import time
+    for _ in range(50):
+        if lines and done:
+            break
+        time.sleep(0.02)
+    assert seen["argv"][-2:] == ["-lc", "printf 'local-line\\n'"]
+    assert lines == ["local-line"]
+    assert done == [0]
+    handle.stop()
 
 
 # --- files facade ---------------------------------------------------------

@@ -61,7 +61,11 @@ logger = logging.getLogger(__name__)
 #      to the host over the single SSH/auth path (ControlMaster -O forward,
 #      background ssh -N fallback); ctx.ui.open_web_tab(url, title=) — show a
 #      URL in an embedded WebKit tab (system-browser fallback).
-API_VERSION: Tuple[int, int] = (1, 12)
+# 1.13: ctx.run_command_stream / ctx.run_local_command_stream — long-lived
+#      line-oriented streams (e.g. `docker logs -f`, `docker events`) over the
+#      same native SSH/local paths as the one-shot command APIs; returns a
+#      StreamHandle the caller stops when done.
+API_VERSION: Tuple[int, int] = (1, 13)
 
 # Stable event names and event payload types live in host.py; re-exported here
 # so plugins import everything from sshpilot.plugins.api. (host.py imports
@@ -342,6 +346,64 @@ class CommandResult:
     @property
     def ok(self) -> bool:
         return self.exit_code == 0
+
+
+class StreamHandle:
+    """Handle for a long-lived command started by ``run_command_stream`` /
+    ``run_local_command_stream``. Call :meth:`stop` to terminate the process
+    and join the reader thread. Safe to call ``stop`` more than once."""
+
+    def __init__(self) -> None:
+        self._proc: Any = None
+        self._thread: Optional[threading.Thread] = None
+        self._cleanup: Optional[Callable[[], None]] = None
+        self._stopped = False
+        self._lock = threading.Lock()
+
+    def _attach(self, proc: Any, thread: threading.Thread,
+                cleanup: Optional[Callable[[], None]] = None) -> None:
+        self._proc = proc
+        self._thread = thread
+        self._cleanup = cleanup
+
+    @property
+    def running(self) -> bool:
+        with self._lock:
+            if self._stopped:
+                return False
+            proc = self._proc
+        return proc is not None and proc.poll() is None
+
+    def stop(self) -> None:
+        """Terminate the stream process (if still running) and wait for the
+        reader thread. Idempotent."""
+        with self._lock:
+            if self._stopped:
+                return
+            self._stopped = True
+            proc = self._proc
+            thread = self._thread
+            cleanup = self._cleanup
+            self._cleanup = None
+        if proc is not None and proc.poll() is None:
+            try:
+                proc.terminate()
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                proc.wait(timeout=2)
+            except Exception:  # noqa: BLE001
+                try:
+                    proc.kill()
+                except Exception:  # noqa: BLE001
+                    pass
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=3)
+        if cleanup is not None:
+            try:
+                cleanup()
+            except Exception:  # noqa: BLE001
+                pass
 
 
 @dataclass
@@ -823,6 +885,173 @@ class PluginContext:
         except Exception as exc:  # noqa: BLE001 — surface as a failed result
             logger.debug("run_local_command failed: %s", exc, exc_info=True)
             return CommandResult(-1, "", str(exc))
+
+    # --- streaming commands (API >= 1.13) --------------------------------
+    def run_command_stream(
+            self, nickname: str, command: str, *,
+            on_line: Callable[[str], None],
+            on_done: Optional[Callable[[int], None]] = None,
+            input: Optional[str] = None) -> StreamHandle:
+        """Start a long-lived remote command and deliver stdout/stderr lines.
+
+        Reuses the same native SSH/auth path as :meth:`run_command` (including
+        ControlMaster when acquired). There is no timeout — the caller must
+        :meth:`StreamHandle.stop` when finished (e.g. page unmap, selection
+        change). ``on_line`` / ``on_done`` are invoked on the UI thread via
+        :meth:`run_on_ui_thread`.
+
+        If the command cannot be started, ``on_done(-1)`` is scheduled and the
+        returned handle is already stopped.
+        """
+        handle = StreamHandle()
+        import os
+        import subprocess
+        from ..ssh_connection_builder import (
+            ConnectionContext, build_ssh_connection)
+        from .. import ssh_multiplex
+        conn = self.connection_manager.find_connection_by_nickname(nickname)
+        if conn is None:
+            logger.debug("run_command_stream(%r): no such connection", nickname)
+            self._finish_stream_early(handle, on_done, -1)
+            return handle
+        mux = ssh_multiplex.is_active(nickname)
+        logger.debug(
+            "run_command_stream(%r) mux=%s stdin=%s: %s",
+            nickname, mux, "yes" if input else "no", command,
+        )
+        cleanup = None
+        try:
+            extra_args = (ssh_multiplex.controlmaster_args() if mux else None)
+            ctx = ConnectionContext(
+                connection=conn, connection_manager=self.connection_manager,
+                config=self.config, command_type='ssh',
+                remote_command=command, native_mode=True, extra_args=extra_args)
+            prepared = build_ssh_connection(ctx)
+            argv = list(prepared.command)
+            env = {**os.environ, **(prepared.env or {})}
+            if prepared.use_sshpass and prepared.password:
+                from ..ssh_password_exec import wrap_argv_with_sshpass
+                argv, cleanup = wrap_argv_with_sshpass(
+                    argv, prepared.password, env=env)
+            self._spawn_stream(
+                handle, argv, env, on_line=on_line, on_done=on_done,
+                input_text=input, cleanup=cleanup)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("run_command_stream(%r) failed: %s", nickname, exc,
+                         exc_info=True)
+            if cleanup is not None:
+                try:
+                    cleanup()
+                except Exception:  # noqa: BLE001
+                    pass
+            self._finish_stream_early(handle, on_done, -1)
+        return handle
+
+    def run_local_command_stream(
+            self, command: str, *,
+            on_line: Callable[[str], None],
+            on_done: Optional[Callable[[int], None]] = None,
+            input: Optional[str] = None) -> StreamHandle:
+        """Start a long-lived local shell command and deliver output lines.
+
+        Flatpak-host aware (same as :meth:`run_local_command`). No timeout —
+        call :meth:`StreamHandle.stop` when finished. Callbacks run on the UI
+        thread.
+        """
+        handle = StreamHandle()
+        import os
+        import shutil
+        from ..platform_utils import is_flatpak
+
+        if not command or not str(command).strip():
+            logger.debug("run_local_command_stream: empty command")
+            self._finish_stream_early(handle, on_done, -1)
+            return handle
+        shell = shutil.which("sh") or "/bin/sh"
+        argv = [shell, "-lc", str(command)]
+        if is_flatpak():
+            spawn = shutil.which("flatpak-spawn")
+            if spawn is None:
+                self._finish_stream_early(handle, on_done, -1)
+                return handle
+            argv = [spawn, "--host", "sh", "-lc", str(command)]
+        logger.debug(
+            "run_local_command_stream stdin=%s: %s",
+            "yes" if input else "no", command,
+        )
+        try:
+            self._spawn_stream(
+                handle, argv, os.environ.copy(), on_line=on_line,
+                on_done=on_done, input_text=input)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("run_local_command_stream failed: %s", exc,
+                         exc_info=True)
+            self._finish_stream_early(handle, on_done, -1)
+        return handle
+
+    def _finish_stream_early(
+            self, handle: StreamHandle,
+            on_done: Optional[Callable[[int], None]],
+            exit_code: int) -> None:
+        handle.stop()  # mark stopped before any reader starts
+        if on_done is not None:
+            self.run_on_ui_thread(on_done, exit_code)
+
+    def _spawn_stream(
+            self, handle: StreamHandle, argv: List[str], env: dict, *,
+            on_line: Callable[[str], None],
+            on_done: Optional[Callable[[int], None]],
+            input_text: Optional[str] = None,
+            cleanup: Optional[Callable[[], None]] = None) -> None:
+        import subprocess
+        proc = subprocess.Popen(
+            argv, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            stdin=subprocess.PIPE if input_text is not None else subprocess.DEVNULL,
+            text=True, bufsize=1,
+        )
+        if input_text is not None and proc.stdin is not None:
+            try:
+                proc.stdin.write(input_text)
+                proc.stdin.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+        def reader() -> None:
+            exit_code = -1
+            try:
+                assert proc.stdout is not None
+                for raw in proc.stdout:
+                    if handle._stopped:  # noqa: SLF001 — same-module flag
+                        break
+                    line = raw.rstrip("\n\r")
+                    self.run_on_ui_thread(on_line, line)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("stream reader error: %s", exc, exc_info=True)
+            finally:
+                try:
+                    if proc.stdout is not None:
+                        proc.stdout.close()
+                except Exception:  # noqa: BLE001
+                    pass
+                code = proc.poll()
+                if code is None:
+                    try:
+                        proc.wait(timeout=1)
+                    except Exception:  # noqa: BLE001
+                        pass
+                    code = proc.poll()
+                exit_code = code if code is not None else -1
+                if cleanup is not None:
+                    try:
+                        cleanup()
+                    except Exception:  # noqa: BLE001
+                        pass
+                if on_done is not None:
+                    self.run_on_ui_thread(on_done, exit_code)
+
+        thread = threading.Thread(target=reader, daemon=True)
+        handle._attach(proc, thread, cleanup=None)  # cleanup runs in reader
+        thread.start()
 
     def acquire_multiplex(self, nickname: str) -> None:
         """Keep a shared SSH master (ControlMaster) warm for ``nickname`` while a
