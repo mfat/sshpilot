@@ -163,7 +163,8 @@ class LogsTabMixin:
             self._logs_raw = ""
             self._logs_buffer.set_text(f"Error: {err}", -1)
             return
-        self._logs_raw = text or ""
+        # Container apps often emit ANSI colors; TextView shows them as garbage.
+        self._logs_raw = w.strip_ansi(text or "")
         self._apply_log_filter()
 
     # Substrings that mark a "problem" line for the Errors-only filter.

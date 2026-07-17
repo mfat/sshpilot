@@ -1062,6 +1062,34 @@ def test_check_sudo():
         rc_denied, "web", "docker", "bad") == (False, "not_sudoers")
 
 
+# --- ANSI stripping (Logs tab TextView cannot render escapes) --------------
+
+def test_strip_ansi_removes_color_codes():
+    from sshpilot.plugins.builtin.docker_manager import widgets as w
+
+    raw = (
+        "\x1b[36mwebpack_version=\x1b[0m5.105.0\n"
+        "\x1b[90m2026/07/17 02:13PM\x1b[0m \x1b[32mINF\x1b[0m "
+        "\x1b[1mgithub.com/portainer/portainer/api/http/server.go:371\x1b[0m"
+        "\x1b[36m >\x1b[0m starting HTTPS server | "
+        "\x1b[36mbind_address=\x1b[0m:9443"
+    )
+    clean = w.strip_ansi(raw)
+    assert "\x1b" not in clean
+    assert "webpack_version=5.105.0" in clean
+    assert "starting HTTPS server" in clean
+    assert "bind_address=:9443" in clean
+    assert "INF" in clean
+
+
+def test_strip_ansi_empty_and_plain():
+    from sshpilot.plugins.builtin.docker_manager import widgets as w
+
+    assert w.strip_ansi("") == ""
+    assert w.strip_ansi(None) == ""  # type: ignore[arg-type]
+    assert w.strip_ansi("plain log line") == "plain log line"
+
+
 # --- failure placeholder / toast truncation --------------------------------
 
 def test_truncate_message_keeps_short_text():
