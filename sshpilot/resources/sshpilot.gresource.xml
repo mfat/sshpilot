@@ -43,6 +43,8 @@
     <file alias="go-down-symbolic.svg">icons/scalable/actions/go-down-symbolic.svg</file>
     <file alias="go-home-symbolic.svg">icons/scalable/actions/go-home-symbolic.svg</file>
     <file alias="go-up-symbolic.svg">icons/scalable/actions/go-up-symbolic.svg</file>
+    <file alias="arrow1-up-symbolic.svg">icons/scalable/actions/arrow1-up-symbolic.svg</file>
+    <file alias="arrow1-down-symbolic.svg">icons/scalable/actions/arrow1-down-symbolic.svg</file>
     <file alias="bottom-large-symbolic.svg">icons/scalable/actions/bottom-large-symbolic.svg</file>
     <file alias="help-about-symbolic.svg">icons/scalable/actions/help-about-symbolic.svg</file>
     <file alias="help-browser-symbolic.svg">icons/scalable/actions/help-browser-symbolic.svg</file>

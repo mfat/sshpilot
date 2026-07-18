@@ -88,27 +88,93 @@ class ScpWindowController:
             if not connection:
                 return
 
-            chooser = Adw.MessageDialog(
-                transient_for=self.window,
-                modal=True,
-                heading=_('Transfer files with scp'),
-                body=_('Choose whether you want to upload local files to the server or download remote paths to your computer.')
-            )
-            chooser.add_response('cancel', _('Cancel'))
-            chooser.add_response('upload', _('Upload to server…'))
-            chooser.add_response('download', _('Download from server…'))
-            chooser.set_default_response('upload')
-            chooser.set_close_response('cancel')
+            from sshpilot import icon_utils
 
-            def _on_choice(dlg, response):
-                dlg.close()
-                if response == 'upload':
+            alias = _get_connection_alias(connection)
+            host = _get_connection_host(connection)
+            display = (
+                getattr(connection, 'nickname', None)
+                or alias
+                or host
+                or _('server')
+            )
+
+            heading = _('Transfer files')
+            body = _('Copy files to or from {name}').format(name=display)
+            if hasattr(Adw, 'AlertDialog'):
+                chooser = Adw.AlertDialog(heading=heading, body=body)
+                present = lambda: chooser.present(self.window)
+            else:
+                chooser = Adw.MessageDialog(
+                    transient_for=self.window,
+                    modal=True,
+                    heading=heading,
+                    body=body,
+                )
+                present = chooser.present
+
+            def _choose(action: str) -> None:
+                chooser.close()
+                if action == 'upload':
                     self._start_scp_upload_flow(connection)
-                elif response == 'download':
+                elif action == 'download':
                     self._prompt_scp_download(connection)
 
-            chooser.connect('response', _on_choice)
-            chooser.present()
+            def _choice_card(title: str, tooltip: str, icon_name: str, action: str):
+                content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+                content.set_halign(Gtk.Align.CENTER)
+                content.set_valign(Gtk.Align.CENTER)
+                content.set_hexpand(True)
+                content.set_vexpand(True)
+                content.set_margin_top(18)
+                content.set_margin_bottom(18)
+                content.set_margin_start(12)
+                content.set_margin_end(12)
+
+                icon = icon_utils.new_image_from_icon_name(icon_name, size=32)
+                icon.set_halign(Gtk.Align.CENTER)
+                content.append(icon)
+
+                label = Gtk.Label(label=title)
+                label.add_css_class('heading')
+                label.set_halign(Gtk.Align.CENTER)
+                content.append(label)
+
+                button = Gtk.Button()
+                button.set_child(content)
+                button.add_css_class('card')
+                button.set_hexpand(True)
+                button.set_vexpand(True)
+                # Same footprint for both cards regardless of label length.
+                button.set_size_request(148, 120)
+                button.set_tooltip_text(tooltip)
+                button.connect('clicked', lambda *_: _choose(action))
+                return button
+
+            cards = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            cards.set_halign(Gtk.Align.CENTER)
+            cards.set_homogeneous(True)
+            cards.append(
+                _choice_card(
+                    _('Upload'),
+                    _('Choose local files and send them with scp'),
+                    'arrow1-up-symbolic',
+                    'upload',
+                )
+            )
+            cards.append(
+                _choice_card(
+                    _('Download'),
+                    _('Browse remote paths and save them locally'),
+                    'arrow1-down-symbolic',
+                    'download',
+                )
+            )
+
+            chooser.set_extra_child(cards)
+            chooser.add_response('cancel', _('Cancel'))
+            chooser.set_close_response('cancel')
+            present()
         except Exception as e:
             logger.error(f'SCP transfer chooser failed: {e}')
 
