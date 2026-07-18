@@ -417,6 +417,10 @@ def test_save_gate_detects_pending_passphrase_when_locked(monkeypatch):
     dialog.key_editor = types.SimpleNamespace(has_pending_passphrases=lambda: False)
     assert dialog._needs_secret_unlock_before_save({'password': ''}) is False
 
+    # Clearing a stored password is a vault delete -> must unlock first.
+    assert dialog._needs_secret_unlock_before_save(
+        {'password': '', 'password_changed': True}) is True
+
     # Unlocked -> never needs a prompt.
     monkeypatch.setattr(sm, 'selected_needs_unlock', lambda: False)
     dialog.key_editor = types.SimpleNamespace(has_pending_passphrases=lambda: True)

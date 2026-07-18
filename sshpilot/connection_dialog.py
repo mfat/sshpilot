@@ -1313,12 +1313,15 @@ class FileListEditor(Adw.PreferencesGroup):
         return out
 
     def has_pending_passphrases(self) -> bool:
-        """True if any key row holds a non-empty passphrase to store on save."""
+        """True if any key row's passphrase changed — a store or a clear — pending save."""
         if not self._with_passphrase:
             return False
-        for entry, _p, _n in self._passphrase_rows():
+        for row in self._rows:
+            entry = getattr(row, '_pass_entry', None)
+            if entry is None:
+                continue
             try:
-                if entry.get_text():
+                if entry.get_text() != (getattr(row, '_pass_initial', '') or ''):
                     return True
             except Exception:
                 pass
@@ -3448,6 +3451,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             self._emit_connection_saved(connection_data)
             return
         if manager is None:
+            self._set_secret_save_busy(False)
             self.show_error(_("Secure storage is unavailable."))
             return
 
@@ -3557,6 +3561,10 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 return False
             pw = connection_data.get('password')
             if pw and str(pw).strip():
+                return True
+            # Clearing a stored password is a vault delete, which a locked
+            # session backend silently skips — unlock for it too.
+            if connection_data.get('password_changed'):
                 return True
             editor = getattr(self, 'key_editor', None)
             return bool(editor is not None and editor.has_pending_passphrases())
