@@ -207,7 +207,11 @@ def test_in_memory_password_used_when_password_auth_selected():
     assert result.use_sshpass is False
     assert result.use_askpass is True
     assert result.password == 'inline-secret'
-    assert result.env.get('SSHPILOT_SESSION_PASSWORD_FILE')
+    # Staged for askpass: IPC id when the prompt server is up, else a temp file.
+    assert (
+        result.env.get('SSHPILOT_SESSION_PASSWORD_ID')
+        or result.env.get('SSHPILOT_SESSION_PASSWORD_FILE')
+    )
 
 
 # --- resolve_native_auth modes ---

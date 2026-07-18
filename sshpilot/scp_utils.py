@@ -182,11 +182,19 @@ def _apply_native_auth_env(env: Dict[str, str], auth: Any) -> None:
     """Merge the shared native auth env into ``env``, honoring deletions.
 
     dict.update() cannot remove keys that are absent from the source, so we
-    explicitly drop askpass/agent vars that the auth resolver cleared (e.g.
-    SSH_ASKPASS in password mode).
+    explicitly drop askpass/agent/session-password vars that the auth resolver
+    cleared (e.g. SSH_ASKPASS in password mode, a consumed session id).
     """
     env.update(auth.env)
-    for key in ('SSH_ASKPASS', 'SSH_ASKPASS_REQUIRE', 'SSH_AUTH_SOCK'):
+    for key in (
+        'SSH_ASKPASS',
+        'SSH_ASKPASS_REQUIRE',
+        'SSH_AUTH_SOCK',
+        'SSHPILOT_SESSION_PASSWORD_ID',
+        'SSHPILOT_SESSION_PASSWORD_FILE',
+        'SSHPILOT_PASSWORD_USER',
+        'SSHPILOT_PASSWORD_HOSTS',
+    ):
         if key not in auth.env:
             env.pop(key, None)
 

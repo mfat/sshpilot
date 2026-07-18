@@ -78,7 +78,7 @@ does not fall back to the TTY when askpass declines). `use_sshpass` is always
 Modes:
 - **Password method** (`auth_method == 1`) with a stored password → askpass with
   password host/user context (`SSHPILOT_PASSWORD_*`) and optional one-shot
-  session file for in-memory secrets.
+  in-memory session secret (IPC id, or a runtime-dir file when IPC is down).
 - **Key-based** (`auth_method == 0`, auto or specific key — askpass enabled):
   - saved key passphrase → askpass autofills passphrase prompts; agent left intact.
   - saved password (and combined auth when the key is loaded into the agent) →
@@ -200,7 +200,7 @@ stays minimal and lets the spawned `ssh` resolve the config itself at run time.
 See also **askpass mechanics (passphrases and login passwords)** below.
 - `get_ssh_env_with_askpass(require, …)` (`askpass_utils.py`) returns an env with
   `SSH_ASKPASS=<our helper>`, `SSH_ASKPASS_REQUIRE=<require>`, optional
-  `SSHPILOT_PASSWORD_*` / session password file, a `DISPLAY` fallback, and the
+  `SSHPILOT_PASSWORD_*` / session-password id (or file fallback), a `DISPLAY` fallback, and the
   `GNOME_KEYRING_*` control vars cleared (so gnome-keyring doesn't intercept)
   while keeping D-Bus available for libsecret.
 - `require` is OpenSSH's `SSH_ASKPASS_REQUIRE`: `prefer` (default — use askpass
@@ -280,8 +280,9 @@ The native path uses **one** askpass helper for both secrets:
 - **Key passphrase** prompts → lookup via `lookup_passphrase` / secret backend;
   optional GTK / main-app IPC when nothing is stored and the builtin prompt is on.
 - **Login password** prompts → lookup via `SSHPILOT_PASSWORD_USER` +
-  `SSHPILOT_PASSWORD_HOSTS` (and optional `SSHPILOT_SESSION_PASSWORD_FILE` for
-  in-memory secrets just entered in a dialog).
+  `SSHPILOT_PASSWORD_HOSTS` (and optional `SSHPILOT_SESSION_PASSWORD_ID` via
+  askpass IPC for just-typed in-memory secrets — no disk; file fallback only
+  when the prompt server is not advertised).
 - **Interactive / MFA** prompts (OTP, PIN, yes/no) → ask the user via the
   main-app dialog (or a standalone askpass window). OpenSSH with
   `SSH_ASKPASS_REQUIRE=prefer` does **not** fall back to the TTY when askpass

@@ -45,21 +45,71 @@ def test_classify_prompt_fido_presence_and_pin():
 
 
 def test_askpass_answers_password_from_session_file(monkeypatch, tmp_path):
-    path = stage_session_password("s3cret")
+    from sshpilot.askpass_utils import _stage_session_password_file
+
+    path = _stage_session_password_file("s3cret")
     assert path and os.path.isfile(path)
     monkeypatch.setenv("SSHPILOT_SESSION_PASSWORD_FILE", path)
     monkeypatch.setenv("SSHPILOT_PASSWORD_USER", "alice")
     monkeypatch.setenv("SSHPILOT_PASSWORD_HOSTS", "example.com")
     monkeypatch.delenv("SSHPILOT_ASKPASS_SOCKET", raising=False)
+    monkeypatch.delenv("SSHPILOT_SESSION_PASSWORD_ID", raising=False)
 
     assert handle_askpass_cli("Password:") == "s3cret"
     assert not os.path.exists(path)  # one-shot
 
 
+def test_askpass_answers_password_from_session_ipc(monkeypatch, tmp_path):
+    """Just-typed password stays in the main process; child only gets an id."""
+    import json
+    import socket
+    import threading
+
+    from sshpilot.askpass_utils import take_session_password
+
+    monkeypatch.setattr(
+        "sshpilot.askpass_utils._ASKPASS_SOCKET", "/run/user/0/askpass.sock"
+    )
+    monkeypatch.setattr("sshpilot.askpass_utils._ASKPASS_TOKEN", "tok")
+    staged = stage_session_password("s3cret")
+    assert "SSHPILOT_SESSION_PASSWORD_FILE" not in staged
+    sid = staged["SSHPILOT_SESSION_PASSWORD_ID"]
+
+    sock_path = str(tmp_path / "askpass.sock")
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(sock_path)
+    server.listen(1)
+
+    def _serve():
+        conn, _ = server.accept()
+        with conn:
+            req = json.loads(conn.recv(4096).split(b"\n", 1)[0])
+            assert req["type"] == "session_password"
+            assert req["id"] == sid
+            value = take_session_password(sid)
+            conn.sendall(json.dumps({"ok": True, "value": value}).encode() + b"\n")
+        server.close()
+
+    threading.Thread(target=_serve, daemon=True).start()
+
+    monkeypatch.setenv("SSHPILOT_ASKPASS_SOCKET", sock_path)
+    monkeypatch.setenv("SSHPILOT_ASKPASS_TOKEN", "tok")
+    monkeypatch.setenv("SSHPILOT_SESSION_PASSWORD_ID", sid)
+    monkeypatch.delenv("SSHPILOT_SESSION_PASSWORD_FILE", raising=False)
+    monkeypatch.setenv("SSHPILOT_PASSWORD_USER", "alice")
+    monkeypatch.setenv("SSHPILOT_PASSWORD_HOSTS", "example.com")
+
+    assert handle_askpass_cli("Password:") == "s3cret"
+    assert take_session_password(sid) == ""  # one-shot consumed
+
+
 def test_stage_session_password_prefers_runtime_dir(monkeypatch, tmp_path):
-    # XDG_RUNTIME_DIR is tmpfs — the secret never rests on real disk.
+    # No IPC → file fallback under XDG_RUNTIME_DIR (tmpfs).
+    monkeypatch.setattr("sshpilot.askpass_utils._ASKPASS_SOCKET", None)
+    monkeypatch.setattr("sshpilot.askpass_utils._ASKPASS_TOKEN", None)
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
-    path = stage_session_password("s3cret")
+    staged = stage_session_password("s3cret")
+    path = staged["SSHPILOT_SESSION_PASSWORD_FILE"]
     try:
         assert os.path.dirname(path) == str(tmp_path)
         assert oct(os.stat(path).st_mode & 0o777) == oct(0o600)
@@ -68,6 +118,8 @@ def test_stage_session_password_prefers_runtime_dir(monkeypatch, tmp_path):
 
 
 def test_stage_session_password_sweeps_stale_files(monkeypatch, tmp_path):
+    monkeypatch.setattr("sshpilot.askpass_utils._ASKPASS_SOCKET", None)
+    monkeypatch.setattr("sshpilot.askpass_utils._ASKPASS_TOKEN", None)
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
     stale = tmp_path / "sshpilot-pw-stale"
     stale.write_text("old-secret")
@@ -75,7 +127,8 @@ def test_stage_session_password_sweeps_stale_files(monkeypatch, tmp_path):
     fresh = tmp_path / "sshpilot-pw-fresh"
     fresh.write_text("fresh-secret")
 
-    path = stage_session_password("s3cret")
+    staged = stage_session_password("s3cret")
+    path = staged["SSHPILOT_SESSION_PASSWORD_FILE"]
     try:
         assert not stale.exists()   # unconsumed leftover removed
         assert fresh.exists()       # concurrent fresh file untouched
@@ -84,11 +137,25 @@ def test_stage_session_password_sweeps_stale_files(monkeypatch, tmp_path):
         os.unlink(fresh)
 
 
+def test_stage_session_password_uses_ipc_when_advertised(monkeypatch):
+    monkeypatch.setattr(
+        "sshpilot.askpass_utils._ASKPASS_SOCKET", "/run/user/1000/askpass.sock"
+    )
+    monkeypatch.setattr("sshpilot.askpass_utils._ASKPASS_TOKEN", "tok")
+    staged = stage_session_password("s3cret")
+    assert "SSHPILOT_SESSION_PASSWORD_ID" in staged
+    assert "SSHPILOT_SESSION_PASSWORD_FILE" not in staged
+    from sshpilot.askpass_utils import take_session_password
+    assert take_session_password(staged["SSHPILOT_SESSION_PASSWORD_ID"]) == "s3cret"
+
+
 def test_no_staging_when_backend_serves_password(monkeypatch):
     # Keyring-backed password: helper looks it up by host/user, no temp file.
     from sshpilot.ssh_connection_builder import _askpass_env_for_connection
     import types
 
+    monkeypatch.setattr("sshpilot.askpass_utils._ASKPASS_SOCKET", None)
+    monkeypatch.setattr("sshpilot.askpass_utils._ASKPASS_TOKEN", None)
     monkeypatch.setattr(
         "sshpilot.askpass_utils.lookup_ssh_password",
         lambda host, user: "vaulted" if user == "alice" else "",
@@ -98,8 +165,9 @@ def test_no_staging_when_backend_serves_password(monkeypatch):
     )
     env = _askpass_env_for_connection(connection, session_password="vaulted")
     assert "SSHPILOT_SESSION_PASSWORD_FILE" not in env
+    assert "SSHPILOT_SESSION_PASSWORD_ID" not in env
 
-    # In-memory password the backend does NOT have → staged.
+    # In-memory password the backend does NOT have → staged (file: no IPC).
     env = _askpass_env_for_connection(connection, session_password="typed-now")
     staged = env.get("SSHPILOT_SESSION_PASSWORD_FILE")
     assert staged and os.path.isfile(staged)

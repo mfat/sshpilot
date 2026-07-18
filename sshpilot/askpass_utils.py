@@ -157,6 +157,14 @@ def classify_prompt(text: str) -> "str | None":
     return None
 
 
+# One-shot in-memory passwords for the askpass helper (main process only).
+# Keyed by a random id advertised as SSHPILOT_SESSION_PASSWORD_ID — the secret
+# never leaves this process except over the askpass IPC socket.
+_SESSION_PASSWORDS: "dict[str, tuple[str, float]]" = {}
+_SESSION_PASSWORDS_LOCK = threading.Lock()
+_SESSION_PASSWORD_TTL = 600.0
+
+
 def _session_password_dir() -> "str | None":
     """Prefer XDG_RUNTIME_DIR (tmpfs, 0700, wiped at logout) over /tmp so a
     staged password never rests on real disk and can't outlive the session."""
@@ -177,7 +185,7 @@ def _sweep_stale_session_files(directory: "str | None") -> None:
                 continue
             path = os.path.join(directory or tempfile.gettempdir(), name)
             try:
-                if now - os.path.getmtime(path) > 600:
+                if now - os.path.getmtime(path) > _SESSION_PASSWORD_TTL:
                     os.unlink(path)
             except Exception:
                 pass
@@ -185,12 +193,42 @@ def _sweep_stale_session_files(directory: "str | None") -> None:
         pass
 
 
-def stage_session_password(password: str) -> str:
-    """Write *password* to a 0600 temp file for one askpass consumption.
+def _sweep_stale_session_password_ids() -> None:
+    now = time.time()
+    with _SESSION_PASSWORDS_LOCK:
+        stale = [
+            sid for sid, (_pw, created) in _SESSION_PASSWORDS.items()
+            if now - created > _SESSION_PASSWORD_TTL
+        ]
+        for sid in stale:
+            _SESSION_PASSWORDS.pop(sid, None)
 
-    Used for in-memory passwords (just entered in a dialog) that are not yet in
-    the secret backend. The askpass helper unlinks the file after reading.
-    Returns the file path, or ``''`` on failure.
+
+def _register_session_password(password: str) -> str:
+    """Hold *password* in-process; return a one-shot id for the SSH child env."""
+    import secrets
+
+    _sweep_stale_session_password_ids()
+    sid = secrets.token_hex(16)
+    with _SESSION_PASSWORDS_LOCK:
+        _SESSION_PASSWORDS[sid] = (password, time.time())
+    return sid
+
+
+def take_session_password(password_id: str) -> str:
+    """Consume a staged in-memory session password (one-shot). Main process only."""
+    if not password_id:
+        return ''
+    with _SESSION_PASSWORDS_LOCK:
+        item = _SESSION_PASSWORDS.pop(password_id, None)
+    return item[0] if item else ''
+
+
+def _stage_session_password_file(password: str) -> str:
+    """Fallback: write *password* to a 0600 temp file for one askpass read.
+
+    Used only when the askpass IPC server is not advertised (no main-window
+    socket). Prefers XDG_RUNTIME_DIR.
     """
     if not password:
         return ''
@@ -215,8 +253,24 @@ def stage_session_password(password: str) -> str:
         atexit.register(_cleanup)
         return path
     except Exception:
-        logger.debug("stage_session_password failed", exc_info=True)
+        logger.debug("_stage_session_password_file failed", exc_info=True)
         return ''
+
+
+def stage_session_password(password: str) -> "dict[str, str]":
+    """Stage an in-memory login password for one askpass consumption.
+
+    Prefer the main-app askpass IPC (secret stays in process memory; the SSH
+    child only gets ``SSHPILOT_SESSION_PASSWORD_ID``). Fall back to a 0600
+    temp file under XDG_RUNTIME_DIR when the IPC server is not advertised.
+    Returns env updates to merge into the SSH child (may be empty on failure).
+    """
+    if not password:
+        return {}
+    if _ASKPASS_SOCKET and _ASKPASS_TOKEN:
+        return {"SSHPILOT_SESSION_PASSWORD_ID": _register_session_password(password)}
+    path = _stage_session_password_file(password)
+    return {"SSHPILOT_SESSION_PASSWORD_FILE": path} if path else {}
 
 
 def lookup_ssh_password(host: str, username: str) -> str:
@@ -676,15 +730,65 @@ def _lookup_via_main_app(key_path: str, log_fn) -> "str | None":
     return None
 
 
+def _lookup_session_password_via_main_app(password_id: str, log_fn) -> "str | None":
+    """Fetch a one-shot in-memory session password from the main app over IPC."""
+    import json
+    import socket
+
+    sock_path = os.environ.get("SSHPILOT_ASKPASS_SOCKET", "")
+    token = os.environ.get("SSHPILOT_ASKPASS_TOKEN", "")
+    if not sock_path or not token or not password_id:
+        return None
+
+    request = json.dumps({
+        "token": token, "type": "session_password", "id": password_id,
+    })
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+            client.settimeout(1.5)
+            client.connect(sock_path)
+            client.sendall((request + "\n").encode("utf-8"))
+            chunks = []
+            while b"\n" not in b"".join(chunks):
+                data = client.recv(4096)
+                if not data:
+                    break
+                chunks.append(data)
+    except Exception as exc:
+        log_fn(f"ASKPASS: session-password IPC unavailable ({exc})")
+        return None
+
+    raw = b"".join(chunks).split(b"\n", 1)[0].strip()
+    if not raw:
+        return None
+    try:
+        reply = json.loads(raw.decode("utf-8"))
+    except Exception:
+        return None
+    if reply.get("ok") and reply.get("value"):
+        return reply.get("value")
+    return None
+
+
 def _resolve_askpass_password(_log) -> "str | None":
     """Return a stored login password for this SSH child, or None to defer to TTY.
 
     Sources (first hit wins):
-    1. ``SSHPILOT_SESSION_PASSWORD_FILE`` — one-shot in-memory password staged by
-       the parent (unlinked after read).
-    2. Secret backend lookup for ``SSHPILOT_PASSWORD_USER`` @ each host in
+    1. ``SSHPILOT_SESSION_PASSWORD_ID`` — one-shot in-memory password held by
+       the main app (fetched over askpass IPC; never written to disk).
+    2. ``SSHPILOT_SESSION_PASSWORD_FILE`` — fallback one-shot temp file when
+       IPC was unavailable at staging time (unlinked after read).
+    3. Secret backend lookup for ``SSHPILOT_PASSWORD_USER`` @ each host in
        ``SSHPILOT_PASSWORD_HOSTS`` (newline-separated).
     """
+    session_id = (os.environ.get("SSHPILOT_SESSION_PASSWORD_ID") or "").strip()
+    if session_id:
+        value = _lookup_session_password_via_main_app(session_id, _log)
+        if value:
+            _log("ASKPASS: Found session password via main-app IPC")
+            return value
+        _log("ASKPASS: session-password id present but IPC returned nothing")
+
     session_file = os.environ.get("SSHPILOT_SESSION_PASSWORD_FILE", "")
     if session_file and os.path.exists(session_file):
         try:
@@ -1355,7 +1459,8 @@ def get_ssh_env_with_askpass(
     declined MFA prompts can fall back to the TTY). When *password_user* /
     *password_hosts* are set, the helper can autofill login-password prompts
     from the secret backend. *session_password* stages an in-memory password
-    into a one-shot temp file for the same purpose.
+    for the same purpose (IPC id when the prompt server is up; otherwise a
+    one-shot temp file under XDG_RUNTIME_DIR).
     """
     ensure_askpass_log_forwarder()
     env = os.environ.copy()
@@ -1390,14 +1495,10 @@ def get_ssh_env_with_askpass(
         env["SSHPILOT_PASSWORD_HOSTS"] = "\n".join(hosts)
     else:
         env.pop("SSHPILOT_PASSWORD_HOSTS", None)
+    env.pop("SSHPILOT_SESSION_PASSWORD_ID", None)
+    env.pop("SSHPILOT_SESSION_PASSWORD_FILE", None)
     if session_password:
-        path = stage_session_password(session_password)
-        if path:
-            env["SSHPILOT_SESSION_PASSWORD_FILE"] = path
-        else:
-            env.pop("SSHPILOT_SESSION_PASSWORD_FILE", None)
-    else:
-        env.pop("SSHPILOT_SESSION_PASSWORD_FILE", None)
+        env.update(stage_session_password(session_password))
     return env
 
 def get_ssh_env_with_askpass_for_password(host: str, username: str) -> dict:

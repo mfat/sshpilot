@@ -20,6 +20,12 @@ Protocol (newline-delimited JSON over ``AF_UNIX``):
     {"ok": false}                         not found / not cached (helper falls back)
   The lookup request never prompts — it lets the askpass helper reuse the main
   process's already-unlocked secret cache instead of cold-loading the vault itself.
+
+  session_password (helper -> app): {"token", "type": "session_password", "id"}
+  session_password reply:
+    {"ok": true,  "value": "..."}   one-shot in-memory password (consumed)
+    {"ok": false}                   unknown/expired id
+  Keeps just-typed login passwords out of temp files when the IPC server is up.
 """
 
 import json
@@ -165,6 +171,15 @@ class AskpassPromptServer:
             self._write_reply(
                 connection,
                 {"ok": True, "passphrase": passphrase} if passphrase else {"ok": False},
+            )
+            return
+
+        # Non-prompting: one-shot in-memory login password (no temp file).
+        if request.get("type") == "session_password":
+            value = askpass_utils.take_session_password(request.get("id") or "")
+            self._write_reply(
+                connection,
+                {"ok": True, "value": value} if value else {"ok": False},
             )
             return
 
