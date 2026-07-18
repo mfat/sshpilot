@@ -69,6 +69,43 @@ def controlmaster_args(persist: str = DEFAULT_PERSIST) -> List[str]:
     ]
 
 
+def invalidate_master(connection, connection_manager=None, config=None, *,
+                      background: bool = True) -> None:
+    """Gracefully retire *connection*'s ControlMaster after its SSH config
+    changed, so the next connect negotiates a fresh master with the new
+    settings instead of silently riding the old transport.
+
+    Uses ``ssh -O stop`` (not ``exit``): the master stops accepting new mux
+    clients and removes its socket, but live sessions keep running until they
+    end on their own. Best-effort; a dead master simply has no socket to stop.
+    """
+    def _stop() -> None:
+        try:
+            from .ssh_connection_builder import ConnectionContext, build_ssh_connection
+            ctx = ConnectionContext(
+                connection=connection,
+                connection_manager=connection_manager,
+                config=config,
+                command_type='ssh',
+                native_mode=True,
+                extra_args=['-O', 'stop', '-o', f'ControlPath={control_path()}'],
+            )
+            prepared = build_ssh_connection(ctx)
+            env = {**os.environ, **(prepared.env or {})}
+            subprocess.run(
+                list(prepared.command), env=env, capture_output=True,
+                timeout=10, check=False,
+            )
+        except Exception:
+            logger.debug("invalidate_master failed (best-effort)", exc_info=True)
+
+    if background:
+        threading.Thread(target=_stop, daemon=True,
+                         name='ssh-mux-invalidate').start()
+    else:
+        _stop()
+
+
 def expire_all_masters(*, background: bool = True) -> None:
     """Gracefully retire every live ControlMaster after a global SSH-settings
     change (Preferences ▸ ssh_overrides), so new connections negotiate fresh

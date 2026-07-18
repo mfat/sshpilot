@@ -16,6 +16,121 @@ from .askpass_utils import (
     lookup_passphrase,
 )
 
+
+def _askpass_env_for_connection(
+    connection: any,
+    *,
+    require: str = "prefer",
+    session_password: Optional[str] = None,
+) -> Dict[str, str]:
+    """Build askpass env, advertising login-password host/user when known."""
+    try:
+        from .credential_model import canonical_password_host, password_host_candidates
+        user = (getattr(connection, 'username', None) or '').strip()
+        hosts = password_host_candidates(connection) or []
+        canonical = canonical_password_host(connection)
+        if canonical and canonical not in hosts:
+            hosts = [canonical] + list(hosts)
+    except Exception:
+        user = (getattr(connection, 'username', None) or '').strip()
+        hosts = [
+            h for h in (
+                getattr(connection, 'hostname', None),
+                getattr(connection, 'host', None),
+                getattr(connection, 'nickname', None),
+            ) if h
+        ]
+    # The helper looks passwords up in the secret backend by host/user; only
+    # stage a temp file when that lookup can't serve this exact password
+    # (i.e. it's truly in-memory). Keyring-backed connects never touch disk.
+    if session_password and user:
+        try:
+            from .askpass_utils import lookup_ssh_password
+            if any(lookup_ssh_password(h, user) == session_password
+                   for h in hosts):
+                session_password = None
+        except Exception:
+            pass
+    return get_ssh_env_with_askpass(
+        require,
+        password_user=user or None,
+        password_hosts=hosts or None,
+        session_password=session_password,
+    )
+
+
+def _apply_askpass_env(
+    prepared_env: Optional[Dict[str, str]],
+    connection,
+    *,
+    require: str,
+    session_password: Optional[str] = None,
+    base_env: Optional[Dict[str, str]] = None,
+) -> Dict[str, str]:
+    """Merge *prepared_env* and ensure ``SSH_ASKPASS`` with the given *require*."""
+    prepared = dict(prepared_env or {})
+    env = {**(base_env if base_env is not None else os.environ), **prepared}
+    for key in ('SSH_ASKPASS', 'SSH_ASKPASS_REQUIRE', 'SSH_AUTH_SOCK'):
+        if key not in prepared:
+            env.pop(key, None)
+    password = session_password
+    if password is None and connection is not None:
+        password = getattr(connection, 'password', None) or None
+    if not env.get('SSH_ASKPASS'):
+        env.update(
+            _askpass_env_for_connection(
+                connection, require=require, session_password=password,
+            )
+        )
+    elif env.get('SSH_ASKPASS_REQUIRE') != require:
+        env['SSH_ASKPASS_REQUIRE'] = require
+    return env
+
+
+def apply_headless_askpass_env(
+    prepared_env: Optional[Dict[str, str]],
+    connection,
+    *,
+    session_password: Optional[str] = None,
+    base_env: Optional[Dict[str, str]] = None,
+) -> Dict[str, str]:
+    """Process env for an SSH child with no user-visible TTY.
+
+    Merges *base_env* (default ``os.environ``) with the auth resolver's
+    *prepared_env*, honors askpass/agent deletions, then forces
+    ``SSH_ASKPASS`` + ``REQUIRE=prefer`` so password / passphrase / PIN /
+    OTP / FIDO presence (``SSH_ASKPASS_PROMPT=none``) use graphical askpass
+    instead of hanging on a missing TTY.
+
+    Use for every pipe/capture/``stdin=DEVNULL`` SSH spawn. Do **not** use for
+    VTE/system-terminal spawns (those have a real TTY) — except ssh-copy-id,
+    which uses :func:`apply_forced_askpass_env`.
+    """
+    return _apply_askpass_env(
+        prepared_env, connection, require='prefer',
+        session_password=session_password, base_env=base_env,
+    )
+
+
+def apply_forced_askpass_env(
+    prepared_env: Optional[Dict[str, str]],
+    connection,
+    *,
+    session_password: Optional[str] = None,
+    base_env: Optional[Dict[str, str]] = None,
+) -> Dict[str, str]:
+    """Like :func:`apply_headless_askpass_env` but ``SSH_ASKPASS_REQUIRE=force``.
+
+    OpenSSH will not fall back to the TTY when askpass declines — use for
+    ssh-copy-id so passphrase/password/MFA prompts stay on the graphical
+    askpass dialog even though the command runs inside a VTE.
+    """
+    return _apply_askpass_env(
+        prepared_env, connection, require='force',
+        session_password=session_password, base_env=base_env,
+    )
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -34,16 +149,19 @@ class NativeAuth:
     """Resolved authentication for a native SSH-family connection.
 
     This is the single source of truth for how sshPilot supplies credentials
-    to ssh/scp/ssh-copy-id: askpass + keyring autofill for key passphrases
-    (with an optional agent bypass), or sshpass for a stored password. Callers
-    apply ``env`` to the child process and add ``extra_opts`` to the command.
+    to ssh/scp/ssh-copy-id: **askpass** autofills both key passphrases and
+    stored login passwords (``SSH_ASKPASS_REQUIRE=prefer`` so MFA/OTP prompts
+    declined by the helper fall back to the TTY). ``use_sshpass`` is always
+    False. ``password`` is retained for UI messaging / askpass session staging
+    only — delivery goes through askpass env. Callers apply ``env`` to the
+    child process and add ``extra_opts`` to the command.
     """
     env: Dict[str, str]            # Environment to spawn the command with
     extra_opts: List[str]          # Extra command options to pass to ssh/scp
-    use_sshpass: bool = False      # Feed ``password`` via sshpass
-    password: Optional[str] = None # Stored password for sshpass
+    use_sshpass: bool = False      # Deprecated: always False (askpass replaced sshpass)
+    password: Optional[str] = None # Stored password (askpass context / UI messaging)
     use_askpass: bool = False      # SSH_ASKPASS is wired up
-    password_mode: bool = False    # Password auth selected or a password is stored
+    password_mode: bool = False    # Password auth method selected (auth_method == 1)
 
 
 def resolve_native_auth(
@@ -56,30 +174,21 @@ def resolve_native_auth(
     Shared by the native terminal builder, SCP, and ssh-copy-id so every part
     of the app authenticates the same way. Behaviour:
 
-    * Password auth selected: clear askpass and signal sshpass (with the stored
-      password when one exists).
-    * Askpass disabled in settings: let SSH prompt natively on the TTY.
-    * Key-based auth — depends on what the user has saved (a saved secret is the
-      opt-in for non-interactive auth):
-        - saved passphrase + saved password -> combined auth (hosts requiring
-          BOTH publickey and password): the key is loaded into ssh-agent here via
-          its passphrase, so pubkey is non-interactive, and sshpass answers the
-          separate password prompt. askpass is stripped (REQUIRE=prefer would let
-          it hijack the password prompt). Taken ONLY when preloading is active
-          and the agent load actually succeeds; if the load fails (no agent,
-          ssh-add error, stale passphrase) it falls back to askpass-only below,
-          so a pubkey-only host still authenticates from the saved passphrase.
-        - saved key passphrase  -> askpass (REQUIRE=prefer) autofills it; key is
-          primary, agent left intact. No sshpass.
-        - else saved password   -> strip askpass and signal sshpass with the
-          stored password, so SSH tries the key and falls back to the password
-          (the terminal and SCP both wrap sshpass from this).
-        - else (nothing saved)  -> no askpass, no sshpass; SSH prompts on the
-          TTY for the passphrase and then the password, naturally.
+    * **Askpass** (when enabled) autofills **key passphrases and login
+      passwords** from the secret backend. REQUIRE=prefer so interactive MFA
+      (OTP/PIN) is declined by the helper and answered on the real TTY.
+    * Password method + stored password → askpass with password host/user
+      context (and a one-shot session file for in-memory secrets).
+    * Key-based + saved passphrase → askpass passphrase autofill; if a
+      password is also saved and the key loads into the agent, askpass also
+      carries password context (combined auth).
+    * Key-based + saved password only → askpass password context (key tried
+      first by ssh, then password prompt autofilled).
+    * Askpass disabled / nothing saved → no askpass; SSH prompts on the TTY.
+    * ``use_sshpass`` is never set (sshpass removed from the native path).
     """
     auth_method = int(getattr(connection, 'auth_method', 0) or 0)
-    password_auth_selected = (auth_method == 1)
-    password_mode = password_auth_selected
+    password_mode = (auth_method == 1)
 
     askpass_enabled = True
     try:
@@ -88,27 +197,40 @@ def resolve_native_auth(
     except Exception:
         askpass_enabled = True
 
-    if password_mode:
-        stored_password = _get_stored_password(connection, connection_manager)
-        env = os.environ.copy()
-        env.pop('SSH_ASKPASS', None)
-        env['SSH_ASKPASS_REQUIRE'] = 'never'
-        if stored_password:
-            logger.debug("resolve_native_auth: stored password -> sshpass")
-        return NativeAuth(
-            env=env, extra_opts=[], use_sshpass=bool(stored_password),
-            password=stored_password or None, use_askpass=False, password_mode=True,
-        )
-
-    if not askpass_enabled:
+    def _tty_only(*, password=None, mode=False) -> NativeAuth:
         env = os.environ.copy()
         env.pop('SSH_ASKPASS', None)
         env.pop('SSH_ASKPASS_REQUIRE', None)
-        logger.debug("resolve_native_auth: askpass disabled by setting")
-        return NativeAuth(env=env, extra_opts=[], use_askpass=False, password_mode=False)
+        return NativeAuth(
+            env=env, extra_opts=[], use_sshpass=False,
+            password=password, use_askpass=False, password_mode=mode,
+        )
 
-    # Key-based auth. Discover the identity candidates once (the same set used by
-    # the passphrase probe and the agent preload). Probe is best-effort: on any
+    if not askpass_enabled:
+        stored = _get_stored_password(connection, connection_manager) if password_mode else None
+        logger.debug("resolve_native_auth: askpass disabled by setting")
+        return _tty_only(password=stored if password_mode else None, mode=password_mode)
+
+    if password_mode:
+        stored_password = _get_stored_password(connection, connection_manager)
+        if stored_password:
+            # In-memory password may not be in the backend yet — stage a one-shot
+            # file; keyring-backed passwords are looked up by host/user in askpass.
+            env = _askpass_env_for_connection(
+                connection, session_password=stored_password,
+            )
+            logger.debug("resolve_native_auth: password method -> askpass")
+            return NativeAuth(
+                env=env, extra_opts=[], use_sshpass=False,
+                password=stored_password, use_askpass=True, password_mode=True,
+            )
+        logger.debug("resolve_native_auth: password method, no stored password -> TTY")
+        return _tty_only(mode=True)
+
+    # From here: key-based (auth_method == 0, auto or specific key).
+
+    # Discover the identity candidates once (the same set used by the
+    # passphrase probe and the agent preload). Probe is best-effort: on any
     # error, fall back to askpass-on (never regress the saved-passphrase autofill).
     candidates = getattr(connection, 'resolved_identity_files', None)
     if not candidates and hasattr(connection, 'collect_identity_file_candidates'):
@@ -123,58 +245,55 @@ def resolve_native_auth(
     except Exception:
         passphrase_keys, probe_failed = [], True
     has_stored_passphrase = bool(passphrase_keys) or probe_failed
+    stored_password = _get_stored_password(connection, connection_manager)
 
     if has_stored_passphrase:
-        # Combined auth: some hosts require BOTH publickey and password
-        # (AuthenticationMethods publickey,password). Take this path only when a
-        # password is also saved AND the key can actually be loaded into
-        # ssh-agent — we load it here, non-interactively via its stored
-        # passphrase. Only on a real load do we strip askpass and drive the
-        # password with sshpass (the agent, not askpass, answers the key; askpass
-        # with REQUIRE=prefer would otherwise hijack the password prompt it can't
-        # serve). If the load fails — no agent, ssh-add error, stale passphrase —
-        # we fall through to askpass-only autofill so a pubkey-only host still
-        # authenticates from the saved passphrase (no regression). Gated by
-        # _agent_preload_active() so a pinned/disabled agent isn't disturbed.
-        stored_password = _get_stored_password(connection, connection_manager)
+        # Combined auth: load key into agent when possible, then askpass covers
+        # both passphrase re-prompts and the login password (REQUIRE=prefer so
+        # MFA stays on the TTY).
         if (stored_password
                 and _agent_preload_active(connection, app_config)
                 and any(_load_key_into_agent(p, connection_manager)
                         for p in passphrase_keys)):
-            env = os.environ.copy()
-            env.pop('SSH_ASKPASS', None)
-            env['SSH_ASKPASS_REQUIRE'] = 'never'
-            logger.debug("resolve_native_auth: combined auth -> agent key (passphrase) + sshpass password")
-            return NativeAuth(
-                env=env, extra_opts=[], use_sshpass=True, password=stored_password,
-                use_askpass=False, password_mode=False,
+            env = _askpass_env_for_connection(
+                connection, session_password=stored_password,
             )
-        # Saved key passphrase (no usable combined path) -> askpass autofill.
-        env = get_ssh_env_with_askpass(require="prefer")
+            logger.debug(
+                "resolve_native_auth: combined auth -> agent key + askpass "
+                "(passphrase/password; MFA on TTY)"
+            )
+            return NativeAuth(
+                env=env, extra_opts=[], use_sshpass=False,
+                password=stored_password, use_askpass=True, password_mode=False,
+            )
+        if stored_password:
+            env = _askpass_env_for_connection(
+                connection, session_password=stored_password,
+            )
+        else:
+            env = get_ssh_env_with_askpass(require="prefer")
         logger.debug("resolve_native_auth: key auth, askpass autofill (saved passphrase)")
-        return NativeAuth(env=env, extra_opts=[], use_askpass=True, password_mode=False)
-
-    stored_password = _get_stored_password(connection, connection_manager)
-    if stored_password:
-        # No saved passphrase but a saved password -> combined auth: try the key,
-        # fall back to the password via sshpass. Strip askpass so it can't hijack
-        # the password prompt.
-        env = os.environ.copy()
-        env.pop('SSH_ASKPASS', None)
-        env['SSH_ASKPASS_REQUIRE'] = 'never'
-        logger.debug("resolve_native_auth: key auth, no saved passphrase -> sshpass password fallback")
         return NativeAuth(
-            env=env, extra_opts=[], use_sshpass=True, password=stored_password,
-            use_askpass=False, password_mode=False,
+            env=env, extra_opts=[], use_sshpass=False,
+            password=stored_password, use_askpass=True, password_mode=False,
         )
 
-    # Nothing saved -> let SSH prompt naturally on the TTY (passphrase, then
-    # password fallback), without our askpass intercepting.
-    env = os.environ.copy()
-    env.pop('SSH_ASKPASS', None)
-    env.pop('SSH_ASKPASS_REQUIRE', None)
+    if stored_password:
+        env = _askpass_env_for_connection(
+            connection, session_password=stored_password,
+        )
+        logger.debug(
+            "resolve_native_auth: key auth, saved password -> askpass "
+            "(password autofill; MFA on TTY)"
+        )
+        return NativeAuth(
+            env=env, extra_opts=[], use_sshpass=False,
+            password=stored_password, use_askpass=True, password_mode=False,
+        )
+
+    # Nothing saved -> let SSH prompt naturally on the TTY.
     logger.debug("resolve_native_auth: key auth, nothing saved -> native TTY prompts")
-    return NativeAuth(env=env, extra_opts=[], use_askpass=False, password_mode=False)
+    return _tty_only()
 
 
 def build_native_command(
@@ -371,9 +490,10 @@ def _agent_preload_active(connection: any, app_config: Optional[any] = None) -> 
 
     Mirrors the gating in ``ConnectionManager._preload_keys_into_agent``. Combined
     auth (publickey AND password) relies on the key already being in the agent so
-    its passphrase is never prompted while sshpass owns the pty for the password.
-    If preloading won't happen, we must NOT take the combined path (it would leave
-    an encrypted key unusable); fall back to askpass-only autofill instead.
+    ssh can complete pubkey without a passphrase prompt while askpass answers the
+    login password. If preloading won't happen, we must NOT take the combined
+    path (it would leave an encrypted key unusable); fall back to askpass-only
+    autofill instead.
     """
     try:
         if getattr(connection, 'identity_agent_disabled', False):
@@ -498,7 +618,7 @@ def _build_base_ssh_command(
                 cmd.extend(['-o', f'ConnectionAttempts={attempts}'])
         except (ValueError, TypeError):
             pass
-    
+
     # Apply keepalive settings if specified
     keepalive_interval = app_ssh_config.get('keepalive_interval')
     if keepalive_interval:
@@ -583,8 +703,19 @@ def _build_base_ssh_command(
     # cancels Local/Remote/Dynamic forwards; X11 and agent forwarding are unaffected.
     if command_type in ('scp', 'ssh-copy-id'):
         cmd.extend(['-o', 'ClearAllForwardings=yes'])
+        # One askpass cancel should end the operation (not OpenSSH's default 3).
+        # Interactive terminals keep the OpenSSH default so MFA can retry.
+        _append_single_password_prompt(cmd)
 
     return cmd
+
+
+def _append_single_password_prompt(cmd: List[str]) -> None:
+    """Force NumberOfPasswordPrompts=1 for non-interactive transfer tools."""
+    for entry in cmd:
+        if entry and 'NumberOfPasswordPrompts' in str(entry):
+            return
+    cmd.extend(['-o', 'NumberOfPasswordPrompts=1'])
 
 
 def _maybe_append_default_keepalive(cmd, overrides, app_ssh_config):
@@ -733,14 +864,21 @@ def build_ssh_connection(
             # any explicit user/per-host value wins.
             _maybe_append_default_keepalive(base_cmd, overrides, app_ssh_config)
 
+        # File manager / SFTP / non-interactive transfers: one askpass cancel
+        # ends auth. Interactive terminals keep OpenSSH's default (3).
+        if ctx.command_type in ('scp', 'ssh-copy-id', 'sftp'):
+            _append_single_password_prompt(base_cmd)
+
         # Authentication is resolved by the single shared helper so the terminal,
         # SCP, and ssh-copy-id all authenticate identically.
         auth = resolve_native_auth(connection, connection_manager, app_config)
 
-        # BatchMode preference — never on any sshpass path (password auth OR
-        # combined publickey+password), since sshpass needs the prompt to answer.
+        # BatchMode preference — never when askpass may need to answer a prompt
+        # (or a stored password / password method is in play).
         if (bool(app_ssh_config.get('batch_mode', False))
-                and not auth.password_mode and not auth.use_sshpass):
+                and not auth.password_mode
+                and not auth.use_askpass
+                and not auth.password):
             if 'BatchMode=yes' not in base_cmd:
                 base_cmd.extend(['-o', 'BatchMode=yes'])
 

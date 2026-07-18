@@ -6,7 +6,7 @@ from gettext import gettext as _
 from typing import Callable, Optional, Tuple
 
 import gi
-from gi.repository import Adw, GLib, Gio, Gdk, Gtk
+from gi.repository import Adw, GLib, Gio, Gtk
 
 try:
     gi.require_version('Vte', '3.91')
@@ -14,6 +14,14 @@ try:
 except Exception:
     Vte = None
 
+from .command_progress_dialog import (
+    build_progress_status_row,
+    build_terminal_disclosure,
+    normalize_child_exit_status as _normalize_child_exit_status,
+    read_terminal_text as _read_ssh_copyid_terminal_text,
+    terminal_awaiting_input as _terminal_awaiting_input,
+    wrap_dialog_terminal,
+)
 from .config import Config
 from .key_manager import SSHKey
 from .platform_utils import get_ssh_dir
@@ -26,29 +34,6 @@ from .ssh_utils import ensure_writable_ssh_home
 
 logger = logging.getLogger(__name__)
 
-_SSHCOPYID_TERMINAL_CARD_CSS = False
-
-
-def _ensure_sshcopyid_terminal_card_css() -> None:
-    global _SSHCOPYID_TERMINAL_CARD_CSS
-    if _SSHCOPYID_TERMINAL_CARD_CSS:
-        return
-    try:
-        display = Gdk.Display.get_default()
-        if display is None:
-            return
-        provider = Gtk.CssProvider()
-        provider.load_from_data(
-            b'.sshcopyid-terminal-card { overflow: hidden; }'
-        )
-        Gtk.StyleContext.add_provider_for_display(
-            display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
-        )
-        _SSHCOPYID_TERMINAL_CARD_CSS = True
-    except Exception:
-        logger.debug('ssh-copy-id terminal card CSS unavailable', exc_info=True)
-
-
 _COPYID_FAILURE_MARKERS = (
     'permission denied',
     'authentication failed',
@@ -59,62 +44,6 @@ _COPYID_FAILURE_MARKERS = (
     'failed to install',
     'failed to copy',
 )
-
-
-def _normalize_child_exit_status(status) -> int:
-    try:
-        value = int(status)
-    except (TypeError, ValueError):
-        return -1
-    try:
-        if os.WIFEXITED(value):
-            return os.WEXITSTATUS(value)
-    except Exception:
-        pass
-    if 0 <= value < 256:
-        return value
-    return (value >> 8) & 0xFF
-
-
-def _read_ssh_copyid_terminal_text(term_widget: TerminalWidget) -> str:
-    vte = getattr(term_widget, 'vte', None)
-    if vte is None:
-        backend = getattr(term_widget, 'backend', None)
-        vte = getattr(backend, 'vte', None) if backend else None
-    # get_text_format() (used by backend.get_content) returns a fragment on
-    # screens that received feed() data before the pty was attached — which
-    # this dialog does — so read an explicit range up to the cursor row.
-    try:
-        if vte is not None and hasattr(vte, 'get_text_range_format'):
-            try:
-                _col, cursor_row = vte.get_cursor_position()
-                end_row = cursor_row + 1
-            except Exception:
-                end_row = vte.get_row_count()
-            content_result = vte.get_text_range_format(
-                Vte.Format.TEXT, 0, 0, end_row, -1,
-            )
-            if content_result and content_result[0]:
-                return content_result[0]
-    except Exception:
-        pass
-    try:
-        backend = getattr(term_widget, 'backend', None)
-        if backend and hasattr(backend, 'get_content'):
-            content = backend.get_content()
-            if content:
-                return content
-    except Exception:
-        pass
-    try:
-        if vte is not None:
-            content_result = vte.get_text_range(0, 0, -1, -1, lambda *args: True)
-            if content_result:
-                return content_result[0] or ''
-    except Exception:
-        pass
-    return ''
-
 
 # ssh-copy-id prints these (unlocalized) on a successful run; failure markers
 # can also appear in successful runs (e.g. a mistyped password the user
@@ -143,109 +72,17 @@ def _copyid_run_succeeded(exit_code: int, content: str) -> bool:
     return not _terminal_indicates_copy_failure(content)
 
 
-# Interactive prompts ssh may print when askpass/sshpass don't cover auth.
-# Only the last non-empty line is checked, so scrollback text such as
-# "Permission denied (publickey,password)." can't false-positive.
-_COPYID_PROMPT_COLON_MARKERS = (
-    'password',
-    'passphrase',
-    'pin',
-    'verification code',
-    'otp',
-)
-_COPYID_PROMPT_INLINE_MARKERS = (
-    '(yes/no',
-    'continue connecting',
-    "please type 'yes'",
-)
-
-
-def _terminal_awaiting_input(text: str) -> bool:
-    lines = [line.strip() for line in (text or '').splitlines()]
-    lines = [line for line in lines if line]
-    if not lines:
-        return False
-    last = lines[-1].lower()
-    if any(marker in last for marker in _COPYID_PROMPT_INLINE_MARKERS):
-        return True
-    if last.endswith(':'):
-        return any(marker in last for marker in _COPYID_PROMPT_COLON_MARKERS)
-    return False
-
-
 def _wrap_sshcopyid_terminal(term_widget: TerminalWidget) -> Gtk.Widget:
-    """Wrap the dialog terminal in an Adwaita card with clipped rounded corners."""
-    _ensure_sshcopyid_terminal_card_css()
-    frame = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-    frame.add_css_class('card')
-    frame.add_css_class('sshcopyid-terminal-card')
-    try:
-        frame.set_overflow(Gtk.Overflow.HIDDEN)
-    except Exception:
-        pass
-    frame.set_hexpand(True)
-    frame.set_vexpand(True)
-    term_widget.set_hexpand(True)
-    term_widget.set_vexpand(True)
-    frame.append(term_widget)
-    return frame
+    """Thin wrapper so tests can monkeypatch the dialog terminal card."""
+    return wrap_dialog_terminal(term_widget)
 
 
 def _build_terminal_disclosure(
     terminal_card: Gtk.Widget,
     on_expanded_changed: Callable[[bool], None],
 ) -> Tuple[Gtk.Widget, Callable[[bool], None], Callable[[], bool]]:
-    """Wrap the terminal card in a revealer with a Show/Hide Terminal toggle."""
-    from . import icon_utils
-
-    revealer = Gtk.Revealer()
-    revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
-    revealer.set_transition_duration(250)
-    revealer.set_reveal_child(False)
-    revealer.set_vexpand(True)
-    revealer.set_child(terminal_card)
-
-    chevron = icon_utils.new_image_from_icon_name('pan-end-symbolic')
-    label = Gtk.Label(label=_('Show Terminal'))
-
-    button_content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-    button_content.append(chevron)
-    button_content.append(label)
-
-    toggle = Gtk.ToggleButton()
-    toggle.add_css_class('flat')
-    toggle.set_child(button_content)
-    toggle.set_halign(Gtk.Align.CENTER)
-
-    def _on_toggled(button):
-        expanded = bool(button.get_active())
-        revealer.set_reveal_child(expanded)
-        label.set_label(_('Hide Terminal') if expanded else _('Show Terminal'))
-        try:
-            icon_utils.set_icon_from_name(
-                chevron,
-                'pan-down-symbolic' if expanded else 'pan-end-symbolic',
-            )
-        except Exception:
-            pass
-        try:
-            on_expanded_changed(expanded)
-        except Exception:
-            logger.debug('ssh-copy-id terminal disclosure callback failed', exc_info=True)
-
-    toggle.connect('toggled', _on_toggled)
-
-    box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-    box.append(toggle)
-    box.append(revealer)
-
-    def set_expanded(expanded: bool) -> None:
-        toggle.set_active(bool(expanded))
-
-    def is_expanded() -> bool:
-        return bool(toggle.get_active())
-
-    return box, set_expanded, is_expanded
+    """Thin wrapper so tests can monkeypatch the terminal disclosure."""
+    return build_terminal_disclosure(terminal_card, on_expanded_changed)
 
 
 def _build_copy_progress_row(
@@ -258,113 +95,15 @@ def _build_copy_progress_row(
     Callable[[], None],
     Callable[[], None],
 ]:
-    """Build spinner + status label row for the ssh-copy-id progress dialog."""
-    from . import icon_utils
-
+    """Thin wrapper: key-copy status strings over the shared progress row."""
     key_name = pub_name or _('selected')
-    copying_text = _('Copying key {name} to {target}').format(
-        name=key_name,
-        target=target,
+    return build_progress_status_row(
+        _('Copying key {name} to {target}').format(name=key_name, target=target),
+        _('Copied key {name} to {target}').format(name=key_name, target=target),
+        _('Failed to copy key {name} to {target}').format(
+            name=key_name, target=target,
+        ),
     )
-    copied_text = _('Copied key {name} to {target}').format(
-        name=key_name,
-        target=target,
-    )
-    failed_text = _('Failed to copy key {name} to {target}').format(
-        name=key_name,
-        target=target,
-    )
-
-    row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-    row.set_halign(Gtk.Align.CENTER)
-    row.set_margin_top(4)
-    row.set_margin_bottom(8)
-
-    icon_slot = Gtk.Stack()
-    icon_slot.set_halign(Gtk.Align.CENTER)
-    icon_slot.set_valign(Gtk.Align.CENTER)
-    icon_slot.set_size_request(20, 20)
-
-    spinner = Gtk.Spinner()
-    spinner.set_size_request(20, 20)
-
-    success_icon = icon_utils.new_image_from_icon_name('success-small-symbolic')
-    success_icon.set_pixel_size(20)
-    try:
-        success_icon.add_css_class('success')
-    except Exception:
-        pass
-
-    error_icon = icon_utils.new_image_from_icon_name('error-outline-symbolic')
-    error_icon.set_pixel_size(20)
-    try:
-        error_icon.add_css_class('error')
-    except Exception:
-        pass
-
-    icon_slot.add_named(spinner, 'spinner')
-    icon_slot.add_named(success_icon, 'success')
-    icon_slot.add_named(error_icon, 'error')
-    icon_slot.set_visible_child_name('spinner')
-
-    label = Gtk.Label(label=copying_text)
-    label.set_halign(Gtk.Align.START)
-    label.set_valign(Gtk.Align.CENTER)
-    label.set_wrap(True)
-
-    row.append(icon_slot)
-    row.append(label)
-
-    def start() -> bool:
-        try:
-            spinner.set_spinning(True)
-            spinner.start()
-        except Exception:
-            pass
-        return False
-
-    def stop() -> None:
-        try:
-            spinner.set_spinning(False)
-            spinner.stop()
-            spinner.set_visible(False)
-        except Exception:
-            pass
-
-    def _set_status_style(style_class: str) -> None:
-        for css_class in ('dim-label', 'success', 'error'):
-            try:
-                label.remove_css_class(css_class)
-            except Exception:
-                pass
-        try:
-            label.add_css_class(style_class)
-        except Exception:
-            pass
-
-    def mark_success() -> None:
-        try:
-            spinner.set_spinning(False)
-            spinner.stop()
-            icon_slot.set_visible_child_name('success')
-            label.set_label(copied_text)
-            _set_status_style('success')
-        except Exception:
-            pass
-
-    def mark_failure() -> None:
-        try:
-            spinner.set_spinning(False)
-            spinner.stop()
-            icon_slot.set_visible_child_name('error')
-            label.set_label(failed_text)
-            _set_status_style('error')
-        except Exception:
-            pass
-
-    spinner.connect('map', lambda *_: spinner.start())
-
-    return row, start, stop, mark_success, mark_failure
 
 
 def _ssh_key_from_public_path(path: str) -> SSHKey:
@@ -1126,11 +865,12 @@ class SshCopyIdRunner:
             username = getattr(connection, 'username', '')
             manager = getattr(self.window, 'connection_manager', None)
             has_saved_password = bool(manager.get_password(host_value, username)) if manager else False
-            if (auth_method == 1 or (auth_method == 0 and has_saved_password)) and has_saved_password:
-                if self._find_ssh_copy_id_helper('sshpass') is None:
-                    logger.warning(
-                        'ssh-copy-id preflight: sshpass unavailable; falling back to terminal password prompt',
-                    )
+            # Password delivery is via askpass (REQUIRE=force); graphical prompts.
+            if auth_method == 1 and has_saved_password:
+                logger.debug(
+                    'ssh-copy-id preflight: password-method with saved password '
+                    '(askpass will autofill; MFA via askpass)',
+                )
         except Exception as exc:
             logger.debug('ssh-copy-id preflight skipped optional auth-helper check: %s', exc)
 
@@ -1288,9 +1028,10 @@ class SshCopyIdRunner:
 
             toolbar.set_content(content_box)
 
-            from .scp_utils import _apply_native_auth_env
-            from .ssh_connection_builder import resolve_native_auth
-            from .ssh_password_exec import wrap_argv_with_sshpass
+            from .ssh_connection_builder import (
+                apply_forced_askpass_env,
+                resolve_native_auth,
+            )
 
             auth = resolve_native_auth(
                 connection,
@@ -1336,17 +1077,18 @@ class SshCopyIdRunner:
 
             _feed_colored_line(_('Running ssh-copy-id…'), 'yellow')
 
-            env = os.environ.copy()
-            _apply_native_auth_env(env, auth)
+            # REQUIRE=force: graphical askpass for passphrase/password/MFA even
+            # though ssh-copy-id runs inside a VTE (which has a real TTY).
+            env = apply_forced_askpass_env(
+                auth.env,
+                connection,
+                session_password=getattr(auth, 'password', None),
+            )
             if auth.extra_opts:
                 argv[-1:-1] = auth.extra_opts
-            if auth.use_sshpass and auth.password:
-                argv, _sshpass_cleanup = wrap_argv_with_sshpass(argv, auth.password, env=env)
-                atexit.register(_sshpass_cleanup)
             logger.debug(
-                "Main window: ssh-copy-id auth (askpass=%s, sshpass=%s)",
+                "Main window: ssh-copy-id auth (askpass force, resolver_askpass=%s)",
                 auth.use_askpass,
-                auth.use_sshpass,
             )
 
             ensure_writable_ssh_home(env)
@@ -1389,6 +1131,10 @@ class SshCopyIdRunner:
                         None,
                     )
                 logger.debug("Main window: ssh-copy-id process spawned successfully")
+                try:
+                    term_widget._install_pty_autofill()
+                except Exception:
+                    logger.debug("ssh-copy-id: could not arm PTY auto-fill", exc_info=True)
 
                 def _disconnect_copyid_exit_handler() -> None:
                     handler_id = copyid_exit_state.get('handler_id')
@@ -1624,7 +1370,8 @@ class SshCopyIdRunner:
 
         if auth is not None:
             prefer_password = bool(getattr(auth, 'password_mode', False))
-            combined_auth = bool(getattr(auth, 'use_sshpass', False)) and not prefer_password
+            # Key-based + stored password (askpass delivers both; MFA via force).
+            combined_auth = bool(getattr(auth, 'password', None)) and not prefer_password
         else:
             try:
                 auth_method = int(getattr(connection, 'auth_method', 0) or 0)
@@ -1665,12 +1412,19 @@ class SshCopyIdRunner:
         else:
             # Apply authentication preferences
             if prefer_password:
-                argv += ['-o', 'PreferredAuthentications=password']
+                argv += ['-o', 'PreferredAuthentications=keyboard-interactive,password']
                 if getattr(connection, 'pubkey_auth_no', False):
                     argv += ['-o', 'PubkeyAuthentication=no']
-                    logger.debug("Main window: Added password authentication options - PubkeyAuthentication=no, PreferredAuthentications=password")
+                    logger.debug(
+                        "Main window: Added password authentication options - "
+                        "PubkeyAuthentication=no, PreferredAuthentications="
+                        "keyboard-interactive,password"
+                    )
                 else:
-                    logger.debug("Main window: Added password authentication option - PreferredAuthentications=password")
+                    logger.debug(
+                        "Main window: Added password authentication option - "
+                        "PreferredAuthentications=keyboard-interactive,password"
+                    )
             elif combined_auth:
                 argv += [
                     '-o',

@@ -1,23 +1,23 @@
 """Config-related dialogs/windows for MainWindow.
 
-Extracted verbatim from window.py as a mixin (matching WindowActions and the
-other Window*Mixin modules) to shrink the window.py god-object. MainWindow
-inherits this; methods keep their signatures and `self.` state access, so this
-is a pure code move with no behavior change.
+Extracted from window.py as a mixin (matching WindowActions and the other
+Window*Mixin modules) to shrink the window.py god-object. MainWindow inherits
+this; methods keep their signatures and ``self.`` state access.
 
-Covers the known-hosts editor launcher, the preferences window launcher, and
-the config export / import flow (including the import-mode prompt and the
-import itself). The generic `_error_dialog` / `_info_dialog` helpers these call
-stay in window.py and resolve via `self`.
+Also hosts the shared in-app SSH password / passphrase prompt helpers
+(:func:`show_ssh_password_dialog`, :func:`_show_password_passphrase_dialog`)
+and Wayland-safe modal parenting (:func:`resolve_app_modal_parent`,
+:func:`present_for_modal_dialog`). ``window`` re-exports those for callers
+that historically imported them from there.
 """
 
 import logging
 import os
 import threading
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
-from gi.repository import Adw, Gio, GLib, Gtk
+from gi.repository import Adw, Gdk, Gio, GLib, Gtk
 from gettext import gettext as _
 
 from .platform_utils import get_config_dir
@@ -30,6 +30,447 @@ BACKUP_DIALOG_MIN_WIDTH = 520
 BACKUP_EXPORT_WINDOW_WIDTH = 640
 BACKUP_EXPORT_WINDOW_HEIGHT = 720
 BACKUP_EXPORT_CLAMP_MAX = 560
+
+
+def resolve_app_modal_parent(from_widget=None) -> "Gtk.Window":
+    """Return the primary app window to use as a modal dialog parent.
+
+    Use this before showing any modal from code that runs inside a secondary
+    window — e.g. :class:`FileManagerWindow`, a plugin page tab, or a progress
+    window — so the dialog stacks correctly on Wayland.
+
+    Resolution order:
+
+    1. ``Gtk.Application.window`` (the live :class:`MainWindow`)
+    2. Any registered window whose class name is ``MainWindow``
+    3. If ``from_widget`` is set: embedded root (``_embedded_parent.get_root()``),
+       ``get_transient_for()``, ``get_root()``, or ``from_widget`` itself when it
+       is a :class:`Gtk.Window`
+    4. ``Gtk.Application.get_active_window()``
+
+    Raises :class:`RuntimeError` if no suitable parent exists.
+
+    See also :func:`present_for_modal_dialog` and :func:`show_ssh_password_dialog`.
+    Pair with ``present_for_modal_dialog(parent)`` before ``dialog.present()``.
+    """
+    app = None
+    if from_widget is not None:
+        try:
+            app = from_widget.get_application()
+        except Exception:
+            app = None
+    if app is None:
+        app = Gtk.Application.get_default()
+
+    if app is not None:
+        main_win = getattr(app, "window", None)
+        if main_win is not None and isinstance(main_win, Gtk.Window):
+            return main_win
+        for win in app.get_windows():
+            if win.__class__.__name__ == "MainWindow":
+                return win
+
+    if from_widget is not None:
+        embedded_parent = getattr(from_widget, "_embedded_parent", None)
+        if embedded_parent is not None:
+            try:
+                root = embedded_parent.get_root()
+                if root is not None:
+                    return root
+            except Exception:
+                pass
+        try:
+            transient = from_widget.get_transient_for()
+            if transient is not None:
+                return transient
+        except Exception:
+            pass
+        try:
+            root = from_widget.get_root()
+            if root is not None:
+                return root
+        except Exception:
+            pass
+        if isinstance(from_widget, Gtk.Window):
+            return from_widget
+
+    if app is not None:
+        try:
+            active = app.get_active_window()
+            if active is not None and isinstance(active, Gtk.Window):
+                return active
+        except Exception:
+            pass
+
+    raise RuntimeError("No modal parent window available")
+
+
+def resolve_topmost_prompt_parent(windows, active_window, main_window):
+    """Pick the window a routed askpass prompt should stack on.
+
+    A visible **modal** secondary window (e.g. the SCP browse ``Adw.Window``)
+    is blocking input, so the prompt must parent to it — not the main window,
+    and not merely whatever GTK reports as "active" (a modal transient does not
+    reliably become the active window on Wayland, so the main window can still
+    win :func:`Gtk.Application.get_active_window`). Resolution:
+
+    1. The active window, if it is a visible modal secondary window.
+    2. Any other visible modal secondary window (last = most recently mapped).
+    3. The active window, if visible (non-modal secondary window, e.g. FM).
+    4. The main window.
+
+    Pure function over already-extracted GTK state so it can be unit-tested.
+    """
+    def _visible(win):
+        try:
+            return bool(win.get_visible())
+        except Exception:
+            return False
+
+    def _modal(win):
+        try:
+            return bool(win.get_modal())
+        except Exception:
+            return False
+
+    modal_secondary = [
+        w for w in (windows or [])
+        if w is not main_window and _visible(w) and _modal(w)
+    ]
+    if modal_secondary:
+        if active_window in modal_secondary:
+            return active_window
+        return modal_secondary[-1]
+    if active_window is not None and active_window is not main_window \
+            and _visible(active_window):
+        return active_window
+    return main_window
+
+
+def present_for_modal_dialog(window: Gtk.Window) -> None:
+    """Raise *window* before showing a modal child so it stacks on top (Wayland).
+
+    Calls ``unminimize()`` and ``present()`` on *window*. Always invoke this on
+    the parent returned by :func:`resolve_app_modal_parent` immediately before
+    presenting a modal dialog.
+    """
+    try:
+        window.unminimize()
+    except Exception:
+        pass
+    try:
+        window.present()
+    except Exception as exc:
+        logger.debug("Failed to present modal parent window: %s", exc)
+
+
+def show_ssh_password_dialog(
+    *,
+    from_widget=None,
+    parent_window: Optional[Gtk.Window] = None,
+    display_name: str = "",
+    host: Optional[str] = None,
+    username: Optional[str] = None,
+    connection: Any = None,
+    connection_manager: Optional[Any] = None,
+    heading: Optional[str] = None,
+    body: Optional[str] = None,
+    store_label: Optional[str] = None,
+    on_store: Optional[Any] = None,
+) -> Optional[str]:
+    """Show the standard in-app SSH **password** dialog (blocking).
+
+    This is the single supported entry point for prompting the user for an SSH
+    login password from core features, plugins (advanced), and secondary windows
+    (file manager, authorized-keys editor, external SFTP mount, …). Do **not**
+    roll a custom password dialog — use this helper so Wayland stacking, copy,
+    and keyring storage behave consistently. Internally this is an
+    ``Adw.Dialog`` with a header bar (Cancel / confirm), a boxed-list
+    ``PasswordEntryRow``, and an optional Store checkbox.
+
+    The dialog is modal, parented on :class:`MainWindow` (via
+    :func:`resolve_app_modal_parent`), and blocks until the user dismisses it
+    (nested ``GLib.MainLoop``). **Must be called on the GTK main thread.**
+
+    See module docstring / ``AGENTS.md`` for call examples. Also re-exported
+    from :mod:`sshpilot.window` for historical imports.
+    """
+    storage_host = host
+    storage_user = username
+    prompt_name = display_name
+
+    if connection is not None:
+        storage_user = storage_user or getattr(connection, "username", None)
+        storage_host = (
+            storage_host
+            or getattr(connection, "hostname", None)
+            or getattr(connection, "host", None)
+            or getattr(connection, "nickname", None)
+        )
+        if not prompt_name:
+            nickname = getattr(connection, "nickname", None)
+            user_label = storage_user or ""
+            host_label = storage_host or ""
+            prompt_name = (
+                str(nickname)
+                if nickname
+                else (f"{user_label}@{host_label}" if user_label else str(host_label))
+            )
+
+    if parent_window is not None:
+        parent = parent_window
+    else:
+        parent = resolve_app_modal_parent(from_widget)
+
+    present_for_modal_dialog(parent)
+    return _show_password_passphrase_dialog(
+        parent,
+        prompt_type="password",
+        display_name=prompt_name,
+        host=storage_host,
+        username=storage_user,
+        connection=connection,
+        connection_manager=connection_manager,
+        heading=heading,
+        body=body,
+        store_label=store_label,
+        on_store=on_store,
+    )
+
+
+def _show_password_passphrase_dialog(
+    parent_window,
+    prompt_type: str = "password",
+    display_name: str = "",
+    key_path: Optional[str] = None,
+    host: Optional[str] = None,
+    username: Optional[str] = None,
+    connection: Optional[Any] = None,
+    connection_manager: Optional[Any] = None,
+    *,
+    heading: Optional[str] = None,
+    body: Optional[str] = None,
+    store_label: Optional[str] = None,
+    on_store: Optional[Any] = None,
+) -> Optional[str]:
+    """Show a graphical password or passphrase dialog.
+
+    ``Adw.Dialog`` + header bar (Cancel / confirm) with a boxed-list password
+    row and an optional Store checkbox below it — not a SwitchRow (which reads
+    like another text field).
+    """
+    from . import icon_utils
+
+    password_result = [None]
+    main_loop = GLib.MainLoop()
+    done = [False]
+
+    if heading is None:
+        if prompt_type == "passphrase":
+            heading = _("Passphrase Required")
+        elif prompt_type == "challenge":
+            heading = _("Authentication Required")
+        else:
+            heading = _("Password Required")
+    if body is None:
+        if prompt_type == "passphrase":
+            if key_path:
+                key_name = os.path.basename(key_path)
+                body = _("Enter the passphrase for key “{key_name}”.").format(
+                    key_name=key_name
+                )
+            else:
+                body = _("Enter your passphrase.")
+        elif prompt_type == "challenge":
+            body = display_name or _("Enter the verification code.")
+        elif display_name:
+            body = _("Enter your password for {display_name}.").format(
+                display_name=display_name
+            )
+        else:
+            body = _("Enter your password.")
+
+    if prompt_type == "passphrase":
+        entry_title = _("Passphrase")
+        default_store_label = _("Store passphrase")
+        confirm_label = _("Unlock")
+    elif prompt_type == "challenge":
+        entry_title = _("Verification code")
+        default_store_label = ""
+        confirm_label = _("Continue")
+    else:
+        entry_title = _("Password")
+        default_store_label = _("Store password")
+        confirm_label = _("OK")
+    if not store_label:
+        store_label = default_store_label
+    allow_store = prompt_type in ("password", "passphrase")
+
+    dialog = Adw.Dialog()
+    dialog.set_title(heading)
+    # follows_content_size=True would ignore content_width and shrink to the
+    # PreferencesGroup's natural size — keep an explicit width instead.
+    dialog.set_content_width(480)
+    dialog.set_follows_content_size(False)
+
+    cancel_btn = Gtk.Button(label=_("Cancel"))
+    ok_btn = Gtk.Button(label=confirm_label)
+    ok_btn.add_css_class("suggested-action")
+
+    header = Adw.HeaderBar()
+    header.set_show_start_title_buttons(False)
+    header.set_show_end_title_buttons(False)
+    header.pack_start(cancel_btn)
+    header.pack_end(ok_btn)
+
+    icon = icon_utils.new_image_from_icon_name("dialog-password-symbolic")
+    icon.set_pixel_size(48)
+    icon.set_halign(Gtk.Align.CENTER)
+
+    body_label = Gtk.Label(label=body)
+    body_label.set_wrap(True)
+    body_label.set_justify(Gtk.Justification.CENTER)
+    body_label.set_halign(Gtk.Align.CENTER)
+    body_label.add_css_class("dim-label")
+
+    password_row = Adw.PasswordEntryRow(title=entry_title)
+    group = Adw.PreferencesGroup()
+    group.add(password_row)
+
+    store_checkbox = Gtk.CheckButton(label=store_label or _("Store password"))
+    store_checkbox.set_active(False)
+
+    persists_secrets = True
+    try:
+        from .secret_storage import get_secret_manager
+        persists_secrets = get_secret_manager().persists_secrets()
+    except Exception:
+        persists_secrets = True
+
+    content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18)
+    content.set_margin_top(18)
+    content.set_margin_bottom(24)
+    content.set_margin_start(24)
+    content.set_margin_end(24)
+    content.append(icon)
+    content.append(body_label)
+    content.append(group)
+    if allow_store and persists_secrets:
+        content.append(store_checkbox)
+    elif allow_store and not persists_secrets:
+        no_store_label = Gtk.Label(
+            label=_(
+                "Secret storage is set to SSH Agent Only — passwords and passphrases "
+                "are not saved by sshPilot."
+            ),
+        )
+        no_store_label.set_wrap(True)
+        no_store_label.set_xalign(0)
+        for css in ("dim-label", "caption"):
+            try:
+                no_store_label.add_css_class(css)
+            except Exception:
+                pass
+        content.append(no_store_label)
+
+    toolbar = Adw.ToolbarView()
+    toolbar.add_top_bar(header)
+    toolbar.set_content(content)
+    dialog.set_child(toolbar)
+
+    def _finish(ok: bool) -> None:
+        if done[0]:
+            return
+        done[0] = True
+        if ok:
+            entered = password_row.get_text()
+            if entered:
+                password_result[0] = entered
+                store_checked = bool(
+                    allow_store and persists_secrets and store_checkbox.get_active()
+                )
+                if allow_store and store_checked:
+                    if on_store is not None:
+                        try:
+                            on_store(entered)
+                        except Exception as e:
+                            logger.debug("Failed to store via on_store hook: %s", e)
+                    elif prompt_type == "passphrase" and key_path:
+                        try:
+                            from .askpass_utils import store_passphrase
+                            store_passphrase(key_path, entered)
+                        except Exception as e:
+                            logger.debug("Failed to store passphrase: %s", e)
+                    elif prompt_type == "password" and connection_manager:
+                        try:
+                            if connection is not None and hasattr(
+                                connection_manager, "store_connection_password"
+                            ):
+                                connection_manager.store_connection_password(
+                                    connection, entered, username=username
+                                )
+                            elif host and username:
+                                from .credential_model import canonical_password_host
+                                canonical = canonical_password_host(
+                                    {
+                                        "hostname": host,
+                                        "host": host,
+                                        "username": username,
+                                    }
+                                )
+                                store_host = canonical or host
+                                connection_manager.store_password(
+                                    store_host, username, entered
+                                )
+                        except Exception as e:
+                            logger.debug("Failed to store password: %s", e)
+            else:
+                password_result[0] = None
+        else:
+            password_result[0] = None
+        try:
+            dialog.close()
+        except Exception:
+            pass
+        main_loop.quit()
+
+    cancel_btn.connect("clicked", lambda _b: _finish(False))
+    ok_btn.connect("clicked", lambda _b: _finish(True))
+    dialog.set_default_widget(ok_btn)
+
+    try:
+        password_row.connect("entry-activated", lambda _r: _finish(True))
+    except (TypeError, AttributeError):
+        key_controller = Gtk.EventControllerKey()
+
+        def on_key_pressed(_controller, keyval, _keycode, _state):
+            if keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
+                _finish(True)
+                return True
+            if keyval == Gdk.KEY_Escape:
+                _finish(False)
+                return True
+            return False
+
+        key_controller.connect("key-pressed", on_key_pressed)
+        dialog.add_controller(key_controller)
+
+    def _on_closed(*_args):
+        if not done[0]:
+            _finish(False)
+
+    try:
+        dialog.connect("closed", _on_closed)
+    except TypeError:
+        dialog.connect("close-request", lambda *_a: (_finish(False), False)[1])
+
+    dialog.present(parent_window)
+    # grab_focus() returns True — idle_add would re-run forever and steal
+    # keystrokes after the first character unless we return SOURCE_REMOVE.
+    GLib.idle_add(lambda: (password_row.grab_focus(), False)[1])
+
+    main_loop.run()
+    return password_result[0]
 
 
 class WindowConfigDialogsMixin:
@@ -659,7 +1100,6 @@ class WindowConfigDialogsMixin:
             except Exception:
                 pw = None
         if not pw:
-            from .window import show_ssh_password_dialog  # lazy import avoids a circular import
             pw = show_ssh_password_dialog(
                 from_widget=self, connection=connection,
                 connection_manager=self.connection_manager)

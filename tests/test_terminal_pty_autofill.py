@@ -68,3 +68,66 @@ def test_install_pty_autofill_noop_without_config():
     t = TerminalWidget.__new__(TerminalWidget)
     t._pty_autofill = None
     t._install_pty_autofill()  # must not raise
+
+
+def _password_fill(password="pw123"):
+    """The queued ssh-password fill exactly as arm_password_pty_autofill arms it."""
+    from sshpilot.askpass_utils import classify_prompt
+    return (lambda text: classify_prompt(text) == 'password', password)
+
+
+def test_queued_password_fill_answers_password_prompt_once():
+    t = _term()
+    t._pty_autofill = None
+    t._pty_autofills = [_password_fill()]
+    t._scrape_recent_terminal_text = lambda max_chars=2000: (
+        "debug1: Next authentication method: keyboard-interactive\n"
+        "(testuser@127.0.0.1) Password:"
+    )
+    t._on_pty_autofill_changed(None)
+    assert t._fed == [b"pw123\n"]
+    # One-shot: a re-prompt (rejected password) is left for the user.
+    t._on_pty_autofill_changed(None)
+    assert t._fed == [b"pw123\n"]
+
+
+def test_queued_password_fill_ignores_2fa_prompt():
+    t = _term()
+    t._pty_autofill = None
+    t._pty_autofills = [_password_fill()]
+    t._scrape_recent_terminal_text = lambda max_chars=2000: (
+        "Verification code:"
+    )
+    t._on_pty_autofill_changed(None)
+    assert t._fed == []
+    assert t._pty_autofills  # still armed for the real password prompt
+
+
+def test_queued_password_fill_coexists_with_legacy_sudo_fill():
+    t = _term()  # legacy sudo fill armed via _pty_autofill
+    t._pty_autofills = [_password_fill()]
+    # ssh password prompt first: only the queued fill fires.
+    t._scrape_recent_terminal_text = lambda max_chars=2000: "Password:"
+    t._on_pty_autofill_changed(None)
+    assert t._fed == [b"pw123\n"]
+    assert t._pty_autofill is not None
+    # then the sudo prompt: the legacy fill fires and everything unwinds.
+    t.vte = types.SimpleNamespace(disconnect=lambda hid: None)
+    t._scrape_recent_terminal_text = lambda max_chars=2000: (
+        "[sshPilot] sudo password:"
+    )
+    t._on_pty_autofill_changed(None)
+    assert t._fed == [b"pw123\n", b"s3cret\n"]
+    assert t._pty_autofill is None
+    assert t._pty_autofills is None
+
+
+def test_arm_password_pty_autofill_queues_classifier():
+    t = TerminalWidget.__new__(TerminalWidget)
+    t._pty_autofills = None
+    t.arm_password_pty_autofill("secret")
+    assert len(t._pty_autofills) == 1
+    matcher, response = t._pty_autofills[0]
+    assert response == "secret"
+    assert matcher("Password:") is True
+    assert matcher("Verification code:") is False

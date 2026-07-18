@@ -125,35 +125,33 @@ def test_run_command_feeds_input_when_provided(monkeypatch):
     assert seen.get("stdin") is None
 
 
-def test_run_command_wraps_sshpass_for_password_auth(monkeypatch):
+def test_run_command_uses_askpass_env_without_sshpass(monkeypatch):
     seen = {}
 
     class _Prepared:
         command = ["ssh", "host", "id"]
-        env = {}
-        use_sshpass = True
+        env = {
+            "SSH_ASKPASS": "/tmp/askpass",
+            "SSH_ASKPASS_REQUIRE": "prefer",
+            "SSHPILOT_PASSWORD_USER": "u",
+        }
+        use_sshpass = False
         password = "secret"
 
     monkeypatch.setattr("sshpilot.ssh_connection_builder.build_ssh_connection",
                         lambda ctx: _Prepared())
 
-    def _fake_wrap(argv, password, *, env=None):
-        seen["password"] = password
-        return (["sshpass", "-f", "/fifo", *argv], lambda: seen.__setitem__("cleaned", True))
-
-    monkeypatch.setattr("sshpilot.ssh_password_exec.wrap_argv_with_sshpass",
-                        _fake_wrap)
-
     def _fake_run(argv, env=None, **kw):
         seen["argv"] = argv
+        seen["env"] = env
         return types.SimpleNamespace(returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr(subprocess, "run", _fake_run)
 
     _ctx(_Manager([_Conn("web")])).run_command("web", "id")
-    assert seen["password"] == "secret"
-    assert seen["argv"][:3] == ["sshpass", "-f", "/fifo"]
-    assert seen.get("cleaned") is True  # FIFO temp dir cleaned up
+    assert seen["argv"][:2] == ["ssh", "host"]
+    assert seen["env"].get("SSH_ASKPASS_REQUIRE") == "prefer"
+    assert "sshpass" not in seen["argv"][0]
 
 
 def test_run_command_timeout_is_a_failed_result(monkeypatch):

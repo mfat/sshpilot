@@ -620,7 +620,6 @@ class SshPilotApplication(Adw.Application):
             'sshpilot.ssh_utils',
             'sshpilot.ssh_config_utils',
             'sshpilot.ssh_connection_builder',
-            'sshpilot.ssh_password_exec',
             'sshpilot.sshcopyid_window',
             'sshpilot.sshpilot_agent',
             'sshpilot.scp_utils',

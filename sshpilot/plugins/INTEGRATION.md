@@ -54,15 +54,15 @@ except ProtocolError as e:
 ssh_cmd = list(spec.argv)
 env = dict(spec.env)
 use_askpass = bool(spec.extras.get('use_askpass'))
-password_value = spec.extras.get('password') if spec.extras.get('use_sshpass') else None
+password_value = spec.extras.get('password')
+# askpass env (from resolve_native_auth) delivers passphrases AND login passwords;
+# MFA/OTP declined by the helper falls back to the VTE TTY.
 ```
 
-Everything below that point (the sshpass FIFO, askpass env handling,
-`self.backend.spawn_async(argv=ssh_cmd, ...)`) stays exactly as it is.
-For the SSH backend the resulting argv/env are byte-identical to today's,
-because plugin zero returns the same `build_ssh_connection()` output —
-this change is a pure indirection, which is what makes it safe to ship
-alone.
+Everything below that point (askpass log forwarding, `TERM`/`PATH`,
+`self.backend.spawn_async(argv=ssh_cmd, ...)`) stays owned by `terminal.py`.
+For the SSH backend the resulting argv/env come from
+`build_ssh_connection()` via the protocol seam — a pure indirection.
 
 `self._plugin_ctx` can be a single `PluginContext` created at startup and
 passed down, or rebuilt cheaply per call; it only carries references.

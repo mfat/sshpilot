@@ -1,22 +1,18 @@
-"""In-process passphrase-prompt IPC server.
+"""In-process askpass IPC server (graphical prompts + warm vault lookup).
 
-The SSH key passphrase prompt is normally rendered by a separate askpass helper
-process that ssh spawns via ``SSH_ASKPASS``. On Wayland that helper window — a
-different app's top-level — can map *behind* the focused main window and be hard
-to find.
-
-This module lets the helper hand the prompt back to the running main process over
-a private Unix socket, so the prompt is shown as a modal child of the main window
-(reusing ``MainWindow.prompt_ssh_passphrase``) and reliably appears on top. If
-the main app is not running or the socket is unreachable, the helper falls back
-to its own standalone window, so there is no regression.
+The askpass helper ssh spawns via ``SSH_ASKPASS`` routes interactive prompts
+(login password, MFA/OTP, FIDO presence, confirm) back to the running main
+process over a private Unix socket so they appear as modal children of the
+main window (Wayland-safe). Unstored key passphrases are not prompted here —
+askpass defers those to SSH / the OS / ssh-agent after vault autofill misses.
 
 Protocol (newline-delimited JSON over ``AF_UNIX``):
-  prompt request (helper -> app): {"token", "type": "passphrase", "key_path", "prompt"}
+  prompt request (helper -> app):
+    {"token", "type": "password"|"challenge"|"presence"|"confirm"|"passphrase", ...}
   prompt reply   (app -> helper):
-    {"ok": true,  "passphrase": "..."}   user entered a passphrase
-    {"ok": false}                         user cancelled (no fallback)
-    {"ok": false, "fallback": true}       app can't prompt now -> use standalone
+    {"ok": true,  "passphrase"|"value": "..."}   user entered a secret
+    {"ok": false}                                 user cancelled (no fallback)
+    {"ok": false, "fallback": true}               app can't prompt now -> helper dialog
 
   lookup request (helper -> app): {"token", "type": "lookup", "key_path"}
   lookup reply   (app -> helper):
@@ -24,6 +20,12 @@ Protocol (newline-delimited JSON over ``AF_UNIX``):
     {"ok": false}                         not found / not cached (helper falls back)
   The lookup request never prompts — it lets the askpass helper reuse the main
   process's already-unlocked secret cache instead of cold-loading the vault itself.
+
+  session_password (helper -> app): {"token", "type": "session_password", "id"}
+  session_password reply:
+    {"ok": true,  "value": "..."}   one-shot in-memory password (consumed)
+    {"ok": false}                   unknown/expired id
+  Keeps just-typed login passwords out of temp files when the IPC server is up.
 """
 
 import json
@@ -140,9 +142,9 @@ class AskpassPromptServer:
         if not line:
             self._close(connection)
             return
-        self._handle_request(line, connection)
+        self._handle_request(line, connection, data_in)
 
-    def _handle_request(self, line, connection):
+    def _handle_request(self, line, connection, data_in=None):
         reply = {"ok": False}
         try:
             request = json.loads(line)
@@ -172,7 +174,19 @@ class AskpassPromptServer:
             )
             return
 
-        if request.get("type") != "passphrase":
+        # Non-prompting: one-shot in-memory login password (no temp file).
+        if request.get("type") == "session_password":
+            value = askpass_utils.take_session_password(request.get("id") or "")
+            self._write_reply(
+                connection,
+                {"ok": True, "value": value} if value else {"ok": False},
+            )
+            return
+
+        req_type = request.get("type")
+        if req_type not in (
+            "passphrase", "challenge", "password", "presence", "confirm"
+        ):
             self._write_reply(connection, reply)
             return
 
@@ -185,11 +199,60 @@ class AskpassPromptServer:
 
         self._busy = True
         try:
-            key_path = request.get("key_path") or ""
             prompt = request.get("prompt") or ""
-            value = self._window.prompt_ssh_passphrase(key_path, prompt)
-            if value is not None:
-                reply = {"ok": True, "passphrase": value}
+            if req_type == "challenge":
+                value = self._window.prompt_ssh_challenge(prompt)
+                if value is not None:
+                    reply = {"ok": True, "value": value, "passphrase": value}
+            elif req_type == "password":
+                value = self._window.prompt_ssh_password(
+                    display_name=prompt.strip() or "",
+                    host=request.get("host") or None,
+                    username=request.get("username") or None,
+                    body=prompt.strip() or None,
+                )
+                if value is not None:
+                    reply = {"ok": True, "value": value, "passphrase": value}
+            elif req_type == "presence":
+                # Informational; dismiss returns "" (ok). Cancel → ok false.
+                # OpenSSH SIGTERMs the helper once the key is touched; that
+                # closes its socket, so peer EOF here means "touch done" —
+                # auto-close the reminder instead of waiting for a click.
+                closer = [None]
+                if data_in is not None:
+                    def _peer_gone(stream, res, *_args):
+                        try:
+                            stream.read_line_finish_utf8(res)
+                        except Exception:
+                            pass
+                        close_dialog = closer[0]
+                        if close_dialog is not None:
+                            try:
+                                close_dialog()
+                            except Exception:
+                                pass
+
+                    try:
+                        data_in.read_line_async(
+                            GLib.PRIORITY_DEFAULT, None, _peer_gone, None
+                        )
+                    except Exception:
+                        pass
+                acknowledged = self._window.prompt_ssh_presence(
+                    prompt,
+                    register_close=lambda fn: closer.__setitem__(0, fn),
+                )
+                closer[0] = None
+                if acknowledged:
+                    reply = {"ok": True, "value": ""}
+            elif req_type == "confirm":
+                if self._window.prompt_ssh_confirm(prompt):
+                    reply = {"ok": True, "value": "yes"}
+            else:
+                key_path = request.get("key_path") or ""
+                value = self._window.prompt_ssh_passphrase(key_path, prompt)
+                if value is not None:
+                    reply = {"ok": True, "passphrase": value}
         except Exception as exc:
             logger.debug("askpass server: prompt error: %s", exc)
             reply = {"ok": False, "fallback": True}

@@ -66,9 +66,8 @@ def test_ssh_options_precede_host_and_raw_remote_command():
     assert '-t' not in cmd and '-tt' not in cmd
 
 
-def test_sshpass_when_password_present_even_for_key_auth():
-    """Combined auth: a key-auth connection with a stored password (and no saved
-    key passphrase) falls back to the password via sshpass."""
+def test_askpass_when_password_present_for_key_and_password_auth():
+    """Stored login password is delivered via askpass (never sshpass)."""
     conn = Connection(
         {
             'host': 'example.com',
@@ -81,17 +80,19 @@ def test_sshpass_when_password_present_even_for_key_auth():
     conn.resolved_identity_files = []  # no key -> no saved passphrase
     ctx = ConnectionContext(connection=conn, command_type='ssh')
     result = build_ssh_connection(ctx)
-    # auth_method=0 + stored password, no saved passphrase -> combined sshpass.
-    assert result.use_sshpass is True
+    assert result.use_sshpass is False
     assert result.password == 'secret'
-    assert result.use_askpass is False
-    assert 'SSH_ASKPASS' not in result.env
+    assert result.use_askpass is True
+    assert result.env.get('SSH_ASKPASS')
+    assert result.env.get('SSH_ASKPASS_REQUIRE') == 'prefer'
+    assert result.env.get('SSHPILOT_PASSWORD_USER') == 'alice'
 
-    # Password auth (auth_method=1) with the same stored password uses sshpass.
+    # Password auth (auth_method=1) with the same stored password also uses askpass.
     conn.auth_method = 1
     ctx = ConnectionContext(connection=conn, command_type='ssh')
     result = build_ssh_connection(ctx)
-    assert result.use_sshpass is True
+    assert result.use_sshpass is False
+    assert result.use_askpass is True
     assert result.password == 'secret'
 
 
@@ -190,7 +191,8 @@ def test_build_ssh_connection_reads_password_via_manager(monkeypatch):
         command_type='ssh',
     )
     built = build_ssh_connection(ctx)
-    assert built.use_sshpass is True
+    assert built.use_sshpass is False
+    assert built.use_askpass is True
     assert built.password == 'from-vault'
 
 

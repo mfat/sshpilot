@@ -138,40 +138,43 @@ def test_local_command_not_emitted_to_command():
 # --- authentication ---
 
 
-def test_password_auth_with_stored_password_uses_sshpass():
+def test_password_auth_with_stored_password_uses_askpass():
     cmd, result = _build(
         {
             'host': 'pw.example',
             'hostname': 'pw.example',
+            'username': 'u',
             'auth_method': 1,
             'password': 'secret',
         },
     )
-    assert result.use_sshpass is True
+    assert result.use_sshpass is False
     assert result.password == 'secret'
-    assert result.use_askpass is False
+    assert result.use_askpass is True
+    assert result.env.get('SSH_ASKPASS_REQUIRE') == 'prefer'
     # PreferredAuthentications/PubkeyAuthentication now come from ~/.ssh/config.
     assert not _has_o_option(cmd, 'PreferredAuthentications')
     # No agent-bypass for password mode.
     assert 'IdentityAgent=none' not in cmd
 
 
-def test_key_auth_with_stored_password_uses_combined_sshpass():
-    # Combined auth: key auth + a stored password (no saved key passphrase) ->
-    # try the key, fall back to the password via sshpass.
+def test_key_auth_with_stored_password_uses_askpass_not_sshpass():
+    # Key auth + a stored password (no saved key passphrase) -> askpass for the
+    # login password; MFA declined by the helper falls back to the TTY.
     conn = Connection({
         'host': 'combo.example',
         'hostname': 'combo.example',
+        'username': 'u',
         'auth_method': 0,
         'password': 'backup',
     })
     conn.resolved_identity_files = []  # no saved passphrase
     cmd, result = _build_from(conn)
-    assert result.use_sshpass is True
+    assert result.use_sshpass is False
     assert result.password == 'backup'
-    assert result.use_askpass is False
-    assert 'SSH_ASKPASS' not in result.env
-    assert result.env.get('SSH_ASKPASS_REQUIRE') == 'never'
+    assert result.use_askpass is True
+    assert result.env.get('SSH_ASKPASS')
+    assert result.env.get('SSH_ASKPASS_REQUIRE') == 'prefer'
     assert not _has_o_option(cmd, 'PreferredAuthentications')
 
 
@@ -196,28 +199,38 @@ def test_in_memory_password_used_when_password_auth_selected():
         {
             'host': 'mem.example',
             'hostname': 'mem.example',
+            'username': 'u',
             'auth_method': 1,
             'password': 'inline-secret',
         },
     )
-    assert result.use_sshpass is True
+    assert result.use_sshpass is False
+    assert result.use_askpass is True
     assert result.password == 'inline-secret'
+    # Staged for askpass: IPC id when the prompt server is up, else a temp file.
+    assert (
+        result.env.get('SSHPILOT_SESSION_PASSWORD_ID')
+        or result.env.get('SSHPILOT_SESSION_PASSWORD_FILE')
+    )
 
 
 # --- resolve_native_auth modes ---
 
 
 def test_resolve_native_auth_password_mode():
-    conn = Connection({'host': 'h', 'hostname': 'h', 'auth_method': 1, 'password': 'p'})
+    conn = Connection({
+        'host': 'h', 'hostname': 'h', 'username': 'u',
+        'auth_method': 1, 'password': 'p',
+    })
     auth = resolve_native_auth(conn)
     assert isinstance(auth, NativeAuth)
     assert auth.password_mode is True
-    assert auth.use_sshpass is True
+    assert auth.use_sshpass is False
     assert auth.password == 'p'
-    assert auth.use_askpass is False
+    assert auth.use_askpass is True
     assert auth.extra_opts == []
-    assert 'SSH_ASKPASS' not in auth.env
-    assert auth.env.get('SSH_ASKPASS_REQUIRE') == 'never'
+    assert auth.env.get('SSH_ASKPASS')
+    assert auth.env.get('SSH_ASKPASS_REQUIRE') == 'prefer'
 
 
 def test_resolve_native_auth_askpass_disabled():
@@ -384,7 +397,7 @@ def test_app_config_batch_mode_skipped_for_password_mode():
     assert not _has_o_option(cmd, 'BatchMode=yes')
 
 
-def test_app_config_batch_mode_skipped_for_combined_auth_sshpass(monkeypatch):
+def test_app_config_batch_mode_skipped_for_combined_auth_pty_password(monkeypatch):
     import sshpilot.ssh_connection_builder as scb
 
     cfg = _ConfigStub({'batch_mode': True})
@@ -400,9 +413,10 @@ def test_app_config_batch_mode_skipped_for_combined_auth_sshpass(monkeypatch):
 
     cmd, result = _build_from(conn, config=cfg)
 
-    assert result.use_sshpass is True
+    assert result.use_sshpass is False
+    assert result.use_askpass is True
     assert result.password == 'account-password'
-    # Any sshpass-backed path needs prompts enabled so sshpass can answer them.
+    # Askpass password delivery needs prompts enabled (BatchMode would skip them).
     assert not _has_o_option(cmd, 'BatchMode=yes')
 
 
@@ -486,6 +500,28 @@ def test_base_command_scp_and_copy_id_clear_forwardings():
     assert _has_o_option(_base_cmd('ssh-copy-id'), 'ClearAllForwardings=yes')
     assert not _has_o_option(_base_cmd('ssh'), 'ClearAllForwardings')
     assert not _has_o_option(_base_cmd('sftp'), 'ClearAllForwardings')
+
+
+def test_base_command_limits_password_prompts_for_transfers_only():
+    # SCP / ssh-copy-id: cancel-once askpass. Interactive ssh keeps OpenSSH default.
+    assert _has_o_option(_base_cmd('scp'), 'NumberOfPasswordPrompts=1')
+    assert _has_o_option(_base_cmd('ssh-copy-id'), 'NumberOfPasswordPrompts=1')
+    assert not _has_o_option(_base_cmd('ssh'), 'NumberOfPasswordPrompts')
+    assert not _has_o_option(_base_cmd('sftp'), 'NumberOfPasswordPrompts')
+
+
+def test_native_sftp_limits_password_prompts_terminal_does_not():
+    # File manager uses command_type=sftp on the native builder.
+    sftp_cmd, _ = _build(
+        {'host': 'fm.example', 'hostname': 'fm.example'},
+        command_type='sftp',
+    )
+    term_cmd, _ = _build(
+        {'host': 'term.example', 'hostname': 'term.example'},
+        command_type='ssh',
+    )
+    assert _has_o_option(sftp_cmd, 'NumberOfPasswordPrompts=1')
+    assert not _has_o_option(term_cmd, 'NumberOfPasswordPrompts')
 
 
 def test_base_command_copy_id_skips_unsupported_flags():

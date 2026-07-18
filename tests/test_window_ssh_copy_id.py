@@ -7,8 +7,8 @@ sys.modules.setdefault("cairo", types.ModuleType("cairo"))
 
 
 def test_ssh_copy_id_saved_passphrase_uses_askpass(monkeypatch, tmp_path):
-    # ssh-copy-id now resolves auth via the shared resolve_native_auth: a saved
-    # key passphrase -> askpass (REQUIRE=prefer), same as the terminal and SCP.
+    # ssh-copy-id resolves auth via resolve_native_auth, then upgrades to
+    # REQUIRE=force so prompts stay on the graphical askpass (VTE has a TTY).
     window_mod = importlib.import_module("sshpilot.window")
     askpass_mod = importlib.import_module("sshpilot.askpass_utils")
     scb = importlib.import_module("sshpilot.ssh_connection_builder")
@@ -119,6 +119,11 @@ def test_ssh_copy_id_saved_passphrase_uses_askpass(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(
         runner_mod,
+        "_wrap_sshcopyid_terminal",
+        lambda *_args, **_kwargs: DummyWidget(),
+    )
+    monkeypatch.setattr(
+        runner_mod,
         "_build_terminal_disclosure",
         lambda *_args, **_kwargs: (
             DummyWidget(),
@@ -196,11 +201,19 @@ def test_ssh_copy_id_saved_passphrase_uses_askpass(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(askpass_mod, "lookup_passphrase", lambda *_: "", raising=False)
 
-    # resolve_native_auth (in ssh_connection_builder) decides the auth: make the
-    # key look like it has a saved passphrase -> askpass(prefer).
+    # resolve_native_auth decides the auth: saved passphrase -> askpass(prefer);
+    # ssh-copy-id then upgrades REQUIRE to force.
     monkeypatch.setattr(scb, "lookup_passphrase", lambda *_: "pp", raising=False)
+
+    def _askpass(require="prefer", **_kwargs):
+        return (forced_env if require == "force" else prefer_env).copy()
+
+    monkeypatch.setattr(scb, "get_ssh_env_with_askpass", _askpass, raising=False)
     monkeypatch.setattr(
-        scb, "get_ssh_env_with_askpass", lambda require="prefer": prefer_env.copy(), raising=False
+        scb,
+        "_askpass_env_for_connection",
+        lambda *_a, require="prefer", **_k: _askpass(require),
+        raising=False,
     )
 
     private_path = tmp_path / "id_test"
@@ -238,7 +251,8 @@ def test_ssh_copy_id_saved_passphrase_uses_askpass(monkeypatch, tmp_path):
 
     spawned_env = DummyTerminalWidget.last_instance.vte.spawn_env
     assert spawned_env is not None
-    assert "SSH_ASKPASS_REQUIRE=prefer" in spawned_env
+    assert "SSH_ASKPASS=/tmp/helper" in spawned_env
+    assert "SSH_ASKPASS_REQUIRE=force" in spawned_env
 
 
 def test_ssh_copy_id_preflight_blocks_missing_binary(monkeypatch, tmp_path):

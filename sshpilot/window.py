@@ -85,7 +85,14 @@ from .window_session import WindowSessionMixin
 from .window_help import WindowHelpMixin
 from .window_file_manager import WindowFileManagerMixin
 from .window_tabs import WindowTabsMixin
-from .window_dialogs import WindowConfigDialogsMixin
+from .window_dialogs import (
+    WindowConfigDialogsMixin,
+    resolve_app_modal_parent,
+    resolve_topmost_prompt_parent,
+    present_for_modal_dialog,
+    show_ssh_password_dialog,
+    _show_password_passphrase_dialog,
+)
 from . import shutdown
 from .search_utils import connection_matches
 from .shortcut_utils import get_primary_modifier_label
@@ -93,22 +100,6 @@ from .platform_utils import is_macos, get_config_dir
 from .context_menu import IconContextMenu
 from .plugins.api import Capability
 from .plugins.registry import capabilities_for
-from .ssh_password_exec import run_ssh_with_password
-from .remote_path_utils import (
-    _format_ssh_target,
-    _normalize_remote_path,
-    _quote_remote_path_for_shell,
-)
-# Re-exported for backward compatibility: these SCP helpers used to live in
-# window.py and are still referenced as `window.<name>` (e.g. by tests). They are
-# unused within window.py itself, hence the noqa.
-from .scp_utils import (  # noqa: F401
-    assemble_scp_transfer_args,
-    classify_sftp_error,
-    download_file,
-    upload_file,
-)
-
 logger = logging.getLogger(__name__)
 
 
@@ -149,621 +140,6 @@ def _ensure_tips_banner_css() -> None:
         Gtk.STYLE_PROVIDER_PRIORITY_USER,
     )
     _tips_banner_css_installed = True
-
-
-def list_remote_files(
-    host: str,
-    user: str,
-    remote_path: str,
-    *,
-    port: int = 22,
-    password: Optional[str] = None,
-    known_hosts_path: Optional[str] = None,
-    extra_ssh_opts: Optional[List[str]] = None,
-    use_publickey: bool = False,
-    inherit_env: Optional[Dict[str, str]] = None,
-    saved_passphrase: Optional[str] = None,
-    keyfile: Optional[str] = None,
-    key_mode: Optional[int] = None,
-) -> Tuple[List[Tuple[str, bool]], Optional[str]]:
-    """List remote files via SSH for the provided path.
-
-    Returns (entries, error_message) where entries contain ``(name, is_directory)`` tuples.
-    """
-    if not host:
-        return [], _('Missing host information.')
-
-    target = _format_ssh_target(host, user)
-    safe_path = _normalize_remote_path(remote_path)
-
-    command_path = _quote_remote_path_for_shell(safe_path)
-    # -L dereferences symlinks when classifying, so a symlink that points to a
-    # directory is marked with a trailing "/" (and thus shown/navigated as a
-    # folder). -p alone leaves symlinked dirs unmarked. See issue #1002.
-    list_command = f"LC_ALL=C ls -1pL --color=never -- {command_path}"
-    wrapped_command = (
-        "set -f; "
-        "printf '__SSHPILOT_BEGIN__\\n'; "
-        f"{list_command}; "
-        "status=$?; "
-        "printf '__SSHPILOT_STATUS__%s\\n' \"$status\"; "
-        "printf '__SSHPILOT_END__\\n'; "
-        "exit $status"
-    )
-
-    env = (inherit_env or os.environ).copy()
-    
-    # Set up askpass environment if we have a keyfile (askpass will handle passphrase retrieval/prompting)
-    # Check if askpass is already set up (inherited from caller)
-    has_inherited_askpass = bool(
-        inherit_env
-        and str(inherit_env.get('SSH_ASKPASS_REQUIRE') or '').lower() == 'force'
-    )
-    
-    # Set up askpass if we have a keyfile and not using password auth
-    # The askpass script will retrieve from storage or show GUI dialog if needed
-    if keyfile and not password and not has_inherited_askpass:
-        try:
-            from .askpass_utils import (
-                get_ssh_env_with_forced_askpass,
-                get_scp_ssh_options,
-            )
-        except Exception:
-            get_ssh_env_with_forced_askpass = None  # type: ignore
-            get_scp_ssh_options = None  # type: ignore
-
-        if get_ssh_env_with_forced_askpass is not None:
-            try:
-                askpass_env = get_ssh_env_with_forced_askpass()
-                if isinstance(askpass_env, dict):
-                    env.update(askpass_env)
-            except Exception:
-                logger.debug('SCP: Unable to initialize askpass environment', exc_info=True)
-
-        if keyfile and '-i' not in (extra_ssh_opts or []):
-            if extra_ssh_opts is None:
-                extra_ssh_opts = []
-            extra_ssh_opts.extend(['-i', keyfile])
-
-        if key_mode == 1 and extra_ssh_opts and 'IdentitiesOnly=yes' not in ' '.join(extra_ssh_opts):
-            if extra_ssh_opts is None:
-                extra_ssh_opts = []
-            extra_ssh_opts.extend(['-o', 'IdentitiesOnly=yes'])
-
-        if get_scp_ssh_options is not None:
-            try:
-                passphrase_opts = list(get_scp_ssh_options())
-            except Exception:
-                passphrase_opts = []
-            if extra_ssh_opts is None:
-                extra_ssh_opts = []
-            for idx in range(0, len(passphrase_opts) - 1, 2):
-                flag = passphrase_opts[idx]
-                value = passphrase_opts[idx + 1]
-                if not flag or not value:
-                    continue
-                already = False
-                for opt_idx in range(0, len(extra_ssh_opts) - 1, 2):
-                    if extra_ssh_opts[opt_idx] == flag and extra_ssh_opts[opt_idx + 1] == value:
-                        already = True
-                        break
-                if not already:
-                    extra_ssh_opts.extend([flag, value])
-    elif not has_inherited_askpass:
-        # Only remove askpass environment if it wasn't inherited (e.g., when identity agent is disabled)
-        env.pop('SSH_ASKPASS', None)
-        env.pop('SSH_ASKPASS_REQUIRE', None)
-
-    try:
-        if password:
-            result = run_ssh_with_password(
-                host,
-                user,
-                password,
-                port=port,
-                argv_tail=['sh', '-lc', wrapped_command],
-                known_hosts_path=known_hosts_path,
-                extra_ssh_opts=extra_ssh_opts or [],
-                inherit_env=env,
-                use_publickey=use_publickey,
-            )
-        else:
-            sshbin = shutil.which('ssh') or '/usr/bin/ssh'
-            cmd = [sshbin, '-p', str(port)]
-            if extra_ssh_opts:
-                cmd.extend(extra_ssh_opts)
-            if known_hosts_path:
-                cmd += ['-o', f'UserKnownHostsFile={known_hosts_path}']
-            else:
-                cmd += ['-o', 'StrictHostKeyChecking=accept-new']
-            cmd.append(target)
-            cmd.extend(['sh', '-lc', wrapped_command])
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=10,
-                check=False,
-                env=env,
-            )
-
-        stdout_lines = result.stdout.splitlines()
-        begin_idx = next((idx for idx, line in enumerate(stdout_lines)
-                          if line.strip() == '__SSHPILOT_BEGIN__'), None)
-        status_idx = next((idx for idx, line in enumerate(stdout_lines)
-                           if line.startswith('__SSHPILOT_STATUS__')), None)
-        if begin_idx is None or status_idx is None or status_idx < begin_idx:
-            logger.warning('SCP: Unexpected remote listing output for %s', safe_path)
-            stderr = result.stderr.strip() or _('Unable to parse remote listing output.')
-            return [], stderr
-        try:
-            status_line = stdout_lines[status_idx]
-            status_code = int(status_line.replace('__SSHPILOT_STATUS__', '').strip() or '0')
-        except ValueError:
-            status_code = result.returncode
-
-        listing_lines = stdout_lines[begin_idx + 1:status_idx]
-        if status_code != 0:
-            stderr = result.stderr.strip() or _('Failed to list remote directory.')
-            logger.warning('SCP: Remote list failed (%s): %s', safe_path, stderr)
-            return [], stderr
-        entries: List[Tuple[str, bool]] = []
-        for raw_line in listing_lines:
-            line = raw_line.rstrip()
-            if not line:
-                continue
-            is_dir = line.endswith('/')
-            name = line[:-1] if is_dir else line
-            entries.append((name, is_dir))
-        return entries, None
-    except Exception as exc:
-        logger.error('SCP: Error listing remote files: %s', exc)
-        return [], str(exc)
-
-
-# download_file and upload_file are now in scp_utils.py
-# Imported at the top of the file
-
-
-def resolve_app_modal_parent(from_widget=None) -> "Gtk.Window":
-    """Return the primary app window to use as a modal dialog parent.
-
-    Use this before showing any ``Adw.MessageDialog`` (or similar modal) from
-    code that runs inside a secondary window — e.g. :class:`FileManagerWindow`,
-    a plugin page tab, or a progress window — so the dialog stacks correctly on
-    Wayland.
-
-    Resolution order:
-
-    1. ``Gtk.Application.window`` (the live :class:`MainWindow`)
-    2. Any registered window whose class name is ``MainWindow``
-    3. If ``from_widget`` is set: embedded root (``_embedded_parent.get_root()``),
-       ``get_transient_for()``, ``get_root()``, or ``from_widget`` itself when it
-       is a :class:`Gtk.Window`
-    4. ``Gtk.Application.get_active_window()``
-
-    Raises :class:`RuntimeError` if no suitable parent exists.
-
-    See also :func:`present_for_modal_dialog` and :func:`show_ssh_password_dialog`.
-    Pair with ``present_for_modal_dialog(parent)`` before ``dialog.present()``.
-    """
-    app = None
-    if from_widget is not None:
-        try:
-            app = from_widget.get_application()
-        except Exception:
-            app = None
-    if app is None:
-        app = Gtk.Application.get_default()
-
-    if app is not None:
-        main_win = getattr(app, "window", None)
-        if main_win is not None and isinstance(main_win, Gtk.Window):
-            return main_win
-        for win in app.get_windows():
-            if win.__class__.__name__ == "MainWindow":
-                return win
-
-    if from_widget is not None:
-        embedded_parent = getattr(from_widget, "_embedded_parent", None)
-        if embedded_parent is not None:
-            try:
-                root = embedded_parent.get_root()
-                if root is not None:
-                    return root
-            except Exception:
-                pass
-        try:
-            transient = from_widget.get_transient_for()
-            if transient is not None:
-                return transient
-        except Exception:
-            pass
-        try:
-            root = from_widget.get_root()
-            if root is not None:
-                return root
-        except Exception:
-            pass
-        if isinstance(from_widget, Gtk.Window):
-            return from_widget
-
-    if app is not None:
-        try:
-            active = app.get_active_window()
-            if active is not None and isinstance(active, Gtk.Window):
-                return active
-        except Exception:
-            pass
-
-    raise RuntimeError("No modal parent window available")
-
-
-def present_for_modal_dialog(window: Gtk.Window) -> None:
-    """Raise *window* before showing a modal child so it stacks on top (Wayland).
-
-    Calls ``unminimize()`` and ``present()`` on *window*. Always invoke this on
-    the parent returned by :func:`resolve_app_modal_parent` immediately before
-    presenting a modal dialog.
-    """
-    try:
-        window.unminimize()
-    except Exception:
-        pass
-    try:
-        window.present()
-    except Exception as exc:
-        logger.debug("Failed to present modal parent window: %s", exc)
-
-
-def show_ssh_password_dialog(
-    *,
-    from_widget=None,
-    parent_window: Optional[Gtk.Window] = None,
-    display_name: str = "",
-    host: Optional[str] = None,
-    username: Optional[str] = None,
-    connection: Any = None,
-    connection_manager: Optional[Any] = None,
-    heading: Optional[str] = None,
-    body: Optional[str] = None,
-    store_label: Optional[str] = None,
-    on_store: Optional[Any] = None,
-) -> Optional[str]:
-    """Show the standard in-app SSH **password** dialog (blocking).
-
-    This is the single supported entry point for prompting the user for an SSH
-    login password from core features, plugins (advanced), and secondary windows
-    (file manager, authorized-keys editor, external SFTP mount, …). Do **not**
-    roll a custom ``Adw.MessageDialog`` for passwords — use this helper so
-    Wayland stacking, copy, and keyring storage behave consistently.
-
-    The dialog is modal, parented on :class:`MainWindow` (via
-    :func:`resolve_app_modal_parent`), and blocks until the user dismisses it
-    (nested ``GLib.MainLoop``). **Must be called on the GTK main thread.**
-
-    Parameters
-    ----------
-    from_widget
-        Any widget or window tied to the caller (plugin page, file-manager pane,
-        progress dialog, …). Used to locate :class:`MainWindow` when
-        *parent_window* is omitted. Pass the widget that logically triggered the
-        prompt.
-    parent_window
-        Explicit parent. When set, skips :func:`resolve_app_modal_parent` but
-        still calls :func:`present_for_modal_dialog`. Prefer omitting this and
-        passing *from_widget* so the main window is chosen automatically.
-    display_name
-        Shown in the default body text (e.g. connection nickname or
-        ``user@host``). Ignored when *connection* supplies a nickname and
-        *display_name* is empty.
-    host, username
-        Used for the optional **Store password** checkbox (via
-        *connection_manager*). When *connection* is given, missing *host* /
-        *username* are filled from ``hostname`` / ``host`` / ``nickname`` and
-        ``username`` on the connection object.
-    connection
-        Optional connection record (built-in ``Connection`` or any object with
-        ``nickname``, ``username``, ``hostname`` / ``host``). Convenient way to
-        pass display and storage fields together.
-    connection_manager
-        When the user checks **Store password**, calls
-        ``connection_manager.store_password(host, username, password)``. Pass
-        ``self.connection_manager`` from :class:`MainWindow` or
-        ``ctx.connection_manager`` from a plugin context.
-    heading, body
-        Optional overrides for dialog title and message (e.g. auth-retry text).
-    store_label, on_store
-        Custom storage hook for the **Store** checkbox. When *on_store* is given,
-        the checkbox is labelled *store_label* and ``on_store(password)`` is
-        called when the user ticks it — instead of the built-in
-        ``connection_manager.store_password`` path. Used to persist a sudo
-        password under its own keyring schema without touching the SSH-password
-        store.
-
-    Returns
-    -------
-    str or None
-        The entered password, or ``None`` if the user cancelled or submitted an
-        empty password.
-
-    Examples
-    --------
-    From a built-in secondary window (file manager pattern)::
-
-        password = show_ssh_password_dialog(
-            from_widget=self,
-            connection=self._connection,
-            connection_manager=self._connection_manager,
-        )
-
-    From a plugin page (UI thread; ``ctx.connection_manager`` escape hatch)::
-
-        password = show_ssh_password_dialog(
-            from_widget=page_widget,
-            display_name=info.nickname,
-            host=info.host,
-            username=info.username,
-            connection_manager=ctx.connection_manager,
-        )
-
-    See :meth:`MainWindow.prompt_ssh_password` when you already hold a reference
-    to the main window. For **key passphrases** prompted outside the askpass
-    helper process, use :meth:`MainWindow.prompt_ssh_passphrase` instead.
-    """
-    storage_host = host
-    storage_user = username
-    prompt_name = display_name
-
-    if connection is not None:
-        storage_user = storage_user or getattr(connection, "username", None)
-        storage_host = (
-            storage_host
-            or getattr(connection, "hostname", None)
-            or getattr(connection, "host", None)
-            or getattr(connection, "nickname", None)
-        )
-        if not prompt_name:
-            nickname = getattr(connection, "nickname", None)
-            user_label = storage_user or ""
-            host_label = storage_host or ""
-            prompt_name = (
-                str(nickname)
-                if nickname
-                else (f"{user_label}@{host_label}" if user_label else str(host_label))
-            )
-
-    if parent_window is not None:
-        parent = parent_window
-    else:
-        parent = resolve_app_modal_parent(from_widget)
-
-    present_for_modal_dialog(parent)
-    return _show_password_passphrase_dialog(
-        parent,
-        prompt_type="password",
-        display_name=prompt_name,
-        host=storage_host,
-        username=storage_user,
-        connection=connection,
-        connection_manager=connection_manager,
-        heading=heading,
-        body=body,
-        store_label=store_label,
-        on_store=on_store,
-    )
-
-
-def _show_password_passphrase_dialog(
-    parent_window,
-    prompt_type: str = "password",
-    display_name: str = "",
-    key_path: Optional[str] = None,
-    host: Optional[str] = None,
-    username: Optional[str] = None,
-    connection: Optional[Any] = None,
-    connection_manager: Optional[Any] = None,
-    *,
-    heading: Optional[str] = None,
-    body: Optional[str] = None,
-    store_label: Optional[str] = None,
-    on_store: Optional[Any] = None,
-) -> Optional[str]:
-    """Show a graphical password or passphrase dialog.
-    
-    Parameters
-    ----------
-    parent_window : Gtk.Window
-        Parent window for the dialog
-    prompt_type : str
-        Either "password" or "passphrase"
-    display_name : str
-        Display name for the connection (e.g., "user@host")
-    key_path : Optional[str]
-        Path to the key file (for passphrase prompts)
-    host : Optional[str]
-        Host name for storing password (for password prompts)
-    username : Optional[str]
-        Username for storing password (for password prompts)
-    connection_manager : Optional[Any]
-        Connection manager instance for storing passwords
-    heading, body
-        Optional overrides for the dialog title and message text.
-    
-    Returns
-    -------
-    Optional[str]
-        The entered password/passphrase, or None if cancelled
-    """
-    password_result = [None]  # Use list to allow modification in nested function
-    store_checked = [False]  # Use list to allow modification in nested function
-    main_loop = GLib.MainLoop()
-    
-    # Determine dialog heading and body text
-    if heading is None:
-        if prompt_type == "passphrase":
-            heading = _("Passphrase Required")
-        else:
-            heading = _("Password Required")
-    if body is None:
-        if prompt_type == "passphrase":
-            if key_path:
-                key_name = os.path.basename(key_path)
-                body = _("Please enter the passphrase for key {key_name}:").format(key_name=key_name)
-            else:
-                body = _("Please enter your passphrase:")
-        elif display_name:
-            body = _("Please enter your password for {display_name}:").format(display_name=display_name)
-        else:
-            body = _("Please enter your password:")
-    if prompt_type == "passphrase":
-        placeholder = _("Passphrase")
-        default_store_label = _("Store passphrase")
-    else:
-        placeholder = _("Password")
-        default_store_label = _("Store password")
-    if not store_label:
-        store_label = default_store_label
-    
-    # Create password/passphrase dialog
-    dialog = Adw.MessageDialog(
-        transient_for=parent_window,
-        modal=True,
-        heading=heading,
-        body=body,
-    )
-    
-    # Create a container box for entry and checkbox
-    content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-    content_box.set_margin_top(12)
-    content_box.set_margin_bottom(12)
-    content_box.set_margin_start(12)
-    content_box.set_margin_end(12)
-    
-    # Add password entry
-    password_entry = Gtk.PasswordEntry()
-    password_entry.set_property("placeholder-text", placeholder)
-    content_box.append(password_entry)
-    
-    # Add checkbox to store password/passphrase
-    store_checkbox = Gtk.CheckButton(label=store_label)
-    store_checkbox.set_active(False)
-    content_box.append(store_checkbox)
-
-    persists_secrets = True
-    try:
-        from .secret_storage import get_secret_manager
-        persists_secrets = get_secret_manager().persists_secrets()
-    except Exception:
-        persists_secrets = True
-    if not persists_secrets:
-        store_checkbox.set_visible(False)
-        no_store_label = Gtk.Label(
-            label=_(
-                "Secret storage is set to SSH Agent Only — passwords and passphrases "
-                "are not saved by sshPilot."
-            ),
-        )
-        no_store_label.set_wrap(True)
-        no_store_label.set_xalign(0)
-        for css in ("dim-label", "caption"):
-            try:
-                no_store_label.add_css_class(css)
-            except Exception:
-                pass
-        content_box.append(no_store_label)
-    
-    # Add container to dialog's extra child area
-    dialog.set_extra_child(content_box)
-    
-    # Add responses
-    dialog.add_response("cancel", _("Cancel"))
-    dialog.add_response("ok", _("OK"))
-    dialog.set_default_response("ok")
-    dialog.set_close_response("cancel")
-    
-    # Handle Enter key - try multiple approaches for maximum compatibility
-    def on_entry_activate(_entry):
-        """Handle Enter key press in password entry"""
-        dialog.emit("response", "ok")
-    
-    # Try to set activates-default property (works for Gtk.Entry)
-    try:
-        password_entry.set_property("activates-default", True)
-    except (TypeError, AttributeError):
-        pass
-    
-    # Also connect to activate signal as fallback
-    try:
-        password_entry.connect("activate", on_entry_activate)
-    except (TypeError, AttributeError):
-        # Fallback to key controller if activate signal is not available
-        key_controller = Gtk.EventControllerKey()
-        def on_key_pressed(_controller, keyval, _keycode, _state):
-            if keyval == Gdk.KEY_Return or keyval == Gdk.KEY_KP_Enter:
-                dialog.emit("response", "ok")
-                return True
-            return False
-        key_controller.connect("key-pressed", on_key_pressed)
-        password_entry.add_controller(key_controller)
-    
-    # Focus password entry when dialog is shown
-    def on_dialog_shown(_dialog):
-        password_entry.grab_focus()
-    dialog.connect("notify::visible", lambda d, _: on_dialog_shown(d) if d.get_visible() else None)
-    
-    def on_response(_dialog, response: str) -> None:
-        if response == "ok":
-            entered_password = password_entry.get_text()
-            if entered_password:
-                password_result[0] = entered_password
-                store_checked[0] = store_checkbox.get_active()
-                
-                # Store password/passphrase if checkbox is checked
-                if store_checked[0]:
-                    if on_store is not None:
-                        # Caller-supplied storage hook (e.g. sudo-password keyring).
-                        try:
-                            on_store(entered_password)
-                        except Exception as e:
-                            logger.debug(f"Failed to store via on_store hook: {e}")
-                    elif prompt_type == "passphrase" and key_path:
-                        # Store passphrase
-                        try:
-                            from .askpass_utils import store_passphrase
-                            store_passphrase(key_path, entered_password)
-                        except Exception as e:
-                            logger.debug(f"Failed to store passphrase: {e}")
-                    elif prompt_type == "password" and connection_manager:
-                        try:
-                            if connection is not None and hasattr(
-                                    connection_manager, 'store_connection_password'):
-                                connection_manager.store_connection_password(
-                                    connection, entered_password, username=username)
-                            elif host and username:
-                                from .credential_model import canonical_password_host
-                                canonical = canonical_password_host(
-                                    {'hostname': host, 'host': host, 'username': username})
-                                store_host = canonical or host
-                                connection_manager.store_password(
-                                    store_host, username, entered_password)
-                        except Exception as e:
-                            logger.debug(f"Failed to store password: {e}")
-            else:
-                password_result[0] = None  # Empty password treated as cancel
-        else:
-            password_result[0] = None  # User cancelled
-        dialog.destroy()
-        main_loop.quit()
-    
-    dialog.connect("response", on_response)
-    dialog.present()
-    
-    # Run main loop to wait for dialog response
-    # This blocks until the dialog is closed
-    main_loop.run()
-    
-    return password_result[0]
 
 
 def maybe_set_native_controls(header_bar: Gtk.HeaderBar, value: bool = False) -> None:
@@ -6182,6 +5558,31 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # No active connections or all local terminals are idle, safe to close
         return False  # Allow close
 
+    def _askpass_dialog_parent(self):
+        """Topmost app window to parent a routed askpass prompt on.
+
+        A routed prompt is an ``Adw.Dialog`` sheet; presenting it on the main
+        window hides it behind a modal secondary window (e.g. the SCP browse
+        ``Adw.Window``), which is what pops these prompts in the first place.
+        A modal transient does not reliably become the active window on
+        Wayland, so target the modal window explicitly rather than trusting
+        focus. See :func:`resolve_topmost_prompt_parent`.
+        """
+        try:
+            app = self.get_application() or Gtk.Application.get_default()
+            if app is None:
+                return self
+            active = None
+            try:
+                active = app.get_active_window()
+            except Exception:
+                active = None
+            return resolve_topmost_prompt_parent(
+                list(app.get_windows()), active, self
+            )
+        except Exception:
+            return self
+
     def prompt_ssh_passphrase(self, key_path: str, prompt: str = "") -> "str | None":
         """Show the SSH key passphrase prompt as a modal child of the main window.
 
@@ -6190,12 +5591,113 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         window that can hide behind it on Wayland. Returns the passphrase, or
         None if the user cancelled. Blocks until the dialog is dismissed.
         """
-        present_for_modal_dialog(self)
+        parent = self._askpass_dialog_parent()
+        present_for_modal_dialog(parent)
         return _show_password_passphrase_dialog(
-            self,
+            parent,
             prompt_type="passphrase",
             key_path=key_path or None,
         )
+
+    def prompt_ssh_challenge(self, prompt: str = "") -> "str | None":
+        """Show an MFA / verification-code prompt as a modal child of the main window.
+
+        Used when askpass receives an interactive keyboard-interactive prompt
+        (OTP, PIN, etc.). OpenSSH with ``SSH_ASKPASS_REQUIRE=prefer`` does not
+        fall back to the TTY when askpass declines, so the user must answer
+        here. Never stores the response.
+        """
+        parent = self._askpass_dialog_parent()
+        present_for_modal_dialog(parent)
+        body = (prompt or "").strip() or _("Please enter the verification code:")
+        return _show_password_passphrase_dialog(
+            parent,
+            prompt_type="challenge",
+            display_name=body,
+            heading=_("Authentication Required"),
+            body=body,
+        )
+
+    def prompt_ssh_presence(self, prompt: str = "", register_close=None) -> bool:
+        """Show a FIDO/security-key touch reminder (no typed secret).
+
+        Used for ``SSH_ASKPASS_PROMPT=none``. Returns True when the user
+        dismisses with Close (reminder acknowledged); False on unexpected
+        failure. Touch itself happens on the hardware — this is only UI.
+        *register_close* (when given) receives a zero-arg callable that closes
+        the dialog programmatically — the askpass server uses it to dismiss
+        the reminder as soon as the touch completes (helper socket EOF).
+        """
+        parent = self._askpass_dialog_parent()
+        present_for_modal_dialog(parent)
+        body = (prompt or "").strip() or _(
+            "Touch your security key to continue."
+        )
+        dialog = Adw.AlertDialog()
+        dialog.set_heading(_("Security Key"))
+        dialog.set_body(
+            body + "\n\n" + _("Touch your security key when it blinks.")
+        )
+        dialog.add_response("ok", _("Close"))
+        dialog.set_default_response("ok")
+        dialog.set_close_response("ok")
+        result = [True]
+        closed = [False]
+
+        def _on_response(_d, _response):
+            closed[0] = True
+            loop.quit()
+
+        dialog.connect("response", _on_response)
+        loop = GLib.MainLoop()
+        dialog.present(parent)
+        if register_close is not None:
+            def _force_close():
+                if not closed[0]:
+                    try:
+                        dialog.close()
+                    except Exception:
+                        loop.quit()
+            try:
+                register_close(_force_close)
+            except Exception:
+                pass
+        try:
+            loop.run()
+        except Exception:
+            result[0] = False
+        return result[0]
+
+    def prompt_ssh_confirm(self, prompt: str = "") -> bool:
+        """Yes/No confirm for ``SSH_ASKPASS_PROMPT=confirm`` (e.g. ssh-add -c)."""
+        parent = self._askpass_dialog_parent()
+        present_for_modal_dialog(parent)
+        dialog = Adw.AlertDialog()
+        dialog.set_heading(_("Confirm"))
+        dialog.set_body(
+            (prompt or "").strip() or _("Allow this key operation?")
+        )
+        dialog.add_response("cancel", _("Cancel"))
+        dialog.add_response("ok", _("Allow"))
+        dialog.set_response_appearance(
+            "ok", Adw.ResponseAppearance.SUGGESTED
+        )
+        dialog.set_default_response("ok")
+        dialog.set_close_response("cancel")
+        allowed = [False]
+
+        def _on_response(_d, response):
+            allowed[0] = response == "ok"
+            loop.quit()
+
+        dialog.connect("response", _on_response)
+        loop = GLib.MainLoop()
+        dialog.present(parent)
+        try:
+            loop.run()
+        except Exception:
+            allowed[0] = False
+        return allowed[0]
 
     def prompt_ssh_password(
         self,
@@ -6212,7 +5714,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         already have the :class:`MainWindow` instance (e.g. future in-app actions).
         """
         return show_ssh_password_dialog(
-            parent_window=self,
+            parent_window=self._askpass_dialog_parent(),
             display_name=display_name,
             host=host,
             username=username,

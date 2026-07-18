@@ -44,7 +44,6 @@ def _make_ctrl(dummy_window):
     ctrl = scp_window.ScpWindowController.__new__(scp_window.ScpWindowController)
     ctrl.window = dummy_window
     ctrl._scp_auth = None
-    ctrl._scp_askpass_env = {}
     ctrl._scp_strip_askpass = False
     ctrl._scp_askpass_helpers = []
     return ctrl
@@ -152,92 +151,3 @@ def test_build_scp_argv_adds_recursive_for_directories(monkeypatch, tmp_path):
 
     assert '-r' in argv
     assert any(arg.endswith('/remote/path') for arg in argv)
-
-
-def test_download_file_with_passphrase_merges_env_and_opts(monkeypatch, tmp_path):
-    recorded = {}
-
-    def fake_run(argv, check, text, capture_output, env):
-        recorded['argv'] = argv
-        recorded['env'] = env
-
-        class _Result:
-            returncode = 0
-            stderr = ''
-
-        return _Result()
-
-    monkeypatch.setattr(window.subprocess, 'run', fake_run)
-
-    # An explicit key that exists on disk: the SCP builder only pins ``-i`` +
-    # ``IdentitiesOnly`` when the keyfile is a real file (see
-    # scp_utils._build_scp_argv_prefix). key_mode == 1 means "use only this key".
-    keyfile = tmp_path / 'id_test'
-    keyfile.write_text('key')
-
-    base_env = {'BASE': '1'}
-
-    local_dir = tmp_path / 'downloads'
-    result = window.download_file(
-        'example.com',
-        'alice',
-        '/remote/file.txt',
-        str(local_dir),
-        port=2200,
-        known_hosts_path='/tmp/known_hosts',
-        extra_ssh_opts=['-i', str(keyfile)],
-        inherit_env=base_env,
-        saved_passphrase='secret',
-        keyfile=str(keyfile),
-        key_mode=1,
-    )
-
-    argv = recorded['argv']
-    assert result is True
-    assert argv[0] == 'scp'
-    assert '-P' in argv and '2200' in argv
-    # The native SCP command is built from _build_base_ssh_command (not the old
-    # get_scp_ssh_options merge); key_mode == 1 pins the explicit identity.
-    assert 'IdentitiesOnly=yes' in argv
-    assert '-i' in argv and str(keyfile) in argv
-    assert 'UserKnownHostsFile=/tmp/known_hosts' in argv
-    # Remote source and local destination round out the transfer.
-    assert 'alice@example.com:/remote/file.txt' in argv
-    assert str(local_dir) in argv
-    # The caller's environment is copied and preserved.
-    assert recorded['env']['BASE'] == '1'
-
-
-def test_download_file_without_passphrase_strips_askpass(monkeypatch, tmp_path):
-    recorded = {}
-
-    def fake_run(argv, check, text, capture_output, env):
-        recorded['env'] = env
-
-        class _Result:
-            returncode = 0
-            stderr = ''
-
-        return _Result()
-
-    monkeypatch.setattr(window.subprocess, 'run', fake_run)
-
-    base_env = {
-        'SSH_ASKPASS': 'something',
-        'SSH_ASKPASS_REQUIRE': 'prefer',
-    }
-
-    result = window.download_file(
-        'example.com',
-        'bob',
-        '/remote/file.txt',
-        str(tmp_path / 'dest'),
-        extra_ssh_opts=None,
-        inherit_env=base_env,
-    )
-
-    assert result is True
-    assert 'SSH_ASKPASS' not in recorded['env']
-    assert 'SSH_ASKPASS_REQUIRE' not in recorded['env']
-    assert base_env['SSH_ASKPASS'] == 'something'
-    assert base_env['SSH_ASKPASS_REQUIRE'] == 'prefer'

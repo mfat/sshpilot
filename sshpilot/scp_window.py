@@ -3,7 +3,7 @@ import logging
 import threading
 from gettext import gettext as _
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 from pathlib import Path
 
 import gi
@@ -14,6 +14,14 @@ except Exception:
     Vte = None
 from gi.repository import Gtk, Adw, GLib, Gio
 
+from .command_progress_dialog import (
+    build_progress_status_row,
+    build_terminal_disclosure,
+    normalize_child_exit_status,
+    read_terminal_text,
+    terminal_awaiting_input,
+    wrap_dialog_terminal,
+)
 from .terminal import TerminalWidget
 from .config import Config  # noqa: F401  # exposed for tests that patch scp_window.Config
 from .connection_display import (
@@ -24,7 +32,6 @@ from .scp_utils import (
     _build_scp_argv_prefix,
     assemble_scp_transfer_args,
     classify_sftp_error,
-    download_file,
     insert_legacy_scp_flag,
 )
 from .platform_utils import is_flatpak
@@ -68,7 +75,6 @@ class ScpWindowController:
     def __init__(self, window):
         self.window = window
         self._scp_auth = None
-        self._scp_askpass_env = {}
         self._scp_strip_askpass = False
         self._scp_askpass_helpers = []
 
@@ -82,27 +88,93 @@ class ScpWindowController:
             if not connection:
                 return
 
-            chooser = Adw.MessageDialog(
-                transient_for=self.window,
-                modal=True,
-                heading=_('Transfer files with scp'),
-                body=_('Choose whether you want to upload local files to the server or download remote paths to your computer.')
-            )
-            chooser.add_response('cancel', _('Cancel'))
-            chooser.add_response('upload', _('Upload to server…'))
-            chooser.add_response('download', _('Download from server…'))
-            chooser.set_default_response('upload')
-            chooser.set_close_response('cancel')
+            from sshpilot import icon_utils
 
-            def _on_choice(dlg, response):
-                dlg.close()
-                if response == 'upload':
+            alias = _get_connection_alias(connection)
+            host = _get_connection_host(connection)
+            display = (
+                getattr(connection, 'nickname', None)
+                or alias
+                or host
+                or _('server')
+            )
+
+            heading = _('Transfer files')
+            body = _('Copy files to or from {name}').format(name=display)
+            if hasattr(Adw, 'AlertDialog'):
+                chooser = Adw.AlertDialog(heading=heading, body=body)
+                present = lambda: chooser.present(self.window)
+            else:
+                chooser = Adw.MessageDialog(
+                    transient_for=self.window,
+                    modal=True,
+                    heading=heading,
+                    body=body,
+                )
+                present = chooser.present
+
+            def _choose(action: str) -> None:
+                chooser.close()
+                if action == 'upload':
                     self._start_scp_upload_flow(connection)
-                elif response == 'download':
+                elif action == 'download':
                     self._prompt_scp_download(connection)
 
-            chooser.connect('response', _on_choice)
-            chooser.present()
+            def _choice_card(title: str, tooltip: str, icon_name: str, action: str):
+                content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+                content.set_halign(Gtk.Align.CENTER)
+                content.set_valign(Gtk.Align.CENTER)
+                content.set_hexpand(True)
+                content.set_vexpand(True)
+                content.set_margin_top(18)
+                content.set_margin_bottom(18)
+                content.set_margin_start(12)
+                content.set_margin_end(12)
+
+                icon = icon_utils.new_image_from_icon_name(icon_name, size=32)
+                icon.set_halign(Gtk.Align.CENTER)
+                content.append(icon)
+
+                label = Gtk.Label(label=title)
+                label.add_css_class('heading')
+                label.set_halign(Gtk.Align.CENTER)
+                content.append(label)
+
+                button = Gtk.Button()
+                button.set_child(content)
+                button.add_css_class('card')
+                button.set_hexpand(True)
+                button.set_vexpand(True)
+                # Same footprint for both cards regardless of label length.
+                button.set_size_request(148, 120)
+                button.set_tooltip_text(tooltip)
+                button.connect('clicked', lambda *_: _choose(action))
+                return button
+
+            cards = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            cards.set_halign(Gtk.Align.CENTER)
+            cards.set_homogeneous(True)
+            cards.append(
+                _choice_card(
+                    _('Upload'),
+                    _('Choose local files and send them with scp'),
+                    'arrow1-up-symbolic',
+                    'upload',
+                )
+            )
+            cards.append(
+                _choice_card(
+                    _('Download'),
+                    _('Browse remote paths and save them locally'),
+                    'arrow1-down-symbolic',
+                    'download',
+                )
+            )
+
+            chooser.set_extra_child(cards)
+            chooser.add_response('cancel', _('Cancel'))
+            chooser.set_close_response('cancel')
+            present()
         except Exception as e:
             logger.error(f'SCP transfer chooser failed: {e}')
 
@@ -272,7 +344,7 @@ class ScpWindowController:
         self._extend_scp_options_from_connection(connection, ssh_options)
 
         if prefer_password:
-            ssh_options += ['-o', 'PreferredAuthentications=password']
+            ssh_options += ['-o', 'PreferredAuthentications=keyboard-interactive,password']
         elif combined_auth:
             ssh_options += [
                 '-o',
@@ -312,7 +384,8 @@ class ScpWindowController:
 
     def _prompt_scp_download(self, connection):
         """Show a simple file picker that downloads selected remote files via scp."""
-        from .window import list_remote_files, _show_password_passphrase_dialog
+        from .window import _show_password_passphrase_dialog
+        from .scp_utils import list_remote_files
         from .remote_path_utils import (
             _normalize_remote_path, _remote_parent, _remote_join,
         )
@@ -334,16 +407,12 @@ class ScpWindowController:
 
             host_value = profile.host
             username = profile.username
-            port = profile.port
 
-            known_hosts_path = None
             saved_password = profile.saved_password
             # Session-level password that can be updated via prompts
             session_password = saved_password
-            # Passphrase will be handled by SSH_ASKPASS (either from storage or GUI prompt)
-            
+
             if hasattr(self.window, 'connection_manager') and self.window.connection_manager:
-                known_hosts_path = getattr(self.window.connection_manager, 'known_hosts_path', None)
                 try:
                     if (
                         profile.key_mode in (1, 2)
@@ -360,7 +429,7 @@ class ScpWindowController:
                             )
                 except Exception:
                     pass
-            
+
             # Get display name for password prompts
             display_name = profile.alias or f"{username}@{host_value}"
 
@@ -374,68 +443,27 @@ class ScpWindowController:
                 except Exception:
                     default_download_dir = GLib.get_home_dir() or os.path.expanduser('~')
 
-            ssh_extra_opts = list(profile.ssh_options)
-            use_publickey_with_password = profile.use_publickey_with_password
-            if profile.prefer_password:
-                use_publickey_with_password = False
-
-            # Set up askpass environment for passphrase-protected keys
-            # SSH_ASKPASS will handle passphrase retrieval from storage or show GUI dialog if needed
-            logger.debug(f"SCP Download: Checking identity_agent_disabled={profile.identity_agent_disabled}")
-            logger.debug(f"SCP Download: Initial ssh_extra_opts={ssh_extra_opts}")
-            base_env = os.environ.copy()
-            
-            # Set up askpass if we have a keyfile and not using password authentication
-            if profile.keyfile_ok and not profile.prefer_password:
-                from .askpass_utils import get_ssh_env_with_askpass, get_ssh_env_with_forced_askpass, get_scp_ssh_options
-                
-                # Use forced askpass if identity agent is disabled, otherwise use regular askpass
-                if profile.identity_agent_disabled:
-                    base_env = get_ssh_env_with_forced_askpass()
-                    logger.debug("SCP: Using forced askpass environment (identity agent disabled)")
-                else:
-                    base_env = get_ssh_env_with_askpass()
-                    logger.debug("SCP: Using askpass environment (identity agent enabled)")
-                
-                # Add SSH options to force publickey authentication only (when identity agent disabled)
-                if profile.identity_agent_disabled:
-                    scp_ssh_opts = get_scp_ssh_options()
-                    logger.debug(f"SCP: Current ssh_extra_opts before adding: {ssh_extra_opts}")
-                    
-                    # Add options in pairs, checking for duplicates properly
-                    for i in range(0, len(scp_ssh_opts), 2):
-                        if i + 1 < len(scp_ssh_opts):
-                            flag = scp_ssh_opts[i]
-                            value = scp_ssh_opts[i + 1]
-                            # Check if this exact option pair is already present
-                            already_present = False
-                            for j in range(0, len(ssh_extra_opts) - 1, 2):
-                                if ssh_extra_opts[j] == flag and ssh_extra_opts[j + 1] == value:
-                                    already_present = True
-                                    break
-                            if not already_present:
-                                ssh_extra_opts.extend([flag, value])
-                                logger.debug(f"SCP: Added option pair: {flag} {value}")
-                    
-                    logger.debug(f"SCP: Final ssh_extra_opts: {ssh_extra_opts}")
-            elif profile.prefer_password:
-                # If using password authentication, ensure askpass vars are not set
-                base_env.pop('SSH_ASKPASS', None)
-                base_env.pop('SSH_ASKPASS_REQUIRE', None)
-                logger.debug("SCP Download: Using password auth - removed askpass environment")
-
             dialog = Adw.Window()
             dialog.set_transient_for(self.window)
             dialog.set_modal(True)
+            # Register with the app so routed askpass prompts can find this
+            # modal window as their parent (a bare Adw.Window is absent from
+            # Gtk.Application.get_windows() and get_active_window()).
             try:
-                dialog.set_default_size(480, 420)
+                app = self.window.get_application()
+                if app is not None:
+                    dialog.set_application(app)
+            except Exception:
+                pass
+            try:
+                dialog.set_default_size(520, 560)
             except Exception:
                 pass
             try:
                 dialog.set_title(_('Download files from server'))
             except Exception:
                 pass
-            
+
             # Prompt for password/passphrase if needed (similar to SCP upload flow)
             # Check if password is needed but not available
             if profile.prefer_password and not session_password:
@@ -454,34 +482,49 @@ class ScpWindowController:
                 session_password = password
                 # Password storage is handled in the dialog if checkbox was checked
                 logger.debug("SCP Download: Using prompted password for session")
-            
+
             # Don't pre-prompt for passphrase - let SSH_ASKPASS handle it
             # The askpass script will show a GUI dialog if no passphrase is found in storage
             # This matches the standard SSH_ASKPASS behavior
             logger.debug("SCP Download: Passphrase will be handled by SSH_ASKPASS if needed")
 
+            from sshpilot import icon_utils
+
+            toolbar = Adw.ToolbarView()
+            dialog.set_content(toolbar)
+
             header = Adw.HeaderBar()
-            title_label = Gtk.Label(label=_('Download files'))
-            title_label.set_halign(Gtk.Align.START)
             try:
-                title_label.add_css_class('title-2')
+                header.set_title_widget(
+                    Adw.WindowTitle(
+                        title=_('Download files'),
+                        subtitle=display_name,
+                    )
+                )
             except Exception:
-                pass
-            header.set_title_widget(title_label)
+                header.set_title_widget(Gtk.Label(label=_('Download files')))
+
+            cancel_button = Gtk.Button(label=_('Cancel'))
+            header.pack_start(cancel_button)
+
+            download_button = Gtk.Button(label=_('Download'))
+            download_button.set_sensitive(False)
+            download_button.add_css_class('suggested-action')
+            header.pack_end(download_button)
+
+            toolbar.add_top_bar(header)
 
             content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
             content_box.set_hexpand(True)
             content_box.set_vexpand(True)
-            try:
-                content_box.set_margin_top(16)
-                content_box.set_margin_bottom(16)
-                content_box.set_margin_start(16)
-                content_box.set_margin_end(16)
-            except Exception:
-                pass
+            content_box.set_margin_top(12)
+            content_box.set_margin_bottom(12)
+            content_box.set_margin_start(12)
+            content_box.set_margin_end(12)
 
             paths_group = Adw.PreferencesGroup()
             paths_group.set_title(_('Locations'))
+            paths_group.add_css_class('boxed-list')
 
             remote_row = Adw.EntryRow(title=_('Remote directory'))
             remote_row.set_text('~')
@@ -492,7 +535,6 @@ class ScpWindowController:
             except Exception:
                 pass
 
-            from sshpilot import icon_utils
             refresh_button = icon_utils.new_button_from_icon_name('view-refresh-symbolic')
             refresh_button.set_tooltip_text(_('Refresh remote listing'))
             refresh_button.add_css_class('flat')
@@ -500,17 +542,26 @@ class ScpWindowController:
             remote_row.set_show_apply_button(False)
             paths_group.add(remote_row)
 
-
             paths_wrapper = Adw.Clamp()
+            paths_wrapper.set_maximum_size(560)
             paths_wrapper.set_child(paths_group)
             content_box.append(paths_wrapper)
 
+            files_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+            files_heading = Gtk.Label(label=_('Remote files'))
+            files_heading.set_halign(Gtk.Align.START)
+            files_heading.add_css_class('heading')
+            files_box.append(files_heading)
+
             scroller = Gtk.ScrolledWindow()
-            scroller.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+            scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
             scroller.set_min_content_height(220)
+            scroller.set_vexpand(True)
+            scroller.set_hexpand(True)
 
             list_box = Gtk.ListBox()
             list_box.set_selection_mode(Gtk.SelectionMode.SINGLE)
+            list_box.add_css_class('boxed-list')
             list_box.set_hexpand(True)
             list_box.set_vexpand(True)
             try:
@@ -518,15 +569,23 @@ class ScpWindowController:
             except Exception:
                 pass
             scroller.set_child(list_box)
-            content_box.append(scroller)
+            files_box.append(scroller)
+
+            files_wrapper = Adw.Clamp()
+            files_wrapper.set_maximum_size(560)
+            files_wrapper.set_child(files_box)
+            content_box.append(files_wrapper)
 
             status_label = Gtk.Label()
             status_label.set_halign(Gtk.Align.START)
             status_label.set_wrap(True)
+            status_label.add_css_class('dim-label')
+            status_label.add_css_class('caption')
             content_box.append(status_label)
 
             destination_group = Adw.PreferencesGroup()
             destination_group.set_title(_('Destination'))
+            destination_group.add_css_class('boxed-list')
 
             # Under Flatpak the destination is a portal-granted folder shown as a
             # read-only label — an ActionRow, which has no edit affordance, so it
@@ -601,6 +660,7 @@ class ScpWindowController:
             if is_flatpak():
                 request_access_button = Gtk.Button(label=_('Choose download folder'))
                 request_access_button.set_halign(Gtk.Align.CENTER)
+                request_access_button.add_css_class('pill')
                 request_access_button.add_css_class('suggested-action')
                 request_access_button.set_margin_top(6)
                 destination_group_box = Gtk.Box(
@@ -617,9 +677,11 @@ class ScpWindowController:
                 destination_child = destination_group
 
             destination_wrapper = Adw.Clamp()
+            destination_wrapper.set_maximum_size(560)
             destination_wrapper.set_child(destination_child)
             content_box.append(destination_wrapper)
 
+            toolbar.set_content(content_box)
 
             def _open_destination_picker():
                 file_dialog = Gtk.FileDialog(title=_('Select destination folder'))
@@ -695,27 +757,6 @@ class ScpWindowController:
             else:
                 picker_button.connect('clicked', lambda *_: _open_destination_picker())
 
-            button_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-            button_box.set_halign(Gtk.Align.END)
-
-            cancel_button = Gtk.Button(label=_('Cancel'))
-            button_box.append(cancel_button)
-
-            download_button = Gtk.Button(label=_('Download'))
-            download_button.set_sensitive(False)
-            try:
-                download_button.add_css_class('suggested-action')
-            except Exception:
-                pass
-            button_box.append(download_button)
-
-            content_box.append(button_box)
-
-            root_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-            root_box.append(header)
-            root_box.append(content_box)
-            dialog.set_content(root_box)
-
             def _clear_list():
                 child = list_box.get_first_child()
                 while child is not None:
@@ -730,34 +771,6 @@ class ScpWindowController:
                 download_button.set_sensitive(getattr(row, 'remote_selectable', True))
 
             list_box.connect('row-selected', _on_rows_changed)
-
-            def _finish_download(success: bool, destination_display: str, remote_name: str, friendly_error: Optional[str] = None):
-                list_box.set_sensitive(True)
-                refresh_button.set_sensitive(True)
-                selected_row = list_box.get_selected_row()
-                if selected_row is not None:
-                    download_button.set_sensitive(getattr(selected_row, 'remote_selectable', True))
-                if success:
-                    status_label.set_text(
-                        _('Downloaded {name} to {dest}').format(
-                            name=remote_name,
-                            dest=destination_display,
-                        )
-                    )
-                    if hasattr(self.window, 'toast_overlay'):
-                        toast = Adw.Toast.new(
-                            _('Downloaded {name} to {dest}').format(
-                                name=remote_name,
-                                dest=destination_display,
-                            )
-                        )
-                        toast.set_timeout(3)
-                        self.window.toast_overlay.add_toast(toast)
-                elif friendly_error:
-                    status_label.set_text(friendly_error)
-                else:
-                    status_label.set_text(_('Download failed. Check the log for details.'))
-                return False
 
             def _start_download(row: Optional[Gtk.ListBoxRow] = None):
                 selected_row = row or list_box.get_selected_row()
@@ -826,51 +839,21 @@ class ScpWindowController:
                         )
                         return
 
-                status_label.set_text(_('Downloading…'))
-                download_button.set_sensitive(False)
-                refresh_button.set_sensitive(False)
-                list_box.set_sensitive(False)
-
-                def _worker():
-                    # If using password authentication, strip askpass environment
-                    # (askpass is only for passphrases, not passwords)
-                    env_for_download = base_env.copy()
-                    if session_password:
-                        env_for_download.pop('SSH_ASKPASS', None)
-                        env_for_download.pop('SSH_ASKPASS_REQUIRE', None)
-                        logger.debug("SCP Download: Using password - removed askpass from environment")
-                    
-                    # SSH_ASKPASS will handle passphrase retrieval from storage or GUI dialog if needed
-                    download_details: Dict[str, Any] = {}
-                    # Always recurse: `scp -r` on a regular file just copies the
-                    # file, so it is safe for both files and directories. Relying
-                    # on the remote `ls -p` listing to decide recursion was
-                    # unreliable (e.g. symlinked directories), causing directory
-                    # downloads to run without `-r` and fail with "not a regular
-                    # file" (issue #1002).
-                    success = download_file(
-                        host_value,
-                        username,
-                        remote_path,
-                        str(destination_dir),
-                        recursive=True,
-                        port=port,
-                        password=session_password,
-                        known_hosts_path=known_hosts_path,
-                        extra_ssh_opts=ssh_extra_opts,
-                        use_publickey=use_publickey_with_password,
-                        inherit_env=env_for_download,
-                        saved_passphrase=None,  # Let askpass handle retrieval/prompting
-                        keyfile=profile.keyfile_expanded if profile.keyfile_ok else None,
-                        key_mode=profile.key_mode,
-                        connection_manager=self.window.connection_manager if hasattr(self.window, 'connection_manager') else None,
-                        config=self.window.config if hasattr(self.window, 'config') else None,
-                        result_details=download_details,
-                    )
-                    friendly_error = download_details.get('friendly') if not success else None
-                    GLib.idle_add(_finish_download, success, dest_display, remote_name, friendly_error)
-
-                threading.Thread(target=_worker, daemon=True).start()
+                # Same VTE transfer path as upload: scp runs in a terminal so
+                # multi-step auth (password + OTP) stays visible. Browse dialog
+                # only picks the remote path; listing uses native askpass auth.
+                if session_password:
+                    try:
+                        connection.password = session_password
+                    except Exception:
+                        pass
+                dialog.close()
+                self._start_scp_transfer(
+                    connection,
+                    [remote_path],
+                    str(destination_dir),
+                    direction='download',
+                )
 
             def _populate_list(entries: List[Tuple[str, bool]], directory: str, error_message: Optional[str]):
                 _clear_list()
@@ -883,19 +866,11 @@ class ScpWindowController:
 
                 parent_dir = _remote_parent(current_dir)
                 if parent_dir is not None:
-                    parent_row = Gtk.ListBoxRow()
-                    parent_label = Gtk.Label(label='..')
-                    parent_label.set_halign(Gtk.Align.START)
-                    parent_label.set_hexpand(True)
-                    try:
-                        parent_label.add_css_class('monospace')
-                    except Exception:
-                        pass
-                    try:
-                        parent_label.add_css_class('dim-label')
-                    except Exception:
-                        pass
-                    parent_row.set_child(parent_label)
+                    parent_row = Adw.ActionRow(title='..')
+                    parent_row.set_subtitle(_('Parent directory'))
+                    parent_row.add_prefix(
+                        icon_utils.new_image_from_icon_name('go-up-symbolic')
+                    )
                     try:
                         parent_row.set_selectable(False)
                         parent_row.set_activatable(True)
@@ -914,16 +889,21 @@ class ScpWindowController:
                     return
 
                 for entry_name, is_dir in entries:
-                    row = Gtk.ListBoxRow()
-                    display_name = f"{entry_name}/" if is_dir else entry_name
-                    label = Gtk.Label(label=display_name)
-                    label.set_halign(Gtk.Align.START)
-                    label.set_hexpand(True)
-                    try:
-                        label.add_css_class('monospace')
-                    except Exception:
-                        pass
-                    row.set_child(label)
+                    row = Adw.ActionRow(title=entry_name)
+                    # ActionRow defaults to non-activatable; without this,
+                    # ListBox never emits row-activated on double-click.
+                    row.set_activatable(True)
+                    if is_dir:
+                        row.set_subtitle(_('Directory'))
+                        row.add_prefix(
+                            icon_utils.new_image_from_icon_name('folder-symbolic')
+                        )
+                    else:
+                        row.add_prefix(
+                            icon_utils.new_image_from_icon_name(
+                                'text-x-generic-symbolic'
+                            )
+                        )
                     setattr(row, 'remote_name', entry_name)
                     setattr(row, 'remote_is_dir', is_dir)
                     setattr(row, 'remote_selectable', True)
@@ -940,6 +920,8 @@ class ScpWindowController:
                 except Exception:
                     pass
 
+            auth_prompt_attempted = {'done': False}
+
             def _load_remote():
                 directory = remote_row.get_text().strip() or '.'
                 status_label.set_text(_('Loading…'))
@@ -948,29 +930,73 @@ class ScpWindowController:
                 download_button.set_sensitive(False)
 
                 def _worker():
-                    # If using password authentication, strip askpass environment
-                    # (askpass is only for passphrases, not passwords)
-                    env_for_list = base_env.copy()
+                    nonlocal session_password
+                    # Native auth (askpass) via list_remote_files / build_ssh_connection.
                     if session_password:
-                        env_for_list.pop('SSH_ASKPASS', None)
-                        env_for_list.pop('SSH_ASKPASS_REQUIRE', None)
-                        logger.debug("SCP Download: Using password - removed askpass from environment")
-                    
-                    # SSH_ASKPASS will handle passphrase retrieval from storage or GUI dialog if needed
+                        try:
+                            connection.password = session_password
+                        except Exception:
+                            pass
                     files, error_message = list_remote_files(
-                        host_value,
-                        username,
+                        connection,
                         directory,
-                        port=port,
-                        password=session_password,
-                        known_hosts_path=known_hosts_path,
-                        extra_ssh_opts=ssh_extra_opts,
-                        use_publickey=use_publickey_with_password,
-                        inherit_env=env_for_list,
-                        saved_passphrase=None,  # Let askpass handle retrieval/prompting
-                        keyfile=profile.keyfile_expanded if profile.keyfile_ok else None,
-                        key_mode=profile.key_mode,
+                        connection_manager=getattr(
+                            self.window, 'connection_manager', None
+                        ),
                     )
+
+                    from .ssh_utils import is_ssh_auth_failure_text
+                    if (
+                        error_message
+                        and not files
+                        and not auth_prompt_attempted['done']
+                        and is_ssh_auth_failure_text(error_message)
+                        and (profile.prefer_password or profile.saved_password
+                             or session_password)
+                    ):
+                        auth_prompt_attempted['done'] = True
+                        # The staged in-memory password was rejected — drop it
+                        # so it can't shadow the keyring on later auths.
+                        session_password = None
+                        try:
+                            connection.password = None
+                        except Exception:
+                            pass
+
+                        def _prompt_and_retry():
+                            nonlocal session_password
+                            password = _show_password_passphrase_dialog(
+                                dialog,
+                                prompt_type='password',
+                                display_name=display_name,
+                                host=host_value,
+                                username=username,
+                                connection_manager=getattr(
+                                    self.window, 'connection_manager', None
+                                ),
+                                heading=_('Password Required'),
+                                body=_(
+                                    'Authentication failed for {name}.\n\n'
+                                    'Enter the correct password to continue:'
+                                ).format(name=display_name),
+                            )
+                            if not password:
+                                status_label.set_text(
+                                    error_message or _('Authentication cancelled')
+                                )
+                                refresh_button.set_sensitive(True)
+                                list_box.set_sensitive(True)
+                                return False
+                            session_password = password
+                            try:
+                                connection.password = password
+                            except Exception:
+                                pass
+                            _load_remote()
+                            return False
+
+                        GLib.idle_add(_prompt_and_retry)
+                        return
 
                     def _update():
                         _populate_list(files, directory, error_message)
@@ -1073,102 +1099,59 @@ class ScpWindowController:
             alias_value = _get_connection_alias(connection)
             hostname_value = _get_connection_host(connection)
             host_value = alias_value or hostname_value
-            target = f"{connection.username}@{host_value}" if getattr(connection, 'username', '') else host_value
+            target = (
+                f"{connection.username}@{host_value}"
+                if getattr(connection, 'username', '')
+                else host_value
+            )
 
             if direction == 'upload':
                 title_text = _('Upload files (scp)')
-                subtitle_text = _('Uploading to {target}:{path}').format(target=target, path=destination)
-                info_text = _('We will use scp to upload file(s) to the selected server.')
+                running_text = _('Uploading to {target}:{path}').format(
+                    target=target, path=destination,
+                )
+                success_text = _('Uploaded to {target}:{path}').format(
+                    target=target, path=destination,
+                )
+                failure_text = _('Failed to upload to {target}:{path}').format(
+                    target=target, path=destination,
+                )
                 start_message = _('Starting upload…')
                 success_message = _('Upload finished successfully.')
                 failure_message = _('Upload failed. See output above.')
-                result_heading_ok = _('Upload complete')
                 result_heading_fail = _('Upload failed')
-                result_body_ok = _('Files uploaded to {target}:{path}').format(target=target, path=destination)
             elif direction == 'download':
                 title_text = _('Download files (scp)')
-                subtitle_text = _('Downloading from {target}').format(target=target)
-                info_text = _('We will use scp to download file(s) from the selected server into {dest}.').format(dest=destination)
+                running_text = _('Downloading from {target}').format(target=target)
+                success_text = _('Downloaded to {dest}').format(dest=destination)
+                failure_text = _('Failed to download from {target}').format(
+                    target=target,
+                )
                 start_message = _('Starting download…')
                 success_message = _('Download finished successfully.')
                 failure_message = _('Download failed. See output above.')
-                result_heading_ok = _('Download complete')
                 result_heading_fail = _('Download failed')
-                result_body_ok = _('Files downloaded to {dest}').format(dest=destination)
             else:
                 raise ValueError(f'Unsupported scp direction: {direction}')
 
-            dlg = Adw.Window()
-            dlg.set_transient_for(self.window)
-            dlg.set_modal(True)
-            try:
-                dlg.set_title(title_text)
-            except Exception:
-                pass
-            try:
-                dlg.set_default_size(920, 520)
-            except Exception:
-                pass
+            dlg = Adw.Dialog.new()
+            dlg.set_title(title_text)
+            dlg.set_follows_content_size(True)
+
+            toolbar = Adw.ToolbarView()
+            dlg.set_child(toolbar)
 
             header = Adw.HeaderBar()
-            title_widget = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-            title_label = Gtk.Label(label=title_text)
-            title_label.set_halign(Gtk.Align.START)
-            subtitle_label = Gtk.Label(label=subtitle_text)
-            subtitle_label.set_halign(Gtk.Align.START)
-            try:
-                title_label.add_css_class('title-2')
-                subtitle_label.add_css_class('dim-label')
-            except Exception:
-                pass
-            title_widget.append(title_label)
-            title_widget.append(subtitle_label)
-            header.set_title_widget(title_widget)
+            header.set_show_end_title_buttons(False)
+            header.set_title_widget(Gtk.Label(label=title_text))
 
-            cancel_btn = Gtk.Button(label=_('Cancel'))
-            try:
-                cancel_btn.add_css_class('flat')
-            except Exception:
-                pass
-            header.pack_start(cancel_btn)
+            scp_exit_state = {
+                'finished': False,
+                'handler_id': None,
+                'prompt_poll_id': None,
+            }
 
-            content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-            content_box.set_hexpand(True)
-            content_box.set_vexpand(True)
-            try:
-                content_box.set_margin_top(12)
-                content_box.set_margin_bottom(12)
-                content_box.set_margin_start(6)
-                content_box.set_margin_end(6)
-            except Exception:
-                pass
-
-            info_lbl = Gtk.Label(label=info_text)
-            info_lbl.set_halign(Gtk.Align.START)
-            try:
-                info_lbl.add_css_class('dim-label')
-                info_lbl.set_wrap(True)
-            except Exception:
-                pass
-            content_box.append(info_lbl)
-
-            term_widget = TerminalWidget(connection, self.window.config, self.window.connection_manager)
-            try:
-                term_widget._set_connecting_overlay_visible(False)
-                setattr(term_widget, '_suppress_disconnect_banner', True)
-                term_widget._set_disconnected_banner_visible(False)
-            except Exception:
-                pass
-            term_widget.set_hexpand(True)
-            term_widget.set_vexpand(True)
-            content_box.append(term_widget)
-
-            root_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-            root_box.append(header)
-            root_box.append(content_box)
-            dlg.set_content(root_box)
-
-            def _on_cancel(btn):
+            def _cleanup_askpass_helpers() -> None:
                 try:
                     if hasattr(self, '_scp_askpass_helpers'):
                         for helper_path in getattr(self, '_scp_askpass_helpers', []):
@@ -1180,14 +1163,101 @@ class ScpWindowController:
                 except Exception:
                     pass
 
+            def _stop_prompt_poller() -> None:
+                poll_id = scp_exit_state.get('prompt_poll_id')
+                if poll_id is None:
+                    return
+                scp_exit_state['prompt_poll_id'] = None
+                try:
+                    GLib.source_remove(poll_id)
+                except Exception:
+                    pass
+
+            def _on_dialog_closed(*_args):
+                # Closing (Cancel/Close/Esc) kills the child below, which still
+                # fires child-exited; mark finished first so cancel isn't a failure.
+                scp_exit_state['finished'] = True
+                _stop_prompt_poller()
+                stop_progress_spinner()
+                _cleanup_askpass_helpers()
                 try:
                     if hasattr(term_widget, 'disconnect'):
                         term_widget.disconnect()
                 except Exception:
                     pass
+
+            dlg.connect('closed', _on_dialog_closed)
+
+            def _close_dialog(*_args):
                 dlg.close()
 
-            cancel_btn.connect('clicked', _on_cancel)
+            cancel_btn = Gtk.Button(label=_('Cancel'))
+            cancel_btn.connect('clicked', _close_dialog)
+            header.pack_start(cancel_btn)
+
+            close_btn = Gtk.Button(label=_('Close'))
+            close_btn.add_css_class('suggested-action')
+            close_btn.connect('clicked', _close_dialog)
+            header.pack_end(close_btn)
+
+            toolbar.add_top_bar(header)
+
+            content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+            content_box.set_hexpand(True)
+            content_box.set_vexpand(True)
+            content_box.set_size_request(560, -1)
+            content_box.set_margin_top(12)
+            content_box.set_margin_bottom(12)
+            content_box.set_margin_start(12)
+            content_box.set_margin_end(12)
+
+            (
+                progress_row,
+                start_progress_spinner,
+                stop_progress_spinner,
+                mark_progress_success,
+                mark_progress_failure,
+            ) = build_progress_status_row(running_text, success_text, failure_text)
+            content_box.append(progress_row)
+
+            term_widget = TerminalWidget(
+                connection, self.window.config, self.window.connection_manager,
+            )
+            try:
+                term_widget._set_connecting_overlay_visible(False)
+                setattr(term_widget, '_suppress_disconnect_banner', True)
+                setattr(term_widget, '_suppress_connection_exit_handling', True)
+                term_widget._set_disconnected_banner_visible(False)
+            except Exception:
+                pass
+            terminal_card = wrap_dialog_terminal(term_widget)
+            terminal_card.set_size_request(-1, 260)
+
+            def _focus_terminal_input() -> bool:
+                try:
+                    if hasattr(term_widget, 'vte') and term_widget.vte:
+                        term_widget.vte.grab_focus()
+                    else:
+                        term_widget.grab_focus()
+                except Exception:
+                    pass
+                return False
+
+            def _on_terminal_expanded_changed(expanded: bool) -> None:
+                if not expanded:
+                    return
+                _stop_prompt_poller()
+                if not scp_exit_state['finished']:
+                    GLib.idle_add(_focus_terminal_input)
+
+            (
+                terminal_disclosure,
+                set_terminal_expanded,
+                terminal_is_expanded,
+            ) = build_terminal_disclosure(terminal_card, _on_terminal_expanded_changed)
+            content_box.append(terminal_disclosure)
+
+            toolbar.set_content(content_box)
 
             argv = self._build_scp_argv(
                 connection,
@@ -1198,17 +1268,16 @@ class ScpWindowController:
             )
 
             env = os.environ.copy()
-            # Apply the auth env resolved by _build_scp_argv (askpass for a saved
-            # passphrase, or stripped for the sshpass / interactive cases). Key
-            # preload is handled inside _build_scp_argv.
+            # Apply the auth env from resolve_native_auth (askpass for passphrases
+            # and stored login passwords; MFA stays on this VTE via prefer).
             from .scp_utils import _apply_native_auth_env
             _scp_auth = getattr(self, '_scp_auth', None)
             if _scp_auth is not None:
                 _apply_native_auth_env(env, _scp_auth)
                 self._scp_auth = None
                 logger.debug(
-                    "SCP: applied resolved auth env (askpass=%s, sshpass=%s)",
-                    _scp_auth.use_askpass, _scp_auth.use_sshpass,
+                    "SCP: applied resolved auth env (askpass=%s)",
+                    _scp_auth.use_askpass,
                 )
 
             if os.path.exists('/app/bin'):
@@ -1216,8 +1285,12 @@ class ScpWindowController:
                 if '/app/bin' not in current_path:
                     env['PATH'] = f"/app/bin:{current_path}"
 
-            envv = [f"{k}={v}" for k, v in env.items()]
-            logger.debug(f"SCP: Final environment variables: SSH_ASKPASS={env.get('SSH_ASKPASS', 'NOT_SET')}, SSH_ASKPASS_REQUIRE={env.get('SSH_ASKPASS_REQUIRE', 'NOT_SET')}")
+            logger.debug(
+                "SCP: Final environment variables: SSH_ASKPASS=%s, "
+                "SSH_ASKPASS_REQUIRE=%s",
+                env.get('SSH_ASKPASS', 'NOT_SET'),
+                env.get('SSH_ASKPASS_REQUIRE', 'NOT_SET'),
+            )
             env_dict = dict(env)
 
             def _feed_colored_line(text: str, color: str):
@@ -1230,15 +1303,20 @@ class ScpWindowController:
                 prefix = colors.get(color, '')
                 try:
                     if hasattr(term_widget, 'backend') and term_widget.backend:
-                        term_widget.backend.feed(("\r\n" + prefix + text + "\x1b[0m\r\n").encode('utf-8'))
+                        term_widget.backend.feed(
+                            ("\r\n" + prefix + text + "\x1b[0m\r\n").encode('utf-8')
+                        )
                     elif hasattr(term_widget, 'vte') and term_widget.vte:
-                        term_widget.vte.feed(("\r\n" + prefix + text + "\x1b[0m\r\n").encode('utf-8'))
+                        term_widget.vte.feed(
+                            ("\r\n" + prefix + text + "\x1b[0m\r\n").encode('utf-8')
+                        )
                 except Exception:
                     pass
 
             def _spawn_scp(spawn_argv):
                 cmdline = ' '.join([GLib.shell_quote(a) for a in spawn_argv])
                 logger.debug(f"SCP: Command line: {cmdline}")
+                envv = [f"{k}={v}" for k, v in env_dict.items()]
                 if hasattr(term_widget, 'backend') and term_widget.backend:
                     term_widget.backend.spawn_async(
                         argv=['bash', '-lc', cmdline],
@@ -1260,108 +1338,240 @@ class ScpWindowController:
                         None,
                         -1,
                         None,
-                        None
+                        None,
                     )
-
-            def _scrape_terminal_text():
                 try:
-                    backend = getattr(term_widget, 'backend', None)
-                    if backend and hasattr(backend, 'get_content'):
-                        content = backend.get_content()
-                        if content:
-                            return content
-                    if hasattr(term_widget, 'vte') and term_widget.vte:
-                        content_result = term_widget.vte.get_text_range(
-                            0, 0, -1, -1, lambda *args: True
-                        )
-                        return content_result[0] if content_result else None
-                except Exception as exc:
-                    logger.debug(f"SCP: Failed to scrape terminal output: {exc}")
-                return None
+                    term_widget._install_pty_autofill()
+                except Exception:
+                    logger.debug("SCP: could not arm PTY auto-fill", exc_info=True)
 
             # Tracks whether we have already retried using the legacy SCP
             # protocol (-O), so the fallback happens at most once.
             scp_legacy_attempted = {'done': False}
+            # One password retype after a stale saved-password askpass autofill.
+            scp_password_retry = {'done': False}
 
-            def _present_result_dialog(failure_body=None):
-                try:
-                    if hasattr(self, '_scp_askpass_helpers'):
-                        for helper_path in getattr(self, '_scp_askpass_helpers', []):
-                            try:
-                                os.unlink(helper_path)
-                            except Exception:
-                                pass
-                        self._scp_askpass_helpers.clear()
-                except Exception:
-                    pass
-
-                msg = Adw.MessageDialog(
-                    transient_for=dlg,
-                    modal=True,
-                    heading=result_heading_ok if failure_body is None else result_heading_fail,
-                    body=(result_body_ok if failure_body is None else failure_body),
-                )
-                msg.add_response('ok', _('OK'))
-                msg.set_default_response('ok')
-                msg.set_close_response('ok')
-                msg.present()
+            def _present_failure_dialog(failure_body: str):
+                _cleanup_askpass_helpers()
+                mark_progress_failure()
+                set_terminal_expanded(True)
+                if hasattr(Adw, 'AlertDialog'):
+                    msg = Adw.AlertDialog(
+                        heading=result_heading_fail,
+                        body=failure_body,
+                    )
+                    msg.add_response('ok', _('OK'))
+                    msg.set_default_response('ok')
+                    msg.set_close_response('ok')
+                    msg.present(dlg)
+                else:
+                    msg = Adw.MessageDialog(
+                        transient_for=self.window,
+                        modal=True,
+                        heading=result_heading_fail,
+                        body=failure_body,
+                    )
+                    msg.add_response('ok', _('OK'))
+                    msg.set_default_response('ok')
+                    msg.set_close_response('ok')
+                    msg.present()
                 return False
 
-            def _on_scp_exited(widget, status):
-                exit_code = None
-                try:
-                    if os.WIFEXITED(status):
-                        exit_code = os.WEXITSTATUS(status)
-                    else:
-                        exit_code = status if 0 <= int(status) < 256 else ((int(status) >> 8) & 0xFF)
-                except Exception:
-                    try:
-                        exit_code = int(status)
-                    except Exception:
-                        exit_code = status
-                ok = (exit_code == 0)
-                if ok:
-                    _feed_colored_line(success_message, 'green')
-                    GLib.idle_add(_present_result_dialog)
+            def _disconnect_scp_exit_handler() -> None:
+                handler_id = scp_exit_state.get('handler_id')
+                if handler_id is None:
                     return
+                try:
+                    if hasattr(term_widget, 'backend') and term_widget.backend:
+                        term_widget.backend.disconnect(handler_id)
+                    elif hasattr(term_widget, 'vte') and term_widget.vte:
+                        term_widget.vte.disconnect(handler_id)
+                except Exception:
+                    pass
+                scp_exit_state['handler_id'] = None
+
+            def _finish_scp(status) -> bool:
+                if scp_exit_state['finished']:
+                    return False
+
+                exit_code = normalize_child_exit_status(status)
+                ok = exit_code == 0
+                if ok:
+                    scp_exit_state['finished'] = True
+                    _stop_prompt_poller()
+                    _disconnect_scp_exit_handler()
+                    _cleanup_askpass_helpers()
+                    mark_progress_success()
+                    _feed_colored_line(success_message, 'green')
+                    return False
+
+                scraped = read_terminal_text(term_widget)
+                from .ssh_utils import is_ssh_auth_failure_text
+                profile = self._build_scp_connection_profile(connection)
+                if (
+                    not scp_password_retry['done']
+                    and is_ssh_auth_failure_text(scraped)
+                    and (
+                        profile.prefer_password
+                        or profile.saved_password
+                        or getattr(connection, 'password', None)
+                    )
+                ):
+                    scp_password_retry['done'] = True
+                    # Whatever in-memory password was staged got rejected —
+                    # drop it so it can't shadow the keyring on later auths.
+                    try:
+                        connection.password = None
+                    except Exception:
+                        pass
+
+                    def _prompt_password_and_respawn():
+                        if scp_exit_state['finished']:
+                            return False
+                        from .window_dialogs import show_ssh_password_dialog
+                        display = (
+                            profile.alias
+                            or f"{profile.username}@{profile.host}"
+                        )
+                        password = show_ssh_password_dialog(
+                            from_widget=dlg,
+                            connection=connection,
+                            host=profile.host,
+                            username=profile.username,
+                            display_name=display,
+                            connection_manager=getattr(
+                                self.window, 'connection_manager', None
+                            ),
+                            heading=_('Password Required'),
+                            body=_(
+                                'Authentication failed for {name}.\n\n'
+                                'Enter the correct password to continue:'
+                            ).format(name=display),
+                        )
+                        if not password:
+                            scp_exit_state['finished'] = True
+                            _stop_prompt_poller()
+                            _disconnect_scp_exit_handler()
+                            _feed_colored_line(failure_message, 'red')
+                            return _present_failure_dialog(
+                                _('Authentication cancelled')
+                            )
+                        try:
+                            connection.password = password
+                        except Exception:
+                            pass
+                        try:
+                            retry_argv = self._build_scp_argv(
+                                connection,
+                                sources,
+                                destination,
+                                direction=direction,
+                                known_hosts_path=(
+                                    self.window.connection_manager.known_hosts_path
+                                ),
+                            )
+                            # Start from the original spawn env so the Flatpak
+                            # /app/bin PATH fix carries over; fresh auth wins.
+                            env_retry = dict(env_dict)
+                            from .scp_utils import _apply_native_auth_env
+                            auth_retry = getattr(self, '_scp_auth', None)
+                            if auth_retry is not None:
+                                _apply_native_auth_env(env_retry, auth_retry)
+                                self._scp_auth = None
+                            env_dict.clear()
+                            env_dict.update(env_retry)
+                            _feed_colored_line(
+                                _('Retrying with updated password…'), 'yellow'
+                            )
+                            _spawn_scp(retry_argv)
+                        except Exception as exc:
+                            logger.error(
+                                'SCP: password-retry respawn failed: %s', exc
+                            )
+                            scp_exit_state['finished'] = True
+                            _stop_prompt_poller()
+                            _disconnect_scp_exit_handler()
+                            _feed_colored_line(failure_message, 'red')
+                            return _present_failure_dialog(str(exc))
+                        return False
+
+                    GLib.idle_add(_prompt_password_and_respawn)
+                    return False
 
                 # Failure: detect a missing/unavailable remote SFTP server.
                 # OpenSSH 9+ scp uses the SFTP protocol by default, so retry
                 # once with the legacy protocol (-O), which does not need it.
-                friendly = classify_sftp_error(_scrape_terminal_text())
+                friendly = classify_sftp_error(scraped)
                 if friendly and not scp_legacy_attempted['done']:
                     scp_legacy_attempted['done'] = True
-                    _feed_colored_line(_('Retrying with legacy SCP protocol (-O)…'), 'yellow')
+                    _feed_colored_line(
+                        _('Retrying with legacy SCP protocol (-O)…'), 'yellow',
+                    )
                     try:
                         legacy_argv = self._build_scp_argv(
                             connection,
                             sources,
                             destination,
                             direction=direction,
-                            known_hosts_path=self.window.connection_manager.known_hosts_path,
+                            known_hosts_path=(
+                                self.window.connection_manager.known_hosts_path
+                            ),
                             legacy=True,
                         )
-                        # Discard askpass env repopulated by the rebuild; the
-                        # original env (env_dict) is reused for the retry.
-                        self._scp_askpass_env = {}
+                        # The first attempt consumed any one-shot session
+                        # password file; apply the fresh auth env from the
+                        # rebuild so the retry can authenticate again.
+                        env_retry = dict(env_dict)
+                        from .scp_utils import _apply_native_auth_env
+                        auth_retry = getattr(self, '_scp_auth', None)
+                        if auth_retry is not None:
+                            _apply_native_auth_env(env_retry, auth_retry)
+                            self._scp_auth = None
+                        env_dict.clear()
+                        env_dict.update(env_retry)
                         _spawn_scp(legacy_argv)
-                        return
+                        return False
                     except Exception as exc:
-                        logger.error(f'SCP: Failed to retry with legacy protocol: {exc}')
+                        logger.error(
+                            'SCP: Failed to retry with legacy protocol: %s', exc
+                        )
 
+                scp_exit_state['finished'] = True
+                _stop_prompt_poller()
+                _disconnect_scp_exit_handler()
                 _feed_colored_line(failure_message, 'red')
-                failure_body = friendly or _('scp exited with an error. Please review the log output.')
-                GLib.idle_add(lambda: _present_result_dialog(failure_body))
+                failure_body = friendly or _(
+                    'scp exited with an error. Please review the log output.'
+                )
+                return _present_failure_dialog(failure_body)
+
+            def _on_scp_exited(widget, status):
+                GLib.idle_add(_finish_scp, status)
 
             _feed_colored_line(start_message, 'yellow')
 
             try:
                 if hasattr(term_widget, 'backend') and term_widget.backend:
-                    term_widget.backend.connect_child_exited(_on_scp_exited)
+                    scp_exit_state['handler_id'] = (
+                        term_widget.backend.connect_child_exited(_on_scp_exited)
+                    )
                 elif hasattr(term_widget, 'vte') and term_widget.vte:
-                    term_widget.vte.connect('child-exited', _on_scp_exited)
+                    scp_exit_state['handler_id'] = term_widget.vte.connect(
+                        'child-exited', _on_scp_exited,
+                    )
             except Exception:
                 pass
+
+            def _poll_for_prompt() -> bool:
+                if scp_exit_state['finished'] or terminal_is_expanded():
+                    scp_exit_state['prompt_poll_id'] = None
+                    return GLib.SOURCE_REMOVE
+                content = read_terminal_text(term_widget)
+                if terminal_awaiting_input(content):
+                    scp_exit_state['prompt_poll_id'] = None
+                    set_terminal_expanded(True)
+                    return GLib.SOURCE_REMOVE
+                return GLib.SOURCE_CONTINUE
 
             try:
                 _spawn_scp(argv)
@@ -1370,9 +1580,14 @@ class ScpWindowController:
                 dlg.close()
                 return
 
-            dlg.present()
+            scp_exit_state['prompt_poll_id'] = GLib.timeout_add(
+                400, _poll_for_prompt,
+            )
+            dlg.present(self.window)
+            GLib.idle_add(start_progress_spinner)
         except Exception as e:
             logger.error(f'Failed to open scp terminal window: {e}')
+
     def _build_scp_argv(
         self,
         connection,
@@ -1415,26 +1630,21 @@ class ScpWindowController:
             except Exception:
                 pass
         # Resolve auth via the single shared resolver (same as terminal + ssh-copy-id):
-        # askpass for a saved passphrase, sshpass for a saved password, or bare TTY
-        # prompts when nothing is saved. Stash it for _show_scp_terminal_window to
-        # apply to the spawn environment.
+        # askpass for passphrases and stored login passwords, or bare TTY when
+        # nothing is saved. Stash it for _show_scp_terminal_window to apply.
         from .ssh_connection_builder import resolve_native_auth
-        from .ssh_password_exec import wrap_argv_with_sshpass
         auth = resolve_native_auth(
             connection,
             getattr(self.window, 'connection_manager', None),
             getattr(self.window, 'config', None),
         )
         self._scp_auth = auth
-        logger.debug(
-            "SCP: auth resolved (askpass=%s, sshpass=%s)",
-            auth.use_askpass, auth.use_sshpass,
-        )
+        logger.debug("SCP: auth resolved (askpass=%s)", auth.use_askpass)
 
         try:
-            # Downloads always recurse (`scp -r` is harmless on a regular file),
-            # mirroring download_file() so this terminal path can't reproduce
-            # issue #1002. Uploads recurse when a local source is a directory
+            # Downloads always recurse (`scp -r` is harmless on a regular file)
+            # so directory transfers don't fail with "not a regular file"
+            # (issue #1002). Uploads recurse when a local source is a directory
             # (os.path.isdir is reliable for local paths, symlinks included).
             recursive = direction == 'download' or any(
                 os.path.isdir(path) for path in transfer_sources
@@ -1461,11 +1671,6 @@ class ScpWindowController:
         # Legacy SCP/rcp protocol (-O) does not require a remote sftp-server.
         if legacy:
             argv = insert_legacy_scp_flag(argv)
-
-        if auth.use_sshpass and auth.password:
-            argv, _sshpass_cleanup = wrap_argv_with_sshpass(argv, auth.password)
-            import atexit
-            atexit.register(_sshpass_cleanup)
 
         for path in transfer_sources:
             argv.append(path)

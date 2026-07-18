@@ -10,6 +10,36 @@ from .platform_utils import is_flatpak
 
 logger = logging.getLogger(__name__)
 
+# Markers shared by FM / SCP when classifying a failed ssh/scp run as auth.
+# "permission denied" alone is NOT a marker: scp prints it for remote *file*
+# permission errors ("scp: /path: Permission denied"). SSH auth failures use
+# the parenthesized method list or the retry phrasing.
+_SSH_AUTH_FAILURE_MARKERS = (
+    'permission denied (',
+    'permission denied, please try again',
+    'authentication failed',
+    'too many authentication failures',
+)
+
+
+def is_ssh_auth_failure_text(text: str) -> bool:
+    """True when *text* looks like an SSH authentication failure."""
+    lowered = (text or '').lower()
+    return any(marker in lowered for marker in _SSH_AUTH_FAILURE_MARKERS)
+
+
+def clean_ssh_stderr(text: str) -> str:
+    """Drop ``ssh -v`` ``debug`` chatter, leaving the human-meaningful lines.
+
+    With verbose logging on, ssh floods stderr with ``debugN:`` lines; showing
+    that raw log in the UI is noise. Returns the stripped, joined remainder.
+    """
+    return "\n".join(
+        line.strip()
+        for line in (text or "").splitlines()
+        if line.strip() and not line.lstrip().startswith("debug")
+    ).strip()
+
 
 def ensure_writable_ssh_home(env: Dict[str, str]) -> None:
     """Ensure ssh-copy-id has a writable HOME when running in Flatpak."""
@@ -81,6 +111,8 @@ def build_connection_ssh_options(connection, config=None, for_ssh_copy_id=False)
         options.extend(['-o', f'ConnectTimeout={connect_timeout}'])
     if connection_attempts is not None:
         options.extend(['-o', f'ConnectionAttempts={connection_attempts}'])
+    if for_ssh_copy_id:
+        options.extend(['-o', 'NumberOfPasswordPrompts=1'])
     if keepalive_interval is not None:
         options.extend(['-o', f'ServerAliveInterval={keepalive_interval}'])
     if keepalive_count is not None:
@@ -162,7 +194,10 @@ def build_connection_ssh_options(connection, config=None, for_ssh_copy_id=False)
     else:
         # Force password authentication when user chose password auth (same as terminal.py)
         # But don't disable pubkey auth for ssh-copy-id since we're installing a key
-        options.extend(['-o', 'PreferredAuthentications=password'])
+        options.extend([
+            '-o',
+            'PreferredAuthentications=keyboard-interactive,password',
+        ])
         if not for_ssh_copy_id and getattr(connection, 'pubkey_auth_no', False):
             options.extend(['-o', 'PubkeyAuthentication=no'])
     

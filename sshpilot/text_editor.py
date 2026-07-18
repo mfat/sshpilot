@@ -1436,99 +1436,29 @@ class RemoteFileEditorWindow(Adw.Window):
         logger.debug("_update_search_settings: configured case_sensitive=False, wrap_around=True")
     
     def _search_next(self) -> None:
-        """Search for next occurrence."""
-        logger.debug("_search_next: called")
-        
-        if not self._gtksource_enabled:
-            logger.debug("_search_next: GtkSource is not enabled")
-            return
-        
-        if not self._search_context:
-            logger.debug("_search_next: _search_context is None")
-            return
-        
-        if not self._search_entry:
-            logger.debug("_search_next: _search_entry is None")
-            return
-        
-        # Ensure search settings are up to date
+        """Search for next occurrence (skip past the current selection)."""
         self._update_search_settings()
-        
-        # Check search text
-        search_text = self._search_entry.get_text() if self._search_entry else None
-        logger.debug(f"_search_next: search_text='{search_text}'")
-        
-        if not search_text:
-            logger.debug("_search_next: no search text, returning")
-            return
-        
-        # Check search settings
-        if self._search_settings:
-            settings_text = self._search_settings.get_search_text()
-            logger.debug(f"_search_next: search_settings.search_text='{settings_text}'")
-        
-        # If there's a selection, start from just after the end of the selection
-        # Otherwise, start from the insert mark
-        try:
-            # get_selection_bounds() returns (has_selection, start_iter, end_iter) when selection exists
-            # Raises ValueError when no selection
-            has_selection, start, end = self._buffer.get_selection_bounds()
-            logger.debug(f"_search_next: has_selection={has_selection}")
-            
-            if has_selection:
-                # Start searching from just after the end of the current selection
-                iter_ = end.copy()
-                start_offset = iter_.get_offset()
-                # Advance by one character to skip the current match
-                if not iter_.is_end():
-                    iter_.forward_char()
-                end_offset = iter_.get_offset()
-                logger.debug(f"_search_next: using selection end, start_offset={start_offset}, end_offset={end_offset}")
-            else:
-                # No selection, start from insert mark (cursor position)
-                insert_mark = self._buffer.get_insert()
-                iter_ = self._buffer.get_iter_at_mark(insert_mark)
-                offset = iter_.get_offset()
-                logger.debug(f"_search_next: using cursor position, offset={offset}")
-        except ValueError:
-            # No selection - get_selection_bounds() raises ValueError when there's no selection
-            # Start from insert mark (cursor position)
-            logger.debug("_search_next: no selection, using cursor position")
-            insert_mark = self._buffer.get_insert()
-            iter_ = self._buffer.get_iter_at_mark(insert_mark)
-            offset = iter_.get_offset()
-            logger.debug(f"_search_next: cursor offset={offset}")
-        
-        # Log iterator position before search
-        iter_offset = iter_.get_offset()
-        buffer_size = self._buffer.get_char_count()
-        logger.debug(f"_search_next: calling forward() with iter_offset={iter_offset}, buffer_size={buffer_size}")
-        
-        ok, match_start, match_end, wrapped = self._search_context.forward(iter_)
-        logger.debug(f"_search_next: forward() returned ok={ok}, wrapped={wrapped}")
-        
-        if ok:
-            match_start_offset = match_start.get_offset()
-            match_end_offset = match_end.get_offset()
-            logger.debug(f"_search_next: match found at start_offset={match_start_offset}, end_offset={match_end_offset}")
-            self._buffer.select_range(match_start, match_end)
-            # Move cursor to the end of the match so next search starts from after it
-            insert_mark = self._buffer.get_insert()
-            self._buffer.move_mark(insert_mark, match_end)
-            logger.debug(f"_search_next: moved cursor to end of match at offset={match_end_offset}")
-            self._source_view.scroll_to_iter(match_start, 0.1, True, 0.0, 0.0)
-        else:
-            logger.debug("_search_next: no match found")
-    
+        self._jump_to_match_for_current_query(advance_past_selection=True)
+
     def _search_prev(self) -> None:
         """Search for previous occurrence."""
         if not self._gtksource_enabled or not self._search_context:
             return
-        
-        insert_mark = self._buffer.get_insert()
-        iter_ = self._buffer.get_iter_at_mark(insert_mark)
-        
-        ok, match_start, match_end, wrapped = self._search_context.backward(iter_)
+
+        self._update_search_settings()
+
+        try:
+            has_selection, start, _end = self._buffer.get_selection_bounds()
+        except ValueError:
+            has_selection, start = False, None
+
+        if has_selection and start is not None:
+            iter_ = start.copy()
+        else:
+            insert_mark = self._buffer.get_insert()
+            iter_ = self._buffer.get_iter_at_mark(insert_mark)
+
+        ok, match_start, match_end, _wrapped = self._search_context.backward(iter_)
         if ok:
             self._buffer.select_range(match_start, match_end)
             self._source_view.scroll_to_iter(match_start, 0.1, True, 0.0, 0.0)
@@ -1543,71 +1473,57 @@ class RemoteFileEditorWindow(Adw.Window):
             # Show and focus search entry when opening
             self._search_entry.grab_focus()
     
+    def _jump_to_match_for_current_query(self, *, advance_past_selection: bool) -> None:
+        """Select and scroll to a match for the current search text.
+
+        When ``advance_past_selection`` is False (typing in the search box),
+        search from the start of any existing selection so refining the query
+        can re-match the same occurrence. When True (Enter / Next), skip past
+        the current selection to move to the following hit.
+        """
+        if not self._gtksource_enabled or not self._search_context or not self._search_entry:
+            return
+
+        search_text = self._search_entry.get_text()
+        if not search_text:
+            return
+
+        try:
+            has_selection, start, end = self._buffer.get_selection_bounds()
+        except ValueError:
+            has_selection, start, end = False, None, None
+
+        if has_selection and start is not None and end is not None:
+            iter_ = end.copy() if advance_past_selection else start.copy()
+            if advance_past_selection and not iter_.is_end():
+                iter_.forward_char()
+        else:
+            insert_mark = self._buffer.get_insert()
+            iter_ = self._buffer.get_iter_at_mark(insert_mark)
+
+        ok, match_start, match_end, _wrapped = self._search_context.forward(iter_)
+        if ok:
+            self._buffer.select_range(match_start, match_end)
+            insert_mark = self._buffer.get_insert()
+            self._buffer.move_mark(insert_mark, match_end)
+            self._source_view.scroll_to_iter(match_start, 0.1, True, 0.0, 0.0)
+
     def _on_search_changed(self, editable: Gtk.Editable) -> None:
-        """Handle search entry text change."""
+        """Handle search entry text change — jump to first match as you type."""
         self._update_search_settings()
-        
-        # According to GtkSource docs (https://gedit-text-editor.org/developer-docs/libgedit-gtksourceview-300/GtkSourceSearchContext.html),
-        # "The buffer is scanned asynchronously, so it doesn't block the user interface.
-        # For each search, the buffer is scanned at most once. After that, navigating through
-        # the occurrences doesn't require to re-scan the buffer entirely."
-        #
-        # When search text changes, it's a new search pattern, so async scanning needs to start.
-        # The async scanning is triggered when a search operation (forward/backward) is performed.
-        # On macOS, highlighting may not appear until the async scanning starts. To ensure
-        # highlighting works immediately when the user types, we trigger a search operation
-        # which starts the async scanning process.
-        #
-        # Based on gedit source code patterns, we need to:
-        # 1. Trigger the search to start async scanning
-        # 2. Allow highlighting to appear before restoring cursor
-        # 3. Use idle_add to restore cursor after UI update, preserving user's typing position
-        if self._gtksource_enabled and self._search_context and self._search_entry:
-            search_text = self._search_entry.get_text()
-            if search_text:
-                try:
-                    # Save current cursor position before search
-                    insert_mark = self._buffer.get_insert()
-                    cursor_iter = self._buffer.get_iter_at_mark(insert_mark)
-                    cursor_offset = cursor_iter.get_offset()
-                    
-                    # Trigger async scanning by performing a search from the start
-                    # This starts the async scanning process which enables highlighting
-                    # When search text changes, this ensures the new pattern is scanned
-                    start_iter = self._buffer.get_start_iter()
-                    ok, match_start, match_end, wrapped = self._search_context.forward(start_iter)
-                    
-                    # Restore cursor to original position after UI has updated
-                    # Using idle_add ensures highlighting appears before cursor is restored
-                    # This is especially important on macOS where highlighting may be delayed
-                    def restore_cursor():
-                        try:
-                            cursor_iter = self._buffer.get_iter_at_offset(cursor_offset)
-                            self._buffer.place_cursor(cursor_iter)
-                        except Exception:
-                            pass  # Cursor position may be invalid if buffer changed
-                        return False  # Don't repeat
-                    
-                    GLib.idle_add(restore_cursor)
-                    
-                    # Scanning has now started (or restarted for new pattern), highlighting is active
-                except Exception as e:
-                    logger.debug(f"Error triggering search scan: {e}")
-    
+        # forward() also kicks GtkSource's async scan so match highlighting updates.
+        self._jump_to_match_for_current_query(advance_past_selection=False)
+
     def _on_search_activate(self, entry: Gtk.Entry) -> None:
-        """Handle Enter key in search entry."""
-        self._update_search_settings()
+        """Handle Enter key in search entry — go to next match."""
         self._search_next()
-    
+
     def _on_search_next_clicked(self, button: Gtk.Button) -> None:
         """Handle search next button click."""
-        logger.debug("_on_search_next_clicked: button clicked")
-        self._update_search_settings()
         self._search_next()
-    
+
     def _on_search_prev_clicked(self, button: Gtk.Button) -> None:
         """Handle search previous button click."""
-        self._update_search_settings()
         self._search_prev()
     
     def _on_replace_clicked(self, button: Gtk.Button) -> None:

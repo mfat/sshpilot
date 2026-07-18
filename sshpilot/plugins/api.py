@@ -777,13 +777,12 @@ class PluginContext:
                 remote_command=command, native_mode=True, extra_args=extra_args)
             prepared = build_ssh_connection(ctx)
             argv = list(prepared.command)
-            env = {**os.environ, **(prepared.env or {})}
-            # Password auth: feed via the shared sshpass FIFO (key/askpass auth
-            # is already baked into env by build_ssh_connection).
-            if prepared.use_sshpass and prepared.password:
-                from ..ssh_password_exec import wrap_argv_with_sshpass
-                argv, cleanup = wrap_argv_with_sshpass(
-                    argv, prepared.password, env=env)
+            from ..ssh_connection_builder import apply_headless_askpass_env
+            # No user-visible TTY — force graphical askpass for secrets/MFA.
+            env = apply_headless_askpass_env(
+                prepared.env, conn,
+                session_password=getattr(prepared, "password", None),
+            )
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug("run_command(%r) argv: %s", nickname, argv)
             # Capture via temp files — NOT pipes (capture_output=True).
@@ -927,11 +926,11 @@ class PluginContext:
                 remote_command=command, native_mode=True, extra_args=extra_args)
             prepared = build_ssh_connection(ctx)
             argv = list(prepared.command)
-            env = {**os.environ, **(prepared.env or {})}
-            if prepared.use_sshpass and prepared.password:
-                from ..ssh_password_exec import wrap_argv_with_sshpass
-                argv, cleanup = wrap_argv_with_sshpass(
-                    argv, prepared.password, env=env)
+            from ..ssh_connection_builder import apply_headless_askpass_env
+            env = apply_headless_askpass_env(
+                prepared.env, conn,
+                session_password=getattr(prepared, "password", None),
+            )
             self._spawn_stream(
                 handle, argv, env, on_line=on_line, on_done=on_done,
                 input_text=input, cleanup=cleanup)
@@ -1146,7 +1145,11 @@ class PluginContext:
                     ["-O", "forward", "-o",
                      f"ControlPath={ssh_multiplex.control_path()}",
                      "-L", forward])
-                env = {**os.environ, **(prepared.env or {})}
+                from ..ssh_connection_builder import apply_headless_askpass_env
+                env = apply_headless_askpass_env(
+                    prepared.env, conn,
+                    session_password=getattr(prepared, "password", None),
+                )
                 result = subprocess.run(
                     list(prepared.command), env=env, capture_output=True,
                     text=True, timeout=10, check=False)
@@ -1163,11 +1166,11 @@ class PluginContext:
             prepared = _build(
                 ["-N", "-o", "ExitOnForwardFailure=yes", "-L", forward])
             argv = list(prepared.command)
-            env = {**os.environ, **(prepared.env or {})}
-            if prepared.use_sshpass and prepared.password:
-                from ..ssh_password_exec import wrap_argv_with_sshpass
-                argv, cleanup = wrap_argv_with_sshpass(
-                    argv, prepared.password, env=env)
+            from ..ssh_connection_builder import apply_headless_askpass_env
+            env = apply_headless_askpass_env(
+                prepared.env, conn,
+                session_password=getattr(prepared, "password", None),
+            )
             proc = subprocess.Popen(
                 argv, env=env, stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -1205,12 +1208,14 @@ class PluginContext:
         import os
         import subprocess
         from ..ssh_connection_builder import (
-            _build_base_ssh_command, resolve_native_auth)
+            _build_base_ssh_command,
+            apply_forced_askpass_env,
+            resolve_native_auth,
+        )
         from ..ssh_config_utils import get_effective_ssh_config
         conn = self.connection_manager.find_connection_by_nickname(nickname)
         if conn is None or not public_key_path:
             return False
-        cleanup = None
         try:
             host = getattr(conn, "nickname", None) or getattr(conn, "host", None) or nickname
             effective = get_effective_ssh_config(host) or {}
@@ -1219,19 +1224,16 @@ class PluginContext:
             argv.extend(['-i', public_key_path])
             auth = resolve_native_auth(conn, self.connection_manager, self.config)
             argv.extend(auth.extra_opts or [])
-            env = {**os.environ, **(auth.env or {})}
-            if auth.use_sshpass and auth.password:
-                from ..ssh_password_exec import wrap_argv_with_sshpass
-                argv, cleanup = wrap_argv_with_sshpass(
-                    argv, auth.password, env=env)
+            # Same as the ssh-copy-id UI: REQUIRE=force → graphical askpass.
+            env = apply_forced_askpass_env(
+                auth.env, conn,
+                session_password=getattr(auth, "password", None),
+            )
             result = subprocess.run(
                 argv, env=env, capture_output=True, text=True, check=False)
             return result.returncode == 0
         except Exception:  # noqa: BLE001
             return False
-        finally:
-            if cleanup is not None:
-                cleanup()
 
     # --- terminals / sessions -----------------------------------------
     def list_sessions(self) -> List["SessionInfo"]:

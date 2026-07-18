@@ -20,10 +20,11 @@ command/auth builders are exactly what was removed.
 Reuse these (and only these):
 - **Open/prepare a connection:** `Connection.native_connect()` →
   `build_ssh_connection(ctx)`. (`Connection.connect()` is just an alias.)
-- **Decide authentication (askpass/keyring or sshpass):**
+- **Decide authentication (askpass for passphrases and login passwords):**
   `resolve_native_auth(connection, connection_manager, app_config)` — the ONLY
   place auth is decided. Every command-based caller must get its env + extra
-  options from here.
+  options from here. Do **not** reintroduce sshpass or PTY password autofill
+  for SSH login secrets.
 - **Build a plain command for an external process** (e.g. system terminal):
   `build_native_command(...)`.
 - **Build an explicit command's option list** (raw host/keyfile/port callers
@@ -32,12 +33,12 @@ Reuse these (and only these):
 Rules:
 - If an existing function *almost* fits, **extend it** (add a parameter / handle
   the case) rather than cloning a variant. One builder, one auth resolver.
-- Never hand-roll `SSH_ASKPASS`, `IdentityAgent`, or `sshpass` in a new place —
-  call `resolve_native_auth`.
+- Never hand-roll `SSH_ASKPASS`, `IdentityAgent`, or a parallel password feeder
+  in a new place — call `resolve_native_auth`.
 - **Never disable/bypass the ssh-agent.** Do not add `-o IdentityAgent=none` and
   do not drop `SSH_AUTH_SOCK` for key auth (a removed misfeature — see the
-  Authentication modes below). The agent is always left intact; askpass is only
-  the passphrase fallback.
+  Authentication modes below). The agent is always left intact; askpass is the
+  passphrase *and* login-password autofill path.
 - Never append per-host SSH settings to a command line — persist them to
   `~/.ssh/config` (see below) and let the native command pick them up.
 - If you genuinely believe a new connection path is needed, stop and confirm
@@ -66,30 +67,39 @@ Rules:
 `resolve_native_auth(connection, connection_manager, app_config)` →
 `NativeAuth(env, extra_opts, use_sshpass, password, use_askpass, password_mode)`.
 The terminal builder, SCP, and ssh-copy-id all call it so they authenticate
-identically. Modes:
-- **Password** (`auth_method == 1`, or a stored password exists): use `sshpass`
-  with a write-once FIFO to feed the password; clear `SSH_ASKPASS` and set
-  `SSH_ASKPASS_REQUIRE=never` so ssh never falls back to askpass.
-- **Key-based** (default, askpass enabled): set `SSH_ASKPASS` (REQUIRE=prefer)
-  so ssh asks our askpass helper for any key passphrase it needs. The agent is
-  left intact — SSH uses it when keys are already loaded, and falls back to
-  askpass (keyring lookup → GTK prompt) for passphrases the agent cannot supply.
+identically.
+
+**Askpass is used for both key passphrases and login passwords** on the native
+path. `SSH_ASKPASS_REQUIRE=prefer` so the helper autofills stored secrets;
+interactive MFA (OTP/PIN) is collected via an askpass/main-window dialog (OpenSSH
+does not fall back to the TTY when askpass declines). `use_sshpass` is always
+`False` here (do not reintroduce it).
+
+Modes:
+- **Password method** (`auth_method == 1`) with a stored password → askpass with
+  password host/user context (`SSHPILOT_PASSWORD_*`) and optional one-shot
+  in-memory session secret (IPC id, or a runtime-dir file when IPC is down).
+- **Key-based** (`auth_method == 0`, auto or specific key — askpass enabled):
+  - saved key passphrase → askpass autofills passphrase prompts; agent left intact.
+  - saved password (and combined auth when the key is loaded into the agent) →
+    same askpass env also advertises login-password context; MFA stays on the TTY.
+  - nothing saved → no askpass; SSH prompts on the TTY.
 - **Askpass disabled** (the `use-askpass` setting is off): set no `SSH_ASKPASS`;
   ssh prompts natively on the TTY.
 
 Credentials are stored/retrieved through a **pluggable secret backend**
 (`secret_storage.py`): `connection_manager.get_connection_password` /
-`get_password` and `askpass_utils.lookup_passphrase` delegate to `SecretManager`.
-The backend is
+`get_password` and `askpass_utils.lookup_passphrase` / `lookup_ssh_password`
+delegate to `SecretManager`. The backend is
 selectable via the `secrets.backend` setting — `auto` (platform default:
 libsecret then keyring on Linux, keyring on macOS), or an explicit `libsecret` /
 `keyring` / `pass` (passwordstore.org) / `bitwarden` / `keepassxc` / `agent`, or
 a registered custom backend. With **`auto`**, reads/deletes fall through to every
 available backend so secrets aren't orphaned when the selection changes; with an
 **explicit** backend, `store`/`lookup`/`delete` consult only that backend. The askpass helper
-(`askpass_utils.py`) is the program ssh invokes; it looks the passphrase up via the
-selected backend and, failing that, shows a GTK prompt. Keyring autofill + the
-askpass prompt are advertised features — keep them working.
+(`askpass_utils.py`) answers passphrase **and** password prompts from the selected
+backend (classifying OTP/MFA as decline→TTY) and, for unstored passphrases when
+enabled, shows a GTK prompt. Keep that working.
 
 Backend specifics:
 - **KeePassXC** can be used two ways: (a) enable its GUI *Secret Service integration* and
@@ -187,33 +197,44 @@ explicit command. The interactive native command does **not** call this: it
 stays minimal and lets the spawned `ssh` resolve the config itself at run time.
 
 ### askpass mechanics
-- `get_ssh_env_with_askpass(require)` (`askpass_utils.py`) returns an env with
-  `SSH_ASKPASS=<our helper>`, `SSH_ASKPASS_REQUIRE=<require>`, a `DISPLAY`
-  fallback, and the `GNOME_KEYRING_*` control vars cleared (so gnome-keyring
-  doesn't intercept) while keeping D-Bus available for libsecret.
+See also **askpass mechanics (passphrases and login passwords)** below.
+- `get_ssh_env_with_askpass(require, …)` (`askpass_utils.py`) returns an env with
+  `SSH_ASKPASS=<our helper>`, `SSH_ASKPASS_REQUIRE=<require>`, optional
+  `SSHPILOT_PASSWORD_*` / session-password id (or file fallback), a `DISPLAY` fallback, and the
+  `GNOME_KEYRING_*` control vars cleared (so gnome-keyring doesn't intercept)
+  while keeping D-Bus available for libsecret.
 - `require` is OpenSSH's `SSH_ASKPASS_REQUIRE`: `prefer` (default — use askpass
   even when a TTY exists, OpenSSH ≥ 8.4), `force`, or `never`.
-- ssh invokes our helper (CLI entry `handle_askpass_cli`), which calls
-  `lookup_passphrase(key_path)` → keyring; if a passphrase is stored it is
-  returned silently (autofill). If nothing is stored, the built-in GTK dialog
-  (`_run_askpass_dialog`) shows ONLY when `use-builtin-passphrase-prompt` is on
-  — it is **off by default**, so by default the helper returns nothing for an
-  unstored key and ssh / the OS / ssh-agent prompts naturally. Helper output is
-  streamed into the app log by the askpass log forwarder.
-- The `use-askpass` setting (master, default on — keyring autofill) and
-  `use-builtin-passphrase-prompt` (sub-option, default off — our GUI prompt)
-  gate this; with askpass off, ssh prompts natively on the TTY.
+- OpenSSH may set `SSH_ASKPASS_PROMPT`: `none` (FIDO touch reminder), `confirm`
+  (yes/no), or unset (typed secret). **Presence usually skips askpass** when
+  stderr is a tty (`notify_start` writes to the TTY); VTE shows it. Headless
+  paths get presence via askpass (`PROMPT=none`).
+- Every SSH spawn with **no user-visible TTY** must use
+  `apply_headless_askpass_env()` (`ssh_connection_builder.py`) so secrets /
+  PIN / OTP / presence go through graphical askpass (`REQUIRE=prefer`).
+  Callers: SFTP file manager, SCP `list_remote_files`, plugin `run_command` /
+  stream / port-forward, remote history fetch.
+- ssh invokes our helper (`handle_askpass_cli`): passphrase →
+  `lookup_passphrase`; login password → session file / `lookup_ssh_password`;
+  OTP/PIN → user dialog; `PROMPT=none` → touch reminder (no entry).
+  Unstored key passphrases return nothing so SSH / the OS / ssh-agent can
+  prompt; login-password and MFA prompts use the graphical askpass dialogs.
+  Helper output is streamed into the app log by the askpass log forwarder.
+- The `use-askpass` setting (default on, no Preferences toggle) gates askpass
+  wiring; with askpass off, ssh prompts natively on the TTY.
 
 ### In-app password & passphrase dialogs (GUI)
 
 When **your code** (not the `ssh` subprocess) must ask the user for credentials,
-use the shared helpers in `window.py`. Do **not** create a one-off
-`Adw.MessageDialog` for SSH passwords — secondary windows parented incorrectly
-hide behind the main window on Wayland.
+use the shared helpers in `window.py`. Do **not** create a one-off password
+dialog — secondary windows parented incorrectly hide behind the main window on
+Wayland. The shared helper uses `Adw.Dialog` + header bar (Cancel / confirm),
+a boxed-list `PasswordEntryRow`, and an optional Store checkbox.
 
 **SSH login password (in-process, blocking, main-thread only)**
 
-- **`show_ssh_password_dialog(...)`** in `window.py` — the single entry point.
+- **`show_ssh_password_dialog(...)`** in `window_dialogs.py` (re-exported from
+  `window`) — the single entry point.
   Resolves `MainWindow` via `resolve_app_modal_parent(from_widget)`, presents it,
   shows the standard password dialog (optional **Store password** via
   `connection_manager`), and returns the string or `None`.
@@ -223,7 +244,8 @@ hide behind the main window on Wayland.
 Typical call from a secondary window or plugin page:
 
 ```python
-from sshpilot.window import show_ssh_password_dialog
+from sshpilot.window_dialogs import show_ssh_password_dialog
+# (also re-exported from sshpilot.window)
 
 password = show_ssh_password_dialog(
     from_widget=self,                    # or your Gtk.Widget / Adw.Window
@@ -253,46 +275,71 @@ If you add a non-password modal from a plugin page or secondary window:
 Plugins: see **PLUGIN_SDK.md → Advanced UI — credential dialogs** (`ctx.connection_manager`
 for store-password; must run on the UI thread).
 
-### sshpass mechanics
-The password is fed to ssh via a **write-once FIFO**, never on the command line
-or in the environment: `_mk_priv_dir()` creates a 0700 temp dir,
-`_write_once_fifo()` (a daemon thread) writes the secret exactly once when ssh
-opens the FIFO, and the command is prefixed with `sshpass -f <fifo>`
-(`ssh_password_exec.py`; the terminal does the same inline in
-`_setup_ssh_terminal`). `SSH_ASKPASS_REQUIRE=never` is set so ssh cannot divert
-to askpass for a password.
+### askpass mechanics (passphrases and login passwords)
+The native path uses **one** askpass helper for both secrets:
+- **Key passphrase** prompts → lookup via `lookup_passphrase` / secret backend;
+  optional GTK / main-app IPC when nothing is stored and the builtin prompt is on.
+- **Login password** prompts → lookup via `SSHPILOT_PASSWORD_USER` +
+  `SSHPILOT_PASSWORD_HOSTS` (and optional `SSHPILOT_SESSION_PASSWORD_ID` via
+  askpass IPC for just-typed in-memory secrets — no disk; file fallback only
+  when the prompt server is not advertised).
+- **Interactive / MFA** prompts (OTP, PIN, yes/no) → ask the user via the
+  main-app dialog (or a standalone askpass window). OpenSSH with
+  `SSH_ASKPASS_REQUIRE=prefer` does **not** fall back to the TTY when askpass
+  declines, so MFA cannot be left on the VTE; the user still types the code
+  (it is never autofilled from the vault).
+
+`get_ssh_env_with_askpass(...)` in `askpass_utils.py` sets `SSH_ASKPASS`,
+`SSH_ASKPASS_REQUIRE`, and the password-context env vars. Do **not** reintroduce
+sshpass or terminal PTY password autofill for SSH login secrets.
+(`TerminalWidget.arm_password_pty_autofill` remains only for non-SSH cases such
+as remote sudo prompts.)
 
 ### Who builds what
 - **Interactive terminal** (`terminal.py::_setup_ssh_terminal`): consumes the
   prepared `connection.ssh_connection_cmd` (command + env + auth flags) — it does
-  **not** build commands or derive auth. It only does runtime mechanics: the
-  sshpass FIFO, askpass log forwarding, `TERM`/`PATH`, and the PTY/spawn.
-- **SCP** (`scp_utils.py`): SCP runs against explicit params (raw host, explicit
-  keyfile/port — not a config alias), so it builds an explicit `scp` command via
-  `_build_base_ssh_command` + the shared `resolve_native_auth`.
-- **ssh-copy-id** (`window.py`): builds its own `ssh-copy-id` argv and applies
-  `resolve_native_auth` (its `-o` options must precede the target).
+  **not** build commands or derive auth. Runtime mechanics only: askpass log
+  forwarding, `TERM`/`PATH`, and the PTY/spawn. Login password + passphrase
+  come from askpass in the prepared env.
+- **SCP UI** (`scp_window.py`): upload and download both run `scp` in a VTE via
+  `_start_scp_transfer` / `_show_scp_terminal_window`, applying
+  `resolve_native_auth` the same way (askpass for secrets; MFA on the VTE).
+  Download browse listing uses `list_remote_files` (`scp_utils.py`) →
+  `build_ssh_connection` + askpass (headless; MFA via askpass dialogs).
+  Shared argv helpers live in `scp_utils.py` (no headless transfer API).
+- **ssh-copy-id** (`sshcopyid_window.py`): builds its own `ssh-copy-id` argv,
+  applies `resolve_native_auth`, then `apply_forced_askpass_env`
+  (`SSH_ASKPASS_REQUIRE=force`) so passphrase/password/MFA use the graphical
+  askpass dialog even though the command runs in a VTE. Plugin
+  `copy_key_to_host` uses the same forced-askpass env.
 - **System / external terminal**: uses `build_native_command()` — a *plain*
   `ssh -F <config> <host>` with **no** in-app auth (`IdentityAgent`/askpass),
   because the external terminal supplies its own TTY and agent.
-- **SFTP file manager** (`file_manager/openssh_backend.py`): uses the same
-  native `build_ssh_connection()` + `resolve_native_auth()` path, spawning
-  `ssh -F <config> … -s <host> sftp` and speaking SFTP v3 over pipes.
+- **SFTP file manager** (`file_manager/openssh_backend.py`): PTY-less
+  `ssh -F <config> … -s <host> sftp` with `apply_headless_askpass_env`
+  (password / passphrase / OTP / FIDO presence via askpass). Rides a live
+  ControlMaster when a terminal already opened one; otherwise authenticates
+  on the worker itself.
 
 ### Key functions/files
 - `ssh_connection_builder.py`: `build_ssh_connection` (native-only),
-  `resolve_native_auth` (the auth chokepoint), `build_native_command` (plain
-  command for external processes), `_build_base_ssh_command` (shared option
-  builder used by explicit-command callers like SCP).
+  `resolve_native_auth` (the auth chokepoint), `apply_headless_askpass_env`
+  (`REQUIRE=prefer` for no-TTY spawns), `apply_forced_askpass_env`
+  (`REQUIRE=force` for ssh-copy-id), `build_native_command` (plain command
+  for external processes), `_build_base_ssh_command` (shared option builder
+  used by explicit-command callers like SCP).
+- `ssh_multiplex.py`: ControlMaster socket policy + `invalidate_master`.
 - `connection_manager.py`: `Connection.native_connect()`/`connect()`,
   persistence of connections to `~/.ssh/config`, credential storage
   (`store_connection_password`, `get_connection_password`, …).
 - `credential_manager.py` / `credential_model.py` / `credential_adapters.py`:
   normalized credential listing and export (see `docs/CREDENTIAL_MANAGER.md`).
-- `askpass_utils.py`: the askpass helper, keyring lookup, and GTK prompt.
-- `window.py`: `show_ssh_password_dialog`, `resolve_app_modal_parent`,
+- `askpass_utils.py`: askpass helper for **passphrases and login passwords**,
+  prompt classification, keyring lookup, and GTK passphrase prompt.
+- `window_dialogs.py`: `show_ssh_password_dialog`, `resolve_app_modal_parent`,
   `present_for_modal_dialog` — in-app SSH password prompts and Wayland-safe modal
-  parenting (see **In-app password & passphrase dialogs** above).
+  parenting (re-exported from `window`; see **In-app password & passphrase
+  dialogs** above).
 
 When changing this subsystem: keep a **single** connection method and a
 **single** auth resolver; prefer writing per-host settings to `~/.ssh/config`
@@ -383,7 +430,9 @@ drag-and-drop, VTE-scraping, or live-SSH bugs — use unit tests there.
 - Never store passwords in plain text
 - Use `libsecret` (via PyGObject) on Linux for credential storage
 - Use `keyring` for cross-platform credential management
-- The app uses askpass for private key passphrases and sshpass for ssh passwords
+- The app uses askpass for private key passphrases **and** stored login
+  passwords; MFA/OTP stays on the TTY (`SSH_ASKPASS_REQUIRE=prefer`). Do not
+  reintroduce sshpass for the native connection path
 ## Build and Packaging
 
 

@@ -5,7 +5,7 @@ command snippets sidebar). Call :func:`show_host_picker` with an anchor widget
 and an ``on_selected(connection)`` callback to reuse it anywhere.
 """
 
-from gi.repository import Gtk, GLib
+from gi.repository import Gdk, Gtk, GLib
 from gettext import gettext as _
 
 
@@ -116,11 +116,39 @@ def show_host_picker(window, anchor, on_selected, *, toast=None,
     list_box.set_filter_func(_filter)
     search_entry.connect('search-changed', lambda _e: list_box.invalidate_filter())
 
+    def _first_match_row():
+        """First row that still matches the current filter (same idea as the
+        sidebar search: Enter activates the top visible result)."""
+        index = 0
+        while True:
+            row = list_box.get_row_at_index(index)
+            if row is None:
+                return None
+            if _filter(row):
+                return row
+            index += 1
+
     def _on_activated(_lb, list_row):
         conn = getattr(list_row, '_connection', None)
         if conn:
             popover.popdown()
             on_selected(conn)
+
+    def _on_search_key(_controller, keyval, _keycode, _state):
+        # Capture phase so Enter is handled before SearchEntry's default
+        # activation (mirrors MainWindow._on_search_entry_key_pressed).
+        if keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
+            row = _first_match_row()
+            if row is not None:
+                list_box.select_row(row)
+                _on_activated(list_box, row)
+            return True
+        return False
+
+    search_key = Gtk.EventControllerKey()
+    search_key.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+    search_key.connect('key-pressed', _on_search_key)
+    search_entry.add_controller(search_key)
 
     list_box.connect('row-activated', _on_activated)
     scrolled.set_child(list_box)

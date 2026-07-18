@@ -24,7 +24,7 @@ docker SDK.** Reasons:
 
 1. **Architecture fit / CLAUDE.md.** sshpilot mandates one connection+auth path
    (`build_ssh_connection` → `resolve_native_auth`, `~/.ssh/config` as source of
-   truth, askpass/keyring/sshpass). The plugin API already exposes exactly this
+   truth, askpass/keyring; sshpass only for password-method auth). The plugin API already exposes exactly this
    as **`ctx.run_command(nickname, cmd)`** (API ≥ 1.5), which runs over the host's
    real SSH config (ProxyJump, IdentityFile, port, stored credentials all apply).
    docker-py would instead talk to a daemon via `tcp://` (insecure, requires
@@ -153,7 +153,7 @@ window. It opens a new terminal tab whose **prepared command** is
 command builder** (`build_ssh_connection` / `build_native_command`) and handed to
 the terminal's existing "consume a prepared command" seam. **No new SSH/auth path
 is introduced** — it reuses the single connection path per CLAUDE.md (same
-`~/.ssh/config`, ProxyJump, keyring/sshpass). This is the only core-code change;
+`~/.ssh/config`, ProxyJump, keyring; sshpass only for password-method). This is the only core-code change;
 everything else is contained in the plugin.
 
 With this hook:

@@ -1,21 +1,113 @@
-"""Utilities for SCP file transfers using ssh_connection_builder."""
+"""Shared helpers for the SCP UI (VTE transfer path in ``scp_window``).
+
+Headless ``download_file`` / ``upload_file`` helpers were removed; transfers
+run in a terminal via ``ScpWindowController._start_scp_transfer``.
+"""
 
 from __future__ import annotations
 
-import os
 import logging
+import os
+import re
+import shlex
 import subprocess
-from typing import List, Optional, Dict, Any
+from gettext import gettext as _
+from typing import Iterable, List, Optional, Dict, Any, Tuple
 
-from .ssh_connection_builder import (
-    _build_base_ssh_command,
-    resolve_native_auth,
-)
+from .ssh_connection_builder import _build_base_ssh_command
 from .ssh_config_utils import get_effective_ssh_config
-from .ssh_password_exec import assemble_scp_transfer_args, wrap_argv_with_sshpass
-from .remote_path_utils import _format_ssh_target
 
 logger = logging.getLogger(__name__)
+
+__all__ = [
+    'assemble_scp_transfer_args',
+    'classify_sftp_error',
+    'insert_legacy_scp_flag',
+    'legacy_scp_flag_unsupported',
+    'list_remote_files',
+    '_apply_native_auth_env',
+    '_build_scp_argv_prefix',
+    '_summarize_listing_error',
+]
+
+
+_REMOTE_SPEC_RE = re.compile(r"^[^@]+@(?:\[[^\]]+\]|[^:]+):.+$")
+
+
+def _strip_brackets(value: str) -> str:
+    if value.startswith('[') and value.endswith(']'):
+        return value[1:-1]
+    return value
+
+
+def _extract_host(target: str) -> str:
+    if '@' in target:
+        host = target.split('@', 1)[1]
+    else:
+        host = target
+    return _strip_brackets(host)
+
+
+def _normalize_remote_sources(target: str, sources: Iterable[str]) -> List[str]:
+    host = _extract_host(target)
+    host_variants = [host] if host else []
+    if host and ':' in host:
+        bracketed = f"[{host}]"
+        if bracketed not in host_variants:
+            host_variants.append(bracketed)
+    normalized: List[str] = []
+    for item in sources:
+        path = (item or '').strip()
+        if not path:
+            continue
+        if path.startswith(f"{target}:"):
+            normalized.append(path)
+            continue
+        if host_variants:
+            matched_host_variant = False
+            for host_variant in host_variants:
+                if path.startswith(f"{host_variant}:"):
+                    normalized.append(path)
+                    matched_host_variant = True
+                    break
+            if matched_host_variant:
+                continue
+        if _REMOTE_SPEC_RE.match(path):
+            normalized.append(path)
+            continue
+        normalized.append(f"{target}:{path}")
+    return normalized
+
+
+def assemble_scp_transfer_args(
+    target: str,
+    sources: Iterable[str],
+    destination: str,
+    direction: str,
+) -> Tuple[List[str], str]:
+    """Return normalized scp sources and destination arguments for a transfer.
+
+    Parameters
+    ----------
+    target:
+        The ``user@host`` string for the connection (user may be omitted).
+    sources:
+        Iterable of source paths supplied by the caller.
+    destination:
+        Destination path (remote directory for uploads or local path for downloads).
+    direction:
+        Either ``"upload"`` or ``"download"``.
+    """
+    direction_value = (direction or '').lower()
+    if direction_value not in {'upload', 'download'}:
+        raise ValueError(f"Unsupported scp direction: {direction}")
+
+    if direction_value == 'upload':
+        cleaned_sources = [s for s in sources if s]
+        return cleaned_sources, f"{target}:{destination}"
+
+    remote_sources = _normalize_remote_sources(target, sources)
+    return remote_sources, destination
 
 
 SFTP_UNAVAILABLE_MESSAGE = (
@@ -86,72 +178,23 @@ def legacy_scp_flag_unsupported(error_text: Optional[str]) -> bool:
     return any(marker in lowered for marker in _LEGACY_FLAG_UNSUPPORTED_MARKERS)
 
 
-def _record_download_failure(
-    result_details: Optional[Dict[str, Any]],
-    error_text: Optional[str],
-) -> None:
-    """Populate ``result_details`` (when provided) with failure context."""
-    if result_details is None:
-        return
-    stderr = (error_text or '').strip()
-    if stderr:
-        result_details['stderr'] = stderr
-    friendly = classify_sftp_error(stderr)
-    if friendly:
-        result_details['friendly'] = friendly
-
-
-def _create_connection_for_scp(
-    host: str,
-    user: str,
-    port: int = 22,
-    keyfile: Optional[str] = None,
-    key_mode: Optional[int] = None,
-    auth_method: int = 0,
-    connection_manager: Optional[Any] = None,
-    known_hosts_path: Optional[str] = None,
-    extra_ssh_config: Optional[str] = None,
-) -> Any:
-    """Create a minimal connection object for SCP operations."""
-    class SCPConnection:
-        def __init__(self):
-            self.hostname = host
-            self.host = host
-            self.nickname = host
-            self.username = user or ''
-            self.port = port
-            self.keyfile = keyfile or ''
-            self.key_select_mode = key_mode or 0
-            self.auth_method = auth_method
-            self.extra_ssh_config = extra_ssh_config or ''
-            self.identity_agent_disabled = False
-            
-            # Try to resolve host identifier
-            try:
-                if hasattr(connection_manager, 'get_effective_ssh_config'):
-                    effective_config = connection_manager.get_effective_ssh_config(host)
-                    if effective_config:
-                        # Check for IdentityAgent
-                        identity_agent = effective_config.get('identityagent', '')
-                        if isinstance(identity_agent, list):
-                            identity_agent = identity_agent[0] if identity_agent else ''
-                        if str(identity_agent).lower() == 'none':
-                            self.identity_agent_disabled = True
-            except Exception:
-                pass
-    
-    return SCPConnection()
-
-
 def _apply_native_auth_env(env: Dict[str, str], auth: Any) -> None:
     """Merge the shared native auth env into ``env``, honoring deletions.
 
     dict.update() cannot remove keys that are absent from the source, so we
-    explicitly drop askpass/agent vars that the auth resolver cleared (e.g.
-    SSH_ASKPASS in password mode).
+    explicitly drop askpass/agent/session-password vars that the auth resolver
+    cleared (e.g. SSH_ASKPASS in password mode, a consumed session id).
     """
     env.update(auth.env)
-    for key in ('SSH_ASKPASS', 'SSH_ASKPASS_REQUIRE', 'SSH_AUTH_SOCK'):
+    for key in (
+        'SSH_ASKPASS',
+        'SSH_ASKPASS_REQUIRE',
+        'SSH_AUTH_SOCK',
+        'SSHPILOT_SESSION_PASSWORD_ID',
+        'SSHPILOT_SESSION_PASSWORD_FILE',
+        'SSHPILOT_PASSWORD_USER',
+        'SSHPILOT_PASSWORD_HOSTS',
+    ):
         if key not in auth.env:
             env.pop(key, None)
 
@@ -214,247 +257,138 @@ def _build_scp_argv_prefix(
     return argv
 
 
-def download_file(
-    host: str,
-    user: str,
-    remote_file: str,
-    local_path: str,
-    *,
-    recursive: bool = False,
-    port: int = 22,
-    password: Optional[str] = None,
-    known_hosts_path: Optional[str] = None,
-    extra_ssh_opts: Optional[List[str]] = None,
-    use_publickey: bool = False,
-    inherit_env: Optional[Dict[str, str]] = None,
-    saved_passphrase: Optional[str] = None,
-    keyfile: Optional[str] = None,
-    key_mode: Optional[int] = None,
-    connection_manager: Optional[Any] = None,
-    config: Optional[Any] = None,
-    result_details: Optional[Dict[str, Any]] = None,
-) -> bool:
-    """Download a remote file (or directory when ``recursive``) via SCP using ssh_connection_builder.
+def _summarize_listing_error(raw_stderr: str, fallback: str) -> str:
+    """Turn raw ssh stderr into a concise message for the browse UI.
 
-    When ``result_details`` is provided, it is populated on failure with the
-    captured ``stderr`` and, when recognizable, a ``friendly`` message (for
-    example when the remote SFTP server is missing).
+    Strips ``ssh -v`` debug chatter (so the verbose log is never dumped into
+    the SCP browse window) and, when the remainder is an auth failure — e.g.
+    the user cancelled the password/OTP prompt — shows a clean line instead.
     """
-    if not host or not remote_file or not local_path:
-        return False
+    from .ssh_utils import clean_ssh_stderr, is_ssh_auth_failure_text
 
-    env = (inherit_env or os.environ).copy()
-    
-    # Create connection object for ssh_connection_builder
-    auth_method = 1 if password else 0
-    connection = _create_connection_for_scp(
-        host=host,
-        user=user,
-        port=port,
-        keyfile=keyfile,
-        key_mode=key_mode,
-        auth_method=auth_method,
-        connection_manager=connection_manager,
-        known_hosts_path=known_hosts_path,
-    )
-    
-    # If password is provided, set it on connection
-    if password:
-        connection.password = password
-    
-    # Resolve shared authentication (askpass + keyring + agent bypass, or sshpass).
-    try:
-        auth = resolve_native_auth(connection, connection_manager, config)
-        _apply_native_auth_env(env, auth)
-    except Exception as e:
-        logger.error(f'SCP: Failed to resolve authentication: {e}')
-        return False
-
-    # Inject sshpass-specific auth-steering options that resolve_native_auth does
-    # not place in auth.extra_opts. These ensure SSH hands the password prompt to
-    # sshpass rather than trying keys first (which would either succeed silently
-    # or prompt interactively in a way sshpass cannot intercept).
-    effective_extra = list(extra_ssh_opts or [])
-    if auth.use_sshpass and auth.password:
-        pref = (
-            'gssapi-with-mic,hostbased,publickey,keyboard-interactive,password'
-            if use_publickey else 'password'
-        )
-        effective_extra = [
-            '-o', f'PreferredAuthentications={pref}',
-            '-o', 'NumberOfPasswordPrompts=1',
-        ] + effective_extra
-
-    # Build SCP command via the unified prefix builder (handles -r, app SSH
-    # settings, ClearAllForwardings, strict-host policy, keyfile, etc.).
-    target = _format_ssh_target(host, user)
-    try:
-        transfer_sources, transfer_destination = assemble_scp_transfer_args(
-            target,
-            [remote_file],
-            local_path,
-            'download',
-        )
-
-        argv = _build_scp_argv_prefix(
-            connection, config, recursive, known_hosts_path, effective_extra, auth
-        )
-        argv.extend(transfer_sources)
-        argv.append(transfer_destination)
-
-        def _run_attempt(scp_argv: List[str]) -> subprocess.CompletedProcess:
-            if auth.use_sshpass and auth.password:
-                wrapped, cleanup = wrap_argv_with_sshpass(scp_argv, auth.password)
-                try:
-                    return subprocess.run(
-                        wrapped, check=False, text=True, capture_output=True, env=env
-                    )
-                finally:
-                    cleanup()
-            return subprocess.run(
-                scp_argv, check=False, text=True, capture_output=True, env=env
-            )
-
-        completed = _run_attempt(argv)
-        if completed.returncode != 0:
-            stderr = (completed.stderr or '').strip()
-            if stderr:
-                logger.error('SCP: Download stderr: %s', stderr)
-            # If the remote SFTP subsystem is unavailable, retry once using the
-            # legacy SCP protocol (-O), which does not require sftp-server.
-            if classify_sftp_error(stderr):
-                logger.info('SCP: Retrying download with legacy protocol (-O) for %s', remote_file)
-                legacy_completed = _run_attempt(insert_legacy_scp_flag(argv))
-                if legacy_completed.returncode == 0:
-                    return True
-                legacy_stderr = (legacy_completed.stderr or '').strip()
-                if legacy_stderr:
-                    logger.error('SCP: Legacy download stderr: %s', legacy_stderr)
-                # Keep the original failure when scp does not support -O.
-                if not legacy_scp_flag_unsupported(legacy_stderr):
-                    stderr = legacy_stderr or stderr
-            _record_download_failure(result_details, stderr)
-            return False
-        return True
-    except Exception as exc:
-        logger.error('SCP: Download failed for %s: %s', remote_file, exc)
-        _record_download_failure(result_details, str(exc))
-        return False
+    cleaned = clean_ssh_stderr(raw_stderr)
+    if not cleaned:
+        return fallback
+    if is_ssh_auth_failure_text(cleaned):
+        return _('Authentication failed or cancelled.')
+    return cleaned
 
 
-def upload_file(
-    host: str,
-    user: str,
-    local_file: str,
+def list_remote_files(
+    connection,
     remote_path: str,
     *,
-    recursive: bool = False,
-    port: int = 22,
-    password: Optional[str] = None,
-    known_hosts_path: Optional[str] = None,
-    extra_ssh_opts: Optional[List[str]] = None,
-    use_publickey: bool = False,
-    inherit_env: Optional[Dict[str, str]] = None,
-    saved_passphrase: Optional[str] = None,
-    keyfile: Optional[str] = None,
-    key_mode: Optional[int] = None,
-    connection_manager: Optional[Any] = None,
-    config: Optional[Any] = None,
-) -> bool:
-    """Upload a local file (or directory when ``recursive``) via SCP using ssh_connection_builder."""
-    if not host or not local_file or not remote_path:
-        return False
+    connection_manager=None,
+    config=None,
+    timeout: float = 10,
+) -> Tuple[List[Tuple[str, bool]], Optional[str]]:
+    """List remote files via the native SSH/auth path.
 
-    env = (inherit_env or os.environ).copy()
+    Uses ``build_ssh_connection`` + ``resolve_native_auth`` (askpass for
+    passwords, passphrases, and MFA). No sshpass. Returns
+    ``(entries, error_message)`` where entries are ``(name, is_directory)``.
+    """
+    if connection is None:
+        return [], _('Missing host information.')
 
-    # Create connection object for ssh_connection_builder
-    auth_method = 1 if password else 0
-    connection = _create_connection_for_scp(
-        host=host,
-        user=user,
-        port=port,
-        keyfile=keyfile,
-        key_mode=key_mode,
-        auth_method=auth_method,
-        connection_manager=connection_manager,
-        known_hosts_path=known_hosts_path,
+    from .remote_path_utils import (
+        _normalize_remote_path,
+        _quote_remote_path_for_shell,
     )
-    
-    # If password is provided, set it on connection
-    if password:
-        connection.password = password
-    
-    # Resolve shared authentication (askpass + keyring + agent bypass, or sshpass).
+    from .ssh_connection_builder import (
+        ConnectionContext,
+        apply_headless_askpass_env,
+        build_ssh_connection,
+    )
+
+    safe_path = _normalize_remote_path(remote_path)
+    command_path = _quote_remote_path_for_shell(safe_path)
+    # -L dereferences symlinks when classifying, so a symlink that points to a
+    # directory is marked with a trailing "/" (and thus shown/navigated as a
+    # folder). -p alone leaves symlinked dirs unmarked. See issue #1002.
+    list_command = f"LC_ALL=C ls -1pL --color=never -- {command_path}"
+    wrapped_command = (
+        "set -f; "
+        "printf '__SSHPILOT_BEGIN__\\n'; "
+        f"{list_command}; "
+        "status=$?; "
+        "printf '__SSHPILOT_STATUS__%s\\n' \"$status\"; "
+        "printf '__SSHPILOT_END__\\n'; "
+        "exit $status"
+    )
+    remote_command = f"sh -lc {shlex.quote(wrapped_command)}"
+
+    if config is None:
+        try:
+            from .config import Config
+            config = Config()
+        except Exception:
+            config = None
+
     try:
-        auth = resolve_native_auth(connection, connection_manager, config)
-        _apply_native_auth_env(env, auth)
-    except Exception as e:
-        logger.error(f'SCP: Failed to resolve authentication: {e}')
-        return False
-
-    # Inject sshpass-specific auth-steering options (mirrors download_file).
-    effective_extra = list(extra_ssh_opts or [])
-    if auth.use_sshpass and auth.password:
-        pref = (
-            'gssapi-with-mic,hostbased,publickey,keyboard-interactive,password'
-            if use_publickey else 'password'
-        )
-        effective_extra = [
-            '-o', f'PreferredAuthentications={pref}',
-            '-o', 'NumberOfPasswordPrompts=1',
-        ] + effective_extra
-
-    # Build SCP command via the unified prefix builder.
-    target = _format_ssh_target(host, user)
-    try:
-        transfer_sources, transfer_destination = assemble_scp_transfer_args(
-            target,
-            [local_file],
-            remote_path,
-            'upload',
-        )
-
-        argv = _build_scp_argv_prefix(
-            connection, config, recursive, known_hosts_path, effective_extra, auth
-        )
-        argv.extend(transfer_sources)
-        argv.append(transfer_destination)
-
-        def _run_attempt(scp_argv: List[str]) -> subprocess.CompletedProcess:
-            if auth.use_sshpass and auth.password:
-                wrapped, cleanup = wrap_argv_with_sshpass(scp_argv, auth.password)
-                try:
-                    return subprocess.run(
-                        wrapped, check=False, text=True, capture_output=True, env=env
-                    )
-                finally:
-                    cleanup()
-            return subprocess.run(
-                scp_argv, check=False, text=True, capture_output=True, env=env
+        prepared = build_ssh_connection(
+            ConnectionContext(
+                connection=connection,
+                connection_manager=connection_manager,
+                config=config,
+                command_type='ssh',
+                remote_command=remote_command,
+                native_mode=True,
             )
+        )
+        env = apply_headless_askpass_env(
+            prepared.env,
+            connection,
+            session_password=getattr(prepared, 'password', None),
+        )
 
-        completed = _run_attempt(argv)
-        if completed.returncode != 0:
-            stderr = (completed.stderr or '').strip()
-            if stderr:
-                logger.error('SCP: Upload stderr: %s', stderr)
-            # If the remote SFTP subsystem is unavailable, retry once using the
-            # legacy SCP protocol (-O), which does not require sftp-server.
-            if classify_sftp_error(stderr):
-                logger.info('SCP: Retrying upload with legacy protocol (-O) for %s', local_file)
-                legacy_completed = _run_attempt(insert_legacy_scp_flag(argv))
-                if legacy_completed.returncode == 0:
-                    return True
-                legacy_stderr = (legacy_completed.stderr or '').strip()
-                if legacy_stderr:
-                    logger.error('SCP: Legacy upload stderr: %s', legacy_stderr)
-                if not legacy_scp_flag_unsupported(legacy_stderr):
-                    stderr = legacy_stderr or stderr
-            return False
-        return True
+        # A staged secret autofills instantly, so a short timeout only guards
+        # against network stalls. With nothing staged, askpass may pop a
+        # dialog (password/passphrase/OTP/FIDO) and a human needs time to
+        # answer it — don't kill ssh mid-prompt.
+        if not getattr(prepared, 'password', None):
+            timeout = max(timeout, 180)
+
+        result = subprocess.run(
+            list(prepared.command),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+            env=env,
+            stdin=subprocess.DEVNULL,
+        )
+
+        stdout_lines = result.stdout.splitlines()
+        begin_idx = next((idx for idx, line in enumerate(stdout_lines)
+                          if line.strip() == '__SSHPILOT_BEGIN__'), None)
+        status_idx = next((idx for idx, line in enumerate(stdout_lines)
+                           if line.startswith('__SSHPILOT_STATUS__')), None)
+        if begin_idx is None or status_idx is None or status_idx < begin_idx:
+            logger.warning('SCP: Unexpected remote listing output for %s', safe_path)
+            return [], _summarize_listing_error(
+                result.stderr, _('Unable to parse remote listing output.'))
+        try:
+            status_line = stdout_lines[status_idx]
+            status_code = int(status_line.replace('__SSHPILOT_STATUS__', '').strip() or '0')
+        except ValueError:
+            status_code = result.returncode
+
+        listing_lines = stdout_lines[begin_idx + 1:status_idx]
+        if status_code != 0:
+            stderr = _summarize_listing_error(
+                result.stderr, _('Failed to list remote directory.'))
+            logger.warning('SCP: Remote list failed (%s): %s', safe_path, stderr)
+            return [], stderr
+        entries: List[Tuple[str, bool]] = []
+        for raw_line in listing_lines:
+            line = raw_line.rstrip()
+            if not line:
+                continue
+            is_dir = line.endswith('/')
+            name = line[:-1] if is_dir else line
+            entries.append((name, is_dir))
+        return entries, None
     except Exception as exc:
-        logger.error('SCP: Upload failed for %s: %s', local_file, exc)
-        return False
-
-
-__all__ = ['assemble_scp_transfer_args', 'download_file', 'upload_file']
+        logger.error('SCP: Error listing remote files: %s', exc)
+        return [], str(exc)

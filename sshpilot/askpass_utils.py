@@ -2,11 +2,13 @@
 import atexit
 import logging
 import os
+import re
 import shutil
 import stat
 import subprocess
 import sys
 import tempfile
+import time
 import threading
 from typing import List
 
@@ -92,6 +94,194 @@ def _extract_key_path(prompt: str) -> str:
                 key_path = key_path[1:-1]
             return key_path
     return ""
+
+
+# Prompt classification for askpass (password vs passphrase vs OTP vs presence).
+# Only the last non-empty line is matched so scrollback like
+# "Permission denied (publickey,password)." cannot false-positive.
+#
+# OpenSSH FIDO presence usually goes to the TTY via notify_start() when stderr
+# is a tty — askpass is only used with SSH_ASKPASS_PROMPT=none (no tty / agent).
+_PRESENCE_MARKERS = (
+    'confirm user presence',
+    'tap your security key',
+    'tap secure token',
+    'touch your yubikey',
+    'touch your security key',
+    'touch your authenticator',
+    'touch the authenticator',
+)
+_HOSTKEY_MARKERS = (
+    '(yes/no',
+    'continue connecting',
+    "please type 'yes'",
+)
+# Word-boundary match: bare substrings would misfire on hostnames/usernames
+# ("user@alpine's password:" contains 'pin', "scotp1" contains 'otp').
+_TYPED_INTERACTIVE_RE = re.compile(
+    r'\b(?:pin|otp|verification code|one-time|authentication code)\b'
+)
+
+
+def classify_prompt(text: str) -> "str | None":
+    """Classify the trailing prompt in *text*.
+
+    Returns ``'password'``, ``'passphrase'``, ``'presence'`` (FIDO touch —
+    no typed secret), ``'interactive'`` (OTP/PIN/host-key — typed or yes/no),
+    or ``None`` when the text does not look like a prompt.
+    """
+    lines = [line.strip() for line in (text or '').splitlines() if line.strip()]
+    if not lines:
+        return None
+    last = lines[-1].lower()
+    if any(marker in last for marker in _PRESENCE_MARKERS):
+        return 'presence'
+    if any(marker in last for marker in _HOSTKEY_MARKERS):
+        return 'interactive'
+    # PIN / OTP may omit a trailing colon ("Enter PIN for authenticator").
+    if _TYPED_INTERACTIVE_RE.search(last) and (
+            last.endswith(':') or last.startswith('enter ') or ' for ' in last):
+        if 'passphrase' in last:
+            return 'passphrase'
+        # "…'s password:" for a host that legitimately contains an OTP/PIN
+        # word is still a login password — but "one-time password" is not.
+        if 'password' in last and not re.search(r'\b(?:pin|otp|one-time)\b', last):
+            return 'password'
+        return 'interactive'
+    if last.endswith(':'):
+        if 'passphrase' in last:
+            return 'passphrase'
+        # "Password:" but also PAM's "Password for user@host:".
+        if 'password' in last:
+            return 'password'
+    return None
+
+
+# One-shot in-memory passwords for the askpass helper (main process only).
+# Keyed by a random id advertised as SSHPILOT_SESSION_PASSWORD_ID — the secret
+# never leaves this process except over the askpass IPC socket.
+_SESSION_PASSWORDS: "dict[str, tuple[str, float]]" = {}
+_SESSION_PASSWORDS_LOCK = threading.Lock()
+_SESSION_PASSWORD_TTL = 600.0
+
+
+def _session_password_dir() -> "str | None":
+    """Prefer XDG_RUNTIME_DIR (tmpfs, 0700, wiped at logout) over /tmp so a
+    staged password never rests on real disk and can't outlive the session."""
+    runtime_dir = os.environ.get('XDG_RUNTIME_DIR')
+    if runtime_dir and os.path.isdir(runtime_dir):
+        return runtime_dir
+    return None
+
+
+def _sweep_stale_session_files(directory: "str | None") -> None:
+    """Best-effort removal of staged password files nobody consumed (key auth
+    succeeded, app crashed before atexit, …). Age-gated so concurrent connects
+    can't delete each other's fresh files."""
+    try:
+        now = time.time()
+        for name in os.listdir(directory or tempfile.gettempdir()):
+            if not name.startswith('sshpilot-pw-'):
+                continue
+            path = os.path.join(directory or tempfile.gettempdir(), name)
+            try:
+                if now - os.path.getmtime(path) > _SESSION_PASSWORD_TTL:
+                    os.unlink(path)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
+def _sweep_stale_session_password_ids() -> None:
+    now = time.time()
+    with _SESSION_PASSWORDS_LOCK:
+        stale = [
+            sid for sid, (_pw, created) in _SESSION_PASSWORDS.items()
+            if now - created > _SESSION_PASSWORD_TTL
+        ]
+        for sid in stale:
+            _SESSION_PASSWORDS.pop(sid, None)
+
+
+def _register_session_password(password: str) -> str:
+    """Hold *password* in-process; return a one-shot id for the SSH child env."""
+    import secrets
+
+    _sweep_stale_session_password_ids()
+    sid = secrets.token_hex(16)
+    with _SESSION_PASSWORDS_LOCK:
+        _SESSION_PASSWORDS[sid] = (password, time.time())
+    return sid
+
+
+def take_session_password(password_id: str) -> str:
+    """Consume a staged in-memory session password (one-shot). Main process only."""
+    if not password_id:
+        return ''
+    with _SESSION_PASSWORDS_LOCK:
+        item = _SESSION_PASSWORDS.pop(password_id, None)
+    return item[0] if item else ''
+
+
+def _stage_session_password_file(password: str) -> str:
+    """Fallback: write *password* to a 0600 temp file for one askpass read.
+
+    Used only when the askpass IPC server is not advertised (no main-window
+    socket). Prefers XDG_RUNTIME_DIR.
+    """
+    if not password:
+        return ''
+    try:
+        directory = _session_password_dir()
+        _sweep_stale_session_files(directory)
+        fd, path = tempfile.mkstemp(
+            prefix='sshpilot-pw-', dir=directory, text=True)
+        try:
+            os.write(fd, password.encode('utf-8'))
+        finally:
+            os.close(fd)
+        os.chmod(path, 0o600)
+
+        def _cleanup(p=path):
+            try:
+                if os.path.exists(p):
+                    os.unlink(p)
+            except Exception:
+                pass
+
+        atexit.register(_cleanup)
+        return path
+    except Exception:
+        logger.debug("_stage_session_password_file failed", exc_info=True)
+        return ''
+
+
+def stage_session_password(password: str) -> "dict[str, str]":
+    """Stage an in-memory login password for one askpass consumption.
+
+    Prefer the main-app askpass IPC (secret stays in process memory; the SSH
+    child only gets ``SSHPILOT_SESSION_PASSWORD_ID``). Fall back to a 0600
+    temp file under XDG_RUNTIME_DIR when the IPC server is not advertised.
+    Returns env updates to merge into the SSH child (may be empty on failure).
+    """
+    if not password:
+        return {}
+    if _ASKPASS_SOCKET and _ASKPASS_TOKEN:
+        return {"SSHPILOT_SESSION_PASSWORD_ID": _register_session_password(password)}
+    path = _stage_session_password_file(password)
+    return {"SSHPILOT_SESSION_PASSWORD_FILE": path} if path else {}
+
+
+def lookup_ssh_password(host: str, username: str) -> str:
+    """Look up a stored SSH login password via the selected secret backend."""
+    if not host or not username:
+        return ''
+    try:
+        from .secret_storage import get_secret_manager, password_spec
+        return get_secret_manager().lookup(password_spec(host, username)) or ''
+    except Exception:
+        return ''
 
 
 def get_secret_schema():
@@ -260,199 +450,13 @@ def _askpass_enabled() -> bool:
     return bool(_read_app_setting("use-askpass", True))
 
 
-def _builtin_passphrase_prompt_enabled() -> bool:
-    """Whether the built-in GUI passphrase prompt is enabled (default False).
-
-    Off by default: keyring autofill still works (it's resolved before this
-    gate), and for a key with no stored passphrase we defer to SSH / the OS /
-    ssh-agent to prompt naturally rather than showing our own dialog.
-    """
-    return bool(_read_app_setting("use-builtin-passphrase-prompt", False))
-
-
-def _run_askpass_dialog(key_path: str, log_fn) -> "str | None":
-    """Show a GTK4/Adwaita passphrase dialog. Returns the passphrase string, or
-    None on cancel. Built from non-deprecated Adwaita widgets (an Adw.Window with
-    a header bar and a boxed-list Adw.PasswordEntryRow)."""
-    import json
-
-    try:
-        import gi
-        gi.require_version('Gtk', '4.0')
-        gi.require_version('Adw', '1')
-        gi.require_version('Gio', '2.0')
-        gi.require_version('Gdk', '4.0')
-        gi.require_version('GLib', '2.0')
-        from gi.repository import Gtk, Adw, GLib, Gio, Gdk
-    except Exception as exc:
-        log_fn(f"ASKPASS: GTK not available: {exc}")
-        return None
-
-    log_fn("ASKPASS: No stored passphrase found, showing GUI dialog")
-
-    passphrase_result = [None]
-    Adw.init()
-
-    app = Adw.Application.new("io.github.mfat.sshpilot.askpass", Gio.ApplicationFlags.NON_UNIQUE)
-
-    def on_activate(app):
-        try:
-            try:
-                config_dir = os.path.join(GLib.get_user_config_dir(), "sshpilot")
-            except Exception:
-                config_dir = os.path.join(os.path.expanduser("~"), ".config", "sshpilot")
-            config_file = os.path.join(config_dir, "config.json")
-            saved_theme = "default"
-            if os.path.exists(config_file):
-                try:
-                    with open(config_file) as f:
-                        saved_theme = str(json.load(f).get("app-theme", "default"))
-                except Exception:
-                    pass
-            style_manager = Adw.StyleManager.get_default()
-            if saved_theme == "light":
-                style_manager.set_color_scheme(Adw.ColorScheme.FORCE_LIGHT)
-            elif saved_theme == "dark":
-                style_manager.set_color_scheme(Adw.ColorScheme.FORCE_DARK)
-            else:
-                style_manager.set_color_scheme(Adw.ColorScheme.DEFAULT)
-        except Exception:
-            pass
-
-        key_name = os.path.basename(key_path) if key_path else "key"
-
-        # Adwaita-styled prompt: a window whose header bar carries the
-        # Cancel/Unlock actions, with the passphrase in a boxed-list row.
-        window = Adw.ApplicationWindow(application=app)
-        window.set_title("Passphrase Required")
-        window.set_resizable(False)
-        window.set_default_size(400, -1)
-
-        done = [False]
-
-        # ── widgets ───────────────────────────────────────────────────────
-        password_row = Adw.PasswordEntryRow()
-        password_row.set_title("Passphrase")
-
-        store_row = Adw.SwitchRow()
-        store_row.set_title("Store passphrase")
-        store_row.set_active(False)
-
-        persists_secrets = True
-        try:
-            from .secret_storage import get_secret_manager
-            persists_secrets = get_secret_manager().persists_secrets()
-        except Exception:
-            persists_secrets = True
-
-        cancel_btn = Gtk.Button(label="Cancel")
-        ok_btn = Gtk.Button(label="Unlock")
-        ok_btn.add_css_class("suggested-action")
-
-        # ── behaviour ─────────────────────────────────────────────────────
-        def _record_and_quit(ok: bool):
-            if done[0]:
-                return
-            done[0] = True
-            if ok:
-                passphrase_result[0] = password_row.get_text()
-                if store_row.get_active() and key_path and passphrase_result[0]:
-                    try:
-                        store_passphrase(key_path, passphrase_result[0])
-                    except Exception:
-                        pass
-            try:
-                app.quit()
-            except Exception:
-                pass
-
-        cancel_btn.connect("clicked", lambda _b: _record_and_quit(False))
-        ok_btn.connect("clicked", lambda _b: _record_and_quit(True))
-        window.set_default_widget(ok_btn)
-
-        # ── layout ────────────────────────────────────────────────────────
-        header = Adw.HeaderBar()
-        header.set_show_start_title_buttons(False)
-        header.set_show_end_title_buttons(False)
-        header.pack_start(cancel_btn)
-        header.pack_end(ok_btn)
-
-        body_label = Gtk.Label(label=f"Enter the passphrase for key “{key_name}”.")
-        body_label.set_wrap(True)
-        body_label.set_xalign(0.0)
-        body_label.add_css_class("dim-label")
-
-        group = Adw.PreferencesGroup()
-        group.add(password_row)
-        if persists_secrets:
-            group.add(store_row)
-        else:
-            no_store = Gtk.Label(
-                label=(
-                    "Secret storage is set to SSH Agent Only — passphrases are not "
-                    "saved by sshPilot."
-                ),
-            )
-            no_store.set_wrap(True)
-            no_store.set_xalign(0.0)
-            no_store.add_css_class("dim-label")
-            group.add(no_store)
-
-        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18)
-        content.set_margin_top(18)
-        content.set_margin_bottom(24)
-        content.set_margin_start(18)
-        content.set_margin_end(18)
-        content.append(body_label)
-        content.append(group)
-
-        toolbar = Adw.ToolbarView()
-        toolbar.add_top_bar(header)
-        toolbar.set_content(content)
-        window.set_content(toolbar)
-
-        # ── dismissal: window close, Escape, Enter ────────────────────────
-        def _on_close_request(_w):
-            if not done[0]:
-                done[0] = True
-            return False
-
-        window.connect("close-request", _on_close_request)
-
-        key_controller = Gtk.EventControllerKey()
-        key_controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
-
-        def _on_key(_ctrl, keyval, _keycode, _state):
-            if keyval == Gdk.KEY_Escape:
-                _record_and_quit(False)
-                return True
-            if keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
-                _record_and_quit(True)
-                return True
-            return False
-
-        key_controller.connect("key-pressed", _on_key)
-        window.add_controller(key_controller)
-
-        window.present()
-        password_row.grab_focus()
-
-    app.connect("activate", on_activate)
-    app.run(None)
-    return passphrase_result[0]
-
-
-def _route_passphrase_to_main_app(
-    key_path: str, prompt: str, log_fn
-) -> "tuple[bool, str | None]":
-    """Ask the running main app to show the passphrase prompt in-process.
+def _ask_main_app(request: dict, log_fn, *, ok_key: str = "passphrase") -> "tuple[bool, str | None]":
+    """Send a JSON request to the main-app askpass socket.
 
     Returns ``(handled, value)``:
-    - ``(True, "<passphrase>")`` — the user entered a passphrase.
-    - ``(True, None)``           — the user cancelled (do NOT also show the
-      standalone window).
-    - ``(False, None)``          — the main app is unreachable / errored; the
-      caller should fall back to the standalone dialog.
+    - ``(True, "<secret>")`` — the user entered a value.
+    - ``(True, None)``       — the user cancelled (do NOT also show a fallback).
+    - ``(False, None)``      — main app unreachable; caller should fall back.
     """
     import json
     import socket
@@ -462,15 +466,14 @@ def _route_passphrase_to_main_app(
     if not sock_path or not token:
         return (False, None)
 
-    request = json.dumps(
-        {"token": token, "type": "passphrase", "key_path": key_path, "prompt": prompt}
-    )
+    payload = dict(request)
+    payload["token"] = token
 
     try:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
             client.settimeout(5)
             client.connect(sock_path)
-            client.sendall((request + "\n").encode("utf-8"))
+            client.sendall((json.dumps(payload) + "\n").encode("utf-8"))
             # The user may take a while to type; allow a generous read window.
             client.settimeout(600)
             chunks = []
@@ -495,13 +498,185 @@ def _route_passphrase_to_main_app(
         return (False, None)
 
     if reply.get("ok"):
-        log_fn("ASKPASS: passphrase provided by main-app dialog")
-        return (True, reply.get("passphrase"))
+        log_fn("ASKPASS: response provided by main-app dialog")
+        # First key present wins — an empty string is a valid answer
+        # (acknowledged presence reminder, empty kbd-interactive response)
+        # and must not collapse into None (= cancel, exit 1).
+        for key in (ok_key, "passphrase", "value"):
+            value = reply.get(key)
+            if value is not None:
+                return (True, value)
+        return (True, "")
     if reply.get("fallback"):
         log_fn("ASKPASS: main app asked to use the standalone window")
         return (False, None)
-    log_fn("ASKPASS: passphrase prompt cancelled in main-app dialog")
+    log_fn("ASKPASS: prompt cancelled in main-app dialog")
     return (True, None)
+
+
+def _route_challenge_to_main_app(
+    prompt: str, log_fn
+) -> "tuple[bool, str | None]":
+    """Ask the main app to collect an interactive MFA/OTP response."""
+    return _ask_main_app(
+        {"type": "challenge", "prompt": prompt},
+        log_fn,
+        ok_key="value",
+    )
+
+
+def _route_confirm_to_main_app(
+    prompt: str, log_fn
+) -> "tuple[bool, str | None]":
+    """Ask the main app for a yes/no confirm (SSH_ASKPASS_PROMPT=confirm)."""
+    return _ask_main_app(
+        {"type": "confirm", "prompt": prompt},
+        log_fn,
+        ok_key="value",
+    )
+
+
+def _route_presence_to_main_app(
+    prompt: str, log_fn
+) -> "tuple[bool, str | None]":
+    """Ask the main app to show a FIDO touch reminder (no typed secret)."""
+    return _ask_main_app(
+        {"type": "presence", "prompt": prompt},
+        log_fn,
+        ok_key="value",
+    )
+
+
+def _route_password_to_main_app(
+    prompt: str, log_fn
+) -> "tuple[bool, str | None]":
+    """Ask the main app to collect an unstored login password."""
+    user = (os.environ.get("SSHPILOT_PASSWORD_USER") or "").strip()
+    hosts_raw = os.environ.get("SSHPILOT_PASSWORD_HOSTS") or ""
+    hosts = [h.strip() for h in hosts_raw.split("\n") if h.strip()]
+    return _ask_main_app(
+        {
+            "type": "password",
+            "prompt": prompt,
+            "username": user,
+            "host": hosts[0] if hosts else "",
+        },
+        log_fn,
+        ok_key="value",
+    )
+
+
+def _standalone_password_label() -> str:
+    """Default prompt for the standalone password fallback dialog.
+
+    Derives "user@host's password:" from the askpass env context when known,
+    so an empty ssh prompt does not fall back to the challenge dialog's
+    "verification code" wording.
+    """
+    user = (os.environ.get("SSHPILOT_PASSWORD_USER") or "").strip()
+    hosts_raw = os.environ.get("SSHPILOT_PASSWORD_HOSTS") or ""
+    host = next((h.strip() for h in hosts_raw.split("\n") if h.strip()), "")
+    if user and host:
+        return f"{user}@{host}'s password:"
+    return "Enter your password:"
+
+
+def _run_challenge_dialog(prompt: str, log_fn) -> "str | None":
+    """Standalone GTK dialog for OTP / verification-code style prompts."""
+    try:
+        import gi
+        gi.require_version('Gtk', '4.0')
+        gi.require_version('Adw', '1')
+        gi.require_version('Gio', '2.0')
+        gi.require_version('Gdk', '4.0')
+        from gi.repository import Gtk, Adw, Gio, Gdk
+    except Exception as exc:
+        log_fn(f"ASKPASS: GTK not available for challenge dialog: {exc}")
+        return None
+
+    log_fn("ASKPASS: Showing interactive challenge GUI dialog")
+    result = [None]
+    Adw.init()
+    app = Adw.Application.new(
+        "io.github.mfat.sshpilot.askpass.challenge",
+        Gio.ApplicationFlags.NON_UNIQUE,
+    )
+
+    def on_activate(application):
+        window = Adw.ApplicationWindow(application=application)
+        window.set_title("Authentication Required")
+        window.set_resizable(False)
+        window.set_default_size(420, -1)
+        done = [False]
+
+        entry = Adw.PasswordEntryRow()
+        entry.set_title("Response")
+
+        cancel_btn = Gtk.Button(label="Cancel")
+        ok_btn = Gtk.Button(label="Continue")
+        ok_btn.add_css_class("suggested-action")
+
+        def _finish(ok: bool):
+            if done[0]:
+                return
+            done[0] = True
+            if ok:
+                result[0] = entry.get_text() or None
+            try:
+                application.quit()
+            except Exception:
+                pass
+
+        cancel_btn.connect("clicked", lambda _b: _finish(False))
+        ok_btn.connect("clicked", lambda _b: _finish(True))
+
+        header = Adw.HeaderBar()
+        header.pack_start(cancel_btn)
+        header.pack_end(ok_btn)
+
+        body = Gtk.Label(
+            label=(prompt or "Please enter the verification code:").strip(),
+            wrap=True,
+            xalign=0,
+        )
+        body.add_css_class("body")
+
+        group = Adw.PreferencesGroup()
+        group.add(entry)
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        box.set_margin_top(12)
+        box.set_margin_bottom(18)
+        box.set_margin_start(18)
+        box.set_margin_end(18)
+        box.append(body)
+        box.append(group)
+
+        toolbar = Adw.ToolbarView()
+        toolbar.add_top_bar(header)
+        toolbar.set_content(box)
+        window.set_content(toolbar)
+
+        key_controller = Gtk.EventControllerKey()
+        key_controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+
+        def _on_key(_ctrl, keyval, _keycode, _state):
+            if keyval == Gdk.KEY_Escape:
+                _finish(False)
+                return True
+            if keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
+                _finish(True)
+                return True
+            return False
+
+        key_controller.connect("key-pressed", _on_key)
+        window.add_controller(key_controller)
+        window.present()
+        entry.grab_focus()
+
+    app.connect("activate", on_activate)
+    app.run(None)
+    return result[0]
 
 
 def _lookup_via_main_app(key_path: str, log_fn) -> "str | None":
@@ -555,13 +730,235 @@ def _lookup_via_main_app(key_path: str, log_fn) -> "str | None":
     return None
 
 
+def _lookup_session_password_via_main_app(password_id: str, log_fn) -> "str | None":
+    """Fetch a one-shot in-memory session password from the main app over IPC."""
+    import json
+    import socket
+
+    sock_path = os.environ.get("SSHPILOT_ASKPASS_SOCKET", "")
+    token = os.environ.get("SSHPILOT_ASKPASS_TOKEN", "")
+    if not sock_path or not token or not password_id:
+        return None
+
+    request = json.dumps({
+        "token": token, "type": "session_password", "id": password_id,
+    })
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+            client.settimeout(1.5)
+            client.connect(sock_path)
+            client.sendall((request + "\n").encode("utf-8"))
+            chunks = []
+            while b"\n" not in b"".join(chunks):
+                data = client.recv(4096)
+                if not data:
+                    break
+                chunks.append(data)
+    except Exception as exc:
+        log_fn(f"ASKPASS: session-password IPC unavailable ({exc})")
+        return None
+
+    raw = b"".join(chunks).split(b"\n", 1)[0].strip()
+    if not raw:
+        return None
+    try:
+        reply = json.loads(raw.decode("utf-8"))
+    except Exception:
+        return None
+    if reply.get("ok") and reply.get("value"):
+        return reply.get("value")
+    return None
+
+
+def _resolve_askpass_password(_log) -> "str | None":
+    """Return a stored login password for this SSH child, or None to defer to TTY.
+
+    Sources (first hit wins):
+    1. ``SSHPILOT_SESSION_PASSWORD_ID`` — one-shot in-memory password held by
+       the main app (fetched over askpass IPC; never written to disk).
+    2. ``SSHPILOT_SESSION_PASSWORD_FILE`` — fallback one-shot temp file when
+       IPC was unavailable at staging time (unlinked after read).
+    3. Secret backend lookup for ``SSHPILOT_PASSWORD_USER`` @ each host in
+       ``SSHPILOT_PASSWORD_HOSTS`` (newline-separated).
+    """
+    session_id = (os.environ.get("SSHPILOT_SESSION_PASSWORD_ID") or "").strip()
+    if session_id:
+        value = _lookup_session_password_via_main_app(session_id, _log)
+        if value:
+            _log("ASKPASS: Found session password via main-app IPC")
+            return value
+        _log("ASKPASS: session-password id present but IPC returned nothing")
+
+    session_file = os.environ.get("SSHPILOT_SESSION_PASSWORD_FILE", "")
+    if session_file and os.path.exists(session_file):
+        try:
+            with open(session_file, encoding="utf-8") as f:
+                value = f.read()
+            if value.endswith("\n"):
+                value = value[:-1]
+            try:
+                os.unlink(session_file)
+            except Exception:
+                pass
+            if value:
+                _log("ASKPASS: Found session password from secure temp file")
+                return value
+        except Exception as exc:
+            _log(f"ASKPASS: Error reading session password file: {exc}")
+
+    user = (os.environ.get("SSHPILOT_PASSWORD_USER") or "").strip()
+    hosts_raw = os.environ.get("SSHPILOT_PASSWORD_HOSTS") or ""
+    hosts = [h.strip() for h in hosts_raw.split("\n") if h.strip()]
+    if not user or not hosts:
+        _log("ASKPASS: password prompt but no host/user context; deferring to TTY")
+        return None
+    for host in hosts:
+        value = lookup_ssh_password(host, user)
+        if value:
+            _log(f"ASKPASS: Found stored password for {user}@{host}")
+            return value
+        _log(f"ASKPASS: No stored password for {user}@{host}")
+    return None
+
+
+def _run_presence_dialog(prompt: str, log_fn) -> "str | None":
+    """Touch/presence reminder — no text field. Stays up until Close or SIGTERM.
+
+    OpenSSH's notify_start() sets SSH_ASKPASS_PROMPT=none, redirects stdout to
+    /dev/null, and SIGTERMs this process when the touch completes.
+    """
+    try:
+        import signal
+        import gi
+        gi.require_version('Gtk', '4.0')
+        gi.require_version('Adw', '1')
+        gi.require_version('Gio', '2.0')
+        from gi.repository import Gtk, Adw, Gio, GLib
+    except Exception as exc:
+        log_fn(f"ASKPASS: GTK not available for presence dialog: {exc}")
+        return ""
+
+    log_fn("ASKPASS: Showing security-key presence reminder")
+    Adw.init()
+    app = Adw.Application.new(
+        "io.github.mfat.sshpilot.askpass.presence",
+        Gio.ApplicationFlags.NON_UNIQUE,
+    )
+
+    def on_activate(application):
+        window = Adw.ApplicationWindow(application=application)
+        window.set_title("Security Key")
+        window.set_resizable(False)
+        window.set_default_size(420, -1)
+
+        def _close(*_a):
+            try:
+                application.quit()
+            except Exception:
+                pass
+            return GLib.SOURCE_REMOVE
+
+        try:
+            GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGTERM, _close)
+        except Exception:
+            pass
+
+        close_btn = Gtk.Button(label="Close")
+        close_btn.add_css_class("suggested-action")
+        close_btn.connect("clicked", _close)
+
+        header = Adw.HeaderBar()
+        header.pack_end(close_btn)
+
+        body = Gtk.Label(
+            label=(prompt or "Touch your security key to continue.").strip(),
+            wrap=True,
+            xalign=0,
+        )
+        body.add_css_class("body")
+        hint = Gtk.Label(
+            label="Touch your security key when it blinks.",
+            wrap=True,
+            xalign=0,
+        )
+        hint.add_css_class("dim-label")
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        box.set_margin_top(12)
+        box.set_margin_bottom(18)
+        box.set_margin_start(18)
+        box.set_margin_end(18)
+        box.append(body)
+        box.append(hint)
+
+        toolbar = Adw.ToolbarView()
+        toolbar.add_top_bar(header)
+        toolbar.set_content(box)
+        window.set_content(toolbar)
+        window.present()
+
+    app.connect("activate", on_activate)
+    app.run(None)
+    return ""
+
+
+def _run_confirm_dialog(prompt: str, log_fn) -> "str | None":
+    """Yes/No confirm for SSH_ASKPASS_PROMPT=confirm (e.g. ssh-add -c)."""
+    try:
+        import gi
+        gi.require_version('Gtk', '4.0')
+        gi.require_version('Adw', '1')
+        gi.require_version('Gio', '2.0')
+        from gi.repository import Gtk, Adw, Gio
+    except Exception as exc:
+        log_fn(f"ASKPASS: GTK not available for confirm dialog: {exc}")
+        return None
+
+    log_fn("ASKPASS: Showing confirm dialog")
+    result = [None]
+    Adw.init()
+    app = Adw.Application.new(
+        "io.github.mfat.sshpilot.askpass.confirm",
+        Gio.ApplicationFlags.NON_UNIQUE,
+    )
+
+    def on_activate(application):
+        dialog = Adw.AlertDialog()
+        dialog.set_heading("Confirm")
+        dialog.set_body((prompt or "Allow this key operation?").strip())
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("ok", "Allow")
+        dialog.set_response_appearance("ok", Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response("ok")
+        dialog.set_close_response("cancel")
+
+        def _on_response(_d, response):
+            if response == "ok":
+                result[0] = "yes"
+            try:
+                application.quit()
+            except Exception:
+                pass
+
+        dialog.connect("response", _on_response)
+        dialog.present(None)
+
+    app.connect("activate", on_activate)
+    app.run(None)
+    return result[0]
+
+
 def handle_askpass_cli(prompt: str) -> "str | None":
     """Handle --askpass CLI mode (re-invoked by SSH as SSH_ASKPASS handler).
 
-    Looks up stored passphrases using the app's own environment (keyring,
-    libsecret) and falls back to a GTK dialog. Returns the passphrase string
-    on success, or None on failure. The caller is responsible for writing the
-    passphrase to the real stdout fd.
+    Honors OpenSSH's ``SSH_ASKPASS_PROMPT`` hint when set:
+
+    * ``none`` — FIDO touch reminder (no typed secret; stay until Close/SIGTERM)
+    * ``confirm`` — yes/no (``ssh-add -c`` style)
+
+    Otherwise answers key passphrase / login password from the secret backend,
+    or prompts for OTP/PIN. Returns the secret (or ``\"\"`` / ``\"yes\"`` for
+    notify/confirm), or None on cancel/failure.
     """
     log_path = get_askpass_log_path()
 
@@ -576,16 +973,123 @@ def handle_askpass_cli(prompt: str) -> "str | None":
         f"ASKPASS: keyring {'available' if _keyring_available() else 'unavailable'}, "
         f"libsecret {'available' if _secret_available() else 'unavailable'}"
     )
-    _log(f"ASKPASS called with prompt: {prompt}")
+    hint = (os.environ.get("SSH_ASKPASS_PROMPT") or "").strip().lower()
+    _log(f"ASKPASS called with prompt: {prompt!r} hint={hint!r}")
 
-    pl = prompt.lower()
+    # Background/passive spawns (e.g. the autocomplete history fetch) set
+    # AUTOFILL_ONLY: answer silently from stored secrets, never show UI.
+    if (os.environ.get("SSHPILOT_ASKPASS_AUTOFILL_ONLY") or "").strip() == "1":
+        only_kind = classify_prompt(prompt)
+        lowered = prompt.lower()
+        if only_kind == 'password' or (
+                only_kind is None and "password" in lowered
+                and "passphrase" not in lowered):
+            value = _resolve_askpass_password(_log)
+            _log("ASKPASS: autofill-only mode; "
+                 + ("answered from store" if value else "no stored password, declining"))
+            return value
+        if only_kind != 'passphrase' and "passphrase" not in lowered:
+            _log("ASKPASS: autofill-only mode; declining interactive prompt")
+            return None
+        # Passphrases fall through: that path is already dialog-free
+        # (vault/session lookup, then defer to SSH/agent).
 
-    if "password" in pl and "passphrase" not in pl:
-        _log("ASKPASS: Ignoring password prompt")
+    # A blank prompt with no UI hint carries no question to answer — OpenSSH
+    # always passes prompt text, so this is a bare/misfired invocation (e.g.
+    # running the helper with no argv). Decline instead of falling through to
+    # the "unrecognized prompt" branch, which would pop a verification-code
+    # dialog out of nowhere.
+    if not (prompt or "").strip() and not hint:
+        _log("ASKPASS: empty prompt with no hint; declining")
         return None
 
-    if "passphrase" not in pl:
-        _log("ASKPASS: No passphrase found, exiting with code 1")
+    # Official OpenSSH askpass UI hints (see readpass.c / notify_start).
+    if hint == "none":
+        _log("ASKPASS: SSH_ASKPASS_PROMPT=none (FIDO presence reminder)")
+        handled, routed = _route_presence_to_main_app(prompt, _log)
+        if handled:
+            return "" if routed is not None else None
+        return _run_presence_dialog(prompt, _log)
+
+    if hint == "confirm":
+        _log("ASKPASS: SSH_ASKPASS_PROMPT=confirm (yes/no)")
+        handled, routed = _route_confirm_to_main_app(prompt, _log)
+        if handled:
+            return routed
+        return _run_confirm_dialog(prompt, _log)
+
+    kind = classify_prompt(prompt)
+    if kind == 'presence':
+        _log("ASKPASS: presence prompt (classifier); reminder UI")
+        handled, routed = _route_presence_to_main_app(prompt, _log)
+        if handled:
+            return "" if routed is not None else None
+        return _run_presence_dialog(prompt, _log)
+
+    if kind == 'interactive':
+        # OpenSSH with SSH_ASKPASS_REQUIRE=prefer does NOT fall back to the
+        # TTY when askpass fails — declining here leaves the user with no way
+        # to enter an OTP. Prompt them (never autofill MFA from the vault).
+        _log("ASKPASS: interactive prompt (OTP/PIN); asking user")
+        handled, routed = _route_challenge_to_main_app(prompt, _log)
+        if handled:
+            if routed is not None:
+                _log("ASKPASS: Returning interactive response from main-app dialog")
+                return routed
+            _log("ASKPASS: user cancelled interactive prompt")
+            return None
+        value = _run_challenge_dialog(prompt, _log)
+        if value is not None:
+            _log("ASKPASS: Returning interactive response from GUI dialog")
+            return value
+        _log("ASKPASS: No interactive response; exiting with code 1")
+        return None
+
+    if kind == 'password' or (
+            kind is None
+            and "password" in prompt.lower()
+            and "passphrase" not in prompt.lower()):
+        value = _resolve_askpass_password(_log)
+        if value:
+            _log("ASKPASS: Returning password to caller")
+            return value
+        # No vault/session password — ask the user. prefer does not fall back
+        # to the TTY (same as MFA), so a dialog is required.
+        _log("ASKPASS: no stored password; asking user")
+        handled, routed = _route_password_to_main_app(prompt, _log)
+        if handled:
+            if routed is not None:
+                _log("ASKPASS: Returning password from main-app dialog")
+                return routed
+            _log("ASKPASS: user cancelled password prompt")
+            return None
+        # Standalone fallback (main app unreachable). Give the entry a
+        # password-appropriate default so an empty prompt does not read as
+        # "verification code" (that default belongs to the OTP/challenge path).
+        value = _run_challenge_dialog(prompt or _standalone_password_label(), _log)
+        if value is not None:
+            _log("ASKPASS: Returning password from GUI dialog")
+            return value
+        _log("ASKPASS: No password available; exiting with code 1")
+        return None
+
+    if kind != 'passphrase' and "passphrase" not in prompt.lower():
+        # Unknown keyboard-interactive / custom MFA text: prefer a typed
+        # challenge dialog over exiting 1 (OpenSSH will not fall back to the
+        # TTY once askpass was invoked under REQUIRE=prefer).
+        _log("ASKPASS: unrecognized prompt; treating as interactive challenge")
+        handled, routed = _route_challenge_to_main_app(prompt, _log)
+        if handled:
+            if routed is not None:
+                _log("ASKPASS: Returning response from main-app dialog")
+                return routed
+            _log("ASKPASS: user cancelled interactive prompt")
+            return None
+        value = _run_challenge_dialog(prompt, _log)
+        if value is not None:
+            _log("ASKPASS: Returning response from GUI dialog")
+            return value
+        _log("ASKPASS: No interactive response; exiting with code 1")
         return None
 
     key_path = _extract_key_path(prompt)
@@ -654,28 +1158,10 @@ def handle_askpass_cli(prompt: str) -> "str | None":
             _log("ASKPASS: Returning passphrase to caller")
             return value
 
-    # Fall back to the built-in GUI dialog, unless the user has turned it off in
-    # settings — in that case defer to SSH / the system keyring prompt.
-    if not _builtin_passphrase_prompt_enabled():
-        _log("ASKPASS: built-in passphrase prompt disabled; deferring to system/SSH")
-        return None
-
-    # Prefer routing the prompt to the running main app so it renders as a modal
-    # child of the main window (avoids the prompt hiding behind it on Wayland).
-    handled, routed = _route_passphrase_to_main_app(key_path, prompt, _log)
-    if handled:
-        if routed is not None:
-            return routed
-        _log("ASKPASS: user cancelled main-app dialog, exiting with code 1")
-        return None
-
-    # Main app not reachable: show our own standalone window as before.
-    passphrase = _run_askpass_dialog(key_path, _log)
-    if passphrase is not None:
-        _log("ASKPASS: User entered passphrase in GUI dialog")
-        return passphrase
-
-    _log("ASKPASS: No passphrase found, exiting with code 1")
+    # No stored passphrase — defer to SSH / the OS / ssh-agent (TTY or system
+    # prompt). Login-password and MFA prompts use the graphical askpass path
+    # above; unstored key passphrases do not.
+    _log("ASKPASS: No stored passphrase; deferring to system/SSH")
     return None
 
 
@@ -960,8 +1446,22 @@ def force_regenerate_askpass_script() -> str:
         _ASKPASS_DIR = None
     return ensure_passphrase_askpass()
 
-def get_ssh_env_with_askpass(require: str = "prefer") -> dict:
-    """Get SSH environment with askpass for passphrase handling"""
+def get_ssh_env_with_askpass(
+    require: str = "prefer",
+    *,
+    password_user: "str | None" = None,
+    password_hosts: "List[str] | None" = None,
+    session_password: "str | None" = None,
+) -> dict:
+    """Get SSH environment with askpass for passphrase and/or password handling.
+
+    ``require`` is OpenSSH's ``SSH_ASKPASS_REQUIRE`` (``prefer`` recommended so
+    declined MFA prompts can fall back to the TTY). When *password_user* /
+    *password_hosts* are set, the helper can autofill login-password prompts
+    from the secret backend. *session_password* stages an in-memory password
+    for the same purpose (IPC id when the prompt server is up; otherwise a
+    one-shot temp file under XDG_RUNTIME_DIR).
+    """
     ensure_askpass_log_forwarder()
     env = os.environ.copy()
     env["SSH_ASKPASS"] = ensure_passphrase_askpass()
@@ -984,21 +1484,34 @@ def get_ssh_env_with_askpass(require: str = "prefer") -> dict:
     else:
         env.pop("SSHPILOT_ASKPASS_SOCKET", None)
         env.pop("SSHPILOT_ASKPASS_TOKEN", None)
+
+    # Login-password context for the askpass helper (optional).
+    if password_user:
+        env["SSHPILOT_PASSWORD_USER"] = str(password_user)
+    else:
+        env.pop("SSHPILOT_PASSWORD_USER", None)
+    hosts = [str(h).strip() for h in (password_hosts or []) if str(h).strip()]
+    if hosts:
+        env["SSHPILOT_PASSWORD_HOSTS"] = "\n".join(hosts)
+    else:
+        env.pop("SSHPILOT_PASSWORD_HOSTS", None)
+    env.pop("SSHPILOT_SESSION_PASSWORD_ID", None)
+    env.pop("SSHPILOT_SESSION_PASSWORD_FILE", None)
+    if session_password:
+        env.update(stage_session_password(session_password))
     return env
 
 def get_ssh_env_with_askpass_for_password(host: str, username: str) -> dict:
-    """Return a copy of the environment without SSH_ASKPASS variables.
+    """SSH env with askpass wired for a login-password autofill on *host*/*username*.
 
-    Previously this helper forced use of the askpass script for password
-    authentication.  We now want the OpenSSH client to prompt the user
-    directly when sshpass is unavailable, so we explicitly strip any
-    askpass related variables that might interfere with interactive
-    prompts.
+    Uses ``SSH_ASKPASS_REQUIRE=prefer`` so OTP/MFA prompts declined by the helper
+    can fall back to the TTY.
     """
-    env = os.environ.copy()
-    env.pop("SSH_ASKPASS", None)
-    env.pop("SSH_ASKPASS_REQUIRE", None)
-    return env
+    return get_ssh_env_with_askpass(
+        "prefer",
+        password_user=username or None,
+        password_hosts=[host] if host else None,
+    )
 
 def get_ssh_env_with_forced_askpass() -> dict:
     """Get SSH environment with forced askpass for passphrase handling"""
