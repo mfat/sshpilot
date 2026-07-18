@@ -2,6 +2,7 @@
 import atexit
 import logging
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -114,12 +115,10 @@ _HOSTKEY_MARKERS = (
     'continue connecting',
     "please type 'yes'",
 )
-_TYPED_INTERACTIVE_MARKERS = (
-    'pin',
-    'verification code',
-    'otp',
-    'one-time',
-    'authentication code',
+# Word-boundary match: bare substrings would misfire on hostnames/usernames
+# ("user@alpine's password:" contains 'pin', "scotp1" contains 'otp').
+_TYPED_INTERACTIVE_RE = re.compile(
+    r'\b(?:pin|otp|verification code|one-time|authentication code)\b'
 )
 
 
@@ -139,11 +138,13 @@ def classify_prompt(text: str) -> "str | None":
     if any(marker in last for marker in _HOSTKEY_MARKERS):
         return 'interactive'
     # PIN / OTP may omit a trailing colon ("Enter PIN for authenticator").
-    if any(m in last for m in _TYPED_INTERACTIVE_MARKERS) and (
+    if _TYPED_INTERACTIVE_RE.search(last) and (
             last.endswith(':') or last.startswith('enter ') or ' for ' in last):
         if 'passphrase' in last:
             return 'passphrase'
-        if 'password' in last and 'pin' not in last:
+        # "…'s password:" for a host that legitimately contains an OTP/PIN
+        # word is still a login password — but "one-time password" is not.
+        if 'password' in last and not re.search(r'\b(?:pin|otp|one-time)\b', last):
             return 'password'
         return 'interactive'
     if last.endswith(':'):

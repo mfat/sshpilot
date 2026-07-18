@@ -17,6 +17,16 @@ def test_classify_prompt_password_vs_otp():
     assert classify_prompt("Enter passphrase for key '/tmp/id':") == "passphrase"
 
 
+def test_classify_prompt_markers_need_word_boundaries():
+    # 'pin' ⊂ 'alpine', 'pinar'; 'otp' ⊂ 'scotp1' — still password prompts.
+    assert classify_prompt("user@alpine's password:") == "password"
+    assert classify_prompt("pinar@host's password:") == "password"
+    assert classify_prompt("root@scotp1's password:") == "password"
+    # Real OTP/PIN prompts still classify as interactive.
+    assert classify_prompt("OTP for alice:") == "interactive"
+    assert classify_prompt("Enter one-time password:") == "interactive"
+
+
 def test_classify_prompt_fido_presence_and_pin():
     assert (
         classify_prompt("Confirm user presence for key ED25519-SK SHA256:abcd")
