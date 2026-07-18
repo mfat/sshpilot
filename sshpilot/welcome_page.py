@@ -212,20 +212,22 @@ class WelcomePage(Gtk.Overlay):
 
         # Secondary actions + pinned sections, hidden by default
         revealer = Gtk.Revealer()
-        revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
+        revealer.set_transition_type(Gtk.RevealerTransitionType.NONE)
         revealer.set_child(self._build_extras(current_shortcuts))
         revealer.set_reveal_child(False)
 
-        chevron = icon_utils.new_image_from_icon_name('pan-down-symbolic')
+        more_icon = icon_utils.new_image_from_icon_name('view-more-horizontal-symbolic')
+        more_icon.add_css_class('dim-label')
         more_btn = Gtk.Button()
-        more_btn.set_child(chevron)
+        more_btn.set_child(more_icon)
         more_btn.add_css_class('flat')
         more_btn.add_css_class('circular')
+        more_btn.add_css_class('dim-label')
         more_btn.set_halign(Gtk.Align.CENTER)
         more_btn.set_margin_top(16)
         more_btn.set_can_focus(False)
         more_btn.set_tooltip_text(_('Show more actions'))
-        more_btn.connect('clicked', self._on_toggle_more, revealer, chevron)
+        more_btn.connect('clicked', self._on_toggle_more, revealer)
         inner.append(more_btn)
         inner.append(revealer)
 
@@ -420,10 +422,9 @@ class WelcomePage(Gtk.Overlay):
         accel = self._get_action_accel_display(getattr(self, '_shortcuts', {}) or {}, action_name) if action_name else ''
         return f"{text}  ({accel})" if accel else text
 
-    def _on_toggle_more(self, button, revealer, chevron):
+    def _on_toggle_more(self, button, revealer):
         reveal = not revealer.get_reveal_child()
         revealer.set_reveal_child(reveal)
-        icon_utils.set_icon_from_name(chevron, 'pan-up-symbolic' if reveal else 'pan-down-symbolic')
         button.set_tooltip_text(_('Show fewer actions') if reveal else _('Show more actions'))
 
     def _prompt_create_connection(self):
