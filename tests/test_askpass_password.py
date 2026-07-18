@@ -152,3 +152,14 @@ def test_askpass_presence_classifier_uses_reminder_not_challenge(monkeypatch):
     )
     assert handle_askpass_cli("Tap secure token") == ""
     assert called["presence"] and not called["challenge"]
+
+
+def test_askpass_unrecognized_prompt_treated_as_challenge(monkeypatch):
+    monkeypatch.delenv("SSH_ASKPASS_PROMPT", raising=False)
+    monkeypatch.setattr(
+        "sshpilot.askpass_utils._route_challenge_to_main_app",
+        lambda prompt, _log: (True, "custom-mfa-response"),
+    )
+    assert handle_askpass_cli("Duo Push: enter a passcode from your phone") == (
+        "custom-mfa-response"
+    )

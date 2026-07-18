@@ -1078,7 +1078,22 @@ def handle_askpass_cli(prompt: str) -> "str | None":
         return None
 
     if kind != 'passphrase' and "passphrase" not in prompt.lower():
-        _log("ASKPASS: Unrecognized prompt; exiting with code 1")
+        # Unknown keyboard-interactive / custom MFA text: prefer a typed
+        # challenge dialog over exiting 1 (OpenSSH will not fall back to the
+        # TTY once askpass was invoked under REQUIRE=prefer).
+        _log("ASKPASS: unrecognized prompt; treating as interactive challenge")
+        handled, routed = _route_challenge_to_main_app(prompt, _log)
+        if handled:
+            if routed is not None:
+                _log("ASKPASS: Returning response from main-app dialog")
+                return routed
+            _log("ASKPASS: user cancelled interactive prompt")
+            return None
+        value = _run_challenge_dialog(prompt, _log)
+        if value is not None:
+            _log("ASKPASS: Returning response from GUI dialog")
+            return value
+        _log("ASKPASS: No interactive response; exiting with code 1")
         return None
 
     key_path = _extract_key_path(prompt)
