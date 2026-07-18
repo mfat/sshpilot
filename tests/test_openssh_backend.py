@@ -419,6 +419,66 @@ def test_manager_classifies_permission_denied_as_authentication_error(
     manager.close()
 
 
+def test_manager_classifies_silent_timeout_as_interactive_auth_hint(
+    backend_modules, monkeypatch
+):
+    """A handshake watchdog firing with empty stderr means ssh stalled at a
+    prompt nobody can answer — the error must say so instead of being cryptic."""
+    _, ob, _ = backend_modules
+    manager = ob.OpenSSHSFTPManager("host", "user")
+
+    exc = manager._classify_handshake_failure(
+        "", EOFError("SFTP stream closed"), timed_out=True
+    )
+
+    assert type(exc) is OSError
+    assert "interactive authentication" in str(exc)
+    # With stderr present, the timeout hint must not mask the real error.
+    exc = manager._classify_handshake_failure(
+        "Permission denied (publickey).", EOFError("x"), timed_out=True
+    )
+    assert isinstance(exc, PermissionError)
+    manager.close()
+
+
+def test_connect_impl_retries_direct_on_mux_refusal(backend_modules, monkeypatch):
+    """A live master socket whose server refuses the channel (MaxSessions,
+    multiplexing disabled) triggers exactly one retry without ControlPath."""
+    _, ob, _ = backend_modules
+    manager = ob.OpenSSHSFTPManager("host", "user")
+    calls = []
+
+    def fake_attempt(*, use_mux=True):
+        calls.append(use_mux)
+        if use_mux:
+            manager._stderr_lines.append(
+                "mux_client_request_session: session request failed: "
+                "Session open refused by peer"
+            )
+            raise OSError("channel refused")
+
+    monkeypatch.setattr(manager, "_connect_attempt", fake_attempt)
+    manager._connect_impl()
+    assert calls == [True, False]
+    manager.close()
+
+
+def test_connect_impl_does_not_retry_without_mux_marker(backend_modules, monkeypatch):
+    _, ob, _ = backend_modules
+    manager = ob.OpenSSHSFTPManager("host", "user")
+    calls = []
+
+    def fake_attempt(*, use_mux=True):
+        calls.append(use_mux)
+        raise OSError("Connection refused")
+
+    monkeypatch.setattr(manager, "_connect_attempt", fake_attempt)
+    with pytest.raises(OSError):
+        manager._connect_impl()
+    assert calls == [True]
+    manager.close()
+
+
 def test_manager_routes_connect_errors_by_exception_type(
     backend_modules, monkeypatch
 ):

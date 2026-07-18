@@ -23,6 +23,7 @@ import os
 import pathlib
 import posixpath
 import shutil
+import threading
 import weakref
 from concurrent.futures import Future, CancelledError
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
@@ -114,6 +115,12 @@ class FileManagerWindow(Adw.Window):
         self._password_dialog_shown = False
         self._password_retry_count = 0
         self._max_password_retries = 3
+
+        # PTY-backed ControlMaster establishing the connection (master-first
+        # flow); guards against stacking masters from rapid reconnects.
+        self._master_session = None
+        self._auth_dialog = None
+        self._auth_master_active = False
 
         # Use ToolbarView like other Adw.Window instances
         toolbar_view = Adw.ToolbarView()
@@ -498,9 +505,206 @@ class FileManagerWindow(Adw.Window):
 
         # Start connection after everything is set up
         try:
-            self._manager.connect_to_server()
+            self._connect_via_master()
         except Exception as exc:
             logger.exception("Error connecting to server: %s", exc)
+
+    def _connect_via_master(self) -> None:
+        """Master-first connect: ride a live ControlMaster socket when one
+        exists; otherwise establish one on an app-owned PTY (MasterSession) so
+        interactive prompts (2FA codes, PINs, host keys) can be answered, then
+        let the PTY-less SFTP worker ride the socket. Falls back to a plain
+        direct connect when there is no Connection object to build from."""
+        connection = self._connection
+        if connection is None:
+            self._manager.connect_to_server()
+            return
+        if self._auth_master_active:
+            logger.debug("Master session already active; ignoring reconnect")
+            return
+        # The pre-connect dialog stores the password on the manager only;
+        # surface it on the connection so the master can auto-answer with it
+        # (the worker's _build_argv does the same at build time).
+        manager_password = getattr(self._manager, "_password", None)
+        if manager_password:
+            try:
+                connection.password = manager_password
+            except Exception:
+                pass
+        self._auth_master_active = True
+
+        def _probe_and_start() -> None:
+            from .ssh_master_session import MasterSession, check_master_alive
+
+            app_config = None
+            try:
+                from .config import Config
+
+                app_config = Config()
+            except Exception:
+                pass
+            if check_master_alive(connection, self._connection_manager, app_config):
+                logger.debug("Live ControlMaster socket found; connecting directly")
+                GLib.idle_add(self._on_master_ready)
+                return
+            try:
+                session = MasterSession(
+                    connection,
+                    self._connection_manager,
+                    app_config,
+                    on_ready=lambda: GLib.idle_add(self._on_master_ready),
+                    on_needs_interaction=lambda fd, transcript: GLib.idle_add(
+                        self._on_master_needs_interaction, fd, transcript
+                    ),
+                    on_need_password=lambda prompt: GLib.idle_add(
+                        self._on_master_need_password, prompt
+                    ),
+                    on_failed=lambda tail: GLib.idle_add(
+                        self._on_master_failed, tail
+                    ),
+                )
+                self._master_session = session
+                session.start()
+            except Exception as exc:
+                logger.exception("Failed to start master session: %s", exc)
+                GLib.idle_add(self._on_master_failed, str(exc))
+
+        threading.Thread(
+            target=_probe_and_start, name="fm-master-probe", daemon=True
+        ).start()
+
+    def _master_display_name(self) -> str:
+        nickname = (
+            getattr(self._connection, "nickname", None) if self._connection else None
+        )
+        return nickname or f"{self._username}@{self._host}"
+
+    def _on_master_ready(self) -> bool:
+        self._auth_master_active = False
+        self._master_session = None
+        if self._auth_dialog is not None:
+            try:
+                self._auth_dialog.finish()
+            except Exception:
+                pass
+            self._auth_dialog = None
+        self._password_dialog_shown = False
+        self._password_retry_count = 0
+        manager = getattr(self, "_manager", None)
+        if manager is not None:
+            try:
+                manager.connect_to_server()
+            except Exception as exc:
+                logger.exception("Error connecting to server: %s", exc)
+        return False
+
+    def _dialog_parent(self) -> Gtk.Widget:
+        """The widget to present dialogs against — the embedded tab parent when
+        this file manager runs inside a tab, else the window (or its transient
+        parent). Mirrors the resolution used for the overwrite-conflict dialog;
+        Adw dialogs presented against the bare `self` never map when embedded."""
+        if self._embedded_parent is not None:
+            return self._embedded_parent
+        try:
+            transient = self.get_transient_for()
+            if transient is not None:
+                return transient
+        except Exception:
+            pass
+        return self
+
+    def _on_master_needs_interaction(self, master_fd: int, transcript: str) -> bool:
+        if self._auth_dialog is not None:
+            return False
+        from .auth_terminal_dialog import AuthTerminalDialog
+
+        dialog = AuthTerminalDialog(
+            self._master_display_name(),
+            master_fd,
+            transcript,
+            on_cancelled=self._on_auth_dialog_cancelled,
+        )
+        self._auth_dialog = dialog
+        dialog.present(self._dialog_parent())
+        return False
+
+    def _on_master_need_password(self, prompt_line: str) -> bool:
+        session = self._master_session
+        if session is None or self._password_dialog_shown:
+            return False
+        self._password_dialog_shown = True
+        try:
+            from .window import show_ssh_password_dialog
+
+            display_name = self._master_display_name()
+            password = show_ssh_password_dialog(
+                from_widget=self,
+                connection=self._connection,
+                host=self._host,
+                username=self._username,
+                display_name=display_name,
+                connection_manager=self._connection_manager,
+                heading=_("Password Required"),
+                body=_(
+                    "{name} is asking for a password:"
+                ).format(name=display_name),
+            )
+        finally:
+            self._password_dialog_shown = False
+        if password:
+            session.send_secret(password)
+        else:
+            session.cancel()
+            self._on_master_cancelled()
+        return False
+
+    def _on_auth_dialog_cancelled(self) -> None:
+        self._auth_dialog = None
+        session = self._master_session
+        if session is not None:
+            session.cancel()
+        self._on_master_cancelled()
+
+    def _on_master_cancelled(self) -> None:
+        self._auth_master_active = False
+        self._master_session = None
+        self._on_connection_error(
+            getattr(self, "_manager", None), _("Authentication cancelled")
+        )
+
+    def _on_master_failed(self, transcript_tail: str) -> bool:
+        self._auth_master_active = False
+        self._master_session = None
+        if self._auth_dialog is not None:
+            try:
+                self._auth_dialog.finish()
+            except Exception:
+                pass
+            self._auth_dialog = None
+        lines = [
+            line.strip()
+            for line in (transcript_tail or "").splitlines()
+            if line.strip() and not line.lstrip().startswith("debug")
+        ]
+        message = lines[-1] if lines else _("Could not establish the SSH connection")
+        self._on_connection_error(getattr(self, "_manager", None), message)
+        return False
+
+    def _cancel_master_session(self) -> None:
+        session = self._master_session
+        self._master_session = None
+        self._auth_master_active = False
+        if session is not None:
+            try:
+                session.cancel()
+            except Exception:
+                pass
+        if self._auth_dialog is not None:
+            try:
+                self._auth_dialog.finish()
+            except Exception:
+                pass
+            self._auth_dialog = None
 
     # -- remote host-picker button (same pattern as the Docker Console) --
 
@@ -862,6 +1066,7 @@ class FileManagerWindow(Adw.Window):
 
     def _cleanup_manager(self) -> None:
         """Close the file manager backend and clear UI state."""
+        self._cancel_master_session()
         manager = getattr(self, "_manager", None)
         if manager is not None:
             try:
@@ -1038,7 +1243,11 @@ class FileManagerWindow(Adw.Window):
                         self._manager._password = password
                         if self._connection is not None:
                             self._connection.password = password
-                        self._manager.connect_to_server()
+                        # Route the retry through the master-first flow so a
+                        # host that needs interactive auth (2FA, expired mux
+                        # socket) gets the PTY path again instead of a
+                        # PTY-less direct attempt that can only time out.
+                        self._connect_via_master()
                     except Exception as exc:
                         logger.error("Error calling connect_to_server: %s", exc)
                         self._on_connection_error(

@@ -2693,7 +2693,16 @@ class ConnectionManager(GObject.Object):
                             pass
             
             # DO NOT call load_ssh_config() here - it breaks object references
-            
+
+            # The host's SSH config changed: retire its ControlMaster (if any)
+            # so the next connect negotiates the new settings instead of
+            # silently riding the old transport. Live sessions drain naturally.
+            try:
+                from .ssh_master_session import invalidate_master
+                invalidate_master(connection, self)
+            except Exception:
+                logger.debug("Master invalidation skipped", exc_info=True)
+
             # Emit signal with SAME connection object
             self.emit('connection-updated', connection)
             

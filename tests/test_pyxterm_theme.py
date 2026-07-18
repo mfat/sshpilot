@@ -1,6 +1,5 @@
 """PyXterm theme application fills the page background (no bottom strip)."""
 from types import SimpleNamespace
-from unittest.mock import MagicMock
 
 from sshpilot.terminal_backends import PyXtermTerminalBackend
 

@@ -338,6 +338,86 @@ def test_connection_secret_save_runs_backend_io_in_worker(monkeypatch):
     assert closed == [True]
 
 
+def test_deleting_unstored_password_is_not_an_error(monkeypatch):
+    # A new connection saved with an empty password queues a delete; nothing
+    # stored to delete is the desired end state, not a storage failure.
+    import sshpilot.connection_dialog as dialog_module
+    import sshpilot.secret_storage as ss
+    import sshpilot.secret_unlock_dialog as unlock_dialog
+
+    class Manager(DummyConnectionManager):
+        def delete_connection_passwords(self, connection, username=None):
+            return False  # nothing was stored
+
+    class Spinner:
+        def connect(self, signal, callback):
+            self.callback = callback
+
+    spinner = Spinner()
+    monkeypatch.setattr(
+        unlock_dialog,
+        '_spinner_dialog',
+        lambda *_args: (lambda _text: None, lambda: spinner.callback(), spinner),
+    )
+    monkeypatch.setattr(
+        ss.get_secret_manager(),
+        'selected_backend',
+        lambda: types.SimpleNamespace(name='bitwarden'),
+    )
+    monkeypatch.setattr(
+        dialog_module.GLib,
+        'idle_add',
+        lambda callback, *args: callback(*args),
+    )
+
+    class InlineThread:
+        def __init__(self, target, daemon=False):
+            self.target = target
+
+        def start(self):
+            self.target()
+
+    monkeypatch.setattr(dialog_module.threading, 'Thread', InlineThread)
+
+    dialog = ConnectionDialog.__new__(ConnectionDialog)
+    dialog.connection_manager = Manager()
+    dialog.key_editor = None
+    dialog._save_buttons = []
+    closed = []
+    errors = []
+
+    dialog.emit = lambda signal, data: data.pop('__save_completion')(True)
+    dialog.close = lambda: closed.append(True)
+    dialog.show_error = lambda message: errors.append(message)
+
+    dialog._store_secrets_then_save({
+        'hostname': 'example.com',
+        'nickname': 'example',
+        'username': 'demo',
+        'password': '',
+        'password_changed': True,
+    })
+
+    assert errors == []
+    assert closed == [True]
+
+
+def test_has_pending_passphrases_detects_cleared_entry():
+    # A cleared passphrase (initial non-empty, entry now empty) is a pending
+    # delete and must count as a change, so the unlock gate fires for it.
+    from sshpilot.connection_dialog import FileListEditor
+
+    ed = FileListEditor.__new__(FileListEditor)
+    ed._with_passphrase = True
+    ed._rows = [types.SimpleNamespace(
+        _pass_entry=DummyEntry(''), _pass_path='/k', _pass_norm='/k',
+        _pass_initial='secret')]
+    assert ed.has_pending_passphrases() is True
+
+    ed._rows[0]._pass_entry.set_text('secret')  # back to original -> no change
+    assert ed.has_pending_passphrases() is False
+
+
 def test_save_gate_detects_pending_passphrase_when_locked(monkeypatch):
     import sshpilot.secret_storage as ss
 
@@ -352,6 +432,10 @@ def test_save_gate_detects_pending_passphrase_when_locked(monkeypatch):
     # No pending passphrase and no password -> no prompt even when locked.
     dialog.key_editor = types.SimpleNamespace(has_pending_passphrases=lambda: False)
     assert dialog._needs_secret_unlock_before_save({'password': ''}) is False
+
+    # Clearing a stored password is a vault delete -> must unlock first.
+    assert dialog._needs_secret_unlock_before_save(
+        {'password': '', 'password_changed': True}) is True
 
     # Unlocked -> never needs a prompt.
     monkeypatch.setattr(sm, 'selected_needs_unlock', lambda: False)

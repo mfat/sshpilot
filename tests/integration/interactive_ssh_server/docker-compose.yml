@@ -1,0 +1,7 @@
+services:
+  mock-2fa:
+    build: .
+    container_name: sshpilot-mock-2fa
+    hostname: mock-2fa
+    ports:
+      - "2225:2222"

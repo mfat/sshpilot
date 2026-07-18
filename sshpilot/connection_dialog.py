@@ -1313,12 +1313,15 @@ class FileListEditor(Adw.PreferencesGroup):
         return out
 
     def has_pending_passphrases(self) -> bool:
-        """True if any key row holds a non-empty passphrase to store on save."""
+        """True if any key row's passphrase changed — a store or a clear — pending save."""
         if not self._with_passphrase:
             return False
-        for entry, _p, _n in self._passphrase_rows():
+        for row in self._rows:
+            entry = getattr(row, '_pass_entry', None)
+            if entry is None:
+                continue
             try:
-                if entry.get_text():
+                if entry.get_text() != (getattr(row, '_pass_initial', '') or ''):
                     return True
             except Exception:
                 pass
@@ -3297,7 +3300,9 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
 
         # Detect if password text was changed by user during this edit session
         try:
-            password_changed = (self.password_row.get_text() != getattr(self, '_orig_password', None))
+            # _orig_password is unset for new connections — treat it as empty so an
+            # untouched empty field doesn't count as a change.
+            password_changed = (self.password_row.get_text() != (getattr(self, '_orig_password', None) or ''))
         except Exception:
             password_changed = False
 
@@ -3446,6 +3451,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             self._emit_connection_saved(connection_data)
             return
         if manager is None:
+            self._set_secret_save_busy(False)
             self.show_error(_("Secure storage is unavailable."))
             return
 
@@ -3473,18 +3479,21 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                                 connection_data, value, username=username,
                                 previous_connection=previous_identity))
                         else:
-                            removed = bool(manager.delete_connection_passwords(
-                                connection_data, username=username))
+                            # Delete is idempotent: "nothing was stored" already is the
+                            # desired end state, not a storage failure. Real backend
+                            # errors raise and are caught below.
+                            manager.delete_connection_passwords(
+                                connection_data, username=username)
                             if previous_identity:
                                 previous_user = previous_identity.get('username') or username
-                                removed = bool(manager.delete_connection_passwords(
-                                    previous_identity,
-                                    username=previous_user)) or removed
-                            ok = removed
+                                manager.delete_connection_passwords(
+                                    previous_identity, username=previous_user)
+                            ok = True
                     elif action == 'store':
                         ok = bool(manager.store_key_passphrase(key, value))
                     else:
-                        ok = bool(manager.delete_key_passphrase(key))
+                        manager.delete_key_passphrase(key)
+                        ok = True
                     if not ok:
                         break
             except Exception:
@@ -3543,15 +3552,19 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         self.close()
 
     def _needs_secret_unlock_before_save(self, connection_data) -> bool:
-        """True when saving would store a secret — a host password or a key passphrase —
-        and the selected session backend (Bitwarden/Vaultwarden) is locked or not signed
-        in, so it should be unlocked before the secret is stored."""
+        """True when saving would store or delete a secret — a host password or a key
+        passphrase — and the selected session backend (Bitwarden/Vaultwarden) is locked
+        or not signed in, so it should be unlocked before the secret I/O runs."""
         try:
             from .secret_storage import get_secret_manager
             if not get_secret_manager().selected_needs_unlock():
                 return False
             pw = connection_data.get('password')
             if pw and str(pw).strip():
+                return True
+            # Clearing a stored password is a vault delete, which a locked
+            # session backend silently skips — unlock for it too.
+            if connection_data.get('password_changed'):
                 return True
             editor = getattr(self, 'key_editor', None)
             return bool(editor is not None and editor.has_pending_passphrases())
