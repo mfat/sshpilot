@@ -5709,12 +5709,15 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             body=body,
         )
 
-    def prompt_ssh_presence(self, prompt: str = "") -> bool:
+    def prompt_ssh_presence(self, prompt: str = "", register_close=None) -> bool:
         """Show a FIDO/security-key touch reminder (no typed secret).
 
         Used for ``SSH_ASKPASS_PROMPT=none``. Returns True when the user
         dismisses with Close (reminder acknowledged); False on unexpected
         failure. Touch itself happens on the hardware — this is only UI.
+        *register_close* (when given) receives a zero-arg callable that closes
+        the dialog programmatically — the askpass server uses it to dismiss
+        the reminder as soon as the touch completes (helper socket EOF).
         """
         present_for_modal_dialog(self)
         body = (prompt or "").strip() or _(
@@ -5729,13 +5732,26 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         dialog.set_default_response("ok")
         dialog.set_close_response("ok")
         result = [True]
+        closed = [False]
 
         def _on_response(_d, _response):
+            closed[0] = True
             loop.quit()
 
         dialog.connect("response", _on_response)
         loop = GLib.MainLoop()
         dialog.present(self)
+        if register_close is not None:
+            def _force_close():
+                if not closed[0]:
+                    try:
+                        dialog.close()
+                    except Exception:
+                        loop.quit()
+            try:
+                register_close(_force_close)
+            except Exception:
+                pass
         try:
             loop.run()
         except Exception:

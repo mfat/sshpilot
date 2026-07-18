@@ -136,9 +136,9 @@ class AskpassPromptServer:
         if not line:
             self._close(connection)
             return
-        self._handle_request(line, connection)
+        self._handle_request(line, connection, data_in)
 
-    def _handle_request(self, line, connection):
+    def _handle_request(self, line, connection, data_in=None):
         reply = {"ok": False}
         try:
             request = json.loads(line)
@@ -200,7 +200,35 @@ class AskpassPromptServer:
                     reply = {"ok": True, "value": value, "passphrase": value}
             elif req_type == "presence":
                 # Informational; dismiss returns "" (ok). Cancel → ok false.
-                if self._window.prompt_ssh_presence(prompt):
+                # OpenSSH SIGTERMs the helper once the key is touched; that
+                # closes its socket, so peer EOF here means "touch done" —
+                # auto-close the reminder instead of waiting for a click.
+                closer = [None]
+                if data_in is not None:
+                    def _peer_gone(stream, res, *_args):
+                        try:
+                            stream.read_line_finish_utf8(res)
+                        except Exception:
+                            pass
+                        close_dialog = closer[0]
+                        if close_dialog is not None:
+                            try:
+                                close_dialog()
+                            except Exception:
+                                pass
+
+                    try:
+                        data_in.read_line_async(
+                            GLib.PRIORITY_DEFAULT, None, _peer_gone, None
+                        )
+                    except Exception:
+                        pass
+                acknowledged = self._window.prompt_ssh_presence(
+                    prompt,
+                    register_close=lambda fn: closer.__setitem__(0, fn),
+                )
+                closer[0] = None
+                if acknowledged:
                     reply = {"ok": True, "value": ""}
             elif req_type == "confirm":
                 if self._window.prompt_ssh_confirm(prompt):
