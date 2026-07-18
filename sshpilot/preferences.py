@@ -1783,21 +1783,6 @@ class PreferencesWindow(Adw.Window):
             self.askpass_switch.connect('notify::active', self.on_use_askpass_changed)
             behavior_group.add(self.askpass_switch)
 
-            # Built-in passphrase prompt (only relevant when the askpass helper is on)
-            self.builtin_passphrase_prompt_switch = Adw.SwitchRow()
-            self.builtin_passphrase_prompt_switch.set_title("Use built-in passphrase prompt")
-            self.builtin_passphrase_prompt_switch.set_subtitle(
-                "When off, SSH and the system keyring handle key passphrase prompts"
-            )
-            self.builtin_passphrase_prompt_switch.set_active(
-                bool(self.config.get_setting('use-builtin-passphrase-prompt', False))
-            )
-            self.builtin_passphrase_prompt_switch.set_sensitive(askpass_on)
-            self.builtin_passphrase_prompt_switch.connect(
-                'notify::active', self.on_builtin_passphrase_prompt_changed
-            )
-            behavior_group.add(self.builtin_passphrase_prompt_switch)
-
             # Preload keys into ssh-agent on connect (uses the askpass helper to
             # unlock the key so a gnome-keyring-locked key can sign; the agent is
             # never disabled).
@@ -5378,12 +5363,6 @@ class PreferencesWindow(Adw.Window):
         logger.info(f"Confirm before disconnect setting changed to: {confirm}")
         self.config.set_setting('confirm-disconnect', confirm)
 
-    def on_builtin_passphrase_prompt_changed(self, switch, *args):
-        """Handle built-in passphrase prompt setting change"""
-        enabled = switch.get_active()
-        logger.info(f"Use built-in passphrase prompt setting changed to: {enabled}")
-        self.config.set_setting('use-builtin-passphrase-prompt', enabled)
-
     def on_agent_preload_changed(self, switch, *args):
         """Handle 'preload keys into ssh-agent' setting change"""
         enabled = switch.get_active()
@@ -5395,9 +5374,7 @@ class PreferencesWindow(Adw.Window):
         enabled = switch.get_active()
         logger.info(f"Use SSH askpass helper setting changed to: {enabled}")
         self.config.set_setting('use-askpass', enabled)
-        # The built-in prompt and agent preload both rely on the askpass helper.
-        if hasattr(self, 'builtin_passphrase_prompt_switch'):
-            self.builtin_passphrase_prompt_switch.set_sensitive(enabled)
+        # Agent preload relies on the askpass helper for passphrase autofill.
         if hasattr(self, 'agent_preload_switch'):
             self.agent_preload_switch.set_sensitive(enabled)
 

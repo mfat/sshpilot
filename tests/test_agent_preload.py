@@ -182,26 +182,8 @@ def test_preload_skipped_when_setting_disabled(monkeypatch):
     assert added == []
 
 
-def test_builtin_passphrase_prompt_defaults_off(monkeypatch):
-    from sshpilot import askpass_utils
-
-    # Simulate the setting being unset: _read_app_setting returns the default.
-    monkeypatch.setattr(
-        askpass_utils, '_read_app_setting', lambda key, default: default
-    )
-    assert askpass_utils._builtin_passphrase_prompt_enabled() is False
-
-    # Explicitly enabled → True.
-    monkeypatch.setattr(
-        askpass_utils, '_read_app_setting',
-        lambda key, default: True if key == 'use-builtin-passphrase-prompt' else default,
-    )
-    assert askpass_utils._builtin_passphrase_prompt_enabled() is True
-
-
 def test_askpass_autofill_stays_enabled_by_default(monkeypatch):
-    # The master askpass/autofill switch must remain on by default — only the
-    # built-in graphical prompt is off.
+    # The master askpass/autofill switch must remain on by default.
     from sshpilot import askpass_utils
 
     monkeypatch.setattr(

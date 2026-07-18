@@ -363,188 +363,6 @@ def _askpass_enabled() -> bool:
     return bool(_read_app_setting("use-askpass", True))
 
 
-def _builtin_passphrase_prompt_enabled() -> bool:
-    """Whether the built-in GUI passphrase prompt is enabled (default False).
-
-    Off by default: keyring autofill still works (it's resolved before this
-    gate), and for a key with no stored passphrase we defer to SSH / the OS /
-    ssh-agent to prompt naturally rather than showing our own dialog.
-    """
-    return bool(_read_app_setting("use-builtin-passphrase-prompt", False))
-
-
-def _run_askpass_dialog(key_path: str, log_fn) -> "str | None":
-    """Show a GTK4/Adwaita passphrase dialog. Returns the passphrase string, or
-    None on cancel. Built from non-deprecated Adwaita widgets (an Adw.Window with
-    a header bar and a boxed-list Adw.PasswordEntryRow)."""
-    import json
-
-    try:
-        import gi
-        gi.require_version('Gtk', '4.0')
-        gi.require_version('Adw', '1')
-        gi.require_version('Gio', '2.0')
-        gi.require_version('Gdk', '4.0')
-        gi.require_version('GLib', '2.0')
-        from gi.repository import Gtk, Adw, GLib, Gio, Gdk
-    except Exception as exc:
-        log_fn(f"ASKPASS: GTK not available: {exc}")
-        return None
-
-    log_fn("ASKPASS: No stored passphrase found, showing GUI dialog")
-
-    passphrase_result = [None]
-    Adw.init()
-
-    app = Adw.Application.new("io.github.mfat.sshpilot.askpass", Gio.ApplicationFlags.NON_UNIQUE)
-
-    def on_activate(app):
-        try:
-            try:
-                config_dir = os.path.join(GLib.get_user_config_dir(), "sshpilot")
-            except Exception:
-                config_dir = os.path.join(os.path.expanduser("~"), ".config", "sshpilot")
-            config_file = os.path.join(config_dir, "config.json")
-            saved_theme = "default"
-            if os.path.exists(config_file):
-                try:
-                    with open(config_file) as f:
-                        saved_theme = str(json.load(f).get("app-theme", "default"))
-                except Exception:
-                    pass
-            style_manager = Adw.StyleManager.get_default()
-            if saved_theme == "light":
-                style_manager.set_color_scheme(Adw.ColorScheme.FORCE_LIGHT)
-            elif saved_theme == "dark":
-                style_manager.set_color_scheme(Adw.ColorScheme.FORCE_DARK)
-            else:
-                style_manager.set_color_scheme(Adw.ColorScheme.DEFAULT)
-        except Exception:
-            pass
-
-        key_name = os.path.basename(key_path) if key_path else "key"
-
-        # Adwaita-styled prompt: a window whose header bar carries the
-        # Cancel/Unlock actions, with the passphrase in a boxed-list row.
-        window = Adw.ApplicationWindow(application=app)
-        window.set_title("Passphrase Required")
-        window.set_resizable(False)
-        window.set_default_size(400, -1)
-
-        done = [False]
-
-        # ── widgets ───────────────────────────────────────────────────────
-        password_row = Adw.PasswordEntryRow()
-        password_row.set_title("Passphrase")
-
-        store_row = Adw.SwitchRow()
-        store_row.set_title("Store passphrase")
-        store_row.set_active(False)
-
-        persists_secrets = True
-        try:
-            from .secret_storage import get_secret_manager
-            persists_secrets = get_secret_manager().persists_secrets()
-        except Exception:
-            persists_secrets = True
-
-        cancel_btn = Gtk.Button(label="Cancel")
-        ok_btn = Gtk.Button(label="Unlock")
-        ok_btn.add_css_class("suggested-action")
-
-        # ── behaviour ─────────────────────────────────────────────────────
-        def _record_and_quit(ok: bool):
-            if done[0]:
-                return
-            done[0] = True
-            if ok:
-                passphrase_result[0] = password_row.get_text()
-                if store_row.get_active() and key_path and passphrase_result[0]:
-                    try:
-                        store_passphrase(key_path, passphrase_result[0])
-                    except Exception:
-                        pass
-            try:
-                app.quit()
-            except Exception:
-                pass
-
-        cancel_btn.connect("clicked", lambda _b: _record_and_quit(False))
-        ok_btn.connect("clicked", lambda _b: _record_and_quit(True))
-        window.set_default_widget(ok_btn)
-
-        # ── layout ────────────────────────────────────────────────────────
-        header = Adw.HeaderBar()
-        header.set_show_start_title_buttons(False)
-        header.set_show_end_title_buttons(False)
-        header.pack_start(cancel_btn)
-        header.pack_end(ok_btn)
-
-        body_label = Gtk.Label(label=f"Enter the passphrase for key “{key_name}”.")
-        body_label.set_wrap(True)
-        body_label.set_xalign(0.0)
-        body_label.add_css_class("dim-label")
-
-        group = Adw.PreferencesGroup()
-        group.add(password_row)
-        if persists_secrets:
-            group.add(store_row)
-        else:
-            no_store = Gtk.Label(
-                label=(
-                    "Secret storage is set to SSH Agent Only — passphrases are not "
-                    "saved by sshPilot."
-                ),
-            )
-            no_store.set_wrap(True)
-            no_store.set_xalign(0.0)
-            no_store.add_css_class("dim-label")
-            group.add(no_store)
-
-        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18)
-        content.set_margin_top(18)
-        content.set_margin_bottom(24)
-        content.set_margin_start(18)
-        content.set_margin_end(18)
-        content.append(body_label)
-        content.append(group)
-
-        toolbar = Adw.ToolbarView()
-        toolbar.add_top_bar(header)
-        toolbar.set_content(content)
-        window.set_content(toolbar)
-
-        # ── dismissal: window close, Escape, Enter ────────────────────────
-        def _on_close_request(_w):
-            if not done[0]:
-                done[0] = True
-            return False
-
-        window.connect("close-request", _on_close_request)
-
-        key_controller = Gtk.EventControllerKey()
-        key_controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
-
-        def _on_key(_ctrl, keyval, _keycode, _state):
-            if keyval == Gdk.KEY_Escape:
-                _record_and_quit(False)
-                return True
-            if keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
-                _record_and_quit(True)
-                return True
-            return False
-
-        key_controller.connect("key-pressed", _on_key)
-        window.add_controller(key_controller)
-
-        window.present()
-        password_row.grab_focus()
-
-    app.connect("activate", on_activate)
-    app.run(None)
-    return passphrase_result[0]
-
-
 def _ask_main_app(request: dict, log_fn, *, ok_key: str = "passphrase") -> "tuple[bool, str | None]":
     """Send a JSON request to the main-app askpass socket.
 
@@ -600,17 +418,6 @@ def _ask_main_app(request: dict, log_fn, *, ok_key: str = "passphrase") -> "tupl
         return (False, None)
     log_fn("ASKPASS: prompt cancelled in main-app dialog")
     return (True, None)
-
-
-def _route_passphrase_to_main_app(
-    key_path: str, prompt: str, log_fn
-) -> "tuple[bool, str | None]":
-    """Ask the running main app to show the passphrase prompt in-process."""
-    return _ask_main_app(
-        {"type": "passphrase", "key_path": key_path, "prompt": prompt},
-        log_fn,
-        ok_key="passphrase",
-    )
 
 
 def _route_challenge_to_main_app(
@@ -1162,28 +969,10 @@ def handle_askpass_cli(prompt: str) -> "str | None":
             _log("ASKPASS: Returning passphrase to caller")
             return value
 
-    # Fall back to the built-in GUI dialog, unless the user has turned it off in
-    # settings — in that case defer to SSH / the system keyring prompt.
-    if not _builtin_passphrase_prompt_enabled():
-        _log("ASKPASS: built-in passphrase prompt disabled; deferring to system/SSH")
-        return None
-
-    # Prefer routing the prompt to the running main app so it renders as a modal
-    # child of the main window (avoids the prompt hiding behind it on Wayland).
-    handled, routed = _route_passphrase_to_main_app(key_path, prompt, _log)
-    if handled:
-        if routed is not None:
-            return routed
-        _log("ASKPASS: user cancelled main-app dialog, exiting with code 1")
-        return None
-
-    # Main app not reachable: show our own standalone window as before.
-    passphrase = _run_askpass_dialog(key_path, _log)
-    if passphrase is not None:
-        _log("ASKPASS: User entered passphrase in GUI dialog")
-        return passphrase
-
-    _log("ASKPASS: No passphrase found, exiting with code 1")
+    # No stored passphrase — defer to SSH / the OS / ssh-agent (TTY or system
+    # prompt). Login-password and MFA prompts use the graphical askpass path
+    # above; unstored key passphrases do not.
+    _log("ASKPASS: No stored passphrase; deferring to system/SSH")
     return None
 
 

@@ -217,12 +217,11 @@ See also **askpass mechanics (passphrases and login passwords)** below.
 - ssh invokes our helper (`handle_askpass_cli`): passphrase →
   `lookup_passphrase`; login password → session file / `lookup_ssh_password`;
   OTP/PIN → user dialog; `PROMPT=none` → touch reminder (no entry).
-  Unstored passphrase may show the builtin GTK dialog when
-  `use-builtin-passphrase-prompt` is on (off by default). Helper output is
-  streamed into the app log by the askpass log forwarder.
-- The `use-askpass` setting (master, default on) and
-  `use-builtin-passphrase-prompt` (sub-option, default off) gate this; with
-  askpass off, ssh prompts natively on the TTY.
+  Unstored key passphrases return nothing so SSH / the OS / ssh-agent can
+  prompt; login-password and MFA prompts use the graphical askpass dialogs.
+  Helper output is streamed into the app log by the askpass log forwarder.
+- The `use-askpass` setting (default on) gates askpass wiring; with askpass
+  off, ssh prompts natively on the TTY.
 
 ### In-app password & passphrase dialogs (GUI)
 

@@ -1,23 +1,18 @@
-"""In-process passphrase-prompt IPC server.
+"""In-process askpass IPC server (graphical prompts + warm vault lookup).
 
-The SSH key passphrase prompt is normally rendered by a separate askpass helper
-process that ssh spawns via ``SSH_ASKPASS``. On Wayland that helper window — a
-different app's top-level — can map *behind* the focused main window and be hard
-to find.
-
-This module lets the helper hand the prompt back to the running main process over
-a private Unix socket, so the prompt is shown as a modal child of the main window
-(reusing ``MainWindow.prompt_ssh_passphrase``) and reliably appears on top. If
-the main app is not running or the socket is unreachable, the helper falls back
-to its own standalone window, so there is no regression.
+The askpass helper ssh spawns via ``SSH_ASKPASS`` routes interactive prompts
+(login password, MFA/OTP, FIDO presence, confirm) back to the running main
+process over a private Unix socket so they appear as modal children of the
+main window (Wayland-safe). Unstored key passphrases are not prompted here —
+askpass defers those to SSH / the OS / ssh-agent after vault autofill misses.
 
 Protocol (newline-delimited JSON over ``AF_UNIX``):
   prompt request (helper -> app):
-    {"token", "type": "passphrase"|"challenge"|"password", ...}
+    {"token", "type": "password"|"challenge"|"presence"|"confirm"|"passphrase", ...}
   prompt reply   (app -> helper):
     {"ok": true,  "passphrase"|"value": "..."}   user entered a secret
     {"ok": false}                                 user cancelled (no fallback)
-    {"ok": false, "fallback": true}               app can't prompt now -> standalone
+    {"ok": false, "fallback": true}               app can't prompt now -> helper dialog
 
   lookup request (helper -> app): {"token", "type": "lookup", "key_path"}
   lookup reply   (app -> helper):
