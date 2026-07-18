@@ -106,6 +106,41 @@ def test_no_staging_when_backend_serves_password(monkeypatch):
     os.unlink(staged)
 
 
+def test_autofill_only_mode_never_shows_ui(monkeypatch):
+    monkeypatch.setenv("SSHPILOT_ASKPASS_AUTOFILL_ONLY", "1")
+    monkeypatch.delenv("SSH_ASKPASS_PROMPT", raising=False)
+    monkeypatch.delenv("SSHPILOT_SESSION_PASSWORD_FILE", raising=False)
+    monkeypatch.setenv("SSHPILOT_PASSWORD_USER", "alice")
+    monkeypatch.setenv("SSHPILOT_PASSWORD_HOSTS", "example.com")
+
+    def _boom(*_a, **_k):
+        raise AssertionError("UI must not be reached in autofill-only mode")
+
+    for name in (
+        "_route_challenge_to_main_app",
+        "_route_password_to_main_app",
+        "_route_presence_to_main_app",
+        "_run_challenge_dialog",
+        "_run_presence_dialog",
+    ):
+        monkeypatch.setattr(f"sshpilot.askpass_utils.{name}", _boom)
+
+    # Stored password → silent autofill.
+    monkeypatch.setattr(
+        "sshpilot.askpass_utils.lookup_ssh_password",
+        lambda host, user: "vaulted" if user == "alice" else "",
+    )
+    assert handle_askpass_cli("alice@example.com's password:") == "vaulted"
+
+    # Nothing stored → silent decline (no dialog).
+    monkeypatch.setattr(
+        "sshpilot.askpass_utils.lookup_ssh_password", lambda *_: ""
+    )
+    assert handle_askpass_cli("alice@example.com's password:") is None
+    assert handle_askpass_cli("Verification code:") is None
+    assert handle_askpass_cli("Touch your security key") is None
+
+
 def _serve_one_reply(tmp_path, reply_json):
     """One-shot Unix-socket server standing in for the main-app askpass IPC."""
     import socket

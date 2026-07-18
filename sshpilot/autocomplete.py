@@ -141,6 +141,9 @@ def fetch_remote_history(connection, connection_manager=None, config=None,
             prepared.env, connection,
             session_password=getattr(prepared, "password", None),
         )
+        # Passive fetch: autofill stored secrets, but never surprise the user
+        # with a password/OTP dialog from a background thread.
+        env["SSHPILOT_ASKPASS_AUTOFILL_ONLY"] = "1"
         result = subprocess.run(argv, env=env, capture_output=True, text=True,
                                 errors="replace", timeout=timeout, check=False)
         return result.stdout if result.returncode == 0 else None

@@ -857,6 +857,24 @@ def handle_askpass_cli(prompt: str) -> "str | None":
     hint = (os.environ.get("SSH_ASKPASS_PROMPT") or "").strip().lower()
     _log(f"ASKPASS called with prompt: {prompt!r} hint={hint!r}")
 
+    # Background/passive spawns (e.g. the autocomplete history fetch) set
+    # AUTOFILL_ONLY: answer silently from stored secrets, never show UI.
+    if (os.environ.get("SSHPILOT_ASKPASS_AUTOFILL_ONLY") or "").strip() == "1":
+        only_kind = classify_prompt(prompt)
+        lowered = prompt.lower()
+        if only_kind == 'password' or (
+                only_kind is None and "password" in lowered
+                and "passphrase" not in lowered):
+            value = _resolve_askpass_password(_log)
+            _log("ASKPASS: autofill-only mode; "
+                 + ("answered from store" if value else "no stored password, declining"))
+            return value
+        if only_kind != 'passphrase' and "passphrase" not in lowered:
+            _log("ASKPASS: autofill-only mode; declining interactive prompt")
+            return None
+        # Passphrases fall through: that path is already dialog-free
+        # (vault/session lookup, then defer to SSH/agent).
+
     # Official OpenSSH askpass UI hints (see readpass.c / notify_start).
     if hint == "none":
         _log("ASKPASS: SSH_ASKPASS_PROMPT=none (FIDO presence reminder)")
