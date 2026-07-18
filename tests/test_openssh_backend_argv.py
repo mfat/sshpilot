@@ -42,7 +42,9 @@ def test_build_argv_requests_sftp_subsystem(monkeypatch):
     ctx = captured["ctx"]
     # The SFTP subsystem is requested via `-s` (option, before host) + the
     # subsystem name "sftp" (remote command, after host) → `ssh … -s host sftp`.
-    assert ctx.command_type == "ssh"
+    # command_type is "sftp" so the builder applies NumberOfPasswordPrompts=1
+    # (one-shot askpass) while still spawning `ssh -s … sftp`.
+    assert ctx.command_type == "sftp"
     assert ctx.extra_args[0] == "-s"
     assert ctx.remote_command == "sftp"
     assert ctx.native_mode is True
