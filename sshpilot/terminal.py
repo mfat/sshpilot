@@ -1877,9 +1877,16 @@ class TerminalWidget(Gtk.Box):
             # saved password is almost certainly the culprit — say so, so the user
             # knows to fix it instead of staring at a generic message. (Not for the
             # "too many authentication failures" case, which is about offered keys.)
+            # But a saved password is only "supplied" when ssh actually asked for
+            # one: ssh's final denial lists the methods the server accepts, and
+            # "Permission denied (publickey)" means no password prompt ever fired
+            # (wrong key, cancelled MFA, …) — don't blame the saved password then.
             if getattr(self, '_used_stored_password', False) \
                     and ('permission denied' in msg or 'authentication failed' in msg):
-                return ConnectionState.FAILED, 'Saved password rejected'
+                methods = re.search(r'permission denied \(([^)]*)\)', msg)
+                if methods is None or 'password' in methods.group(1) \
+                        or 'keyboard-interactive' in methods.group(1):
+                    return ConnectionState.FAILED, 'Saved password rejected'
             return ConnectionState.FAILED, 'Authentication failed'
         if 'connection refused' in msg:
             return ConnectionState.FAILED, 'Connection refused'

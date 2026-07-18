@@ -38,6 +38,28 @@ def test_generic_auth_failed_without_stored_password():
     assert reason == "Authentication failed"
 
 
+def test_pubkey_only_denial_not_blamed_on_saved_password():
+    # Key-auth host with a saved password: "(publickey)" means no password
+    # prompt ever fired — the saved password cannot be the culprit.
+    t = _term(used_stored_password=True)
+    state, reason = t._classify_exit(
+        255, was_connected=False,
+        extra_text="alice@host: Permission denied (publickey).",
+    )
+    assert state == ConnectionState.FAILED
+    assert reason == "Authentication failed"
+
+
+def test_password_method_denial_blamed_on_saved_password():
+    t = _term(used_stored_password=True)
+    state, reason = t._classify_exit(
+        255, was_connected=False,
+        extra_text="alice@host: Permission denied (publickey,password).",
+    )
+    assert state == ConnectionState.FAILED
+    assert reason == "Saved password rejected"
+
+
 def test_too_many_failures_not_attributed_to_password():
     # "too many authentication failures" is about offered keys, not the password.
     t = _term(used_stored_password=True)
