@@ -371,6 +371,15 @@ class ScpWindowController:
             dialog = Adw.Window()
             dialog.set_transient_for(self.window)
             dialog.set_modal(True)
+            # Register with the app so routed askpass prompts can find this
+            # modal window as their parent (a bare Adw.Window is absent from
+            # Gtk.Application.get_windows() and get_active_window()).
+            try:
+                app = self.window.get_application()
+                if app is not None:
+                    dialog.set_application(app)
+            except Exception:
+                pass
             try:
                 dialog.set_default_size(480, 420)
             except Exception:
@@ -1033,6 +1042,14 @@ class ScpWindowController:
             dlg = Adw.Window()
             dlg.set_transient_for(self.window)
             dlg.set_modal(True)
+            # Register with the app so routed askpass prompts (passphrase /
+            # password) parent to this modal window instead of hiding behind it.
+            try:
+                app = self.window.get_application()
+                if app is not None:
+                    dlg.set_application(app)
+            except Exception:
+                pass
             try:
                 dlg.set_title(title_text)
             except Exception:
