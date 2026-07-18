@@ -15,7 +15,7 @@ Architecture**. The essentials:
   feature that connects, runs a remote command, copies a key, or transfers a
   file uses the existing entry points: `Connection.native_connect()` →
   `build_ssh_connection()` to connect, and `resolve_native_auth()` for auth
-  (askpass/keyring or sshpass). For external-process commands use
+  (askpass/keyring). For external-process commands use
   `build_native_command()`; for explicit raw-host commands (SCP) use
   `_build_base_ssh_command()` + `resolve_native_auth()`. Do **not** hand-roll a
   new `ssh`/`scp` command builder or a new auth env anywhere. If an existing

@@ -3,7 +3,7 @@
 Drives a single persistent ``ssh -F <config> <host> -s sftp`` subprocess (built
 via the app's native command/auth path) and speaks the SFTP v3 wire protocol
 over its pipes. No paramiko: OpenSSH owns transport, ``~/.ssh/config``,
-ProxyJump, host keys, and askpass/sshpass auth.
+ProxyJump, host keys, and askpass auth.
 
 ``OpenSSHSFTPManager`` matches the public contract of
 ``AsyncSFTPManager`` (same GObject signals, constructor, and methods) so the
@@ -436,7 +436,6 @@ class OpenSSHSFTPManager(GObject.GObject):
         self._listdir_seq = 0  # generation guard for background count passes
         self._client: Optional[OpenSSHSFTPClient] = None
         self._proc: Optional[subprocess.Popen] = None
-        self._sshpass_cleanup: Optional[Callable[[], None]] = None
         self._closed = False  # set by close(); blocks in-flight connect resurrection
         self._home: Optional[str] = None
         self._stderr_lines: "deque[str]" = deque(maxlen=200)
@@ -535,7 +534,7 @@ class OpenSSHSFTPManager(GObject.GObject):
         remote_command: str = "sftp",
         extra_args: Tuple[str, ...] = ("-s",),
         use_mux: bool = True,
-    ) -> Tuple[List[str], Dict[str, str], Optional[Callable[[], None]]]:
+    ) -> Tuple[List[str], Dict[str, str]]:
         from ..ssh_connection_builder import (
             ConnectionContext,
             apply_headless_askpass_env,
@@ -585,8 +584,7 @@ class OpenSSHSFTPManager(GObject.GObject):
             self._connection,
             session_password=getattr(prepared, "password", None) or self._password,
         )
-        cleanup: Optional[Callable[[], None]] = None
-        return argv, env, cleanup
+        return argv, env
 
     @property
     def host(self) -> str:
@@ -607,8 +605,7 @@ class OpenSSHSFTPManager(GObject.GObject):
         safe (no text decoding of stdout). Returns
         ``(exit_code, stdout_bytes, stderr_text)``; ``exit_code == -1`` means it
         could not be launched. **Blocking** — call via :meth:`run_command_async`."""
-        argv, env, cleanup = self._build_argv(
-            remote_command=command, extra_args=())
+        argv, env = self._build_argv(remote_command=command, extra_args=())
         try:
             proc = subprocess.run(
                 argv, env=env, input=input, capture_output=True, timeout=timeout)
@@ -618,9 +615,6 @@ class OpenSSHSFTPManager(GObject.GObject):
             return -1, b"", "Command timed out"
         except Exception as exc:  # noqa: BLE001 — surface as a failed result
             return -1, b"", str(exc)
-        finally:
-            if cleanup is not None:
-                cleanup()
 
     def run_command_async(
         self, command: str, *, input: Optional[bytes] = None, timeout: float = 30
@@ -656,7 +650,7 @@ class OpenSSHSFTPManager(GObject.GObject):
 
     def _connect_attempt(self, *, use_mux: bool = True) -> None:
         self._read_keepalive_config()
-        argv, env, cleanup = self._build_argv(use_mux=use_mux)
+        argv, env = self._build_argv(use_mux=use_mux)
         logger.debug("OpenSSH SFTP backend launching: %s", " ".join(argv))
         proc = subprocess.Popen(
             argv,
@@ -670,18 +664,15 @@ class OpenSSHSFTPManager(GObject.GObject):
         # Drain stderr continuously so verbose ssh output can't fill the pipe
         # buffer and block the ssh process mid-session.
         self._start_stderr_drain(proc)
-        # Publish proc + cleanup BEFORE the (blocking) handshake so a concurrent
+        # Publish proc BEFORE the (blocking) handshake so a concurrent
         # close() — e.g. app quit against a dead host — can terminate ssh and EOF
         # its stdout, unblocking client.start() on this worker thread instead of
         # hanging until ssh's ConnectTimeout fires.
         with self._lock:
             if self._closed:
                 self._terminate_proc(proc)
-                if cleanup is not None:
-                    cleanup()
                 return
             self._proc = proc
-            self._sshpass_cleanup = cleanup
         # On client.close() terminate the ssh subprocess so its stdout EOFs and
         # the reader thread unblocks cleanly (no fd surgery).
         client = OpenSSHSFTPClient(
@@ -709,12 +700,9 @@ class OpenSSHSFTPManager(GObject.GObject):
                 proc.wait(timeout=self._connect_timeout())
             except Exception:  # pragma: no cover - defensive
                 proc.kill()
-            if cleanup is not None:
-                cleanup()
             with self._lock:
                 if self._proc is proc:
                     self._proc = None
-                    self._sshpass_cleanup = None
             raise self._classify_handshake_failure(
                 self._drained_stderr(), exc, timed_out=timed_out.is_set()
             ) from exc
@@ -726,8 +714,6 @@ class OpenSSHSFTPManager(GObject.GObject):
                 # close() ran during the handshake — it already terminated proc
                 # and dropped our refs. Don't resurrect a live connection.
                 self._terminate_proc(proc)
-                if cleanup is not None:
-                    cleanup()
                 return
             self._client = client
         try:
@@ -859,8 +845,7 @@ class OpenSSHSFTPManager(GObject.GObject):
     def _terminate_proc(proc: subprocess.Popen) -> None:
         """Stop the ssh subprocess (EOFs its pipes so the reader/stderr threads
         unblock). Kills the whole process group (spawned with
-        ``start_new_session=True``) so an sshpass→ssh chain dies together.
-        Idempotent and quiet."""
+        ``start_new_session=True``). Idempotent and quiet."""
         if proc is None:
             return
         try:
@@ -879,10 +864,8 @@ class OpenSSHSFTPManager(GObject.GObject):
             self._closed = True
             client = self._client
             proc = self._proc
-            cleanup = self._sshpass_cleanup
             self._client = None
             self._proc = None
-            self._sshpass_cleanup = None
         # Terminate the subprocess first so the reader/stderr threads EOF and
         # stop, then close the client (joins the reader) — no fd surgery.
         self._terminate_proc(proc)
@@ -908,11 +891,6 @@ class OpenSSHSFTPManager(GObject.GObject):
                         stream.close()
                 except Exception:  # pragma: no cover - best effort
                     pass
-        if cleanup is not None:
-            try:
-                cleanup()
-            except Exception:  # pragma: no cover - best effort
-                pass
         try:
             self._executor.shutdown(wait=False)
         except Exception as exc:  # pragma: no cover - best effort
