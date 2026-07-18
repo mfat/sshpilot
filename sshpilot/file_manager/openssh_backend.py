@@ -16,6 +16,7 @@ import errno
 import logging
 import os
 import pathlib
+import signal
 import subprocess
 import threading
 import time
@@ -533,6 +534,7 @@ class OpenSSHSFTPManager(GObject.GObject):
         *,
         remote_command: str = "sftp",
         extra_args: Tuple[str, ...] = ("-s",),
+        use_mux: bool = True,
     ) -> Tuple[List[str], Dict[str, str], Optional[Callable[[], None]]]:
         from ..ssh_connection_builder import ConnectionContext, build_ssh_connection
 
@@ -552,18 +554,35 @@ class OpenSSHSFTPManager(GObject.GObject):
             except Exception:  # pragma: no cover - defensive
                 pass
 
+        args = list(extra_args)  # e.g. ["-s"] to request a subsystem "sftp"
+        if use_mux:
+            # Ride a live ControlMaster socket when one exists (established by
+            # a MasterSession or a multiplexed terminal). ControlMaster is left
+            # at its default "no", so a dead/missing socket silently falls back
+            # to a direct connection — this PTY-less worker never becomes the
+            # master itself.
+            from .. import ssh_multiplex
+
+            args.extend(["-o", f"ControlPath={ssh_multiplex.control_path()}"])
         ctx = ConnectionContext(
             connection=self._connection,
             connection_manager=self._connection_manager,
             config=app_config,
             command_type="ssh",
             native_mode=True,
-            extra_args=list(extra_args),  # e.g. ["-s"] to request a subsystem...
-            remote_command=remote_command,  # ...named "sftp" (after the host)
+            extra_args=args,
+            remote_command=remote_command,  # appended after the host
         )
         prepared = build_ssh_connection(ctx)
         argv = list(prepared.command)
         env = {**os.environ, **(prepared.env or {})}
+        # The auth resolver clears askpass/agent vars by *removing* them from
+        # its env copy — a plain merge with os.environ resurrects them (e.g. a
+        # desktop ksshaskpass would hijack the PTY-less worker's prompts).
+        # Honor the deletions, same as scp_utils._apply_native_auth_env.
+        for key in ("SSH_ASKPASS", "SSH_ASKPASS_REQUIRE", "SSH_AUTH_SOCK"):
+            if key not in (prepared.env or {}):
+                env.pop(key, None)
         cleanup: Optional[Callable[[], None]] = None
         if prepared.use_sshpass and prepared.password:
             from ..ssh_password_exec import wrap_argv_with_sshpass
@@ -614,8 +633,32 @@ class OpenSSHSFTPManager(GObject.GObject):
             self.run_command, command, input=input, timeout=timeout)
 
     def _connect_impl(self) -> None:
+        try:
+            self._connect_attempt(use_mux=True)
+        except Exception:
+            # A live master socket whose server refuses the extra channel
+            # (MaxSessions exhausted, sshd multiplexing disabled) makes ssh
+            # exit instead of falling back — retry once with a plain direct
+            # connection. Missing/stale sockets never hit this: with
+            # ControlMaster=no semantics ssh falls back silently.
+            if self._stderr_mentions_mux_refusal():
+                logger.info(
+                    "SFTP mux channel refused; retrying with a direct connection"
+                )
+                self._connect_attempt(use_mux=False)
+            else:
+                raise
+
+    def _stderr_mentions_mux_refusal(self) -> bool:
+        text = "\n".join(self._stderr_lines).lower()
+        return (
+            "mux_client_request_session" in text
+            or "session request failed" in text
+        )
+
+    def _connect_attempt(self, *, use_mux: bool = True) -> None:
         self._read_keepalive_config()
-        argv, env, cleanup = self._build_argv()
+        argv, env, cleanup = self._build_argv(use_mux=use_mux)
         logger.debug("OpenSSH SFTP backend launching: %s", " ".join(argv))
         proc = subprocess.Popen(
             argv,
@@ -624,6 +667,7 @@ class OpenSSHSFTPManager(GObject.GObject):
             stderr=subprocess.PIPE,
             env=env,
             bufsize=0,
+            start_new_session=True,
         )
         # Drain stderr continuously so verbose ssh output can't fill the pipe
         # buffer and block the ssh process mid-session.
@@ -645,6 +689,19 @@ class OpenSSHSFTPManager(GObject.GObject):
         client = OpenSSHSFTPClient(
             proc.stdin, proc.stdout, on_close=lambda: self._terminate_proc(proc)
         )
+        # Watchdog: an ssh stalled at a prompt it cannot answer (no PTY) never
+        # completes the handshake and never exits — bound the wait so it
+        # becomes a classifiable error instead of a hang until the server's
+        # LoginGraceTime. Terminating ssh EOFs stdout, which unblocks start().
+        timed_out = threading.Event()
+
+        def _watchdog_fire() -> None:
+            timed_out.set()
+            self._terminate_proc(proc)
+
+        watchdog = threading.Timer(self._connect_timeout(), _watchdog_fire)
+        watchdog.daemon = True
+        watchdog.start()
         try:
             client.start()
         except Exception as exc:
@@ -660,7 +717,11 @@ class OpenSSHSFTPManager(GObject.GObject):
                 if self._proc is proc:
                     self._proc = None
                     self._sshpass_cleanup = None
-            raise self._classify_handshake_failure(self._drained_stderr(), exc) from exc
+            raise self._classify_handshake_failure(
+                self._drained_stderr(), exc, timed_out=timed_out.is_set()
+            ) from exc
+        finally:
+            watchdog.cancel()
 
         with self._lock:
             if self._closed:
@@ -701,7 +762,9 @@ class OpenSSHSFTPManager(GObject.GObject):
             self._stderr_thread.join(timeout=0.5)
         return "\n".join(self._stderr_lines).strip()
 
-    def _classify_handshake_failure(self, text: str, exc: Exception) -> Exception:
+    def _classify_handshake_failure(
+        self, text: str, exc: Exception, *, timed_out: bool = False
+    ) -> Exception:
         # With verbose logging on, ssh -v fills stderr with "debugN:" chatter;
         # the actual error is in the non-debug lines (e.g. "ssh: connect to
         # host … Connection timed out").
@@ -718,6 +781,12 @@ class OpenSSHSFTPManager(GObject.GObject):
         )
         if any(marker in lowered for marker in auth_failure_markers):
             return PermissionError(text or "Authentication failed")
+        if timed_out and not text:
+            # A stall at a prompt nobody can answer produces no stderr.
+            return OSError(
+                "Timed out waiting for the SFTP handshake — the server may "
+                "require interactive authentication"
+            )
         if text:
             from ..scp_utils import classify_sftp_error
 
@@ -791,12 +860,17 @@ class OpenSSHSFTPManager(GObject.GObject):
     @staticmethod
     def _terminate_proc(proc: subprocess.Popen) -> None:
         """Stop the ssh subprocess (EOFs its pipes so the reader/stderr threads
-        unblock). Idempotent and quiet."""
+        unblock). Kills the whole process group (spawned with
+        ``start_new_session=True``) so an sshpass→ssh chain dies together.
+        Idempotent and quiet."""
         if proc is None:
             return
         try:
             if proc.poll() is None:
-                proc.terminate()
+                try:
+                    os.killpg(proc.pid, signal.SIGTERM)
+                except (OSError, PermissionError):
+                    proc.terminate()
         except Exception:  # pragma: no cover - best effort
             pass
 
