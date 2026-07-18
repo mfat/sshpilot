@@ -420,6 +420,17 @@ def _ask_main_app(request: dict, log_fn, *, ok_key: str = "passphrase") -> "tupl
     return (True, None)
 
 
+def _route_passphrase_to_main_app(
+    key_path: str, prompt: str, log_fn
+) -> "tuple[bool, str | None]":
+    """Ask the running main app to show the passphrase prompt in-process."""
+    return _ask_main_app(
+        {"type": "passphrase", "key_path": key_path, "prompt": prompt},
+        log_fn,
+        ok_key="passphrase",
+    )
+
+
 def _route_challenge_to_main_app(
     prompt: str, log_fn
 ) -> "tuple[bool, str | None]":
@@ -969,10 +980,22 @@ def handle_askpass_cli(prompt: str) -> "str | None":
             _log("ASKPASS: Returning passphrase to caller")
             return value
 
-    # No stored passphrase — defer to SSH / the OS / ssh-agent (TTY or system
-    # prompt). Login-password and MFA prompts use the graphical askpass path
-    # above; unstored key passphrases do not.
-    _log("ASKPASS: No stored passphrase; deferring to system/SSH")
+    # No stored passphrase — same graphical path as login password (main-app
+    # modal with optional Store; standalone challenge dialog if IPC is down).
+    # prefer/force do not fall back to a useful TTY passphrase prompt.
+    _log("ASKPASS: no stored passphrase; asking user")
+    handled, routed = _route_passphrase_to_main_app(key_path, prompt, _log)
+    if handled:
+        if routed is not None:
+            _log("ASKPASS: Returning passphrase from main-app dialog")
+            return routed
+        _log("ASKPASS: user cancelled passphrase prompt")
+        return None
+    value = _run_challenge_dialog(prompt, _log)
+    if value is not None:
+        _log("ASKPASS: Returning passphrase from GUI dialog")
+        return value
+    _log("ASKPASS: No passphrase available; exiting with code 1")
     return None
 
 

@@ -251,17 +251,20 @@ def test_resolve_native_auth_key_mode_saved_passphrase_uses_askpass(monkeypatch)
     assert auth.env.get('SSH_ASKPASS')
 
 
-def test_resolve_native_auth_key_mode_nothing_saved_no_askpass(monkeypatch):
+def test_resolve_native_auth_key_mode_nothing_saved_still_askpass(monkeypatch):
+    # Unstored passphrase still uses askpass so the in-app GUI can prompt.
+    # Agent unlock for locked gcr keys is done on the terminal worker thread
+    # (Connection._preload_keys_into_agent), not here.
     import sshpilot.ssh_connection_builder as scb
     monkeypatch.setattr(scb, 'lookup_passphrase', lambda _p: '')
     monkeypatch.setattr(scb, '_get_stored_password', lambda _c, _m=None: None)
     conn = Connection({'host': 'h', 'hostname': 'h', 'auth_method': 0})
     conn.resolved_identity_files = ['/home/u/.ssh/k']
     auth = resolve_native_auth(conn)
-    assert auth.use_askpass is False
+    assert auth.use_askpass is True
     assert auth.use_sshpass is False
-    assert 'SSH_ASKPASS' not in auth.env
-    assert 'SSH_ASKPASS_REQUIRE' not in auth.env
+    assert auth.env.get('SSH_ASKPASS')
+    assert auth.env.get('SSH_ASKPASS_REQUIRE') == 'prefer'
 
 
 def test_resolve_native_auth_key_mode_probe_error_failsafe_askpass(monkeypatch):
@@ -369,12 +372,27 @@ def test_build_native_command_overrides_and_remote_command():
 # --- app config: batch mode + overrides ---
 
 
-def test_app_config_batch_mode_added_for_key_auth():
+def test_app_config_batch_mode_skipped_when_askpass_on():
+    # Key auth wires askpass by default; BatchMode would block passphrase/MFA prompts.
     cfg = _ConfigStub({'batch_mode': True})
-    cmd, _ = _build(
+    cmd, result = _build(
         {'host': 'appcfg.example', 'hostname': 'appcfg.example', 'auth_method': 0},
         config=cfg,
     )
+    assert result.use_askpass is True
+    assert not _has_o_option(cmd, 'BatchMode=yes')
+
+
+def test_app_config_batch_mode_added_when_askpass_disabled():
+    cfg = _ConfigStub(
+        {'batch_mode': True},
+        settings={'use-askpass': False},
+    )
+    cmd, result = _build(
+        {'host': 'batch.example', 'hostname': 'batch.example', 'auth_method': 0},
+        config=cfg,
+    )
+    assert result.use_askpass is False
     assert _has_o_option(cmd, 'BatchMode=yes')
 
 

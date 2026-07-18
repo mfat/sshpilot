@@ -82,8 +82,13 @@ Modes:
 - **Key-based** (`auth_method == 0`, auto or specific key — askpass enabled):
   - saved key passphrase → askpass autofills passphrase prompts; agent left intact.
   - saved password (and combined auth when the key is loaded into the agent) →
-    same askpass env also advertises login-password context; MFA stays on the TTY.
-  - nothing saved → no askpass; SSH prompts on the TTY.
+    same askpass env also advertises login-password context.
+  - nothing saved → askpass still on; unstored passphrase/password/MFA use the
+    graphical askpass dialogs. The terminal worker also force-unlocks configured
+    identity files into the agent (`Connection._preload_keys_into_agent` →
+    `ensure_key_in_agent(force=True)`) so a gcr/gnome-keyring *listed but locked*
+    key cannot block OpenSSH — that failure mode otherwise skips our askpass and
+    shows the system askpass (ksshaskpass) for password instead.
 - **Askpass disabled** (the `use-askpass` setting is off): set no `SSH_ASKPASS`;
   ssh prompts natively on the TTY.
 
@@ -217,8 +222,8 @@ See also **askpass mechanics (passphrases and login passwords)** below.
 - ssh invokes our helper (`handle_askpass_cli`): passphrase →
   `lookup_passphrase`; login password → session file / `lookup_ssh_password`;
   OTP/PIN → user dialog; `PROMPT=none` → touch reminder (no entry).
-  Unstored key passphrases return nothing so SSH / the OS / ssh-agent can
-  prompt; login-password and MFA prompts use the graphical askpass dialogs.
+  Unstored key passphrases and login passwords use the graphical askpass
+  dialogs (main-app modal via IPC, with optional Store for passphrase/password).
   Helper output is streamed into the app log by the askpass log forwarder.
 - The `use-askpass` setting (default on, no Preferences toggle) gates askpass
   wiring; with askpass off, ssh prompts natively on the TTY.

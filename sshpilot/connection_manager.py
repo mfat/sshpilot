@@ -537,15 +537,18 @@ class Connection:
             return False
 
     def _preload_keys_into_agent(self, app_config=None) -> None:
-        """Best-effort: load this host's on-disk key(s) into ssh-agent — but ONLY
-        keys whose passphrase the user has stored in the keyring. A stored
-        passphrase is the user's opt-in for silent agent auth; we then ``ssh-add``
-        the key (askpass autofills the passphrase) so a gnome-keyring-locked key
-        gets unlocked and can sign (the agent is never disabled).
+        """Best-effort: force-unlock this host's on-disk key(s) in ssh-agent.
 
-        Keys with NO stored passphrase are left untouched — we do NOT ``ssh-add``
-        them. That signals the user prefers SSH / the OS / ssh-agent to prompt
-        naturally, and avoids adding/unlocking a key they didn't ask us to.
+        gcr/gnome-keyring often *lists* a key in ``ssh-add -l`` while still
+        refusing to sign (locked). OpenSSH then will not fall back to the
+        on-disk file — it skips to password and the system askpass
+        (ksshaskpass) appears. Re-running ``ssh-add`` via
+        ``ensure_key_in_agent(force=True)`` decrypts the key client-side
+        (askpass autofills a stored passphrase, or shows our in-app GUI) and
+        hands an unlocked key to the agent. The agent is never disabled.
+
+        When askpass is disabled, skip keys with no stored passphrase so SSH
+        can prompt natively on the TTY instead.
 
         MUST be called from a thread where the GLib main loop is free (e.g. the
         terminal's connect worker thread). Never raises.
@@ -563,12 +566,14 @@ class Connection:
 
             preload = True
             lifetime = 0
+            askpass_enabled = True
             if cfg is not None and hasattr(cfg, 'get_setting'):
                 try:
                     preload = bool(cfg.get_setting('ssh.agent_preload_keys', True))
                     lifetime = int(cfg.get_setting('ssh.agent_preload_lifetime', 0) or 0)
+                    askpass_enabled = bool(cfg.get_setting('use-askpass', True))
                 except Exception:
-                    preload, lifetime = True, 0
+                    preload, lifetime, askpass_enabled = True, 0, True
             if not preload:
                 return
 
@@ -595,9 +600,9 @@ class Connection:
 
             for path in (candidates or []):
                 try:
-                    # Keyring-only: skip keys with no stored passphrase entirely
-                    # (no ssh-add) → user gets the natural OS/agent prompt.
-                    if not lookup_passphrase(path):
+                    # Without askpass, only silently unlock keys whose passphrase
+                    # is already stored — otherwise leave prompting to the TTY.
+                    if not askpass_enabled and not lookup_passphrase(path):
                         continue
                     ensure_key_in_agent(path, force=True, lifetime=lifetime)
                     logger.debug("Preloaded key into ssh-agent: %s", path)

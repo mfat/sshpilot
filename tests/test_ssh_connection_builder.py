@@ -96,9 +96,9 @@ def test_askpass_when_password_present_for_key_and_password_auth():
     assert result.password == 'secret'
 
 
-def test_key_auth_without_anything_saved_uses_native_prompts():
-    # Key auth, no saved passphrase and no saved password -> neither askpass nor
-    # sshpass; SSH prompts on the TTY (and can fall back to password naturally).
+def test_key_auth_without_anything_saved_uses_askpass():
+    # Key auth with nothing saved still wires askpass so an unstored passphrase
+    # can use the in-app graphical dialog.
     conn = Connection(
         {
             'host': 'example.com',
@@ -111,8 +111,9 @@ def test_key_auth_without_anything_saved_uses_native_prompts():
     result = build_ssh_connection(ConnectionContext(connection=conn))
     assert result.use_sshpass is False
     assert result.password is None
-    assert result.use_askpass is False
-    assert 'SSH_ASKPASS' not in result.env
+    assert result.use_askpass is True
+    assert result.env.get('SSH_ASKPASS')
+    assert result.env.get('SSH_ASKPASS_REQUIRE') == 'prefer'
 
 
 def _forwarding_conn():
