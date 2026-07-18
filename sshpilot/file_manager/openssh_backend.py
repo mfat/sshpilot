@@ -755,11 +755,9 @@ class OpenSSHSFTPManager(GObject.GObject):
         # With verbose logging on, ssh -v fills stderr with "debugN:" chatter;
         # the actual error is in the non-debug lines (e.g. "ssh: connect to
         # host … Connection timed out").
-        error_lines = [
-            line.strip() for line in (text or "").splitlines()
-            if line.strip() and not line.lstrip().startswith("debug")
-        ]
-        text = "\n".join(error_lines)
+        from ..ssh_utils import clean_ssh_stderr
+
+        text = clean_ssh_stderr(text)
         lowered = text.lower()
         auth_failure_markers = (
             "permission denied",

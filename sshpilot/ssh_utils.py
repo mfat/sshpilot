@@ -28,6 +28,19 @@ def is_ssh_auth_failure_text(text: str) -> bool:
     return any(marker in lowered for marker in _SSH_AUTH_FAILURE_MARKERS)
 
 
+def clean_ssh_stderr(text: str) -> str:
+    """Drop ``ssh -v`` ``debug`` chatter, leaving the human-meaningful lines.
+
+    With verbose logging on, ssh floods stderr with ``debugN:`` lines; showing
+    that raw log in the UI is noise. Returns the stripped, joined remainder.
+    """
+    return "\n".join(
+        line.strip()
+        for line in (text or "").splitlines()
+        if line.strip() and not line.lstrip().startswith("debug")
+    ).strip()
+
+
 def ensure_writable_ssh_home(env: Dict[str, str]) -> None:
     """Ensure ssh-copy-id has a writable HOME when running in Flatpak."""
     if is_flatpak():

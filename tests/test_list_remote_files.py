@@ -89,6 +89,26 @@ def test_list_remote_files_extends_timeout_for_interactive_auth(monkeypatch):
     assert captured["timeout"] >= 180
 
 
+def test_summarize_listing_error_strips_log_and_friendlies_auth():
+    summ = window_mod._summarize_listing_error
+    # Cancelled prompt: verbose log + auth failure → clean friendly line.
+    raw = (
+        "debug1: Authenticating to host\n"
+        "debug1: Next authentication method: keyboard-interactive\n"
+        "root@host: Permission denied (keyboard-interactive).\n"
+    )
+    msg = summ(raw, "fallback")
+    assert "debug" not in msg
+    assert "cancel" in msg.lower()
+
+    # Non-auth error survives (minus debug chatter).
+    raw2 = "debug1: noise\nls: cannot access '/x': No such file or directory\n"
+    assert summ(raw2, "fallback") == "ls: cannot access '/x': No such file or directory"
+
+    # Only debug chatter → fallback.
+    assert summ("debug1: only\ndebug2: noise", "fallback") == "fallback"
+
+
 def test_list_remote_files_forces_askpass_when_resolver_omits_it(monkeypatch):
     monkeypatch.setattr(
         "sshpilot.ssh_connection_builder.build_ssh_connection",

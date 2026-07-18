@@ -147,6 +147,23 @@ def _ensure_tips_banner_css() -> None:
     _tips_banner_css_installed = True
 
 
+def _summarize_listing_error(raw_stderr: str, fallback: str) -> str:
+    """Turn raw ssh stderr into a concise message for the browse UI.
+
+    Strips ``ssh -v`` debug chatter (so the verbose log is never dumped into
+    the SCP browse window) and, when the remainder is an auth failure — e.g.
+    the user cancelled the password/OTP prompt — shows a clean line instead.
+    """
+    from .ssh_utils import clean_ssh_stderr, is_ssh_auth_failure_text
+
+    cleaned = clean_ssh_stderr(raw_stderr)
+    if not cleaned:
+        return fallback
+    if is_ssh_auth_failure_text(cleaned):
+        return _('Authentication failed or cancelled.')
+    return cleaned
+
+
 def list_remote_files(
     connection,
     remote_path: str,
@@ -234,8 +251,8 @@ def list_remote_files(
                            if line.startswith('__SSHPILOT_STATUS__')), None)
         if begin_idx is None or status_idx is None or status_idx < begin_idx:
             logger.warning('SCP: Unexpected remote listing output for %s', safe_path)
-            stderr = result.stderr.strip() or _('Unable to parse remote listing output.')
-            return [], stderr
+            return [], _summarize_listing_error(
+                result.stderr, _('Unable to parse remote listing output.'))
         try:
             status_line = stdout_lines[status_idx]
             status_code = int(status_line.replace('__SSHPILOT_STATUS__', '').strip() or '0')
@@ -244,7 +261,8 @@ def list_remote_files(
 
         listing_lines = stdout_lines[begin_idx + 1:status_idx]
         if status_code != 0:
-            stderr = result.stderr.strip() or _('Failed to list remote directory.')
+            stderr = _summarize_listing_error(
+                result.stderr, _('Failed to list remote directory.'))
             logger.warning('SCP: Remote list failed (%s): %s', safe_path, stderr)
             return [], stderr
         entries: List[Tuple[str, bool]] = []
