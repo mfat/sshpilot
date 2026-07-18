@@ -159,7 +159,7 @@ def list_remote_files(
 
     from .ssh_connection_builder import (
         ConnectionContext,
-        _askpass_env_for_connection,
+        apply_headless_askpass_env,
         build_ssh_connection,
     )
 
@@ -197,23 +197,11 @@ def list_remote_files(
                 native_mode=True,
             )
         )
-        env = {**os.environ, **(prepared.env or {})}
-        # Honor resolver deletions (don't resurrect desktop SSH_ASKPASS).
-        for key in ('SSH_ASKPASS', 'SSH_ASKPASS_REQUIRE', 'SSH_AUTH_SOCK'):
-            if key not in (prepared.env or {}):
-                env.pop(key, None)
-        # Headless listing has no TTY — force askpass prefer so password/MFA
-        # prompts can be collected graphically (same posture as MasterSession).
-        if not env.get('SSH_ASKPASS'):
-            env.update(
-                _askpass_env_for_connection(
-                    connection,
-                    session_password=getattr(prepared, 'password', None)
-                    or getattr(connection, 'password', None),
-                )
-            )
-        elif env.get('SSH_ASKPASS_REQUIRE') != 'prefer':
-            env['SSH_ASKPASS_REQUIRE'] = 'prefer'
+        env = apply_headless_askpass_env(
+            prepared.env,
+            connection,
+            session_password=getattr(prepared, 'password', None),
+        )
 
         result = subprocess.run(
             list(prepared.command),
@@ -6157,6 +6145,69 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             heading=_("Authentication Required"),
             body=body,
         )
+
+    def prompt_ssh_presence(self, prompt: str = "") -> bool:
+        """Show a FIDO/security-key touch reminder (no typed secret).
+
+        Used for ``SSH_ASKPASS_PROMPT=none``. Returns True when the user
+        dismisses with Close (reminder acknowledged); False on unexpected
+        failure. Touch itself happens on the hardware — this is only UI.
+        """
+        present_for_modal_dialog(self)
+        body = (prompt or "").strip() or _(
+            "Touch your security key to continue."
+        )
+        dialog = Adw.AlertDialog()
+        dialog.set_heading(_("Security Key"))
+        dialog.set_body(
+            body + "\n\n" + _("Touch your security key when it blinks.")
+        )
+        dialog.add_response("ok", _("Close"))
+        dialog.set_default_response("ok")
+        dialog.set_close_response("ok")
+        result = [True]
+
+        def _on_response(_d, _response):
+            loop.quit()
+
+        dialog.connect("response", _on_response)
+        loop = GLib.MainLoop()
+        dialog.present(self)
+        try:
+            loop.run()
+        except Exception:
+            result[0] = False
+        return result[0]
+
+    def prompt_ssh_confirm(self, prompt: str = "") -> bool:
+        """Yes/No confirm for ``SSH_ASKPASS_PROMPT=confirm`` (e.g. ssh-add -c)."""
+        present_for_modal_dialog(self)
+        dialog = Adw.AlertDialog()
+        dialog.set_heading(_("Confirm"))
+        dialog.set_body(
+            (prompt or "").strip() or _("Allow this key operation?")
+        )
+        dialog.add_response("cancel", _("Cancel"))
+        dialog.add_response("ok", _("Allow"))
+        dialog.set_response_appearance(
+            "ok", Adw.ResponseAppearance.SUGGESTED
+        )
+        dialog.set_default_response("ok")
+        dialog.set_close_response("cancel")
+        allowed = [False]
+
+        def _on_response(_d, response):
+            allowed[0] = response == "ok"
+            loop.quit()
+
+        dialog.connect("response", _on_response)
+        loop = GLib.MainLoop()
+        dialog.present(self)
+        try:
+            loop.run()
+        except Exception:
+            allowed[0] = False
+        return allowed[0]
 
     def prompt_ssh_password(
         self,

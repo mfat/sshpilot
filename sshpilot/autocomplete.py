@@ -119,12 +119,16 @@ class ShellHistoryProvider:
 def fetch_remote_history(connection, connection_manager=None, config=None,
                          timeout: float = 15) -> Optional[str]:
     """Read the remote host's ~/.bash_history + ~/.zsh_history over the app's
-    single SSH path (``build_ssh_connection`` + sshpass, same shape as the
-    plugin API's ``run_command``). **Blocking** — call from a worker thread.
-    Returns the raw file text, or None on any failure.
+    single SSH path (``build_ssh_connection`` + headless askpass, same shape
+    as the plugin API's ``run_command``). **Blocking** — call from a worker
+    thread. Returns the raw file text, or None on any failure.
     """
     import subprocess
-    from .ssh_connection_builder import ConnectionContext, build_ssh_connection
+    from .ssh_connection_builder import (
+        ConnectionContext,
+        apply_headless_askpass_env,
+        build_ssh_connection,
+    )
     try:
         ctx = ConnectionContext(
             connection=connection, connection_manager=connection_manager,
@@ -133,7 +137,10 @@ def fetch_remote_history(connection, connection_manager=None, config=None,
         )
         prepared = build_ssh_connection(ctx)
         argv = list(prepared.command)
-        env = {**os.environ, **(prepared.env or {})}
+        env = apply_headless_askpass_env(
+            prepared.env, connection,
+            session_password=getattr(prepared, "password", None),
+        )
         result = subprocess.run(argv, env=env, capture_output=True, text=True,
                                 errors="replace", timeout=timeout, check=False)
         return result.stdout if result.returncode == 0 else None

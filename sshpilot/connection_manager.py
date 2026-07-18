@@ -2702,7 +2702,7 @@ class ConnectionManager(GObject.Object):
             # so the next connect negotiates the new settings instead of
             # silently riding the old transport. Live sessions drain naturally.
             try:
-                from .ssh_master_session import invalidate_master
+                from .ssh_multiplex import invalidate_master
                 invalidate_master(connection, self)
             except Exception:
                 logger.debug("Master invalidation skipped", exc_info=True)

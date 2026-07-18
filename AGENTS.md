@@ -204,11 +204,19 @@ See also **askpass mechanics (passphrases and login passwords)** below.
   `GNOME_KEYRING_*` control vars cleared (so gnome-keyring doesn't intercept)
   while keeping D-Bus available for libsecret.
 - `require` is OpenSSH's `SSH_ASKPASS_REQUIRE`: `prefer` (default — use askpass
-  even when a TTY exists, OpenSSH ≥ 8.4; declined MFA prompts fall back to TTY),
-  `force`, or `never`.
+  even when a TTY exists, OpenSSH ≥ 8.4), `force`, or `never`.
+- OpenSSH may set `SSH_ASKPASS_PROMPT`: `none` (FIDO touch reminder), `confirm`
+  (yes/no), or unset (typed secret). **Presence usually skips askpass** when
+  stderr is a tty (`notify_start` writes to the TTY); VTE shows it. Headless
+  paths get presence via askpass (`PROMPT=none`).
+- Every SSH spawn with **no user-visible TTY** must use
+  `apply_headless_askpass_env()` (`ssh_connection_builder.py`) so secrets /
+  PIN / OTP / presence go through graphical askpass (`REQUIRE=prefer`).
+  Callers: SFTP file manager, SCP `list_remote_files`, plugin `run_command` /
+  stream / port-forward, remote history fetch.
 - ssh invokes our helper (`handle_askpass_cli`): passphrase →
   `lookup_passphrase`; login password → session file / `lookup_ssh_password`;
-  OTP/MFA → user dialog (main-app IPC or standalone; never vault autofill).
+  OTP/PIN → user dialog; `PROMPT=none` → touch reminder (no entry).
   Unstored passphrase may show the builtin GTK dialog when
   `use-builtin-passphrase-prompt` is on (off by default). Helper output is
   streamed into the app log by the askpass log forwarder.
@@ -301,20 +309,19 @@ as remote sudo prompts.)
 - **System / external terminal**: uses `build_native_command()` — a *plain*
   `ssh -F <config> <host>` with **no** in-app auth (`IdentityAgent`/askpass),
   because the external terminal supplies its own TTY and agent.
-- **SFTP file manager** (`file_manager/openssh_backend.py` +
-  `ssh_master_session.py`): master-first — `MasterSession` spawns `ssh -N` with
-  `resolve_native_auth` askpass env (`REQUIRE=prefer`) so password / passphrase /
-  OTP are all collected via askpass (no PTY-side prompt routing). Then the
-  PTY-less SFTP worker uses `build_ssh_connection()` + `resolve_native_auth()`
-  over `ssh -F <config> … -s <host> sftp` on the mux socket.
+- **SFTP file manager** (`file_manager/openssh_backend.py`): PTY-less
+  `ssh -F <config> … -s <host> sftp` with `apply_headless_askpass_env`
+  (password / passphrase / OTP / FIDO presence via askpass). Rides a live
+  ControlMaster when a terminal already opened one; otherwise authenticates
+  on the worker itself.
 
 ### Key functions/files
 - `ssh_connection_builder.py`: `build_ssh_connection` (native-only),
-  `resolve_native_auth` (the auth chokepoint), `build_native_command` (plain
-  command for external processes), `_build_base_ssh_command` (shared option
-  builder used by explicit-command callers like SCP).
-- `ssh_master_session.py`: `MasterSession`, `ensure_authenticated_master` —
-  PTY-backed ControlMaster for the mux socket; auth is askpass-only.
+  `resolve_native_auth` (the auth chokepoint), `apply_headless_askpass_env`
+  (force askpass for no-TTY spawns), `build_native_command` (plain command
+  for external processes), `_build_base_ssh_command` (shared option builder
+  used by explicit-command callers like SCP).
+- `ssh_multiplex.py`: ControlMaster socket policy + `invalidate_master`.
 - `connection_manager.py`: `Connection.native_connect()`/`connect()`,
   persistence of connections to `~/.ssh/config`, credential storage
   (`store_connection_password`, `get_connection_password`, …).

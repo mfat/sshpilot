@@ -47,6 +47,44 @@ def _askpass_env_for_connection(
         session_password=session_password,
     )
 
+
+def apply_headless_askpass_env(
+    prepared_env: Optional[Dict[str, str]],
+    connection,
+    *,
+    session_password: Optional[str] = None,
+    base_env: Optional[Dict[str, str]] = None,
+) -> Dict[str, str]:
+    """Process env for an SSH child with no user-visible TTY.
+
+    Merges *base_env* (default ``os.environ``) with the auth resolver's
+    *prepared_env*, honors askpass/agent deletions, then forces
+    ``SSH_ASKPASS`` + ``REQUIRE=prefer`` so password / passphrase / PIN /
+    OTP / FIDO presence (``SSH_ASKPASS_PROMPT=none``) use graphical askpass
+    instead of hanging on a missing TTY.
+
+    Use for every pipe/capture/``stdin=DEVNULL`` SSH spawn. Do **not** use for
+    VTE/system-terminal spawns (those have a real TTY).
+    """
+    prepared = dict(prepared_env or {})
+    env = {**(base_env if base_env is not None else os.environ), **prepared}
+    for key in ('SSH_ASKPASS', 'SSH_ASKPASS_REQUIRE', 'SSH_AUTH_SOCK'):
+        if key not in prepared:
+            env.pop(key, None)
+    password = session_password
+    if password is None and connection is not None:
+        password = getattr(connection, 'password', None) or None
+    if not env.get('SSH_ASKPASS'):
+        env.update(
+            _askpass_env_for_connection(
+                connection, session_password=password,
+            )
+        )
+    elif env.get('SSH_ASKPASS_REQUIRE') != 'prefer':
+        env['SSH_ASKPASS_REQUIRE'] = 'prefer'
+    return env
+
+
 logger = logging.getLogger(__name__)
 
 

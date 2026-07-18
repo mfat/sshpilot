@@ -1,4 +1,4 @@
-"""Askpass login-password autofill and MFA decline."""
+"""Askpass login-password autofill, MFA, and FIDO presence hints."""
 import os
 
 import pytest
@@ -15,6 +15,23 @@ def test_classify_prompt_password_vs_otp():
     assert classify_prompt("Password for alice@host:") == "password"
     assert classify_prompt("Verification code:") == "interactive"
     assert classify_prompt("Enter passphrase for key '/tmp/id':") == "passphrase"
+
+
+def test_classify_prompt_fido_presence_and_pin():
+    assert (
+        classify_prompt("Confirm user presence for key ED25519-SK SHA256:abcd")
+        == "presence"
+    )
+    assert classify_prompt("Tap your security key") == "presence"
+    assert classify_prompt("Tap secure token") == "presence"
+    assert classify_prompt("Enter PIN for authenticator:") == "interactive"
+    assert classify_prompt("Enter PIN for authenticator") == "interactive"
+    assert (
+        classify_prompt(
+            "Are you sure you want to continue connecting (yes/no/[fingerprint])? "
+        )
+        == "interactive"
+    )
 
 
 def test_askpass_answers_password_from_session_file(monkeypatch, tmp_path):
@@ -94,3 +111,44 @@ def test_askpass_unstored_password_cancel(monkeypatch):
         lambda prompt, _log: (True, None),
     )
     assert handle_askpass_cli("Password:") is None
+
+
+def test_askpass_honors_prompt_hint_none(monkeypatch):
+    """OpenSSH notify_start sets SSH_ASKPASS_PROMPT=none for FIDO touch."""
+    monkeypatch.setenv("SSH_ASKPASS_PROMPT", "none")
+    monkeypatch.setattr(
+        "sshpilot.askpass_utils._route_presence_to_main_app",
+        lambda prompt, _log: (True, ""),
+    )
+    assert handle_askpass_cli("Confirm user presence for key ED25519-SK") == ""
+
+
+def test_askpass_honors_prompt_hint_confirm(monkeypatch):
+    monkeypatch.setenv("SSH_ASKPASS_PROMPT", "confirm")
+    monkeypatch.setattr(
+        "sshpilot.askpass_utils._route_confirm_to_main_app",
+        lambda prompt, _log: (True, "yes"),
+    )
+    assert handle_askpass_cli("Allow use of key?") == "yes"
+
+
+def test_askpass_presence_classifier_uses_reminder_not_challenge(monkeypatch):
+    monkeypatch.delenv("SSH_ASKPASS_PROMPT", raising=False)
+    called = {"challenge": False, "presence": False}
+
+    def _challenge(*_a):
+        called["challenge"] = True
+        return (True, "nope")
+
+    def _presence(*_a):
+        called["presence"] = True
+        return (True, "")
+
+    monkeypatch.setattr(
+        "sshpilot.askpass_utils._route_challenge_to_main_app", _challenge
+    )
+    monkeypatch.setattr(
+        "sshpilot.askpass_utils._route_presence_to_main_app", _presence
+    )
+    assert handle_askpass_cli("Tap secure token") == ""
+    assert called["presence"] and not called["challenge"]

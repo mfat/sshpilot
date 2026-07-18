@@ -536,7 +536,11 @@ class OpenSSHSFTPManager(GObject.GObject):
         extra_args: Tuple[str, ...] = ("-s",),
         use_mux: bool = True,
     ) -> Tuple[List[str], Dict[str, str], Optional[Callable[[], None]]]:
-        from ..ssh_connection_builder import ConnectionContext, build_ssh_connection
+        from ..ssh_connection_builder import (
+            ConnectionContext,
+            apply_headless_askpass_env,
+            build_ssh_connection,
+        )
 
         app_config = None
         try:
@@ -556,11 +560,11 @@ class OpenSSHSFTPManager(GObject.GObject):
 
         args = list(extra_args)  # e.g. ["-s"] to request a subsystem "sftp"
         if use_mux:
-            # Ride a live ControlMaster socket when one exists (established by
-            # a MasterSession or a multiplexed terminal). ControlMaster is left
-            # at its default "no", so a dead/missing socket silently falls back
-            # to a direct connection — this PTY-less worker never becomes the
-            # master itself.
+            # Ride a live ControlMaster socket when one exists (e.g. a
+            # multiplexed terminal). ControlMaster is left at its default
+            # "no", so a dead/missing socket silently falls back to a direct
+            # connection with headless askpass — this worker never becomes
+            # the master itself.
             from .. import ssh_multiplex
 
             args.extend(["-o", f"ControlPath={ssh_multiplex.control_path()}"])
@@ -575,15 +579,12 @@ class OpenSSHSFTPManager(GObject.GObject):
         )
         prepared = build_ssh_connection(ctx)
         argv = list(prepared.command)
-        env = {**os.environ, **(prepared.env or {})}
-        # The auth resolver clears askpass/agent vars by *removing* them from
-        # its env copy — a plain merge with os.environ resurrects them (e.g. a
-        # desktop ksshaskpass would hijack the PTY-less worker's prompts).
-        # Honor the deletions, same as scp_utils._apply_native_auth_env.
-        for key in ("SSH_ASKPASS", "SSH_ASKPASS_REQUIRE", "SSH_AUTH_SOCK"):
-            if key not in (prepared.env or {}):
-                env.pop(key, None)
-        # Login password / passphrase come from askpass in prepared.env.
+        # PTY-less worker: graphical askpass when auth is needed (mux miss).
+        env = apply_headless_askpass_env(
+            prepared.env,
+            self._connection,
+            session_password=getattr(prepared, "password", None) or self._password,
+        )
         cleanup: Optional[Callable[[], None]] = None
         return argv, env, cleanup
 

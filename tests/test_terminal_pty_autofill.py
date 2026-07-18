@@ -72,7 +72,7 @@ def test_install_pty_autofill_noop_without_config():
 
 def _password_fill(password="pw123"):
     """The queued ssh-password fill exactly as arm_password_pty_autofill arms it."""
-    from sshpilot.ssh_master_session import classify_prompt
+    from sshpilot.askpass_utils import classify_prompt
     return (lambda text: classify_prompt(text) == 'password', password)
 
 

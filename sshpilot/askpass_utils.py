@@ -94,40 +94,64 @@ def _extract_key_path(prompt: str) -> str:
     return ""
 
 
-# Prompt classification for askpass (password vs passphrase vs OTP). Only the
-# last non-empty line is matched so scrollback like
+# Prompt classification for askpass (password vs passphrase vs OTP vs presence).
+# Only the last non-empty line is matched so scrollback like
 # "Permission denied (publickey,password)." cannot false-positive.
-_INLINE_PROMPT_MARKERS = (
+#
+# OpenSSH FIDO presence usually goes to the TTY via notify_start() when stderr
+# is a tty — askpass is only used with SSH_ASKPASS_PROMPT=none (no tty / agent).
+_PRESENCE_MARKERS = (
+    'confirm user presence',
+    'tap your security key',
+    'tap secure token',
+    'touch your yubikey',
+    'touch your security key',
+    'touch your authenticator',
+    'touch the authenticator',
+)
+_HOSTKEY_MARKERS = (
     '(yes/no',
     'continue connecting',
     "please type 'yes'",
-    'confirm user presence',
-    'tap your security key',
+)
+_TYPED_INTERACTIVE_MARKERS = (
+    'pin',
+    'verification code',
+    'otp',
+    'one-time',
+    'authentication code',
 )
 
 
 def classify_prompt(text: str) -> "str | None":
     """Classify the trailing prompt in *text*.
 
-    Returns ``'password'``, ``'passphrase'``, ``'interactive'`` (OTP/PIN/yes-no —
-    anything the app cannot answer from stored secrets), or ``None`` when the
-    text does not end in a prompt.
+    Returns ``'password'``, ``'passphrase'``, ``'presence'`` (FIDO touch —
+    no typed secret), ``'interactive'`` (OTP/PIN/host-key — typed or yes/no),
+    or ``None`` when the text does not look like a prompt.
     """
     lines = [line.strip() for line in (text or '').splitlines() if line.strip()]
     if not lines:
         return None
     last = lines[-1].lower()
-    if any(marker in last for marker in _INLINE_PROMPT_MARKERS):
+    if any(marker in last for marker in _PRESENCE_MARKERS):
+        return 'presence'
+    if any(marker in last for marker in _HOSTKEY_MARKERS):
+        return 'interactive'
+    # PIN / OTP may omit a trailing colon ("Enter PIN for authenticator").
+    if any(m in last for m in _TYPED_INTERACTIVE_MARKERS) and (
+            last.endswith(':') or last.startswith('enter ') or ' for ' in last):
+        if 'passphrase' in last:
+            return 'passphrase'
+        if 'password' in last and 'pin' not in last:
+            return 'password'
         return 'interactive'
     if last.endswith(':'):
         if 'passphrase' in last:
             return 'passphrase'
         # "Password:" but also PAM's "Password for user@host:".
-        if 'password' in last and not any(
-                m in last for m in ('pin', 'verification code', 'otp')):
+        if 'password' in last:
             return 'password'
-        if any(m in last for m in ('pin', 'verification code', 'otp')):
-            return 'interactive'
     return None
 
 
@@ -600,6 +624,28 @@ def _route_challenge_to_main_app(
     )
 
 
+def _route_confirm_to_main_app(
+    prompt: str, log_fn
+) -> "tuple[bool, str | None]":
+    """Ask the main app for a yes/no confirm (SSH_ASKPASS_PROMPT=confirm)."""
+    return _ask_main_app(
+        {"type": "confirm", "prompt": prompt},
+        log_fn,
+        ok_key="value",
+    )
+
+
+def _route_presence_to_main_app(
+    prompt: str, log_fn
+) -> "tuple[bool, str | None]":
+    """Ask the main app to show a FIDO touch reminder (no typed secret)."""
+    return _ask_main_app(
+        {"type": "presence", "prompt": prompt},
+        log_fn,
+        ok_key="value",
+    )
+
+
 def _route_password_to_main_app(
     prompt: str, log_fn
 ) -> "tuple[bool, str | None]":
@@ -809,15 +855,144 @@ def _resolve_askpass_password(_log) -> "str | None":
     return None
 
 
+def _run_presence_dialog(prompt: str, log_fn) -> "str | None":
+    """Touch/presence reminder — no text field. Stays up until Close or SIGTERM.
+
+    OpenSSH's notify_start() sets SSH_ASKPASS_PROMPT=none, redirects stdout to
+    /dev/null, and SIGTERMs this process when the touch completes.
+    """
+    try:
+        import signal
+        import gi
+        gi.require_version('Gtk', '4.0')
+        gi.require_version('Adw', '1')
+        gi.require_version('Gio', '2.0')
+        from gi.repository import Gtk, Adw, Gio, GLib
+    except Exception as exc:
+        log_fn(f"ASKPASS: GTK not available for presence dialog: {exc}")
+        return ""
+
+    log_fn("ASKPASS: Showing security-key presence reminder")
+    Adw.init()
+    app = Adw.Application.new(
+        "io.github.mfat.sshpilot.askpass.presence",
+        Gio.ApplicationFlags.NON_UNIQUE,
+    )
+
+    def on_activate(application):
+        window = Adw.ApplicationWindow(application=application)
+        window.set_title("Security Key")
+        window.set_resizable(False)
+        window.set_default_size(420, -1)
+
+        def _close(*_a):
+            try:
+                application.quit()
+            except Exception:
+                pass
+            return GLib.SOURCE_REMOVE
+
+        try:
+            GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGTERM, _close)
+        except Exception:
+            pass
+
+        close_btn = Gtk.Button(label="Close")
+        close_btn.add_css_class("suggested-action")
+        close_btn.connect("clicked", _close)
+
+        header = Adw.HeaderBar()
+        header.pack_end(close_btn)
+
+        body = Gtk.Label(
+            label=(prompt or "Touch your security key to continue.").strip(),
+            wrap=True,
+            xalign=0,
+        )
+        body.add_css_class("body")
+        hint = Gtk.Label(
+            label="Touch your security key when it blinks.",
+            wrap=True,
+            xalign=0,
+        )
+        hint.add_css_class("dim-label")
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        box.set_margin_top(12)
+        box.set_margin_bottom(18)
+        box.set_margin_start(18)
+        box.set_margin_end(18)
+        box.append(body)
+        box.append(hint)
+
+        toolbar = Adw.ToolbarView()
+        toolbar.add_top_bar(header)
+        toolbar.set_content(box)
+        window.set_content(toolbar)
+        window.present()
+
+    app.connect("activate", on_activate)
+    app.run(None)
+    return ""
+
+
+def _run_confirm_dialog(prompt: str, log_fn) -> "str | None":
+    """Yes/No confirm for SSH_ASKPASS_PROMPT=confirm (e.g. ssh-add -c)."""
+    try:
+        import gi
+        gi.require_version('Gtk', '4.0')
+        gi.require_version('Adw', '1')
+        gi.require_version('Gio', '2.0')
+        from gi.repository import Gtk, Adw, Gio
+    except Exception as exc:
+        log_fn(f"ASKPASS: GTK not available for confirm dialog: {exc}")
+        return None
+
+    log_fn("ASKPASS: Showing confirm dialog")
+    result = [None]
+    Adw.init()
+    app = Adw.Application.new(
+        "io.github.mfat.sshpilot.askpass.confirm",
+        Gio.ApplicationFlags.NON_UNIQUE,
+    )
+
+    def on_activate(application):
+        dialog = Adw.AlertDialog()
+        dialog.set_heading("Confirm")
+        dialog.set_body((prompt or "Allow this key operation?").strip())
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("ok", "Allow")
+        dialog.set_response_appearance("ok", Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response("ok")
+        dialog.set_close_response("cancel")
+
+        def _on_response(_d, response):
+            if response == "ok":
+                result[0] = "yes"
+            try:
+                application.quit()
+            except Exception:
+                pass
+
+        dialog.connect("response", _on_response)
+        dialog.present(None)
+
+    app.connect("activate", on_activate)
+    app.run(None)
+    return result[0]
+
+
 def handle_askpass_cli(prompt: str) -> "str | None":
     """Handle --askpass CLI mode (re-invoked by SSH as SSH_ASKPASS handler).
 
-    Answers **key passphrase** and **login password** prompts from the secret
-    backend (and optional one-shot session files). Interactive MFA prompts
-    (OTP/PIN/yes-no) are declined (return None) so OpenSSH with
-    ``SSH_ASKPASS_REQUIRE=prefer`` can fall back to the real TTY. Returns the
-    secret string on success, or None on failure/decline. The caller writes it
-    to the real stdout fd.
+    Honors OpenSSH's ``SSH_ASKPASS_PROMPT`` hint when set:
+
+    * ``none`` — FIDO touch reminder (no typed secret; stay until Close/SIGTERM)
+    * ``confirm`` — yes/no (``ssh-add -c`` style)
+
+    Otherwise answers key passphrase / login password from the secret backend,
+    or prompts for OTP/PIN. Returns the secret (or ``\"\"`` / ``\"yes\"`` for
+    notify/confirm), or None on cancel/failure.
     """
     log_path = get_askpass_log_path()
 
@@ -832,14 +1007,37 @@ def handle_askpass_cli(prompt: str) -> "str | None":
         f"ASKPASS: keyring {'available' if _keyring_available() else 'unavailable'}, "
         f"libsecret {'available' if _secret_available() else 'unavailable'}"
     )
-    _log(f"ASKPASS called with prompt: {prompt}")
+    hint = (os.environ.get("SSH_ASKPASS_PROMPT") or "").strip().lower()
+    _log(f"ASKPASS called with prompt: {prompt!r} hint={hint!r}")
+
+    # Official OpenSSH askpass UI hints (see readpass.c / notify_start).
+    if hint == "none":
+        _log("ASKPASS: SSH_ASKPASS_PROMPT=none (FIDO presence reminder)")
+        handled, routed = _route_presence_to_main_app(prompt, _log)
+        if handled:
+            return "" if routed is not None else None
+        return _run_presence_dialog(prompt, _log)
+
+    if hint == "confirm":
+        _log("ASKPASS: SSH_ASKPASS_PROMPT=confirm (yes/no)")
+        handled, routed = _route_confirm_to_main_app(prompt, _log)
+        if handled:
+            return routed
+        return _run_confirm_dialog(prompt, _log)
 
     kind = classify_prompt(prompt)
+    if kind == 'presence':
+        _log("ASKPASS: presence prompt (classifier); reminder UI")
+        handled, routed = _route_presence_to_main_app(prompt, _log)
+        if handled:
+            return "" if routed is not None else None
+        return _run_presence_dialog(prompt, _log)
+
     if kind == 'interactive':
         # OpenSSH with SSH_ASKPASS_REQUIRE=prefer does NOT fall back to the
         # TTY when askpass fails — declining here leaves the user with no way
         # to enter an OTP. Prompt them (never autofill MFA from the vault).
-        _log("ASKPASS: interactive prompt (OTP/PIN/confirm); asking user")
+        _log("ASKPASS: interactive prompt (OTP/PIN); asking user")
         handled, routed = _route_challenge_to_main_app(prompt, _log)
         if handled:
             if routed is not None:

@@ -116,12 +116,6 @@ class FileManagerWindow(Adw.Window):
         self._password_retry_count = 0
         self._max_password_retries = 3
 
-        # PTY-backed ControlMaster establishing the connection (master-first
-        # flow; auth via askpass). Guards against stacking masters from
-        # rapid reconnects.
-        self._master_session = None
-        self._auth_master_active = False
-
         # Use ToolbarView like other Adw.Window instances
         toolbar_view = Adw.ToolbarView()
         self.set_content(toolbar_view)
@@ -503,78 +497,29 @@ class FileManagerWindow(Adw.Window):
             else:
                 logger.debug("Built-in file manager: No password found, but password auth not enabled, proceeding with key-based auth")
 
-        # Start connection after everything is set up
+        # Headless SFTP worker + askpass (rides a live ControlMaster if any).
         try:
-            self._connect_via_master()
+            self._connect_sftp()
         except Exception as exc:
             logger.exception("Error connecting to server: %s", exc)
 
-    def _connect_via_master(self) -> None:
-        """Master-first connect: ride a live ControlMaster socket when one
-        exists; otherwise establish one via MasterSession (askpass auth on a
-        PTY-backed ``ssh -N``), then let the PTY-less SFTP worker ride the
-        socket. Falls back to a plain direct connect when there is no
-        Connection object to build from."""
+    def _connect_sftp(self) -> None:
+        """Connect the PTY-less SFTP backend with headless askpass auth.
+
+        Rides an existing ControlMaster when a terminal (or other surface)
+        already opened one; otherwise authenticates via askpass on the
+        worker itself — no MasterSession.
+        """
         connection = self._connection
-        if connection is None:
-            self._manager.connect_to_server()
-            return
-        if self._auth_master_active:
-            logger.debug("Master session already active; ignoring reconnect")
-            return
-        # The pre-connect dialog stores the password on the manager only;
-        # surface it on the connection so resolve_native_auth / askpass can
-        # stage it for the master (the worker's _build_argv does the same).
         manager_password = getattr(self._manager, "_password", None)
-        if manager_password:
+        if connection is not None and manager_password:
             try:
                 connection.password = manager_password
             except Exception:
                 pass
-        self._auth_master_active = True
-
-        def _probe_and_start() -> None:
-            from .ssh_master_session import ensure_authenticated_master
-
-            app_config = None
-            try:
-                from .config import Config
-
-                app_config = Config()
-            except Exception:
-                pass
-            try:
-                session = ensure_authenticated_master(
-                    connection,
-                    self._connection_manager,
-                    app_config,
-                    on_ready=lambda: GLib.idle_add(self._on_master_ready),
-                    on_failed=lambda tail: GLib.idle_add(
-                        self._on_master_failed, tail
-                    ),
-                )
-                if session is not None:
-                    self._master_session = session
-            except Exception as exc:
-                logger.exception("Failed to start master session: %s", exc)
-                GLib.idle_add(self._on_master_failed, str(exc))
-
-        threading.Thread(
-            target=_probe_and_start, name="fm-master-probe", daemon=True
-        ).start()
-
-    def _on_master_ready(self) -> bool:
-        self._auth_master_active = False
-        self._master_session = None
         self._password_dialog_shown = False
         self._password_retry_count = 0
-        manager = getattr(self, "_manager", None)
-        if manager is not None:
-            try:
-                manager.connect_to_server()
-            except Exception as exc:
-                logger.exception("Error connecting to server: %s", exc)
-        return False
+        self._manager.connect_to_server()
 
     def _dialog_parent(self) -> Gtk.Widget:
         """The widget to present dialogs against — the embedded tab parent when
@@ -590,28 +535,6 @@ class FileManagerWindow(Adw.Window):
         except Exception:
             pass
         return self
-
-    def _on_master_failed(self, transcript_tail: str) -> bool:
-        self._auth_master_active = False
-        self._master_session = None
-        lines = [
-            line.strip()
-            for line in (transcript_tail or "").splitlines()
-            if line.strip() and not line.lstrip().startswith("debug")
-        ]
-        message = lines[-1] if lines else _("Could not establish the SSH connection")
-        self._on_connection_error(getattr(self, "_manager", None), message)
-        return False
-
-    def _cancel_master_session(self) -> None:
-        session = self._master_session
-        self._master_session = None
-        self._auth_master_active = False
-        if session is not None:
-            try:
-                session.cancel()
-            except Exception:
-                pass
 
     # -- remote host-picker button (same pattern as the Docker Console) --
 
@@ -973,7 +896,6 @@ class FileManagerWindow(Adw.Window):
 
     def _cleanup_manager(self) -> None:
         """Close the file manager backend and clear UI state."""
-        self._cancel_master_session()
         manager = getattr(self, "_manager", None)
         if manager is not None:
             try:
@@ -1150,11 +1072,7 @@ class FileManagerWindow(Adw.Window):
                         self._manager._password = password
                         if self._connection is not None:
                             self._connection.password = password
-                        # Route the retry through the master-first flow so a
-                        # host that needs interactive auth (2FA, expired mux
-                        # socket) gets the PTY path again instead of a
-                        # PTY-less direct attempt that can only time out.
-                        self._connect_via_master()
+                        self._connect_sftp()
                     except Exception as exc:
                         logger.error("Error calling connect_to_server: %s", exc)
                         self._on_connection_error(

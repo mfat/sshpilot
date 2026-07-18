@@ -777,9 +777,12 @@ class PluginContext:
                 remote_command=command, native_mode=True, extra_args=extra_args)
             prepared = build_ssh_connection(ctx)
             argv = list(prepared.command)
-            env = {**os.environ, **(prepared.env or {})}
-            # Auth (passphrase + login password) is already in prepared.env via
-            # askpass from resolve_native_auth.
+            from ..ssh_connection_builder import apply_headless_askpass_env
+            # No user-visible TTY — force graphical askpass for secrets/MFA.
+            env = apply_headless_askpass_env(
+                prepared.env, conn,
+                session_password=getattr(prepared, "password", None),
+            )
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug("run_command(%r) argv: %s", nickname, argv)
             # Capture via temp files — NOT pipes (capture_output=True).
@@ -923,7 +926,11 @@ class PluginContext:
                 remote_command=command, native_mode=True, extra_args=extra_args)
             prepared = build_ssh_connection(ctx)
             argv = list(prepared.command)
-            env = {**os.environ, **(prepared.env or {})}
+            from ..ssh_connection_builder import apply_headless_askpass_env
+            env = apply_headless_askpass_env(
+                prepared.env, conn,
+                session_password=getattr(prepared, "password", None),
+            )
             self._spawn_stream(
                 handle, argv, env, on_line=on_line, on_done=on_done,
                 input_text=input, cleanup=cleanup)
@@ -1138,7 +1145,11 @@ class PluginContext:
                     ["-O", "forward", "-o",
                      f"ControlPath={ssh_multiplex.control_path()}",
                      "-L", forward])
-                env = {**os.environ, **(prepared.env or {})}
+                from ..ssh_connection_builder import apply_headless_askpass_env
+                env = apply_headless_askpass_env(
+                    prepared.env, conn,
+                    session_password=getattr(prepared, "password", None),
+                )
                 result = subprocess.run(
                     list(prepared.command), env=env, capture_output=True,
                     text=True, timeout=10, check=False)
@@ -1155,7 +1166,11 @@ class PluginContext:
             prepared = _build(
                 ["-N", "-o", "ExitOnForwardFailure=yes", "-L", forward])
             argv = list(prepared.command)
-            env = {**os.environ, **(prepared.env or {})}
+            from ..ssh_connection_builder import apply_headless_askpass_env
+            env = apply_headless_askpass_env(
+                prepared.env, conn,
+                session_password=getattr(prepared, "password", None),
+            )
             proc = subprocess.Popen(
                 argv, env=env, stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

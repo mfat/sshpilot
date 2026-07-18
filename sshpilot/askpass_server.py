@@ -174,7 +174,9 @@ class AskpassPromptServer:
             return
 
         req_type = request.get("type")
-        if req_type not in ("passphrase", "challenge", "password"):
+        if req_type not in (
+            "passphrase", "challenge", "password", "presence", "confirm"
+        ):
             self._write_reply(connection, reply)
             return
 
@@ -201,6 +203,13 @@ class AskpassPromptServer:
                 )
                 if value is not None:
                     reply = {"ok": True, "value": value, "passphrase": value}
+            elif req_type == "presence":
+                # Informational; dismiss returns "" (ok). Cancel → ok false.
+                if self._window.prompt_ssh_presence(prompt):
+                    reply = {"ok": True, "value": ""}
+            elif req_type == "confirm":
+                if self._window.prompt_ssh_confirm(prompt):
+                    reply = {"ok": True, "value": "yes"}
             else:
                 key_path = request.get("key_path") or ""
                 value = self._window.prompt_ssh_passphrase(key_path, prompt)
