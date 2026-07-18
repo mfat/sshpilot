@@ -1,30 +1,39 @@
 """Can / can't matrix: interactive auth vs the OpenSSH SFTP file manager.
 
 The file manager speaks SFTP over pipes (``ssh -s <host> sftp`` via
-``Popen`` stdin/stdout) — there is **no TTY**. Interactive prompts that only
-work on a TTY therefore fail, even when the same Host succeeds in the
-integrated terminal (which has a VTE PTY).
+``Popen`` stdin/stdout) — there is **no TTY**. That does **not** mean there
+are no interactive prompts: the FM has two graphical prompt channels that
+work without a PTY:
 
-This module is the authoritative proof of which common interactive-auth
-scenarios the file manager can handle:
+  * **SSH login password** — ``FileManagerWindow`` calls
+    ``show_ssh_password_dialog`` before connect (password auth) and again on
+    ``authentication-required`` retries.
+  * **Key passphrase** — when ``resolve_native_auth`` wires askpass, ssh
+    spawns our ``SSH_ASKPASS`` helper, which shows a GTK dialog (or routes
+    through ``askpass_server`` → ``MainWindow.prompt_ssh_passphrase``).
+
+What fails is a *native OpenSSH TTY prompt* with askpass stripped and no
+dialog password on the manager.
 
 =======  ===============================================================  ======
 #        Scenario                                                         Result
 =======  ===============================================================  ======
 1        Agent-held key (YubiKey / ssh-add already done)                  CAN
 2        Unencrypted IdentityFile in ssh_config                           CAN
-3        Encrypted IdentityFile + stored passphrase (askpass)             CAN
-4        Password auth + stored / dialog password (sshpass)               CAN
-5        Encrypted key, nothing stored (needs TTY passphrase)             CAN'T
-6        Password auth, nothing stored, no dialog password                CAN'T
+3        Encrypted IdentityFile + stored passphrase (askpass autofill)    CAN
+3b       Encrypted key + askpass GUI (builtin / askpass_server IPC)       CAN
+4        Password auth + stored password (sshpass)                        CAN
+4b       Password auth + graphical dialog password (sshpass)              CAN
+5        Encrypted key, askpass stripped (nothing saved)                  CAN'T
+6        Password auth, nothing stored, dialog cancelled / skipped        CAN'T
 7        Askpass disabled + encrypted key needing passphrase              CAN'T
 8        Key-based auth failure → UI password-dialog recovery             CAN'T
 9        Password auth failure → UI password-dialog recovery              CAN
 =======  ===============================================================  ======
 
 Layers:
-  * Decision — what ``_build_argv`` / ``resolve_native_auth`` wires, and
-    whether the FM UI will offer a password retry (always runs).
+  * Decision — resolver wiring + UI dialog gates (always runs).
+  * Graphical prompts — prove password/passphrase GUI channels exist.
   * Live — real ``OpenSSHSFTPManager._connect_impl()`` against a paramiko
     SFTP server (skipped when ssh tools are missing).
 """
@@ -431,24 +440,25 @@ class TestFileManagerAuthDecision:
         assert auth.password == PASSWORD
         assert auth.use_askpass is False
 
-    def test_password_auth_without_stored_password_has_no_helper(self, monkeypatch):
-        """#6 CAN'T without dialog — resolver leaves a TTY password prompt."""
+    def test_password_auth_without_stored_password_needs_ui_dialog(self, monkeypatch):
+        """#4b/#6 — backend has no sshpass until the graphical dialog fills it."""
         auth = self._resolve(
             monkeypatch, auth_method=1,
             passphrase_stored=False, password_stored=False,
         )
         assert auth.use_sshpass is False
         assert auth.use_askpass is False
-        assert auth.password_mode is True
+        assert auth.password_mode is True  # UI may still prompt graphically
 
-    def test_encrypted_key_nothing_stored_has_no_helper(self, monkeypatch):
-        """#5 CAN'T — needs a TTY passphrase prompt the FM pipes cannot provide."""
+    def test_encrypted_key_nothing_stored_strips_askpass(self, monkeypatch):
+        """#5 CAN'T — nothing saved strips askpass, so no GUI passphrase either."""
         auth = self._resolve(
             monkeypatch, auth_method=0,
             passphrase_stored=False, password_stored=False,
         )
         assert auth.use_askpass is False
         assert auth.use_sshpass is False
+        assert not auth.env.get("SSH_ASKPASS")
 
     def test_askpass_disabled_strips_helpers(self, monkeypatch):
         """#7 CAN'T — askpass off + encrypted key → TTY-only, fails on FM pipes."""
@@ -519,6 +529,129 @@ class TestFileManagerAuthDecision:
         # Unbound call — method only reads ``connection``.
         assert gate(object(), key_conn) is False  # #8 no dialog on key failure
         assert gate(object(), pw_conn) is True    # #9 dialog on password failure
+
+
+# ---------------------------------------------------------------------------
+# Graphical prompt channels (no TTY required)
+# ---------------------------------------------------------------------------
+
+
+class TestFileManagerGraphicalPrompts:
+    """Prove the FM's Adwaita/askpass GUI paths — what users actually see."""
+
+    def test_password_auth_enables_preconnect_and_retry_dialogs(self, monkeypatch):
+        """#4b/#9 — password auth opens show_ssh_password_dialog (not a TTY)."""
+        import inspect
+
+        module = _load_file_manager_module(monkeypatch)
+        FM = module.FileManagerWindow
+        assert FM._is_password_auth_enabled(
+            object(), SimpleNamespace(auth_method=1, pubkey_auth_no=False)
+        )
+        preconnect_src = inspect.getsource(FM._show_password_dialog_before_connect)
+        retry_src = inspect.getsource(FM._on_authentication_required)
+        assert "show_ssh_password_dialog" in preconnect_src
+        assert "show_ssh_password_dialog" in retry_src
+        assert "_is_password_auth_enabled" in retry_src
+
+    def test_askpass_env_advertises_inapp_passphrase_ipc(self, monkeypatch):
+        """#3b CAN — SSH_ASKPASS child can open the in-app passphrase dialog."""
+        from sshpilot import askpass_utils
+
+        sock = "/run/user/1000/sshpilot/askpass-test.sock"
+        token = "deadbeef" * 4
+        askpass_utils.set_askpass_ipc(sock, token)
+        try:
+            env = askpass_utils.get_ssh_env_with_askpass(require="prefer")
+            assert env.get("SSH_ASKPASS")
+            assert env.get("SSH_ASKPASS_REQUIRE") == "prefer"
+            assert env.get("SSHPILOT_ASKPASS_SOCKET") == sock
+            assert env.get("SSHPILOT_ASKPASS_TOKEN") == token
+        finally:
+            askpass_utils.set_askpass_ipc(None, None)
+
+    def test_fm_build_argv_forwards_askpass_ipc_for_passphrase_gui(self, monkeypatch):
+        """#3b — FM merges askpass IPC env so the helper can prompt graphically."""
+        import sshpilot.ssh_connection_builder as scb
+
+        sock = "/tmp/sshpilot-askpass.sock"
+        token = "tok123"
+        monkeypatch.setattr(
+            scb,
+            "build_ssh_connection",
+            lambda ctx: SimpleNamespace(
+                command=["ssh", "-s", HOST_ALIAS, "sftp"],
+                env={
+                    "SSH_ASKPASS": "/tmp/askpass-helper",
+                    "SSH_ASKPASS_REQUIRE": "prefer",
+                    "SSHPILOT_ASKPASS_SOCKET": sock,
+                    "SSHPILOT_ASKPASS_TOKEN": token,
+                    "DISPLAY": ":0",
+                },
+                use_sshpass=False,
+                password=None,
+                use_askpass=True,
+            ),
+        )
+        _load_file_manager_module(monkeypatch)
+        import sshpilot.file_manager.openssh_backend as ob
+
+        manager = ob.OpenSSHSFTPManager(
+            "h", USERNAME, 22,
+            connection=SimpleNamespace(nickname=HOST_ALIAS, password=None),
+            dispatcher=lambda cb, args=(), kwargs=None: cb(*args, **(kwargs or {})),
+        )
+        _argv, env, cleanup = manager._build_argv()
+        assert env["SSH_ASKPASS"] == "/tmp/askpass-helper"
+        assert env["SSHPILOT_ASKPASS_SOCKET"] == sock
+        assert env["SSHPILOT_ASKPASS_TOKEN"] == token
+        assert cleanup is None
+        manager.close()
+
+    def test_askpass_cli_offers_gui_when_builtin_prompt_enabled(self, monkeypatch):
+        """#3b — helper falls through to GUI (IPC or standalone) for passphrase."""
+        from sshpilot import askpass_utils
+
+        monkeypatch.setattr(askpass_utils, "_builtin_passphrase_prompt_enabled", lambda: True)
+        monkeypatch.setattr(askpass_utils, "lookup_passphrase", lambda _p: "")
+        monkeypatch.setattr(askpass_utils, "_lookup_via_main_app", lambda *_a, **_k: None)
+        monkeypatch.setattr(
+            askpass_utils,
+            "_route_passphrase_to_main_app",
+            lambda key_path, prompt, log_fn: (True, "gui-passphrase"),
+        )
+        # Avoid keyring/libsecret noise in the askpass log path.
+        monkeypatch.setattr(askpass_utils, "_keyring_available", lambda: False)
+        monkeypatch.setattr(askpass_utils, "_secret_available", lambda: False)
+
+        result = askpass_utils.handle_askpass_cli(
+            "Enter passphrase for key '/home/u/.ssh/id_ed25519': "
+        )
+        assert result == "gui-passphrase"
+
+    def test_askpass_cli_skips_gui_when_builtin_prompt_disabled(self, monkeypatch):
+        """Builtin passphrase prompt off → helper returns nothing (no GUI)."""
+        from sshpilot import askpass_utils
+
+        monkeypatch.setattr(askpass_utils, "_builtin_passphrase_prompt_enabled", lambda: False)
+        monkeypatch.setattr(askpass_utils, "lookup_passphrase", lambda _p: "")
+        monkeypatch.setattr(askpass_utils, "_lookup_via_main_app", lambda *_a, **_k: None)
+        monkeypatch.setattr(askpass_utils, "_keyring_available", lambda: False)
+        monkeypatch.setattr(askpass_utils, "_secret_available", lambda: False)
+
+        routed = []
+
+        def _boom(*_a, **_k):
+            routed.append(True)
+            return (False, None)
+
+        monkeypatch.setattr(askpass_utils, "_route_passphrase_to_main_app", _boom)
+
+        result = askpass_utils.handle_askpass_cli(
+            "Enter passphrase for key '/home/u/.ssh/id_ed25519': "
+        )
+        assert result is None
+        assert routed == []  # never reached GUI routing
 
 
 # ---------------------------------------------------------------------------
@@ -715,9 +848,10 @@ class TestFileManagerAuthLiveCannot:
             finally:
                 manager.close()
 
-    def test_06_password_auth_nothing_stored_cannot_connect(
+    def test_06_password_auth_without_dialog_password_cannot_connect(
         self, tmp_path, monkeypatch
     ):
+        """#6 — backend alone fails; the UI dialog (#4b) is what makes it CAN."""
         with _sftp_server(
             lambda: _AuthServer(password=PASSWORD)
         ) as server:
@@ -731,7 +865,7 @@ class TestFileManagerAuthLiveCannot:
                 overrides=["-o", "ConnectTimeout=5", "-o", "BatchMode=yes"]
             )
             manager = _prepare_manager(monkeypatch, conn, cm, app)
-            # Deliberately no manager._password (dialog not shown yet).
+            # Deliberately no manager._password (simulates dialog cancelled).
             try:
                 argv, _env, cleanup = manager._build_argv()
                 assert os.path.basename(argv[0]) != "sshpass"
@@ -791,21 +925,25 @@ class TestFileManagerAuthMatrixSummary:
         "agent_held_key": "CAN",
         "unencrypted_identity_file": "CAN",
         "encrypted_key_stored_passphrase_askpass": "CAN",
-        "password_auth_stored_or_dialog_sshpass": "CAN",
-        "encrypted_key_nothing_stored_tty_passphrase": "CAN'T",
-        "password_auth_nothing_stored_no_dialog": "CAN'T",
+        "encrypted_key_askpass_gui_passphrase": "CAN",
+        "password_auth_stored_sshpass": "CAN",
+        "password_auth_graphical_dialog_sshpass": "CAN",
+        "encrypted_key_askpass_stripped_nothing_saved": "CAN'T",
+        "password_auth_dialog_cancelled": "CAN'T",
         "askpass_disabled_encrypted_key": "CAN'T",
         "ui_password_dialog_on_key_auth_failure": "CAN'T",
         "ui_password_dialog_on_password_auth_failure": "CAN",
     }
 
-    def test_matrix_documents_tty_gap(self):
-        cant = {k for k, v in self.EXPECTED.items() if v == "CAN'T"}
-        assert "encrypted_key_nothing_stored_tty_passphrase" in cant
-        assert "password_auth_nothing_stored_no_dialog" in cant
-        assert "askpass_disabled_encrypted_key" in cant
-        assert "ui_password_dialog_on_key_auth_failure" in cant
+    def test_matrix_documents_graphical_and_tty_gaps(self):
         can = {k for k, v in self.EXPECTED.items() if v == "CAN"}
-        assert "agent_held_key" in can
-        assert "password_auth_stored_or_dialog_sshpass" in can
-        assert len(self.EXPECTED) == 9
+        cant = {k for k, v in self.EXPECTED.items() if v == "CAN'T"}
+        # Graphical channels the user sees in the FM:
+        assert "password_auth_graphical_dialog_sshpass" in can
+        assert "encrypted_key_askpass_gui_passphrase" in can
+        assert "ui_password_dialog_on_password_auth_failure" in can
+        # Still impossible without a helper / dialog:
+        assert "encrypted_key_askpass_stripped_nothing_saved" in cant
+        assert "password_auth_dialog_cancelled" in cant
+        assert "ui_password_dialog_on_key_auth_failure" in cant
+        assert len(self.EXPECTED) == 11
