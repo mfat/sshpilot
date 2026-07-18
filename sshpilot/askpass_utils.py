@@ -445,7 +445,14 @@ def _ask_main_app(request: dict, log_fn, *, ok_key: str = "passphrase") -> "tupl
 
     if reply.get("ok"):
         log_fn("ASKPASS: response provided by main-app dialog")
-        return (True, reply.get(ok_key) or reply.get("passphrase") or reply.get("value"))
+        # First key present wins — an empty string is a valid answer
+        # (acknowledged presence reminder, empty kbd-interactive response)
+        # and must not collapse into None (= cancel, exit 1).
+        for key in (ok_key, "passphrase", "value"):
+            value = reply.get(key)
+            if value is not None:
+                return (True, value)
+        return (True, "")
     if reply.get("fallback"):
         log_fn("ASKPASS: main app asked to use the standalone window")
         return (False, None)

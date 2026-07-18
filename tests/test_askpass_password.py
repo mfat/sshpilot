@@ -106,6 +106,57 @@ def test_no_staging_when_backend_serves_password(monkeypatch):
     os.unlink(staged)
 
 
+def _serve_one_reply(tmp_path, reply_json):
+    """One-shot Unix-socket server standing in for the main-app askpass IPC."""
+    import socket
+    import threading
+
+    sock_path = str(tmp_path / "askpass.sock")
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(sock_path)
+    server.listen(1)
+
+    def _serve():
+        conn, _ = server.accept()
+        with conn:
+            conn.recv(4096)
+            conn.sendall(reply_json.encode() + b"\n")
+        server.close()
+
+    threading.Thread(target=_serve, daemon=True).start()
+    return sock_path
+
+
+def test_ask_main_app_preserves_empty_string_reply(monkeypatch, tmp_path):
+    # ok+"" (acknowledged presence / empty kbd-interactive answer) must not
+    # collapse into None, which callers treat as cancel (helper exits 1).
+    from sshpilot.askpass_utils import _ask_main_app
+
+    sock_path = _serve_one_reply(tmp_path, '{"ok": true, "value": ""}')
+    monkeypatch.setenv("SSHPILOT_ASKPASS_SOCKET", sock_path)
+    monkeypatch.setenv("SSHPILOT_ASKPASS_TOKEN", "tok")
+
+    handled, value = _ask_main_app(
+        {"type": "presence", "prompt": "touch"}, lambda m: None, ok_key="value"
+    )
+    assert handled is True
+    assert value == ""  # not None
+
+
+def test_ask_main_app_cancel_is_none(monkeypatch, tmp_path):
+    from sshpilot.askpass_utils import _ask_main_app
+
+    sock_path = _serve_one_reply(tmp_path, '{"ok": false}')
+    monkeypatch.setenv("SSHPILOT_ASKPASS_SOCKET", sock_path)
+    monkeypatch.setenv("SSHPILOT_ASKPASS_TOKEN", "tok")
+
+    handled, value = _ask_main_app(
+        {"type": "presence", "prompt": "touch"}, lambda m: None, ok_key="value"
+    )
+    assert handled is True
+    assert value is None
+
+
 def test_askpass_prompts_user_for_otp(monkeypatch):
     # OpenSSH prefer does not fall back to TTY — interactive prompts must ask
     # the user (never autofill MFA from the vault).
