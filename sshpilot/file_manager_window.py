@@ -110,11 +110,6 @@ class FileManagerWindow(Adw.Window):
         
         # Progress state
         self._current_future: Optional[Future] = None
-        
-        # Password dialog state
-        self._password_dialog_shown = False
-        self._password_retry_count = 0
-        self._max_password_retries = 3
 
         # Use ToolbarView like other Adw.Window instances
         toolbar_view = Adw.ToolbarView()
@@ -150,8 +145,7 @@ class FileManagerWindow(Adw.Window):
         self._toast_overlay = Adw.ToastOverlay()
         self._progress_dialog: Optional[SFTPProgressDialog] = None
         self._connection_error_reported = False
-        self._password_dialog_shown = False
-        
+
         # Apply custom styling to toasts
         css_provider = Gtk.CssProvider()
         toast_css = """
@@ -455,7 +449,8 @@ class FileManagerWindow(Adw.Window):
         try:
             self._manager.connect("connected", self._on_connected)
             self._manager.connect("connection-error", self._on_connection_error)
-            self._manager.connect("authentication-required", self._on_authentication_required)
+            # Auth failures use headless askpass; surface them like any connect error.
+            self._manager.connect("authentication-required", self._on_connection_error)
             self._manager.connect("progress", self._on_progress)
             self._manager.connect("operation-error", self._on_operation_error)
             self._manager.connect("directory-loaded", self._on_directory_loaded)
@@ -476,28 +471,8 @@ class FileManagerWindow(Adw.Window):
         except (AttributeError, RuntimeError, GLib.GError):
             pass
 
-        # If no password found and password auth is enabled, show dialog before connecting
-        # Check for both None and empty string
-        has_password = initial_password and initial_password.strip()
-        logger.debug(f"Built-in file manager: Password check - initial_password={'***' if initial_password else 'None'}, has_password={bool(has_password)}, password_auth_enabled={self._is_password_auth_enabled(connection) if connection else False}")
-
-        if not has_password and connection_manager is not None:
-            if self._is_password_auth_enabled(connection):
-                logger.debug("Built-in file manager: No password found, password auth enabled, showing password dialog before connection")
-                password = self._show_password_dialog_before_connect(username, host, connection)
-                if password:
-                    # Update the manager's password
-                    self._manager._password = password
-                    logger.debug("Built-in file manager: Password provided via dialog, updating manager")
-                elif password is None:
-                    # User cancelled, don't attempt connection
-                    logger.debug("Built-in file manager: User cancelled password dialog")
-                    self._on_connection_error(None, "Authentication cancelled")
-                    return
-            else:
-                logger.debug("Built-in file manager: No password found, but password auth not enabled, proceeding with key-based auth")
-
         # Headless SFTP worker + askpass (rides a live ControlMaster if any).
+        # Password/MFA prompts go through askpass — no pre-connect GUI dialog.
         try:
             self._connect_sftp()
         except Exception as exc:
@@ -517,8 +492,6 @@ class FileManagerWindow(Adw.Window):
                 connection.password = manager_password
             except Exception:
                 pass
-        self._password_dialog_shown = False
-        self._password_retry_count = 0
         self._manager.connect_to_server()
 
     def _dialog_parent(self) -> Gtk.Widget:
@@ -591,8 +564,6 @@ class FileManagerWindow(Adw.Window):
             except Exception:
                 logger.debug("Error closing previous SFTP backend", exc_info=True)
         self._connection_error_reported = False
-        self._password_dialog_shown = False
-        self._password_retry_count = 0
 
     def _reconnect(self) -> None:
         """Retry the connection to the current host from scratch."""
@@ -786,12 +757,7 @@ class FileManagerWindow(Adw.Window):
             toggle_button.set_tooltip_text("Hide Local Pane")
 
     def _on_connected(self, *_args) -> None:
-        """Handle successful connection: reset password state and load directories."""
-        self._password_dialog_shown = False
-        self._password_retry_count = 0
-        logger.debug(
-            "Built-in file manager: Connection successful, reset password dialog state"
-        )
+        """Handle successful connection and load directories."""
         self._show_progress(0.4, "Connected")
         try:
             self._right_pane.set_connecting_status("Connected — loading files…")
@@ -847,19 +813,7 @@ class FileManagerWindow(Adw.Window):
             pass
 
     def _on_connection_error(self, _manager, message: str) -> None:
-        """Handle connection error with toast and password-dialog state reset."""
-        error_text = message or ""
-        if (
-            "authentication" not in error_text.lower()
-            and "password" not in error_text.lower()
-        ):
-            self._password_dialog_shown = False
-            self._password_retry_count = 0
-            logger.debug(
-                "Built-in file manager: Non-authentication connection error, "
-                "reset password dialog state"
-            )
-
+        """Handle connection / authentication failure with toast or alert."""
         def show_error():
             try:
                 self._clear_progress_toast()
@@ -922,179 +876,6 @@ class FileManagerWindow(Adw.Window):
         """Handle window destroy - ensure cleanup happens even if close-request wasn't called."""
         logger.info("FileManagerWindow destroy received, ensuring cleanup")
         self._cleanup_manager()
-
-    def _is_password_auth_enabled(self, connection: Any = None) -> bool:
-        """Check if password authentication is enabled/required for this connection.
-        
-        Returns True only if password auth is explicitly required or preferred:
-        - auth_method == 1 (password auth explicitly selected)
-        - pubkey_auth_no == True (pubkey disabled, password required)
-        - preferred_authentications contains 'password' as the primary/preferred method
-        
-        Returns False for:
-        - auth_method == 0 (key-based auth) with pubkey enabled
-        - Combined auth scenarios (key-based with password fallback)
-        - All key_select_mode values (0=try all, 1=specific key with IdentitiesOnly, 2=specific key without IdentitiesOnly)
-        """
-        if connection is None:
-            return False
-        
-        try:
-            # Check auth_method (1 = password, 0 = key-based)
-            # This is the PRIMARY indicator - if it's 0, it's key-based auth, period
-            auth_method = int(getattr(connection, "auth_method", 0) or 0)
-            
-            # If auth_method is 0 (key-based), don't show password prompt
-            # Even if password is in PreferredAuthentications, it's just a fallback
-            if auth_method == 0:
-                logger.debug("Password auth disabled: auth_method == 0 (key-based auth)")
-                return False
-            
-            # If auth_method is 1, password auth is explicitly selected
-            if auth_method == 1:
-                logger.debug("Password auth enabled: auth_method == 1")
-                return True
-            
-            # Check if pubkey auth is disabled (forces password auth)
-            if getattr(connection, "pubkey_auth_no", False):
-                logger.debug("Password auth enabled: pubkey_auth_no == True")
-                return True
-            
-            # Check preferred_authentications - only if password is the primary/preferred method
-            # If publickey comes before password, it's key-based with password fallback - don't show prompt
-            preferred_auth = getattr(connection, "preferred_authentications", None)
-            if preferred_auth:
-                auth_list = []
-                if isinstance(preferred_auth, (list, tuple)):
-                    auth_list = [str(a).lower() for a in preferred_auth]
-                elif isinstance(preferred_auth, str):
-                    auth_list = [a.strip().lower() for a in preferred_auth.split(',')]
-                
-                if auth_list:
-                    # Only return True if password is the first/preferred method
-                    if auth_list[0] == "password":
-                        return True
-                    
-                    # If publickey comes before password, it's key-based auth (password is just fallback)
-                    password_idx = auth_list.index("password") if "password" in auth_list else -1
-                    publickey_idx = auth_list.index("publickey") if "publickey" in auth_list else -1
-                    
-                    # If publickey is not in the list at all and password is, password might be required
-                    if publickey_idx == -1 and password_idx >= 0:
-                        return True
-                    
-                    # If publickey comes before password, it's key-based auth - don't show prompt
-                    if publickey_idx >= 0 and password_idx >= 0 and publickey_idx < password_idx:
-                        return False
-        except Exception as exc:
-            logger.debug(f"Error checking password auth status: {exc}")
-        
-        # Default: key-based auth (auth_method == 0) - don't show password prompt
-        return False
-
-    def _show_password_dialog_before_connect(
-        self, user: str, host: str, connection: Any = None
-    ) -> Optional[str]:
-        """Show password dialog before attempting connection."""
-        from .window import show_ssh_password_dialog
-
-        return show_ssh_password_dialog(
-            from_widget=self,
-            connection=connection,
-            host=host,
-            username=user,
-            connection_manager=self._connection_manager,
-        )
-
-    def _on_authentication_required(self, _manager, error_message: str) -> None:
-        """Handle authentication failure by showing password dialog."""
-        logger.debug(f"Built-in file manager: _on_authentication_required called, error_message={error_message}")
-        logger.debug(f"Built-in file manager: _password_dialog_shown={self._password_dialog_shown}, _password_retry_count={self._password_retry_count}")
-        
-        # Use GLib.idle_add to ensure we're on the main thread
-        def show_password_dialog():
-            try:
-                self._clear_progress_toast()
-                
-                # Only show password dialog if password authentication is enabled
-                if not self._is_password_auth_enabled(self._connection):
-                    logger.debug("Built-in file manager: Authentication failed but password auth not enabled, showing error")
-                    self._on_connection_error(_manager, "Authentication failed. Please check your SSH keys or enable password authentication.")
-                    return False
-                
-                # Don't show multiple password dialogs
-                if self._password_dialog_shown:
-                    logger.debug("Built-in file manager: Password dialog already shown, ignoring duplicate authentication-required signal")
-                    return False
-                
-                # Check retry limit
-                if self._password_retry_count >= self._max_password_retries:
-                    logger.warning(f"Built-in file manager: Maximum password retry limit ({self._max_password_retries}) reached")
-                    self._on_connection_error(_manager, f"Authentication failed after {self._max_password_retries} attempts. Please check your password.")
-                    return False
-                
-                self._password_dialog_shown = True
-                self._password_retry_count += 1
-                logger.debug(
-                    "Built-in file manager: Showing password dialog "
-                    "(attempt %s/%s)",
-                    self._password_retry_count,
-                    self._max_password_retries,
-                )
-
-                username = self._manager._username
-                host = self._manager._host
-                nickname = (
-                    getattr(self._connection, "nickname", None)
-                    if self._connection
-                    else None
-                )
-                display_name = nickname or f"{username}@{host}"
-                from .window import show_ssh_password_dialog
-
-                password = show_ssh_password_dialog(
-                    from_widget=self,
-                    connection=self._connection,
-                    host=host,
-                    username=username,
-                    display_name=display_name,
-                    connection_manager=self._connection_manager,
-                    heading=_("Password Required"),
-                    body=_(
-                        "Authentication failed for {name}.\n\n"
-                        "Please enter your password:"
-                    ).format(name=display_name),
-                )
-                self._password_dialog_shown = False
-
-                if password:
-                    try:
-                        self._manager._password = password
-                        if self._connection is not None:
-                            self._connection.password = password
-                        self._connect_sftp()
-                    except Exception as exc:
-                        logger.error("Error calling connect_to_server: %s", exc)
-                        self._on_connection_error(
-                            self._manager, f"Failed to connect: {exc}"
-                        )
-                elif password is None:
-                    self._password_retry_count = 0
-                    self._on_connection_error(
-                        self._manager, "Authentication cancelled"
-                    )
-
-                return False
-            except Exception as exc:
-                logger.error(
-                    "Built-in file manager: Error in show_password_dialog: %s",
-                    exc,
-                    exc_info=True,
-                )
-                self._password_dialog_shown = False
-                return False
-
-        GLib.idle_add(show_password_dialog)
 
     def _on_directory_loaded(
         self, _manager, path: str, entries: Iterable[FileEntry]
