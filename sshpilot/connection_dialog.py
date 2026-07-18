@@ -1534,9 +1534,9 @@ class ConnectionDialog(
         def _page_box():
             box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
             box.set_margin_top(12)
-            box.set_margin_bottom(12)
-            box.set_margin_start(12)
-            box.set_margin_end(12)
+            box.set_margin_bottom(24)
+            box.set_margin_start(24)
+            box.set_margin_end(24)
             return box
 
         general_page = _page_box()
@@ -1578,13 +1578,19 @@ class ConnectionDialog(
             ("wol", _("Wake on LAN"), wol_page),
         ]
 
-    @staticmethod
-    def _wrap_page_scrolled(widget):
+    # Wider than Adw.PreferencesPage's 600 so the dialog doesn't feel empty;
+    # only reins in content on very wide windows.
+    _CLAMP_ARGS = {"maximum_size": 900, "tightening_threshold": 700}
+
+    @classmethod
+    def _wrap_page_scrolled(cls, widget):
         """Give a tab page its own scroller so scroll position doesn't carry over between tabs."""
+        clamp = Adw.Clamp(**cls._CLAMP_ARGS)
+        clamp.set_child(widget)
         scrolled = Gtk.ScrolledWindow()
         scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         scrolled.set_vexpand(True)
-        scrolled.set_child(widget)
+        scrolled.set_child(clamp)
         return scrolled
 
     def _create_preferences_viewstack_content(self, pages):
@@ -1622,11 +1628,16 @@ class ConnectionDialog(
         switcher_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         switcher_card.add_css_class("card")
         switcher_card.set_hexpand(True)
-        switcher_card.set_margin_start(12)
-        switcher_card.set_margin_end(12)
+        switcher_card.set_margin_start(24)
+        switcher_card.set_margin_end(24)
         switcher_card.set_margin_top(12)
         switcher_card.append(switcher)
         self._switcher_card = switcher_card
+
+        # Same clamp as the pages so the switcher stays aligned with the
+        # content edges when the dialog is resized.
+        switcher_clamp = Adw.Clamp(**self._CLAMP_ARGS)
+        switcher_clamp.set_child(switcher_card)
 
         def _relayout_switcher(*_args):
             try:
@@ -1639,7 +1650,7 @@ class ConnectionDialog(
 
         container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         container.set_vexpand(True)
-        container.append(switcher_card)
+        container.append(switcher_clamp)
         container.append(stack)
         return container
 
