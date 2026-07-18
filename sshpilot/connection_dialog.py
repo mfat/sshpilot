@@ -2619,11 +2619,9 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         page.set_hexpand(True)
         page.set_vexpand(True)
         
-        _nickname_hint = _("Nickname is used as the SSH Host label; no whitespaces allowed.")
         # Host Group
         basic_group = Adw.PreferencesGroup(
             title=_("Host"),
-            description=_nickname_hint,
         )
 
         # Protocol selector. Invisible while SSH is the only registered
@@ -2661,11 +2659,9 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         basic_group.add(self.protocol_row)
 
         # Nickname
-        self.nickname_row = Adw.EntryRow(title=_("Nickname"))
-        try:
-            self.nickname_row.set_subtitle(_nickname_hint)
-        except Exception:
-            pass
+        self.nickname_row = Adw.EntryRow(
+            title=_("Nickname (no whitespace allowed)")
+        )
         basic_group.add(self.nickname_row)
         
         # Hostname
