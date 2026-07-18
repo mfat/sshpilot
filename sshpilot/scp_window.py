@@ -14,6 +14,14 @@ except Exception:
     Vte = None
 from gi.repository import Gtk, Adw, GLib, Gio
 
+from .command_progress_dialog import (
+    build_progress_status_row,
+    build_terminal_disclosure,
+    normalize_child_exit_status,
+    read_terminal_text,
+    terminal_awaiting_input,
+    wrap_dialog_terminal,
+)
 from .terminal import TerminalWidget
 from .config import Config  # noqa: F401  # exposed for tests that patch scp_window.Config
 from .connection_display import (
@@ -1015,110 +1023,59 @@ class ScpWindowController:
             alias_value = _get_connection_alias(connection)
             hostname_value = _get_connection_host(connection)
             host_value = alias_value or hostname_value
-            target = f"{connection.username}@{host_value}" if getattr(connection, 'username', '') else host_value
+            target = (
+                f"{connection.username}@{host_value}"
+                if getattr(connection, 'username', '')
+                else host_value
+            )
 
             if direction == 'upload':
                 title_text = _('Upload files (scp)')
-                subtitle_text = _('Uploading to {target}:{path}').format(target=target, path=destination)
-                info_text = _('We will use scp to upload file(s) to the selected server.')
+                running_text = _('Uploading to {target}:{path}').format(
+                    target=target, path=destination,
+                )
+                success_text = _('Uploaded to {target}:{path}').format(
+                    target=target, path=destination,
+                )
+                failure_text = _('Failed to upload to {target}:{path}').format(
+                    target=target, path=destination,
+                )
                 start_message = _('Starting upload…')
                 success_message = _('Upload finished successfully.')
                 failure_message = _('Upload failed. See output above.')
-                result_heading_ok = _('Upload complete')
                 result_heading_fail = _('Upload failed')
-                result_body_ok = _('Files uploaded to {target}:{path}').format(target=target, path=destination)
             elif direction == 'download':
                 title_text = _('Download files (scp)')
-                subtitle_text = _('Downloading from {target}').format(target=target)
-                info_text = _('We will use scp to download file(s) from the selected server into {dest}.').format(dest=destination)
+                running_text = _('Downloading from {target}').format(target=target)
+                success_text = _('Downloaded to {dest}').format(dest=destination)
+                failure_text = _('Failed to download from {target}').format(
+                    target=target,
+                )
                 start_message = _('Starting download…')
                 success_message = _('Download finished successfully.')
                 failure_message = _('Download failed. See output above.')
-                result_heading_ok = _('Download complete')
                 result_heading_fail = _('Download failed')
-                result_body_ok = _('Files downloaded to {dest}').format(dest=destination)
             else:
                 raise ValueError(f'Unsupported scp direction: {direction}')
 
-            dlg = Adw.Window()
-            dlg.set_transient_for(self.window)
-            dlg.set_modal(True)
-            # Register with the app so routed askpass prompts (passphrase /
-            # password) parent to this modal window instead of hiding behind it.
-            try:
-                app = self.window.get_application()
-                if app is not None:
-                    dlg.set_application(app)
-            except Exception:
-                pass
-            try:
-                dlg.set_title(title_text)
-            except Exception:
-                pass
-            try:
-                dlg.set_default_size(920, 520)
-            except Exception:
-                pass
+            dlg = Adw.Dialog.new()
+            dlg.set_title(title_text)
+            dlg.set_follows_content_size(True)
+
+            toolbar = Adw.ToolbarView()
+            dlg.set_child(toolbar)
 
             header = Adw.HeaderBar()
-            title_widget = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-            title_label = Gtk.Label(label=title_text)
-            title_label.set_halign(Gtk.Align.START)
-            subtitle_label = Gtk.Label(label=subtitle_text)
-            subtitle_label.set_halign(Gtk.Align.START)
-            try:
-                title_label.add_css_class('title-2')
-                subtitle_label.add_css_class('dim-label')
-            except Exception:
-                pass
-            title_widget.append(title_label)
-            title_widget.append(subtitle_label)
-            header.set_title_widget(title_widget)
+            header.set_show_end_title_buttons(False)
+            header.set_title_widget(Gtk.Label(label=title_text))
 
-            cancel_btn = Gtk.Button(label=_('Cancel'))
-            try:
-                cancel_btn.add_css_class('flat')
-            except Exception:
-                pass
-            header.pack_start(cancel_btn)
+            scp_exit_state = {
+                'finished': False,
+                'handler_id': None,
+                'prompt_poll_id': None,
+            }
 
-            content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-            content_box.set_hexpand(True)
-            content_box.set_vexpand(True)
-            try:
-                content_box.set_margin_top(12)
-                content_box.set_margin_bottom(12)
-                content_box.set_margin_start(6)
-                content_box.set_margin_end(6)
-            except Exception:
-                pass
-
-            info_lbl = Gtk.Label(label=info_text)
-            info_lbl.set_halign(Gtk.Align.START)
-            try:
-                info_lbl.add_css_class('dim-label')
-                info_lbl.set_wrap(True)
-            except Exception:
-                pass
-            content_box.append(info_lbl)
-
-            term_widget = TerminalWidget(connection, self.window.config, self.window.connection_manager)
-            try:
-                term_widget._set_connecting_overlay_visible(False)
-                setattr(term_widget, '_suppress_disconnect_banner', True)
-                term_widget._set_disconnected_banner_visible(False)
-            except Exception:
-                pass
-            term_widget.set_hexpand(True)
-            term_widget.set_vexpand(True)
-            content_box.append(term_widget)
-
-            root_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-            root_box.append(header)
-            root_box.append(content_box)
-            dlg.set_content(root_box)
-
-            def _on_cancel(btn):
+            def _cleanup_askpass_helpers() -> None:
                 try:
                     if hasattr(self, '_scp_askpass_helpers'):
                         for helper_path in getattr(self, '_scp_askpass_helpers', []):
@@ -1130,14 +1087,101 @@ class ScpWindowController:
                 except Exception:
                     pass
 
+            def _stop_prompt_poller() -> None:
+                poll_id = scp_exit_state.get('prompt_poll_id')
+                if poll_id is None:
+                    return
+                scp_exit_state['prompt_poll_id'] = None
+                try:
+                    GLib.source_remove(poll_id)
+                except Exception:
+                    pass
+
+            def _on_dialog_closed(*_args):
+                # Closing (Cancel/Close/Esc) kills the child below, which still
+                # fires child-exited; mark finished first so cancel isn't a failure.
+                scp_exit_state['finished'] = True
+                _stop_prompt_poller()
+                stop_progress_spinner()
+                _cleanup_askpass_helpers()
                 try:
                     if hasattr(term_widget, 'disconnect'):
                         term_widget.disconnect()
                 except Exception:
                     pass
+
+            dlg.connect('closed', _on_dialog_closed)
+
+            def _close_dialog(*_args):
                 dlg.close()
 
-            cancel_btn.connect('clicked', _on_cancel)
+            cancel_btn = Gtk.Button(label=_('Cancel'))
+            cancel_btn.connect('clicked', _close_dialog)
+            header.pack_start(cancel_btn)
+
+            close_btn = Gtk.Button(label=_('Close'))
+            close_btn.add_css_class('suggested-action')
+            close_btn.connect('clicked', _close_dialog)
+            header.pack_end(close_btn)
+
+            toolbar.add_top_bar(header)
+
+            content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+            content_box.set_hexpand(True)
+            content_box.set_vexpand(True)
+            content_box.set_size_request(560, -1)
+            content_box.set_margin_top(12)
+            content_box.set_margin_bottom(12)
+            content_box.set_margin_start(12)
+            content_box.set_margin_end(12)
+
+            (
+                progress_row,
+                start_progress_spinner,
+                stop_progress_spinner,
+                mark_progress_success,
+                mark_progress_failure,
+            ) = build_progress_status_row(running_text, success_text, failure_text)
+            content_box.append(progress_row)
+
+            term_widget = TerminalWidget(
+                connection, self.window.config, self.window.connection_manager,
+            )
+            try:
+                term_widget._set_connecting_overlay_visible(False)
+                setattr(term_widget, '_suppress_disconnect_banner', True)
+                setattr(term_widget, '_suppress_connection_exit_handling', True)
+                term_widget._set_disconnected_banner_visible(False)
+            except Exception:
+                pass
+            terminal_card = wrap_dialog_terminal(term_widget)
+            terminal_card.set_size_request(-1, 260)
+
+            def _focus_terminal_input() -> bool:
+                try:
+                    if hasattr(term_widget, 'vte') and term_widget.vte:
+                        term_widget.vte.grab_focus()
+                    else:
+                        term_widget.grab_focus()
+                except Exception:
+                    pass
+                return False
+
+            def _on_terminal_expanded_changed(expanded: bool) -> None:
+                if not expanded:
+                    return
+                _stop_prompt_poller()
+                if not scp_exit_state['finished']:
+                    GLib.idle_add(_focus_terminal_input)
+
+            (
+                terminal_disclosure,
+                set_terminal_expanded,
+                terminal_is_expanded,
+            ) = build_terminal_disclosure(terminal_card, _on_terminal_expanded_changed)
+            content_box.append(terminal_disclosure)
+
+            toolbar.set_content(content_box)
 
             argv = self._build_scp_argv(
                 connection,
@@ -1165,8 +1209,12 @@ class ScpWindowController:
                 if '/app/bin' not in current_path:
                     env['PATH'] = f"/app/bin:{current_path}"
 
-            envv = [f"{k}={v}" for k, v in env.items()]
-            logger.debug(f"SCP: Final environment variables: SSH_ASKPASS={env.get('SSH_ASKPASS', 'NOT_SET')}, SSH_ASKPASS_REQUIRE={env.get('SSH_ASKPASS_REQUIRE', 'NOT_SET')}")
+            logger.debug(
+                "SCP: Final environment variables: SSH_ASKPASS=%s, "
+                "SSH_ASKPASS_REQUIRE=%s",
+                env.get('SSH_ASKPASS', 'NOT_SET'),
+                env.get('SSH_ASKPASS_REQUIRE', 'NOT_SET'),
+            )
             env_dict = dict(env)
 
             def _feed_colored_line(text: str, color: str):
@@ -1179,15 +1227,20 @@ class ScpWindowController:
                 prefix = colors.get(color, '')
                 try:
                     if hasattr(term_widget, 'backend') and term_widget.backend:
-                        term_widget.backend.feed(("\r\n" + prefix + text + "\x1b[0m\r\n").encode('utf-8'))
+                        term_widget.backend.feed(
+                            ("\r\n" + prefix + text + "\x1b[0m\r\n").encode('utf-8')
+                        )
                     elif hasattr(term_widget, 'vte') and term_widget.vte:
-                        term_widget.vte.feed(("\r\n" + prefix + text + "\x1b[0m\r\n").encode('utf-8'))
+                        term_widget.vte.feed(
+                            ("\r\n" + prefix + text + "\x1b[0m\r\n").encode('utf-8')
+                        )
                 except Exception:
                     pass
 
             def _spawn_scp(spawn_argv):
                 cmdline = ' '.join([GLib.shell_quote(a) for a in spawn_argv])
                 logger.debug(f"SCP: Command line: {cmdline}")
+                envv = [f"{k}={v}" for k, v in env_dict.items()]
                 if hasattr(term_widget, 'backend') and term_widget.backend:
                     term_widget.backend.spawn_async(
                         argv=['bash', '-lc', cmdline],
@@ -1209,28 +1262,12 @@ class ScpWindowController:
                         None,
                         -1,
                         None,
-                        None
+                        None,
                     )
                 try:
                     term_widget._install_pty_autofill()
                 except Exception:
                     logger.debug("SCP: could not arm PTY auto-fill", exc_info=True)
-
-            def _scrape_terminal_text():
-                try:
-                    backend = getattr(term_widget, 'backend', None)
-                    if backend and hasattr(backend, 'get_content'):
-                        content = backend.get_content()
-                        if content:
-                            return content
-                    if hasattr(term_widget, 'vte') and term_widget.vte:
-                        content_result = term_widget.vte.get_text_range(
-                            0, 0, -1, -1, lambda *args: True
-                        )
-                        return content_result[0] if content_result else None
-                except Exception as exc:
-                    logger.debug(f"SCP: Failed to scrape terminal output: {exc}")
-                return None
 
             # Tracks whether we have already retried using the legacy SCP
             # protocol (-O), so the fallback happens at most once.
@@ -1238,56 +1275,71 @@ class ScpWindowController:
             # One password retype after a stale saved-password askpass autofill.
             scp_password_retry = {'done': False}
 
-            def _present_result_dialog(failure_body=None):
-                try:
-                    if hasattr(self, '_scp_askpass_helpers'):
-                        for helper_path in getattr(self, '_scp_askpass_helpers', []):
-                            try:
-                                os.unlink(helper_path)
-                            except Exception:
-                                pass
-                        self._scp_askpass_helpers.clear()
-                except Exception:
-                    pass
-
-                msg = Adw.MessageDialog(
-                    transient_for=dlg,
-                    modal=True,
-                    heading=result_heading_ok if failure_body is None else result_heading_fail,
-                    body=(result_body_ok if failure_body is None else failure_body),
-                )
-                msg.add_response('ok', _('OK'))
-                msg.set_default_response('ok')
-                msg.set_close_response('ok')
-                msg.present()
+            def _present_failure_dialog(failure_body: str):
+                _cleanup_askpass_helpers()
+                mark_progress_failure()
+                set_terminal_expanded(True)
+                if hasattr(Adw, 'AlertDialog'):
+                    msg = Adw.AlertDialog(
+                        heading=result_heading_fail,
+                        body=failure_body,
+                    )
+                    msg.add_response('ok', _('OK'))
+                    msg.set_default_response('ok')
+                    msg.set_close_response('ok')
+                    msg.present(dlg)
+                else:
+                    msg = Adw.MessageDialog(
+                        transient_for=self.window,
+                        modal=True,
+                        heading=result_heading_fail,
+                        body=failure_body,
+                    )
+                    msg.add_response('ok', _('OK'))
+                    msg.set_default_response('ok')
+                    msg.set_close_response('ok')
+                    msg.present()
                 return False
 
-            def _on_scp_exited(widget, status):
-                exit_code = None
-                try:
-                    if os.WIFEXITED(status):
-                        exit_code = os.WEXITSTATUS(status)
-                    else:
-                        exit_code = status if 0 <= int(status) < 256 else ((int(status) >> 8) & 0xFF)
-                except Exception:
-                    try:
-                        exit_code = int(status)
-                    except Exception:
-                        exit_code = status
-                ok = (exit_code == 0)
-                if ok:
-                    _feed_colored_line(success_message, 'green')
-                    GLib.idle_add(_present_result_dialog)
+            def _disconnect_scp_exit_handler() -> None:
+                handler_id = scp_exit_state.get('handler_id')
+                if handler_id is None:
                     return
+                try:
+                    if hasattr(term_widget, 'backend') and term_widget.backend:
+                        term_widget.backend.disconnect(handler_id)
+                    elif hasattr(term_widget, 'vte') and term_widget.vte:
+                        term_widget.vte.disconnect(handler_id)
+                except Exception:
+                    pass
+                scp_exit_state['handler_id'] = None
 
-                scraped = _scrape_terminal_text()
+            def _finish_scp(status) -> bool:
+                if scp_exit_state['finished']:
+                    return False
+
+                exit_code = normalize_child_exit_status(status)
+                ok = exit_code == 0
+                if ok:
+                    scp_exit_state['finished'] = True
+                    _stop_prompt_poller()
+                    _disconnect_scp_exit_handler()
+                    _cleanup_askpass_helpers()
+                    mark_progress_success()
+                    _feed_colored_line(success_message, 'green')
+                    return False
+
+                scraped = read_terminal_text(term_widget)
                 from .ssh_utils import is_ssh_auth_failure_text
                 profile = self._build_scp_connection_profile(connection)
                 if (
                     not scp_password_retry['done']
                     and is_ssh_auth_failure_text(scraped)
-                    and (profile.prefer_password or profile.saved_password
-                         or getattr(connection, 'password', None))
+                    and (
+                        profile.prefer_password
+                        or profile.saved_password
+                        or getattr(connection, 'password', None)
+                    )
                 ):
                     scp_password_retry['done'] = True
                     # Whatever in-memory password was staged got rejected —
@@ -1298,6 +1350,8 @@ class ScpWindowController:
                         pass
 
                     def _prompt_password_and_respawn():
+                        if scp_exit_state['finished']:
+                            return False
                         from .window_dialogs import show_ssh_password_dialog
                         display = (
                             profile.alias
@@ -1319,8 +1373,11 @@ class ScpWindowController:
                             ).format(name=display),
                         )
                         if not password:
+                            scp_exit_state['finished'] = True
+                            _stop_prompt_poller()
+                            _disconnect_scp_exit_handler()
                             _feed_colored_line(failure_message, 'red')
-                            return _present_result_dialog(
+                            return _present_failure_dialog(
                                 _('Authentication cancelled')
                             )
                         try:
@@ -1355,12 +1412,15 @@ class ScpWindowController:
                             logger.error(
                                 'SCP: password-retry respawn failed: %s', exc
                             )
+                            scp_exit_state['finished'] = True
+                            _stop_prompt_poller()
+                            _disconnect_scp_exit_handler()
                             _feed_colored_line(failure_message, 'red')
-                            return _present_result_dialog(str(exc))
+                            return _present_failure_dialog(str(exc))
                         return False
 
                     GLib.idle_add(_prompt_password_and_respawn)
-                    return
+                    return False
 
                 # Failure: detect a missing/unavailable remote SFTP server.
                 # OpenSSH 9+ scp uses the SFTP protocol by default, so retry
@@ -1368,14 +1428,18 @@ class ScpWindowController:
                 friendly = classify_sftp_error(scraped)
                 if friendly and not scp_legacy_attempted['done']:
                     scp_legacy_attempted['done'] = True
-                    _feed_colored_line(_('Retrying with legacy SCP protocol (-O)…'), 'yellow')
+                    _feed_colored_line(
+                        _('Retrying with legacy SCP protocol (-O)…'), 'yellow',
+                    )
                     try:
                         legacy_argv = self._build_scp_argv(
                             connection,
                             sources,
                             destination,
                             direction=direction,
-                            known_hosts_path=self.window.connection_manager.known_hosts_path,
+                            known_hosts_path=(
+                                self.window.connection_manager.known_hosts_path
+                            ),
                             legacy=True,
                         )
                         # The first attempt consumed any one-shot session
@@ -1390,23 +1454,48 @@ class ScpWindowController:
                         env_dict.clear()
                         env_dict.update(env_retry)
                         _spawn_scp(legacy_argv)
-                        return
+                        return False
                     except Exception as exc:
-                        logger.error(f'SCP: Failed to retry with legacy protocol: {exc}')
+                        logger.error(
+                            'SCP: Failed to retry with legacy protocol: %s', exc
+                        )
 
+                scp_exit_state['finished'] = True
+                _stop_prompt_poller()
+                _disconnect_scp_exit_handler()
                 _feed_colored_line(failure_message, 'red')
-                failure_body = friendly or _('scp exited with an error. Please review the log output.')
-                GLib.idle_add(lambda: _present_result_dialog(failure_body))
+                failure_body = friendly or _(
+                    'scp exited with an error. Please review the log output.'
+                )
+                return _present_failure_dialog(failure_body)
+
+            def _on_scp_exited(widget, status):
+                GLib.idle_add(_finish_scp, status)
 
             _feed_colored_line(start_message, 'yellow')
 
             try:
                 if hasattr(term_widget, 'backend') and term_widget.backend:
-                    term_widget.backend.connect_child_exited(_on_scp_exited)
+                    scp_exit_state['handler_id'] = (
+                        term_widget.backend.connect_child_exited(_on_scp_exited)
+                    )
                 elif hasattr(term_widget, 'vte') and term_widget.vte:
-                    term_widget.vte.connect('child-exited', _on_scp_exited)
+                    scp_exit_state['handler_id'] = term_widget.vte.connect(
+                        'child-exited', _on_scp_exited,
+                    )
             except Exception:
                 pass
+
+            def _poll_for_prompt() -> bool:
+                if scp_exit_state['finished'] or terminal_is_expanded():
+                    scp_exit_state['prompt_poll_id'] = None
+                    return GLib.SOURCE_REMOVE
+                content = read_terminal_text(term_widget)
+                if terminal_awaiting_input(content):
+                    scp_exit_state['prompt_poll_id'] = None
+                    set_terminal_expanded(True)
+                    return GLib.SOURCE_REMOVE
+                return GLib.SOURCE_CONTINUE
 
             try:
                 _spawn_scp(argv)
@@ -1415,9 +1504,14 @@ class ScpWindowController:
                 dlg.close()
                 return
 
-            dlg.present()
+            scp_exit_state['prompt_poll_id'] = GLib.timeout_add(
+                400, _poll_for_prompt,
+            )
+            dlg.present(self.window)
+            GLib.idle_add(start_progress_spinner)
         except Exception as e:
             logger.error(f'Failed to open scp terminal window: {e}')
+
     def _build_scp_argv(
         self,
         connection,

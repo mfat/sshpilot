@@ -119,6 +119,11 @@ def test_ssh_copy_id_saved_passphrase_uses_askpass(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(
         runner_mod,
+        "_wrap_sshcopyid_terminal",
+        lambda *_args, **_kwargs: DummyWidget(),
+    )
+    monkeypatch.setattr(
+        runner_mod,
         "_build_terminal_disclosure",
         lambda *_args, **_kwargs: (
             DummyWidget(),
