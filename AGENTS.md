@@ -292,9 +292,8 @@ that own a PTY type it once at ssh's password prompt (`classify_prompt` from
 - **SCP UI** (`scp_window.py`): upload and download both run `scp` in a VTE via
   `_start_scp_transfer` / `_show_scp_terminal_window`, applying
   `resolve_native_auth` the same way (sshpass only if password method; else PTY
-  auto-fill). Headless `scp_utils.download_file` / `upload_file` still exist for
-  programmatic callers and must set `use_publickey=True` for key-based hosts so
-  they never force `auth_method=1` / sshpass.
+  auto-fill). Shared argv helpers live in `scp_utils.py` (no headless transfer
+  API).
 - **ssh-copy-id** (`sshcopyid_window.py`): builds its own `ssh-copy-id` argv and
   applies `resolve_native_auth` (its `-o` options must precede the target); same
   sshpass vs PTY-fill split as the terminal.

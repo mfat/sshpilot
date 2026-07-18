@@ -1381,9 +1381,9 @@ class ScpWindowController:
         )
 
         try:
-            # Downloads always recurse (`scp -r` is harmless on a regular file),
-            # mirroring download_file() so this terminal path can't reproduce
-            # issue #1002. Uploads recurse when a local source is a directory
+            # Downloads always recurse (`scp -r` is harmless on a regular file)
+            # so directory transfers don't fail with "not a regular file"
+            # (issue #1002). Uploads recurse when a local source is a directory
             # (os.path.isdir is reliable for local paths, symlinks included).
             recursive = direction == 'download' or any(
                 os.path.isdir(path) for path in transfer_sources

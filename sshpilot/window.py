@@ -99,15 +99,6 @@ from .remote_path_utils import (
     _normalize_remote_path,
     _quote_remote_path_for_shell,
 )
-# Re-exported for backward compatibility: these SCP helpers used to live in
-# window.py and are still referenced as `window.<name>` (e.g. by tests). They are
-# unused within window.py itself, hence the noqa.
-from .scp_utils import (  # noqa: F401
-    assemble_scp_transfer_args,
-    classify_sftp_error,
-    download_file,
-    upload_file,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -322,10 +313,6 @@ def list_remote_files(
     except Exception as exc:
         logger.error('SCP: Error listing remote files: %s', exc)
         return [], str(exc)
-
-
-# download_file and upload_file are now in scp_utils.py
-# Imported at the top of the file
 
 
 def resolve_app_modal_parent(from_widget=None) -> "Gtk.Window":
