@@ -576,6 +576,13 @@ class OpenSSHSFTPManager(GObject.GObject):
         prepared = build_ssh_connection(ctx)
         argv = list(prepared.command)
         env = {**os.environ, **(prepared.env or {})}
+        # The auth resolver clears askpass/agent vars by *removing* them from
+        # its env copy — a plain merge with os.environ resurrects them (e.g. a
+        # desktop ksshaskpass would hijack the PTY-less worker's prompts).
+        # Honor the deletions, same as scp_utils._apply_native_auth_env.
+        for key in ("SSH_ASKPASS", "SSH_ASKPASS_REQUIRE", "SSH_AUTH_SOCK"):
+            if key not in (prepared.env or {}):
+                env.pop(key, None)
         cleanup: Optional[Callable[[], None]] = None
         if prepared.use_sshpass and prepared.password:
             from ..ssh_password_exec import wrap_argv_with_sshpass

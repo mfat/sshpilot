@@ -149,6 +149,29 @@ def test_build_argv_uses_manager_password_for_sshpass(monkeypatch):
     manager.close()
 
 
+def test_build_argv_strips_cleared_askpass_from_env(monkeypatch):
+    """The auth resolver clears SSH_ASKPASS by *omitting* it from its env; a
+    plain merge with os.environ would resurrect a desktop askpass and let it
+    hijack the PTY-less worker's prompts. The merge must honor the deletion."""
+    import sshpilot.ssh_connection_builder as scb
+
+    monkeypatch.setenv("SSH_ASKPASS", "/usr/bin/ksshaskpass")
+    monkeypatch.setenv("SSH_ASKPASS_REQUIRE", "prefer")
+    # Resolver returns an env WITHOUT askpass (the "nothing saved" branch).
+    monkeypatch.setattr(
+        scb, "build_ssh_connection",
+        lambda ctx: _stub_prepared(["ssh", "host", "sftp"], env={"KEEP": "1"}),
+    )
+
+    manager = _manager(monkeypatch)
+    argv, env, cleanup = manager._build_argv()
+
+    assert "SSH_ASKPASS" not in env
+    assert "SSH_ASKPASS_REQUIRE" not in env
+    assert env["KEEP"] == "1"
+    manager.close()
+
+
 def test_build_argv_no_sshpass_when_key_auth(monkeypatch):
     import sshpilot.ssh_connection_builder as scb
     import sshpilot.ssh_password_exec as spe

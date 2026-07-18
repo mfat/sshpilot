@@ -196,6 +196,12 @@ class MasterSession:
             ['-N'] + ssh_multiplex.controlmaster_args())
         prepared = build_ssh_connection(ctx)
         env = {**os.environ, **(prepared.env or {})}
+        # Honor the auth resolver's deletions: a plain merge would resurrect a
+        # desktop SSH_ASKPASS (ksshaskpass etc.) from os.environ and let it
+        # intercept prompts meant for our PTY.
+        for key in ('SSH_ASKPASS', 'SSH_ASKPASS_REQUIRE', 'SSH_AUTH_SOCK'):
+            if key not in (prepared.env or {}):
+                env.pop(key, None)
         self._stored_password = prepared.password or _get_stored_password(
             self._connection, self._connection_manager)
 
