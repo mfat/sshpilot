@@ -67,7 +67,7 @@ def test_resolve_app_modal_parent_embedded_uses_root():
 
 
 def test_show_ssh_password_dialog_delegates_to_shared_helper(monkeypatch):
-    from sshpilot.window import show_ssh_password_dialog
+    from sshpilot.window_dialogs import show_ssh_password_dialog
 
     calls = {}
 
@@ -77,10 +77,10 @@ def test_show_ssh_password_dialog_delegates_to_shared_helper(monkeypatch):
         return "secret"
 
     monkeypatch.setattr(
-        "sshpilot.window._show_password_passphrase_dialog", fake_dialog
+        "sshpilot.window_dialogs._show_password_passphrase_dialog", fake_dialog
     )
     monkeypatch.setattr(
-        "sshpilot.window.present_for_modal_dialog", lambda _w: None
+        "sshpilot.window_dialogs.present_for_modal_dialog", lambda _w: None
     )
 
     main = MainWindow()

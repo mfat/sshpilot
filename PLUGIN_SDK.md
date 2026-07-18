@@ -44,7 +44,7 @@ change without notice.
 | Register a page with no menu entry / custom activation | `ctx.ui.register_page(..., add_menu_item=False, on_activate=cb)` *(1.8)* |
 | Keep one SSH connection warm & multiplex calls over it | `ctx.acquire_multiplex(nickname)` / `ctx.release_multiplex(nickname)` *(1.9)* |
 | Store/read credentials (keyring) | `ctx.secrets.get/set/delete(key)` |
-| Prompt for SSH login password (in-app GUI) | `show_ssh_password_dialog(...)` in `sshpilot.window` *(escape hatch — see [Advanced UI — credential dialogs](#advanced-ui--credential-dialogs))* |
+| Prompt for SSH login password (in-app GUI) | `show_ssh_password_dialog(...)` in `sshpilot.window_dialogs` (also re-exported from `sshpilot.window`) *(escape hatch — see [Advanced UI — credential dialogs](#advanced-ui--credential-dialogs))* |
 | Store/read plugin settings | `ctx.settings.get/set(key)` |
 | Run code back on the UI thread | `ctx.run_on_ui_thread(fn, *args)` |
 
@@ -280,7 +280,7 @@ for password-method connections). Prompt with `show_ssh_password_dialog` only
 when you need a password that is not already in the keyring / connection record.
 
 Full reference: **AGENTS.md → In-app password & passphrase dialogs** and
-docstrings on `show_ssh_password_dialog` in `sshpilot/window.py`.
+docstrings on `show_ssh_password_dialog` in `sshpilot/window_dialogs.py`.
 
 ---
 

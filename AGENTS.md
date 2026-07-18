@@ -234,7 +234,8 @@ a boxed-list `PasswordEntryRow`, and an optional Store checkbox.
 
 **SSH login password (in-process, blocking, main-thread only)**
 
-- **`show_ssh_password_dialog(...)`** in `window.py` — the single entry point.
+- **`show_ssh_password_dialog(...)`** in `window_dialogs.py` (re-exported from
+  `window`) — the single entry point.
   Resolves `MainWindow` via `resolve_app_modal_parent(from_widget)`, presents it,
   shows the standard password dialog (optional **Store password** via
   `connection_manager`), and returns the string or `None`.
@@ -244,7 +245,8 @@ a boxed-list `PasswordEntryRow`, and an optional Store checkbox.
 Typical call from a secondary window or plugin page:
 
 ```python
-from sshpilot.window import show_ssh_password_dialog
+from sshpilot.window_dialogs import show_ssh_password_dialog
+# (also re-exported from sshpilot.window)
 
 password = show_ssh_password_dialog(
     from_widget=self,                    # or your Gtk.Widget / Adw.Window
@@ -334,9 +336,10 @@ as remote sudo prompts.)
   normalized credential listing and export (see `docs/CREDENTIAL_MANAGER.md`).
 - `askpass_utils.py`: askpass helper for **passphrases and login passwords**,
   prompt classification, keyring lookup, and GTK passphrase prompt.
-- `window.py`: `show_ssh_password_dialog`, `resolve_app_modal_parent`,
+- `window_dialogs.py`: `show_ssh_password_dialog`, `resolve_app_modal_parent`,
   `present_for_modal_dialog` — in-app SSH password prompts and Wayland-safe modal
-  parenting (see **In-app password & passphrase dialogs** above).
+  parenting (re-exported from `window`; see **In-app password & passphrase
+  dialogs** above).
 
 When changing this subsystem: keep a **single** connection method and a
 **single** auth resolver; prefer writing per-host settings to `~/.ssh/config`
