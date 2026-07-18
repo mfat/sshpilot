@@ -598,6 +598,21 @@ class FileManagerWindow(Adw.Window):
                 logger.exception("Error connecting to server: %s", exc)
         return False
 
+    def _dialog_parent(self) -> Gtk.Widget:
+        """The widget to present dialogs against — the embedded tab parent when
+        this file manager runs inside a tab, else the window (or its transient
+        parent). Mirrors the resolution used for the overwrite-conflict dialog;
+        Adw dialogs presented against the bare `self` never map when embedded."""
+        if self._embedded_parent is not None:
+            return self._embedded_parent
+        try:
+            transient = self.get_transient_for()
+            if transient is not None:
+                return transient
+        except Exception:
+            pass
+        return self
+
     def _on_master_needs_interaction(self, master_fd: int, transcript: str) -> bool:
         if self._auth_dialog is not None:
             return False
@@ -610,7 +625,7 @@ class FileManagerWindow(Adw.Window):
             on_cancelled=self._on_auth_dialog_cancelled,
         )
         self._auth_dialog = dialog
-        dialog.present(self)
+        dialog.present(self._dialog_parent())
         return False
 
     def _on_master_need_password(self, prompt_line: str) -> bool:
