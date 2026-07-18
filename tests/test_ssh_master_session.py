@@ -1,9 +1,8 @@
 """Tests for the PTY-backed MasterSession (master-first file-manager auth).
 
-A fake "ssh" python script runs on a real PTY and plays the server's part:
-prompting for a password, an OTP code, or failing outright. The tests assert
-the session auto-answers stored secrets, escalates unanswerable prompts with
-the PTY fd + transcript, and reports failures with the transcript tail.
+Auth is askpass-only: MasterSession does not scrape the PTY or hand off an
+AuthTerminalDialog. These tests cover askpass env wiring, ready/failed
+lifecycle, and ControlMaster stop via the single command builder.
 """
 
 import os
@@ -19,21 +18,10 @@ import sshpilot.ssh_master_session as mss
 FAKE_SSH = r"""
 import sys, time
 mode, flag = sys.argv[1], sys.argv[2]
-if mode == "password":
-    sys.stdout.write("user@host's password: ")
-    sys.stdout.flush()
-    line = sys.stdin.readline().strip()
-    if line == "sekret":
-        with open(flag, "w") as fh:
-            fh.write("ok")
-        sys.stdout.write("\nconnected\n")
-        sys.stdout.flush()
-        time.sleep(30)  # emulate ssh -N staying attached
-    else:
-        sys.stdout.write("Permission denied, please try again.\n")
-        sys.exit(255)
-elif mode == "otp":
-    sys.stdout.write("Verification code: ")
+if mode == "ready":
+    with open(flag, "w") as fh:
+        fh.write("ok")
+    sys.stdout.write("connected\n")
     sys.stdout.flush()
     time.sleep(30)
 elif mode == "fail":
@@ -47,24 +35,10 @@ class _Callbacks:
     def __init__(self):
         self.ready = threading.Event()
         self.failed = threading.Event()
-        self.needs_interaction = threading.Event()
-        self.need_password = threading.Event()
-        self.interaction_fd = None
-        self.interaction_transcript = ""
         self.failed_tail = ""
-        self.password_prompt = ""
 
     def on_ready(self):
         self.ready.set()
-
-    def on_needs_interaction(self, fd, transcript):
-        self.interaction_fd = fd
-        self.interaction_transcript = transcript
-        self.needs_interaction.set()
-
-    def on_need_password(self, prompt):
-        self.password_prompt = prompt
-        self.need_password.set()
 
     def on_failed(self, tail):
         self.failed_tail = tail
@@ -78,25 +52,33 @@ def harness(monkeypatch, tmp_path):
     flag = tmp_path / "authed.flag"
 
     monkeypatch.setattr(mss, "_CHECK_INTERVAL", 0.1)
-    # The flag file written by the fake ssh after successful auth stands in
-    # for a live control socket.
     monkeypatch.setattr(
         mss, "check_master_alive", lambda *a, **k: flag.exists()
     )
-    monkeypatch.setattr(mss, "_get_stored_password", lambda *a: None)
 
-    def make_session(mode, password=None):
+    def make_session(mode, *, prepared_env=None, password=None):
+        captured = {}
+
+        def _build(ctx):
+            env = dict(prepared_env or {})
+            return types.SimpleNamespace(
+                command=[sys.executable, str(script), mode, str(flag)],
+                env=env,
+                use_sshpass=False,
+                password=password,
+                use_askpass=bool(env.get("SSH_ASKPASS")),
+            )
+
+        monkeypatch.setattr(mss, "build_ssh_connection", _build)
         monkeypatch.setattr(
             mss,
-            "build_ssh_connection",
-            lambda ctx: types.SimpleNamespace(
-                command=[sys.executable, str(script), mode, str(flag)],
-                env={},
-                use_sshpass=bool(password),
-                password=password,
-                use_askpass=False,
-            ),
+            "_askpass_env_for_connection",
+            lambda *a, **k: {
+                "SSH_ASKPASS": "/tmp/fake-askpass",
+                "SSH_ASKPASS_REQUIRE": "prefer",
+            },
         )
+
         callbacks = _Callbacks()
         connection = types.SimpleNamespace(
             nickname="host", resolved_identity_files=[]
@@ -106,47 +88,57 @@ def harness(monkeypatch, tmp_path):
             None,
             None,
             on_ready=callbacks.on_ready,
-            on_needs_interaction=callbacks.on_needs_interaction,
-            on_need_password=callbacks.on_need_password,
             on_failed=callbacks.on_failed,
         )
-        return session, callbacks
+        return session, callbacks, captured
 
     return make_session
 
 
-def test_auto_answers_stored_password(harness):
-    session, callbacks = harness("password", password="sekret")
+def test_forces_askpass_prefer_when_resolver_omits_it(harness, monkeypatch):
+    spawned = {}
+
+    real_popen = mss.subprocess.Popen
+
+    def _popen(*args, **kwargs):
+        spawned["env"] = kwargs.get("env") or {}
+        return real_popen(*args, **kwargs)
+
+    monkeypatch.setattr(mss.subprocess, "Popen", _popen)
+    session, callbacks, _ = harness("ready", prepared_env={})
     session.start()
     assert callbacks.ready.wait(10), "master never reported ready"
-    assert not callbacks.failed.is_set()
-    assert not callbacks.need_password.is_set()
-
-
-def test_unstored_password_escalates_to_callback(harness):
-    session, callbacks = harness("password", password=None)
-    session.start()
-    assert callbacks.need_password.wait(10), "password callback never fired"
-    assert "password" in callbacks.password_prompt.lower()
-    session.send_secret("sekret")
-    assert callbacks.ready.wait(10), "master never reported ready after answer"
-
-
-def test_interactive_prompt_hands_off_pty(harness):
-    session, callbacks = harness("otp")
-    session.start()
-    assert callbacks.needs_interaction.wait(10), "interaction callback never fired"
-    assert "verification code" in callbacks.interaction_transcript.lower()
-    assert callbacks.interaction_fd is not None
-    # The UI owns the fd after handover; answering through it completes nothing
-    # here (fake ssh ignores it) — just verify it is a live PTY fd and clean up.
-    os.write(callbacks.interaction_fd, b"\x03")
+    assert spawned["env"].get("SSH_ASKPASS") == "/tmp/fake-askpass"
+    assert spawned["env"].get("SSH_ASKPASS_REQUIRE") == "prefer"
     session.cancel()
-    os.close(callbacks.interaction_fd)
+
+
+def test_keeps_resolver_askpass_and_forces_prefer(harness, monkeypatch):
+    spawned = {}
+
+    real_popen = mss.subprocess.Popen
+
+    def _popen(*args, **kwargs):
+        spawned["env"] = kwargs.get("env") or {}
+        return real_popen(*args, **kwargs)
+
+    monkeypatch.setattr(mss.subprocess, "Popen", _popen)
+    session, callbacks, _ = harness(
+        "ready",
+        prepared_env={
+            "SSH_ASKPASS": "/resolver/askpass",
+            "SSH_ASKPASS_REQUIRE": "force",
+        },
+    )
+    session.start()
+    assert callbacks.ready.wait(10)
+    assert spawned["env"].get("SSH_ASKPASS") == "/resolver/askpass"
+    assert spawned["env"].get("SSH_ASKPASS_REQUIRE") == "prefer"
+    session.cancel()
 
 
 def test_exit_before_ready_reports_failure(harness):
-    session, callbacks = harness("fail")
+    session, callbacks, _ = harness("fail")
     session.start()
     assert callbacks.failed.wait(10), "failure callback never fired"
     assert "connection refused" in callbacks.failed_tail.lower()
@@ -182,7 +174,7 @@ def test_invalidate_master_runs_stop_via_builder(monkeypatch):
     assert ran["argv"] == ["ssh", "-O", "stop", "host"]
 
 
-def test_classify_prompt():
+def test_classify_prompt_reexport():
     assert mss.classify_prompt("user@host's password: ") == "password"
     assert (
         mss.classify_prompt("Enter passphrase for key '/home/u/.ssh/id_ed25519': ")
@@ -197,6 +189,5 @@ def test_classify_prompt():
         )
         == "interactive"
     )
-    # Statements, not prompts.
     assert mss.classify_prompt("Permission denied (publickey,password).") is None
     assert mss.classify_prompt("") is None

@@ -94,7 +94,7 @@ def _extract_key_path(prompt: str) -> str:
     return ""
 
 
-# Prompt classification shared with MasterSession / terminal autofill. Only the
+# Prompt classification for askpass (password vs passphrase vs OTP). Only the
 # last non-empty line is matched so scrollback like
 # "Permission denied (publickey,password)." cannot false-positive.
 _INLINE_PROMPT_MARKERS = (
@@ -600,6 +600,25 @@ def _route_challenge_to_main_app(
     )
 
 
+def _route_password_to_main_app(
+    prompt: str, log_fn
+) -> "tuple[bool, str | None]":
+    """Ask the main app to collect an unstored login password."""
+    user = (os.environ.get("SSHPILOT_PASSWORD_USER") or "").strip()
+    hosts_raw = os.environ.get("SSHPILOT_PASSWORD_HOSTS") or ""
+    hosts = [h.strip() for h in hosts_raw.split("\n") if h.strip()]
+    return _ask_main_app(
+        {
+            "type": "password",
+            "prompt": prompt,
+            "username": user,
+            "host": hosts[0] if hosts else "",
+        },
+        log_fn,
+        ok_key="value",
+    )
+
+
 def _run_challenge_dialog(prompt: str, log_fn) -> "str | None":
     """Standalone GTK dialog for OTP / verification-code style prompts."""
     try:
@@ -843,7 +862,21 @@ def handle_askpass_cli(prompt: str) -> "str | None":
         if value:
             _log("ASKPASS: Returning password to caller")
             return value
-        _log("ASKPASS: No password available; exiting with code 1 (TTY fallback)")
+        # No vault/session password — ask the user. prefer does not fall back
+        # to the TTY (same as MFA), so a dialog is required.
+        _log("ASKPASS: no stored password; asking user")
+        handled, routed = _route_password_to_main_app(prompt, _log)
+        if handled:
+            if routed is not None:
+                _log("ASKPASS: Returning password from main-app dialog")
+                return routed
+            _log("ASKPASS: user cancelled password prompt")
+            return None
+        value = _run_challenge_dialog(prompt, _log)
+        if value is not None:
+            _log("ASKPASS: Returning password from GUI dialog")
+            return value
+        _log("ASKPASS: No password available; exiting with code 1")
         return None
 
     if kind != 'passphrase' and "passphrase" not in prompt.lower():

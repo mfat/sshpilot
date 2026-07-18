@@ -1,17 +1,16 @@
 """PTY-backed SSH ControlMaster session for the file manager.
 
 The SFTP file manager runs ``ssh -s <host> sftp`` over pipes with no PTY, so it
-cannot answer interactive prompts (2FA codes, YubiKey PINs, host-key
-confirmations, unstored secrets). This module establishes the connection
-*first*, as an OpenSSH ControlMaster spawned on a PTY the app owns:
+cannot answer interactive prompts itself. This module establishes the connection
+*first*, as an OpenSSH ControlMaster spawned on an app-owned PTY:
 
-* known prompts with stored secrets are answered by askpass (login password
-  and key passphrase) via ``resolve_native_auth()`` env, or by writing to the
-  PTY as a backup when the prompt still appears on the master PTY;
-* anything else (OTP, PIN, touch, yes/no) is surfaced via callback so the UI
-  can reveal the PTY in a terminal dialog for the user to answer natively;
-* once ``ssh -O check`` confirms the master socket, the PTY-less SFTP worker
-  connects through it instantly with no authentication of its own.
+* **All auth** (login password, key passphrase, OTP/MFA) is handled by askpass
+  via ``resolve_native_auth()`` env with ``SSH_ASKPASS_REQUIRE=prefer``. There is
+  no PTY-side prompt scraping or AuthTerminalDialog handoff.
+* The PTY exists so OpenSSH can run ``ssh -N`` / ControlMaster; output is only
+  retained for failure diagnostics.
+* Once ``ssh -O check`` confirms the master socket, the PTY-less SFTP worker
+  connects through it with no authentication of its own.
 
 GTK-free: callbacks fire on internal threads; callers marshal to the UI loop.
 """
@@ -26,13 +25,13 @@ import struct
 import subprocess
 import termios
 import threading
-from typing import Callable, Dict, List, Optional
+from typing import Callable, List, Optional
 
 from . import ssh_multiplex
-from .askpass_utils import _extract_key_path, classify_prompt, lookup_passphrase
+from .askpass_utils import classify_prompt, lookup_passphrase
 from .ssh_connection_builder import (
     ConnectionContext,
-    _get_stored_password,
+    _askpass_env_for_connection,
     build_ssh_connection,
 )
 
@@ -70,16 +69,14 @@ def ensure_authenticated_master(
     config=None,
     *,
     on_ready: Callable[[], None],
-    on_needs_interaction: Callable[[int, str], None],
-    on_need_password: Callable[[str], None],
     on_failed: Callable[[str], None],
 ) -> Optional["MasterSession"]:
     """Start a PTY-backed ControlMaster when none is live.
 
-    Returns the new ``MasterSession`` when one was started, or ``None`` when a
-    live master already exists (``on_ready`` is invoked immediately). Callers
-    (file manager, and any future PTY-less tool) marshal callbacks to the UI
-    loop themselves — this helper stays GTK-free.
+    Auth is entirely via askpass (see ``MasterSession``). Returns the new
+    ``MasterSession`` when one was started, or ``None`` when a live master
+    already exists (``on_ready`` is invoked immediately). Callers marshal
+    callbacks to the UI loop themselves — this helper stays GTK-free.
     """
     if check_master_alive(connection, connection_manager, config):
         on_ready()
@@ -89,8 +86,6 @@ def ensure_authenticated_master(
         connection_manager,
         config,
         on_ready=on_ready,
-        on_needs_interaction=on_needs_interaction,
-        on_need_password=on_need_password,
         on_failed=on_failed,
     )
     session.start()
@@ -156,27 +151,16 @@ class MasterSession:
     * ``on_ready()`` — ``ssh -O check`` passed; the socket is live. The
       foreground ssh has been terminated (ControlPersist keeps the daemonized
       master serving the socket).
-    * ``on_needs_interaction(master_fd, transcript)`` — an unanswerable prompt
-      appeared. The raw reader has stopped; the caller owns ``master_fd`` now
-      (attach it to a VTE) and should show ``transcript`` so the pending
-      prompt is visible.
-    * ``on_need_password(prompt_line)`` — a password prompt with no stored (or
-      a rejected stored) password. Answer with :meth:`send_secret` or
-      :meth:`cancel`.
     * ``on_failed(transcript_tail)`` — ssh exited before the socket went live.
     """
 
     def __init__(self, connection, connection_manager=None, config=None, *,
                  on_ready: Callable[[], None],
-                 on_needs_interaction: Callable[[int, str], None],
-                 on_need_password: Callable[[str], None],
                  on_failed: Callable[[str], None]):
         self._connection = connection
         self._connection_manager = connection_manager
         self._config = config
         self._on_ready = on_ready
-        self._on_needs_interaction = on_needs_interaction
-        self._on_need_password = on_need_password
         self._on_failed = on_failed
 
         self._proc: Optional[subprocess.Popen] = None
@@ -184,13 +168,6 @@ class MasterSession:
         self._transcript = ''
         self._lock = threading.Lock()
         self._finished = threading.Event()   # ready/failed/cancelled: no more callbacks
-        self._handed_off = False             # reader stopped; fd belongs to the UI
-        self._answered: Dict[str, int] = {}  # prompt key -> auto-answers sent
-        # Only transcript text after this offset is classified, so an answered
-        # prompt (whose text remains the last line until the server responds)
-        # cannot re-trigger, and a genuine re-prompt (which arrives after the
-        # mark) still does.
-        self._answer_mark = 0
 
     # -- lifecycle ---------------------------------------------------------
     def start(self) -> None:
@@ -201,13 +178,26 @@ class MasterSession:
         prepared = build_ssh_connection(ctx)
         env = {**os.environ, **(prepared.env or {})}
         # Honor the auth resolver's deletions: a plain merge would resurrect a
-        # desktop SSH_ASKPASS (ksshaskpass etc.) from os.environ and let it
-        # intercept prompts meant for our PTY.
+        # desktop SSH_ASKPASS (ksshaskpass etc.) from os.environ.
         for key in ('SSH_ASKPASS', 'SSH_ASKPASS_REQUIRE', 'SSH_AUTH_SOCK'):
             if key not in (prepared.env or {}):
                 env.pop(key, None)
-        self._stored_password = prepared.password or _get_stored_password(
-            self._connection, self._connection_manager)
+
+        # FM master always uses askpass (prefer). Auth UI is askpass dialogs —
+        # never PTY-side classify/handoff. When resolve_native_auth left askpass
+        # off (nothing saved / setting off), still wire it so unstored password
+        # and OTP prompts can be collected graphically.
+        if not env.get('SSH_ASKPASS'):
+            ask_env = _askpass_env_for_connection(
+                self._connection,
+                session_password=getattr(prepared, 'password', None),
+            )
+            env.update(ask_env)
+            logger.debug(
+                "MasterSession: forced askpass prefer (resolver had no SSH_ASKPASS)"
+            )
+        elif env.get('SSH_ASKPASS_REQUIRE') != 'prefer':
+            env['SSH_ASKPASS_REQUIRE'] = 'prefer'
 
         master_fd, slave_fd = os.openpty()
         try:
@@ -216,7 +206,7 @@ class MasterSession:
             pass
         try:
             # setsid() via start_new_session, then adopt the PTY slave as the
-            # controlling terminal so ssh's /dev/tty prompts land on our PTY.
+            # controlling terminal (OpenSSH still allocates a tty for -N).
             self._proc = subprocess.Popen(
                 list(prepared.command),
                 stdin=slave_fd, stdout=slave_fd, stderr=slave_fd,
@@ -226,25 +216,15 @@ class MasterSession:
         finally:
             os.close(slave_fd)
         self._master_fd = master_fd
-        logger.debug("MasterSession spawned: %s", ' '.join(prepared.command))
+        logger.debug(
+            "MasterSession spawned (askpass auth): %s",
+            ' '.join(prepared.command),
+        )
 
         threading.Thread(target=self._read_loop, daemon=True,
                          name='ssh-master-pty-reader').start()
         threading.Thread(target=self._check_loop, daemon=True,
                          name='ssh-master-check').start()
-
-    def send_secret(self, secret: str) -> None:
-        """Write a secret + newline to the PTY (echo is off during secret
-        prompts, so nothing is displayed or retained by the terminal)."""
-        fd = self._master_fd
-        if fd is None or self._finished.is_set():
-            return
-        try:
-            os.write(fd, secret.encode('utf-8', errors='replace') + b'\n')
-            with self._lock:
-                self._answer_mark = len(self._transcript)
-        except OSError:
-            logger.debug("MasterSession: PTY write failed", exc_info=True)
 
     def cancel(self) -> None:
         """Abort the session: kill the foreground ssh and close the PTY. A
@@ -254,8 +234,8 @@ class MasterSession:
 
     # -- internals ---------------------------------------------------------
     def _preload_agent_keys(self) -> None:
-        """Silently load stored-passphrase keys into ssh-agent (existing
-        keyring-only behaviour) so most key hosts never prompt at all."""
+        """Silently load stored-passphrase keys into ssh-agent so most key hosts
+        never prompt at all."""
         manager = self._connection_manager
         if manager is None or not hasattr(manager, 'prepare_key_for_connection'):
             return
@@ -274,6 +254,7 @@ class MasterSession:
                              path, exc_info=True)
 
     def _read_loop(self) -> None:
+        """Drain PTY output into a transcript for failure diagnostics only."""
         fd = self._master_fd
         while not self._finished.is_set():
             try:
@@ -287,54 +268,6 @@ class MasterSession:
                 combined = self._transcript + text
                 dropped = max(0, len(combined) - _TRANSCRIPT_MAX)
                 self._transcript = combined[dropped:]
-                self._answer_mark = max(0, self._answer_mark - dropped)
-                transcript = self._transcript
-            if self._handle_prompt(transcript):
-                return  # handed off to the UI; stop reading
-        # EOF/error: ssh exited. The check loop reports failure (or already
-        # reported ready); nothing to do here.
-
-    def _handle_prompt(self, transcript: str) -> bool:
-        """React to a trailing prompt. Returns True when the reader must stop
-        because the fd was handed to the UI."""
-        with self._lock:
-            pending = transcript[self._answer_mark:]
-        kind = classify_prompt(pending)
-        if kind is None or self._finished.is_set():
-            return False
-
-        lines = [l.strip() for l in pending.splitlines() if l.strip()]
-        prompt_line = lines[-1] if lines else ''
-
-        if kind == 'password':
-            if self._stored_password and self._answered.get('password', 0) < 1:
-                self._answered['password'] = 1
-                logger.debug("MasterSession: auto-answering password prompt")
-                self.send_secret(self._stored_password)
-                return False
-            # No stored password, or the stored one was rejected (re-prompt).
-            with self._lock:
-                self._answer_mark = len(self._transcript)
-            self._on_need_password(prompt_line)
-            return False
-
-        if kind == 'passphrase':
-            key_path = _extract_key_path(prompt_line)
-            answer_key = f'passphrase:{key_path}'
-            passphrase = lookup_passphrase(key_path) if key_path else ''
-            if passphrase and self._answered.get(answer_key, 0) < 1:
-                self._answered[answer_key] = 1
-                logger.debug("MasterSession: auto-answering passphrase for %s", key_path)
-                self.send_secret(passphrase)
-                return False
-            # Unstored (or rejected) passphrase -> let the user type it.
-
-        # 'interactive' (or unanswerable passphrase): hand the PTY to the UI.
-        self._handed_off = True
-        logger.info("MasterSession: interactive prompt, handing PTY to UI: %r",
-                    prompt_line)
-        self._on_needs_interaction(self._master_fd, transcript)
-        return True
 
     def _check_loop(self) -> None:
         while not self._finished.is_set():
@@ -375,7 +308,7 @@ class MasterSession:
                     pass
         fd = self._master_fd
         self._master_fd = None
-        if fd is not None and not self._handed_off:
+        if fd is not None:
             try:
                 os.close(fd)
             except OSError:

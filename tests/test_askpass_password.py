@@ -68,3 +68,29 @@ def test_askpass_password_from_backend(monkeypatch):
 
     assert handle_askpass_cli("password for alice@example.com:") == "from-vault"
     assert ("example.com", "alice") in calls
+
+
+def test_askpass_prompts_user_for_unstored_password(monkeypatch):
+    # prefer does not fall back to TTY — unstored login passwords need a dialog.
+    monkeypatch.delenv("SSHPILOT_SESSION_PASSWORD_FILE", raising=False)
+    monkeypatch.setenv("SSHPILOT_PASSWORD_USER", "alice")
+    monkeypatch.setenv("SSHPILOT_PASSWORD_HOSTS", "example.com")
+    monkeypatch.setattr(
+        "sshpilot.askpass_utils.lookup_ssh_password", lambda *_a, **_k: ""
+    )
+    monkeypatch.setattr(
+        "sshpilot.askpass_utils._route_password_to_main_app",
+        lambda prompt, _log: (True, "typed-in"),
+    )
+    assert handle_askpass_cli("alice@example.com's password: ") == "typed-in"
+
+
+def test_askpass_unstored_password_cancel(monkeypatch):
+    monkeypatch.setattr(
+        "sshpilot.askpass_utils.lookup_ssh_password", lambda *_a, **_k: ""
+    )
+    monkeypatch.setattr(
+        "sshpilot.askpass_utils._route_password_to_main_app",
+        lambda prompt, _log: (True, None),
+    )
+    assert handle_askpass_cli("Password:") is None

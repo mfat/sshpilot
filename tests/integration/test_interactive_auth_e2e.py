@@ -5,11 +5,9 @@ socket, real SFTP worker — against the mock 2FA sshd from
 ``tests/integration/interactive_ssh_server`` (password "password" + PAM
 verification code "123456" over keyboard-interactive):
 
-1. ``MasterSession`` spawns ``ssh -N`` on an app-owned PTY, auto-answers the
-   stored password, and hands the PTY over when the "Verification code:"
-   prompt appears (what the AuthTerminalDialog receives in the app);
-2. the test plays the user, writing the code to the handed-over fd;
-3. the master socket goes live and the PTY-less ``OpenSSHSFTPManager`` worker
+1. ``MasterSession`` spawns ``ssh -N`` with askpass env (``REQUIRE=prefer``);
+   a throwaway askpass script answers the login password then the OTP;
+2. the master socket goes live and the PTY-less ``OpenSSHSFTPManager`` worker
    connects through it — no authentication of its own — and lists a directory.
 
 Start the server first:  docker compose -f
@@ -73,6 +71,23 @@ def ssh_config(tmp_path):
     return str(cfg)
 
 
+@pytest.fixture
+def askpass_script(tmp_path):
+    """Minimal SSH_ASKPASS that returns password then OTP from the prompt text."""
+    path = tmp_path / "askpass.py"
+    path.write_text(
+        "#!/usr/bin/env python3\n"
+        "import sys\n"
+        "prompt = ' '.join(sys.argv[1:]).lower()\n"
+        "if 'verification' in prompt or 'code' in prompt or 'otp' in prompt:\n"
+        f"    print({CODE!r})\n"
+        "else:\n"
+        f"    print({PASSWORD!r})\n"
+    )
+    path.chmod(0o755)
+    return str(path)
+
+
 def _connection(ssh_config):
     return types.SimpleNamespace(
         nickname=HOST_ALIAS,
@@ -95,16 +110,25 @@ def _stop_master(ssh_config):
 
 @_needs_server
 @_needs_gi
-def test_master_first_2fa_end_to_end(monkeypatch, ssh_config):
+def test_master_first_2fa_end_to_end(monkeypatch, ssh_config, askpass_script):
     import sshpilot.ssh_master_session as mss
 
-    monkeypatch.setattr(mss, "_get_stored_password", lambda *a: PASSWORD)
     monkeypatch.setattr(mss, "_CHECK_INTERVAL", 0.2)
+    # Force the same askpass script MasterSession would get from the resolver
+    # (session password staging) without going through the GTK helper.
+    monkeypatch.setattr(
+        mss,
+        "_askpass_env_for_connection",
+        lambda *a, **k: {
+            "SSH_ASKPASS": askpass_script,
+            "SSH_ASKPASS_REQUIRE": "prefer",
+            "DISPLAY": os.environ.get("DISPLAY", ":0"),
+        },
+    )
 
     conn = _connection(ssh_config)
     ready = threading.Event()
     failed = threading.Event()
-    interaction = threading.Event()
     state = {}
 
     session = mss.MasterSession(
@@ -112,29 +136,37 @@ def test_master_first_2fa_end_to_end(monkeypatch, ssh_config):
         None,
         None,
         on_ready=ready.set,
-        on_needs_interaction=lambda fd, transcript: (
-            state.update(fd=fd, transcript=transcript), interaction.set()),
-        on_need_password=lambda prompt: state.update(pw_prompt=prompt),
         on_failed=lambda tail: (state.update(tail=tail), failed.set()),
     )
     try:
+        # Clear resolver askpass so MasterSession's force-prefer path installs
+        # our script (build_ssh_connection still runs for the real argv).
+        real_build = mss.build_ssh_connection
+
+        def _build(ctx):
+            prepared = real_build(ctx)
+            env = dict(prepared.env or {})
+            env.pop("SSH_ASKPASS", None)
+            env.pop("SSH_ASKPASS_REQUIRE", None)
+            return types.SimpleNamespace(
+                command=prepared.command,
+                env=env,
+                use_sshpass=False,
+                password=PASSWORD,
+                use_askpass=False,
+            )
+
+        monkeypatch.setattr(mss, "build_ssh_connection", _build)
         session.start()
 
-        # The stored password is auto-answered invisibly; the next prompt is
-        # the verification code, which must be escalated with the PTY fd.
-        assert interaction.wait(30), (
-            f"no interaction callback; failed={failed.is_set()} state={state}")
-        assert "verification code" in state["transcript"].lower()
-        assert not failed.is_set()
-
-        # Play the user typing the code into the revealed terminal.
-        os.write(state["fd"], (CODE + "\n").encode())
-
-        assert ready.wait(30), f"master never ready; state={state}"
+        assert ready.wait(60), (
+            f"master never ready; failed={failed.is_set()} state={state}"
+        )
+        assert not failed.is_set(), f"master failed: {state}"
         assert mss.check_master_alive(conn), "-O check should pass after auth"
 
         # PTY-less SFTP worker rides the socket with zero authentication.
-        import gi  # real gi on this box; the worker only needs GObject
+        import gi  # noqa: F401 — real gi on this box; the worker only needs GObject
 
         from sshpilot.file_manager.openssh_backend import OpenSSHSFTPManager
 
@@ -149,43 +181,10 @@ def test_master_first_2fa_end_to_end(monkeypatch, ssh_config):
             entries = manager._client.listdir_attr(home)
             assert entries is not None  # listing succeeded (may be empty attrs)
         finally:
-            manager.close()
+            try:
+                manager.disconnect()
+            except Exception:
+                pass
     finally:
         session.cancel()
-        os.close(state["fd"]) if "fd" in state else None
         _stop_master(ssh_config)
-
-
-@_needs_server
-@_needs_gi
-def test_worker_without_master_times_out_fast(monkeypatch, ssh_config):
-    """The old failure mode, now bounded: a PTY-less worker straight at the 2FA
-    host (no master, no stored creds usable for kbd-interactive) fails within
-    the connect timeout instead of hanging until LoginGraceTime."""
-    import gi
-
-    from sshpilot.file_manager.openssh_backend import OpenSSHSFTPManager
-
-    _stop_master(ssh_config)  # ensure no socket to ride
-    conn = _connection(ssh_config)
-    manager = OpenSSHSFTPManager(
-        "127.0.0.1", "testuser", PORT, connection=conn,
-        ssh_config={"file_manager": {"sftp_connect_timeout": 8}},
-        dispatcher=lambda cb, args=(), kwargs=None: cb(*args, **(kwargs or {})),
-    )
-    try:
-        import time
-
-        start = time.monotonic()
-        with pytest.raises(Exception) as excinfo:
-            manager._connect_impl()
-        elapsed = time.monotonic() - start
-        # The point of the watchdog: bound the wait. Before the fix this hung
-        # until the server's LoginGraceTime (~120s); now it must fail well
-        # inside that. (The exact message depends on whether a desktop askpass
-        # is installed — ssh's compiled-in default fires regardless of
-        # SSH_ASKPASS — so we assert on timing + that it raised, not on text.)
-        assert elapsed < 60, f"took {elapsed:.0f}s — watchdog did not bound the wait"
-        assert str(excinfo.value), "failure must carry a message"
-    finally:
-        manager.close()

@@ -300,10 +300,11 @@ as remote sudo prompts.)
   `ssh -F <config> <host>` with **no** in-app auth (`IdentityAgent`/askpass),
   because the external terminal supplies its own TTY and agent.
 - **SFTP file manager** (`file_manager/openssh_backend.py` +
-  `ssh_master_session.py`): master-first on a PTY for interactive auth (askpass
-  in the master env; residual MFA handed to the UI), then the PTY-less SFTP
-  worker uses `build_ssh_connection()` + `resolve_native_auth()` over
-  `ssh -F <config> … -s <host> sftp` on the mux socket.
+  `ssh_master_session.py`): master-first — `MasterSession` spawns `ssh -N` with
+  `resolve_native_auth` askpass env (`REQUIRE=prefer`) so password / passphrase /
+  OTP are all collected via askpass (no PTY-side prompt routing). Then the
+  PTY-less SFTP worker uses `build_ssh_connection()` + `resolve_native_auth()`
+  over `ssh -F <config> … -s <host> sftp` on the mux socket.
 
 ### Key functions/files
 - `ssh_connection_builder.py`: `build_ssh_connection` (native-only),
@@ -311,7 +312,7 @@ as remote sudo prompts.)
   command for external processes), `_build_base_ssh_command` (shared option
   builder used by explicit-command callers like SCP).
 - `ssh_master_session.py`: `MasterSession`, `ensure_authenticated_master` —
-  PTY-backed ControlMaster; `classify_prompt` lives in `askpass_utils.py`.
+  PTY-backed ControlMaster for the mux socket; auth is askpass-only.
 - `connection_manager.py`: `Connection.native_connect()`/`connect()`,
   persistence of connections to `~/.ssh/config`, credential storage
   (`store_connection_password`, `get_connection_password`, …).

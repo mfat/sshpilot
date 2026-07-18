@@ -12,11 +12,12 @@ the main app is not running or the socket is unreachable, the helper falls back
 to its own standalone window, so there is no regression.
 
 Protocol (newline-delimited JSON over ``AF_UNIX``):
-  prompt request (helper -> app): {"token", "type": "passphrase", "key_path", "prompt"}
+  prompt request (helper -> app):
+    {"token", "type": "passphrase"|"challenge"|"password", ...}
   prompt reply   (app -> helper):
-    {"ok": true,  "passphrase": "..."}   user entered a passphrase
-    {"ok": false}                         user cancelled (no fallback)
-    {"ok": false, "fallback": true}       app can't prompt now -> use standalone
+    {"ok": true,  "passphrase"|"value": "..."}   user entered a secret
+    {"ok": false}                                 user cancelled (no fallback)
+    {"ok": false, "fallback": true}               app can't prompt now -> standalone
 
   lookup request (helper -> app): {"token", "type": "lookup", "key_path"}
   lookup reply   (app -> helper):
@@ -173,7 +174,7 @@ class AskpassPromptServer:
             return
 
         req_type = request.get("type")
-        if req_type not in ("passphrase", "challenge"):
+        if req_type not in ("passphrase", "challenge", "password"):
             self._write_reply(connection, reply)
             return
 
@@ -189,6 +190,15 @@ class AskpassPromptServer:
             prompt = request.get("prompt") or ""
             if req_type == "challenge":
                 value = self._window.prompt_ssh_challenge(prompt)
+                if value is not None:
+                    reply = {"ok": True, "value": value, "passphrase": value}
+            elif req_type == "password":
+                value = self._window.prompt_ssh_password(
+                    display_name=prompt.strip() or "",
+                    host=request.get("host") or None,
+                    username=request.get("username") or None,
+                    body=prompt.strip() or None,
+                )
                 if value is not None:
                     reply = {"ok": True, "value": value, "passphrase": value}
             else:

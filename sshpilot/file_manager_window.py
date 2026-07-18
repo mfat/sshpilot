@@ -117,9 +117,9 @@ class FileManagerWindow(Adw.Window):
         self._max_password_retries = 3
 
         # PTY-backed ControlMaster establishing the connection (master-first
-        # flow); guards against stacking masters from rapid reconnects.
+        # flow; auth via askpass). Guards against stacking masters from
+        # rapid reconnects.
         self._master_session = None
-        self._auth_dialog = None
         self._auth_master_active = False
 
         # Use ToolbarView like other Adw.Window instances
@@ -511,10 +511,10 @@ class FileManagerWindow(Adw.Window):
 
     def _connect_via_master(self) -> None:
         """Master-first connect: ride a live ControlMaster socket when one
-        exists; otherwise establish one on an app-owned PTY (MasterSession) so
-        interactive prompts (2FA codes, PINs, host keys) can be answered, then
-        let the PTY-less SFTP worker ride the socket. Falls back to a plain
-        direct connect when there is no Connection object to build from."""
+        exists; otherwise establish one via MasterSession (askpass auth on a
+        PTY-backed ``ssh -N``), then let the PTY-less SFTP worker ride the
+        socket. Falls back to a plain direct connect when there is no
+        Connection object to build from."""
         connection = self._connection
         if connection is None:
             self._manager.connect_to_server()
@@ -523,8 +523,8 @@ class FileManagerWindow(Adw.Window):
             logger.debug("Master session already active; ignoring reconnect")
             return
         # The pre-connect dialog stores the password on the manager only;
-        # surface it on the connection so the master can auto-answer with it
-        # (the worker's _build_argv does the same at build time).
+        # surface it on the connection so resolve_native_auth / askpass can
+        # stage it for the master (the worker's _build_argv does the same).
         manager_password = getattr(self._manager, "_password", None)
         if manager_password:
             try:
@@ -549,12 +549,6 @@ class FileManagerWindow(Adw.Window):
                     self._connection_manager,
                     app_config,
                     on_ready=lambda: GLib.idle_add(self._on_master_ready),
-                    on_needs_interaction=lambda fd, transcript: GLib.idle_add(
-                        self._on_master_needs_interaction, fd, transcript
-                    ),
-                    on_need_password=lambda prompt: GLib.idle_add(
-                        self._on_master_need_password, prompt
-                    ),
                     on_failed=lambda tail: GLib.idle_add(
                         self._on_master_failed, tail
                     ),
@@ -569,21 +563,9 @@ class FileManagerWindow(Adw.Window):
             target=_probe_and_start, name="fm-master-probe", daemon=True
         ).start()
 
-    def _master_display_name(self) -> str:
-        nickname = (
-            getattr(self._connection, "nickname", None) if self._connection else None
-        )
-        return nickname or f"{self._username}@{self._host}"
-
     def _on_master_ready(self) -> bool:
         self._auth_master_active = False
         self._master_session = None
-        if self._auth_dialog is not None:
-            try:
-                self._auth_dialog.finish()
-            except Exception:
-                pass
-            self._auth_dialog = None
         self._password_dialog_shown = False
         self._password_retry_count = 0
         manager = getattr(self, "_manager", None)
@@ -609,74 +591,9 @@ class FileManagerWindow(Adw.Window):
             pass
         return self
 
-    def _on_master_needs_interaction(self, master_fd: int, transcript: str) -> bool:
-        if self._auth_dialog is not None:
-            return False
-        from .auth_terminal_dialog import AuthTerminalDialog
-
-        dialog = AuthTerminalDialog(
-            self._master_display_name(),
-            master_fd,
-            transcript,
-            on_cancelled=self._on_auth_dialog_cancelled,
-        )
-        self._auth_dialog = dialog
-        dialog.present(self._dialog_parent())
-        return False
-
-    def _on_master_need_password(self, prompt_line: str) -> bool:
-        session = self._master_session
-        if session is None or self._password_dialog_shown:
-            return False
-        self._password_dialog_shown = True
-        try:
-            from .window import show_ssh_password_dialog
-
-            display_name = self._master_display_name()
-            password = show_ssh_password_dialog(
-                from_widget=self,
-                connection=self._connection,
-                host=self._host,
-                username=self._username,
-                display_name=display_name,
-                connection_manager=self._connection_manager,
-                heading=_("Password Required"),
-                body=_(
-                    "{name} is asking for a password:"
-                ).format(name=display_name),
-            )
-        finally:
-            self._password_dialog_shown = False
-        if password:
-            session.send_secret(password)
-        else:
-            session.cancel()
-            self._on_master_cancelled()
-        return False
-
-    def _on_auth_dialog_cancelled(self) -> None:
-        self._auth_dialog = None
-        session = self._master_session
-        if session is not None:
-            session.cancel()
-        self._on_master_cancelled()
-
-    def _on_master_cancelled(self) -> None:
-        self._auth_master_active = False
-        self._master_session = None
-        self._on_connection_error(
-            getattr(self, "_manager", None), _("Authentication cancelled")
-        )
-
     def _on_master_failed(self, transcript_tail: str) -> bool:
         self._auth_master_active = False
         self._master_session = None
-        if self._auth_dialog is not None:
-            try:
-                self._auth_dialog.finish()
-            except Exception:
-                pass
-            self._auth_dialog = None
         lines = [
             line.strip()
             for line in (transcript_tail or "").splitlines()
@@ -695,12 +612,6 @@ class FileManagerWindow(Adw.Window):
                 session.cancel()
             except Exception:
                 pass
-        if self._auth_dialog is not None:
-            try:
-                self._auth_dialog.finish()
-            except Exception:
-                pass
-            self._auth_dialog = None
 
     # -- remote host-picker button (same pattern as the Docker Console) --
 

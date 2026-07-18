@@ -44,8 +44,9 @@ Architecture**. The essentials:
 - **Callers:** the terminal consumes the prepared command (it does not build
   commands); SCP UI / ssh-copy-id use VTE + `resolve_native_auth`; the
   system/external terminal uses `build_native_command()` (plain, no in-app
-  auth); the SFTP file manager uses master-first PTY auth then the same native
-  path over `ssh -s sftp`.
+  auth); the SFTP file manager uses master-first askpass auth
+  (`MasterSession` + `REQUIRE=prefer`) then the same native path over
+  `ssh -s sftp`.
 - **Advanced SSH options** (Preferences ▸ SSH Settings) are saved as `ssh.*`
   keys and composed into a flat `ssh.ssh_overrides` list
   (`preferences.py::save_advanced_ssh_settings`); the native command appends
@@ -53,7 +54,7 @@ Architecture**. The essentials:
   individual keys. **Effective config** is computed with `ssh -G` via
   `get_effective_ssh_config()` when code needs the resolved per-host options.
   **askpass** = `SSH_ASKPASS`/`SSH_ASKPASS_REQUIRE` + the helper in
-  `askpass_utils.py` (passphrase **and** login-password lookup; MFA → TTY).
+  `askpass_utils.py` (passphrase, login password, and OTP/MFA dialogs).
   Full detail in `AGENTS.md`.
 
 ## Dialogs & Alerts (GTK4/libadwaita — read before adding any dialog)

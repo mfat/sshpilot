@@ -68,7 +68,7 @@ class NativeAuth:
     to ssh/scp/ssh-copy-id: **askpass** autofills both key passphrases and
     stored login passwords (``SSH_ASKPASS_REQUIRE=prefer`` so MFA/OTP prompts
     declined by the helper fall back to the TTY). ``use_sshpass`` is always
-    False. ``password`` is retained for UI messaging / MasterSession backup
+    False. ``password`` is retained for UI messaging / askpass session staging
     only — delivery goes through askpass env. Callers apply ``env`` to the
     child process and add ``extra_opts`` to the command.
     """
