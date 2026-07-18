@@ -173,7 +173,7 @@ def run_ssh_with_password(host: str, user: str, password: str, *,
             "PreferredAuthentications=gssapi-with-mic,hostbased,publickey,keyboard-interactive,password",
         ]
     else:
-        ssh_opts += ["-o", "PreferredAuthentications=password"]
+        ssh_opts += ["-o", "PreferredAuthentications=keyboard-interactive,password"]
     ssh_opts += [
         "-o", "NumberOfPasswordPrompts=1",
     ]

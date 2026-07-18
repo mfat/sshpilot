@@ -480,13 +480,13 @@ class TestResolverDecision:
     KEY = "/home/u/.ssh/id_ed25519"
 
     def test_both_stored_wires_combined_auth(self, monkeypatch):
-        # Combined auth: passphrase (via agent load) + password (via sshpass).
+        # Combined auth: passphrase (via agent load) + password for PTY (no sshpass).
         # The resolver now actually loads the key into the agent; succeed here.
         monkeypatch.setattr(ssh_connection_builder, "ensure_key_in_agent",
                             lambda path, *, force=False, lifetime=0: True)
         auth = _resolve(monkeypatch, passphrase_stored=True, password_stored=True,
                         identity_file=self.KEY)
-        assert auth.use_sshpass is True
+        assert auth.use_sshpass is False
         assert auth.password == PASSWORD
         assert auth.use_askpass is False  # askpass stripped so it can't hijack pw
 
@@ -505,10 +505,10 @@ class TestResolverDecision:
         assert auth.use_askpass is True
         assert auth.use_sshpass is False
 
-    def test_only_password_uses_sshpass_fallback(self, monkeypatch):
+    def test_only_password_uses_pty_password_not_sshpass(self, monkeypatch):
         auth = _resolve(monkeypatch, passphrase_stored=False, password_stored=True,
                         identity_file=self.KEY)
-        assert auth.use_sshpass is True
+        assert auth.use_sshpass is False
         assert auth.use_askpass is False
         assert auth.password == PASSWORD
 
@@ -557,7 +557,8 @@ class TestCombinedAuthPreloadHandoff:
         )
 
         auth = resolve_native_auth(conn, _make_cm(PASSWORD))
-        assert auth.use_sshpass is True
+        assert auth.use_sshpass is False
+        assert auth.password == PASSWORD
         assert auth.use_askpass is False
 
         added = []
@@ -698,13 +699,12 @@ class TestCombinedAuthConnection:
         if passphrase_stored:
             agent.add(key, PASSPHRASE, combined_server.tmp)
             agent_sock = agent.sock
-        sshpass_pw = auth.password if auth.use_sshpass else None
+        # Harness still feeds via sshpass; the app delivers auth.password on a PTY.
         return _ssh_connect(combined_server.port, key, agent_sock=agent_sock,
-                            sshpass_password=sshpass_pw)
+                            sshpass_password=auth.password)
 
     def test_both_stored_succeeds_combined_auth(self, monkeypatch, combined_server, agent):
-        # Combined auth now satisfied: key via agent (passphrase) + password via
-        # sshpass → full publickey+password handshake.
+        # Combined auth: key via agent (passphrase) + password available for PTY.
         rc = self._drive(monkeypatch, combined_server, agent,
                          passphrase_stored=True, password_stored=True)
         assert rc == 0
@@ -718,7 +718,7 @@ class TestCombinedAuthConnection:
         )
         conn = _make_conn(key)
         auth = resolve_native_auth(conn, _make_cm("wrong-password"))
-        assert auth.use_sshpass is True
+        assert auth.use_sshpass is False
         assert auth.password == "wrong-password"
 
         agent.add(key, PASSPHRASE, combined_server.tmp)
@@ -764,7 +764,7 @@ class TestCombinedAuthConnection:
         )
         conn = _make_conn(key)
         auth = resolve_native_auth(conn, _make_cm("wrong-password"))
-        assert auth.use_sshpass is True
+        assert auth.use_sshpass is False
         assert auth.password == "wrong-password"
 
         agent.add(key, PASSPHRASE, combined_server.tmp)
@@ -844,18 +844,17 @@ class TestCombinedAuthConnection:
     # ---- positive controls (prove the server + the combined path work) ----
 
     def test_unencrypted_key_with_password_succeeds(self, monkeypatch, combined_server, agent):
-        """Resolver's combined-auth path (key + sshpass) works when the key
-        needs no passphrase: pubkey via the plain key, password via sshpass."""
+        """Resolver returns password for PTY when the key needs no passphrase."""
         auth = _resolve(monkeypatch, passphrase_stored=False, password_stored=True,
                         identity_file=combined_server.plain_key)
-        assert auth.use_sshpass is True
+        assert auth.use_sshpass is False
+        assert auth.password == PASSWORD
         rc = _ssh_connect(combined_server.port, combined_server.plain_key,
                           sshpass_password=auth.password)
         assert rc == 0
 
     def test_both_secrets_supplied_together_succeeds(self, combined_server, agent):
-        """The shape a combined-auth fix needs: encrypted key in the agent
-        (passphrase) AND password via sshpass → full publickey+password handshake."""
+        """Encrypted key in the agent AND password available → full handshake."""
         agent.add(combined_server.enc_key, PASSPHRASE, combined_server.tmp)
         rc = _ssh_connect(combined_server.port, combined_server.enc_key,
                           agent_sock=agent.sock, sshpass_password=PASSWORD)

@@ -1126,7 +1126,8 @@ class SshCopyIdRunner:
             username = getattr(connection, 'username', '')
             manager = getattr(self.window, 'connection_manager', None)
             has_saved_password = bool(manager.get_password(host_value, username)) if manager else False
-            if (auth_method == 1 or (auth_method == 0 and has_saved_password)) and has_saved_password:
+            # sshpass is only for password-method auth; key-based uses PTY fill.
+            if auth_method == 1 and has_saved_password:
                 if self._find_ssh_copy_id_helper('sshpass') is None:
                     logger.warning(
                         'ssh-copy-id preflight: sshpass unavailable; falling back to terminal password prompt',
@@ -1343,6 +1344,9 @@ class SshCopyIdRunner:
             if auth.use_sshpass and auth.password:
                 argv, _sshpass_cleanup = wrap_argv_with_sshpass(argv, auth.password, env=env)
                 atexit.register(_sshpass_cleanup)
+            elif auth.password and hasattr(term_widget, 'arm_password_pty_autofill'):
+                # Key-based stored password: type once on this VTE (no sshpass).
+                term_widget.arm_password_pty_autofill(auth.password)
             logger.debug(
                 "Main window: ssh-copy-id auth (askpass=%s, sshpass=%s)",
                 auth.use_askpass,
@@ -1389,6 +1393,10 @@ class SshCopyIdRunner:
                         None,
                     )
                 logger.debug("Main window: ssh-copy-id process spawned successfully")
+                try:
+                    term_widget._install_pty_autofill()
+                except Exception:
+                    logger.debug("ssh-copy-id: could not arm PTY auto-fill", exc_info=True)
 
                 def _disconnect_copyid_exit_handler() -> None:
                     handler_id = copyid_exit_state.get('handler_id')
@@ -1624,7 +1632,8 @@ class SshCopyIdRunner:
 
         if auth is not None:
             prefer_password = bool(getattr(auth, 'password_mode', False))
-            combined_auth = bool(getattr(auth, 'use_sshpass', False)) and not prefer_password
+            # Key-based + stored password (PTY delivery; use_sshpass is False).
+            combined_auth = bool(getattr(auth, 'password', None)) and not prefer_password
         else:
             try:
                 auth_method = int(getattr(connection, 'auth_method', 0) or 0)
@@ -1665,12 +1674,19 @@ class SshCopyIdRunner:
         else:
             # Apply authentication preferences
             if prefer_password:
-                argv += ['-o', 'PreferredAuthentications=password']
+                argv += ['-o', 'PreferredAuthentications=keyboard-interactive,password']
                 if getattr(connection, 'pubkey_auth_no', False):
                     argv += ['-o', 'PubkeyAuthentication=no']
-                    logger.debug("Main window: Added password authentication options - PubkeyAuthentication=no, PreferredAuthentications=password")
+                    logger.debug(
+                        "Main window: Added password authentication options - "
+                        "PubkeyAuthentication=no, PreferredAuthentications="
+                        "keyboard-interactive,password"
+                    )
                 else:
-                    logger.debug("Main window: Added password authentication option - PreferredAuthentications=password")
+                    logger.debug(
+                        "Main window: Added password authentication option - "
+                        "PreferredAuthentications=keyboard-interactive,password"
+                    )
             elif combined_auth:
                 argv += [
                     '-o',

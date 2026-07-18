@@ -1120,8 +1120,9 @@ class TerminalWidget(Gtk.Box):
             # that Connection.native_connect()/connect() produced, so argv/env
             # are identical to consuming connection.ssh_connection_cmd directly.
             # The terminal handles only the runtime mechanics that cannot live
-            # in a pure command builder: the sshpass FIFO, askpass log
-            # forwarding, terminal env tweaks, and the PTY/spawn.
+            # in a pure command builder: sshpass (password method) or PTY
+            # auto-fill (key-based stored password), askpass log forwarding,
+            # terminal env tweaks, and the PTY/spawn.
             # NOTE: self.backend is the *terminal* backend (VTE vs fallback);
             # protocol backends are a different axis.
             proto = getattr(self.connection, 'protocol', 'ssh')
@@ -1157,22 +1158,16 @@ class TerminalWidget(Gtk.Box):
                 env = dict(spec.env)
                 working_dir = spec.working_directory
                 use_askpass = bool(spec.extras.get('use_askpass'))
-                password_value = (
-                    spec.extras.get('password')
-                    if spec.extras.get('use_sshpass')
-                    else None
-                )
+                use_sshpass = bool(spec.extras.get('use_sshpass'))
+                password_value = spec.extras.get('password')
             elif (ssh_conn_cmd := getattr(self.connection, 'ssh_connection_cmd', None)) is not None:
                 # No backend registered (plugin system unavailable): consume the
                 # prepared command directly, exactly as before the plugin seam.
                 ssh_cmd = list(ssh_conn_cmd.command)
                 env = dict(ssh_conn_cmd.env)
                 use_askpass = bool(getattr(ssh_conn_cmd, 'use_askpass', False))
-                password_value = (
-                    ssh_conn_cmd.password
-                    if getattr(ssh_conn_cmd, 'use_sshpass', False)
-                    else None
-                )
+                use_sshpass = bool(getattr(ssh_conn_cmd, 'use_sshpass', False))
+                password_value = ssh_conn_cmd.password
             else:
                 # Fallback: a bare prepared command list from an older path, or a
                 # minimal ssh invocation as a last resort.
@@ -1183,6 +1178,7 @@ class TerminalWidget(Gtk.Box):
                     ssh_cmd = ['ssh']
                 env = os.environ.copy()
                 use_askpass = False
+                use_sshpass = False
                 password_value = None
 
             # Route identity/agent env injection through the selected identity provider
@@ -1198,9 +1194,12 @@ class TerminalWidget(Gtk.Box):
 
             logger.debug(f"SSH command from builder: {' '.join(ssh_cmd)}")
 
-            # Password authentication: feed the stored password to ssh via sshpass
-            # using a write-once FIFO (keeps it off the command line and the env).
-            if password_value:
+            # Password delivery: password-method auth still uses sshpass (single
+            # password prompt). Key-based stored passwords are typed once on this
+            # terminal's visible PTY — sshpass allocates a hidden PTY and discards
+            # residual keyboard-interactive prompts (2FA/PIN). Same rationale as
+            # MasterSession. OTP and re-prompts stay in the terminal for the user.
+            if password_value and use_sshpass:
                 sshpass_path = get_sshpass_path()
                 if sshpass_path:
                     from .ssh_password_exec import _mk_priv_dir, _write_once_fifo
@@ -1214,8 +1213,6 @@ class TerminalWidget(Gtk.Box):
                     )
                     t.start()
                     ssh_cmd = [sshpass_path, "-f", fifo] + ssh_cmd
-                    # Ensure ssh can never fall back to askpass for the password,
-                    # even if the session injects SSH_ASKPASS_REQUIRE=prefer.
                     env.pop("SSH_ASKPASS", None)
                     env["SSH_ASKPASS_REQUIRE"] = "never"
                     self._sshpass_tmpdir = tmpdir
@@ -1226,6 +1223,11 @@ class TerminalWidget(Gtk.Box):
                     logger.warning(
                         "sshpass not available; falling back to interactive password prompt"
                     )
+            elif password_value:
+                self.arm_password_pty_autofill(password_value)
+                env.pop("SSH_ASKPASS", None)
+                env["SSH_ASKPASS_REQUIRE"] = "never"
+                logger.debug("Stored password armed as one-shot PTY auto-fill")
 
             # Forward askpass helper log lines into our logger while connecting so
             # passphrase-prompt activity is visible. Only new lines are forwarded
@@ -1712,14 +1714,36 @@ class TerminalWidget(Gtk.Box):
             pass
         return ''
 
-    # -- one-shot PTY auto-fill (e.g. answer a remote sudo password prompt) ----
+    # -- one-shot PTY auto-fill (sudo prompt, ssh password on key-based auth) ----
+    def arm_password_pty_autofill(self, password: str) -> None:
+        """Queue a one-shot fill for ssh's password prompt (``classify_prompt``).
+
+        Call before spawn (or before ``_install_pty_autofill``). Residual prompts
+        such as 2FA stay in the terminal for the user. Safe to call from SCP /
+        ssh-copy-id paths that spawn on a TerminalWidget without going through
+        ``_setup_ssh_terminal``.
+        """
+        from .ssh_master_session import classify_prompt
+
+        fills = getattr(self, '_pty_autofills', None)
+        if fills is None:
+            fills = self._pty_autofills = []
+        fills.insert(0, (
+            lambda text: classify_prompt(text) == 'password',
+            password,
+        ))
+
     def _install_pty_autofill(self):
         """Arm a watcher that types a canned response the first time a known
-        prompt appears in the terminal. Used to answer a remote ``sudo`` password
-        prompt: the secret travels through the encrypted PTY exactly as if typed,
-        never on a command line. No-op unless ``_pty_autofill`` is set."""
+        prompt appears in the terminal. Used for a remote ``sudo`` password
+        prompt or ssh's own password prompt: the secret travels through the
+        encrypted PTY exactly as if typed, never on a command line. Fills come
+        from the ``_pty_autofills`` queue of ``(matcher, response)`` entries
+        (matcher: substring or callable over the scraped tail) and/or the legacy
+        single-slot ``_pty_autofill`` tuple; no-op when neither is set."""
         autofill = getattr(self, '_pty_autofill', None)
-        if not autofill or not autofill[0]:
+        if (not getattr(self, '_pty_autofills', None)
+                and (not autofill or not autofill[0])):
             return
         self._pty_autofill_done = False
         vte = getattr(self, 'vte', None)
@@ -1748,16 +1772,34 @@ class TerminalWidget(Gtk.Box):
             30, self._cancel_pty_autofill)
 
     def _on_pty_autofill_changed(self, _vte):
-        if getattr(self, '_pty_autofill_done', True):
+        fills = getattr(self, '_pty_autofills', None) or []
+        legacy = (None if getattr(self, '_pty_autofill_done', True)
+                  else getattr(self, '_pty_autofill', None))
+        if not fills and not legacy:
             return False
-        autofill = getattr(self, '_pty_autofill', None)
-        if not autofill:
+        text = self._scrape_recent_terminal_text(max_chars=4000) or ''
+
+        def _matches(matcher):
+            try:
+                return matcher(text) if callable(matcher) else (matcher in text)
+            except Exception:
+                return False
+
+        # Fire at most one fill per output batch (a single trailing prompt can
+        # only be one prompt), queued fills first — the ssh password prompt
+        # precedes any post-login prompt like sudo's.
+        response = None
+        for entry in list(fills):
+            if entry[0] and _matches(entry[0]):
+                fills.remove(entry)
+                response = entry[1]
+                break
+        if response is None and legacy and legacy[0] and _matches(legacy[0]):
+            self._pty_autofill = None
+            self._pty_autofill_done = True
+            response = legacy[1]
+        if response is None:
             return False
-        prompt, response = autofill
-        if prompt not in (self._scrape_recent_terminal_text(max_chars=4000) or ''):
-            return False
-        # Matched — type the response once, then stop watching.
-        self._pty_autofill_done = True
         try:
             data = (response + '\n').encode('utf-8')
             if getattr(self, 'backend', None) is not None and hasattr(self.backend, 'feed_child'):
@@ -1766,13 +1808,16 @@ class TerminalWidget(Gtk.Box):
                 self.vte.feed_child(data)
         except Exception:
             logger.debug("PTY auto-fill feed failed", exc_info=True)
-        self._cancel_pty_autofill()
+        if not fills and (getattr(self, '_pty_autofill_done', True)
+                          or not getattr(self, '_pty_autofill', None)):
+            self._cancel_pty_autofill()
         return False
 
     def _cancel_pty_autofill(self):
-        """Disconnect the auto-fill watcher and drop the cached response."""
+        """Disconnect the auto-fill watcher and drop the cached responses."""
         self._pty_autofill_done = True
         self._pty_autofill = None
+        self._pty_autofills = None
         handler_id = getattr(self, '_pty_autofill_handler', None)
         if handler_id:
             try:

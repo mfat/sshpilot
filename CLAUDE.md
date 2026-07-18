@@ -36,15 +36,16 @@ Architecture**. The essentials:
 - **One auth resolver:** `resolve_native_auth(...)` in `ssh_connection_builder.py`
   is the only place auth is decided, shared by terminal, SCP, ssh-copy-id, and
   the SFTP file manager (`ssh -s sftp` subprocess).
-  Key auth → `SSH_ASKPASS` (REQUIRE=prefer) + keyring autofill (GTK prompt
-  fallback); the agent is left intact so SSH uses it when keys are loaded.
-  Password → `sshpass` via a write-once FIFO. Keyring autofill and the askpass
-  prompt are advertised features — keep them.
+  Key auth → askpass for passphrases when saved; a stored password is returned
+  for **PTY auto-fill** (`use_sshpass=False`) — never sshpass on key-based
+  (auto or specific key), so 2FA/OTP prompts stay visible. Password method
+  (`auth_method == 1`) → `sshpass` via a write-once FIFO only. Keyring autofill
+  and the askpass prompt are advertised features — keep them.
 - **Callers:** the terminal consumes the prepared command (it does not build
-  commands); SCP/ssh-copy-id build explicit commands + `resolve_native_auth`;
-  the system/external terminal uses `build_native_command()` (plain, no in-app
-  auth); the SFTP file manager uses the same native auth path over
-  `ssh -s sftp`.
+  commands); SCP UI / ssh-copy-id use VTE + `resolve_native_auth`; the
+  system/external terminal uses `build_native_command()` (plain, no in-app
+  auth); the SFTP file manager uses master-first PTY auth then the same native
+  path over `ssh -s sftp`.
 - **Advanced SSH options** (Preferences ▸ SSH Settings) are saved as `ssh.*`
   keys and composed into a flat `ssh.ssh_overrides` list
   (`preferences.py::save_advanced_ssh_settings`); the native command appends
@@ -53,8 +54,8 @@ Architecture**. The essentials:
   `get_effective_ssh_config()` when code needs the resolved per-host options.
   **askpass** = `SSH_ASKPASS`/`SSH_ASKPASS_REQUIRE` + the helper in
   `askpass_utils.py` (keyring lookup → GTK prompt); **sshpass** feeds the
-  password via a write-once FIFO (`ssh_password_exec.py`). Full detail in
-  `AGENTS.md`.
+  password via a write-once FIFO (`ssh_password_exec.py`) **only when password
+  auth is selected**. Full detail in `AGENTS.md`.
 
 ## Dialogs & Alerts (GTK4/libadwaita — read before adding any dialog)
 

@@ -507,7 +507,7 @@ class Connection:
 
             # Resolve identity files FIRST so resolve_native_auth (inside
             # build_ssh_connection) can decide auth from what's saved for them
-            # (saved passphrase -> askpass; else saved password -> sshpass; else
+            # (saved passphrase -> askpass; else saved password -> PTY fill; else
             # native prompts) without recomputing `ssh -G`.
             try:
                 self.resolved_identity_files = self.collect_identity_file_candidates()
@@ -2148,8 +2148,12 @@ class ConnectionManager(GObject.Object):
                     "    PreferredAuthentications gssapi-with-mic,hostbased,publickey,keyboard-interactive,password"
                 )
         else:
-            # Password-based authentication only
-            lines.append("    PreferredAuthentications password")
+            # Password-based authentication. Include keyboard-interactive so
+            # PAM/2FA hosts (which often disable the raw "password" method)
+            # still negotiate; order prefers kbd-int first.
+            lines.append(
+                "    PreferredAuthentications keyboard-interactive,password"
+            )
             if data.get('pubkey_auth_no'):
                 lines.append("    PubkeyAuthentication no")
         

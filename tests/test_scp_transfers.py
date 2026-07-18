@@ -173,6 +173,75 @@ def test_classify_sftp_error_ignores_unrelated(error_text):
     assert classify_sftp_error(error_text) is None
 
 
+def test_download_file_key_based_with_password_does_not_use_sshpass(monkeypatch, tmp_path):
+    """Key-based (use_publickey) + stored password must not wrap with sshpass."""
+    recorded = {}
+
+    def fake_run(argv, check, text, capture_output, env):
+        recorded['argv'] = list(argv)
+
+        class _Result:
+            returncode = 0
+            stderr = ''
+
+        return _Result()
+
+    monkeypatch.setattr(scp_utils.subprocess, 'run', fake_run)
+    monkeypatch.setattr(
+        scp_utils, 'wrap_argv_with_sshpass',
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError('sshpass must not be used')),
+    )
+
+    result = download_file(
+        'example.com',
+        'alice',
+        '/remote/file.txt',
+        str(tmp_path / 'dest'),
+        password='secret',
+        use_publickey=True,
+    )
+
+    assert result is True
+    assert recorded['argv'][0] == 'scp'
+    assert 'sshpass' not in recorded['argv'][0]
+
+
+def test_download_file_password_method_still_uses_sshpass(monkeypatch, tmp_path):
+    """Password-method auth (use_publickey=False) still feeds via sshpass."""
+    recorded = {}
+
+    def fake_wrap(argv, password, env=None):
+        recorded['wrapped'] = True
+        recorded['password'] = password
+        return ['sshpass', '-f', '/tmp/fifo'] + list(argv), (lambda: None)
+
+    def fake_run(argv, check, text, capture_output, env):
+        recorded['argv'] = list(argv)
+
+        class _Result:
+            returncode = 0
+            stderr = ''
+
+        return _Result()
+
+    monkeypatch.setattr(scp_utils, 'wrap_argv_with_sshpass', fake_wrap)
+    monkeypatch.setattr(scp_utils.subprocess, 'run', fake_run)
+
+    result = download_file(
+        'example.com',
+        'alice',
+        '/remote/file.txt',
+        str(tmp_path / 'dest'),
+        password='secret',
+        use_publickey=False,
+    )
+
+    assert result is True
+    assert recorded.get('wrapped') is True
+    assert recorded['password'] == 'secret'
+    assert recorded['argv'][0] == 'sshpass'
+
+
 def test_download_file_populates_friendly_details_on_subsystem_failure(monkeypatch, tmp_path):
     def fake_run(argv, check, text, capture_output, env):
         class _Result:

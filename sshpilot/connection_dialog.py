@@ -2128,7 +2128,9 @@ class ConnectionDialog(
                     )
                 # For automatic key selection, don't add IdentityFile
             else:  # Password auth only
-                config_lines.append("    PreferredAuthentications password")
+                config_lines.append(
+                    "    PreferredAuthentications keyboard-interactive,password"
+                )
                 if self.pubkey_auth_row.get_active():
                     config_lines.append("    PubkeyAuthentication no")
             

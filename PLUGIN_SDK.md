@@ -153,7 +153,7 @@ Passed to `activate`. One context per plugin; `ctx.plugin_id` is your manifest i
 - `generate_key(name: str, *, key_type="ed25519", key_size=3072, comment=None, passphrase=None) -> str | None` — generate an SSH key; returns the private-key path or `None`. *(after `app_started`)*
 
 ### Remote commands, config & keys *(API ≥ 1.5)*
-- `run_command(nickname: str, command: str, *, timeout=30, input=None) -> CommandResult` — run a one-shot command on a saved host and capture `exit_code`/`stdout`/`stderr`. Reuses the app's SSH/auth path (`~/.ssh/config`, ProxyJump, stored password via sshpass / passphrase via askpass). **Blocking** — call from a worker thread. `exit_code == -1` means it couldn't be launched. Optional `input` is written to the remote command's stdin (e.g. a password for `sudo -S`); the SSH transport itself is non-interactive (no PTY).
+- `run_command(nickname: str, command: str, *, timeout=30, input=None) -> CommandResult` — run a one-shot command on a saved host and capture `exit_code`/`stdout`/`stderr`. Reuses the app's SSH/auth path (`~/.ssh/config`, ProxyJump, passphrase via askpass; sshpass only when the connection's auth method is password). **Blocking** — call from a worker thread. `exit_code == -1` means it couldn't be launched. Optional `input` is written to the remote command's stdin (e.g. a password for `sudo -S`); the SSH transport itself is non-interactive (no PTY).
 - `run_command_stream(nickname: str, command: str, *, on_line, on_done=None, input=None) -> StreamHandle` *(API ≥ 1.13)* — start a long-lived remote command over the same native SSH/auth path and deliver stdout/stderr **lines** to `on_line` (marshalled onto the UI thread). No timeout — call `handle.stop()` when finished (page unmap, selection change, …). `on_done(exit_code)` runs when the process exits. Use this for in-page streaming such as `docker logs -f` or `docker events` when you need lines in a widget rather than a VTE tab.
 - `get_effective_ssh_config(nickname: str) -> dict` — resolved `ssh -G` options for the host (keys lowercased; multi-value options are lists).
 - `list_keys() -> list[dict]` — `{"private_path", "public_path"}` for keys the app manages. *(after `app_started`)*
@@ -275,9 +275,9 @@ run on the UI thread. From a worker thread, marshal with
 result back with a queue/future.
 
 **Auth for remote commands:** prefer `ctx.run_command(nickname, …)` so core
-applies stored passwords via sshpass/askpass. Prompt with
-`show_ssh_password_dialog` only when you need a password that is not already in
-the keyring / connection record.
+applies the shared native auth path (askpass for key passphrases; sshpass only
+for password-method connections). Prompt with `show_ssh_password_dialog` only
+when you need a password that is not already in the keyring / connection record.
 
 Full reference: **AGENTS.md → In-app password & passphrase dialogs** and
 docstrings on `show_ssh_password_dialog` in `sshpilot/window.py`.

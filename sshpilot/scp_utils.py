@@ -245,8 +245,11 @@ def download_file(
 
     env = (inherit_env or os.environ).copy()
     
-    # Create connection object for ssh_connection_builder
-    auth_method = 1 if password else 0
+    # Create connection object for ssh_connection_builder.
+    # use_publickey means key-based method (auto/specific key): never force
+    # auth_method=1 just because a password is present — that would enable
+    # sshpass via resolve_native_auth.
+    auth_method = 0 if use_publickey else (1 if password else 0)
     connection = _create_connection_for_scp(
         host=host,
         user=user,
@@ -274,12 +277,10 @@ def download_file(
     # not place in auth.extra_opts. These ensure SSH hands the password prompt to
     # sshpass rather than trying keys first (which would either succeed silently
     # or prompt interactively in a way sshpass cannot intercept).
+    # Only for password-method auth (use_sshpass); never for key-based.
     effective_extra = list(extra_ssh_opts or [])
     if auth.use_sshpass and auth.password:
-        pref = (
-            'gssapi-with-mic,hostbased,publickey,keyboard-interactive,password'
-            if use_publickey else 'password'
-        )
+        pref = 'keyboard-interactive,password'
         effective_extra = [
             '-o', f'PreferredAuthentications={pref}',
             '-o', 'NumberOfPasswordPrompts=1',
@@ -367,8 +368,9 @@ def upload_file(
 
     env = (inherit_env or os.environ).copy()
 
-    # Create connection object for ssh_connection_builder
-    auth_method = 1 if password else 0
+    # use_publickey => key-based method: never force auth_method=1 for a
+    # stored password (that would enable sshpass via resolve_native_auth).
+    auth_method = 0 if use_publickey else (1 if password else 0)
     connection = _create_connection_for_scp(
         host=host,
         user=user,
@@ -392,13 +394,10 @@ def upload_file(
         logger.error(f'SCP: Failed to resolve authentication: {e}')
         return False
 
-    # Inject sshpass-specific auth-steering options (mirrors download_file).
+    # sshpass steering options only for password-method auth.
     effective_extra = list(extra_ssh_opts or [])
     if auth.use_sshpass and auth.password:
-        pref = (
-            'gssapi-with-mic,hostbased,publickey,keyboard-interactive,password'
-            if use_publickey else 'password'
-        )
+        pref = 'keyboard-interactive,password'
         effective_extra = [
             '-o', f'PreferredAuthentications={pref}',
             '-o', 'NumberOfPasswordPrompts=1',

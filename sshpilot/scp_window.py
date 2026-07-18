@@ -3,7 +3,7 @@ import logging
 import threading
 from gettext import gettext as _
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 from pathlib import Path
 
 import gi
@@ -24,7 +24,6 @@ from .scp_utils import (
     _build_scp_argv_prefix,
     assemble_scp_transfer_args,
     classify_sftp_error,
-    download_file,
     insert_legacy_scp_flag,
 )
 from .platform_utils import is_flatpak
@@ -272,7 +271,7 @@ class ScpWindowController:
         self._extend_scp_options_from_connection(connection, ssh_options)
 
         if prefer_password:
-            ssh_options += ['-o', 'PreferredAuthentications=password']
+            ssh_options += ['-o', 'PreferredAuthentications=keyboard-interactive,password']
         elif combined_auth:
             ssh_options += [
                 '-o',
@@ -731,34 +730,6 @@ class ScpWindowController:
 
             list_box.connect('row-selected', _on_rows_changed)
 
-            def _finish_download(success: bool, destination_display: str, remote_name: str, friendly_error: Optional[str] = None):
-                list_box.set_sensitive(True)
-                refresh_button.set_sensitive(True)
-                selected_row = list_box.get_selected_row()
-                if selected_row is not None:
-                    download_button.set_sensitive(getattr(selected_row, 'remote_selectable', True))
-                if success:
-                    status_label.set_text(
-                        _('Downloaded {name} to {dest}').format(
-                            name=remote_name,
-                            dest=destination_display,
-                        )
-                    )
-                    if hasattr(self.window, 'toast_overlay'):
-                        toast = Adw.Toast.new(
-                            _('Downloaded {name} to {dest}').format(
-                                name=remote_name,
-                                dest=destination_display,
-                            )
-                        )
-                        toast.set_timeout(3)
-                        self.window.toast_overlay.add_toast(toast)
-                elif friendly_error:
-                    status_label.set_text(friendly_error)
-                else:
-                    status_label.set_text(_('Download failed. Check the log for details.'))
-                return False
-
             def _start_download(row: Optional[Gtk.ListBoxRow] = None):
                 selected_row = row or list_box.get_selected_row()
                 if not selected_row:
@@ -826,51 +797,21 @@ class ScpWindowController:
                         )
                         return
 
-                status_label.set_text(_('Downloading…'))
-                download_button.set_sensitive(False)
-                refresh_button.set_sensitive(False)
-                list_box.set_sensitive(False)
-
-                def _worker():
-                    # If using password authentication, strip askpass environment
-                    # (askpass is only for passphrases, not passwords)
-                    env_for_download = base_env.copy()
-                    if session_password:
-                        env_for_download.pop('SSH_ASKPASS', None)
-                        env_for_download.pop('SSH_ASKPASS_REQUIRE', None)
-                        logger.debug("SCP Download: Using password - removed askpass from environment")
-                    
-                    # SSH_ASKPASS will handle passphrase retrieval from storage or GUI dialog if needed
-                    download_details: Dict[str, Any] = {}
-                    # Always recurse: `scp -r` on a regular file just copies the
-                    # file, so it is safe for both files and directories. Relying
-                    # on the remote `ls -p` listing to decide recursion was
-                    # unreliable (e.g. symlinked directories), causing directory
-                    # downloads to run without `-r` and fail with "not a regular
-                    # file" (issue #1002).
-                    success = download_file(
-                        host_value,
-                        username,
-                        remote_path,
-                        str(destination_dir),
-                        recursive=True,
-                        port=port,
-                        password=session_password,
-                        known_hosts_path=known_hosts_path,
-                        extra_ssh_opts=ssh_extra_opts,
-                        use_publickey=use_publickey_with_password,
-                        inherit_env=env_for_download,
-                        saved_passphrase=None,  # Let askpass handle retrieval/prompting
-                        keyfile=profile.keyfile_expanded if profile.keyfile_ok else None,
-                        key_mode=profile.key_mode,
-                        connection_manager=self.window.connection_manager if hasattr(self.window, 'connection_manager') else None,
-                        config=self.window.config if hasattr(self.window, 'config') else None,
-                        result_details=download_details,
-                    )
-                    friendly_error = download_details.get('friendly') if not success else None
-                    GLib.idle_add(_finish_download, success, dest_display, remote_name, friendly_error)
-
-                threading.Thread(target=_worker, daemon=True).start()
+                # Same VTE transfer path as upload: scp runs in a terminal so
+                # multi-step auth (password + OTP) stays visible. Browse dialog
+                # only picks the remote path; listing still uses list_remote_files.
+                if session_password:
+                    try:
+                        connection.password = session_password
+                    except Exception:
+                        pass
+                dialog.close()
+                self._start_scp_transfer(
+                    connection,
+                    [remote_path],
+                    str(destination_dir),
+                    direction='download',
+                )
 
             def _populate_list(entries: List[Tuple[str, bool]], directory: str, error_message: Optional[str]):
                 _clear_list()
@@ -1210,6 +1151,10 @@ class ScpWindowController:
                     "SCP: applied resolved auth env (askpass=%s, sshpass=%s)",
                     _scp_auth.use_askpass, _scp_auth.use_sshpass,
                 )
+                # Key-based stored password: type once on this VTE (no sshpass).
+                if (_scp_auth.password and not _scp_auth.use_sshpass
+                        and hasattr(term_widget, 'arm_password_pty_autofill')):
+                    term_widget.arm_password_pty_autofill(_scp_auth.password)
 
             if os.path.exists('/app/bin'):
                 current_path = env.get('PATH', '')
@@ -1262,6 +1207,10 @@ class ScpWindowController:
                         None,
                         None
                     )
+                try:
+                    term_widget._install_pty_autofill()
+                except Exception:
+                    logger.debug("SCP: could not arm PTY auto-fill", exc_info=True)
 
             def _scrape_terminal_text():
                 try:

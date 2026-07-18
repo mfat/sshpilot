@@ -67,8 +67,8 @@ def test_ssh_options_precede_host_and_raw_remote_command():
 
 
 def test_sshpass_when_password_present_even_for_key_auth():
-    """Combined auth: a key-auth connection with a stored password (and no saved
-    key passphrase) falls back to the password via sshpass."""
+    """Combined auth: key-auth + stored password returns the password for PTY
+    delivery (no sshpass — residual keyboard-interactive must stay visible)."""
     conn = Connection(
         {
             'host': 'example.com',
@@ -81,8 +81,8 @@ def test_sshpass_when_password_present_even_for_key_auth():
     conn.resolved_identity_files = []  # no key -> no saved passphrase
     ctx = ConnectionContext(connection=conn, command_type='ssh')
     result = build_ssh_connection(ctx)
-    # auth_method=0 + stored password, no saved passphrase -> combined sshpass.
-    assert result.use_sshpass is True
+    # auth_method=0 + stored password -> password for PTY, never sshpass.
+    assert result.use_sshpass is False
     assert result.password == 'secret'
     assert result.use_askpass is False
     assert 'SSH_ASKPASS' not in result.env

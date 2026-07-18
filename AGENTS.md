@@ -20,10 +20,10 @@ command/auth builders are exactly what was removed.
 Reuse these (and only these):
 - **Open/prepare a connection:** `Connection.native_connect()` →
   `build_ssh_connection(ctx)`. (`Connection.connect()` is just an alias.)
-- **Decide authentication (askpass/keyring or sshpass):**
+- **Decide authentication (askpass / PTY password fill / sshpass):**
   `resolve_native_auth(connection, connection_manager, app_config)` — the ONLY
   place auth is decided. Every command-based caller must get its env + extra
-  options from here.
+  options from here. sshpass only when password auth is selected.
 - **Build a plain command for an external process** (e.g. system terminal):
   `build_native_command(...)`.
 - **Build an explicit command's option list** (raw host/keyfile/port callers
@@ -67,13 +67,20 @@ Rules:
 `NativeAuth(env, extra_opts, use_sshpass, password, use_askpass, password_mode)`.
 The terminal builder, SCP, and ssh-copy-id all call it so they authenticate
 identically. Modes:
-- **Password** (`auth_method == 1`, or a stored password exists): use `sshpass`
-  with a write-once FIFO to feed the password; clear `SSH_ASKPASS` and set
-  `SSH_ASKPASS_REQUIRE=never` so ssh never falls back to askpass.
-- **Key-based** (default, askpass enabled): set `SSH_ASKPASS` (REQUIRE=prefer)
-  so ssh asks our askpass helper for any key passphrase it needs. The agent is
-  left intact — SSH uses it when keys are already loaded, and falls back to
-  askpass (keyring lookup → GTK prompt) for passphrases the agent cannot supply.
+- **Password method** (`auth_method == 1` only): when a stored password exists,
+  set `use_sshpass=True` and feed it via a write-once FIFO; clear `SSH_ASKPASS`
+  and set `SSH_ASKPASS_REQUIRE=never` so ssh never falls back to askpass.
+  **sshpass is never used for key-based auth**, even if a password is also stored.
+- **Key-based** (`auth_method == 0`, auto or specific key — askpass enabled):
+  never set `use_sshpass`. Behaviour depends on what is saved:
+  - saved key passphrase → `SSH_ASKPASS` (REQUIRE=prefer) autofills it; agent
+    left intact.
+  - saved password (optional / combined auth) → return `password` with
+    `use_sshpass=False` for **PTY auto-fill** (terminal / SCP VTE /
+    `MasterSession`): type the password once at a real prompt; residual
+    keyboard-interactive steps (2FA, PIN) stay visible for the user. Strip
+    askpass when delivering a stored password so it cannot hijack that prompt.
+  - nothing saved → no askpass, no password; SSH prompts on the TTY.
 - **Askpass disabled** (the `use-askpass` setting is off): set no `SSH_ASKPASS`;
   ssh prompts natively on the TTY.
 
@@ -254,36 +261,59 @@ Plugins: see **PLUGIN_SDK.md → Advanced UI — credential dialogs** (`ctx.conn
 for store-password; must run on the UI thread).
 
 ### sshpass mechanics
+**Only for password-method auth** (`auth_method == 1` and `use_sshpass=True`).
 The password is fed to ssh via a **write-once FIFO**, never on the command line
 or in the environment: `_mk_priv_dir()` creates a 0700 temp dir,
 `_write_once_fifo()` (a daemon thread) writes the secret exactly once when ssh
 opens the FIFO, and the command is prefixed with `sshpass -f <fifo>`
 (`ssh_password_exec.py`; the terminal does the same inline in
-`_setup_ssh_terminal`). `SSH_ASKPASS_REQUIRE=never` is set so ssh cannot divert
-to askpass for a password.
+`_setup_ssh_terminal` when `use_sshpass` is set). `SSH_ASKPASS_REQUIRE=never`
+is set so ssh cannot divert to askpass for a password.
+
+Do **not** use sshpass for key-based connections: it allocates a hidden PTY and
+discards residual keyboard-interactive prompts (2FA codes, PINs). Key-based
+stored passwords are typed once onto a real PTY instead (see below).
+
+### PTY password auto-fill (key-based stored password)
+When `resolve_native_auth` returns `password` with `use_sshpass=False`, callers
+that own a PTY type it once at ssh's password prompt (`classify_prompt` from
+`ssh_master_session.py`) and leave further prompts to the user:
+- **Terminal / SCP UI / ssh-copy-id VTE:** `TerminalWidget.arm_password_pty_autofill`
+- **File manager (PTY-less SFTP):** `MasterSession` / `ensure_authenticated_master`
+  establishes a ControlMaster on an app-owned PTY first, then the SFTP worker
+  rides the mux socket.
 
 ### Who builds what
 - **Interactive terminal** (`terminal.py::_setup_ssh_terminal`): consumes the
   prepared `connection.ssh_connection_cmd` (command + env + auth flags) — it does
-  **not** build commands or derive auth. It only does runtime mechanics: the
-  sshpass FIFO, askpass log forwarding, `TERM`/`PATH`, and the PTY/spawn.
-- **SCP** (`scp_utils.py`): SCP runs against explicit params (raw host, explicit
-  keyfile/port — not a config alias), so it builds an explicit `scp` command via
-  `_build_base_ssh_command` + the shared `resolve_native_auth`.
-- **ssh-copy-id** (`window.py`): builds its own `ssh-copy-id` argv and applies
-  `resolve_native_auth` (its `-o` options must precede the target).
+  **not** build commands or derive auth. Runtime mechanics only: sshpass FIFO
+  (password method), PTY password auto-fill (key-based stored password), askpass
+  log forwarding, `TERM`/`PATH`, and the PTY/spawn.
+- **SCP UI** (`scp_window.py`): upload and download both run `scp` in a VTE via
+  `_start_scp_transfer` / `_show_scp_terminal_window`, applying
+  `resolve_native_auth` the same way (sshpass only if password method; else PTY
+  auto-fill). Headless `scp_utils.download_file` / `upload_file` still exist for
+  programmatic callers and must set `use_publickey=True` for key-based hosts so
+  they never force `auth_method=1` / sshpass.
+- **ssh-copy-id** (`sshcopyid_window.py`): builds its own `ssh-copy-id` argv and
+  applies `resolve_native_auth` (its `-o` options must precede the target); same
+  sshpass vs PTY-fill split as the terminal.
 - **System / external terminal**: uses `build_native_command()` — a *plain*
   `ssh -F <config> <host>` with **no** in-app auth (`IdentityAgent`/askpass),
   because the external terminal supplies its own TTY and agent.
-- **SFTP file manager** (`file_manager/openssh_backend.py`): uses the same
-  native `build_ssh_connection()` + `resolve_native_auth()` path, spawning
-  `ssh -F <config> … -s <host> sftp` and speaking SFTP v3 over pipes.
+- **SFTP file manager** (`file_manager/openssh_backend.py` +
+  `ssh_master_session.py`): master-first on a PTY for interactive auth, then the
+  PTY-less SFTP worker uses `build_ssh_connection()` + `resolve_native_auth()`
+  over `ssh -F <config> … -s <host> sftp` on the mux socket.
 
 ### Key functions/files
 - `ssh_connection_builder.py`: `build_ssh_connection` (native-only),
   `resolve_native_auth` (the auth chokepoint), `build_native_command` (plain
   command for external processes), `_build_base_ssh_command` (shared option
   builder used by explicit-command callers like SCP).
+- `ssh_master_session.py`: `MasterSession`, `ensure_authenticated_master`,
+  `classify_prompt` — PTY-backed ControlMaster + prompt classification for
+  interactive / key-based password delivery.
 - `connection_manager.py`: `Connection.native_connect()`/`connect()`,
   persistence of connections to `~/.ssh/config`, credential storage
   (`store_connection_password`, `get_connection_password`, …).
@@ -383,7 +413,9 @@ drag-and-drop, VTE-scraping, or live-SSH bugs — use unit tests there.
 - Never store passwords in plain text
 - Use `libsecret` (via PyGObject) on Linux for credential storage
 - Use `keyring` for cross-platform credential management
-- The app uses askpass for private key passphrases and sshpass for ssh passwords
+- The app uses askpass for private key passphrases; sshpass only when password
+  authentication is selected (`auth_method == 1`); key-based stored passwords
+  are typed on a real PTY (never sshpass)
 ## Build and Packaging
 
 

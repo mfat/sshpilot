@@ -54,15 +54,17 @@ except ProtocolError as e:
 ssh_cmd = list(spec.argv)
 env = dict(spec.env)
 use_askpass = bool(spec.extras.get('use_askpass'))
-password_value = spec.extras.get('password') if spec.extras.get('use_sshpass') else None
+use_sshpass = bool(spec.extras.get('use_sshpass'))
+password_value = spec.extras.get('password')
+# use_sshpass=True  -> password-method: wrap with sshpass FIFO
+# password only     -> key-based stored password: PTY auto-fill (no sshpass)
 ```
 
-Everything below that point (the sshpass FIFO, askpass env handling,
-`self.backend.spawn_async(argv=ssh_cmd, ...)`) stays exactly as it is.
-For the SSH backend the resulting argv/env are byte-identical to today's,
-because plugin zero returns the same `build_ssh_connection()` output —
-this change is a pure indirection, which is what makes it safe to ship
-alone.
+Everything below that point (sshpass FIFO when `use_sshpass`, else PTY
+password auto-fill when `password` is set, askpass env handling,
+`self.backend.spawn_async(argv=ssh_cmd, ...)`) stays owned by `terminal.py`.
+For the SSH backend the resulting argv/env come from
+`build_ssh_connection()` via the protocol seam — a pure indirection.
 
 `self._plugin_ctx` can be a single `PluginContext` created at startup and
 passed down, or rebuilt cheaply per call; it only carries references.

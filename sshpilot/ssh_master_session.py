@@ -93,6 +93,39 @@ def _build_master_context(connection, connection_manager, config,
     )
 
 
+def ensure_authenticated_master(
+    connection,
+    connection_manager=None,
+    config=None,
+    *,
+    on_ready: Callable[[], None],
+    on_needs_interaction: Callable[[int, str], None],
+    on_need_password: Callable[[str], None],
+    on_failed: Callable[[str], None],
+) -> Optional["MasterSession"]:
+    """Start a PTY-backed ControlMaster when none is live.
+
+    Returns the new ``MasterSession`` when one was started, or ``None`` when a
+    live master already exists (``on_ready`` is invoked immediately). Callers
+    (file manager, and any future PTY-less tool) marshal callbacks to the UI
+    loop themselves — this helper stays GTK-free.
+    """
+    if check_master_alive(connection, connection_manager, config):
+        on_ready()
+        return None
+    session = MasterSession(
+        connection,
+        connection_manager,
+        config,
+        on_ready=on_ready,
+        on_needs_interaction=on_needs_interaction,
+        on_need_password=on_need_password,
+        on_failed=on_failed,
+    )
+    session.start()
+    return session
+
+
 def check_master_alive(connection, connection_manager=None, config=None) -> bool:
     """Return True when a live ControlMaster socket exists for *connection*.
 

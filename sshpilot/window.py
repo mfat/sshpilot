@@ -255,7 +255,10 @@ def list_remote_files(
         env.pop('SSH_ASKPASS_REQUIRE', None)
 
     try:
-        if password:
+        # sshpass only for password-method listing. Key-based (use_publickey),
+        # even with a stored password, must not use sshpass — it hides residual
+        # keyboard-interactive prompts (same rule as resolve_native_auth).
+        if password and not use_publickey:
             result = run_ssh_with_password(
                 host,
                 user,
@@ -265,7 +268,7 @@ def list_remote_files(
                 known_hosts_path=known_hosts_path,
                 extra_ssh_opts=extra_ssh_opts or [],
                 inherit_env=env,
-                use_publickey=use_publickey,
+                use_publickey=False,
             )
         else:
             sshbin = shutil.which('ssh') or '/usr/bin/ssh'

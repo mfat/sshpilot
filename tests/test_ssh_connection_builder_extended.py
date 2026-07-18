@@ -156,9 +156,9 @@ def test_password_auth_with_stored_password_uses_sshpass():
     assert 'IdentityAgent=none' not in cmd
 
 
-def test_key_auth_with_stored_password_uses_combined_sshpass():
+def test_key_auth_with_stored_password_uses_pty_password_not_sshpass():
     # Combined auth: key auth + a stored password (no saved key passphrase) ->
-    # try the key, fall back to the password via sshpass.
+    # try the key, then answer the password on a real PTY (never sshpass).
     conn = Connection({
         'host': 'combo.example',
         'hostname': 'combo.example',
@@ -167,7 +167,7 @@ def test_key_auth_with_stored_password_uses_combined_sshpass():
     })
     conn.resolved_identity_files = []  # no saved passphrase
     cmd, result = _build_from(conn)
-    assert result.use_sshpass is True
+    assert result.use_sshpass is False
     assert result.password == 'backup'
     assert result.use_askpass is False
     assert 'SSH_ASKPASS' not in result.env
@@ -384,7 +384,7 @@ def test_app_config_batch_mode_skipped_for_password_mode():
     assert not _has_o_option(cmd, 'BatchMode=yes')
 
 
-def test_app_config_batch_mode_skipped_for_combined_auth_sshpass(monkeypatch):
+def test_app_config_batch_mode_skipped_for_combined_auth_pty_password(monkeypatch):
     import sshpilot.ssh_connection_builder as scb
 
     cfg = _ConfigStub({'batch_mode': True})
@@ -400,9 +400,9 @@ def test_app_config_batch_mode_skipped_for_combined_auth_sshpass(monkeypatch):
 
     cmd, result = _build_from(conn, config=cfg)
 
-    assert result.use_sshpass is True
+    assert result.use_sshpass is False
     assert result.password == 'account-password'
-    # Any sshpass-backed path needs prompts enabled so sshpass can answer them.
+    # PTY password delivery needs prompts enabled (BatchMode would skip them).
     assert not _has_o_option(cmd, 'BatchMode=yes')
 
 

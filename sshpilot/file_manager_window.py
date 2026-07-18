@@ -534,7 +534,7 @@ class FileManagerWindow(Adw.Window):
         self._auth_master_active = True
 
         def _probe_and_start() -> None:
-            from .ssh_master_session import MasterSession, check_master_alive
+            from .ssh_master_session import ensure_authenticated_master
 
             app_config = None
             try:
@@ -543,12 +543,8 @@ class FileManagerWindow(Adw.Window):
                 app_config = Config()
             except Exception:
                 pass
-            if check_master_alive(connection, self._connection_manager, app_config):
-                logger.debug("Live ControlMaster socket found; connecting directly")
-                GLib.idle_add(self._on_master_ready)
-                return
             try:
-                session = MasterSession(
+                session = ensure_authenticated_master(
                     connection,
                     self._connection_manager,
                     app_config,
@@ -563,8 +559,8 @@ class FileManagerWindow(Adw.Window):
                         self._on_master_failed, tail
                     ),
                 )
-                self._master_session = session
-                session.start()
+                if session is not None:
+                    self._master_session = session
             except Exception as exc:
                 logger.exception("Failed to start master session: %s", exc)
                 GLib.idle_add(self._on_master_failed, str(exc))
