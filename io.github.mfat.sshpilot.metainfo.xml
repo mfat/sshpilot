@@ -60,6 +60,14 @@
 
 
 
+    <release version="5.5.6" date="2026-07-19">
+      <description>
+        <p>Enhanced suppot for multi-sttep authentication challenges</p>
+        <p>Better support for FIDO hardware keys</p>
+        <p>More robust password autofill flow</p>
+        <p>Revamped SCP dialogs</p>
+      </description>
+    </release>
     <release version="5.5.5" date="2026-07-18">
       <description>
         <p>Bug fixes and minor UI improvements</p>
