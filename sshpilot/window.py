@@ -209,6 +209,13 @@ def list_remote_files(
             session_password=getattr(prepared, 'password', None),
         )
 
+        # A staged secret autofills instantly, so a short timeout only guards
+        # against network stalls. With nothing staged, askpass may pop a
+        # dialog (password/passphrase/OTP/FIDO) and a human needs time to
+        # answer it — don't kill ssh mid-prompt.
+        if not getattr(prepared, 'password', None):
+            timeout = max(timeout, 180)
+
         result = subprocess.run(
             list(prepared.command),
             capture_output=True,
