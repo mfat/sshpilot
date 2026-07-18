@@ -357,8 +357,10 @@ def show_ssh_password_dialog(
     This is the single supported entry point for prompting the user for an SSH
     login password from core features, plugins (advanced), and secondary windows
     (file manager, authorized-keys editor, external SFTP mount, …). Do **not**
-    roll a custom ``Adw.MessageDialog`` for passwords — use this helper so
-    Wayland stacking, copy, and keyring storage behave consistently.
+    roll a custom password dialog — use this helper so Wayland stacking, copy,
+    and keyring storage behave consistently. Internally this is an
+    ``Adw.Dialog`` with a header bar (Cancel / confirm), a boxed-list
+    ``PasswordEntryRow``, and an optional Store checkbox.
 
     The dialog is modal, parented on :class:`MainWindow` (via
     :func:`resolve_app_modal_parent`), and blocks until the user dismisses it
@@ -492,7 +494,11 @@ def _show_password_passphrase_dialog(
     on_store: Optional[Any] = None,
 ) -> Optional[str]:
     """Show a graphical password or passphrase dialog.
-    
+
+    ``Adw.Dialog`` + header bar (Cancel / confirm) with a boxed-list password
+    row and an optional Store checkbox below it — not a SwitchRow (which reads
+    like another text field).
+
     Parameters
     ----------
     parent_window : Gtk.Window
@@ -511,17 +517,16 @@ def _show_password_passphrase_dialog(
         Connection manager instance for storing passwords
     heading, body
         Optional overrides for the dialog title and message text.
-    
+
     Returns
     -------
     Optional[str]
         The entered password/passphrase, or None if cancelled
     """
-    password_result = [None]  # Use list to allow modification in nested function
-    store_checked = [False]  # Use list to allow modification in nested function
+    password_result = [None]
     main_loop = GLib.MainLoop()
-    
-    # Determine dialog heading and body text
+    done = [False]
+
     if heading is None:
         if prompt_type == "passphrase":
             heading = _("Passphrase Required")
@@ -533,53 +538,62 @@ def _show_password_passphrase_dialog(
         if prompt_type == "passphrase":
             if key_path:
                 key_name = os.path.basename(key_path)
-                body = _("Please enter the passphrase for key {key_name}:").format(key_name=key_name)
+                body = _("Enter the passphrase for key “{key_name}”.").format(
+                    key_name=key_name
+                )
             else:
-                body = _("Please enter your passphrase:")
+                body = _("Enter your passphrase.")
         elif prompt_type == "challenge":
-            body = display_name or _("Please enter the verification code:")
+            body = display_name or _("Enter the verification code.")
         elif display_name:
-            body = _("Please enter your password for {display_name}:").format(display_name=display_name)
+            body = _("Enter your password for {display_name}.").format(
+                display_name=display_name
+            )
         else:
-            body = _("Please enter your password:")
+            body = _("Enter your password.")
+
     if prompt_type == "passphrase":
-        placeholder = _("Passphrase")
+        entry_title = _("Passphrase")
         default_store_label = _("Store passphrase")
+        confirm_label = _("Unlock")
     elif prompt_type == "challenge":
-        placeholder = _("Verification code")
+        entry_title = _("Verification code")
         default_store_label = ""
+        confirm_label = _("Continue")
     else:
-        placeholder = _("Password")
+        entry_title = _("Password")
         default_store_label = _("Store password")
+        confirm_label = _("OK")
     if not store_label:
         store_label = default_store_label
     allow_store = prompt_type in ("password", "passphrase")
-    
-    # Create password/passphrase dialog
-    dialog = Adw.MessageDialog(
-        transient_for=parent_window,
-        modal=True,
-        heading=heading,
-        body=body,
-    )
-    
-    # Create a container box for entry and checkbox
-    content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-    content_box.set_margin_top(12)
-    content_box.set_margin_bottom(12)
-    content_box.set_margin_start(12)
-    content_box.set_margin_end(12)
-    
-    # Add password entry
-    password_entry = Gtk.PasswordEntry()
-    password_entry.set_property("placeholder-text", placeholder)
-    content_box.append(password_entry)
-    
-    # Optional checkbox to store password/passphrase (not for one-shot MFA).
+
+    dialog = Adw.Dialog()
+    dialog.set_title(heading)
+    dialog.set_content_width(400)
+    dialog.set_follows_content_size(True)
+
+    cancel_btn = Gtk.Button(label=_("Cancel"))
+    ok_btn = Gtk.Button(label=confirm_label)
+    ok_btn.add_css_class("suggested-action")
+
+    header = Adw.HeaderBar()
+    header.set_show_start_title_buttons(False)
+    header.set_show_end_title_buttons(False)
+    header.pack_start(cancel_btn)
+    header.pack_end(ok_btn)
+
+    body_label = Gtk.Label(label=body)
+    body_label.set_wrap(True)
+    body_label.set_xalign(0.0)
+    body_label.add_css_class("dim-label")
+
+    password_row = Adw.PasswordEntryRow(title=entry_title)
+    group = Adw.PreferencesGroup()
+    group.add(password_row)
+
     store_checkbox = Gtk.CheckButton(label=store_label or _("Store password"))
     store_checkbox.set_active(False)
-    if allow_store:
-        content_box.append(store_checkbox)
 
     persists_secrets = True
     try:
@@ -587,8 +601,17 @@ def _show_password_passphrase_dialog(
         persists_secrets = get_secret_manager().persists_secrets()
     except Exception:
         persists_secrets = True
-    if allow_store and not persists_secrets:
-        store_checkbox.set_visible(False)
+
+    content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18)
+    content.set_margin_top(18)
+    content.set_margin_bottom(24)
+    content.set_margin_start(18)
+    content.set_margin_end(18)
+    content.append(body_label)
+    content.append(group)
+    if allow_store and persists_secrets:
+        content.append(store_checkbox)
+    elif allow_store and not persists_secrets:
         no_store_label = Gtk.Label(
             label=_(
                 "Secret storage is set to SSH Agent Only — passwords and passphrases "
@@ -602,98 +625,105 @@ def _show_password_passphrase_dialog(
                 no_store_label.add_css_class(css)
             except Exception:
                 pass
-        content_box.append(no_store_label)
-    
-    # Add container to dialog's extra child area
-    dialog.set_extra_child(content_box)
-    
-    # Add responses
-    dialog.add_response("cancel", _("Cancel"))
-    dialog.add_response("ok", _("OK"))
-    dialog.set_default_response("ok")
-    dialog.set_close_response("cancel")
-    
-    # Handle Enter key - try multiple approaches for maximum compatibility
-    def on_entry_activate(_entry):
-        """Handle Enter key press in password entry"""
-        dialog.emit("response", "ok")
-    
-    # Try to set activates-default property (works for Gtk.Entry)
-    try:
-        password_entry.set_property("activates-default", True)
-    except (TypeError, AttributeError):
-        pass
-    
-    # Also connect to activate signal as fallback
-    try:
-        password_entry.connect("activate", on_entry_activate)
-    except (TypeError, AttributeError):
-        # Fallback to key controller if activate signal is not available
-        key_controller = Gtk.EventControllerKey()
-        def on_key_pressed(_controller, keyval, _keycode, _state):
-            if keyval == Gdk.KEY_Return or keyval == Gdk.KEY_KP_Enter:
-                dialog.emit("response", "ok")
-                return True
-            return False
-        key_controller.connect("key-pressed", on_key_pressed)
-        password_entry.add_controller(key_controller)
-    
-    # Focus password entry when dialog is shown
-    def on_dialog_shown(_dialog):
-        password_entry.grab_focus()
-    dialog.connect("notify::visible", lambda d, _: on_dialog_shown(d) if d.get_visible() else None)
-    
-    def on_response(_dialog, response: str) -> None:
-        if response == "ok":
-            entered_password = password_entry.get_text()
-            if entered_password:
-                password_result[0] = entered_password
-                store_checked[0] = store_checkbox.get_active()
-                
-                # Store password/passphrase if checkbox is checked (never for MFA).
-                if allow_store and store_checked[0]:
+        content.append(no_store_label)
+
+    toolbar = Adw.ToolbarView()
+    toolbar.add_top_bar(header)
+    toolbar.set_content(content)
+    dialog.set_child(toolbar)
+
+    def _finish(ok: bool) -> None:
+        if done[0]:
+            return
+        done[0] = True
+        if ok:
+            entered = password_row.get_text()
+            if entered:
+                password_result[0] = entered
+                store_checked = bool(
+                    allow_store and persists_secrets and store_checkbox.get_active()
+                )
+                if allow_store and store_checked:
                     if on_store is not None:
-                        # Caller-supplied storage hook (e.g. sudo-password keyring).
                         try:
-                            on_store(entered_password)
+                            on_store(entered)
                         except Exception as e:
-                            logger.debug(f"Failed to store via on_store hook: {e}")
+                            logger.debug("Failed to store via on_store hook: %s", e)
                     elif prompt_type == "passphrase" and key_path:
-                        # Store passphrase
                         try:
                             from .askpass_utils import store_passphrase
-                            store_passphrase(key_path, entered_password)
+                            store_passphrase(key_path, entered)
                         except Exception as e:
-                            logger.debug(f"Failed to store passphrase: {e}")
+                            logger.debug("Failed to store passphrase: %s", e)
                     elif prompt_type == "password" and connection_manager:
                         try:
                             if connection is not None and hasattr(
-                                    connection_manager, 'store_connection_password'):
+                                connection_manager, "store_connection_password"
+                            ):
                                 connection_manager.store_connection_password(
-                                    connection, entered_password, username=username)
+                                    connection, entered, username=username
+                                )
                             elif host and username:
                                 from .credential_model import canonical_password_host
                                 canonical = canonical_password_host(
-                                    {'hostname': host, 'host': host, 'username': username})
+                                    {
+                                        "hostname": host,
+                                        "host": host,
+                                        "username": username,
+                                    }
+                                )
                                 store_host = canonical or host
                                 connection_manager.store_password(
-                                    store_host, username, entered_password)
+                                    store_host, username, entered
+                                )
                         except Exception as e:
-                            logger.debug(f"Failed to store password: {e}")
+                            logger.debug("Failed to store password: %s", e)
             else:
-                password_result[0] = None  # Empty password treated as cancel
+                password_result[0] = None
         else:
-            password_result[0] = None  # User cancelled
-        dialog.destroy()
+            password_result[0] = None
+        try:
+            dialog.close()
+        except Exception:
+            pass
         main_loop.quit()
-    
-    dialog.connect("response", on_response)
-    dialog.present()
-    
-    # Run main loop to wait for dialog response
-    # This blocks until the dialog is closed
+
+    cancel_btn.connect("clicked", lambda _b: _finish(False))
+    ok_btn.connect("clicked", lambda _b: _finish(True))
+    dialog.set_default_widget(ok_btn)
+
+    try:
+        password_row.connect("entry-activated", lambda _r: _finish(True))
+    except (TypeError, AttributeError):
+        key_controller = Gtk.EventControllerKey()
+
+        def on_key_pressed(_controller, keyval, _keycode, _state):
+            if keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
+                _finish(True)
+                return True
+            if keyval == Gdk.KEY_Escape:
+                _finish(False)
+                return True
+            return False
+
+        key_controller.connect("key-pressed", on_key_pressed)
+        dialog.add_controller(key_controller)
+
+    def _on_closed(*_args):
+        if not done[0]:
+            _finish(False)
+
+    try:
+        dialog.connect("closed", _on_closed)
+    except TypeError:
+        dialog.connect("close-request", lambda *_a: (_finish(False), False)[1])
+
+    dialog.present(parent_window)
+    # grab_focus() returns True — idle_add would re-run forever and steal
+    # keystrokes after the first character unless we return SOURCE_REMOVE.
+    GLib.idle_add(lambda: (password_row.grab_focus(), False)[1])
+
     main_loop.run()
-    
     return password_result[0]
 
 

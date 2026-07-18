@@ -227,9 +227,10 @@ See also **askpass mechanics (passphrases and login passwords)** below.
 ### In-app password & passphrase dialogs (GUI)
 
 When **your code** (not the `ssh` subprocess) must ask the user for credentials,
-use the shared helpers in `window.py`. Do **not** create a one-off
-`Adw.MessageDialog` for SSH passwords — secondary windows parented incorrectly
-hide behind the main window on Wayland.
+use the shared helpers in `window.py`. Do **not** create a one-off password
+dialog — secondary windows parented incorrectly hide behind the main window on
+Wayland. The shared helper uses `Adw.Dialog` + header bar (Cancel / confirm),
+a boxed-list `PasswordEntryRow`, and an optional Store checkbox.
 
 **SSH login password (in-process, blocking, main-thread only)**
 

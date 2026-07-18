@@ -239,7 +239,7 @@ self.connect("unmap", lambda *_: self.ctx.release_multiplex(self._nick))
 When your plugin must collect an **SSH login password** in the GUI (e.g. before
 calling `run_command` with a password-only host, or provisioning a connection),
 use the same shared dialog as core — **do not** build your own password
-`Adw.MessageDialog`.
+dialog (`show_ssh_password_dialog` is an `Adw.Dialog` with a header bar).
 
 ```python
 from sshpilot.window import show_ssh_password_dialog
@@ -435,8 +435,8 @@ must be made on the UI thread.
 - **Don't** touch the main window, the internal `Connection` class, private
   modules, or GObject signals directly — use events and `PluginContext`.
 - **Don't** store secrets in `settings`.
-- **Don't** roll custom `Adw.MessageDialog` password prompts — use
-  `show_ssh_password_dialog` (see [Advanced UI — credential dialogs](#advanced-ui--credential-dialogs)).
+- **Don't** roll custom password prompts — use `show_ssh_password_dialog`
+  (`Adw.Dialog` + header bar; see [Advanced UI — credential dialogs](#advanced-ui--credential-dialogs)).
 
 See the full [`mock_vps`](sshpilot/plugins/examples/mock_vps/) example for all of
 the above wired together.
