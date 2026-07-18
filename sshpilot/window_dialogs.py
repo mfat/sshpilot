@@ -266,8 +266,10 @@ def _show_password_passphrase_dialog(
 
     dialog = Adw.Dialog()
     dialog.set_title(heading)
+    # follows_content_size=True would ignore content_width and shrink to the
+    # PreferencesGroup's natural size — keep an explicit width instead.
     dialog.set_content_width(480)
-    dialog.set_follows_content_size(True)
+    dialog.set_follows_content_size(False)
 
     cancel_btn = Gtk.Button(label=_("Cancel"))
     ok_btn = Gtk.Button(label=confirm_label)
