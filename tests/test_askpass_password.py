@@ -324,3 +324,23 @@ def test_askpass_unrecognized_prompt_treated_as_challenge(monkeypatch):
     assert handle_askpass_cli("Duo Push: enter a passcode from your phone") == (
         "custom-mfa-response"
     )
+
+
+def test_askpass_empty_prompt_declines_without_ui(monkeypatch):
+    # A bare helper invocation (no argv/prompt) and no UI hint must decline,
+    # not fall through to the interactive challenge dialog. Any routing/dialog
+    # call would be a bug, so make them explode.
+    monkeypatch.delenv("SSH_ASKPASS_PROMPT", raising=False)
+
+    def _boom(*_a, **_k):
+        raise AssertionError("empty prompt must not reach a dialog")
+
+    for name in (
+        "_route_challenge_to_main_app",
+        "_run_challenge_dialog",
+        "_route_password_to_main_app",
+    ):
+        monkeypatch.setattr(f"sshpilot.askpass_utils.{name}", _boom)
+
+    assert handle_askpass_cli("") is None
+    assert handle_askpass_cli("   ") is None

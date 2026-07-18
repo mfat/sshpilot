@@ -890,6 +890,15 @@ def handle_askpass_cli(prompt: str) -> "str | None":
         # Passphrases fall through: that path is already dialog-free
         # (vault/session lookup, then defer to SSH/agent).
 
+    # A blank prompt with no UI hint carries no question to answer — OpenSSH
+    # always passes prompt text, so this is a bare/misfired invocation (e.g.
+    # running the helper with no argv). Decline instead of falling through to
+    # the "unrecognized prompt" branch, which would pop a verification-code
+    # dialog out of nowhere.
+    if not (prompt or "").strip() and not hint:
+        _log("ASKPASS: empty prompt with no hint; declining")
+        return None
+
     # Official OpenSSH askpass UI hints (see readpass.c / notify_start).
     if hint == "none":
         _log("ASKPASS: SSH_ASKPASS_PROMPT=none (FIDO presence reminder)")
