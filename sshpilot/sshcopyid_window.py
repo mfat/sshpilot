@@ -1126,12 +1126,12 @@ class SshCopyIdRunner:
             username = getattr(connection, 'username', '')
             manager = getattr(self.window, 'connection_manager', None)
             has_saved_password = bool(manager.get_password(host_value, username)) if manager else False
-            # sshpass is only for password-method auth; key-based uses PTY fill.
+            # Password delivery is via askpass (REQUIRE=prefer); no sshpass check.
             if auth_method == 1 and has_saved_password:
-                if self._find_ssh_copy_id_helper('sshpass') is None:
-                    logger.warning(
-                        'ssh-copy-id preflight: sshpass unavailable; falling back to terminal password prompt',
-                    )
+                logger.debug(
+                    'ssh-copy-id preflight: password-method with saved password '
+                    '(askpass will autofill; MFA on TTY)',
+                )
         except Exception as exc:
             logger.debug('ssh-copy-id preflight skipped optional auth-helper check: %s', exc)
 
@@ -1291,7 +1291,6 @@ class SshCopyIdRunner:
 
             from .scp_utils import _apply_native_auth_env
             from .ssh_connection_builder import resolve_native_auth
-            from .ssh_password_exec import wrap_argv_with_sshpass
 
             auth = resolve_native_auth(
                 connection,
@@ -1341,16 +1340,9 @@ class SshCopyIdRunner:
             _apply_native_auth_env(env, auth)
             if auth.extra_opts:
                 argv[-1:-1] = auth.extra_opts
-            if auth.use_sshpass and auth.password:
-                argv, _sshpass_cleanup = wrap_argv_with_sshpass(argv, auth.password, env=env)
-                atexit.register(_sshpass_cleanup)
-            elif auth.password and hasattr(term_widget, 'arm_password_pty_autofill'):
-                # Key-based stored password: type once on this VTE (no sshpass).
-                term_widget.arm_password_pty_autofill(auth.password)
             logger.debug(
-                "Main window: ssh-copy-id auth (askpass=%s, sshpass=%s)",
+                "Main window: ssh-copy-id auth (askpass=%s)",
                 auth.use_askpass,
-                auth.use_sshpass,
             )
 
             ensure_writable_ssh_home(env)
@@ -1632,7 +1624,7 @@ class SshCopyIdRunner:
 
         if auth is not None:
             prefer_password = bool(getattr(auth, 'password_mode', False))
-            # Key-based + stored password (PTY delivery; use_sshpass is False).
+            # Key-based + stored password (askpass delivers both; MFA on TTY).
             combined_auth = bool(getattr(auth, 'password', None)) and not prefer_password
         else:
             try:

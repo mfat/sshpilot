@@ -246,9 +246,9 @@ def list_remote_files(
         env.pop('SSH_ASKPASS_REQUIRE', None)
 
     try:
-        # sshpass only for password-method listing. Key-based (use_publickey),
-        # even with a stored password, must not use sshpass — it hides residual
-        # keyboard-interactive prompts (same rule as resolve_native_auth).
+        # Password-method listing may still use the sshpass helper for this
+        # headless path; key-based (use_publickey) must not — askpass / TTY
+        # handle residual keyboard-interactive prompts.
         if password and not use_publickey:
             result = run_ssh_with_password(
                 host,
@@ -566,7 +566,7 @@ def _show_password_passphrase_dialog(
     parent_window : Gtk.Window
         Parent window for the dialog
     prompt_type : str
-        Either "password" or "passphrase"
+        ``"password"``, ``"passphrase"``, or ``"challenge"`` (OTP / MFA; no store)
     display_name : str
         Display name for the connection (e.g., "user@host")
     key_path : Optional[str]
@@ -593,6 +593,8 @@ def _show_password_passphrase_dialog(
     if heading is None:
         if prompt_type == "passphrase":
             heading = _("Passphrase Required")
+        elif prompt_type == "challenge":
+            heading = _("Authentication Required")
         else:
             heading = _("Password Required")
     if body is None:
@@ -602,6 +604,8 @@ def _show_password_passphrase_dialog(
                 body = _("Please enter the passphrase for key {key_name}:").format(key_name=key_name)
             else:
                 body = _("Please enter your passphrase:")
+        elif prompt_type == "challenge":
+            body = display_name or _("Please enter the verification code:")
         elif display_name:
             body = _("Please enter your password for {display_name}:").format(display_name=display_name)
         else:
@@ -609,11 +613,15 @@ def _show_password_passphrase_dialog(
     if prompt_type == "passphrase":
         placeholder = _("Passphrase")
         default_store_label = _("Store passphrase")
+    elif prompt_type == "challenge":
+        placeholder = _("Verification code")
+        default_store_label = ""
     else:
         placeholder = _("Password")
         default_store_label = _("Store password")
     if not store_label:
         store_label = default_store_label
+    allow_store = prompt_type in ("password", "passphrase")
     
     # Create password/passphrase dialog
     dialog = Adw.MessageDialog(
@@ -635,10 +643,11 @@ def _show_password_passphrase_dialog(
     password_entry.set_property("placeholder-text", placeholder)
     content_box.append(password_entry)
     
-    # Add checkbox to store password/passphrase
-    store_checkbox = Gtk.CheckButton(label=store_label)
+    # Optional checkbox to store password/passphrase (not for one-shot MFA).
+    store_checkbox = Gtk.CheckButton(label=store_label or _("Store password"))
     store_checkbox.set_active(False)
-    content_box.append(store_checkbox)
+    if allow_store:
+        content_box.append(store_checkbox)
 
     persists_secrets = True
     try:
@@ -646,7 +655,7 @@ def _show_password_passphrase_dialog(
         persists_secrets = get_secret_manager().persists_secrets()
     except Exception:
         persists_secrets = True
-    if not persists_secrets:
+    if allow_store and not persists_secrets:
         store_checkbox.set_visible(False)
         no_store_label = Gtk.Label(
             label=_(
@@ -709,8 +718,8 @@ def _show_password_passphrase_dialog(
                 password_result[0] = entered_password
                 store_checked[0] = store_checkbox.get_active()
                 
-                # Store password/passphrase if checkbox is checked
-                if store_checked[0]:
+                # Store password/passphrase if checkbox is checked (never for MFA).
+                if allow_store and store_checked[0]:
                     if on_store is not None:
                         # Caller-supplied storage hook (e.g. sudo-password keyring).
                         try:
@@ -6185,6 +6194,24 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self,
             prompt_type="passphrase",
             key_path=key_path or None,
+        )
+
+    def prompt_ssh_challenge(self, prompt: str = "") -> "str | None":
+        """Show an MFA / verification-code prompt as a modal child of the main window.
+
+        Used when askpass receives an interactive keyboard-interactive prompt
+        (OTP, PIN, etc.). OpenSSH with ``SSH_ASKPASS_REQUIRE=prefer`` does not
+        fall back to the TTY when askpass declines, so the user must answer
+        here. Never stores the response.
+        """
+        present_for_modal_dialog(self)
+        body = (prompt or "").strip() or _("Please enter the verification code:")
+        return _show_password_passphrase_dialog(
+            self,
+            prompt_type="challenge",
+            display_name=body,
+            heading=_("Authentication Required"),
+            body=body,
         )
 
     def prompt_ssh_password(

@@ -583,11 +583,8 @@ class OpenSSHSFTPManager(GObject.GObject):
         for key in ("SSH_ASKPASS", "SSH_ASKPASS_REQUIRE", "SSH_AUTH_SOCK"):
             if key not in (prepared.env or {}):
                 env.pop(key, None)
+        # Login password / passphrase come from askpass in prepared.env.
         cleanup: Optional[Callable[[], None]] = None
-        if prepared.use_sshpass and prepared.password:
-            from ..ssh_password_exec import wrap_argv_with_sshpass
-
-            argv, cleanup = wrap_argv_with_sshpass(argv, prepared.password, env=env)
         return argv, env, cleanup
 
     @property

@@ -94,6 +94,85 @@ def _extract_key_path(prompt: str) -> str:
     return ""
 
 
+# Prompt classification shared with MasterSession / terminal autofill. Only the
+# last non-empty line is matched so scrollback like
+# "Permission denied (publickey,password)." cannot false-positive.
+_INLINE_PROMPT_MARKERS = (
+    '(yes/no',
+    'continue connecting',
+    "please type 'yes'",
+    'confirm user presence',
+    'tap your security key',
+)
+
+
+def classify_prompt(text: str) -> "str | None":
+    """Classify the trailing prompt in *text*.
+
+    Returns ``'password'``, ``'passphrase'``, ``'interactive'`` (OTP/PIN/yes-no —
+    anything the app cannot answer from stored secrets), or ``None`` when the
+    text does not end in a prompt.
+    """
+    lines = [line.strip() for line in (text or '').splitlines() if line.strip()]
+    if not lines:
+        return None
+    last = lines[-1].lower()
+    if any(marker in last for marker in _INLINE_PROMPT_MARKERS):
+        return 'interactive'
+    if last.endswith(':'):
+        if 'passphrase' in last:
+            return 'passphrase'
+        # "Password:" but also PAM's "Password for user@host:".
+        if 'password' in last and not any(
+                m in last for m in ('pin', 'verification code', 'otp')):
+            return 'password'
+        if any(m in last for m in ('pin', 'verification code', 'otp')):
+            return 'interactive'
+    return None
+
+
+def stage_session_password(password: str) -> str:
+    """Write *password* to a 0600 temp file for one askpass consumption.
+
+    Used for in-memory passwords (just entered in a dialog) that are not yet in
+    the secret backend. The askpass helper unlinks the file after reading.
+    Returns the file path, or ``''`` on failure.
+    """
+    if not password:
+        return ''
+    try:
+        fd, path = tempfile.mkstemp(prefix='sshpilot-pw-', text=True)
+        try:
+            os.write(fd, password.encode('utf-8'))
+        finally:
+            os.close(fd)
+        os.chmod(path, 0o600)
+
+        def _cleanup(p=path):
+            try:
+                if os.path.exists(p):
+                    os.unlink(p)
+            except Exception:
+                pass
+
+        atexit.register(_cleanup)
+        return path
+    except Exception:
+        logger.debug("stage_session_password failed", exc_info=True)
+        return ''
+
+
+def lookup_ssh_password(host: str, username: str) -> str:
+    """Look up a stored SSH login password via the selected secret backend."""
+    if not host or not username:
+        return ''
+    try:
+        from .secret_storage import get_secret_manager, password_spec
+        return get_secret_manager().lookup(password_spec(host, username)) or ''
+    except Exception:
+        return ''
+
+
 def get_secret_schema():
     """Return the shared Secret.Schema for stored secrets.
 
@@ -442,17 +521,13 @@ def _run_askpass_dialog(key_path: str, log_fn) -> "str | None":
     return passphrase_result[0]
 
 
-def _route_passphrase_to_main_app(
-    key_path: str, prompt: str, log_fn
-) -> "tuple[bool, str | None]":
-    """Ask the running main app to show the passphrase prompt in-process.
+def _ask_main_app(request: dict, log_fn, *, ok_key: str = "passphrase") -> "tuple[bool, str | None]":
+    """Send a JSON request to the main-app askpass socket.
 
     Returns ``(handled, value)``:
-    - ``(True, "<passphrase>")`` — the user entered a passphrase.
-    - ``(True, None)``           — the user cancelled (do NOT also show the
-      standalone window).
-    - ``(False, None)``          — the main app is unreachable / errored; the
-      caller should fall back to the standalone dialog.
+    - ``(True, "<secret>")`` — the user entered a value.
+    - ``(True, None)``       — the user cancelled (do NOT also show a fallback).
+    - ``(False, None)``      — main app unreachable; caller should fall back.
     """
     import json
     import socket
@@ -462,15 +537,14 @@ def _route_passphrase_to_main_app(
     if not sock_path or not token:
         return (False, None)
 
-    request = json.dumps(
-        {"token": token, "type": "passphrase", "key_path": key_path, "prompt": prompt}
-    )
+    payload = dict(request)
+    payload["token"] = token
 
     try:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
             client.settimeout(5)
             client.connect(sock_path)
-            client.sendall((request + "\n").encode("utf-8"))
+            client.sendall((json.dumps(payload) + "\n").encode("utf-8"))
             # The user may take a while to type; allow a generous read window.
             client.settimeout(600)
             chunks = []
@@ -495,13 +569,133 @@ def _route_passphrase_to_main_app(
         return (False, None)
 
     if reply.get("ok"):
-        log_fn("ASKPASS: passphrase provided by main-app dialog")
-        return (True, reply.get("passphrase"))
+        log_fn("ASKPASS: response provided by main-app dialog")
+        return (True, reply.get(ok_key) or reply.get("passphrase") or reply.get("value"))
     if reply.get("fallback"):
         log_fn("ASKPASS: main app asked to use the standalone window")
         return (False, None)
-    log_fn("ASKPASS: passphrase prompt cancelled in main-app dialog")
+    log_fn("ASKPASS: prompt cancelled in main-app dialog")
     return (True, None)
+
+
+def _route_passphrase_to_main_app(
+    key_path: str, prompt: str, log_fn
+) -> "tuple[bool, str | None]":
+    """Ask the running main app to show the passphrase prompt in-process."""
+    return _ask_main_app(
+        {"type": "passphrase", "key_path": key_path, "prompt": prompt},
+        log_fn,
+        ok_key="passphrase",
+    )
+
+
+def _route_challenge_to_main_app(
+    prompt: str, log_fn
+) -> "tuple[bool, str | None]":
+    """Ask the main app to collect an interactive MFA/OTP response."""
+    return _ask_main_app(
+        {"type": "challenge", "prompt": prompt},
+        log_fn,
+        ok_key="value",
+    )
+
+
+def _run_challenge_dialog(prompt: str, log_fn) -> "str | None":
+    """Standalone GTK dialog for OTP / verification-code style prompts."""
+    try:
+        import gi
+        gi.require_version('Gtk', '4.0')
+        gi.require_version('Adw', '1')
+        gi.require_version('Gio', '2.0')
+        gi.require_version('Gdk', '4.0')
+        from gi.repository import Gtk, Adw, Gio, Gdk
+    except Exception as exc:
+        log_fn(f"ASKPASS: GTK not available for challenge dialog: {exc}")
+        return None
+
+    log_fn("ASKPASS: Showing interactive challenge GUI dialog")
+    result = [None]
+    Adw.init()
+    app = Adw.Application.new(
+        "io.github.mfat.sshpilot.askpass.challenge",
+        Gio.ApplicationFlags.NON_UNIQUE,
+    )
+
+    def on_activate(application):
+        window = Adw.ApplicationWindow(application=application)
+        window.set_title("Authentication Required")
+        window.set_resizable(False)
+        window.set_default_size(420, -1)
+        done = [False]
+
+        entry = Adw.PasswordEntryRow()
+        entry.set_title("Response")
+
+        cancel_btn = Gtk.Button(label="Cancel")
+        ok_btn = Gtk.Button(label="Continue")
+        ok_btn.add_css_class("suggested-action")
+
+        def _finish(ok: bool):
+            if done[0]:
+                return
+            done[0] = True
+            if ok:
+                result[0] = entry.get_text() or None
+            try:
+                application.quit()
+            except Exception:
+                pass
+
+        cancel_btn.connect("clicked", lambda _b: _finish(False))
+        ok_btn.connect("clicked", lambda _b: _finish(True))
+
+        header = Adw.HeaderBar()
+        header.pack_start(cancel_btn)
+        header.pack_end(ok_btn)
+
+        body = Gtk.Label(
+            label=(prompt or "Please enter the verification code:").strip(),
+            wrap=True,
+            xalign=0,
+        )
+        body.add_css_class("body")
+
+        group = Adw.PreferencesGroup()
+        group.add(entry)
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        box.set_margin_top(12)
+        box.set_margin_bottom(18)
+        box.set_margin_start(18)
+        box.set_margin_end(18)
+        box.append(body)
+        box.append(group)
+
+        toolbar = Adw.ToolbarView()
+        toolbar.add_top_bar(header)
+        toolbar.set_content(box)
+        window.set_content(toolbar)
+
+        key_controller = Gtk.EventControllerKey()
+        key_controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+
+        def _on_key(_ctrl, keyval, _keycode, _state):
+            if keyval == Gdk.KEY_Escape:
+                _finish(False)
+                return True
+            if keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
+                _finish(True)
+                return True
+            return False
+
+        key_controller.connect("key-pressed", _on_key)
+        window.add_controller(key_controller)
+        window.present()
+        entry.grab_focus()
+
+    app.connect("activate", on_activate)
+    app.run(None)
+    return result[0]
 
 
 def _lookup_via_main_app(key_path: str, log_fn) -> "str | None":
@@ -555,13 +749,56 @@ def _lookup_via_main_app(key_path: str, log_fn) -> "str | None":
     return None
 
 
+def _resolve_askpass_password(_log) -> "str | None":
+    """Return a stored login password for this SSH child, or None to defer to TTY.
+
+    Sources (first hit wins):
+    1. ``SSHPILOT_SESSION_PASSWORD_FILE`` — one-shot in-memory password staged by
+       the parent (unlinked after read).
+    2. Secret backend lookup for ``SSHPILOT_PASSWORD_USER`` @ each host in
+       ``SSHPILOT_PASSWORD_HOSTS`` (newline-separated).
+    """
+    session_file = os.environ.get("SSHPILOT_SESSION_PASSWORD_FILE", "")
+    if session_file and os.path.exists(session_file):
+        try:
+            with open(session_file, encoding="utf-8") as f:
+                value = f.read()
+            if value.endswith("\n"):
+                value = value[:-1]
+            try:
+                os.unlink(session_file)
+            except Exception:
+                pass
+            if value:
+                _log("ASKPASS: Found session password from secure temp file")
+                return value
+        except Exception as exc:
+            _log(f"ASKPASS: Error reading session password file: {exc}")
+
+    user = (os.environ.get("SSHPILOT_PASSWORD_USER") or "").strip()
+    hosts_raw = os.environ.get("SSHPILOT_PASSWORD_HOSTS") or ""
+    hosts = [h.strip() for h in hosts_raw.split("\n") if h.strip()]
+    if not user or not hosts:
+        _log("ASKPASS: password prompt but no host/user context; deferring to TTY")
+        return None
+    for host in hosts:
+        value = lookup_ssh_password(host, user)
+        if value:
+            _log(f"ASKPASS: Found stored password for {user}@{host}")
+            return value
+        _log(f"ASKPASS: No stored password for {user}@{host}")
+    return None
+
+
 def handle_askpass_cli(prompt: str) -> "str | None":
     """Handle --askpass CLI mode (re-invoked by SSH as SSH_ASKPASS handler).
 
-    Looks up stored passphrases using the app's own environment (keyring,
-    libsecret) and falls back to a GTK dialog. Returns the passphrase string
-    on success, or None on failure. The caller is responsible for writing the
-    passphrase to the real stdout fd.
+    Answers **key passphrase** and **login password** prompts from the secret
+    backend (and optional one-shot session files). Interactive MFA prompts
+    (OTP/PIN/yes-no) are declined (return None) so OpenSSH with
+    ``SSH_ASKPASS_REQUIRE=prefer`` can fall back to the real TTY. Returns the
+    secret string on success, or None on failure/decline. The caller writes it
+    to the real stdout fd.
     """
     log_path = get_askpass_log_path()
 
@@ -578,14 +815,39 @@ def handle_askpass_cli(prompt: str) -> "str | None":
     )
     _log(f"ASKPASS called with prompt: {prompt}")
 
-    pl = prompt.lower()
-
-    if "password" in pl and "passphrase" not in pl:
-        _log("ASKPASS: Ignoring password prompt")
+    kind = classify_prompt(prompt)
+    if kind == 'interactive':
+        # OpenSSH with SSH_ASKPASS_REQUIRE=prefer does NOT fall back to the
+        # TTY when askpass fails — declining here leaves the user with no way
+        # to enter an OTP. Prompt them (never autofill MFA from the vault).
+        _log("ASKPASS: interactive prompt (OTP/PIN/confirm); asking user")
+        handled, routed = _route_challenge_to_main_app(prompt, _log)
+        if handled:
+            if routed is not None:
+                _log("ASKPASS: Returning interactive response from main-app dialog")
+                return routed
+            _log("ASKPASS: user cancelled interactive prompt")
+            return None
+        value = _run_challenge_dialog(prompt, _log)
+        if value is not None:
+            _log("ASKPASS: Returning interactive response from GUI dialog")
+            return value
+        _log("ASKPASS: No interactive response; exiting with code 1")
         return None
 
-    if "passphrase" not in pl:
-        _log("ASKPASS: No passphrase found, exiting with code 1")
+    if kind == 'password' or (
+            kind is None
+            and "password" in prompt.lower()
+            and "passphrase" not in prompt.lower()):
+        value = _resolve_askpass_password(_log)
+        if value:
+            _log("ASKPASS: Returning password to caller")
+            return value
+        _log("ASKPASS: No password available; exiting with code 1 (TTY fallback)")
+        return None
+
+    if kind != 'passphrase' and "passphrase" not in prompt.lower():
+        _log("ASKPASS: Unrecognized prompt; exiting with code 1")
         return None
 
     key_path = _extract_key_path(prompt)
@@ -960,8 +1222,21 @@ def force_regenerate_askpass_script() -> str:
         _ASKPASS_DIR = None
     return ensure_passphrase_askpass()
 
-def get_ssh_env_with_askpass(require: str = "prefer") -> dict:
-    """Get SSH environment with askpass for passphrase handling"""
+def get_ssh_env_with_askpass(
+    require: str = "prefer",
+    *,
+    password_user: "str | None" = None,
+    password_hosts: "List[str] | None" = None,
+    session_password: "str | None" = None,
+) -> dict:
+    """Get SSH environment with askpass for passphrase and/or password handling.
+
+    ``require`` is OpenSSH's ``SSH_ASKPASS_REQUIRE`` (``prefer`` recommended so
+    declined MFA prompts can fall back to the TTY). When *password_user* /
+    *password_hosts* are set, the helper can autofill login-password prompts
+    from the secret backend. *session_password* stages an in-memory password
+    into a one-shot temp file for the same purpose.
+    """
     ensure_askpass_log_forwarder()
     env = os.environ.copy()
     env["SSH_ASKPASS"] = ensure_passphrase_askpass()
@@ -984,21 +1259,38 @@ def get_ssh_env_with_askpass(require: str = "prefer") -> dict:
     else:
         env.pop("SSHPILOT_ASKPASS_SOCKET", None)
         env.pop("SSHPILOT_ASKPASS_TOKEN", None)
+
+    # Login-password context for the askpass helper (optional).
+    if password_user:
+        env["SSHPILOT_PASSWORD_USER"] = str(password_user)
+    else:
+        env.pop("SSHPILOT_PASSWORD_USER", None)
+    hosts = [str(h).strip() for h in (password_hosts or []) if str(h).strip()]
+    if hosts:
+        env["SSHPILOT_PASSWORD_HOSTS"] = "\n".join(hosts)
+    else:
+        env.pop("SSHPILOT_PASSWORD_HOSTS", None)
+    if session_password:
+        path = stage_session_password(session_password)
+        if path:
+            env["SSHPILOT_SESSION_PASSWORD_FILE"] = path
+        else:
+            env.pop("SSHPILOT_SESSION_PASSWORD_FILE", None)
+    else:
+        env.pop("SSHPILOT_SESSION_PASSWORD_FILE", None)
     return env
 
 def get_ssh_env_with_askpass_for_password(host: str, username: str) -> dict:
-    """Return a copy of the environment without SSH_ASKPASS variables.
+    """SSH env with askpass wired for a login-password autofill on *host*/*username*.
 
-    Previously this helper forced use of the askpass script for password
-    authentication.  We now want the OpenSSH client to prompt the user
-    directly when sshpass is unavailable, so we explicitly strip any
-    askpass related variables that might interfere with interactive
-    prompts.
+    Uses ``SSH_ASKPASS_REQUIRE=prefer`` so OTP/MFA prompts declined by the helper
+    can fall back to the TTY.
     """
-    env = os.environ.copy()
-    env.pop("SSH_ASKPASS", None)
-    env.pop("SSH_ASKPASS_REQUIRE", None)
-    return env
+    return get_ssh_env_with_askpass(
+        "prefer",
+        password_user=username or None,
+        password_hosts=[host] if host else None,
+    )
 
 def get_ssh_env_with_forced_askpass() -> dict:
     """Get SSH environment with forced askpass for passphrase handling"""

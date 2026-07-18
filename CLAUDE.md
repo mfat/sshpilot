@@ -36,11 +36,11 @@ Architecture**. The essentials:
 - **One auth resolver:** `resolve_native_auth(...)` in `ssh_connection_builder.py`
   is the only place auth is decided, shared by terminal, SCP, ssh-copy-id, and
   the SFTP file manager (`ssh -s sftp` subprocess).
-  Key auth → askpass for passphrases when saved; a stored password is returned
-  for **PTY auto-fill** (`use_sshpass=False`) — never sshpass on key-based
-  (auto or specific key), so 2FA/OTP prompts stay visible. Password method
-  (`auth_method == 1`) → `sshpass` via a write-once FIFO only. Keyring autofill
-  and the askpass prompt are advertised features — keep them.
+  **Askpass handles both key passphrases and stored login passwords**
+  (`SSH_ASKPASS_REQUIRE=prefer`); OTP/MFA is collected via an askpass dialog
+  (OpenSSH does not fall back to the TTY when askpass declines). Do not
+  reintroduce sshpass or PTY login password autofill on the native path.
+  Keyring autofill + the askpass prompt are advertised features — keep them.
 - **Callers:** the terminal consumes the prepared command (it does not build
   commands); SCP UI / ssh-copy-id use VTE + `resolve_native_auth`; the
   system/external terminal uses `build_native_command()` (plain, no in-app
@@ -53,9 +53,8 @@ Architecture**. The essentials:
   individual keys. **Effective config** is computed with `ssh -G` via
   `get_effective_ssh_config()` when code needs the resolved per-host options.
   **askpass** = `SSH_ASKPASS`/`SSH_ASKPASS_REQUIRE` + the helper in
-  `askpass_utils.py` (keyring lookup → GTK prompt); **sshpass** feeds the
-  password via a write-once FIFO (`ssh_password_exec.py`) **only when password
-  auth is selected**. Full detail in `AGENTS.md`.
+  `askpass_utils.py` (passphrase **and** login-password lookup; MFA → TTY).
+  Full detail in `AGENTS.md`.
 
 ## Dialogs & Alerts (GTK4/libadwaita — read before adding any dialog)
 

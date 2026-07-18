@@ -54,14 +54,12 @@ except ProtocolError as e:
 ssh_cmd = list(spec.argv)
 env = dict(spec.env)
 use_askpass = bool(spec.extras.get('use_askpass'))
-use_sshpass = bool(spec.extras.get('use_sshpass'))
 password_value = spec.extras.get('password')
-# use_sshpass=True  -> password-method: wrap with sshpass FIFO
-# password only     -> key-based stored password: PTY auto-fill (no sshpass)
+# askpass env (from resolve_native_auth) delivers passphrases AND login passwords;
+# MFA/OTP declined by the helper falls back to the VTE TTY.
 ```
 
-Everything below that point (sshpass FIFO when `use_sshpass`, else PTY
-password auto-fill when `password` is set, askpass env handling,
+Everything below that point (askpass log forwarding, `TERM`/`PATH`,
 `self.backend.spawn_async(argv=ssh_cmd, ...)`) stays owned by `terminal.py`.
 For the SSH backend the resulting argv/env come from
 `build_ssh_connection()` via the protocol seam — a pure indirection.

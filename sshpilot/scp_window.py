@@ -1139,22 +1139,17 @@ class ScpWindowController:
             )
 
             env = os.environ.copy()
-            # Apply the auth env resolved by _build_scp_argv (askpass for a saved
-            # passphrase, or stripped for the sshpass / interactive cases). Key
-            # preload is handled inside _build_scp_argv.
+            # Apply the auth env from resolve_native_auth (askpass for passphrases
+            # and stored login passwords; MFA stays on this VTE via prefer).
             from .scp_utils import _apply_native_auth_env
             _scp_auth = getattr(self, '_scp_auth', None)
             if _scp_auth is not None:
                 _apply_native_auth_env(env, _scp_auth)
                 self._scp_auth = None
                 logger.debug(
-                    "SCP: applied resolved auth env (askpass=%s, sshpass=%s)",
-                    _scp_auth.use_askpass, _scp_auth.use_sshpass,
+                    "SCP: applied resolved auth env (askpass=%s)",
+                    _scp_auth.use_askpass,
                 )
-                # Key-based stored password: type once on this VTE (no sshpass).
-                if (_scp_auth.password and not _scp_auth.use_sshpass
-                        and hasattr(term_widget, 'arm_password_pty_autofill')):
-                    term_widget.arm_password_pty_autofill(_scp_auth.password)
 
             if os.path.exists('/app/bin'):
                 current_path = env.get('PATH', '')
@@ -1364,21 +1359,16 @@ class ScpWindowController:
             except Exception:
                 pass
         # Resolve auth via the single shared resolver (same as terminal + ssh-copy-id):
-        # askpass for a saved passphrase, sshpass for a saved password, or bare TTY
-        # prompts when nothing is saved. Stash it for _show_scp_terminal_window to
-        # apply to the spawn environment.
+        # askpass for passphrases and stored login passwords, or bare TTY when
+        # nothing is saved. Stash it for _show_scp_terminal_window to apply.
         from .ssh_connection_builder import resolve_native_auth
-        from .ssh_password_exec import wrap_argv_with_sshpass
         auth = resolve_native_auth(
             connection,
             getattr(self.window, 'connection_manager', None),
             getattr(self.window, 'config', None),
         )
         self._scp_auth = auth
-        logger.debug(
-            "SCP: auth resolved (askpass=%s, sshpass=%s)",
-            auth.use_askpass, auth.use_sshpass,
-        )
+        logger.debug("SCP: auth resolved (askpass=%s)", auth.use_askpass)
 
         try:
             # Downloads always recurse (`scp -r` is harmless on a regular file)
@@ -1410,11 +1400,6 @@ class ScpWindowController:
         # Legacy SCP/rcp protocol (-O) does not require a remote sftp-server.
         if legacy:
             argv = insert_legacy_scp_flag(argv)
-
-        if auth.use_sshpass and auth.password:
-            argv, _sshpass_cleanup = wrap_argv_with_sshpass(argv, auth.password)
-            import atexit
-            atexit.register(_sshpass_cleanup)
 
         for path in transfer_sources:
             argv.append(path)

@@ -1120,9 +1120,9 @@ class TerminalWidget(Gtk.Box):
             # that Connection.native_connect()/connect() produced, so argv/env
             # are identical to consuming connection.ssh_connection_cmd directly.
             # The terminal handles only the runtime mechanics that cannot live
-            # in a pure command builder: sshpass (password method) or PTY
-            # auto-fill (key-based stored password), askpass log forwarding,
-            # terminal env tweaks, and the PTY/spawn.
+            # in a pure command builder: askpass log forwarding (passphrase +
+            # login password from resolve_native_auth), terminal env tweaks,
+            # and the PTY/spawn.
             # NOTE: self.backend is the *terminal* backend (VTE vs fallback);
             # protocol backends are a different axis.
             proto = getattr(self.connection, 'protocol', 'ssh')
@@ -1189,49 +1189,23 @@ class TerminalWidget(Gtk.Box):
 
             # Remember whether a stored password was supplied this attempt, so an
             # auth failure can say "saved password rejected" rather than a generic
-            # "authentication failed".
+            # "authentication failed". Delivery is via askpass (not sshpass/PTY).
             self._used_stored_password = bool(password_value)
 
             logger.debug(f"SSH command from builder: {' '.join(ssh_cmd)}")
 
-            # Password delivery: password-method auth still uses sshpass (single
-            # password prompt). Key-based stored passwords are typed once on this
-            # terminal's visible PTY — sshpass allocates a hidden PTY and discards
-            # residual keyboard-interactive prompts (2FA/PIN). Same rationale as
-            # MasterSession. OTP and re-prompts stay in the terminal for the user.
-            if password_value and use_sshpass:
-                sshpass_path = get_sshpass_path()
-                if sshpass_path:
-                    from .ssh_password_exec import _mk_priv_dir, _write_once_fifo
-                    import threading
-
-                    tmpdir = _mk_priv_dir()
-                    fifo = os.path.join(tmpdir, "pw.fifo")
-                    os.mkfifo(fifo, 0o600)
-                    t = threading.Thread(
-                        target=_write_once_fifo, args=(fifo, password_value), daemon=True
-                    )
-                    t.start()
-                    ssh_cmd = [sshpass_path, "-f", fifo] + ssh_cmd
-                    env.pop("SSH_ASKPASS", None)
-                    env["SSH_ASKPASS_REQUIRE"] = "never"
-                    self._sshpass_tmpdir = tmpdir
-                    logger.debug("Using sshpass with FIFO for password authentication")
-                else:
-                    env.pop("SSH_ASKPASS", None)
-                    env["SSH_ASKPASS_REQUIRE"] = "never"
-                    logger.warning(
-                        "sshpass not available; falling back to interactive password prompt"
-                    )
-            elif password_value:
-                self.arm_password_pty_autofill(password_value)
-                env.pop("SSH_ASKPASS", None)
-                env["SSH_ASKPASS_REQUIRE"] = "never"
-                logger.debug("Stored password armed as one-shot PTY auto-fill")
+            # Auth secrets (login password + key passphrase) are delivered by
+            # SSH_ASKPASS from resolve_native_auth — REQUIRE=prefer so MFA/OTP
+            # prompts declined by the helper appear on this terminal's TTY.
+            # Do not wrap with sshpass or arm PTY password autofill here.
+            if use_sshpass:
+                logger.debug(
+                    "Ignoring use_sshpass on terminal spawn; askpass owns password delivery"
+                )
 
             # Forward askpass helper log lines into our logger while connecting so
-            # passphrase-prompt activity is visible. Only new lines are forwarded
-            # (the log file persists for the whole session).
+            # passphrase/password-prompt activity is visible. Only new lines are
+            # forwarded (the log file persists for the whole session).
             if use_askpass:
                 self._enable_askpass_log_forwarding(include_existing=False)
 
@@ -1723,7 +1697,7 @@ class TerminalWidget(Gtk.Box):
         ssh-copy-id paths that spawn on a TerminalWidget without going through
         ``_setup_ssh_terminal``.
         """
-        from .ssh_master_session import classify_prompt
+        from .askpass_utils import classify_prompt
 
         fills = getattr(self, '_pty_autofills', None)
         if fills is None:

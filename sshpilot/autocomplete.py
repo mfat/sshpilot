@@ -125,7 +125,6 @@ def fetch_remote_history(connection, connection_manager=None, config=None,
     """
     import subprocess
     from .ssh_connection_builder import ConnectionContext, build_ssh_connection
-    cleanup = None
     try:
         ctx = ConnectionContext(
             connection=connection, connection_manager=connection_manager,
@@ -135,17 +134,11 @@ def fetch_remote_history(connection, connection_manager=None, config=None,
         prepared = build_ssh_connection(ctx)
         argv = list(prepared.command)
         env = {**os.environ, **(prepared.env or {})}
-        if prepared.use_sshpass and prepared.password:
-            from .ssh_password_exec import wrap_argv_with_sshpass
-            argv, cleanup = wrap_argv_with_sshpass(argv, prepared.password, env=env)
         result = subprocess.run(argv, env=env, capture_output=True, text=True,
                                 errors="replace", timeout=timeout, check=False)
         return result.stdout if result.returncode == 0 else None
     except Exception:  # noqa: BLE001 — best-effort background fetch
         return None
-    finally:
-        if cleanup is not None:
-            cleanup()
 
 
 class RemoteHistoryProvider:

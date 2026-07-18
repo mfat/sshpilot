@@ -78,7 +78,8 @@ class SshProtocolBackend(ProtocolBackend):
             argv=list(prepared.command),
             env=dict(prepared.env),
             extras={
-                # Consumed by terminal.py's existing auth runtime for now.
+                # Auth delivery is askpass in prepared.env; these flags are for
+                # terminal messaging / legacy extras only (use_sshpass is always False).
                 "use_sshpass": bool(getattr(prepared, "use_sshpass", False)),
                 "password": getattr(prepared, "password", None),
                 "use_askpass": bool(getattr(prepared, "use_askpass", False)),

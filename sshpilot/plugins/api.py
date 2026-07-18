@@ -778,12 +778,8 @@ class PluginContext:
             prepared = build_ssh_connection(ctx)
             argv = list(prepared.command)
             env = {**os.environ, **(prepared.env or {})}
-            # Password auth: feed via the shared sshpass FIFO (key/askpass auth
-            # is already baked into env by build_ssh_connection).
-            if prepared.use_sshpass and prepared.password:
-                from ..ssh_password_exec import wrap_argv_with_sshpass
-                argv, cleanup = wrap_argv_with_sshpass(
-                    argv, prepared.password, env=env)
+            # Auth (passphrase + login password) is already in prepared.env via
+            # askpass from resolve_native_auth.
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug("run_command(%r) argv: %s", nickname, argv)
             # Capture via temp files — NOT pipes (capture_output=True).
@@ -928,10 +924,6 @@ class PluginContext:
             prepared = build_ssh_connection(ctx)
             argv = list(prepared.command)
             env = {**os.environ, **(prepared.env or {})}
-            if prepared.use_sshpass and prepared.password:
-                from ..ssh_password_exec import wrap_argv_with_sshpass
-                argv, cleanup = wrap_argv_with_sshpass(
-                    argv, prepared.password, env=env)
             self._spawn_stream(
                 handle, argv, env, on_line=on_line, on_done=on_done,
                 input_text=input, cleanup=cleanup)
@@ -1164,10 +1156,6 @@ class PluginContext:
                 ["-N", "-o", "ExitOnForwardFailure=yes", "-L", forward])
             argv = list(prepared.command)
             env = {**os.environ, **(prepared.env or {})}
-            if prepared.use_sshpass and prepared.password:
-                from ..ssh_password_exec import wrap_argv_with_sshpass
-                argv, cleanup = wrap_argv_with_sshpass(
-                    argv, prepared.password, env=env)
             proc = subprocess.Popen(
                 argv, env=env, stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -1220,10 +1208,6 @@ class PluginContext:
             auth = resolve_native_auth(conn, self.connection_manager, self.config)
             argv.extend(auth.extra_opts or [])
             env = {**os.environ, **(auth.env or {})}
-            if auth.use_sshpass and auth.password:
-                from ..ssh_password_exec import wrap_argv_with_sshpass
-                argv, cleanup = wrap_argv_with_sshpass(
-                    argv, auth.password, env=env)
             result = subprocess.run(
                 argv, env=env, capture_output=True, text=True, check=False)
             return result.returncode == 0

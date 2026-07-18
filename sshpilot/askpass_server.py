@@ -172,7 +172,8 @@ class AskpassPromptServer:
             )
             return
 
-        if request.get("type") != "passphrase":
+        req_type = request.get("type")
+        if req_type not in ("passphrase", "challenge"):
             self._write_reply(connection, reply)
             return
 
@@ -185,11 +186,16 @@ class AskpassPromptServer:
 
         self._busy = True
         try:
-            key_path = request.get("key_path") or ""
             prompt = request.get("prompt") or ""
-            value = self._window.prompt_ssh_passphrase(key_path, prompt)
-            if value is not None:
-                reply = {"ok": True, "passphrase": value}
+            if req_type == "challenge":
+                value = self._window.prompt_ssh_challenge(prompt)
+                if value is not None:
+                    reply = {"ok": True, "value": value, "passphrase": value}
+            else:
+                key_path = request.get("key_path") or ""
+                value = self._window.prompt_ssh_passphrase(key_path, prompt)
+                if value is not None:
+                    reply = {"ok": True, "passphrase": value}
         except Exception as exc:
             logger.debug("askpass server: prompt error: %s", exc)
             reply = {"ok": False, "fallback": True}

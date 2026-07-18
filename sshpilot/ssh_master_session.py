@@ -5,10 +5,9 @@ cannot answer interactive prompts (2FA codes, YubiKey PINs, host-key
 confirmations, unstored secrets). This module establishes the connection
 *first*, as an OpenSSH ControlMaster spawned on a PTY the app owns:
 
-* known prompts with stored secrets (password, key passphrase) are answered
-  silently by writing to the PTY — ``resolve_native_auth()`` remains the sole
-  auth *decision* point, only the delivery differs (sshpass cannot back the
-  master: it allocates its own internal PTY, hiding residual prompts);
+* known prompts with stored secrets are answered by askpass (login password
+  and key passphrase) via ``resolve_native_auth()`` env, or by writing to the
+  PTY as a backup when the prompt still appears on the master PTY;
 * anything else (OTP, PIN, touch, yes/no) is surfaced via callback so the UI
   can reveal the PTY in a terminal dialog for the user to answer natively;
 * once ``ssh -O check`` confirms the master socket, the PTY-less SFTP worker
@@ -30,55 +29,27 @@ import threading
 from typing import Callable, Dict, List, Optional
 
 from . import ssh_multiplex
-from .askpass_utils import _extract_key_path, lookup_passphrase
+from .askpass_utils import _extract_key_path, classify_prompt, lookup_passphrase
 from .ssh_connection_builder import (
     ConnectionContext,
     _get_stored_password,
     build_ssh_connection,
 )
 
+# Re-export for callers that historically imported classify_prompt from here.
+__all__ = [
+    'MasterSession',
+    'check_master_alive',
+    'classify_prompt',
+    'ensure_authenticated_master',
+    'invalidate_master',
+]
+
 logger = logging.getLogger(__name__)
 
 _TRANSCRIPT_MAX = 16384
 _CHECK_INTERVAL = 1.0
 _CHECK_TIMEOUT = 10
-
-# Prompt vocabulary mirrors sshcopyid_window.py's detectors (that module pulls
-# in GTK at import time, so the patterns are restated here rather than
-# imported). Only the last non-empty line is matched, so scrollback text such
-# as "Permission denied (publickey,password)." cannot false-positive.
-_INLINE_PROMPT_MARKERS = (
-    '(yes/no',
-    'continue connecting',
-    "please type 'yes'",
-    'confirm user presence',
-    'tap your security key',
-)
-
-
-def classify_prompt(text: str) -> Optional[str]:
-    """Classify the trailing prompt in *text*.
-
-    Returns ``'password'``, ``'passphrase'``, ``'interactive'`` (anything the
-    app cannot answer from stored secrets), or ``None`` when the text does not
-    end in a prompt.
-    """
-    lines = [line.strip() for line in (text or '').splitlines() if line.strip()]
-    if not lines:
-        return None
-    last = lines[-1].lower()
-    if any(marker in last for marker in _INLINE_PROMPT_MARKERS):
-        return 'interactive'
-    if last.endswith(':'):
-        if 'passphrase' in last:
-            return 'passphrase'
-        # "Password:" but also PAM's "Password for user@host:".
-        if 'password' in last and not any(
-                m in last for m in ('pin', 'verification code', 'otp')):
-            return 'password'
-        if any(m in last for m in ('pin', 'verification code', 'otp')):
-            return 'interactive'
-    return None
 
 
 def _build_master_context(connection, connection_manager, config,
