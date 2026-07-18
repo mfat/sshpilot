@@ -111,6 +111,12 @@ class FileManagerWindow(Adw.Window):
         # Progress state
         self._current_future: Optional[Future] = None
 
+        # Auth recovery: stale saved passwords are autofilled once by askpass
+        # (NumberOfPasswordPrompts=1). Offer a retype dialog a few times.
+        self._password_dialog_shown = False
+        self._password_retry_count = 0
+        self._max_password_retries = 3
+
         # Use ToolbarView like other Adw.Window instances
         toolbar_view = Adw.ToolbarView()
         self.set_content(toolbar_view)
@@ -372,6 +378,8 @@ class FileManagerWindow(Adw.Window):
         """Create the SFTP backend for the current host and connect."""
         # A fresh attempt supersedes any load-error state on the remote pane.
         self._right_pane._clear_load_error()
+        self._password_dialog_shown = False
+        self._password_retry_count = 0
         connection = self._connection
         connection_manager = self._connection_manager
         username = self._username
@@ -449,8 +457,10 @@ class FileManagerWindow(Adw.Window):
         try:
             self._manager.connect("connected", self._on_connected)
             self._manager.connect("connection-error", self._on_connection_error)
-            # Auth failures use headless askpass; surface them like any connect error.
-            self._manager.connect("authentication-required", self._on_connection_error)
+            # Stale saved password → askpass autofills once and fails; re-prompt.
+            self._manager.connect(
+                "authentication-required", self._on_authentication_required
+            )
             self._manager.connect("progress", self._on_progress)
             self._manager.connect("operation-error", self._on_operation_error)
             self._manager.connect("directory-loaded", self._on_directory_loaded)
@@ -570,6 +580,138 @@ class FileManagerWindow(Adw.Window):
         self._teardown_backend()
         if self._host:
             self._start_connection()
+
+    def _should_offer_password_retry(self) -> bool:
+        """Whether a password retype dialog can recover from auth failure.
+
+        Covers explicit password auth and combined auth where a saved/session
+        password was (or can be) supplied via askpass.
+        """
+        connection = self._connection
+        if connection is None:
+            return False
+        try:
+            from .sftp_utils import _is_password_auth_enabled
+            if _is_password_auth_enabled(connection):
+                return True
+        except Exception:
+            pass
+        if getattr(self._manager, '_password', None):
+            return True
+        try:
+            if int(getattr(connection, 'auth_method', 0) or 0) == 1:
+                return True
+        except Exception:
+            pass
+        manager = self._connection_manager
+        if manager is None:
+            return False
+        try:
+            if hasattr(manager, 'get_connection_password'):
+                if manager.get_connection_password(connection):
+                    return True
+        except Exception:
+            pass
+        try:
+            host = (
+                getattr(connection, 'hostname', None)
+                or getattr(connection, 'host', None)
+                or self._host
+            )
+            user = getattr(connection, 'username', None) or self._username
+            if host and user and hasattr(manager, 'get_password'):
+                return bool(manager.get_password(host, user))
+        except Exception:
+            pass
+        return False
+
+    def _on_authentication_required(self, _manager, error_message: str) -> None:
+        """Re-prompt for password when askpass's stored/session secret was rejected."""
+        def show_password_dialog():
+            try:
+                self._clear_progress_toast()
+
+                if not self._should_offer_password_retry():
+                    self._on_connection_error(
+                        _manager,
+                        error_message or _('Authentication failed'),
+                    )
+                    return False
+
+                if self._password_dialog_shown:
+                    return False
+
+                if self._password_retry_count >= self._max_password_retries:
+                    self._on_connection_error(
+                        _manager,
+                        _(
+                            'Authentication failed after {n} attempts. '
+                            'Please check your password.'
+                        ).format(n=self._max_password_retries),
+                    )
+                    return False
+
+                self._password_dialog_shown = True
+                self._password_retry_count += 1
+
+                username = getattr(self._manager, '_username', None) or self._username
+                host = getattr(self._manager, '_host', None) or self._host
+                nickname = (
+                    getattr(self._connection, 'nickname', None)
+                    if self._connection
+                    else None
+                )
+                display_name = nickname or f'{username}@{host}'
+                from .window_dialogs import show_ssh_password_dialog
+
+                password = show_ssh_password_dialog(
+                    from_widget=self,
+                    connection=self._connection,
+                    host=host,
+                    username=username,
+                    display_name=display_name,
+                    connection_manager=self._connection_manager,
+                    heading=_('Password Required'),
+                    body=_(
+                        'Authentication failed for {name}.\n\n'
+                        'Enter the correct password to continue:'
+                    ).format(name=display_name),
+                )
+                self._password_dialog_shown = False
+
+                if password:
+                    try:
+                        if self._manager is not None:
+                            self._manager.connect_to_server(password=password)
+                        else:
+                            self._on_connection_error(
+                                None, _('Connection was closed'),
+                            )
+                    except Exception as exc:
+                        logger.error('Error reconnecting after password prompt: %s', exc)
+                        self._on_connection_error(
+                            self._manager, f'Failed to connect: {exc}',
+                        )
+                else:
+                    self._password_retry_count = 0
+                    self._on_connection_error(
+                        self._manager, _('Authentication cancelled'),
+                    )
+                return False
+            except Exception as exc:
+                logger.error(
+                    'File manager password retry dialog failed: %s',
+                    exc,
+                    exc_info=True,
+                )
+                self._password_dialog_shown = False
+                self._on_connection_error(
+                    _manager,
+                    error_message or _('Authentication failed'),
+                )
+                return False
+
+        GLib.idle_add(show_password_dialog)
 
     def _switch_remote_host(self, connection) -> None:
         """Point the remote pane at another host: tear down the current
@@ -758,6 +900,8 @@ class FileManagerWindow(Adw.Window):
 
     def _on_connected(self, *_args) -> None:
         """Handle successful connection and load directories."""
+        self._password_retry_count = 0
+        self._password_dialog_shown = False
         self._show_progress(0.4, "Connected")
         try:
             self._right_pane.set_connecting_status("Connected — loading files…")

@@ -827,6 +827,8 @@ class ScpWindowController:
                 except Exception:
                     pass
 
+            auth_prompt_attempted = {'done': False}
+
             def _load_remote():
                 directory = remote_row.get_text().strip() or '.'
                 status_label.set_text(_('Loading…'))
@@ -835,6 +837,7 @@ class ScpWindowController:
                 download_button.set_sensitive(False)
 
                 def _worker():
+                    nonlocal session_password
                     # Native auth (askpass) via list_remote_files / build_ssh_connection.
                     if session_password:
                         try:
@@ -848,6 +851,52 @@ class ScpWindowController:
                             self.window, 'connection_manager', None
                         ),
                     )
+
+                    from .ssh_utils import is_ssh_auth_failure_text
+                    if (
+                        error_message
+                        and not files
+                        and not auth_prompt_attempted['done']
+                        and is_ssh_auth_failure_text(error_message)
+                        and (profile.prefer_password or profile.saved_password
+                             or session_password)
+                    ):
+                        auth_prompt_attempted['done'] = True
+
+                        def _prompt_and_retry():
+                            nonlocal session_password
+                            password = _show_password_passphrase_dialog(
+                                dialog,
+                                prompt_type='password',
+                                display_name=display_name,
+                                host=host_value,
+                                username=username,
+                                connection_manager=getattr(
+                                    self.window, 'connection_manager', None
+                                ),
+                                heading=_('Password Required'),
+                                body=_(
+                                    'Authentication failed for {name}.\n\n'
+                                    'Enter the correct password to continue:'
+                                ).format(name=display_name),
+                            )
+                            if not password:
+                                status_label.set_text(
+                                    error_message or _('Authentication cancelled')
+                                )
+                                refresh_button.set_sensitive(True)
+                                list_box.set_sensitive(True)
+                                return False
+                            session_password = password
+                            try:
+                                connection.password = password
+                            except Exception:
+                                pass
+                            _load_remote()
+                            return False
+
+                        GLib.idle_add(_prompt_and_retry)
+                        return
 
                     def _update():
                         _populate_list(files, directory, error_message)
@@ -1162,6 +1211,8 @@ class ScpWindowController:
             # Tracks whether we have already retried using the legacy SCP
             # protocol (-O), so the fallback happens at most once.
             scp_legacy_attempted = {'done': False}
+            # One password retype after a stale saved-password askpass autofill.
+            scp_password_retry = {'done': False}
 
             def _present_result_dialog(failure_body=None):
                 try:
@@ -1205,10 +1256,84 @@ class ScpWindowController:
                     GLib.idle_add(_present_result_dialog)
                     return
 
+                scraped = _scrape_terminal_text()
+                from .ssh_utils import is_ssh_auth_failure_text
+                profile = self._build_scp_connection_profile(connection)
+                if (
+                    not scp_password_retry['done']
+                    and is_ssh_auth_failure_text(scraped)
+                    and (profile.prefer_password or profile.saved_password
+                         or getattr(connection, 'password', None))
+                ):
+                    scp_password_retry['done'] = True
+
+                    def _prompt_password_and_respawn():
+                        from .window_dialogs import show_ssh_password_dialog
+                        display = (
+                            profile.alias
+                            or f"{profile.username}@{profile.host}"
+                        )
+                        password = show_ssh_password_dialog(
+                            from_widget=dlg,
+                            connection=connection,
+                            host=profile.host,
+                            username=profile.username,
+                            display_name=display,
+                            connection_manager=getattr(
+                                self.window, 'connection_manager', None
+                            ),
+                            heading=_('Password Required'),
+                            body=_(
+                                'Authentication failed for {name}.\n\n'
+                                'Enter the correct password to continue:'
+                            ).format(name=display),
+                        )
+                        if not password:
+                            _feed_colored_line(failure_message, 'red')
+                            return _present_result_dialog(
+                                _('Authentication cancelled')
+                            )
+                        try:
+                            connection.password = password
+                        except Exception:
+                            pass
+                        try:
+                            retry_argv = self._build_scp_argv(
+                                connection,
+                                sources,
+                                destination,
+                                direction=direction,
+                                known_hosts_path=(
+                                    self.window.connection_manager.known_hosts_path
+                                ),
+                            )
+                            env_retry = os.environ.copy()
+                            from .scp_utils import _apply_native_auth_env
+                            auth_retry = getattr(self, '_scp_auth', None)
+                            if auth_retry is not None:
+                                _apply_native_auth_env(env_retry, auth_retry)
+                                self._scp_auth = None
+                            env_dict.clear()
+                            env_dict.update(env_retry)
+                            _feed_colored_line(
+                                _('Retrying with updated password…'), 'yellow'
+                            )
+                            _spawn_scp(retry_argv)
+                        except Exception as exc:
+                            logger.error(
+                                'SCP: password-retry respawn failed: %s', exc
+                            )
+                            _feed_colored_line(failure_message, 'red')
+                            return _present_result_dialog(str(exc))
+                        return False
+
+                    GLib.idle_add(_prompt_password_and_respawn)
+                    return
+
                 # Failure: detect a missing/unavailable remote SFTP server.
                 # OpenSSH 9+ scp uses the SFTP protocol by default, so retry
                 # once with the legacy protocol (-O), which does not need it.
-                friendly = classify_sftp_error(_scrape_terminal_text())
+                friendly = classify_sftp_error(scraped)
                 if friendly and not scp_legacy_attempted['done']:
                     scp_legacy_attempted['done'] = True
                     _feed_colored_line(_('Retrying with legacy SCP protocol (-O)…'), 'yellow')

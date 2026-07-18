@@ -10,6 +10,19 @@ from .platform_utils import is_flatpak
 
 logger = logging.getLogger(__name__)
 
+# Markers shared by FM / SCP when classifying a failed ssh/scp run as auth.
+_SSH_AUTH_FAILURE_MARKERS = (
+    'permission denied',
+    'authentication failed',
+    'too many authentication failures',
+)
+
+
+def is_ssh_auth_failure_text(text: str) -> bool:
+    """True when *text* looks like an SSH authentication failure."""
+    lowered = (text or '').lower()
+    return any(marker in lowered for marker in _SSH_AUTH_FAILURE_MARKERS)
+
 
 def ensure_writable_ssh_home(env: Dict[str, str]) -> None:
     """Ensure ssh-copy-id has a writable HOME when running in Flatpak."""
