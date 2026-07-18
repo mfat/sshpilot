@@ -3629,6 +3629,23 @@ class PreferencesWindow(Adw.Window):
         dlg.add_response('ok', _("OK"))
         dlg.present(self)
 
+    def _prompt_restart_required(self, body):
+        """Alert that a change needs a restart, with Later / Restart Now."""
+        dlg = Adw.AlertDialog(heading=_("Restart Required"), body=body)
+        dlg.add_response('later', _("Later"))
+        dlg.add_response('restart', _("Restart Now"))
+        dlg.set_default_response('restart')
+        dlg.set_close_response('later')
+        dlg.set_response_appearance('restart', Adw.ResponseAppearance.SUGGESTED)
+
+        def _on_response(_d, response):
+            if response == 'restart':
+                from .platform_utils import restart_app
+                restart_app()
+
+        dlg.connect('response', _on_response)
+        dlg.present(self)
+
     def _add_permissions_info(self, row, permissions):
         """Add an info button to a plugin row listing its declared permissions."""
         if not permissions:
@@ -4025,6 +4042,13 @@ class PreferencesWindow(Adw.Window):
             ui.open_page(full_id)
         self.close()
 
+    def _mark_plugin_restart_needed(self, row=None):
+        """Subtitle + dialog: plugins load/unload only on the next launch."""
+        if row is not None:
+            row.set_subtitle(_("Restart SSH Pilot to apply"))
+        self._prompt_restart_required(
+            _("Plugins load and unload only after restarting SSH Pilot."))
+
     def _on_builtin_plugin_toggled(self, plugin_id, active, row=None):
         disabled = set(self.config.get_setting('plugins.disabled', []) or [])
         if active:
@@ -4032,8 +4056,7 @@ class PreferencesWindow(Adw.Window):
         else:
             disabled.add(plugin_id)
         self.config.set_setting('plugins.disabled', sorted(disabled))
-        if row is not None:
-            row.set_subtitle(_("Restart SSH Pilot to apply"))
+        self._mark_plugin_restart_needed(row)
 
     def _set_user_plugin_enabled(self, plugin_id, on):
         enabled = set(self.config.get_setting('plugins.enabled', []) or [])
@@ -4049,15 +4072,13 @@ class PreferencesWindow(Adw.Window):
             return
         if not active:
             self._set_user_plugin_enabled(plugin_id, False)
-            if row is not None:
-                row.set_subtitle(_("Restart SSH Pilot to apply"))
+            self._mark_plugin_restart_needed(row)
             return
 
         # Enabling runs third-party code with full privileges — get consent first.
         def _accept():
             self._set_user_plugin_enabled(plugin_id, True)
-            if row is not None:
-                row.set_subtitle(_("Restart SSH Pilot to apply"))
+            self._mark_plugin_restart_needed(row)
 
         def _decline():
             # Revert the toggle (the manual switch; ActionRow has no set_active).
@@ -4714,45 +4735,8 @@ class PreferencesWindow(Adw.Window):
                 parent_window.connection_manager.set_isolated_mode(bool(use_isolated))
 
             # Offer an immediate restart to apply the mode change
-            if parent_window:
-                use_alert = hasattr(Adw, 'AlertDialog')
-                if use_alert:
-                    rdialog = Adw.AlertDialog(
-                        heading=_("Restart Required"),
-                        body=_(
-                            "Restart SSH Pilot to fully apply the new operation mode."
-                        ),
-                    )
-                else:
-                    rdialog = Adw.MessageDialog(
-                        transient_for=parent_window,
-                        modal=True,
-                        heading=_("Restart Required"),
-                        body=_(
-                            "Restart SSH Pilot to fully apply the new operation mode."
-                        ),
-                    )
-                rdialog.add_response('later', _("Later"))
-                rdialog.add_response('restart', _("Restart Now"))
-                rdialog.set_default_response('restart')
-                rdialog.set_close_response('later')
-                try:
-                    rdialog.set_response_appearance(
-                        'restart', Adw.ResponseAppearance.SUGGESTED
-                    )
-                except Exception:
-                    pass
-
-                def _on_restart_response(_d, response):
-                    if response == 'restart':
-                        from .platform_utils import restart_app
-                        restart_app()
-
-                rdialog.connect('response', _on_restart_response)
-                if use_alert:
-                    rdialog.present(self)
-                else:
-                    rdialog.present()
+            self._prompt_restart_required(
+                _("Restart SSH Pilot to fully apply the new operation mode."))
 
         except Exception as e:
             logger.error(f"Failed to toggle isolated SSH mode: {e}")
