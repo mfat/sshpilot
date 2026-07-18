@@ -808,9 +808,9 @@ class PluginContext:
                     else:
                         run_kwargs["stdin"] = subprocess.DEVNULL
                     completed = subprocess.run(argv, **run_kwargs)
-                with open(out_path, "r", encoding="utf-8", errors="replace") as out_f:
+                with open(out_path, encoding="utf-8", errors="replace") as out_f:
                     stdout = out_f.read()
-                with open(err_path, "r", encoding="utf-8", errors="replace") as err_f:
+                with open(err_path, encoding="utf-8", errors="replace") as err_f:
                     stderr = err_f.read()
             logger.debug(
                 "run_command(%r) exit=%s stdout=%dB stderr=%dB",
@@ -905,7 +905,6 @@ class PluginContext:
         """
         handle = StreamHandle()
         import os
-        import subprocess
         from ..ssh_connection_builder import (
             ConnectionContext, build_ssh_connection)
         from .. import ssh_multiplex
