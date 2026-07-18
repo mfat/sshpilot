@@ -3297,7 +3297,9 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
 
         # Detect if password text was changed by user during this edit session
         try:
-            password_changed = (self.password_row.get_text() != getattr(self, '_orig_password', None))
+            # _orig_password is unset for new connections — treat it as empty so an
+            # untouched empty field doesn't count as a change.
+            password_changed = (self.password_row.get_text() != (getattr(self, '_orig_password', None) or ''))
         except Exception:
             password_changed = False
 
@@ -3473,18 +3475,21 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                                 connection_data, value, username=username,
                                 previous_connection=previous_identity))
                         else:
-                            removed = bool(manager.delete_connection_passwords(
-                                connection_data, username=username))
+                            # Delete is idempotent: "nothing was stored" already is the
+                            # desired end state, not a storage failure. Real backend
+                            # errors raise and are caught below.
+                            manager.delete_connection_passwords(
+                                connection_data, username=username)
                             if previous_identity:
                                 previous_user = previous_identity.get('username') or username
-                                removed = bool(manager.delete_connection_passwords(
-                                    previous_identity,
-                                    username=previous_user)) or removed
-                            ok = removed
+                                manager.delete_connection_passwords(
+                                    previous_identity, username=previous_user)
+                            ok = True
                     elif action == 'store':
                         ok = bool(manager.store_key_passphrase(key, value))
                     else:
-                        ok = bool(manager.delete_key_passphrase(key))
+                        manager.delete_key_passphrase(key)
+                        ok = True
                     if not ok:
                         break
             except Exception:
