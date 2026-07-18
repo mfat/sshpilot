@@ -56,6 +56,56 @@ def test_askpass_answers_password_from_session_file(monkeypatch, tmp_path):
     assert not os.path.exists(path)  # one-shot
 
 
+def test_stage_session_password_prefers_runtime_dir(monkeypatch, tmp_path):
+    # XDG_RUNTIME_DIR is tmpfs — the secret never rests on real disk.
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    path = stage_session_password("s3cret")
+    try:
+        assert os.path.dirname(path) == str(tmp_path)
+        assert oct(os.stat(path).st_mode & 0o777) == oct(0o600)
+    finally:
+        os.unlink(path)
+
+
+def test_stage_session_password_sweeps_stale_files(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    stale = tmp_path / "sshpilot-pw-stale"
+    stale.write_text("old-secret")
+    os.utime(stale, (0, 0))  # ancient mtime
+    fresh = tmp_path / "sshpilot-pw-fresh"
+    fresh.write_text("fresh-secret")
+
+    path = stage_session_password("s3cret")
+    try:
+        assert not stale.exists()   # unconsumed leftover removed
+        assert fresh.exists()       # concurrent fresh file untouched
+    finally:
+        os.unlink(path)
+        os.unlink(fresh)
+
+
+def test_no_staging_when_backend_serves_password(monkeypatch):
+    # Keyring-backed password: helper looks it up by host/user, no temp file.
+    from sshpilot.ssh_connection_builder import _askpass_env_for_connection
+    import types
+
+    monkeypatch.setattr(
+        "sshpilot.askpass_utils.lookup_ssh_password",
+        lambda host, user: "vaulted" if user == "alice" else "",
+    )
+    connection = types.SimpleNamespace(
+        username="alice", hostname="example.com", host="", nickname="ex"
+    )
+    env = _askpass_env_for_connection(connection, session_password="vaulted")
+    assert "SSHPILOT_SESSION_PASSWORD_FILE" not in env
+
+    # In-memory password the backend does NOT have → staged.
+    env = _askpass_env_for_connection(connection, session_password="typed-now")
+    staged = env.get("SSHPILOT_SESSION_PASSWORD_FILE")
+    assert staged and os.path.isfile(staged)
+    os.unlink(staged)
+
+
 def test_askpass_prompts_user_for_otp(monkeypatch):
     # OpenSSH prefer does not fall back to TTY — interactive prompts must ask
     # the user (never autofill MFA from the vault).

@@ -8,6 +8,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 import threading
 from typing import List
 
@@ -156,6 +157,34 @@ def classify_prompt(text: str) -> "str | None":
     return None
 
 
+def _session_password_dir() -> "str | None":
+    """Prefer XDG_RUNTIME_DIR (tmpfs, 0700, wiped at logout) over /tmp so a
+    staged password never rests on real disk and can't outlive the session."""
+    runtime_dir = os.environ.get('XDG_RUNTIME_DIR')
+    if runtime_dir and os.path.isdir(runtime_dir):
+        return runtime_dir
+    return None
+
+
+def _sweep_stale_session_files(directory: "str | None") -> None:
+    """Best-effort removal of staged password files nobody consumed (key auth
+    succeeded, app crashed before atexit, …). Age-gated so concurrent connects
+    can't delete each other's fresh files."""
+    try:
+        now = time.time()
+        for name in os.listdir(directory or tempfile.gettempdir()):
+            if not name.startswith('sshpilot-pw-'):
+                continue
+            path = os.path.join(directory or tempfile.gettempdir(), name)
+            try:
+                if now - os.path.getmtime(path) > 600:
+                    os.unlink(path)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
 def stage_session_password(password: str) -> str:
     """Write *password* to a 0600 temp file for one askpass consumption.
 
@@ -166,7 +195,10 @@ def stage_session_password(password: str) -> str:
     if not password:
         return ''
     try:
-        fd, path = tempfile.mkstemp(prefix='sshpilot-pw-', text=True)
+        directory = _session_password_dir()
+        _sweep_stale_session_files(directory)
+        fd, path = tempfile.mkstemp(
+            prefix='sshpilot-pw-', dir=directory, text=True)
         try:
             os.write(fd, password.encode('utf-8'))
         finally:

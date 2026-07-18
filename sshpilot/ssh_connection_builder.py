@@ -40,6 +40,17 @@ def _askpass_env_for_connection(
                 getattr(connection, 'nickname', None),
             ) if h
         ]
+    # The helper looks passwords up in the secret backend by host/user; only
+    # stage a temp file when that lookup can't serve this exact password
+    # (i.e. it's truly in-memory). Keyring-backed connects never touch disk.
+    if session_password and user:
+        try:
+            from .askpass_utils import lookup_ssh_password
+            if any(lookup_ssh_password(h, user) == session_password
+                   for h in hosts):
+                session_password = None
+        except Exception:
+            pass
     return get_ssh_env_with_askpass(
         require,
         password_user=user or None,
