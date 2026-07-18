@@ -2,7 +2,7 @@
 
 import types
 
-import sshpilot.window as window_mod
+import sshpilot.scp_utils as scp_mod
 
 
 def test_list_remote_files_uses_native_builder(monkeypatch):
@@ -40,12 +40,12 @@ def test_list_remote_files_uses_native_builder(monkeypatch):
         )
         return types.SimpleNamespace(returncode=0, stdout=stdout, stderr="")
 
-    monkeypatch.setattr(window_mod.subprocess, "run", _run)
+    monkeypatch.setattr(scp_mod.subprocess, "run", _run)
 
     connection = types.SimpleNamespace(
         nickname="host", password="sekret", username="alice"
     )
-    entries, err = window_mod.list_remote_files(connection, "/tmp")
+    entries, err = scp_mod.list_remote_files(connection, "/tmp")
     assert err is None
     assert entries == [("file.txt", False), ("dir", True)]
     assert captured["native"] is True
@@ -80,9 +80,9 @@ def test_list_remote_files_extends_timeout_for_interactive_auth(monkeypatch):
         )
         return types.SimpleNamespace(returncode=0, stdout=stdout, stderr="")
 
-    monkeypatch.setattr(window_mod.subprocess, "run", _run)
+    monkeypatch.setattr(scp_mod.subprocess, "run", _run)
 
-    entries, err = window_mod.list_remote_files(
+    entries, err = scp_mod.list_remote_files(
         types.SimpleNamespace(nickname="h"), "."
     )
     assert err is None
@@ -90,7 +90,7 @@ def test_list_remote_files_extends_timeout_for_interactive_auth(monkeypatch):
 
 
 def test_summarize_listing_error_strips_log_and_friendlies_auth():
-    summ = window_mod._summarize_listing_error
+    summ = scp_mod._summarize_listing_error
     # Cancelled prompt: verbose log + auth failure → clean friendly line.
     raw = (
         "debug1: Authenticating to host\n"
@@ -139,9 +139,9 @@ def test_list_remote_files_forces_askpass_when_resolver_omits_it(monkeypatch):
         )
         return types.SimpleNamespace(returncode=0, stdout=stdout, stderr="")
 
-    monkeypatch.setattr(window_mod.subprocess, "run", _run)
+    monkeypatch.setattr(scp_mod.subprocess, "run", _run)
 
-    entries, err = window_mod.list_remote_files(
+    entries, err = scp_mod.list_remote_files(
         types.SimpleNamespace(nickname="h"), "."
     )
     assert err is None

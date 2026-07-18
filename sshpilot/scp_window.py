@@ -310,7 +310,8 @@ class ScpWindowController:
 
     def _prompt_scp_download(self, connection):
         """Show a simple file picker that downloads selected remote files via scp."""
-        from .window import list_remote_files, _show_password_passphrase_dialog
+        from .window import _show_password_passphrase_dialog
+        from .scp_utils import list_remote_files
         from .remote_path_utils import (
             _normalize_remote_path, _remote_parent, _remote_join,
         )
