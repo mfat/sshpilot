@@ -513,12 +513,11 @@ class TestResolverDecision:
         assert auth.password == PASSWORD
         assert auth.env.get('SSH_ASKPASS_REQUIRE') == 'prefer'
 
-    def test_neither_stored_still_askpass(self, monkeypatch):
+    def test_neither_stored_no_helpers(self, monkeypatch):
         auth = _resolve(monkeypatch, passphrase_stored=False, password_stored=False,
                         identity_file=self.KEY)
-        assert auth.use_askpass is True
+        assert auth.use_askpass is False
         assert auth.use_sshpass is False
-        assert auth.env.get('SSH_ASKPASS')
 
 
 class TestCombinedAuthPreloadHandoff:

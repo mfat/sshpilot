@@ -173,9 +173,7 @@ def resolve_native_auth(
       carries password context (combined auth).
     * Key-based + saved password only → askpass password context (key tried
       first by ssh, then password prompt autofilled).
-    * Key-based + nothing saved → askpass still on so an unstored key
-      passphrase (or MFA) can use the graphical dialogs.
-    * Askpass disabled → no askpass; SSH prompts on the TTY.
+    * Askpass disabled / nothing saved → no askpass; SSH prompts on the TTY.
     * ``use_sshpass`` is never set (sshpass removed from the native path).
     """
     auth_method = int(getattr(connection, 'auth_method', 0) or 0)
@@ -282,17 +280,9 @@ def resolve_native_auth(
             password=stored_password, use_askpass=True, password_mode=False,
         )
 
-    # Nothing saved — still wire askpass so an unstored key passphrase uses
-    # the in-app graphical dialog (same helper path as password/MFA).
-    # Agent unlock for locked gcr keys happens on the terminal worker thread
-    # via Connection._preload_keys_into_agent (not here — native_connect runs
-    # on the main loop and would block our askpass dialog).
-    env = get_ssh_env_with_askpass(require="prefer")
-    logger.debug("resolve_native_auth: key auth, nothing saved -> askpass")
-    return NativeAuth(
-        env=env, extra_opts=[], use_sshpass=False,
-        password=None, use_askpass=True, password_mode=False,
-    )
+    # Nothing saved -> let SSH prompt naturally on the TTY.
+    logger.debug("resolve_native_auth: key auth, nothing saved -> native TTY prompts")
+    return _tty_only()
 
 
 def build_native_command(

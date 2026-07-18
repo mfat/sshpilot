@@ -1,4 +1,4 @@
-"""Tests for ssh-agent preloading / gcr locked-key unlock (agent never disabled)."""
+"""Tests for keyring-gated ssh-agent preloading (stop disabling the agent)."""
 
 import subprocess
 
@@ -92,14 +92,13 @@ def test_prepare_key_for_connection_forces_by_default(monkeypatch):
     assert seen == {'path': '/home/u/.ssh/k', 'force': True}
 
 
-# --- Connection._preload_keys_into_agent: unlock locked gcr keys ------------
+# --- Connection._preload_keys_into_agent: keyring-gated, guarded ------------
 
 class _Cfg:
-    def __init__(self, preload=True, lifetime=0, askpass=True):
+    def __init__(self, preload=True, lifetime=0):
         self._vals = {
             'ssh.agent_preload_keys': preload,
             'ssh.agent_preload_lifetime': lifetime,
-            'use-askpass': askpass,
         }
 
     def get_setting(self, key, default=None):
@@ -134,42 +133,25 @@ def _patch_preload(monkeypatch, stored_paths):
     return added
 
 
-def test_preload_unlocks_stored_and_unstored_when_askpass_on(monkeypatch):
-    # With askpass on, every configured identity is force-unlocked so a
-    # gcr-listed-but-locked key cannot steal the prompt (OS ksshaskpass).
+def test_preload_only_adds_stored_keys(monkeypatch):
     conn = _make_connection(resolved_identity_files=['/k/stored', '/k/unstored'])
     added = _patch_preload(monkeypatch, stored_paths={'/k/stored'})
 
     conn._preload_keys_into_agent(_Cfg(lifetime=600))
 
-    assert added == [
-        ('/k/stored', True, 600),
-        ('/k/unstored', True, 600),
-    ]
+    # Keyring-only: the stored key loads (force-unlock); the unstored key is
+    # never ssh-added — the user gets the natural OS/agent prompt for it.
+    assert added == [('/k/stored', True, 600)]
 
 
-def test_preload_unlocks_all_unstored_keys_when_askpass_on(monkeypatch):
+def test_preload_skips_all_unstored_keys(monkeypatch):
     conn = _make_connection(resolved_identity_files=['/k/a', '/k/b', '/k/c'])
     added = _patch_preload(monkeypatch, stored_paths=set())  # none stored
 
     conn._preload_keys_into_agent(_Cfg())
 
-    assert added == [
-        ('/k/a', True, 0),
-        ('/k/b', True, 0),
-        ('/k/c', True, 0),
-    ]
-
-
-def test_preload_skips_unstored_when_askpass_off(monkeypatch):
-    # Without askpass, only silently unlock keys with a stored passphrase —
-    # otherwise leave prompting to the TTY / OS.
-    conn = _make_connection(resolved_identity_files=['/k/stored', '/k/unstored'])
-    added = _patch_preload(monkeypatch, stored_paths={'/k/stored'})
-
-    conn._preload_keys_into_agent(_Cfg(askpass=False))
-
-    assert added == [('/k/stored', True, 0)]
+    # No stored passphrases → nothing is added to the agent.
+    assert added == []
 
 
 def test_preload_skipped_for_password_auth(monkeypatch):

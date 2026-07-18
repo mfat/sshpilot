@@ -1,14 +1,14 @@
 """In-process askpass IPC server (graphical prompts + warm vault lookup).
 
 The askpass helper ssh spawns via ``SSH_ASKPASS`` routes interactive prompts
-(login password, unstored key passphrase, MFA/OTP, FIDO presence, confirm)
-back to the running main process over a private Unix socket so they appear as
-modal children of the main window (Wayland-safe). Vault autofill is tried in
-the helper first; a miss prompts here (with optional Store for passphrases).
+(login password, MFA/OTP, FIDO presence, confirm) back to the running main
+process over a private Unix socket so they appear as modal children of the
+main window (Wayland-safe). Unstored key passphrases are not prompted here —
+askpass defers those to SSH / the OS / ssh-agent after vault autofill misses.
 
 Protocol (newline-delimited JSON over ``AF_UNIX``):
   prompt request (helper -> app):
-    {"token", "type": "password"|"passphrase"|"challenge"|"presence"|"confirm", ...}
+    {"token", "type": "password"|"challenge"|"presence"|"confirm"|"passphrase", ...}
   prompt reply   (app -> helper):
     {"ok": true,  "passphrase"|"value": "..."}   user entered a secret
     {"ok": false}                                 user cancelled (no fallback)
