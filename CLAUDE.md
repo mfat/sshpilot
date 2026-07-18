@@ -42,7 +42,8 @@ Architecture**. The essentials:
   reintroduce sshpass or PTY login password autofill on the native path.
   Keyring autofill + the askpass prompt are advertised features — keep them.
 - **Callers:** the terminal consumes the prepared command (it does not build
-  commands); SCP UI / ssh-copy-id use VTE + `resolve_native_auth`; the
+  commands); SCP UI uses VTE + `resolve_native_auth`; ssh-copy-id uses VTE +
+  `apply_forced_askpass_env` (`REQUIRE=force` for graphical prompts); the
   system/external terminal uses `build_native_command()` (plain, no in-app
   auth); the SFTP file manager uses headless askpass
   (`apply_headless_askpass_env` + `ssh -s sftp`), riding a live mux when one

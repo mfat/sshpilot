@@ -1208,12 +1208,14 @@ class PluginContext:
         import os
         import subprocess
         from ..ssh_connection_builder import (
-            _build_base_ssh_command, resolve_native_auth)
+            _build_base_ssh_command,
+            apply_forced_askpass_env,
+            resolve_native_auth,
+        )
         from ..ssh_config_utils import get_effective_ssh_config
         conn = self.connection_manager.find_connection_by_nickname(nickname)
         if conn is None or not public_key_path:
             return False
-        cleanup = None
         try:
             host = getattr(conn, "nickname", None) or getattr(conn, "host", None) or nickname
             effective = get_effective_ssh_config(host) or {}
@@ -1222,15 +1224,16 @@ class PluginContext:
             argv.extend(['-i', public_key_path])
             auth = resolve_native_auth(conn, self.connection_manager, self.config)
             argv.extend(auth.extra_opts or [])
-            env = {**os.environ, **(auth.env or {})}
+            # Same as the ssh-copy-id UI: REQUIRE=force → graphical askpass.
+            env = apply_forced_askpass_env(
+                auth.env, conn,
+                session_password=getattr(auth, "password", None),
+            )
             result = subprocess.run(
                 argv, env=env, capture_output=True, text=True, check=False)
             return result.returncode == 0
         except Exception:  # noqa: BLE001
             return False
-        finally:
-            if cleanup is not None:
-                cleanup()
 
     # --- terminals / sessions -----------------------------------------
     def list_sessions(self) -> List["SessionInfo"]:

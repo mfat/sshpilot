@@ -1126,11 +1126,11 @@ class SshCopyIdRunner:
             username = getattr(connection, 'username', '')
             manager = getattr(self.window, 'connection_manager', None)
             has_saved_password = bool(manager.get_password(host_value, username)) if manager else False
-            # Password delivery is via askpass (REQUIRE=prefer); no sshpass check.
+            # Password delivery is via askpass (REQUIRE=force); graphical prompts.
             if auth_method == 1 and has_saved_password:
                 logger.debug(
                     'ssh-copy-id preflight: password-method with saved password '
-                    '(askpass will autofill; MFA on TTY)',
+                    '(askpass will autofill; MFA via askpass)',
                 )
         except Exception as exc:
             logger.debug('ssh-copy-id preflight skipped optional auth-helper check: %s', exc)
@@ -1289,8 +1289,10 @@ class SshCopyIdRunner:
 
             toolbar.set_content(content_box)
 
-            from .scp_utils import _apply_native_auth_env
-            from .ssh_connection_builder import resolve_native_auth
+            from .ssh_connection_builder import (
+                apply_forced_askpass_env,
+                resolve_native_auth,
+            )
 
             auth = resolve_native_auth(
                 connection,
@@ -1336,12 +1338,17 @@ class SshCopyIdRunner:
 
             _feed_colored_line(_('Running ssh-copy-id…'), 'yellow')
 
-            env = os.environ.copy()
-            _apply_native_auth_env(env, auth)
+            # REQUIRE=force: graphical askpass for passphrase/password/MFA even
+            # though ssh-copy-id runs inside a VTE (which has a real TTY).
+            env = apply_forced_askpass_env(
+                auth.env,
+                connection,
+                session_password=getattr(auth, 'password', None),
+            )
             if auth.extra_opts:
                 argv[-1:-1] = auth.extra_opts
             logger.debug(
-                "Main window: ssh-copy-id auth (askpass=%s)",
+                "Main window: ssh-copy-id auth (askpass force, resolver_askpass=%s)",
                 auth.use_askpass,
             )
 
@@ -1624,7 +1631,7 @@ class SshCopyIdRunner:
 
         if auth is not None:
             prefer_password = bool(getattr(auth, 'password_mode', False))
-            # Key-based + stored password (askpass delivers both; MFA on TTY).
+            # Key-based + stored password (askpass delivers both; MFA via force).
             combined_auth = bool(getattr(auth, 'password', None)) and not prefer_password
         else:
             try:

@@ -304,8 +304,11 @@ as remote sudo prompts.)
   Download browse listing uses `list_remote_files` (`window.py`) →
   `build_ssh_connection` + askpass (headless; MFA via askpass dialogs).
   Shared argv helpers live in `scp_utils.py` (no headless transfer API).
-- **ssh-copy-id** (`sshcopyid_window.py`): builds its own `ssh-copy-id` argv and
-  applies `resolve_native_auth` (its `-o` options must precede the target).
+- **ssh-copy-id** (`sshcopyid_window.py`): builds its own `ssh-copy-id` argv,
+  applies `resolve_native_auth`, then `apply_forced_askpass_env`
+  (`SSH_ASKPASS_REQUIRE=force`) so passphrase/password/MFA use the graphical
+  askpass dialog even though the command runs in a VTE. Plugin
+  `copy_key_to_host` uses the same forced-askpass env.
 - **System / external terminal**: uses `build_native_command()` — a *plain*
   `ssh -F <config> <host>` with **no** in-app auth (`IdentityAgent`/askpass),
   because the external terminal supplies its own TTY and agent.
@@ -318,7 +321,8 @@ as remote sudo prompts.)
 ### Key functions/files
 - `ssh_connection_builder.py`: `build_ssh_connection` (native-only),
   `resolve_native_auth` (the auth chokepoint), `apply_headless_askpass_env`
-  (force askpass for no-TTY spawns), `build_native_command` (plain command
+  (`REQUIRE=prefer` for no-TTY spawns), `apply_forced_askpass_env`
+  (`REQUIRE=force` for ssh-copy-id), `build_native_command` (plain command
   for external processes), `_build_base_ssh_command` (shared option builder
   used by explicit-command callers like SCP).
 - `ssh_multiplex.py`: ControlMaster socket policy + `invalidate_master`.

@@ -48,6 +48,34 @@ def _askpass_env_for_connection(
     )
 
 
+def _apply_askpass_env(
+    prepared_env: Optional[Dict[str, str]],
+    connection,
+    *,
+    require: str,
+    session_password: Optional[str] = None,
+    base_env: Optional[Dict[str, str]] = None,
+) -> Dict[str, str]:
+    """Merge *prepared_env* and ensure ``SSH_ASKPASS`` with the given *require*."""
+    prepared = dict(prepared_env or {})
+    env = {**(base_env if base_env is not None else os.environ), **prepared}
+    for key in ('SSH_ASKPASS', 'SSH_ASKPASS_REQUIRE', 'SSH_AUTH_SOCK'):
+        if key not in prepared:
+            env.pop(key, None)
+    password = session_password
+    if password is None and connection is not None:
+        password = getattr(connection, 'password', None) or None
+    if not env.get('SSH_ASKPASS'):
+        env.update(
+            _askpass_env_for_connection(
+                connection, require=require, session_password=password,
+            )
+        )
+    elif env.get('SSH_ASKPASS_REQUIRE') != require:
+        env['SSH_ASKPASS_REQUIRE'] = require
+    return env
+
+
 def apply_headless_askpass_env(
     prepared_env: Optional[Dict[str, str]],
     connection,
@@ -64,25 +92,32 @@ def apply_headless_askpass_env(
     instead of hanging on a missing TTY.
 
     Use for every pipe/capture/``stdin=DEVNULL`` SSH spawn. Do **not** use for
-    VTE/system-terminal spawns (those have a real TTY).
+    VTE/system-terminal spawns (those have a real TTY) — except ssh-copy-id,
+    which uses :func:`apply_forced_askpass_env`.
     """
-    prepared = dict(prepared_env or {})
-    env = {**(base_env if base_env is not None else os.environ), **prepared}
-    for key in ('SSH_ASKPASS', 'SSH_ASKPASS_REQUIRE', 'SSH_AUTH_SOCK'):
-        if key not in prepared:
-            env.pop(key, None)
-    password = session_password
-    if password is None and connection is not None:
-        password = getattr(connection, 'password', None) or None
-    if not env.get('SSH_ASKPASS'):
-        env.update(
-            _askpass_env_for_connection(
-                connection, session_password=password,
-            )
-        )
-    elif env.get('SSH_ASKPASS_REQUIRE') != 'prefer':
-        env['SSH_ASKPASS_REQUIRE'] = 'prefer'
-    return env
+    return _apply_askpass_env(
+        prepared_env, connection, require='prefer',
+        session_password=session_password, base_env=base_env,
+    )
+
+
+def apply_forced_askpass_env(
+    prepared_env: Optional[Dict[str, str]],
+    connection,
+    *,
+    session_password: Optional[str] = None,
+    base_env: Optional[Dict[str, str]] = None,
+) -> Dict[str, str]:
+    """Like :func:`apply_headless_askpass_env` but ``SSH_ASKPASS_REQUIRE=force``.
+
+    OpenSSH will not fall back to the TTY when askpass declines — use for
+    ssh-copy-id so passphrase/password/MFA prompts stay on the graphical
+    askpass dialog even though the command runs inside a VTE.
+    """
+    return _apply_askpass_env(
+        prepared_env, connection, require='force',
+        session_password=session_password, base_env=base_env,
+    )
 
 
 logger = logging.getLogger(__name__)
