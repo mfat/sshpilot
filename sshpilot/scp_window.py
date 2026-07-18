@@ -333,16 +333,12 @@ class ScpWindowController:
 
             host_value = profile.host
             username = profile.username
-            port = profile.port
 
-            known_hosts_path = None
             saved_password = profile.saved_password
             # Session-level password that can be updated via prompts
             session_password = saved_password
-            # Passphrase will be handled by SSH_ASKPASS (either from storage or GUI prompt)
-            
+
             if hasattr(self.window, 'connection_manager') and self.window.connection_manager:
-                known_hosts_path = getattr(self.window.connection_manager, 'known_hosts_path', None)
                 try:
                     if (
                         profile.key_mode in (1, 2)
@@ -359,7 +355,7 @@ class ScpWindowController:
                             )
                 except Exception:
                     pass
-            
+
             # Get display name for password prompts
             display_name = profile.alias or f"{username}@{host_value}"
 
@@ -372,56 +368,6 @@ class ScpWindowController:
                     default_download_dir = str(Path.home() / 'Downloads')
                 except Exception:
                     default_download_dir = GLib.get_home_dir() or os.path.expanduser('~')
-
-            ssh_extra_opts = list(profile.ssh_options)
-            use_publickey_with_password = profile.use_publickey_with_password
-            if profile.prefer_password:
-                use_publickey_with_password = False
-
-            # Set up askpass environment for passphrase-protected keys
-            # SSH_ASKPASS will handle passphrase retrieval from storage or show GUI dialog if needed
-            logger.debug(f"SCP Download: Checking identity_agent_disabled={profile.identity_agent_disabled}")
-            logger.debug(f"SCP Download: Initial ssh_extra_opts={ssh_extra_opts}")
-            base_env = os.environ.copy()
-            
-            # Set up askpass if we have a keyfile and not using password authentication
-            if profile.keyfile_ok and not profile.prefer_password:
-                from .askpass_utils import get_ssh_env_with_askpass, get_ssh_env_with_forced_askpass, get_scp_ssh_options
-                
-                # Use forced askpass if identity agent is disabled, otherwise use regular askpass
-                if profile.identity_agent_disabled:
-                    base_env = get_ssh_env_with_forced_askpass()
-                    logger.debug("SCP: Using forced askpass environment (identity agent disabled)")
-                else:
-                    base_env = get_ssh_env_with_askpass()
-                    logger.debug("SCP: Using askpass environment (identity agent enabled)")
-                
-                # Add SSH options to force publickey authentication only (when identity agent disabled)
-                if profile.identity_agent_disabled:
-                    scp_ssh_opts = get_scp_ssh_options()
-                    logger.debug(f"SCP: Current ssh_extra_opts before adding: {ssh_extra_opts}")
-                    
-                    # Add options in pairs, checking for duplicates properly
-                    for i in range(0, len(scp_ssh_opts), 2):
-                        if i + 1 < len(scp_ssh_opts):
-                            flag = scp_ssh_opts[i]
-                            value = scp_ssh_opts[i + 1]
-                            # Check if this exact option pair is already present
-                            already_present = False
-                            for j in range(0, len(ssh_extra_opts) - 1, 2):
-                                if ssh_extra_opts[j] == flag and ssh_extra_opts[j + 1] == value:
-                                    already_present = True
-                                    break
-                            if not already_present:
-                                ssh_extra_opts.extend([flag, value])
-                                logger.debug(f"SCP: Added option pair: {flag} {value}")
-                    
-                    logger.debug(f"SCP: Final ssh_extra_opts: {ssh_extra_opts}")
-            elif profile.prefer_password:
-                # If using password authentication, ensure askpass vars are not set
-                base_env.pop('SSH_ASKPASS', None)
-                base_env.pop('SSH_ASKPASS_REQUIRE', None)
-                logger.debug("SCP Download: Using password auth - removed askpass environment")
 
             dialog = Adw.Window()
             dialog.set_transient_for(self.window)
@@ -799,7 +745,7 @@ class ScpWindowController:
 
                 # Same VTE transfer path as upload: scp runs in a terminal so
                 # multi-step auth (password + OTP) stays visible. Browse dialog
-                # only picks the remote path; listing still uses list_remote_files.
+                # only picks the remote path; listing uses native askpass auth.
                 if session_password:
                     try:
                         connection.password = session_password
@@ -889,28 +835,18 @@ class ScpWindowController:
                 download_button.set_sensitive(False)
 
                 def _worker():
-                    # If using password authentication, strip askpass environment
-                    # (askpass is only for passphrases, not passwords)
-                    env_for_list = base_env.copy()
+                    # Native auth (askpass) via list_remote_files / build_ssh_connection.
                     if session_password:
-                        env_for_list.pop('SSH_ASKPASS', None)
-                        env_for_list.pop('SSH_ASKPASS_REQUIRE', None)
-                        logger.debug("SCP Download: Using password - removed askpass from environment")
-                    
-                    # SSH_ASKPASS will handle passphrase retrieval from storage or GUI dialog if needed
+                        try:
+                            connection.password = session_password
+                        except Exception:
+                            pass
                     files, error_message = list_remote_files(
-                        host_value,
-                        username,
+                        connection,
                         directory,
-                        port=port,
-                        password=session_password,
-                        known_hosts_path=known_hosts_path,
-                        extra_ssh_opts=ssh_extra_opts,
-                        use_publickey=use_publickey_with_password,
-                        inherit_env=env_for_list,
-                        saved_passphrase=None,  # Let askpass handle retrieval/prompting
-                        keyfile=profile.keyfile_expanded if profile.keyfile_ok else None,
-                        key_mode=profile.key_mode,
+                        connection_manager=getattr(
+                            self.window, 'connection_manager', None
+                        ),
                     )
 
                     def _update():

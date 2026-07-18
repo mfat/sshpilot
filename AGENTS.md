@@ -293,6 +293,8 @@ as remote sudo prompts.)
 - **SCP UI** (`scp_window.py`): upload and download both run `scp` in a VTE via
   `_start_scp_transfer` / `_show_scp_terminal_window`, applying
   `resolve_native_auth` the same way (askpass for secrets; MFA on the VTE).
+  Download browse listing uses `list_remote_files` (`window.py`) →
+  `build_ssh_connection` + askpass (headless; MFA via askpass dialogs).
   Shared argv helpers live in `scp_utils.py` (no headless transfer API).
 - **ssh-copy-id** (`sshcopyid_window.py`): builds its own `ssh-copy-id` argv and
   applies `resolve_native_auth` (its `-o` options must precede the target).

@@ -93,9 +93,7 @@ from .platform_utils import is_macos, get_config_dir
 from .context_menu import IconContextMenu
 from .plugins.api import Capability
 from .plugins.registry import capabilities_for
-from .ssh_password_exec import run_ssh_with_password
 from .remote_path_utils import (
-    _format_ssh_target,
     _normalize_remote_path,
     _quote_remote_path_for_shell,
 )
@@ -143,30 +141,29 @@ def _ensure_tips_banner_css() -> None:
 
 
 def list_remote_files(
-    host: str,
-    user: str,
+    connection,
     remote_path: str,
     *,
-    port: int = 22,
-    password: Optional[str] = None,
-    known_hosts_path: Optional[str] = None,
-    extra_ssh_opts: Optional[List[str]] = None,
-    use_publickey: bool = False,
-    inherit_env: Optional[Dict[str, str]] = None,
-    saved_passphrase: Optional[str] = None,
-    keyfile: Optional[str] = None,
-    key_mode: Optional[int] = None,
+    connection_manager=None,
+    config=None,
+    timeout: float = 10,
 ) -> Tuple[List[Tuple[str, bool]], Optional[str]]:
-    """List remote files via SSH for the provided path.
+    """List remote files via the native SSH/auth path.
 
-    Returns (entries, error_message) where entries contain ``(name, is_directory)`` tuples.
+    Uses ``build_ssh_connection`` + ``resolve_native_auth`` (askpass for
+    passwords, passphrases, and MFA). No sshpass. Returns
+    ``(entries, error_message)`` where entries are ``(name, is_directory)``.
     """
-    if not host:
+    if connection is None:
         return [], _('Missing host information.')
 
-    target = _format_ssh_target(host, user)
-    safe_path = _normalize_remote_path(remote_path)
+    from .ssh_connection_builder import (
+        ConnectionContext,
+        _askpass_env_for_connection,
+        build_ssh_connection,
+    )
 
+    safe_path = _normalize_remote_path(remote_path)
     command_path = _quote_remote_path_for_shell(safe_path)
     # -L dereferences symlinks when classifying, so a symlink that points to a
     # directory is marked with a trailing "/" (and thus shown/navigated as a
@@ -181,105 +178,52 @@ def list_remote_files(
         "printf '__SSHPILOT_END__\\n'; "
         "exit $status"
     )
+    remote_command = f"sh -lc {shlex.quote(wrapped_command)}"
 
-    env = (inherit_env or os.environ).copy()
-    
-    # Set up askpass environment if we have a keyfile (askpass will handle passphrase retrieval/prompting)
-    # Check if askpass is already set up (inherited from caller)
-    has_inherited_askpass = bool(
-        inherit_env
-        and str(inherit_env.get('SSH_ASKPASS_REQUIRE') or '').lower() == 'force'
-    )
-    
-    # Set up askpass if we have a keyfile and not using password auth
-    # The askpass script will retrieve from storage or show GUI dialog if needed
-    if keyfile and not password and not has_inherited_askpass:
+    if config is None:
         try:
-            from .askpass_utils import (
-                get_ssh_env_with_forced_askpass,
-                get_scp_ssh_options,
-            )
+            config = Config()
         except Exception:
-            get_ssh_env_with_forced_askpass = None  # type: ignore
-            get_scp_ssh_options = None  # type: ignore
-
-        if get_ssh_env_with_forced_askpass is not None:
-            try:
-                askpass_env = get_ssh_env_with_forced_askpass()
-                if isinstance(askpass_env, dict):
-                    env.update(askpass_env)
-            except Exception:
-                logger.debug('SCP: Unable to initialize askpass environment', exc_info=True)
-
-        if keyfile and '-i' not in (extra_ssh_opts or []):
-            if extra_ssh_opts is None:
-                extra_ssh_opts = []
-            extra_ssh_opts.extend(['-i', keyfile])
-
-        if key_mode == 1 and extra_ssh_opts and 'IdentitiesOnly=yes' not in ' '.join(extra_ssh_opts):
-            if extra_ssh_opts is None:
-                extra_ssh_opts = []
-            extra_ssh_opts.extend(['-o', 'IdentitiesOnly=yes'])
-
-        if get_scp_ssh_options is not None:
-            try:
-                passphrase_opts = list(get_scp_ssh_options())
-            except Exception:
-                passphrase_opts = []
-            if extra_ssh_opts is None:
-                extra_ssh_opts = []
-            for idx in range(0, len(passphrase_opts) - 1, 2):
-                flag = passphrase_opts[idx]
-                value = passphrase_opts[idx + 1]
-                if not flag or not value:
-                    continue
-                already = False
-                for opt_idx in range(0, len(extra_ssh_opts) - 1, 2):
-                    if extra_ssh_opts[opt_idx] == flag and extra_ssh_opts[opt_idx + 1] == value:
-                        already = True
-                        break
-                if not already:
-                    extra_ssh_opts.extend([flag, value])
-    elif not has_inherited_askpass:
-        # Only remove askpass environment if it wasn't inherited (e.g., when identity agent is disabled)
-        env.pop('SSH_ASKPASS', None)
-        env.pop('SSH_ASKPASS_REQUIRE', None)
+            config = None
 
     try:
-        # Password-method listing may still use the sshpass helper for this
-        # headless path; key-based (use_publickey) must not — askpass / TTY
-        # handle residual keyboard-interactive prompts.
-        if password and not use_publickey:
-            result = run_ssh_with_password(
-                host,
-                user,
-                password,
-                port=port,
-                argv_tail=['sh', '-lc', wrapped_command],
-                known_hosts_path=known_hosts_path,
-                extra_ssh_opts=extra_ssh_opts or [],
-                inherit_env=env,
-                use_publickey=False,
+        prepared = build_ssh_connection(
+            ConnectionContext(
+                connection=connection,
+                connection_manager=connection_manager,
+                config=config,
+                command_type='ssh',
+                remote_command=remote_command,
+                native_mode=True,
             )
-        else:
-            sshbin = shutil.which('ssh') or '/usr/bin/ssh'
-            cmd = [sshbin, '-p', str(port)]
-            if extra_ssh_opts:
-                cmd.extend(extra_ssh_opts)
-            if known_hosts_path:
-                cmd += ['-o', f'UserKnownHostsFile={known_hosts_path}']
-            else:
-                cmd += ['-o', 'StrictHostKeyChecking=accept-new']
-            cmd.append(target)
-            cmd.extend(['sh', '-lc', wrapped_command])
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=10,
-                check=False,
-                env=env,
+        )
+        env = {**os.environ, **(prepared.env or {})}
+        # Honor resolver deletions (don't resurrect desktop SSH_ASKPASS).
+        for key in ('SSH_ASKPASS', 'SSH_ASKPASS_REQUIRE', 'SSH_AUTH_SOCK'):
+            if key not in (prepared.env or {}):
+                env.pop(key, None)
+        # Headless listing has no TTY — force askpass prefer so password/MFA
+        # prompts can be collected graphically (same posture as MasterSession).
+        if not env.get('SSH_ASKPASS'):
+            env.update(
+                _askpass_env_for_connection(
+                    connection,
+                    session_password=getattr(prepared, 'password', None)
+                    or getattr(connection, 'password', None),
+                )
             )
+        elif env.get('SSH_ASKPASS_REQUIRE') != 'prefer':
+            env['SSH_ASKPASS_REQUIRE'] = 'prefer'
+
+        result = subprocess.run(
+            list(prepared.command),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+            env=env,
+            stdin=subprocess.DEVNULL,
+        )
 
         stdout_lines = result.stdout.splitlines()
         begin_idx = next((idx for idx, line in enumerate(stdout_lines)
