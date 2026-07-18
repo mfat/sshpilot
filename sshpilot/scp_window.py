@@ -390,14 +390,14 @@ class ScpWindowController:
             except Exception:
                 pass
             try:
-                dialog.set_default_size(480, 420)
+                dialog.set_default_size(520, 560)
             except Exception:
                 pass
             try:
                 dialog.set_title(_('Download files from server'))
             except Exception:
                 pass
-            
+
             # Prompt for password/passphrase if needed (similar to SCP upload flow)
             # Check if password is needed but not available
             if profile.prefer_password and not session_password:
@@ -416,34 +416,49 @@ class ScpWindowController:
                 session_password = password
                 # Password storage is handled in the dialog if checkbox was checked
                 logger.debug("SCP Download: Using prompted password for session")
-            
+
             # Don't pre-prompt for passphrase - let SSH_ASKPASS handle it
             # The askpass script will show a GUI dialog if no passphrase is found in storage
             # This matches the standard SSH_ASKPASS behavior
             logger.debug("SCP Download: Passphrase will be handled by SSH_ASKPASS if needed")
 
+            from sshpilot import icon_utils
+
+            toolbar = Adw.ToolbarView()
+            dialog.set_content(toolbar)
+
             header = Adw.HeaderBar()
-            title_label = Gtk.Label(label=_('Download files'))
-            title_label.set_halign(Gtk.Align.START)
             try:
-                title_label.add_css_class('title-2')
+                header.set_title_widget(
+                    Adw.WindowTitle(
+                        title=_('Download files'),
+                        subtitle=display_name,
+                    )
+                )
             except Exception:
-                pass
-            header.set_title_widget(title_label)
+                header.set_title_widget(Gtk.Label(label=_('Download files')))
+
+            cancel_button = Gtk.Button(label=_('Cancel'))
+            header.pack_start(cancel_button)
+
+            download_button = Gtk.Button(label=_('Download'))
+            download_button.set_sensitive(False)
+            download_button.add_css_class('suggested-action')
+            header.pack_end(download_button)
+
+            toolbar.add_top_bar(header)
 
             content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
             content_box.set_hexpand(True)
             content_box.set_vexpand(True)
-            try:
-                content_box.set_margin_top(16)
-                content_box.set_margin_bottom(16)
-                content_box.set_margin_start(16)
-                content_box.set_margin_end(16)
-            except Exception:
-                pass
+            content_box.set_margin_top(12)
+            content_box.set_margin_bottom(12)
+            content_box.set_margin_start(12)
+            content_box.set_margin_end(12)
 
             paths_group = Adw.PreferencesGroup()
             paths_group.set_title(_('Locations'))
+            paths_group.add_css_class('boxed-list')
 
             remote_row = Adw.EntryRow(title=_('Remote directory'))
             remote_row.set_text('~')
@@ -454,7 +469,6 @@ class ScpWindowController:
             except Exception:
                 pass
 
-            from sshpilot import icon_utils
             refresh_button = icon_utils.new_button_from_icon_name('view-refresh-symbolic')
             refresh_button.set_tooltip_text(_('Refresh remote listing'))
             refresh_button.add_css_class('flat')
@@ -462,17 +476,26 @@ class ScpWindowController:
             remote_row.set_show_apply_button(False)
             paths_group.add(remote_row)
 
-
             paths_wrapper = Adw.Clamp()
+            paths_wrapper.set_maximum_size(560)
             paths_wrapper.set_child(paths_group)
             content_box.append(paths_wrapper)
 
+            files_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+            files_heading = Gtk.Label(label=_('Remote files'))
+            files_heading.set_halign(Gtk.Align.START)
+            files_heading.add_css_class('heading')
+            files_box.append(files_heading)
+
             scroller = Gtk.ScrolledWindow()
-            scroller.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+            scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
             scroller.set_min_content_height(220)
+            scroller.set_vexpand(True)
+            scroller.set_hexpand(True)
 
             list_box = Gtk.ListBox()
             list_box.set_selection_mode(Gtk.SelectionMode.SINGLE)
+            list_box.add_css_class('boxed-list')
             list_box.set_hexpand(True)
             list_box.set_vexpand(True)
             try:
@@ -480,15 +503,23 @@ class ScpWindowController:
             except Exception:
                 pass
             scroller.set_child(list_box)
-            content_box.append(scroller)
+            files_box.append(scroller)
+
+            files_wrapper = Adw.Clamp()
+            files_wrapper.set_maximum_size(560)
+            files_wrapper.set_child(files_box)
+            content_box.append(files_wrapper)
 
             status_label = Gtk.Label()
             status_label.set_halign(Gtk.Align.START)
             status_label.set_wrap(True)
+            status_label.add_css_class('dim-label')
+            status_label.add_css_class('caption')
             content_box.append(status_label)
 
             destination_group = Adw.PreferencesGroup()
             destination_group.set_title(_('Destination'))
+            destination_group.add_css_class('boxed-list')
 
             # Under Flatpak the destination is a portal-granted folder shown as a
             # read-only label — an ActionRow, which has no edit affordance, so it
@@ -563,6 +594,7 @@ class ScpWindowController:
             if is_flatpak():
                 request_access_button = Gtk.Button(label=_('Choose download folder'))
                 request_access_button.set_halign(Gtk.Align.CENTER)
+                request_access_button.add_css_class('pill')
                 request_access_button.add_css_class('suggested-action')
                 request_access_button.set_margin_top(6)
                 destination_group_box = Gtk.Box(
@@ -579,9 +611,11 @@ class ScpWindowController:
                 destination_child = destination_group
 
             destination_wrapper = Adw.Clamp()
+            destination_wrapper.set_maximum_size(560)
             destination_wrapper.set_child(destination_child)
             content_box.append(destination_wrapper)
 
+            toolbar.set_content(content_box)
 
             def _open_destination_picker():
                 file_dialog = Gtk.FileDialog(title=_('Select destination folder'))
@@ -656,27 +690,6 @@ class ScpWindowController:
                 request_access_button.connect('clicked', lambda *_: _open_destination_picker())
             else:
                 picker_button.connect('clicked', lambda *_: _open_destination_picker())
-
-            button_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-            button_box.set_halign(Gtk.Align.END)
-
-            cancel_button = Gtk.Button(label=_('Cancel'))
-            button_box.append(cancel_button)
-
-            download_button = Gtk.Button(label=_('Download'))
-            download_button.set_sensitive(False)
-            try:
-                download_button.add_css_class('suggested-action')
-            except Exception:
-                pass
-            button_box.append(download_button)
-
-            content_box.append(button_box)
-
-            root_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-            root_box.append(header)
-            root_box.append(content_box)
-            dialog.set_content(root_box)
 
             def _clear_list():
                 child = list_box.get_first_child()
@@ -787,19 +800,11 @@ class ScpWindowController:
 
                 parent_dir = _remote_parent(current_dir)
                 if parent_dir is not None:
-                    parent_row = Gtk.ListBoxRow()
-                    parent_label = Gtk.Label(label='..')
-                    parent_label.set_halign(Gtk.Align.START)
-                    parent_label.set_hexpand(True)
-                    try:
-                        parent_label.add_css_class('monospace')
-                    except Exception:
-                        pass
-                    try:
-                        parent_label.add_css_class('dim-label')
-                    except Exception:
-                        pass
-                    parent_row.set_child(parent_label)
+                    parent_row = Adw.ActionRow(title='..')
+                    parent_row.set_subtitle(_('Parent directory'))
+                    parent_row.add_prefix(
+                        icon_utils.new_image_from_icon_name('go-up-symbolic')
+                    )
                     try:
                         parent_row.set_selectable(False)
                         parent_row.set_activatable(True)
@@ -818,16 +823,21 @@ class ScpWindowController:
                     return
 
                 for entry_name, is_dir in entries:
-                    row = Gtk.ListBoxRow()
-                    display_name = f"{entry_name}/" if is_dir else entry_name
-                    label = Gtk.Label(label=display_name)
-                    label.set_halign(Gtk.Align.START)
-                    label.set_hexpand(True)
-                    try:
-                        label.add_css_class('monospace')
-                    except Exception:
-                        pass
-                    row.set_child(label)
+                    row = Adw.ActionRow(title=entry_name)
+                    # ActionRow defaults to non-activatable; without this,
+                    # ListBox never emits row-activated on double-click.
+                    row.set_activatable(True)
+                    if is_dir:
+                        row.set_subtitle(_('Directory'))
+                        row.add_prefix(
+                            icon_utils.new_image_from_icon_name('folder-symbolic')
+                        )
+                    else:
+                        row.add_prefix(
+                            icon_utils.new_image_from_icon_name(
+                                'text-x-generic-symbolic'
+                            )
+                        )
                     setattr(row, 'remote_name', entry_name)
                     setattr(row, 'remote_is_dir', is_dir)
                     setattr(row, 'remote_selectable', True)
