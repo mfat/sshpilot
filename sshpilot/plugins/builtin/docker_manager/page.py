@@ -559,7 +559,9 @@ class DockerConsolePage(
     # host bar
     # ================================================================
     def _build_host_bar(self) -> Gtk.Widget:
-        bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        # CenterBox keeps the host picker visually centered; runtime/sudo/
+        # refresh controls sit on the end without shifting the selector.
+        bar = Gtk.CenterBox()
 
         self._connections = self._list_hosts()
         target = self._initial_host or self.ctx.settings.get("last_host", None)
@@ -587,16 +589,14 @@ class DockerConsolePage(
         self._host_btn.set_child(host_box)
         self._host_btn.connect("clicked", self._show_host_picker)
         self._update_host_button_label()
-        bar.append(self._host_btn)
+        bar.set_center_widget(self._host_btn)
 
-        spacer = Gtk.Box()
-        spacer.set_hexpand(True)
-        bar.append(spacer)
+        end = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
 
         runtime_label = Gtk.Label(label="Runtime")
         runtime_label.add_css_class("dim-label")
         runtime_label.add_css_class("caption")
-        bar.append(runtime_label)
+        end.append(runtime_label)
 
         # Auto-detect (default) or force docker/podman per host.
         self._RUNTIME_MODES = ("Auto", "docker", "podman")
@@ -604,7 +604,7 @@ class DockerConsolePage(
         self._runtime_drop.set_tooltip_text("Container runtime (Auto detects docker/podman)")
         self._runtime_drop.set_selected(self._runtime_mode_index(self._current_nickname()))
         self._runtime_drop.connect("notify::selected", self._on_runtime_mode_changed)
-        bar.append(self._runtime_drop)
+        end.append(self._runtime_drop)
 
         self._sudo_check = Gtk.CheckButton(label="sudo")
         self._sudo_check.set_tooltip_text(
@@ -614,22 +614,24 @@ class DockerConsolePage(
         if nick0:
             self._sudo_check.set_active(self._use_sudo_for(nick0))
         self._sudo_check.connect("toggled", self._on_sudo_toggled)
-        bar.append(self._sudo_check)
+        end.append(self._sudo_check)
 
         self._pause_btn = Gtk.ToggleButton(icon_name="media-playback-pause-symbolic")
         self._pause_btn.set_tooltip_text("Pause auto-refresh")
         self._pause_btn.connect("toggled", self._on_pause_toggled)
-        bar.append(self._pause_btn)
+        end.append(self._pause_btn)
 
         settings = Gtk.Button(icon_name="settings-symbolic")
         settings.set_tooltip_text("Docker Console settings")
         settings.connect("clicked", lambda _b: self._open_settings())
-        bar.append(settings)
+        end.append(settings)
 
         refresh = Gtk.Button(icon_name="view-refresh-symbolic")
         refresh.set_tooltip_text("Refresh")
         refresh.connect("clicked", lambda _b: self._manual_refresh())
-        bar.append(refresh)
+        end.append(refresh)
+
+        bar.set_end_widget(end)
         return bar
 
     def _set_selected_container(
