@@ -44,7 +44,6 @@ def _make_ctrl(dummy_window):
     ctrl = scp_window.ScpWindowController.__new__(scp_window.ScpWindowController)
     ctrl.window = dummy_window
     ctrl._scp_auth = None
-    ctrl._scp_askpass_env = {}
     ctrl._scp_strip_askpass = False
     ctrl._scp_askpass_helpers = []
     return ctrl

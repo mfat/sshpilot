@@ -620,7 +620,6 @@ class TestCombinedAuthPreloadHandoff:
         controller = scp_window.ScpWindowController.__new__(scp_window.ScpWindowController)
         controller.window = SimpleNamespace(connection_manager=manager, config=_Config())
         controller._scp_auth = None
-        controller._scp_askpass_env = {}
 
         connection = SimpleNamespace(
             hostname="combo.example",

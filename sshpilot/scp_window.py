@@ -67,7 +67,6 @@ class ScpWindowController:
     def __init__(self, window):
         self.window = window
         self._scp_auth = None
-        self._scp_askpass_env = {}
         self._scp_strip_askpass = False
         self._scp_askpass_helpers = []
 
@@ -1361,9 +1360,17 @@ class ScpWindowController:
                             known_hosts_path=self.window.connection_manager.known_hosts_path,
                             legacy=True,
                         )
-                        # Discard askpass env repopulated by the rebuild; the
-                        # original env (env_dict) is reused for the retry.
-                        self._scp_askpass_env = {}
+                        # The first attempt consumed any one-shot session
+                        # password file; apply the fresh auth env from the
+                        # rebuild so the retry can authenticate again.
+                        env_retry = dict(env_dict)
+                        from .scp_utils import _apply_native_auth_env
+                        auth_retry = getattr(self, '_scp_auth', None)
+                        if auth_retry is not None:
+                            _apply_native_auth_env(env_retry, auth_retry)
+                            self._scp_auth = None
+                        env_dict.clear()
+                        env_dict.update(env_retry)
                         _spawn_scp(legacy_argv)
                         return
                     except Exception as exc:
