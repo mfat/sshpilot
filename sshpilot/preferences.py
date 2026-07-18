@@ -1771,22 +1771,9 @@ class PreferencesWindow(Adw.Window):
             self.confirm_disconnect_switch.connect('notify::active', self.on_confirm_disconnect_changed)
             behavior_group.add(self.confirm_disconnect_switch)
 
-            # Preload keys into ssh-agent on connect (uses askpass to unlock a
-            # key so a gnome-keyring-locked key can sign; the agent is never
-            # disabled). Askpass itself stays on by default with no UI toggle.
-            self.agent_preload_switch = Adw.SwitchRow()
-            self.agent_preload_switch.set_title("Preload keys into ssh-agent")
-            self.agent_preload_switch.set_subtitle(
-                "Add keys with a saved passphrase to ssh-agent so they connect "
-                "without a prompt"
-            )
-            self.agent_preload_switch.set_active(
-                bool(self.config.get_setting('ssh.agent_preload_keys', True))
-            )
-            self.agent_preload_switch.connect(
-                'notify::active', self.on_agent_preload_changed
-            )
-            behavior_group.add(self.agent_preload_switch)
+            # ssh.agent_preload_keys stays on by default (no Preferences toggle):
+            # the terminal worker force-unlocks configured identities into the
+            # agent so locked gcr keys cannot fall through to the system askpass.
 
             advanced_page.add(behavior_group)
 
@@ -5349,12 +5336,6 @@ class PreferencesWindow(Adw.Window):
         confirm = switch.get_active()
         logger.info(f"Confirm before disconnect setting changed to: {confirm}")
         self.config.set_setting('confirm-disconnect', confirm)
-
-    def on_agent_preload_changed(self, switch, *args):
-        """Handle 'preload keys into ssh-agent' setting change"""
-        enabled = switch.get_active()
-        logger.info(f"Preload keys into ssh-agent setting changed to: {enabled}")
-        self.config.set_setting('ssh.agent_preload_keys', enabled)
 
     def on_logging_level_changed(self, combo_row, _param):
         """Persist the chosen log level and apply it on the fly."""
