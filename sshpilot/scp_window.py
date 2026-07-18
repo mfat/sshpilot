@@ -862,6 +862,13 @@ class ScpWindowController:
                              or session_password)
                     ):
                         auth_prompt_attempted['done'] = True
+                        # The staged in-memory password was rejected — drop it
+                        # so it can't shadow the keyring on later auths.
+                        session_password = None
+                        try:
+                            connection.password = None
+                        except Exception:
+                            pass
 
                         def _prompt_and_retry():
                             nonlocal session_password
@@ -1266,6 +1273,12 @@ class ScpWindowController:
                          or getattr(connection, 'password', None))
                 ):
                     scp_password_retry['done'] = True
+                    # Whatever in-memory password was staged got rejected —
+                    # drop it so it can't shadow the keyring on later auths.
+                    try:
+                        connection.password = None
+                    except Exception:
+                        pass
 
                     def _prompt_password_and_respawn():
                         from .window_dialogs import show_ssh_password_dialog
@@ -1307,7 +1320,9 @@ class ScpWindowController:
                                     self.window.connection_manager.known_hosts_path
                                 ),
                             )
-                            env_retry = os.environ.copy()
+                            # Start from the original spawn env so the Flatpak
+                            # /app/bin PATH fix carries over; fresh auth wins.
+                            env_retry = dict(env_dict)
                             from .scp_utils import _apply_native_auth_env
                             auth_retry = getattr(self, '_scp_auth', None)
                             if auth_retry is not None:

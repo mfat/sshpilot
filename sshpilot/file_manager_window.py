@@ -638,6 +638,17 @@ class FileManagerWindow(Adw.Window):
                     )
                     return False
 
+                # The staged in-memory password was rejected — drop it (from
+                # both the connection and the backend, which re-applies it on
+                # every connect) so it can't shadow the keyring on later auths.
+                try:
+                    if self._connection is not None:
+                        self._connection.password = None
+                    if self._manager is not None:
+                        self._manager._password = None
+                except Exception:
+                    pass
+
                 if self._password_dialog_shown:
                     return False
 

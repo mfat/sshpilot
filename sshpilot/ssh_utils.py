@@ -11,8 +11,12 @@ from .platform_utils import is_flatpak
 logger = logging.getLogger(__name__)
 
 # Markers shared by FM / SCP when classifying a failed ssh/scp run as auth.
+# "permission denied" alone is NOT a marker: scp prints it for remote *file*
+# permission errors ("scp: /path: Permission denied"). SSH auth failures use
+# the parenthesized method list or the retry phrasing.
 _SSH_AUTH_FAILURE_MARKERS = (
-    'permission denied',
+    'permission denied (',
+    'permission denied, please try again',
     'authentication failed',
     'too many authentication failures',
 )
