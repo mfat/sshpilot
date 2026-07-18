@@ -1771,21 +1771,9 @@ class PreferencesWindow(Adw.Window):
             self.confirm_disconnect_switch.connect('notify::active', self.on_confirm_disconnect_changed)
             behavior_group.add(self.confirm_disconnect_switch)
 
-            # SSH askpass helper (master switch for sshPilot's passphrase handling)
-            self.askpass_switch = Adw.SwitchRow()
-            self.askpass_switch.set_title("Use SSH askpass helper")
-            self.askpass_switch.set_subtitle(
-                "Lets SSH Pilot autofill key passphrases from the keyring. "
-                "When off, SSH handles passphrase prompts itself."
-            )
-            askpass_on = bool(self.config.get_setting('use-askpass', True))
-            self.askpass_switch.set_active(askpass_on)
-            self.askpass_switch.connect('notify::active', self.on_use_askpass_changed)
-            behavior_group.add(self.askpass_switch)
-
-            # Preload keys into ssh-agent on connect (uses the askpass helper to
-            # unlock the key so a gnome-keyring-locked key can sign; the agent is
-            # never disabled).
+            # Preload keys into ssh-agent on connect (uses askpass to unlock a
+            # key so a gnome-keyring-locked key can sign; the agent is never
+            # disabled). Askpass itself stays on by default with no UI toggle.
             self.agent_preload_switch = Adw.SwitchRow()
             self.agent_preload_switch.set_title("Preload keys into ssh-agent")
             self.agent_preload_switch.set_subtitle(
@@ -1795,7 +1783,6 @@ class PreferencesWindow(Adw.Window):
             self.agent_preload_switch.set_active(
                 bool(self.config.get_setting('ssh.agent_preload_keys', True))
             )
-            self.agent_preload_switch.set_sensitive(askpass_on)
             self.agent_preload_switch.connect(
                 'notify::active', self.on_agent_preload_changed
             )
@@ -5368,15 +5355,6 @@ class PreferencesWindow(Adw.Window):
         enabled = switch.get_active()
         logger.info(f"Preload keys into ssh-agent setting changed to: {enabled}")
         self.config.set_setting('ssh.agent_preload_keys', enabled)
-
-    def on_use_askpass_changed(self, switch, *args):
-        """Handle 'use SSH askpass helper' setting change"""
-        enabled = switch.get_active()
-        logger.info(f"Use SSH askpass helper setting changed to: {enabled}")
-        self.config.set_setting('use-askpass', enabled)
-        # Agent preload relies on the askpass helper for passphrase autofill.
-        if hasattr(self, 'agent_preload_switch'):
-            self.agent_preload_switch.set_sensitive(enabled)
 
     def on_logging_level_changed(self, combo_row, _param):
         """Persist the chosen log level and apply it on the fly."""

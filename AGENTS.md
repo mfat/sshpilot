@@ -220,8 +220,8 @@ See also **askpass mechanics (passphrases and login passwords)** below.
   Unstored key passphrases return nothing so SSH / the OS / ssh-agent can
   prompt; login-password and MFA prompts use the graphical askpass dialogs.
   Helper output is streamed into the app log by the askpass log forwarder.
-- The `use-askpass` setting (default on) gates askpass wiring; with askpass
-  off, ssh prompts natively on the TTY.
+- The `use-askpass` setting (default on, no Preferences toggle) gates askpass
+  wiring; with askpass off, ssh prompts natively on the TTY.
 
 ### In-app password & passphrase dialogs (GUI)
 
