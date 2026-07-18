@@ -402,6 +402,22 @@ def test_deleting_unstored_password_is_not_an_error(monkeypatch):
     assert closed == [True]
 
 
+def test_has_pending_passphrases_detects_cleared_entry():
+    # A cleared passphrase (initial non-empty, entry now empty) is a pending
+    # delete and must count as a change, so the unlock gate fires for it.
+    from sshpilot.connection_dialog import FileListEditor
+
+    ed = FileListEditor.__new__(FileListEditor)
+    ed._with_passphrase = True
+    ed._rows = [types.SimpleNamespace(
+        _pass_entry=DummyEntry(''), _pass_path='/k', _pass_norm='/k',
+        _pass_initial='secret')]
+    assert ed.has_pending_passphrases() is True
+
+    ed._rows[0]._pass_entry.set_text('secret')  # back to original -> no change
+    assert ed.has_pending_passphrases() is False
+
+
 def test_save_gate_detects_pending_passphrase_when_locked(monkeypatch):
     import sshpilot.secret_storage as ss
 

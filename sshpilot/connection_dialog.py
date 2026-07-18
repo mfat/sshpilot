@@ -3552,9 +3552,9 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         self.close()
 
     def _needs_secret_unlock_before_save(self, connection_data) -> bool:
-        """True when saving would store a secret — a host password or a key passphrase —
-        and the selected session backend (Bitwarden/Vaultwarden) is locked or not signed
-        in, so it should be unlocked before the secret is stored."""
+        """True when saving would store or delete a secret — a host password or a key
+        passphrase — and the selected session backend (Bitwarden/Vaultwarden) is locked
+        or not signed in, so it should be unlocked before the secret I/O runs."""
         try:
             from .secret_storage import get_secret_manager
             if not get_secret_manager().selected_needs_unlock():
