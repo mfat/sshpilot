@@ -152,6 +152,36 @@ def test_exit_before_ready_reports_failure(harness):
     assert "connection refused" in callbacks.failed_tail.lower()
 
 
+def test_invalidate_master_runs_stop_via_builder(monkeypatch):
+    """invalidate_master must go through build_ssh_connection (single command
+    path: -F config → same %C) and use -O stop, which drains live sessions
+    instead of killing them like -O exit would."""
+    captured = {}
+
+    monkeypatch.setattr(
+        mss,
+        "build_ssh_connection",
+        lambda ctx: (
+            captured.update(extra_args=ctx.extra_args),
+            types.SimpleNamespace(command=["ssh", "-O", "stop", "host"], env={}),
+        )[1],
+    )
+
+    ran = {}
+    monkeypatch.setattr(
+        mss.subprocess, "run",
+        lambda argv, **kw: ran.update(argv=argv)
+        or types.SimpleNamespace(returncode=0),
+    )
+
+    connection = types.SimpleNamespace(nickname="host")
+    mss.invalidate_master(connection, background=False)
+
+    assert captured["extra_args"][:2] == ["-O", "stop"]
+    assert any(str(a).startswith("ControlPath=") for a in captured["extra_args"])
+    assert ran["argv"] == ["ssh", "-O", "stop", "host"]
+
+
 def test_classify_prompt():
     assert mss.classify_prompt("user@host's password: ") == "password"
     assert (

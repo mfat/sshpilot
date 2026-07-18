@@ -115,6 +115,36 @@ def check_master_alive(connection, connection_manager=None, config=None) -> bool
         return False
 
 
+def invalidate_master(connection, connection_manager=None, config=None, *,
+                      background: bool = True) -> None:
+    """Gracefully retire *connection*'s ControlMaster after its SSH config
+    changed, so the next connect negotiates a fresh master with the new
+    settings instead of silently riding the old transport.
+
+    Uses ``ssh -O stop`` (not ``exit``): the master stops accepting new mux
+    clients and removes its socket, but live sessions keep running until they
+    end on their own. Best-effort; a dead master simply has no socket to stop.
+    """
+    def _stop() -> None:
+        try:
+            ctx = _build_master_context(
+                connection, connection_manager, config,
+                ['-O', 'stop', '-o',
+                 f'ControlPath={ssh_multiplex.control_path()}'])
+            prepared = build_ssh_connection(ctx)
+            env = {**os.environ, **(prepared.env or {})}
+            subprocess.run(list(prepared.command), env=env, capture_output=True,
+                           timeout=_CHECK_TIMEOUT, check=False)
+        except Exception:
+            logger.debug("invalidate_master failed (best-effort)", exc_info=True)
+
+    if background:
+        threading.Thread(target=_stop, daemon=True,
+                         name='ssh-master-invalidate').start()
+    else:
+        _stop()
+
+
 class MasterSession:
     """One PTY-backed ``ssh -N`` master establishing a shared connection.
 

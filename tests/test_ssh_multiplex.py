@@ -53,6 +53,53 @@ def test_controlmaster_args_custom_persist(monkeypatch, tmp_path):
     assert "ControlPersist=120" in mux.controlmaster_args(persist="120")
 
 
+# --- expire_all_masters -----------------------------------------------------
+
+def test_expire_all_masters_stops_each_socket(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    sock_dir = mux.socket_dir()
+    for name in ("aaa", "bbb"):
+        open(os.path.join(sock_dir, name), "w").close()
+
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        return types.SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+
+    monkeypatch.setattr(mux.subprocess, "run", fake_run)
+    mux.expire_all_masters(background=False)
+
+    assert len(calls) == 2
+    for argv in calls:
+        assert argv[0] == "ssh"
+        assert "-O" in argv and "stop" in argv
+        assert any(str(a).startswith("ControlPath=") for a in argv)
+    # Responsive masters unlink their own socket; ours stay (fake run).
+    assert sorted(os.listdir(sock_dir)) == ["aaa", "bbb"]
+
+
+def test_expire_all_masters_unlinks_stale_sockets(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    sock_dir = mux.socket_dir()
+    stale = os.path.join(sock_dir, "stale")
+    open(stale, "w").close()
+
+    monkeypatch.setattr(
+        mux.subprocess, "run",
+        lambda argv, **kw: types.SimpleNamespace(
+            returncode=255, stdout=b"", stderr=b"Control socket connect: refused"),
+    )
+    mux.expire_all_masters(background=False)
+    assert not os.path.exists(stale)
+
+
+def test_expire_all_masters_missing_dir_is_noop(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "gone"))
+    monkeypatch.setattr(mux.os, "listdir", lambda p: (_ for _ in ()).throw(OSError()))
+    mux.expire_all_masters(background=False)  # must not raise
+
+
 # --- refcounted pool --------------------------------------------------------
 
 def test_pool_refcount_acquire_release():

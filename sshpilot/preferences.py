@@ -4621,6 +4621,14 @@ class PreferencesWindow(Adw.Window):
                 overrides.extend(controlmaster_args())
 
             self.config.set_setting('ssh.ssh_overrides', overrides)
+            # Global SSH options changed: retire live ControlMasters so new
+            # connections pick up the new overrides instead of riding stale
+            # transports (existing sessions drain naturally via -O stop).
+            try:
+                from .ssh_multiplex import expire_all_masters
+                expire_all_masters()
+            except Exception:
+                logger.debug('Master expiry skipped', exc_info=True)
             if getattr(self, 'force_internal_file_manager_row', None) is not None:
                 self.config.set_setting(
                     'file_manager.force_internal',
