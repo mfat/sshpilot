@@ -567,11 +567,14 @@ class OpenSSHSFTPManager(GObject.GObject):
             from .. import ssh_multiplex
 
             args.extend(["-o", f"ControlPath={ssh_multiplex.control_path()}"])
+        # command_type=sftp so the native builder applies
+        # NumberOfPasswordPrompts=1 (cancel-once askpass); the binary stays
+        # ``ssh`` with ``-s … sftp`` / a remote command as before.
         ctx = ConnectionContext(
             connection=self._connection,
             connection_manager=self._connection_manager,
             config=app_config,
-            command_type="ssh",
+            command_type="sftp",
             native_mode=True,
             extra_args=args,
             remote_command=remote_command,  # appended after the host

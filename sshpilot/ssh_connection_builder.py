@@ -607,7 +607,7 @@ def _build_base_ssh_command(
                 cmd.extend(['-o', f'ConnectionAttempts={attempts}'])
         except (ValueError, TypeError):
             pass
-    
+
     # Apply keepalive settings if specified
     keepalive_interval = app_ssh_config.get('keepalive_interval')
     if keepalive_interval:
@@ -692,8 +692,19 @@ def _build_base_ssh_command(
     # cancels Local/Remote/Dynamic forwards; X11 and agent forwarding are unaffected.
     if command_type in ('scp', 'ssh-copy-id'):
         cmd.extend(['-o', 'ClearAllForwardings=yes'])
+        # One askpass cancel should end the operation (not OpenSSH's default 3).
+        # Interactive terminals keep the OpenSSH default so MFA can retry.
+        _append_single_password_prompt(cmd)
 
     return cmd
+
+
+def _append_single_password_prompt(cmd: List[str]) -> None:
+    """Force NumberOfPasswordPrompts=1 for non-interactive transfer tools."""
+    for entry in cmd:
+        if entry and 'NumberOfPasswordPrompts' in str(entry):
+            return
+    cmd.extend(['-o', 'NumberOfPasswordPrompts=1'])
 
 
 def _maybe_append_default_keepalive(cmd, overrides, app_ssh_config):
@@ -841,6 +852,11 @@ def build_ssh_connection(
             # ~/.ssh/config, applied via -o like the rest of ssh_overrides, and
             # any explicit user/per-host value wins.
             _maybe_append_default_keepalive(base_cmd, overrides, app_ssh_config)
+
+        # File manager / SFTP / non-interactive transfers: one askpass cancel
+        # ends auth. Interactive terminals keep OpenSSH's default (3).
+        if ctx.command_type in ('scp', 'ssh-copy-id', 'sftp'):
+            _append_single_password_prompt(base_cmd)
 
         # Authentication is resolved by the single shared helper so the terminal,
         # SCP, and ssh-copy-id all authenticate identically.

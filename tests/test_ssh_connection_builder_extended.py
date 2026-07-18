@@ -498,6 +498,28 @@ def test_base_command_scp_and_copy_id_clear_forwardings():
     assert not _has_o_option(_base_cmd('sftp'), 'ClearAllForwardings')
 
 
+def test_base_command_limits_password_prompts_for_transfers_only():
+    # SCP / ssh-copy-id: cancel-once askpass. Interactive ssh keeps OpenSSH default.
+    assert _has_o_option(_base_cmd('scp'), 'NumberOfPasswordPrompts=1')
+    assert _has_o_option(_base_cmd('ssh-copy-id'), 'NumberOfPasswordPrompts=1')
+    assert not _has_o_option(_base_cmd('ssh'), 'NumberOfPasswordPrompts')
+    assert not _has_o_option(_base_cmd('sftp'), 'NumberOfPasswordPrompts')
+
+
+def test_native_sftp_limits_password_prompts_terminal_does_not():
+    # File manager uses command_type=sftp on the native builder.
+    sftp_cmd, _ = _build(
+        {'host': 'fm.example', 'hostname': 'fm.example'},
+        command_type='sftp',
+    )
+    term_cmd, _ = _build(
+        {'host': 'term.example', 'hostname': 'term.example'},
+        command_type='ssh',
+    )
+    assert _has_o_option(sftp_cmd, 'NumberOfPasswordPrompts=1')
+    assert not _has_o_option(term_cmd, 'NumberOfPasswordPrompts')
+
+
 def test_base_command_copy_id_skips_unsupported_flags():
     # ssh-copy-id rejects -v/-C/-A and BatchMode defeats its interactive purpose.
     cfg = _ConfigStub({'verbosity': 2, 'compression': True, 'batch_mode': True})

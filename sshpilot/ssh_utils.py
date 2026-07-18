@@ -81,6 +81,8 @@ def build_connection_ssh_options(connection, config=None, for_ssh_copy_id=False)
         options.extend(['-o', f'ConnectTimeout={connect_timeout}'])
     if connection_attempts is not None:
         options.extend(['-o', f'ConnectionAttempts={connection_attempts}'])
+    if for_ssh_copy_id:
+        options.extend(['-o', 'NumberOfPasswordPrompts=1'])
     if keepalive_interval is not None:
         options.extend(['-o', f'ServerAliveInterval={keepalive_interval}'])
     if keepalive_count is not None:
