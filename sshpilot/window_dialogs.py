@@ -105,6 +105,48 @@ def resolve_app_modal_parent(from_widget=None) -> "Gtk.Window":
     raise RuntimeError("No modal parent window available")
 
 
+def resolve_topmost_prompt_parent(windows, active_window, main_window):
+    """Pick the window a routed askpass prompt should stack on.
+
+    A visible **modal** secondary window (e.g. the SCP browse ``Adw.Window``)
+    is blocking input, so the prompt must parent to it — not the main window,
+    and not merely whatever GTK reports as "active" (a modal transient does not
+    reliably become the active window on Wayland, so the main window can still
+    win :func:`Gtk.Application.get_active_window`). Resolution:
+
+    1. The active window, if it is a visible modal secondary window.
+    2. Any other visible modal secondary window (last = most recently mapped).
+    3. The active window, if visible (non-modal secondary window, e.g. FM).
+    4. The main window.
+
+    Pure function over already-extracted GTK state so it can be unit-tested.
+    """
+    def _visible(win):
+        try:
+            return bool(win.get_visible())
+        except Exception:
+            return False
+
+    def _modal(win):
+        try:
+            return bool(win.get_modal())
+        except Exception:
+            return False
+
+    modal_secondary = [
+        w for w in (windows or [])
+        if w is not main_window and _visible(w) and _modal(w)
+    ]
+    if modal_secondary:
+        if active_window in modal_secondary:
+            return active_window
+        return modal_secondary[-1]
+    if active_window is not None and active_window is not main_window \
+            and _visible(active_window):
+        return active_window
+    return main_window
+
+
 def present_for_modal_dialog(window: Gtk.Window) -> None:
     """Raise *window* before showing a modal child so it stacks on top (Wayland).
 

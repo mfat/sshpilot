@@ -88,6 +88,7 @@ from .window_tabs import WindowTabsMixin
 from .window_dialogs import (
     WindowConfigDialogsMixin,
     resolve_app_modal_parent,
+    resolve_topmost_prompt_parent,
     present_for_modal_dialog,
     show_ssh_password_dialog,
     _show_password_passphrase_dialog,
@@ -5682,16 +5683,24 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         A routed prompt is an ``Adw.Dialog`` sheet; presenting it on the main
         window hides it behind a modal secondary window (e.g. the SCP browse
         ``Adw.Window``), which is what pops these prompts in the first place.
-        Prefer the application's active window so the prompt stacks on top.
+        A modal transient does not reliably become the active window on
+        Wayland, so target the modal window explicitly rather than trusting
+        focus. See :func:`resolve_topmost_prompt_parent`.
         """
         try:
             app = self.get_application() or Gtk.Application.get_default()
-            active = app.get_active_window() if app is not None else None
-            if active is not None and active.get_visible():
-                return active
+            if app is None:
+                return self
+            active = None
+            try:
+                active = app.get_active_window()
+            except Exception:
+                active = None
+            return resolve_topmost_prompt_parent(
+                list(app.get_windows()), active, self
+            )
         except Exception:
-            pass
-        return self
+            return self
 
     def prompt_ssh_passphrase(self, key_path: str, prompt: str = "") -> "str | None":
         """Show the SSH key passphrase prompt as a modal child of the main window.
