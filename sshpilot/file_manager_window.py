@@ -1228,7 +1228,11 @@ class FileManagerWindow(Adw.Window):
                         self._manager._password = password
                         if self._connection is not None:
                             self._connection.password = password
-                        self._manager.connect_to_server()
+                        # Route the retry through the master-first flow so a
+                        # host that needs interactive auth (2FA, expired mux
+                        # socket) gets the PTY path again instead of a
+                        # PTY-less direct attempt that can only time out.
+                        self._connect_via_master()
                     except Exception as exc:
                         logger.error("Error calling connect_to_server: %s", exc)
                         self._on_connection_error(

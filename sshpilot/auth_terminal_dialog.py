@@ -75,6 +75,13 @@ class AuthTerminalDialog(Adw.Dialog):
         except Exception:
             logger.error('AuthTerminalDialog: could not adopt master PTY',
                          exc_info=True)
+            # Without the PTY the terminal is dead — say so instead of
+            # presenting an empty box; Cancel remains the way out.
+            subtitle.remove_css_class('dim-label')
+            subtitle.add_css_class('error')
+            subtitle.set_label(_(
+                'Could not attach the authentication terminal. '
+                'Cancel and try again, or connect from a terminal first.'))
 
         card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         card.add_css_class('card')

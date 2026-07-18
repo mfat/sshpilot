@@ -47,7 +47,6 @@ _CHECK_TIMEOUT = 10
 # in GTK at import time, so the patterns are restated here rather than
 # imported). Only the last non-empty line is matched, so scrollback text such
 # as "Permission denied (publickey,password)." cannot false-positive.
-_COLON_PROMPT_MARKERS = ('password', 'passphrase', 'pin', 'verification code', 'otp')
 _INLINE_PROMPT_MARKERS = (
     '(yes/no',
     'continue connecting',
