@@ -44,11 +44,44 @@ def test_build_argv_requests_sftp_subsystem(monkeypatch):
     # The SFTP subsystem is requested via `-s` (option, before host) + the
     # subsystem name "sftp" (remote command, after host) → `ssh … -s host sftp`.
     assert ctx.command_type == "ssh"
-    assert ctx.extra_args == ["-s"]
+    assert ctx.extra_args[0] == "-s"
     assert ctx.remote_command == "sftp"
     assert ctx.native_mode is True
     assert argv == ["ssh", "-F", "/cfg", "-s", "host", "sftp"]
     assert cleanup is None
+    manager.close()
+
+
+def test_build_argv_rides_control_master_socket(monkeypatch):
+    """The worker appends ControlPath (without ControlMaster) so it rides a live
+    master socket and silently direct-connects when the socket is absent."""
+    import sshpilot.ssh_connection_builder as scb
+    import sshpilot.ssh_multiplex as ssh_multiplex
+
+    captured = {}
+
+    def fake_build(ctx):
+        captured["ctx"] = ctx
+        return _stub_prepared(["ssh", "host", "sftp"])
+
+    monkeypatch.setattr(scb, "build_ssh_connection", fake_build)
+
+    manager = _manager(monkeypatch)
+    manager._build_argv()
+    extra = captured["ctx"].extra_args
+    assert extra[:1] == ["-s"]
+    assert "-o" in extra
+    assert f"ControlPath={ssh_multiplex.control_path()}" in extra
+    assert not any("ControlMaster" in str(a) for a in extra)
+
+    # run_command's argv rides the socket too.
+    manager._build_argv(remote_command="uname", extra_args=())
+    extra = captured["ctx"].extra_args
+    assert f"ControlPath={ssh_multiplex.control_path()}" in extra
+
+    # use_mux=False (mux-refused retry) omits it entirely.
+    manager._build_argv(use_mux=False)
+    assert captured["ctx"].extra_args == ["-s"]
     manager.close()
 
 
