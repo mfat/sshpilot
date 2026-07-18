@@ -5676,6 +5676,23 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # No active connections or all local terminals are idle, safe to close
         return False  # Allow close
 
+    def _askpass_dialog_parent(self):
+        """Topmost app window to parent a routed askpass prompt on.
+
+        A routed prompt is an ``Adw.Dialog`` sheet; presenting it on the main
+        window hides it behind a modal secondary window (e.g. the SCP browse
+        ``Adw.Window``), which is what pops these prompts in the first place.
+        Prefer the application's active window so the prompt stacks on top.
+        """
+        try:
+            app = self.get_application() or Gtk.Application.get_default()
+            active = app.get_active_window() if app is not None else None
+            if active is not None and active.get_visible():
+                return active
+        except Exception:
+            pass
+        return self
+
     def prompt_ssh_passphrase(self, key_path: str, prompt: str = "") -> "str | None":
         """Show the SSH key passphrase prompt as a modal child of the main window.
 
@@ -5684,9 +5701,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         window that can hide behind it on Wayland. Returns the passphrase, or
         None if the user cancelled. Blocks until the dialog is dismissed.
         """
-        present_for_modal_dialog(self)
+        parent = self._askpass_dialog_parent()
+        present_for_modal_dialog(parent)
         return _show_password_passphrase_dialog(
-            self,
+            parent,
             prompt_type="passphrase",
             key_path=key_path or None,
         )
@@ -5699,10 +5717,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         fall back to the TTY when askpass declines, so the user must answer
         here. Never stores the response.
         """
-        present_for_modal_dialog(self)
+        parent = self._askpass_dialog_parent()
+        present_for_modal_dialog(parent)
         body = (prompt or "").strip() or _("Please enter the verification code:")
         return _show_password_passphrase_dialog(
-            self,
+            parent,
             prompt_type="challenge",
             display_name=body,
             heading=_("Authentication Required"),
@@ -5719,7 +5738,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         the dialog programmatically — the askpass server uses it to dismiss
         the reminder as soon as the touch completes (helper socket EOF).
         """
-        present_for_modal_dialog(self)
+        parent = self._askpass_dialog_parent()
+        present_for_modal_dialog(parent)
         body = (prompt or "").strip() or _(
             "Touch your security key to continue."
         )
@@ -5740,7 +5760,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         dialog.connect("response", _on_response)
         loop = GLib.MainLoop()
-        dialog.present(self)
+        dialog.present(parent)
         if register_close is not None:
             def _force_close():
                 if not closed[0]:
@@ -5760,7 +5780,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
     def prompt_ssh_confirm(self, prompt: str = "") -> bool:
         """Yes/No confirm for ``SSH_ASKPASS_PROMPT=confirm`` (e.g. ssh-add -c)."""
-        present_for_modal_dialog(self)
+        parent = self._askpass_dialog_parent()
+        present_for_modal_dialog(parent)
         dialog = Adw.AlertDialog()
         dialog.set_heading(_("Confirm"))
         dialog.set_body(
@@ -5781,7 +5802,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         dialog.connect("response", _on_response)
         loop = GLib.MainLoop()
-        dialog.present(self)
+        dialog.present(parent)
         try:
             loop.run()
         except Exception:
@@ -5803,7 +5824,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         already have the :class:`MainWindow` instance (e.g. future in-app actions).
         """
         return show_ssh_password_dialog(
-            parent_window=self,
+            parent_window=self._askpass_dialog_parent(),
             display_name=display_name,
             host=host,
             username=username,

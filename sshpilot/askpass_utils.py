@@ -512,6 +512,21 @@ def _route_password_to_main_app(
     )
 
 
+def _standalone_password_label() -> str:
+    """Default prompt for the standalone password fallback dialog.
+
+    Derives "user@host's password:" from the askpass env context when known,
+    so an empty ssh prompt does not fall back to the challenge dialog's
+    "verification code" wording.
+    """
+    user = (os.environ.get("SSHPILOT_PASSWORD_USER") or "").strip()
+    hosts_raw = os.environ.get("SSHPILOT_PASSWORD_HOSTS") or ""
+    host = next((h.strip() for h in hosts_raw.split("\n") if h.strip()), "")
+    if user and host:
+        return f"{user}@{host}'s password:"
+    return "Enter your password:"
+
+
 def _run_challenge_dialog(prompt: str, log_fn) -> "str | None":
     """Standalone GTK dialog for OTP / verification-code style prompts."""
     try:
@@ -935,7 +950,10 @@ def handle_askpass_cli(prompt: str) -> "str | None":
                 return routed
             _log("ASKPASS: user cancelled password prompt")
             return None
-        value = _run_challenge_dialog(prompt, _log)
+        # Standalone fallback (main app unreachable). Give the entry a
+        # password-appropriate default so an empty prompt does not read as
+        # "verification code" (that default belongs to the OTP/challenge path).
+        value = _run_challenge_dialog(prompt or _standalone_password_label(), _log)
         if value is not None:
             _log("ASKPASS: Returning password from GUI dialog")
             return value

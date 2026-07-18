@@ -106,6 +106,21 @@ def test_no_staging_when_backend_serves_password(monkeypatch):
     os.unlink(staged)
 
 
+def test_standalone_password_label_uses_context(monkeypatch):
+    # Empty ssh prompt must not fall back to the OTP "verification code" text.
+    from sshpilot.askpass_utils import _standalone_password_label
+
+    monkeypatch.setenv("SSHPILOT_PASSWORD_USER", "alice")
+    monkeypatch.setenv("SSHPILOT_PASSWORD_HOSTS", "example.com\nother")
+    assert _standalone_password_label() == "alice@example.com's password:"
+
+    monkeypatch.delenv("SSHPILOT_PASSWORD_USER", raising=False)
+    monkeypatch.delenv("SSHPILOT_PASSWORD_HOSTS", raising=False)
+    label = _standalone_password_label()
+    assert "password" in label.lower()
+    assert "verification" not in label.lower()
+
+
 def test_autofill_only_mode_never_shows_ui(monkeypatch):
     monkeypatch.setenv("SSHPILOT_ASKPASS_AUTOFILL_ONLY", "1")
     monkeypatch.delenv("SSH_ASKPASS_PROMPT", raising=False)
