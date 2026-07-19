@@ -43,6 +43,31 @@ def _ensure_gi_stub():
     repository.GLib = glib_module
     repository.GObject.SignalFlags = types.SimpleNamespace(RUN_FIRST=None)
 
+    # Blueprint-templated widgets (e.g. ConnectionDialog) use @Gtk.Template /
+    # Gtk.Template.Child; make them no-ops so the class imports under the stub.
+    class _TemplateStub:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __call__(self, cls):
+            return cls
+
+        class Child:
+            def __init__(self, *args, **kwargs):
+                pass
+
+        @staticmethod
+        def Callback(*args, **kwargs):
+            if len(args) == 1 and callable(args[0]) and not kwargs:
+                return args[0]
+
+            def _decorator(func):
+                return func
+
+            return _decorator
+
+    sys.modules["gi.repository.Gtk"].Template = _TemplateStub
+
 
 _ORIGINAL_GI_MODULES = {
     name: sys.modules.get(name)

@@ -75,6 +75,32 @@ def _ensure_gi_stub():
         repository.__dict__[name] = module
         sys.modules[f"gi.repository.{name}"] = module
 
+    # Blueprint-templated widgets use @Gtk.Template / Gtk.Template.Child /
+    # @Gtk.Template.Callback; make them no-ops under this stub so the classes
+    # import (the auto-generated dummy class would reject the decorator args).
+    class _TemplateStub:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __call__(self, cls):
+            return cls
+
+        class Child:
+            def __init__(self, *args, **kwargs):
+                pass
+
+        @staticmethod
+        def Callback(*args, **kwargs):
+            if len(args) == 1 and callable(args[0]) and not kwargs:
+                return args[0]
+
+            def _decorator(func):
+                return func
+
+            return _decorator
+
+    sys.modules["gi.repository.Gtk"].Template = _TemplateStub
+
     class _DummySimpleAction:
         def __init__(self, name=None, parameter_type=None):
             self.name = name
