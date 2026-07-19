@@ -33,8 +33,6 @@ from .askpass_utils import (
 
 # Set up asyncio event loop for GTK integration
 if os.name == 'posix':
-    import gi
-    gi.require_version('Gtk', '4.0')
     from gi.repository import GLib
     
     # Set up the asyncio event loop
