@@ -148,5 +148,6 @@
     <file alias="text_editor_window.ui" preprocess="xml-stripblanks">ui/text_editor_window.ui</file>
     <file alias="file_manager_window.ui" preprocess="xml-stripblanks">ui/file_manager_window.ui</file>
     <file alias="preferences_window.ui" preprocess="xml-stripblanks">ui/preferences_window.ui</file>
+    <file alias="window.ui" preprocess="xml-stripblanks">ui/window.ui</file>
   </gresource>
 </gresources>

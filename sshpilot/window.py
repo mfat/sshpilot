@@ -171,8 +171,14 @@ def _effective_max_sidebar_width(saved_value, default: int = 400) -> int:
         return default
 
 
+@Gtk.Template(resource_path="/io/github/mfat/sshpilot/ui/window.ui")
 class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin, WindowHelpMixin, WindowFileManagerMixin, WindowTabsMixin, WindowConfigDialogsMixin, WindowActions):
     """Main application window"""
+
+    __gtype_name__ = "SshPilotMainWindow"
+
+    toast_overlay = Gtk.Template.Child()
+    main_box = Gtk.Template.Child()
 
     def __init__(self, *args, isolated: bool = False, **kwargs):
         super().__init__(*args, **kwargs)
@@ -1116,11 +1122,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
     def setup_ui(self):
         """Set up the user interface"""
-        # Create main container
-        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        main_box.set_hexpand(True)
-        main_box.set_vexpand(True)
-        
+        # Outer skeleton (ToastOverlay -> main_box) is in the template; the split
+        # view, header bar, banners, sidebar, and tabs are appended below.
+        main_box = self.main_box
+
         # Create update notification banner (hidden by default)
         # Use overlay to position dismiss button on top of banner
         banner_overlay = Gtk.Overlay()
@@ -1328,11 +1333,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         main_box.append(self.split_view)
 
         # Sidebar is always visible on startup
-
-        # Create toast overlay and set main content
-        self.toast_overlay = Adw.ToastOverlay()
-        self.toast_overlay.set_child(main_box)
-        self.set_content(self.toast_overlay)
+        # (toast_overlay + main_box come from the template)
 
         # The window UI now exists (tab_view, toast_overlay, the plugins menu
         # section). Bind the plugin host so plugin pages, toasts, events, and
