@@ -40,6 +40,12 @@ logger = logging.getLogger(__name__)
 # ssh_process_manager.py (GTK-free). Re-exported here so existing
 # `from .terminal import SSHProcessManager` / `process_manager` callers keep working.
 from .ssh_process_manager import SSHProcessManager, process_manager  # noqa: F401
+from .terminal_color_utils import (
+    mix_rgba,
+    clone_rgba,
+    relative_luminance,
+    get_contrast_color,
+)
 
 
 # Substrings (lowercased) in terminal output that mean an ssh attempt is failing.
@@ -1755,16 +1761,6 @@ class TerminalWidget(Gtk.Box):
         return ConnectionState.DISCONNECTED, ''
 
 
-    @staticmethod
-    def _mix_rgba(base: Gdk.RGBA, other: Gdk.RGBA, ratio: float) -> Gdk.RGBA:
-        ratio = max(0.0, min(1.0, ratio))
-        mixed = Gdk.RGBA()
-        mixed.red = base.red * (1.0 - ratio) + other.red * ratio
-        mixed.green = base.green * (1.0 - ratio) + other.green * ratio
-        mixed.blue = base.blue * (1.0 - ratio) + other.blue * ratio
-        mixed.alpha = base.alpha * (1.0 - ratio) + other.alpha * ratio
-        return mixed
-
     def apply_theme(self, theme_name=None):
         """Apply terminal theme and font settings
 
@@ -1806,7 +1802,7 @@ class TerminalWidget(Gtk.Box):
             cursor_color_value = profile.get('cursor_color')
             cursor_color = Gdk.RGBA()
             if not (cursor_color_value and cursor_color.parse(cursor_color_value)):
-                cursor_color = self._get_contrast_color(bg_color)
+                cursor_color = get_contrast_color(bg_color)
 
             highlight_bg_value = profile.get('highlight_background')
             highlight_fg_value = profile.get('highlight_foreground')
@@ -1817,7 +1813,7 @@ class TerminalWidget(Gtk.Box):
                 highlight_bg.parse('#4A90E2')
 
             if not (highlight_fg_value and highlight_fg.parse(highlight_fg_value)):
-                highlight_fg = self._get_contrast_color(highlight_bg)
+                highlight_fg = get_contrast_color(highlight_bg)
 
             override_rgba = self._get_group_color_rgba()
             use_group_color = False
@@ -1830,15 +1826,15 @@ class TerminalWidget(Gtk.Box):
                 use_group_color = False
 
             if use_group_color and override_rgba is not None:
-                bg_color = self._clone_rgba(override_rgba)  # Use exact group color
-                fg_color = self._get_contrast_color(bg_color)
+                bg_color = clone_rgba(override_rgba)  # Use exact group color
+                fg_color = get_contrast_color(bg_color)
 
-                contrast_for_bg = self._get_contrast_color(bg_color)
-                mix_ratio = 0.35 if self._relative_luminance(bg_color) < 0.5 else 0.25
-                highlight_bg = self._mix_rgba(bg_color, contrast_for_bg, mix_ratio)
+                contrast_for_bg = get_contrast_color(bg_color)
+                mix_ratio = 0.35 if relative_luminance(bg_color) < 0.5 else 0.25
+                highlight_bg = mix_rgba(bg_color, contrast_for_bg, mix_ratio)
                 highlight_bg.alpha = 1.0
-                highlight_fg = self._get_contrast_color(highlight_bg)
-                cursor_color = self._clone_rgba(fg_color)
+                highlight_fg = get_contrast_color(highlight_bg)
+                cursor_color = clone_rgba(fg_color)
 
 
             # Prepare palette colors (16 ANSI colors)
@@ -1874,10 +1870,10 @@ class TerminalWidget(Gtk.Box):
                 # For non-VTE backends, use apply_theme which should handle colors
                 self.backend.apply_theme(theme_name)
 
-            self._applied_background_color = self._clone_rgba(bg_color)
-            self._applied_cursor_color = self._clone_rgba(cursor_color)
-            self._applied_highlight_bg = self._clone_rgba(highlight_bg)
-            self._applied_highlight_fg = self._clone_rgba(highlight_fg)
+            self._applied_background_color = clone_rgba(bg_color)
+            self._applied_cursor_color = clone_rgba(cursor_color)
+            self._applied_highlight_bg = clone_rgba(highlight_bg)
+            self._applied_highlight_fg = clone_rgba(highlight_fg)
 
             # Also color the container background to prevent white flash before VTE paints
             try:
@@ -1940,14 +1936,6 @@ class TerminalWidget(Gtk.Box):
         except Exception as e:
             logger.error(f"Failed to apply terminal theme: {e}")
 
-    def _clone_rgba(self, rgba: Gdk.RGBA) -> Gdk.RGBA:
-        clone = Gdk.RGBA()
-        clone.red = rgba.red
-        clone.green = rgba.green
-        clone.blue = rgba.blue
-        clone.alpha = rgba.alpha
-        return clone
-
     def _get_group_color_rgba(self) -> Optional[Gdk.RGBA]:
         color_value = getattr(self, 'group_color', None)
         if not color_value:
@@ -1962,34 +1950,13 @@ class TerminalWidget(Gtk.Box):
             logger.debug("Failed to parse group color '%s'", color_value, exc_info=True)
         return None
 
-    def _relative_luminance(self, rgba: Gdk.RGBA) -> float:
-        def to_linear(channel: float) -> float:
-            if channel <= 0.03928:
-                return channel / 12.92
-            return ((channel + 0.055) / 1.055) ** 2.4
-
-        r_lin = to_linear(rgba.red)
-        g_lin = to_linear(rgba.green)
-        b_lin = to_linear(rgba.blue)
-        return 0.2126 * r_lin + 0.7152 * g_lin + 0.0722 * b_lin
-
-    def _get_contrast_color(self, background: Gdk.RGBA) -> Gdk.RGBA:
-        luminance = self._relative_luminance(background)
-        contrast = Gdk.RGBA()
-        if luminance > 0.5:
-            contrast.parse('#1B1B1D')
-        else:
-            contrast.parse('#FFFFFF')
-        contrast.alpha = 1.0
-        return contrast
-
     def _apply_cursor_and_selection_colors(self):
         try:
             cursor_color = getattr(self, '_applied_cursor_color', None)
             background_color = getattr(self, '_applied_background_color', None)
 
             if cursor_color is None and background_color is not None:
-                cursor_color = self._get_contrast_color(background_color)
+                cursor_color = get_contrast_color(background_color)
             elif cursor_color is None:
                 cursor_color = Gdk.RGBA()
                 cursor_color.parse('#000000')
@@ -2006,7 +1973,7 @@ class TerminalWidget(Gtk.Box):
                 highlight_bg.parse('#4A90E2')
 
             if highlight_fg is None:
-                highlight_fg = self._get_contrast_color(highlight_bg)
+                highlight_fg = get_contrast_color(highlight_bg)
 
             if hasattr(self.vte, 'set_color_highlight'):
                 self.vte.set_color_highlight(highlight_bg)
