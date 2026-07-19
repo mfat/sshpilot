@@ -34,10 +34,10 @@ class Plugin(SshPilotPlugin):
         # a UI-only plugin, so there is simply nothing to register there.
         if getattr(ctx, "ui", None) is None:
             return
-        # Tools-menu "Docker Console" → open the last-used host's tab. The page
+        # Tools-menu "Docker Console" → sidebar selection, else Local. The page
         # itself is never opened directly; on_activate handles the click.
         ctx.ui.register_page("manager", "Docker Console", _ICON, lambda: None,
-                             on_activate=self._open_last_host)
+                             on_activate=self._open_from_tools)
         # Right-click a connection → a per-host Docker Console tab (API >= 1.7).
         register_action = getattr(ctx.ui, "register_connection_action", None)
         if callable(register_action):
@@ -45,8 +45,7 @@ class Plugin(SshPilotPlugin):
 
     # --- one tab per host (reused if already open) ---------------------
     def _open_host_page(self, nickname: str) -> None:
-        if not nickname:
-            return
+        nickname = nickname or _LOCAL_TARGET
         page_id = f"host-{nickname}"
         if page_id not in self._host_pages:
             try:
@@ -67,18 +66,24 @@ class Plugin(SshPilotPlugin):
 
         return DockerConsolePage(self.ctx, initial_host=nickname)
 
-    def _open_last_host(self) -> None:
-        # No host context from the Tools menu → use the last-used target, with
-        # Local always available even when there are no saved SSH connections.
-        nick = self.ctx.settings.get("last_host", None)
-        if nick and nick != _LOCAL_TARGET:
-            try:
-                known = {
-                    connection.nickname for connection in self.ctx.list_connections()
-                    if getattr(connection, "protocol", "ssh") in ("ssh", "", None)
-                }
-            except Exception:
-                known = set()
-            if nick not in known:
-                nick = None
-        self._open_host_page(nick or _LOCAL_TARGET)
+    def _sidebar_ssh_nickname(self):
+        """Nickname of the sidebar's selected SSH connection, if any."""
+        host = getattr(self.ctx, "_host", None)
+        window = getattr(host, "_window", None) if host is not None else None
+        if window is None:
+            return None
+        try:
+            row = window.connection_list.get_selected_row()
+            conn = getattr(row, "connection", None) if row else None
+            if conn is None:
+                return None
+            if getattr(conn, "protocol", "ssh") not in ("ssh", "", None):
+                return None
+            return getattr(conn, "nickname", None) or None
+        except Exception:
+            return None
+
+    def _open_from_tools(self) -> None:
+        # Tools / welcome have no explicit host: use the sidebar selection when
+        # one is selected, otherwise start on the local Docker daemon.
+        self._open_host_page(self._sidebar_ssh_nickname() or _LOCAL_TARGET)
