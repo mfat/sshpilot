@@ -44,9 +44,14 @@ def content_provider_for_payload(payload: dict) -> Gdk.ContentProvider:
 
 
 def new_internal_drop_target(
-    actions: Gdk.DragAction = Gdk.DragAction.MOVE,
+    actions: Gdk.DragAction = Gdk.DragAction.MOVE | Gdk.DragAction.COPY,
 ) -> Gtk.DropTarget:
-    """``DropTarget`` that accepts the JSON strings from our drag sources."""
+    """``DropTarget`` that accepts the JSON strings from our drag sources.
+
+    Accepts MOVE and COPY by default: sidebar drags are MOVE, command-block
+    drags are COPY, and GTK rejects a drop when source and target actions
+    don't intersect.
+    """
     return Gtk.DropTarget.new(type=GObject.TYPE_STRING, actions=actions)
 
 
