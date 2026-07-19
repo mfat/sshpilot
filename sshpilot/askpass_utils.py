@@ -118,8 +118,16 @@ _HOSTKEY_MARKERS = (
 )
 # Word-boundary match: bare substrings would misfire on hostnames/usernames
 # ("user@alpine's password:" contains 'pin', "scotp1" contains 'otp').
+#
+# OTP/MFA markers shared with the "…password" exemption below so prompts like
+# "one time password" / "TOTP password" are never treated as login passwords
+# (which would autofill the stored SSH password into an MFA challenge).
+_OTP_MFA_MARKER_RE = re.compile(
+    r'\b(?:pin|otp|totp|mfa|2fa|two[-\s]?factor|one[-\s]?time)\b'
+)
 _TYPED_INTERACTIVE_RE = re.compile(
-    r'\b(?:pin|otp|verification code|one-time|authentication code)\b'
+    r'\b(?:pin|otp|totp|mfa|2fa|two[-\s]?factor|'
+    r'verification code|one[-\s]?time|authentication code)\b'
 )
 
 
@@ -144,8 +152,9 @@ def classify_prompt(text: str) -> "str | None":
         if 'passphrase' in last:
             return 'passphrase'
         # "…'s password:" for a host that legitimately contains an OTP/PIN
-        # word is still a login password — but "one-time password" is not.
-        if 'password' in last and not re.search(r'\b(?:pin|otp|one-time)\b', last):
+        # word is still a login password — but "one-time password",
+        # "one time password", "TOTP password", etc. are MFA challenges.
+        if 'password' in last and not _OTP_MFA_MARKER_RE.search(last):
             return 'password'
         return 'interactive'
     if last.endswith(':'):
