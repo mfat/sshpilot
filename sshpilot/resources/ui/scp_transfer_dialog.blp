@@ -1,0 +1,46 @@
+using Gtk 4.0;
+using Adw 1;
+
+// Layout skeleton only. The controller (ScpWindowController._show_scp_terminal_window)
+// builds the dynamic content (progress row, embedded VTE terminal, disclosure) into
+// content_box, sets the header title text, and wires the "closed" cleanup in Python.
+template $SshPilotScpTransferDialog: Adw.Dialog {
+  follows-content-size: true;
+
+  child: Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {
+      show-end-title-buttons: false;
+
+      title-widget: Gtk.Label title_label {};
+
+      [start]
+      Gtk.Button cancel_btn {
+        label: _("Cancel");
+        clicked => $_on_close();
+      }
+
+      [end]
+      Gtk.Button close_btn {
+        label: _("Close");
+        clicked => $_on_close();
+
+        styles [
+          "suggested-action",
+        ]
+      }
+    }
+
+    content: Gtk.Box content_box {
+      orientation: vertical;
+      spacing: 8;
+      hexpand: true;
+      vexpand: true;
+      width-request: 560;
+      margin-top: 12;
+      margin-bottom: 12;
+      margin-start: 12;
+      margin-end: 12;
+    };
+  };
+}

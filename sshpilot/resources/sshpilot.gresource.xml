@@ -156,5 +156,7 @@
     <file alias="add_folder_dialog.ui" preprocess="xml-stripblanks">ui/add_folder_dialog.ui</file>
     <file alias="key_chooser_dialog.ui" preprocess="xml-stripblanks">ui/key_chooser_dialog.ui</file>
     <file alias="properties_dialog.ui" preprocess="xml-stripblanks">ui/properties_dialog.ui</file>
+    <file alias="scp_download_window.ui" preprocess="xml-stripblanks">ui/scp_download_window.ui</file>
+    <file alias="scp_transfer_dialog.ui" preprocess="xml-stripblanks">ui/scp_transfer_dialog.ui</file>
   </gresource>
 </gresources>

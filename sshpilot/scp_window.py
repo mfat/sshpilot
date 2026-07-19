@@ -65,6 +65,58 @@ class SCPConnectionProfile:
     identity_agent_disabled: bool = False
 
 
+@Gtk.Template(resource_path="/io/github/mfat/sshpilot/ui/scp_download_window.ui")
+class ScpDownloadWindow(Adw.Window):
+    """Static shell for the SCP download picker.
+
+    The controller (:meth:`ScpWindowController._prompt_scp_download`) fills
+    ``content_box`` with the dynamic remote-file browser and wires the Download
+    button in Python; the Cancel button closes declaratively.
+    """
+
+    __gtype_name__ = "SshPilotScpDownloadWindow"
+
+    window_title = Gtk.Template.Child()
+    cancel_button = Gtk.Template.Child()
+    download_button = Gtk.Template.Child()
+    content_box = Gtk.Template.Child()
+
+    def __init__(self, parent, subtitle=""):
+        super().__init__()
+        self.set_transient_for(parent)
+        self.window_title.set_subtitle(subtitle)
+
+    @Gtk.Template.Callback()
+    def _on_cancel(self, _button):
+        self.close()
+
+
+@Gtk.Template(resource_path="/io/github/mfat/sshpilot/ui/scp_transfer_dialog.ui")
+class ScpTransferDialog(Adw.Dialog):
+    """Static shell for the SCP transfer/terminal dialog.
+
+    The controller (:meth:`ScpWindowController._show_scp_terminal_window`) fills
+    ``content_box`` with the progress row + embedded terminal and connects the
+    ``closed`` cleanup in Python; Cancel/Close close declaratively.
+    """
+
+    __gtype_name__ = "SshPilotScpTransferDialog"
+
+    title_label = Gtk.Template.Child()
+    cancel_btn = Gtk.Template.Child()
+    close_btn = Gtk.Template.Child()
+    content_box = Gtk.Template.Child()
+
+    def __init__(self, title_text=""):
+        super().__init__()
+        self.set_title(title_text)
+        self.title_label.set_label(title_text)
+
+    @Gtk.Template.Callback()
+    def _on_close(self, _button):
+        self.close()
+
+
 class ScpWindowController:
     """SCP-in-a-terminal-window feature, extracted from MainWindow.
 
@@ -443,9 +495,7 @@ class ScpWindowController:
                 except Exception:
                     default_download_dir = GLib.get_home_dir() or os.path.expanduser('~')
 
-            dialog = Adw.Window()
-            dialog.set_transient_for(self.window)
-            dialog.set_modal(True)
+            dialog = ScpDownloadWindow(self.window, subtitle=display_name)
             # Register with the app so routed askpass prompts can find this
             # modal window as their parent (a bare Adw.Window is absent from
             # Gtk.Application.get_windows() and get_active_window()).
@@ -453,14 +503,6 @@ class ScpWindowController:
                 app = self.window.get_application()
                 if app is not None:
                     dialog.set_application(app)
-            except Exception:
-                pass
-            try:
-                dialog.set_default_size(520, 560)
-            except Exception:
-                pass
-            try:
-                dialog.set_title(_('Download files from server'))
             except Exception:
                 pass
 
@@ -490,37 +532,10 @@ class ScpWindowController:
 
             from sshpilot import icon_utils
 
-            toolbar = Adw.ToolbarView()
-            dialog.set_content(toolbar)
-
-            header = Adw.HeaderBar()
-            try:
-                header.set_title_widget(
-                    Adw.WindowTitle(
-                        title=_('Download files'),
-                        subtitle=display_name,
-                    )
-                )
-            except Exception:
-                header.set_title_widget(Gtk.Label(label=_('Download files')))
-
-            cancel_button = Gtk.Button(label=_('Cancel'))
-            header.pack_start(cancel_button)
-
-            download_button = Gtk.Button(label=_('Download'))
-            download_button.set_sensitive(False)
-            download_button.add_css_class('suggested-action')
-            header.pack_end(download_button)
-
-            toolbar.add_top_bar(header)
-
-            content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-            content_box.set_hexpand(True)
-            content_box.set_vexpand(True)
-            content_box.set_margin_top(12)
-            content_box.set_margin_bottom(12)
-            content_box.set_margin_start(12)
-            content_box.set_margin_end(12)
+            # Static shell (header, WindowTitle, Cancel/Download buttons) is in the
+            # template; alias its children to the local names this method uses.
+            content_box = dialog.content_box
+            download_button = dialog.download_button
 
             paths_group = Adw.PreferencesGroup()
             paths_group.set_title(_('Locations'))
@@ -680,8 +695,6 @@ class ScpWindowController:
             destination_wrapper.set_maximum_size(560)
             destination_wrapper.set_child(destination_child)
             content_box.append(destination_wrapper)
-
-            toolbar.set_content(content_box)
 
             def _open_destination_picker():
                 file_dialog = Gtk.FileDialog(title=_('Select destination folder'))
@@ -1039,7 +1052,6 @@ class ScpWindowController:
                     list_box.select_row(row)
 
             list_box.connect('row-activated', _on_row_activated)
-            cancel_button.connect('clicked', lambda *_: dialog.close())
 
             dialog.present()
             _load_remote()
@@ -1134,16 +1146,7 @@ class ScpWindowController:
             else:
                 raise ValueError(f'Unsupported scp direction: {direction}')
 
-            dlg = Adw.Dialog.new()
-            dlg.set_title(title_text)
-            dlg.set_follows_content_size(True)
-
-            toolbar = Adw.ToolbarView()
-            dlg.set_child(toolbar)
-
-            header = Adw.HeaderBar()
-            header.set_show_end_title_buttons(False)
-            header.set_title_widget(Gtk.Label(label=title_text))
+            dlg = ScpTransferDialog(title_text)
 
             scp_exit_state = {
                 'finished': False,
@@ -1188,28 +1191,9 @@ class ScpWindowController:
 
             dlg.connect('closed', _on_dialog_closed)
 
-            def _close_dialog(*_args):
-                dlg.close()
-
-            cancel_btn = Gtk.Button(label=_('Cancel'))
-            cancel_btn.connect('clicked', _close_dialog)
-            header.pack_start(cancel_btn)
-
-            close_btn = Gtk.Button(label=_('Close'))
-            close_btn.add_css_class('suggested-action')
-            close_btn.connect('clicked', _close_dialog)
-            header.pack_end(close_btn)
-
-            toolbar.add_top_bar(header)
-
-            content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-            content_box.set_hexpand(True)
-            content_box.set_vexpand(True)
-            content_box.set_size_request(560, -1)
-            content_box.set_margin_top(12)
-            content_box.set_margin_bottom(12)
-            content_box.set_margin_start(12)
-            content_box.set_margin_end(12)
+            # Static shell (header, Cancel/Close buttons) is in the template;
+            # its content_box holds the dynamic progress row + terminal below.
+            content_box = dlg.content_box
 
             (
                 progress_row,
@@ -1256,8 +1240,6 @@ class ScpWindowController:
                 terminal_is_expanded,
             ) = build_terminal_disclosure(terminal_card, _on_terminal_expanded_changed)
             content_box.append(terminal_disclosure)
-
-            toolbar.set_content(content_box)
 
             argv = self._build_scp_argv(
                 connection,
