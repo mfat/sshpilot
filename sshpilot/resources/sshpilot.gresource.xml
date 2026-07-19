@@ -140,5 +140,6 @@
     <file alias="known_hosts_editor.ui" preprocess="xml-stripblanks">ui/known_hosts_editor.ui</file>
     <file alias="shortcut_capture_dialog.ui" preprocess="xml-stripblanks">ui/shortcut_capture_dialog.ui</file>
     <file alias="shortcut_editor_window.ui" preprocess="xml-stripblanks">ui/shortcut_editor_window.ui</file>
+    <file alias="log_viewer_window.ui" preprocess="xml-stripblanks">ui/log_viewer_window.ui</file>
   </gresource>
 </gresources>

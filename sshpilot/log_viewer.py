@@ -334,6 +334,7 @@ def build_diagnostics_zip(dest_path: str) -> str:
     return dest_path
 
 
+@Gtk.Template(resource_path="/io/github/mfat/sshpilot/ui/log_viewer_window.ui")
 class LogViewerWindow(Adw.Window):
     """Main window's "Help → View Logs" target.
 
@@ -341,16 +342,40 @@ class LogViewerWindow(Adw.Window):
     *Copy for bug report*, and paste a self-contained, code-fenced summary
     into a GitHub issue. The full log file is also reachable via *Open Log
     Folder* in case a developer asks for it.
+
+    The static chrome (header, banner, filter/search rows, log text view) is
+    defined in resources/ui/log_viewer_window.blp; the dropdown models, text
+    tags, live-tail wiring, and the More-actions menu stay in Python.
     """
+
+    __gtype_name__ = "SshPilotLogViewerWindow"
+
+    follow_toggle = Gtk.Template.Child()
+    copy_btn = Gtk.Template.Child()
+    menu_button = Gtk.Template.Child()
+    banner = Gtk.Template.Child()
+    path_label = Gtk.Template.Child()
+    stats_label = Gtk.Template.Child()
+    category_dropdown = Gtk.Template.Child()
+    level_dropdown = Gtk.Template.Child()
+    search_entry = Gtk.Template.Child()
+    textview = Gtk.Template.Child()
 
     def __init__(self, parent: Optional[Gtk.Window] = None):
         super().__init__()
         if parent is not None:
             self.set_transient_for(parent)
-        # Non-modal so the user can keep using the app while reviewing logs.
-        self.set_modal(False)
-        self.set_default_size(900, 640)
-        self.set_title(_("Application Log"))
+
+        # Template-child aliases keep the rest of the class using its original
+        # ``self._x`` names (the .blp ids are underscore-free identifiers).
+        self._banner = self.banner
+        self._path_label = self.path_label
+        self._stats_label = self.stats_label
+        self._category_dropdown = self.category_dropdown
+        self._level_dropdown = self.level_dropdown
+        self._follow_toggle = self.follow_toggle
+        self._search_entry = self.search_entry
+        self._textview = self.textview
 
         # Ordered tuple of (category-id, display-label, file-path). Drives
         # the category dropdown. We rebuild path lookups on each refresh in
@@ -394,73 +419,31 @@ class LogViewerWindow(Adw.Window):
         # request) — so it's discoverable purely by sight.
         self._search_query: str = ""
 
-        toolbar = Adw.ToolbarView()
-        self.set_content(toolbar)
-
-        header = Adw.HeaderBar()
-        header.set_title_widget(Gtk.Label(label=_("Application Log")))
-        toolbar.add_top_bar(header)
-
-        # Category dropdown — constructed here, placed in the body filter
-        # row below. The header bar only carries action buttons; pairing
-        # two unlabeled DropDowns there made them look like duplicates.
+        # Category dropdown model (widget + tooltip are in the template).
         cat_model = Gtk.StringList()
         for _id, label, _path in self._categories:
             cat_model.append(label)
-        self._category_dropdown = Gtk.DropDown(model=cat_model)
+        self._category_dropdown.set_model(cat_model)
         self._category_dropdown.set_selected(0)
-        self._category_dropdown.set_tooltip_text(
-            _("Which log file to view. The bug-report bundle always uses the "
-              "complete master log regardless of this selection.")
-        )
         self._category_dropdown.connect(
             "notify::selected", self._on_category_changed
         )
 
-        # Level filter dropdown — VIEWER-side, independent of the persistent
-        # app log level. Tooltip explains the distinction so users don't
-        # confuse it with Preferences → Advanced → Logging.
+        # Level filter dropdown model — VIEWER-side, independent of the
+        # persistent app log level.
         level_model = Gtk.StringList()
         for label, _lvl in _LEVEL_FILTER_OPTIONS:
             level_model.append(label)
-        self._level_dropdown = Gtk.DropDown(model=level_model)
+        self._level_dropdown.set_model(level_model)
         self._level_dropdown.set_selected(self._level_filter_idx)
-        self._level_dropdown.set_tooltip_text(
-            _("Show lines at the selected level and above (display only). "
-              "What is actually written to the log files is controlled in "
-              "Preferences → Advanced → Logging.")
-        )
         self._level_dropdown.connect(
             "notify::selected", self._on_level_filter_changed
         )
 
-        # Follow toggle — stays in the header because it's a single-icon
-        # action that pairs naturally with the Copy / ⋮ buttons.
-        self._follow_toggle = Gtk.ToggleButton()
-        self._follow_toggle.set_icon_name("go-bottom-symbolic")
-        self._follow_toggle.set_active(self._follow_enabled)
-        self._follow_toggle.set_tooltip_text(
-            _("Follow new log entries as they are written")
-        )
         self._follow_toggle.connect("toggled", self._on_follow_toggled)
-        header.pack_start(self._follow_toggle)
-
-        # Primary action: copy a self-contained diagnostic bundle.
-        copy_btn = Gtk.Button(label=_("Copy log output"))
-        copy_btn.add_css_class("suggested-action")
-        copy_btn.set_tooltip_text(
-            _("Copy platform info and recent log lines to the clipboard, "
-              "formatted for pasting into a bug report. Always uses the "
-              "master log regardless of the current view selection.")
-        )
-        copy_btn.connect("clicked", self._on_copy_clicked)
-        header.pack_end(copy_btn)
+        self.copy_btn.connect("clicked", self._on_copy_clicked)
 
         # Secondary actions: folder, refresh, save-as, toggle full file.
-        menu_button = Gtk.MenuButton()
-        menu_button.set_icon_name("view-more-symbolic")
-        menu_button.set_tooltip_text(_("More log actions"))
-
         action_group = Gio.SimpleActionGroup()
         for name, handler in (
             ("refresh", self._do_refresh),
@@ -481,103 +464,13 @@ class LogViewerWindow(Adw.Window):
         menu_model.append(_("Save Log As…"), "logview.save-as")
         menu_model.append(_("Export Diagnostics…"), "logview.export-diagnostics")
         menu_model.append(_("Toggle Full File"), "logview.toggle-full")
-        menu_button.set_menu_model(menu_model)
-        header.pack_end(menu_button)
+        self.menu_button.set_menu_model(menu_model)
 
-        # Content: privacy banner + log path strip + scrollable log text.
-        body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        toolbar.set_content(body)
-
-        self._banner = Adw.Banner.new(
-            _("Log lines may contain hostnames, usernames, and file paths. "
-              "Review before sharing.")
-        )
-        self._banner.set_revealed(True)
-        body.append(self._banner)
-
-        # Path strip — small monospace row showing exactly where the log
-        # lives on disk so users can find it without us.
-        path_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        path_row.set_margin_top(8)
-        path_row.set_margin_bottom(4)
-        path_row.set_margin_start(12)
-        path_row.set_margin_end(12)
-        path_label_caption = Gtk.Label(label=_("Log file:"))
-        path_label_caption.add_css_class("caption")
-        path_label_caption.add_css_class("dim-label")
-        path_row.append(path_label_caption)
-        self._path_label = Gtk.Label(label=self._log_path)
-        self._path_label.add_css_class("caption")
-        self._path_label.set_selectable(True)
-        self._path_label.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
-        self._path_label.set_hexpand(True)
-        self._path_label.set_xalign(0.0)
+        # Dynamic path-strip content (widget is templated).
+        self._path_label.set_label(self._log_path)
         self._path_label.set_tooltip_text(self._log_path)
-        path_row.append(self._path_label)
-        self._stats_label = Gtk.Label()
-        self._stats_label.add_css_class("caption")
-        self._stats_label.add_css_class("dim-label")
-        path_row.append(self._stats_label)
-        body.append(path_row)
 
-        # Labeled filter strip. Each dropdown gets a small caption-labeled
-        # prefix so two unlabeled dropdowns side-by-side don't look like
-        # duplicates of each other.
-        filter_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        filter_row.set_margin_top(2)
-        filter_row.set_margin_start(12)
-        filter_row.set_margin_end(12)
-
-        cat_caption = Gtk.Label(label=_("Category:"))
-        cat_caption.add_css_class("caption")
-        cat_caption.add_css_class("dim-label")
-        cat_caption.set_valign(Gtk.Align.CENTER)
-        filter_row.append(cat_caption)
-        filter_row.append(self._category_dropdown)
-
-        # Visual spacer between the two filters so they don't blur together.
-        spacer = Gtk.Box()
-        spacer.set_size_request(16, -1)
-        filter_row.append(spacer)
-
-        lvl_caption = Gtk.Label(label=_("Level:"))
-        lvl_caption.add_css_class("caption")
-        lvl_caption.add_css_class("dim-label")
-        lvl_caption.set_valign(Gtk.Align.CENTER)
-        filter_row.append(lvl_caption)
-        filter_row.append(self._level_dropdown)
-
-        body.append(filter_row)
-
-        # Always-visible search entry. Filters lines client-side by
-        # substring (case-insensitive); combines with the level filter via
-        # AND. No keyboard shortcut binding by design — the entry is
-        # always on screen so users find it by sight, and no accelerator
-        # can collide with the rest of the app's shortcuts.
-        search_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        search_row.set_margin_top(2)
-        search_row.set_margin_bottom(8)
-        search_row.set_margin_start(12)
-        search_row.set_margin_end(12)
-        self._search_entry = Gtk.SearchEntry()
-        self._search_entry.set_placeholder_text(
-            _("Search visible lines (case-insensitive)")
-        )
-        self._search_entry.set_hexpand(True)
         self._search_entry.connect("search-changed", self._on_search_changed)
-        search_row.append(self._search_entry)
-        body.append(search_row)
-
-        # Scrollable monospace log view.
-        self._textview = Gtk.TextView()
-        self._textview.set_monospace(True)
-        self._textview.set_editable(False)
-        self._textview.set_cursor_visible(False)
-        self._textview.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
-        self._textview.set_top_margin(8)
-        self._textview.set_bottom_margin(8)
-        self._textview.set_left_margin(12)
-        self._textview.set_right_margin(12)
 
         # Per-level highlight tags. INFO/DEBUG are intentionally left
         # unstyled so they read as background context; only the levels that
@@ -600,12 +493,6 @@ class LogViewerWindow(Adw.Window):
             "search-match", background="#f5c211",
             foreground="#000000",
         )
-
-        scrolled = Gtk.ScrolledWindow()
-        scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
-        scrolled.set_vexpand(True)
-        scrolled.set_child(self._textview)
-        body.append(scrolled)
 
         # Make sure we drop the file monitor when the window closes —
         # otherwise the GFile handle stays bound for the rest of the session.
