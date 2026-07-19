@@ -124,14 +124,32 @@ def test_connection_action_opens_per_host_tab_and_reuses_it():
     assert ctx.ui.opened[-1] == "host-db"
 
 
-def test_tools_menu_opens_last_used_host():
+def test_tools_menu_opens_local_when_no_host_selected():
+    # last_host must not win over an empty sidebar selection.
     connection = types.SimpleNamespace(nickname="beta", protocol="ssh")
     ctx = _fake_ctx(last_host="beta", connections=(connection,))
     plugin = Plugin()
     plugin.activate(ctx)
     on_activate = next(p[4]["on_activate"] for p in ctx.ui.pages if p[0] == "manager")
     on_activate()
-    assert "host-beta" in ctx.ui.opened
+    assert ctx.ui.opened == ["host-__local__"]
+
+
+def test_tools_menu_opens_sidebar_selection():
+    connection = types.SimpleNamespace(nickname="beta", protocol="ssh")
+    ctx = _fake_ctx(last_host="other", connections=(connection,))
+    ctx._host = types.SimpleNamespace(
+        _window=types.SimpleNamespace(
+            connection_list=types.SimpleNamespace(
+                get_selected_row=lambda: types.SimpleNamespace(connection=connection),
+            ),
+        ),
+    )
+    plugin = Plugin()
+    plugin.activate(ctx)
+    on_activate = next(p[4]["on_activate"] for p in ctx.ui.pages if p[0] == "manager")
+    on_activate()
+    assert ctx.ui.opened == ["host-beta"]
 
 
 def test_tools_menu_no_connections_opens_local_console():
