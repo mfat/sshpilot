@@ -4,8 +4,10 @@ from __future__ import annotations
 import logging
 from typing import List, Optional
 
-from gi.repository import Gtk, Gdk, GObject, GLib, Adw
+from gi.repository import Gtk, Gdk, GLib, Adw
 from gettext import gettext as _
+
+from .dnd_payload import decode_dnd_payload, new_internal_drop_target
 
 logger = logging.getLogger(__name__)
 
@@ -13,14 +15,16 @@ logger = logging.getLogger(__name__)
 def _connections_from_drop_payload(value) -> List[str]:
     """Normalize a sidebar drop payload into an ordered list of nicknames.
 
-    The payload is the ``TYPE_PYOBJECT`` value carried by a connection drag:
-    a dict with ``type == "connection"`` and either ``connection_nicknames``
-    (a list, multi-select) or a single ``connection_nickname`` fallback.
+    Accepts the pasteboard-safe JSON string from sidebar connection drags
+    (or a bare payload dict in unit tests). Expects ``type == "connection"``
+    and either ``connection_nicknames`` (multi-select) or a single
+    ``connection_nickname`` fallback.
 
-    Returns ``[]`` for anything that isn't a connection payload (non-dict,
-    wrong/absent type, or no nicknames), so callers can treat an empty list as
-    "not a drop we handle". Pure — no widget access — so it is unit-testable.
+    Returns ``[]`` for anything that isn't a connection payload, so callers
+    can treat an empty list as "not a drop we handle". Pure — no widget
+    access — so it is unit-testable.
     """
+    value = decode_dnd_payload(value)
     if not isinstance(value, dict) or value.get("type") != "connection":
         return []
     nicknames = value.get("connection_nicknames") or []
@@ -464,15 +468,13 @@ class SplitPane(Gtk.Box):
     # ── drag-and-drop ────────────────────────────────────────────────────────
 
     def _setup_drop_target(self) -> None:
-        dt = Gtk.DropTarget.new(type=GObject.TYPE_PYOBJECT, actions=Gdk.DragAction.MOVE)
+        dt = new_internal_drop_target(Gdk.DragAction.MOVE)
         dt.connect("drop", self._on_drop)
         dt.connect("enter", lambda _t, _x, _y: Gdk.DragAction.MOVE)
         self.add_controller(dt)
 
     def _on_drop(self, _target, value, _x: float, _y: float) -> bool:
         try:
-            if hasattr(value, 'get_value'):
-                value = value.get_value()
             nicknames = _connections_from_drop_payload(value)
             if not nicknames:
                 return False
@@ -931,7 +933,7 @@ class SplitViewTab(Gtk.Box):
         self._add_pane_btn = add_btn
         self._add_pane_strip = strip
 
-        dt = Gtk.DropTarget.new(type=GObject.TYPE_PYOBJECT, actions=Gdk.DragAction.MOVE)
+        dt = new_internal_drop_target(Gdk.DragAction.MOVE)
         dt.connect("enter", lambda _t, _x, _y: Gdk.DragAction.MOVE)
         dt.connect("drop", self._on_add_pane_drop)
         strip.add_controller(dt)
@@ -980,18 +982,14 @@ class SplitViewTab(Gtk.Box):
 
     def _on_add_pane_drop(self, _target, value, _x, _y) -> bool:
         try:
-            if hasattr(value, 'get_value'):
-                value = value.get_value()
-            if not isinstance(value, dict) or value.get("type") != "connection":
+            nicknames = _connections_from_drop_payload(value)
+            if not nicknames:
                 return False
-            nicknames = value.get("connection_nicknames") or []
-            if not nicknames and value.get("connection_nickname"):
-                nicknames = [value["connection_nickname"]]
             for nick in nicknames:
                 conn = self.window.connection_manager.find_connection_by_nickname(nick)
                 if conn is not None:
                     self.add_pane().add_connection(conn)
-            return bool(nicknames)
+            return True
         except Exception as exc:
             logger.error("add-pane drop failed: %s", exc)
             return False
@@ -1004,7 +1002,7 @@ class SplitViewTab(Gtk.Box):
         spacer.set_hexpand(True)
         spacer.set_size_request(-1, self.SCROLL_SPACER_HEIGHT)
 
-        dt = Gtk.DropTarget.new(type=GObject.TYPE_PYOBJECT, actions=Gdk.DragAction.MOVE)
+        dt = new_internal_drop_target(Gdk.DragAction.MOVE)
         dt.connect("enter", lambda _t, _x, _y: self._on_scroll_spacer_drag_enter())
         dt.connect("leave", lambda _t: self._on_scroll_spacer_drag_leave())
         dt.connect("drop", self._on_add_pane_drop)

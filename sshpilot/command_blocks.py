@@ -13,6 +13,7 @@ gi.require_version('Adw', '1')
 from gi.repository import Gtk, Adw, GLib, GObject, Gdk, Pango
 
 from .context_menu import IconContextMenu
+from .dnd_payload import content_provider_for_payload
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
@@ -1264,16 +1265,14 @@ class CommandBlocksPanel(Gtk.Box):
         _cmd = cmd
 
         def _on_prepare(src, x, y):
-            payload = {
+            # JSON string — TYPE_PYOBJECT crashes macOS pasteboard (issues #704/#876).
+            return content_provider_for_payload({
                 'type': 'command_block',
                 'command_id': _cmd['id'],
                 'name': _cmd.get('name', ''),
                 'command': _cmd.get('command', ''),
                 'has_placeholders': _cmd.get('has_placeholders', False),
-            }
-            val = GObject.Value(GObject.TYPE_PYOBJECT)
-            val.set_boxed(payload)
-            return Gdk.ContentProvider.new_for_value(val)
+            })
 
         drag_source.connect('prepare', _on_prepare)
         row.add_controller(drag_source)

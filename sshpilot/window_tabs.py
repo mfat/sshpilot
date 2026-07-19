@@ -20,6 +20,7 @@ from gi.repository import Gtk, Adw, Gio, GLib, Gdk, GObject
 from gettext import gettext as _
 
 from sshpilot import icon_utils
+from .dnd_payload import decode_dnd_payload, new_internal_drop_target
 from .terminal import TerminalWidget
 from .plugins.api import Capability
 from .plugins.registry import capabilities_for
@@ -962,13 +963,11 @@ class WindowTabsMixin:
 
     def _register_convert_to_split_drop(self, terminal, page) -> None:
         """Attach a drop target to terminal so dragging a connection converts the tab to split view."""
-        from gi.repository import Gtk, Gdk, GObject
-        dt = Gtk.DropTarget.new(type=GObject.TYPE_PYOBJECT, actions=Gdk.DragAction.MOVE)
+        dt = new_internal_drop_target(Gdk.DragAction.MOVE)
 
         def _on_drop(_target, value, _x, _y):
             try:
-                if hasattr(value, 'get_value'):
-                    value = value.get_value()
+                value = decode_dnd_payload(value)
                 if not isinstance(value, dict):
                     return False
 
