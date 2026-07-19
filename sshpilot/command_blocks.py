@@ -343,21 +343,25 @@ class CommandBlockStore:
 # PlaceholderDialog
 # ---------------------------------------------------------------------------
 
+@Gtk.Template(resource_path="/io/github/mfat/sshpilot/ui/placeholder_dialog.ui")
 class PlaceholderDialog(Adw.Window):
     """Fill in ${VAR} placeholders before sending a command to the terminal."""
+
+    __gtype_name__ = "SshPilotPlaceholderDialog"
 
     __gsignals__ = {
         'send': (GObject.SignalFlags.RUN_FIRST, None, (str,)),
     }
+
+    cancel_btn = Gtk.Template.Child()
+    send_btn = Gtk.Template.Child()
+    body = Gtk.Template.Child()
 
     def __init__(self, parent: Gtk.Window, cmd: dict) -> None:
         super().__init__()
         self._cmd = cmd
         self._entries: dict[str, Gtk.Entry] = {}
         self.set_transient_for(parent)
-        self.set_modal(True)
-        self.set_default_size(420, -1)
-        self.set_title(_('Fill Placeholders'))
         self._build_ui()
 
     def _parse_placeholders(self, command: str) -> list[str]:
@@ -368,34 +372,15 @@ class PlaceholderDialog(Adw.Window):
         return seen
 
     def _build_ui(self) -> None:
-        root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        self.set_content(root)
-
-        header = Adw.HeaderBar()
-        cancel_btn = Gtk.Button(label=_('Cancel'))
-        cancel_btn.connect('clicked', lambda _: self.close())
-        header.pack_start(cancel_btn)
-        send_btn = Gtk.Button(label=_('Send'))
-        send_btn.add_css_class('suggested-action')
-        send_btn.connect('clicked', self._on_confirm)
-        header.pack_end(send_btn)
-        root.append(header)
+        # Static shell (header Cancel/Send + scrolled body) is in the template.
+        self.cancel_btn.connect('clicked', lambda _: self.close())
+        self.send_btn.connect('clicked', self._on_confirm)
 
         key_ctrl = Gtk.EventControllerKey()
         key_ctrl.connect('key-pressed', self._on_key_pressed)
         self.add_controller(key_ctrl)
 
-        scr = Gtk.ScrolledWindow()
-        scr.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scr.set_propagate_natural_height(True)
-        root.append(scr)
-
-        body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        body.set_margin_start(16)
-        body.set_margin_end(16)
-        body.set_margin_top(12)
-        body.set_margin_bottom(16)
-        scr.set_child(body)
+        body = self.body
 
         title_lbl = Gtk.Label()
         title_lbl.set_markup(f'<b>{GLib.markup_escape_text(self._cmd.get("name", ""))}</b>')
@@ -669,12 +654,19 @@ class CommandRow(Gtk.ListBoxRow):
 # CommandEditDialog
 # ---------------------------------------------------------------------------
 
+@Gtk.Template(resource_path="/io/github/mfat/sshpilot/ui/command_edit_dialog.ui")
 class CommandEditDialog(Adw.Window):
     """Add or edit a CommandBlock."""
+
+    __gtype_name__ = "SshPilotCommandEditDialog"
 
     __gsignals__ = {
         'saved': (GObject.SignalFlags.RUN_FIRST, None, (object,)),
     }
+
+    cancel_btn = Gtk.Template.Child()
+    save_btn = Gtk.Template.Child()
+    body = Gtk.Template.Child()
 
     def __init__(self, parent: Gtk.Window, store: CommandBlockStore,
                  cmd: dict | None = None) -> None:
@@ -682,36 +674,15 @@ class CommandEditDialog(Adw.Window):
         self._store = store
         self._cmd = cmd
         self.set_transient_for(parent)
-        self.set_modal(True)
-        self.set_default_size(520, 580)
         self.set_title(_('Edit Command') if cmd else _('New Command'))
         self._build_ui()
 
     def _build_ui(self) -> None:
-        root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        self.set_content(root)
+        # Static shell (header Cancel/Save + scrolled body) is in the template.
+        self.cancel_btn.connect('clicked', lambda _: self.close())
+        self.save_btn.connect('clicked', self._on_save)
 
-        header = Adw.HeaderBar()
-        cancel_btn = Gtk.Button(label=_('Cancel'))
-        cancel_btn.connect('clicked', lambda _: self.close())
-        header.pack_start(cancel_btn)
-        save_btn = Gtk.Button(label=_('Save'))
-        save_btn.add_css_class('suggested-action')
-        save_btn.connect('clicked', self._on_save)
-        header.pack_end(save_btn)
-        root.append(header)
-
-        scr = Gtk.ScrolledWindow()
-        scr.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scr.set_vexpand(True)
-        root.append(scr)
-
-        body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
-        body.set_margin_start(16)
-        body.set_margin_end(16)
-        body.set_margin_top(12)
-        body.set_margin_bottom(16)
-        scr.set_child(body)
+        body = self.body
 
         details_group = Adw.PreferencesGroup(title=_('Command Details'))
         body.append(details_group)
@@ -821,47 +792,31 @@ class CommandEditDialog(Adw.Window):
 # AddFolderDialog
 # ---------------------------------------------------------------------------
 
+@Gtk.Template(resource_path="/io/github/mfat/sshpilot/ui/add_folder_dialog.ui")
 class AddFolderDialog(Adw.Window):
     """Simple dialog to name a new folder."""
+
+    __gtype_name__ = "SshPilotAddFolderDialog"
 
     __gsignals__ = {
         'created': (GObject.SignalFlags.RUN_FIRST, None, (str,)),
     }
 
+    cancel_btn = Gtk.Template.Child()
+    create_btn = Gtk.Template.Child()
+    name_row = Gtk.Template.Child()
+
     def __init__(self, parent: Gtk.Window) -> None:
         super().__init__()
         self.set_transient_for(parent)
-        self.set_modal(True)
-        self.set_default_size(360, -1)
-        self.set_title(_('New Folder'))
         self._build_ui()
 
     def _build_ui(self) -> None:
-        root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        self.set_content(root)
-
-        header = Adw.HeaderBar()
-        cancel_btn = Gtk.Button(label=_('Cancel'))
-        cancel_btn.connect('clicked', lambda _: self.close())
-        header.pack_start(cancel_btn)
-        create_btn = Gtk.Button(label=_('Create'))
-        create_btn.add_css_class('suggested-action')
-        create_btn.connect('clicked', self._on_create)
-        header.pack_end(create_btn)
-        root.append(header)
-
-        body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        body.set_margin_start(16)
-        body.set_margin_end(16)
-        body.set_margin_top(12)
-        body.set_margin_bottom(16)
-        root.append(body)
-
-        group = Adw.PreferencesGroup()
-        self._name_row = Adw.EntryRow(title=_('Folder Name'))
+        # Static shell (header Cancel/Create + name entry row) is in the template.
+        self.cancel_btn.connect('clicked', lambda _: self.close())
+        self.create_btn.connect('clicked', self._on_create)
+        self._name_row = self.name_row
         self._name_row.connect('entry-activated', self._on_create)
-        group.add(self._name_row)
-        body.append(group)
 
     def _on_create(self, *_) -> None:
         name = self._name_row.get_text().strip()

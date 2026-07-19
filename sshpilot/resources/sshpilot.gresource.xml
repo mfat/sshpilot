@@ -151,5 +151,8 @@
     <file alias="window.ui" preprocess="xml-stripblanks">ui/window.ui</file>
     <file alias="mount_progress_dialog.ui" preprocess="xml-stripblanks">ui/mount_progress_dialog.ui</file>
     <file alias="sftp_connection_dialog.ui" preprocess="xml-stripblanks">ui/sftp_connection_dialog.ui</file>
+    <file alias="placeholder_dialog.ui" preprocess="xml-stripblanks">ui/placeholder_dialog.ui</file>
+    <file alias="command_edit_dialog.ui" preprocess="xml-stripblanks">ui/command_edit_dialog.ui</file>
+    <file alias="add_folder_dialog.ui" preprocess="xml-stripblanks">ui/add_folder_dialog.ui</file>
   </gresource>
 </gresources>
