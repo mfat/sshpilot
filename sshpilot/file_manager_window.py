@@ -73,8 +73,15 @@ logger = logging.getLogger(__name__)
 _file_manager_windows_registry: weakref.WeakSet = weakref.WeakSet()
 
 
+@Gtk.Template(resource_path="/io/github/mfat/sshpilot/ui/file_manager_window.ui")
 class FileManagerWindow(Adw.Window):
     """Top-level window hosting two :class:`FilePane` instances."""
+
+    __gtype_name__ = "SshPilotFileManagerWindow"
+
+    toolbar_view = Gtk.Template.Child()
+    toast_overlay = Gtk.Template.Child()
+    panes = Gtk.Template.Child()
 
     def __init__(
         self,
@@ -118,9 +125,9 @@ class FileManagerWindow(Adw.Window):
         self._max_password_retries = 3
 
         # Use ToolbarView like other Adw.Window instances
-        toolbar_view = Adw.ToolbarView()
-        self.set_content(toolbar_view)
-        self._toolbar_view = toolbar_view
+        # Container skeleton (ToolbarView/ToastOverlay/Paned) lives in the
+        # template; alias the template children to the names the class uses.
+        toolbar_view = self._toolbar_view = self.toolbar_view
         self._embedded_parent: Optional[Gtk.Widget] = None
         
         # Create header bar with window controls
@@ -147,8 +154,8 @@ class FileManagerWindow(Adw.Window):
         self._local_pane_toggle.connect("toggled", self._on_local_pane_toggle)
         header_bar.pack_start(self._local_pane_toggle)
         
-        # Create toast overlay first and set it as toolbar content
-        self._toast_overlay = Adw.ToastOverlay()
+        # Toast overlay lives in the template.
+        self._toast_overlay = self.toast_overlay
         self._progress_dialog: Optional[SFTPProgressDialog] = None
         self._connection_error_reported = False
 
@@ -258,22 +265,10 @@ class FileManagerWindow(Adw.Window):
             css_provider, Gtk.STYLE_PROVIDER_PRIORITY_USER
         )
         
-        toolbar_view.set_content(self._toast_overlay)
         toolbar_view.add_top_bar(header_bar)
 
-        # Create the main content area and set it as toast overlay child
-        panes = Gtk.Paned.new(Gtk.Orientation.HORIZONTAL)
-        panes.set_wide_handle(False)
-        # Set position to split evenly by default (50%)
-        panes.set_position(500)  # This will be adjusted when window is resized
-        # Enable resizing and shrinking for both panes following GNOME HIG
-        panes.set_resize_start_child(True)
-        panes.set_resize_end_child(True)
-        panes.set_shrink_start_child(False)
-        panes.set_shrink_end_child(False)
-        
-        # Set panes as the child of toast overlay
-        self._toast_overlay.set_child(panes)
+        # The main content Paned lives in the template (props set there).
+        panes = self.panes
         # Connect to size changes to maintain proportional split
         self.connect("notify::default-width", self._on_window_resize)
         # Also connect to the panes widget size changes

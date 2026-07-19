@@ -146,5 +146,6 @@
     <file alias="sshcopyid_window.ui" preprocess="xml-stripblanks">ui/sshcopyid_window.ui</file>
     <file alias="connection_dialog.ui" preprocess="xml-stripblanks">ui/connection_dialog.ui</file>
     <file alias="text_editor_window.ui" preprocess="xml-stripblanks">ui/text_editor_window.ui</file>
+    <file alias="file_manager_window.ui" preprocess="xml-stripblanks">ui/file_manager_window.ui</file>
   </gresource>
 </gresources>
