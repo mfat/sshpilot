@@ -11,15 +11,18 @@ from .platform_utils import get_ssh_dir
 logger = logging.getLogger(__name__)
 
 
+@Gtk.Template(resource_path="/io/github/mfat/sshpilot/ui/known_hosts_editor.ui")
 class KnownHostsEditorWindow(Adw.Window):
     """Simple window for viewing and removing entries from known_hosts."""
+
+    __gtype_name__ = "KnownHostsEditorWindow"
+
+    search_entry = Gtk.Template.Child()
+    listbox = Gtk.Template.Child()
 
     def __init__(self, parent, connection_manager, on_saved: Optional[Callable] = None):
         super().__init__()
         self.set_transient_for(parent)
-        self.set_modal(True)
-        self.set_default_size(700, 500)
-        self.set_title(_("Known Hosts Editor"))
 
         self._cm = connection_manager
         self._on_saved = on_saved
@@ -30,52 +33,11 @@ class KnownHostsEditorWindow(Adw.Window):
         )
         self._all_entries = []  # Store all entries for filtering
 
-        tv = Adw.ToolbarView()
-        self.set_content(tv)
-
-        header = Adw.HeaderBar()
-        header.set_title_widget(Gtk.Label(label=_("Known Hosts Editor")))
-        tv.add_top_bar(header)
-
-        cancel_btn = Gtk.Button(label=_("Cancel"))
-        cancel_btn.connect("clicked", lambda *_: self.close())
-        header.pack_start(cancel_btn)
-
-        save_btn = Gtk.Button(label=_("Save"))
-        save_btn.add_css_class("suggested-action")
-        save_btn.connect("clicked", self._on_save_clicked)
-        header.pack_end(save_btn)
-
-        # Create search entry with minimal margins
-        self.search_entry = Gtk.SearchEntry()
-        self.search_entry.set_placeholder_text(_("Search known hosts..."))
-        self.search_entry.set_margin_start(12)
-        self.search_entry.set_margin_end(12)
-        self.search_entry.set_margin_top(6)
-        self.search_entry.set_margin_bottom(3)
-        self.search_entry.connect('search-changed', self._on_search_changed)
-        
-        # Create main content box
-        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        main_box.append(self.search_entry)
-        
-        # Add thin separator
-        separator = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
-        main_box.append(separator)
-
-        self.listbox = Gtk.ListBox()
-        self.listbox.set_selection_mode(Gtk.SelectionMode.NONE)
-
-        # Create scrolled window that expands to fill available space
-        scrolled = Gtk.ScrolledWindow()
-        scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
-        scrolled.set_child(self.listbox)
-        scrolled.set_vexpand(True)  # Make it expand vertically
-        main_box.append(scrolled)
-        
-        tv.set_content(main_box)
-
         self._load_entries()
+
+    @Gtk.Template.Callback()
+    def _on_cancel_clicked(self, _btn):
+        self.close()
 
     def _load_entries(self):
         """Load known_hosts entries into the listbox."""
@@ -206,6 +168,7 @@ class KnownHostsEditorWindow(Adw.Window):
             _btn.set_sensitive(True)
             icon_utils.set_button_icon(_btn, 'user-trash-symbolic')
 
+    @Gtk.Template.Callback()
     def _on_search_changed(self, search_entry):
         """Handle search text changes."""
         search_text = search_entry.get_text().lower().strip()
@@ -221,6 +184,7 @@ class KnownHostsEditorWindow(Adw.Window):
                     filtered_entries.append(line)
             self._display_entries(filtered_entries)
 
+    @Gtk.Template.Callback()
     def _on_save_clicked(self, _btn):
         # Save all remaining entries from the _all_entries list
         lines = self._all_entries.copy()

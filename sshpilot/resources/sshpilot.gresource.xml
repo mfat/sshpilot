@@ -137,5 +137,6 @@
 
   <gresource prefix="/io/github/mfat/sshpilot/ui">
     <file alias="monospace_font_dialog.ui" preprocess="xml-stripblanks">ui/monospace_font_dialog.ui</file>
+    <file alias="known_hosts_editor.ui" preprocess="xml-stripblanks">ui/known_hosts_editor.ui</file>
   </gresource>
 </gresources>
