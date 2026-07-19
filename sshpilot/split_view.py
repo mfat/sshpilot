@@ -468,7 +468,7 @@ class SplitPane(Gtk.Box):
     # ── drag-and-drop ────────────────────────────────────────────────────────
 
     def _setup_drop_target(self) -> None:
-        dt = new_internal_drop_target(Gdk.DragAction.MOVE)
+        dt = new_internal_drop_target()
         dt.connect("drop", self._on_drop)
         dt.connect("enter", lambda _t, _x, _y: Gdk.DragAction.MOVE)
         self.add_controller(dt)
@@ -933,7 +933,7 @@ class SplitViewTab(Gtk.Box):
         self._add_pane_btn = add_btn
         self._add_pane_strip = strip
 
-        dt = new_internal_drop_target(Gdk.DragAction.MOVE)
+        dt = new_internal_drop_target()
         dt.connect("enter", lambda _t, _x, _y: Gdk.DragAction.MOVE)
         dt.connect("drop", self._on_add_pane_drop)
         strip.add_controller(dt)
@@ -1002,7 +1002,7 @@ class SplitViewTab(Gtk.Box):
         spacer.set_hexpand(True)
         spacer.set_size_request(-1, self.SCROLL_SPACER_HEIGHT)
 
-        dt = new_internal_drop_target(Gdk.DragAction.MOVE)
+        dt = new_internal_drop_target()
         dt.connect("enter", lambda _t, _x, _y: self._on_scroll_spacer_drag_enter())
         dt.connect("leave", lambda _t: self._on_scroll_spacer_drag_leave())
         dt.connect("drop", self._on_add_pane_drop)

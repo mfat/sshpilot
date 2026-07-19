@@ -965,7 +965,7 @@ class WindowTabsMixin:
 
     def _register_convert_to_split_drop(self, terminal, page) -> None:
         """Attach a drop target to terminal so dragging a connection converts the tab to split view."""
-        dt = new_internal_drop_target(Gdk.DragAction.MOVE)
+        dt = new_internal_drop_target()
 
         def _on_drop(_target, value, _x, _y):
             try:

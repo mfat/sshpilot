@@ -2007,7 +2007,7 @@ def reset_connection_list_drag_session(window) -> None:
 def setup_connection_list_dnd(window):
     """Set up drag and drop for the window's connection list."""
 
-    drop_target = new_internal_drop_target(Gdk.DragAction.MOVE)
+    drop_target = new_internal_drop_target()
     drop_target.connect("drop", lambda t, v, x, y: _on_connection_list_drop(window, t, v, x, y))
     drop_target.connect("motion", lambda t, x, y: _on_connection_list_motion(window, t, x, y))
     drop_target.connect("leave", lambda t: _on_connection_list_leave(window, t))
