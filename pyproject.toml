@@ -73,6 +73,10 @@ exclude = ["packaging*", "screenshots*", "sshpilot.plugins.examples*"]
 # and the app fails at startup with "can't load gresource".
 "sshpilot" = ["resources/**/*", "resources/*"]
 # PyXterm.js web-terminal backend: HTML template + bundled xterm.js assets
+#
+# (Blueprint .blp sources are excluded below — they are build-time inputs
+# compiled to .ui and bundled in sshpilot.gresource; the running app never
+# reads them.)
 # (the latter is a fallback; Debian prefers the system libjs-xterm at runtime).
 "sshpilot.vendor.pyxtermjs" = ["xterm/**/*"]
 # Built-in plugin manifests are read from disk by the plugin loader.
@@ -84,6 +88,12 @@ exclude = ["packaging*", "screenshots*", "sshpilot.plugins.examples*"]
 "sshpilot.plugins.builtin.kubernetes_protocol" = ["plugin.json"]
 "sshpilot.plugins.builtin.mosh_protocol" = ["plugin.json"]
 "sshpilot.plugins.builtin.docker_manager" = ["plugin.json"]
+
+[tool.setuptools.exclude-package-data]
+# Blueprint sources are build-time only: they compile to resources/ui/*.ui,
+# which are bundled into sshpilot.gresource. The installed app never reads the
+# .blp, so keep them out of the wheel.
+"sshpilot" = ["resources/ui/*.blp"]
 
 [project.urls]
 Homepage = "https://github.com/mfat/sshpilot"
