@@ -91,36 +91,16 @@ def _get_action_label(name: str) -> str:
     return name.replace('-', ' ').title()
 
 
+@Gtk.Template(resource_path="/io/github/mfat/sshpilot/ui/shortcut_capture_dialog.ui")
 class _ShortcutCaptureDialog(Adw.Window):
     """Modal dialog that captures a shortcut press."""
 
+    __gtype_name__ = "SshPilotShortcutCaptureDialog"
+
     def __init__(self, parent: Adw.Window, on_selected):
-        super().__init__(transient_for=parent, modal=True)
-        self.set_title(_('Assign Shortcut'))
-        self.set_default_size(360, 160)
+        super().__init__(transient_for=parent)
         self._on_selected = on_selected
         self._handled = False
-
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        box.set_margin_top(24)
-        box.set_margin_bottom(24)
-        box.set_margin_start(24)
-        box.set_margin_end(24)
-
-        title = Gtk.Label(label=_('Press the new shortcut'))
-        title.add_css_class('title-3')
-        title.set_halign(Gtk.Align.CENTER)
-
-        subtitle = Gtk.Label(
-            label=_('Press Esc to cancel. Shortcuts must include a key (modifiers optional).')
-        )
-        subtitle.set_wrap(True)
-        subtitle.set_justify(Gtk.Justification.CENTER)
-
-        box.append(title)
-        box.append(subtitle)
-
-        self.set_content(box)
 
         controller = Gtk.EventControllerKey()
         controller.connect('key-pressed', self._on_key_pressed)
@@ -665,23 +645,22 @@ class ShortcutsPreferencesPage(PreferencesPageBase):
         row.set_tooltip_text(notice if self._pass_through_enabled else None)
 
 
+@Gtk.Template(resource_path="/io/github/mfat/sshpilot/ui/shortcut_editor_window.ui")
 class ShortcutEditorWindow(Adw.Window):
     """Window that allows editing of application keyboard shortcuts."""
 
+    __gtype_name__ = "SshPilotShortcutEditorWindow"
+
+    pass_through_switch = Gtk.Template.Child()
+    editor_scrolled = Gtk.Template.Child()
+
     def __init__(self, parent_window):
-        super().__init__(transient_for=parent_window, modal=True)
-        self.set_title(_('Shortcut Editor'))
-        self.set_default_size(600, 600)
+        super().__init__(transient_for=parent_window)
 
         self._parent_window = parent_window
         self._app = parent_window.get_application()
         self._config = getattr(self._app, 'config', None)
 
-        toolbar_view = Adw.ToolbarView()
-        header = Adw.HeaderBar()
-        header.set_title_widget(
-            Adw.WindowTitle.new(_('Shortcut Editor'), _('Customize keyboard shortcuts'))
-        )
         pass_through_active = False
         if self._config is not None:
             try:
@@ -691,24 +670,8 @@ class ShortcutEditorWindow(Adw.Window):
             except Exception:
                 pass
 
-        toggle_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        toggle_label = Gtk.Label(label=_('Pass-through'))
-        toggle_label.set_halign(Gtk.Align.END)
-        toggle_label.set_valign(Gtk.Align.CENTER)
-        self._pass_through_switch = Gtk.Switch()
-        self._pass_through_switch.set_active(pass_through_active)
-        self._pass_through_switch.set_valign(Gtk.Align.CENTER)
-        self._pass_through_switch.connect('notify::active', self._on_pass_through_switch_toggled)
-        toggle_box.append(toggle_label)
-        toggle_box.append(self._pass_through_switch)
-        try:
-            header.pack_end(toggle_box)
-        except AttributeError:
-            header.add_suffix(toggle_box)
-        toolbar_view.add_top_bar(header)
-
-        scrolled = Gtk.ScrolledWindow()
-        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        self.pass_through_switch.set_active(pass_through_active)
+        self.pass_through_switch.connect('notify::active', self._on_pass_through_switch_toggled)
 
         self._preferences_page = ShortcutsPreferencesPage(
             parent_widget=self,
@@ -717,10 +680,7 @@ class ShortcutEditorWindow(Adw.Window):
             owner_window=self._parent_window,
         )
         editor_widget = self._preferences_page.create_editor_widget()
-        scrolled.set_child(editor_widget)
-
-        toolbar_view.set_content(scrolled)
-        self.set_content(toolbar_view)
+        self.editor_scrolled.set_child(editor_widget)
 
         self._preferences_page.set_pass_through_enabled(pass_through_active)
 
