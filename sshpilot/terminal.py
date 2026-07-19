@@ -199,6 +199,14 @@ class TerminalWidget(Gtk.Box):
         self.vte = getattr(self.backend, 'vte', None)
         self.terminal_widget = getattr(self.backend, 'widget', None)
 
+        # Search overlay lives in a composed object. Create it BEFORE
+        # setup_terminal(): that call runs _install_shortcuts(), which attaches
+        # the search key controller via self._search. Widget construction does
+        # not depend on the backend, and the key controller needs self.vte
+        # (set above), so this ordering is required for Ctrl+F/Ctrl+G/Esc to work.
+        self._search = TerminalSearch(self)
+        self.search_revealer = self._search.search_revealer
+
         # Initialize terminal with basic settings and apply configured theme early
         self.setup_terminal()
         try:
@@ -213,11 +221,6 @@ class TerminalWidget(Gtk.Box):
                 self.backend.ensure_shell_loaded()
         self.overlay = Gtk.Overlay()
         self.overlay.set_child(self.scrolled_window)
-
-        # Search overlay (widgets + state + backend driving) live in a composed
-        # object; TerminalWidget keeps thin forwarders for the external API.
-        self._search = TerminalSearch(self)
-        self.search_revealer = self._search.search_revealer
 
         # Connecting overlay elements
         self.connecting_bg = Gtk.Box()
@@ -3339,10 +3342,18 @@ class TerminalWidget(Gtk.Box):
         except Exception as e:
             logger.debug(f"Failed to install shortcuts: {e}")
 
-        try:
-            self._search._ensure_search_key_controller()
-        except Exception:
-            pass
+        # self._search is created before setup_terminal() (which calls this), so it
+        # is normally present; guard + log rather than a bare except so a future
+        # init-order regression is visible instead of silently dropping the
+        # keyboard search shortcuts.
+        search = getattr(self, '_search', None)
+        if search is not None:
+            try:
+                search._ensure_search_key_controller()
+            except Exception:
+                logger.debug("Failed to install search key controller", exc_info=True)
+        else:
+            logger.warning("Search key controller not installed: _search missing at shortcut setup")
     
     def _setup_mouse_wheel_zoom(self):
         """Set up mouse wheel zoom functionality with Cmd+MouseWheel."""
