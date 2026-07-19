@@ -1,0 +1,44 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $SshPilotAuthorizedKeyEntryDialog: Adw.Window {
+  title: _("Edit authorized_keys entry");
+  modal: true;
+  default-width: 640;
+  default-height: 720;
+
+  content: Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {
+      show-start-title-buttons: false;
+      show-end-title-buttons: false;
+
+      [start]
+      Gtk.Button cancel_button {
+        label: _("Cancel");
+      }
+
+      [end]
+      Gtk.Button apply_button {
+        label: _("Apply");
+
+        styles [
+          "suggested-action",
+        ]
+      }
+    }
+
+    content: Gtk.ScrolledWindow {
+      vexpand: true;
+
+      Gtk.Box body {
+        orientation: vertical;
+        spacing: 16;
+        margin-top: 16;
+        margin-bottom: 16;
+        margin-start: 16;
+        margin-end: 16;
+      }
+    };
+  };
+}

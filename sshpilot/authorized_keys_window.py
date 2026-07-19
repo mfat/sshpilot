@@ -67,8 +67,20 @@ def _summary(entry: AuthorizedKeyEntry) -> str:
     return " · ".join(chips) or _("no options")
 
 
+@Gtk.Template(resource_path="/io/github/mfat/sshpilot/ui/authorized_keys_window.ui")
 class AuthorizedKeysWindow(Adw.Window):
     """List + edit ``~/.ssh/authorized_keys`` over SFTP."""
+
+    __gtype_name__ = "SshPilotAuthorizedKeysWindow"
+
+    toast_overlay = Gtk.Template.Child()
+    title_label = Gtk.Template.Child()
+    add_button = Gtk.Template.Child()
+    reload_button = Gtk.Template.Child()
+    raw_button = Gtk.Template.Child()
+    save_button = Gtk.Template.Child()
+    status_label = Gtk.Template.Child()
+    list_box = Gtk.Template.Child()
 
     def __init__(
         self,
@@ -151,62 +163,28 @@ class AuthorizedKeysWindow(Adw.Window):
     # ------------------------------------------------------------------
 
     def _build_ui(self, title: str) -> None:
-        self._toast_overlay = Adw.ToastOverlay()
-        self.set_content(self._toast_overlay)
+        # Static chrome lives in the template; here we bind the template-child
+        # aliases (keeping the class's original ``self._x`` names), set the
+        # dynamic title, wire the add-menu popover, and connect handlers.
+        self._toast_overlay = self.toast_overlay
+        self.title_label.set_label(title)
 
-        tv = Adw.ToolbarView()
-        self._toast_overlay.set_child(tv)
+        self._add_button = self.add_button
+        self._add_button.set_popover(
+            Gtk.PopoverMenu.new_from_model(self._build_add_menu_model())
+        )
 
-        hb = Adw.HeaderBar()
-        hb.set_title_widget(Gtk.Label(label=title))
-        tv.add_top_bar(hb)
-
-        # Add menu button
-        self._add_button = Gtk.MenuButton()
-        self._add_button.set_icon_name("list-add-symbolic")
-        self._add_button.set_tooltip_text(_("Add key"))
-        popover = Gtk.PopoverMenu.new_from_model(self._build_add_menu_model())
-        self._add_button.set_popover(popover)
-        hb.pack_start(self._add_button)
-
-        self._reload_button = Gtk.Button.new_from_icon_name("view-refresh-symbolic")
-        self._reload_button.set_tooltip_text(_("Reload from server"))
+        self._reload_button = self.reload_button
         self._reload_button.connect("clicked", lambda *_: self._reload())
-        hb.pack_start(self._reload_button)
 
-        self._raw_button = Gtk.Button.new_from_icon_name("text-x-generic-symbolic")
-        self._raw_button.set_tooltip_text(_("Open raw editor…"))
+        self._raw_button = self.raw_button
         self._raw_button.connect("clicked", self._on_raw_edit_clicked)
-        hb.pack_start(self._raw_button)
 
-        self._save_button = Gtk.Button(label=_("Save"))
-        self._save_button.add_css_class("suggested-action")
-        self._save_button.set_sensitive(False)
+        self._save_button = self.save_button
         self._save_button.connect("clicked", self._on_save_clicked)
-        hb.pack_end(self._save_button)
 
-        # Body
-        body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        tv.set_content(body)
-
-        self._status_label = Gtk.Label(label=_("Loading…"))
-        self._status_label.set_margin_top(8)
-        self._status_label.set_margin_bottom(8)
-        body.append(self._status_label)
-
-        scrolled = Gtk.ScrolledWindow()
-        scrolled.set_vexpand(True)
-        scrolled.set_hexpand(True)
-        body.append(scrolled)
-
-        self._list_box = Gtk.ListBox()
-        self._list_box.set_selection_mode(Gtk.SelectionMode.NONE)
-        self._list_box.add_css_class("boxed-list")
-        self._list_box.set_margin_top(12)
-        self._list_box.set_margin_bottom(12)
-        self._list_box.set_margin_start(12)
-        self._list_box.set_margin_end(12)
-        scrolled.set_child(self._list_box)
+        self._status_label = self.status_label
+        self._list_box = self.list_box
 
         # Add an action set on the window for Ctrl+S.
         self._install_shortcuts()
@@ -776,36 +754,24 @@ class AuthorizedKeysWindow(Adw.Window):
 # ---------------------------------------------------------------------------
 
 
+@Gtk.Template(resource_path="/io/github/mfat/sshpilot/ui/authorized_key_entry_dialog.ui")
 class AuthorizedKeyEntryDialog(Adw.Window):
     """Modal dialog for editing one AuthorizedKeyEntry's options."""
+
+    __gtype_name__ = "SshPilotAuthorizedKeyEntryDialog"
+
+    cancel_button = Gtk.Template.Child()
+    apply_button = Gtk.Template.Child()
+    body = Gtk.Template.Child()
 
     def __init__(self, parent: AuthorizedKeysWindow, entry: AuthorizedKeyEntry, *, on_saved):
         super().__init__()
         self._entry = entry
         self._on_saved = on_saved
         self.set_transient_for(parent)
-        self.set_modal(True)
-        self.set_default_size(640, 720)
-        self.set_title(_("Edit authorized_keys entry"))
 
-        tv = Adw.ToolbarView()
-        self.set_content(tv)
-        hb = Adw.HeaderBar()
-        hb.set_show_end_title_buttons(False)
-        hb.set_show_start_title_buttons(False)
-        tv.add_top_bar(hb)
-
-        cancel = Gtk.Button(label=_("Cancel"))
-        cancel.connect("clicked", lambda *_: self.close())
-        hb.pack_start(cancel)
-        save = Gtk.Button(label=_("Apply"))
-        save.add_css_class("suggested-action")
-        save.connect("clicked", self._on_save_clicked)
-        hb.pack_end(save)
-
-        scroller = Gtk.ScrolledWindow()
-        scroller.set_vexpand(True)
-        tv.set_content(scroller)
+        self.cancel_button.connect("clicked", lambda *_: self.close())
+        self.apply_button.connect("clicked", self._on_save_clicked)
 
         # Esc closes
         key_ctrl = Gtk.EventControllerKey()
@@ -820,12 +786,8 @@ class AuthorizedKeyEntryDialog(Adw.Window):
         key_ctrl.connect("key-pressed", _on_key)
         self.add_controller(key_ctrl)
 
-        body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
-        body.set_margin_top(16)
-        body.set_margin_bottom(16)
-        body.set_margin_start(16)
-        body.set_margin_end(16)
-        scroller.set_child(body)
+        # The data-driven form is appended to the template's body box.
+        body = self.body
 
         # Identity / comment
         info = Adw.PreferencesGroup()

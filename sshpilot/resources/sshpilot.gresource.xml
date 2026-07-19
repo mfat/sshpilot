@@ -141,5 +141,7 @@
     <file alias="shortcut_capture_dialog.ui" preprocess="xml-stripblanks">ui/shortcut_capture_dialog.ui</file>
     <file alias="shortcut_editor_window.ui" preprocess="xml-stripblanks">ui/shortcut_editor_window.ui</file>
     <file alias="log_viewer_window.ui" preprocess="xml-stripblanks">ui/log_viewer_window.ui</file>
+    <file alias="authorized_keys_window.ui" preprocess="xml-stripblanks">ui/authorized_keys_window.ui</file>
+    <file alias="authorized_key_entry_dialog.ui" preprocess="xml-stripblanks">ui/authorized_key_entry_dialog.ui</file>
   </gresource>
 </gresources>
