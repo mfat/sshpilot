@@ -27,6 +27,17 @@ def test_classify_prompt_markers_need_word_boundaries():
     assert classify_prompt("Enter one-time password:") == "interactive"
 
 
+def test_classify_prompt_common_mfa_challenges():
+    assert classify_prompt("Duo two-factor login for alice:") == "interactive"
+    assert (
+        classify_prompt("Enter a passcode or select one of the following options:")
+        == "interactive"
+    )
+    assert classify_prompt("Security code:") == "interactive"
+    assert classify_prompt("TOTP token for alice:") == "interactive"
+    assert classify_prompt("MFA verification-token:") == "interactive"
+
+
 def test_classify_prompt_fido_presence_and_pin():
     assert (
         classify_prompt("Confirm user presence for key ED25519-SK SHA256:abcd")

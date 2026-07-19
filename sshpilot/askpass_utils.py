@@ -119,7 +119,9 @@ _HOSTKEY_MARKERS = (
 # Word-boundary match: bare substrings would misfire on hostnames/usernames
 # ("user@alpine's password:" contains 'pin', "scotp1" contains 'otp').
 _TYPED_INTERACTIVE_RE = re.compile(
-    r'\b(?:pin|otp|verification code|one-time|authentication code)\b'
+    r'\b(?:pin|otp|totp|mfa|2fa|two[-\s]?factor|'
+    r'verification[ -]?(?:code|token)|one[-\s]?time|'
+    r'authentication[ -]?(?:code|token)|passcode|security[ -]?code|token)\b'
 )
 
 
