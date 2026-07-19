@@ -1,0 +1,28 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $SshPilotPropertiesDialog: Adw.Window {
+  title: "Properties";
+  default-width: 400;
+  default-height: 500;
+  resizable: true;
+  modal: true;
+
+  content: Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {
+      title-widget: Gtk.Label {
+        label: "Properties";
+      };
+    }
+
+    content: Gtk.Box content_box {
+      orientation: vertical;
+      spacing: 16;
+      margin-top: 16;
+      margin-bottom: 16;
+      margin-start: 16;
+      margin-end: 16;
+    };
+  };
+}

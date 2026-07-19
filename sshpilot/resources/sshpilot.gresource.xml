@@ -154,5 +154,7 @@
     <file alias="placeholder_dialog.ui" preprocess="xml-stripblanks">ui/placeholder_dialog.ui</file>
     <file alias="command_edit_dialog.ui" preprocess="xml-stripblanks">ui/command_edit_dialog.ui</file>
     <file alias="add_folder_dialog.ui" preprocess="xml-stripblanks">ui/add_folder_dialog.ui</file>
+    <file alias="key_chooser_dialog.ui" preprocess="xml-stripblanks">ui/key_chooser_dialog.ui</file>
+    <file alias="properties_dialog.ui" preprocess="xml-stripblanks">ui/properties_dialog.ui</file>
   </gresource>
 </gresources>

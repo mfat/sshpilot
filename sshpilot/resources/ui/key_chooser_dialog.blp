@@ -1,0 +1,36 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $SshPilotKeyChooserDialog: Adw.Window {
+  title: _("Add a Key");
+  modal: true;
+  default-width: 540;
+  default-height: 580;
+
+  content: Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {
+      title-widget: Adw.ViewSwitcher {
+        stack: stack;
+        policy: wide;
+      };
+
+      [start]
+      Gtk.Button cancel_btn {
+        label: _("Cancel");
+      }
+
+      [end]
+      Gtk.Button add_btn {
+        label: _("Add");
+        sensitive: false;
+
+        styles [
+          "suggested-action",
+        ]
+      }
+    }
+
+    content: Adw.ViewStack stack {};
+  };
+}

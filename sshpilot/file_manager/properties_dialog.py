@@ -20,8 +20,13 @@ if TYPE_CHECKING:
     from .common import FileEntry
 
 
+@Gtk.Template(resource_path="/io/github/mfat/sshpilot/ui/properties_dialog.ui")
 class PropertiesDialog(Adw.Window):
     """Nautilus-style properties dialog using card-based design."""
+
+    __gtype_name__ = "SshPilotPropertiesDialog"
+
+    content_box = Gtk.Template.Child()
 
     def __init__(self, entry: "FileEntry", current_path: str, parent: Gtk.Window, sftp_manager: Optional[Any] = None):
         super().__init__()
@@ -29,14 +34,8 @@ class PropertiesDialog(Adw.Window):
         self._current_path = current_path
         self._parent_window = parent
         self._sftp_manager = sftp_manager
-        self.set_title("Properties")
-        
-        # Set window properties
-        self.set_default_size(400, 500)
-        self.set_resizable(True)
-        self.set_modal(True)
         self.set_transient_for(parent)
-        
+
         # Positioning is delegated to the window manager via the modal /
         # transient_for properties; GTK4 has no manual window placement.
 
@@ -45,20 +44,10 @@ class PropertiesDialog(Adw.Window):
 
     def _build_dialog(self) -> None:
         """Build the Nautilus-style properties dialog content."""
-        # Create AdwToolbarView as the main content (proper Adw.Window structure)
-        toolbar_view = Adw.ToolbarView()
-        
-        # Create proper header bar for dragging
-        header_bar = Adw.HeaderBar()
-        header_bar.set_title_widget(Gtk.Label(label="Properties"))
-        
-        # Add header bar to toolbar view
-        toolbar_view.add_top_bar(header_bar)
-        
-        # Main content box
-        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16,
-                         margin_top=16, margin_bottom=16, margin_start=16, margin_end=16)
-        
+        # Static shell (toolbar view + "Properties" header) is in the template;
+        # the property rows are appended into the template content box.
+        content = self.content_box
+
         # Header with icon and name
         content.append(self._create_header_block())
         
@@ -77,12 +66,6 @@ class PropertiesDialog(Adw.Window):
 
         # Permissions row
         content.append(self._create_permissions_row())
-        
-        # Set content in toolbar view
-        toolbar_view.set_content(content)
-        
-        # Set the toolbar view as the window content
-        self.set_content(toolbar_view)
 
 
     def _create_header_block(self) -> Gtk.Widget:

@@ -749,6 +749,7 @@ def _type_tag_markup(ktype):
             f"weight='bold'> {GLib.markup_escape_text(ktype)} </span>")
 
 
+@Gtk.Template(resource_path="/io/github/mfat/sshpilot/ui/key_chooser_dialog.ui")
 class KeyChooserDialog(Adw.Window):
     """Modal chooser listing keys on disk and in the agent across two tabs.
 
@@ -759,14 +760,15 @@ class KeyChooserDialog(Adw.Window):
 
     __gtype_name__ = 'SshPilotKeyChooserDialog'
 
+    cancel_btn = Gtk.Template.Child()
+    add_btn = Gtk.Template.Child()
+    stack = Gtk.Template.Child()
+
     def __init__(self, parent, *, disk_keys, agent_keys, existing_paths,
                  on_add, on_browse=None):
         super().__init__()
-        self.set_title(_("Add a Key"))
-        self.set_modal(True)
         if parent is not None:
             self.set_transient_for(parent)
-        self.set_default_size(540, 580)
 
         self._on_add = on_add
         self._on_browse = on_browse
@@ -776,37 +778,17 @@ class KeyChooserDialog(Adw.Window):
             for p in (existing_paths or []) if p
         }
 
-        toolbar = Adw.ToolbarView()
-        header = Adw.HeaderBar()
-
-        cancel_btn = Gtk.Button(label=_("Cancel"))
-        cancel_btn.connect("clicked", lambda *_a: self.close())
-        header.pack_start(cancel_btn)
-
-        self.add_btn = Gtk.Button(label=_("Add"))
-        self.add_btn.add_css_class("suggested-action")
-        self.add_btn.set_sensitive(False)
+        # Static shell (toolbar, header Cancel/Add, view switcher + stack) is in
+        # the template; the disk/agent pages are built and added here.
+        self.cancel_btn.connect("clicked", lambda *_a: self.close())
         self.add_btn.connect("clicked", self._on_add_clicked)
-        header.pack_end(self.add_btn)
 
-        stack = Adw.ViewStack()
-        switcher = Adw.ViewSwitcher(stack=stack)
-        try:
-            switcher.set_policy(Adw.ViewSwitcherPolicy.WIDE)
-        except Exception:
-            pass
-        header.set_title_widget(switcher)
-
-        stack.add_titled_with_icon(
+        self.stack.add_titled_with_icon(
             self._build_disk_page(disk_keys), "disk", _("On disk"),
             "computer-symbolic")
-        stack.add_titled_with_icon(
+        self.stack.add_titled_with_icon(
             self._build_agent_page(agent_keys), "agent", _("In agent"),
             "dialog-password-symbolic")
-
-        toolbar.add_top_bar(header)
-        toolbar.set_content(stack)
-        self.set_content(toolbar)
 
     # ---- page builders --------------------------------------------------
     def _wrap_group(self, group):
