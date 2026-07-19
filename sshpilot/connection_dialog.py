@@ -1440,6 +1440,7 @@ class FileListEditor(Adw.PreferencesGroup):
             except Exception:
                 logger.debug("FileListEditor browse() failed", exc_info=True)
 
+@Gtk.Template(resource_path="/io/github/mfat/sshpilot/ui/connection_dialog.ui")
 class ConnectionDialog(
     Adw.Window,
     ConnectionDialogValidationMixin,
@@ -1447,12 +1448,16 @@ class ConnectionDialog(
     ConnectionDialogPortForwardingMixin,
 ):
     """Dialog for adding/editing SSH connections using custom layout with pinned buttons"""
-    
+
     __gtype_name__ = 'ConnectionDialog'
-    
+
     __gsignals__ = {
         'connection-saved': (GObject.SignalFlags.RUN_FIRST, None, (object,)),
     }
+
+    content_mount = Gtk.Template.Child()
+    cancel_button = Gtk.Template.Child()
+    save_button = Gtk.Template.Child()
     
     def __init__(self, parent, connection=None, connection_manager=None, force_split_from_group=False, split_group_source=None, split_original_nickname=None):
         super().__init__()
@@ -1489,29 +1494,19 @@ class ConnectionDialog(
         GLib.idle_add(self.load_connection_data)
     
     def setup_ui(self):
-        """Set up the dialog UI with pinned buttons"""
-        # Create main vertical container
-        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        
-        # Create header bar
-        header_bar = Adw.HeaderBar()
-        header_bar.set_show_end_title_buttons(True)
-        main_box.append(header_bar)
-        
-        # Create tabbed preferences content (switcher pinned above scrollable pages)
+        """Wire the dynamic content + buttons into the template skeleton."""
+        # The container skeleton (header bar, separator, Cancel/Save button box)
+        # lives in connection_dialog.blp; here we mount the tabbed preferences
+        # content and wire the pinned buttons.
         self.preferences_content = self.create_preferences_content()
         self.preferences_content.set_vexpand(True)
-        
-        # Create pinned bottom section with buttons
-        bottom_section = self.create_bottom_section()
-        
-        # Assemble the layout
-        main_box.append(self.preferences_content)
-        main_box.append(bottom_section)
-        
-        # Set the content
-        self.set_content(main_box)
-        
+        self.content_mount.append(self.preferences_content)
+
+        self.cancel_button.connect("clicked", self.on_cancel_clicked)
+        self.save_button.connect("clicked", self.on_save_clicked)
+        self._save_buttons = [self.save_button]
+        self.setup_keyboard_shortcuts()
+
         # Install inline validators for key fields
         try:
             self._install_inline_validators()
@@ -1676,44 +1671,6 @@ class ConnectionDialog(
         if hasattr(Adw, "InlineViewSwitcher"):
             return self._create_preferences_viewstack_content(pages)
         return self._create_preferences_notebook_content(pages)
-    
-    def create_bottom_section(self):
-        """Create the pinned bottom section with save/cancel buttons"""
-        bottom_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        
-        # Visual separator
-        separator = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
-        bottom_container.append(separator)
-        
-        # Button container with proper spacing
-        button_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        button_box.set_margin_start(24)
-        button_box.set_margin_end(24)
-        button_box.set_margin_top(12)
-        button_box.set_margin_bottom(12)
-        button_box.set_halign(Gtk.Align.END)  # Align buttons to the right
-        
-        # Cancel button
-        self.cancel_button = Gtk.Button(label=_("Cancel"))
-        self.cancel_button.connect("clicked", self.on_cancel_clicked)
-        
-        # Save button with suggested action styling
-        self.save_button = Gtk.Button(label=_("Save"))
-        self.save_button.add_css_class("suggested-action")
-        self.save_button.connect("clicked", self.on_save_clicked)
-        
-        button_box.append(self.cancel_button)
-        button_box.append(self.save_button)
-        
-        bottom_container.append(button_box)
-        
-        # Store reference to save button for validation updates
-        self._save_buttons = [self.save_button]
-        
-        # Setup keyboard shortcuts
-        self.setup_keyboard_shortcuts()
-        
-        return bottom_container
     
     def setup_keyboard_shortcuts(self):
         """Setup keyboard shortcuts for common actions"""

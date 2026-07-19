@@ -144,5 +144,6 @@
     <file alias="authorized_keys_window.ui" preprocess="xml-stripblanks">ui/authorized_keys_window.ui</file>
     <file alias="authorized_key_entry_dialog.ui" preprocess="xml-stripblanks">ui/authorized_key_entry_dialog.ui</file>
     <file alias="sshcopyid_window.ui" preprocess="xml-stripblanks">ui/sshcopyid_window.ui</file>
+    <file alias="connection_dialog.ui" preprocess="xml-stripblanks">ui/connection_dialog.ui</file>
   </gresource>
 </gresources>
