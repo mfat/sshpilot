@@ -24,6 +24,7 @@ def _setup_glib_stub(window_module, calls, monkeypatch):
 
     monkeypatch.setattr(window_module.GLib, 'idle_add', idle_add, raising=False)
     monkeypatch.setattr(window_module.GLib, 'timeout_add', timeout_add, raising=False)
+    monkeypatch.setattr(window_module, 'install_sidebar_css', lambda: None, raising=False)
 
 
 def _build_main_window(window_module, startup_value, calls):
@@ -31,7 +32,6 @@ def _build_main_window(window_module, startup_value, calls):
     window._startup_tasks_scheduled = False
     window._pending_focus_operations = []
     window._startup_complete = False
-    window._install_sidebar_css = lambda: None
     window._queue_focus_operation = lambda func: calls.setdefault('queued', []).append(func)
     window._on_startup_complete = lambda: calls.setdefault('startup_complete', []).append(True) or False
     window._focus_connection_list_first_row = lambda: calls.setdefault('welcome_focus', []).append(True)
