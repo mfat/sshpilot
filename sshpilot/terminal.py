@@ -18,7 +18,7 @@ import shutil
 import pwd
 from datetime import datetime
 from typing import Optional
-from .platform_utils import is_flatpak, is_macos, get_sshpass_path
+from .platform_utils import is_flatpak, is_macos
 from .terminal_backends import (
     BaseTerminalBackend,
     VTETerminalBackend,
@@ -129,8 +129,6 @@ class TerminalWidget(Gtk.Box):
         self._connect_grace_timer_id = None  # evidence poller: promotes CONNECTING→CONNECTED
         self._connect_poll_count = 0
         self._connect_failure_hint = ''  # failure line scraped while connecting
-        self.watch_id = 0
-        self.ssh_client = None
         self.session_id = str(id(self))  # Unique ID for this session
         self._is_quitting = False  # Flag to suppress signal handlers during quit
         self.last_error_message = None  # Store last SSH error for reporting
@@ -148,8 +146,7 @@ class TerminalWidget(Gtk.Box):
         self._backend_name = "vte"
         self.backend = None
         self.terminal_widget = None
-        self._is_local_shell = False
-        
+
         # Fullscreen state
         self._is_fullscreen = False
         self._fullscreen_sidebar_visible = None
@@ -1136,12 +1133,7 @@ class TerminalWidget(Gtk.Box):
             
             # Store the PTY for later cleanup
             self.pty = pty
-            try:
-                import time
-                self._spawn_start_time = time.time()
-            except Exception:
-                self._spawn_start_time = None
-            
+
             # Defer marking as connected until spawn completes
             try:
                 self.apply_theme()
@@ -1763,21 +1755,6 @@ class TerminalWidget(Gtk.Box):
         return ConnectionState.DISCONNECTED, ''
 
 
-    def _show_forwarding_error_dialog(self, message):
-        try:
-            dialog = Adw.MessageDialog(
-                transient_for=self.get_root() if hasattr(self, 'get_root') else None,
-                modal=True,
-                heading="Port Forwarding Error",
-                body=str(message)
-            )
-            dialog.add_response('ok', 'OK')
-            dialog.set_default_response('ok')
-            dialog.present()
-        except Exception as e:
-            logger.debug(f"Failed to present forwarding error dialog: {e}")
-        return False
-
     @staticmethod
     def _mix_rgba(base: Gdk.RGBA, other: Gdk.RGBA, ratio: float) -> Gdk.RGBA:
         ratio = max(0.0, min(1.0, ratio))
@@ -1787,42 +1764,6 @@ class TerminalWidget(Gtk.Box):
         mixed.blue = base.blue * (1.0 - ratio) + other.blue * ratio
         mixed.alpha = base.alpha * (1.0 - ratio) + other.alpha * ratio
         return mixed
-
-    @staticmethod
-    def _calculate_luminance(rgba: Gdk.RGBA) -> float:
-        return 0.2126 * rgba.red + 0.7152 * rgba.green + 0.0722 * rgba.blue
-
-    @classmethod
-    def _contrast_color(cls, rgba: Gdk.RGBA) -> Gdk.RGBA:
-        contrast = Gdk.RGBA()
-        if cls._calculate_luminance(rgba) < 0.5:
-            contrast.parse('#FFFFFF')
-        else:
-            contrast.parse('#000000')
-        contrast.alpha = 1.0
-        return contrast
-
-    @staticmethod
-    def _ensure_opaque(rgba: Gdk.RGBA) -> Gdk.RGBA:
-        opaque = Gdk.RGBA()
-        opaque.red = rgba.red
-        opaque.green = rgba.green
-        opaque.blue = rgba.blue
-        opaque.alpha = 1.0
-        return opaque
-
-    def _parse_group_color(self) -> Optional[Gdk.RGBA]:
-        if not self.group_color:
-            return None
-        rgba = Gdk.RGBA()
-        try:
-            parsed = rgba.parse(str(self.group_color))
-        except Exception:
-            logger.debug("Failed to parse terminal group color '%s'", self.group_color, exc_info=True)
-            return None
-        if not parsed or rgba.alpha <= 0:
-            return None
-        return rgba
 
     def apply_theme(self, theme_name=None):
         """Apply terminal theme and font settings
@@ -1933,7 +1874,6 @@ class TerminalWidget(Gtk.Box):
                 # For non-VTE backends, use apply_theme which should handle colors
                 self.backend.apply_theme(theme_name)
 
-            self._applied_foreground_color = self._clone_rgba(fg_color)
             self._applied_background_color = self._clone_rgba(bg_color)
             self._applied_cursor_color = self._clone_rgba(cursor_color)
             self._applied_highlight_bg = self._clone_rgba(highlight_bg)
@@ -2021,15 +1961,6 @@ class TerminalWidget(Gtk.Box):
         except Exception:
             logger.debug("Failed to parse group color '%s'", color_value, exc_info=True)
         return None
-
-    def _mix_with_white(self, rgba: Gdk.RGBA, ratio: float = 0.35) -> Gdk.RGBA:
-        ratio = max(0.0, min(1.0, ratio))
-        mixed = Gdk.RGBA()
-        mixed.red = min(1.0, rgba.red * ratio + (1 - ratio))
-        mixed.green = min(1.0, rgba.green * ratio + (1 - ratio))
-        mixed.blue = min(1.0, rgba.blue * ratio + (1 - ratio))
-        mixed.alpha = 1.0
-        return mixed
 
     def _relative_luminance(self, rgba: Gdk.RGBA) -> float:
         def to_linear(channel: float) -> float:
@@ -2184,7 +2115,6 @@ class TerminalWidget(Gtk.Box):
 
                 # Enable OSC 8 hyperlink support (links emitted by apps via escape sequences)
                 self._hovered_hyperlink_uri = None
-                self._ctrl_pressed = False
                 try:
                     if hasattr(self.vte, 'set_allow_hyperlink'):
                         self.vte.set_allow_hyperlink(True)
@@ -2242,23 +2172,6 @@ class TerminalWidget(Gtk.Box):
                 # Key controller – tracks Ctrl state for Ctrl+click URL opening.
                 # Reading it from the click event is unreliable; a dedicated key
                 # controller is more robust.
-                try:
-                    _key_ctrl = Gtk.EventControllerKey()
-                    def _on_key_press_url(ctrl, keyval, keycode, state):
-                        if keyval in (Gdk.KEY_Control_L, Gdk.KEY_Control_R):
-                            self._ctrl_pressed = True
-                        return False
-                    def _on_key_release_url(ctrl, keyval, keycode, state):
-                        if keyval in (Gdk.KEY_Control_L, Gdk.KEY_Control_R):
-                            self._ctrl_pressed = False
-                        return False
-                    _key_ctrl.connect('key-pressed', _on_key_press_url)
-                    _key_ctrl.connect('key-released', _on_key_release_url)
-                    self.vte.add_controller(_key_ctrl)
-                    self._url_key_controller = _key_ctrl
-                except Exception as e:
-                    logger.warning(f"Could not add URL key controller: {e}")
-
                 # Show the terminal
                 try:
                     self.vte.show()
@@ -3757,74 +3670,7 @@ class TerminalWidget(Gtk.Box):
             logger.info("Connection settings updated, waiting for user confirmation to reconnect...")
             # Just update our connection reference, don't reconnect automatically
             self.connection = connection
-    
-    def _on_connection_established(self):
-        """Handle successful SSH connection"""
-        logger.info(f"SSH connection to {self.connection.hostname} established")
-        self.is_connected = True
-        
-        # Update connection status in the connection manager
-        self.connection.is_connected = True
-        self.connection_manager.emit('connection-status-changed', self.connection, True)
-        
-        self.emit('connection-established')
 
-        # Apply theme after connection is established
-        self.apply_theme()
-        # Hide any reconnect banner on success
-        self._set_disconnected_banner_visible(False)
-        self.last_error_message = None
-        
-    def _on_connection_lost(self, message: Optional[str] = None):
-        """Handle SSH connection loss"""
-        if self.is_connected:
-            logger.info(f"SSH connection to {self.connection.hostname} lost")
-            self.is_connected = False
-
-            # Update connection status in the connection manager
-            if hasattr(self, 'connection') and self.connection:
-                self.connection.is_connected = False
-                self.connection_manager.emit('connection-status-changed', self.connection, False)
-
-            self.emit('connection-lost')
-            # Show reconnect UI
-            self._set_connecting_overlay_visible(False)
-            banner_text = message or self.last_error_message or _('Connection lost.')
-            self._record_error_detail(banner_text)
-            self._set_disconnected_banner_visible(True, banner_text)
-
-    def _on_terminal_input(self, widget, text, size):
-        """Handle input from the terminal (handled automatically by VTE)"""
-            
-    def _on_terminal_resize(self, widget, width, height):
-        """Handle terminal resize events"""
-        # Update the SSH session if it exists
-        if self.ssh_session and hasattr(self.ssh_session, 'change_terminal_size'):
-            asyncio.create_task(
-                self.ssh_session.change_terminal_size(
-                    height, width, 0, 0
-                )
-            )
-        
-        # For local terminals with direct spawn, VTE automatically sends SIGWINCH
-        # to the child process, so no additional action needed.
-        # For agent-based shells, the agent runs in a separate process and
-        # would need a mechanism to receive resize signals, which is not
-        # currently implemented. The initial size should be correct now though.
-    
-    def _on_ssh_disconnected(self, exc):
-        """Called when SSH connection is lost"""
-        if self.is_connected:
-            self.is_connected = False
-            if exc:
-                logger.error(f"SSH connection lost: {exc}")
-            GLib.idle_add(lambda: self.emit('connection-lost'))
-    
-    def _setup_process_group(self, spawn_data):
-        """Setup function called after fork but before exec"""
-        # Create new process group for the child process
-        os.setpgrp()
-        
     def _get_terminal_pid(self):
         """Get the PID of the terminal's child process"""
         # First try the stored PID
@@ -3916,37 +3762,6 @@ class TerminalWidget(Gtk.Box):
                     logger.debug(f"Removed terminal {self.session_id} from process manager terminals set")
             except Exception as e:
                 logger.debug(f"Error removing terminal from process manager: {e}")
-
-    def _terminate_process_tree(self, pid):
-        """Terminate a process and all its children"""
-        try:
-            # First try to get the process group
-            try:
-                pgid = os.getpgid(pid)
-                logger.debug(f"Terminating process group {pgid}")
-                os.killpg(pgid, signal.SIGTERM)
-                
-                # Give processes a moment to shut down
-                time.sleep(0.5)
-                
-                # Check if any processes are still running
-                try:
-                    os.killpg(pgid, 0)  # Check if process group exists
-                    logger.debug(f"Process group {pgid} still running, sending SIGKILL")
-                    os.killpg(pgid, signal.SIGKILL)
-                except (ProcessLookupError, OSError):
-                    pass  # Process group already gone
-                    
-            except ProcessLookupError:
-                logger.debug(f"Process {pid} already terminated")
-                return
-
-            # Reaping is left to VTE's GLib child-watch source (which spawned
-            # this child); calling waitpid() here would make GLib's waitid()
-            # fail with ECHILD and emit a GLib-WARNING.
-
-        except Exception as e:
-            logger.error(f"Error terminating process {pid}: {e}")
 
     def _cleanup_process(self, pid):
         """Clean up a process by PID"""
@@ -4441,10 +4256,6 @@ class TerminalWidget(Gtk.Box):
         """
         return getattr(self, '_current_remote_directory', None)
 
-    def on_bell(self, terminal):
-        """Handle terminal bell"""
-        # Could implement visual bell or notification here
-
     def _on_selection_changed(self, *_args):
         """Copy-on-select: mirror the terminal selection into the clipboard when
         the preference is enabled. Silent (no toast — the signal fires on every
@@ -4520,20 +4331,6 @@ class TerminalWidget(Gtk.Box):
             logger.debug("Terminal zoom reset to 1.0x")
         except Exception as e:
             logger.error(f"Failed to reset terminal zoom: {e}")
-
-    def reset_terminal(self):
-        """Reset terminal"""
-        if self.backend:
-            self.backend.reset(True, True)
-        elif self.vte is not None:
-            self.vte.reset(True, True)
-
-    def reset_and_clear(self):
-        """Reset and clear terminal"""
-        if self.backend:
-            self.backend.reset(True, False)
-        elif self.vte is not None:
-            self.vte.reset(True, False)
 
     def _apply_search_highlight_colors(self):
         """Switch VTE highlight to a high-contrast color while search is active."""
