@@ -104,6 +104,185 @@ def _install_sidebar_color_css():
         logger.debug("Failed to install sidebar color CSS", exc_info=True)
 
 
+def install_sidebar_css():
+    """Install sidebar focus CSS"""
+    try:
+        # Install CSS for sidebar focus highlighting once per display
+        display = Gdk.Display.get_default()
+        if not display:
+            logger.warning("No display available for CSS installation")
+            return
+        # Use an attribute on the display to avoid re-adding provider
+        if getattr(display, '_sidebar_css_installed', False):
+            return
+        provider = Gtk.CssProvider()
+        css = """
+
+        /* optional: a subtle focus ring while the list is focused */
+        row:selected:focus-within {
+          /* box-shadow: 0 0 8px 2px @accent_bg_color inset; */
+          /* border: 2px solid @accent_bg_color;  Adds a solid border of 2px thickness */
+          border-radius: 8px;
+        }
+        
+        /* Group styling */
+        .group-expand-button {
+          min-width: 16px;
+          min-height: 16px;
+          padding: 2px;
+          border-radius: 4px;
+        }
+        
+        .group-expand-button:hover {
+          background: alpha(@accent_bg_color, 0.1);
+        }
+        
+        /* Smooth drag indicator transitions */
+        .drag-indicator {
+          opacity: 0;
+          transition: opacity 0.15s ease-in-out;
+        }
+        
+        .drag-indicator.visible {
+          opacity: 1;
+        }
+        
+        /* Smooth transitions for connection rows during drag */
+        .navigation-sidebar {
+          transition: transform 0.1s ease-out, opacity 0.1s ease-out;
+        }
+        
+        .navigation-sidebar.dragging {
+          opacity: 0.7;
+          transform: scale(0.98);
+        }
+
+        /* Gap between sidebar list rows (GtkListBox has no spacing property) */
+        .navigation-sidebar row {
+          margin: 4px 8px;
+        }
+
+        /* Selected sidebar row: always use the accent so selection is
+           visible in dark mode by default. libadwaita's default
+           navigation-sidebar selection is a neutral shade that is nearly
+           invisible against the dark card background; this rule (which the
+           accent-override path already emits, but only when an override is
+           set) makes selection clear unconditionally.
+           @accent_bg_color / @accent_fg_color follow the system accent and
+           any user override. The more specific .tinted:selected rule below
+           keeps the identical color for grouped rows. */
+        .navigation-sidebar row:selected {
+          background-color: @accent_bg_color;
+          color: @accent_fg_color;
+        }
+
+        .navigation-sidebar row.tinted {
+          margin: 4px 8px;
+          border-radius: 10px;
+          transition: background-color 0s ease;
+        }
+
+        .navigation-sidebar row.tinted:not(:selected) {
+          background-color: alpha(@accent_bg_color, 0.18);
+        }
+
+        .navigation-sidebar row.tinted:hover:not(:selected) {
+          background-color: alpha(@accent_bg_color, 0.24);
+        }
+
+        .navigation-sidebar row.tinted:active:not(:selected) {
+          background-color: alpha(@accent_bg_color, 0.30);
+        }
+
+        .navigation-sidebar row.tinted:selected {
+          background-color: @accent_bg_color;
+          color: @accent_fg_color;
+          box-shadow: inset 0 0 0 1px @accent_bg_color;
+        }
+
+        .navigation-sidebar row.tinted:selected:hover {
+          background-color: shade(@accent_bg_color, 0.95);
+        }
+
+        .navigation-sidebar row.tinted:selected:active {
+          background-color: shade(@accent_bg_color, 0.90);
+        }
+
+        /* Accent-bar mode: the coloured left bar is the highlight, so a
+           selected row uses a neutral overlay instead of the accent fill
+           (which would swamp the bar). Every bar-mode row carries
+           .color-bar, and this out-specifies the accent `row:selected`
+           rule above at the same provider priority. */
+        .navigation-sidebar row.color-bar:selected {
+          background-color: alpha(@window_fg_color, 0.10);
+          color: @window_fg_color;
+          box-shadow: none;
+        }
+
+        .navigation-sidebar row.color-bar:selected:hover {
+          background-color: alpha(@window_fg_color, 0.13);
+        }
+
+        .navigation-sidebar row.color-bar:selected:active {
+          background-color: alpha(@window_fg_color, 0.16);
+        }
+
+        /* Reorder placeholder: a slim transparent gap row whose child
+           DragIndicator draws the accent bar; the list parts around it. */
+        .drop-placeholder-row {
+          background: transparent;
+          min-height: 0;
+          padding: 0;
+        }
+
+        /* Group drop target highlight */
+        .drop-target-group {
+          background: alpha(@accent_bg_color, 0.25);
+          border-radius: 8px;
+          box-shadow: 0 0 0 2px @accent_bg_color inset,
+                      0 2px 8px alpha(@accent_bg_color, 0.4);
+          transition: background-color 0.15s ease-in-out,
+                      box-shadow 0.15s ease-in-out;
+        }
+        
+        /* Drop target indicator styling */
+        .drop-target-indicator {
+          background: alpha(@accent_bg_color, 0.9);
+          color: white;
+          border-radius: 12px;
+          padding: 4px 12px;
+          margin: 4px 8px;
+          font-weight: bold;
+          font-size: 0.9em;
+          animation: drop-indicator-bounce 0.6s ease-in-out;
+        }
+
+        @keyframes drop-indicator-bounce {
+          0% {
+            transform: translateY(-10px) scale(0.8);
+            opacity: 0;
+          }
+          60% {
+            transform: translateY(2px) scale(1.05);
+            opacity: 1;
+          }
+          100% {
+            transform: translateY(0) scale(1);
+            opacity: 1;
+          }
+        }
+
+        """
+        provider.load_from_data(css.encode('utf-8'))
+        Gtk.StyleContext.add_provider_for_display(display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        setattr(display, '_sidebar_css_installed', True)
+        logger.debug("Sidebar CSS installed successfully")
+    except Exception as e:
+        logger.error(f"Failed to install sidebar CSS: {e}")
+        import traceback
+        logger.debug(f"CSS installation traceback: {traceback.format_exc()}")
+
+
 def _use_flat_sidebar_rows(config) -> bool:
     if config is None:
         return False
