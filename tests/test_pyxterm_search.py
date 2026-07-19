@@ -79,19 +79,19 @@ def test_clear_query_clears_decorations():
 
 
 def test_handle_search_result_error_state():
-    from sshpilot.terminal import TerminalWidget
+    from sshpilot.terminal_search import TerminalSearch
 
-    tw = object.__new__(TerminalWidget)
-    tw._search_has_match = False
-    tw.search_entry = type("E", (), {"get_text": lambda self: "needle"})()
+    s = object.__new__(TerminalSearch)
+    s._search_has_match = False
+    s.search_entry = type("E", (), {"get_text": lambda self: "needle"})()
     states = []
-    tw._set_search_error_state = lambda err: states.append(err)
-    tw._update_search_count_label = lambda i, c: None
+    s._set_search_error_state = lambda err: states.append(err)
+    s._update_search_count_label = lambda i, c: None
 
-    tw.handle_search_result(False)
+    s.handle_search_result(False)
     assert states == [True]
-    assert tw._search_has_match is False
+    assert s._search_has_match is False
 
-    tw.handle_search_result(True, result_index=0, result_count=3)
+    s.handle_search_result(True, result_index=0, result_count=3)
     assert states[-1] is False
-    assert tw._search_has_match is True
+    assert s._search_has_match is True
