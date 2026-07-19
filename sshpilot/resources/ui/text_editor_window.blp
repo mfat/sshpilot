@@ -1,0 +1,11 @@
+using Gtk 4.0;
+using Adw 1;
+
+// Layout skeleton only. The editor interior is deeply conditional (source vs
+// text view, optional outline Paned, optional root banner, conditional search
+// toolbar, dynamic header buttons), so it stays in Python (text_editor.py) and
+// is attached to this ToolbarView at runtime.
+template $SshPilotRemoteFileEditorWindow: Adw.Window {
+  content: Adw.ToolbarView toolbar_view {
+  };
+}

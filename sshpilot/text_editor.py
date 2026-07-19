@@ -103,13 +103,18 @@ def prettify_path(path: str, home: Optional[str]) -> str:
     return path
 
 
+@Gtk.Template(resource_path="/io/github/mfat/sshpilot/ui/text_editor_window.ui")
 class RemoteFileEditorWindow(Adw.Window):
     """FileZilla-style text editor window using GTK SourceView.
-    
+
     Supports both remote (SFTP) and local file editing:
     - Remote: Downloads to temp location, edits, uploads back when saved
     - Local: Edits file directly, saves locally
     """
+
+    __gtype_name__ = "SshPilotRemoteFileEditorWindow"
+
+    toolbar_view = Gtk.Template.Child()
     
     def __init__(
         self,
@@ -206,10 +211,9 @@ class RemoteFileEditorWindow(Adw.Window):
             self._download_and_load()
     
     def _setup_ui(self) -> None:
-        """Set up the editor UI."""
-        toolbar_view = Adw.ToolbarView()
-        self.set_content(toolbar_view)
-        
+        """Set up the editor UI (the ToolbarView skeleton is in the template)."""
+        toolbar_view = self.toolbar_view
+
         # Header bar — title with the path shown as a dimmed subtitle (full
         # path on hover).
         header_bar = Adw.HeaderBar()
